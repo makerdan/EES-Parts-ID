@@ -31,6 +31,8 @@ type ParsedRow = {
 type EnrichProgress = {
   progress: number;
   total: number;
+  batchSize?: number;
+  etaSeconds?: number | null;
   done?: boolean;
   error?: string;
   item?: { id: number; keywords: string[] };
@@ -480,8 +482,16 @@ export default function UploadScreen() {
                   />
                 </View>
                 <Text style={[styles.progressText, { color: colors.foreground }]}>
-                  {enrichProgress.progress} / {enrichProgress.total} items enriched
+                  {enrichProgress.progress} / {enrichProgress.total} items
+                  {enrichProgress.batchSize ? ` (batch of ${enrichProgress.batchSize})` : ""}
                 </Text>
+                {enrichProgress.etaSeconds != null && enrichProgress.etaSeconds > 0 ? (
+                  <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
+                    ETA: ~{enrichProgress.etaSeconds < 60
+                      ? `${enrichProgress.etaSeconds}s`
+                      : `${Math.ceil(enrichProgress.etaSeconds / 60)}m`}
+                  </Text>
+                ) : null}
               </View>
             ) : null}
 

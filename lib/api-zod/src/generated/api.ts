@@ -48,9 +48,9 @@ export const ListInventoryResponse = zod.object({
 /**
  * @summary Search inventory with multi-strategy cascade
  */
-export const searchInventoryBodyConfidenceThresholdDefault = 0.5;
+export const searchInventoryBodyConfidenceThresholdDefault = 50;
 export const searchInventoryBodyConfidenceThresholdMin = 0;
-export const searchInventoryBodyConfidenceThresholdMax = 1;
+export const searchInventoryBodyConfidenceThresholdMax = 100;
 
 export const SearchInventoryBody = zod.object({
   keywords: zod.string().optional(),
@@ -64,7 +64,8 @@ export const SearchInventoryBody = zod.object({
     .number()
     .min(searchInventoryBodyConfidenceThresholdMin)
     .max(searchInventoryBodyConfidenceThresholdMax)
-    .default(searchInventoryBodyConfidenceThresholdDefault),
+    .default(searchInventoryBodyConfidenceThresholdDefault)
+    .describe("Minimum confidence percentage (0–100); default 50"),
   category: zod
     .string()
     .optional()

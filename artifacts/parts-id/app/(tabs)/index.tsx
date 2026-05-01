@@ -30,7 +30,7 @@ const DEFAULT_FILTERS: FilterValues = {
   size: "",
   material: "",
   textNumbers: "",
-  confidenceThreshold: 0.5,
+  confidenceThreshold: 50,
   // 16 required chip dimensions
   category: "",
   amperage: "",
@@ -354,25 +354,39 @@ export default function SearchScreen() {
 
             {/* Results header */}
             {hasResults ? (
-              <View style={styles.resultsHeader}>
-                <View>
+              <View>
+                <View style={styles.resultsHeader}>
                   <Text style={[styles.resultsCount, { color: colors.foreground }]}>
-                    {results.length} {isOffline ? "offline" : ""} matches found
+                    {results.length} {isOffline ? "offline" : ""} match{results.length !== 1 ? "es" : ""} found
                   </Text>
-                  {!isOffline && belowThreshold > 0 ? (
-                    <Text style={[styles.belowThreshold, { color: colors.mutedForeground }]}>
-                      +{belowThreshold} below threshold
-                    </Text>
+                  {!showFilters ? (
+                    <Pressable
+                      onPress={handleClear}
+                      style={[styles.newSearchBtn, { borderColor: colors.border }]}
+                    >
+                      <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
+                    </Pressable>
                   ) : null}
                 </View>
-                {!showFilters ? (
+                {/* Actionable "more matches below threshold" banner */}
+                {!isOffline && belowThreshold > 0 && (
                   <Pressable
-                    onPress={handleClear}
-                    style={[styles.newSearchBtn, { borderColor: colors.border }]}
+                    onPress={() => {
+                      const lower = Math.max(0, filters.confidenceThreshold - 20);
+                      handleChange("confidenceThreshold", lower);
+                      setTimeout(handleSearch, 50);
+                    }}
+                    style={[styles.belowThresholdBanner, {
+                      backgroundColor: colors.warning + "18",
+                      borderColor: colors.warning + "55",
+                    }]}
                   >
-                    <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
+                    <Text style={[styles.belowThresholdBannerText, { color: colors.warning }]}>
+                      {belowThreshold} more match{belowThreshold !== 1 ? "es" : ""} available at{" "}
+                      {Math.max(0, filters.confidenceThreshold - 20)}% — tap to lower threshold
+                    </Text>
                   </Pressable>
-                ) : null}
+                )}
               </View>
             ) : null}
 
@@ -411,9 +425,22 @@ export default function SearchScreen() {
                   Try broader terms, check spelling, or lower the confidence threshold.
                 </Text>
                 {belowThreshold > 0 ? (
-                  <Text style={[styles.belowHint, { color: colors.warning }]}>
-                    {belowThreshold} items matched below threshold — try 10% or 20%
-                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      const lower = Math.max(0, filters.confidenceThreshold - 20);
+                      handleChange("confidenceThreshold", lower);
+                      setTimeout(handleSearch, 50);
+                    }}
+                    style={[styles.lowerThresholdBtn, {
+                      backgroundColor: colors.warning + "18",
+                      borderColor: colors.warning + "55",
+                    }]}
+                  >
+                    <Text style={[styles.lowerThresholdBtnText, { color: colors.warning }]}>
+                      {belowThreshold} match{belowThreshold !== 1 ? "es" : ""} at lower confidence —{"\n"}
+                      Tap to search at {Math.max(0, filters.confidenceThreshold - 20)}%
+                    </Text>
+                  </Pressable>
                 ) : null}
               </View>
             ) : null}
@@ -515,7 +542,16 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   resultsCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  belowThreshold: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  belowThresholdBanner: {
+    marginHorizontal: 16, marginBottom: 4, padding: 10,
+    borderRadius: 8, borderWidth: 1,
+  },
+  belowThresholdBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
+  lowerThresholdBtn: {
+    marginTop: 12, paddingHorizontal: 20, paddingVertical: 12,
+    borderRadius: 10, borderWidth: 1, alignItems: "center",
+  },
+  lowerThresholdBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", textAlign: "center", lineHeight: 22 },
   newSearchBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
   newSearchText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   loadingContainer: { alignItems: "center", padding: 40, gap: 12 },
@@ -526,7 +562,6 @@ const styles = StyleSheet.create({
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   emptyHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 8 },
-  belowHint: { fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
   welcomeContainer: { padding: 24, alignItems: "center" },
   welcomeEmoji: { fontSize: 48, marginBottom: 12 },
   welcomeTitle: { fontSize: 20, fontFamily: "Inter_700Bold", marginBottom: 8 },

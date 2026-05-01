@@ -256,7 +256,8 @@ function ConfidenceSlider({
   onChange: (v: number) => void;
   colors: ReturnType<typeof useColors>;
 }) {
-  const pct = Math.round(value * 100);
+  // value is 0–100 (integer percentage)
+  const pct = Math.round(value);
   const trackWidth = useRef(0);
 
   const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
@@ -268,12 +269,12 @@ function ConfidenceSlider({
       onPanResponderGrant: (e) => {
         if (trackWidth.current === 0) return;
         const x = e.nativeEvent.locationX;
-        onChange(clamp((x / trackWidth.current) * 100) / 100);
+        onChange(clamp((x / trackWidth.current) * 100));
       },
       onPanResponderMove: (e) => {
         if (trackWidth.current === 0) return;
         const x = e.nativeEvent.locationX;
-        onChange(clamp((x / trackWidth.current) * 100) / 100);
+        onChange(clamp((x / trackWidth.current) * 100));
       },
     }),
   ).current;
