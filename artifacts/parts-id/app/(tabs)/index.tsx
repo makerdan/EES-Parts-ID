@@ -158,6 +158,9 @@ export default function SearchScreen() {
   // Track latest filters in a ref so the onError closure always reads current values
   const filtersRef = useRef<FilterValues>(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
+  // Timeout + abort tracking for slow-connection fallback
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchAbortedRef = useRef(false);
 
   // Load persisted settings and apply on mount
   useEffect(() => {
@@ -233,7 +236,7 @@ export default function SearchScreen() {
     if (!fuseRef.current || !kw.trim()) return [];
     return fuseRef.current
       .search(kw.trim(), { limit: 30 })
-      .map((r, index) => ({
+      .map((r) => ({
         item: r.item,
         confidence: Math.max(0, 1 - (r.score ?? 0.5)),
         matchReason: "offline Fuse match",
@@ -242,9 +245,36 @@ export default function SearchScreen() {
       }));
   }, []);
 
+  // Shared offline fallback — used by onError and the slow-connection timeout
+  const runOfflineFallback = useCallback(() => {
+    const f = filtersRef.current;
+    const queryKey = buildQueryKey(f);
+    loadQueryCache().then(cache => {
+      const pruned = pruneExpired(cache);
+      if (Object.keys(pruned).length !== Object.keys(cache).length) saveQueryCache(pruned);
+      const exactEntry = pruned[queryKey];
+      if (exactEntry) {
+        setIsOffline(true);
+        setOfflineCacheType("exact");
+        setOfflineResults(exactEntry.results);
+        setShowFilters(false);
+        return;
+      }
+      const kw = [f.keywords, f.catalog, f.vendor, f.category, f.voltage, f.amperage]
+        .filter(Boolean).join(" ");
+      const fuseHits = runFuseSearch(kw);
+      setIsOffline(true);
+      setOfflineCacheType("fuse");
+      setOfflineResults(fuseHits.length > 0 ? fuseHits : []);
+      if (fuseHits.length > 0) setShowFilters(false);
+    });
+  }, [runFuseSearch]);
+
   const searchMutation = useSearchInventory({
     mutation: {
       onSuccess: (data) => {
+        if (searchAbortedRef.current) return; // timed out — discard late response
+        if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
         setIsOffline(false);
         setOfflineResults(null);
         setOfflineCacheType(null);
@@ -274,41 +304,8 @@ export default function SearchScreen() {
         });
       },
       onError: () => {
-        // Server unreachable — try exact query cache first, then Fuse fallback
-        const f = filtersRef.current;
-        const queryKey = buildQueryKey(f);
-
-        loadQueryCache().then(cache => {
-          const pruned = pruneExpired(cache);
-          // Persist pruned cache back to storage so expired entries are removed on disk
-          if (Object.keys(pruned).length !== Object.keys(cache).length) {
-            saveQueryCache(pruned);
-          }
-          const exactEntry = pruned[queryKey];
-
-          if (exactEntry) {
-            setIsOffline(true);
-            setOfflineCacheType("exact");
-            setOfflineResults(exactEntry.results);
-            setShowFilters(false);
-            return;
-          }
-
-          // No exact cache hit — fall back to Fuse keyword search
-          const kw = [
-            f.keywords,
-            f.catalog,
-            f.vendor,
-            f.category,
-            f.voltage,
-            f.amperage,
-          ].filter(Boolean).join(" ");
-          const fuseHits = runFuseSearch(kw);
-          setIsOffline(true);
-          setOfflineCacheType("fuse");
-          setOfflineResults(fuseHits.length > 0 ? fuseHits : []);
-          if (fuseHits.length > 0) setShowFilters(false);
-        });
+        if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
+        if (!searchAbortedRef.current) runOfflineFallback(); // timeout already ran fallback — skip
       },
     },
   });
@@ -317,15 +314,28 @@ export default function SearchScreen() {
     setFilters(f => ({ ...f, [key]: value }));
   };
 
+  const SEARCH_TIMEOUT_MS = 8000;
+
   const handleSearch = () => {
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
+    searchAbortedRef.current = false;
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     const body = buildSearchBody(filters);
     searchMutation.mutate({ data: body });
+    // Fall back to offline if API hasn't responded within the timeout
+    searchTimeoutRef.current = setTimeout(() => {
+      searchTimeoutRef.current = null;
+      searchAbortedRef.current = true; // onSuccess will discard any late response
+      searchMutation.reset();          // clear the loading spinner
+      runOfflineFallback();
+    }, SEARCH_TIMEOUT_MS);
   };
 
   const handleClear = () => {
+    if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
+    searchAbortedRef.current = false;
     setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settings.defaultConfidenceThreshold });
     searchMutation.reset();
     setOfflineResults(null);
