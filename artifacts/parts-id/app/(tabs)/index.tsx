@@ -21,6 +21,36 @@ import { KeywordEditor } from "@/components/KeywordEditor";
 import { useApp } from "@/contexts/AppContext";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
+const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+type QueryCacheEntry = { timestamp: number; results: SearchResult[] };
+type QueryCache = Record<string, QueryCacheEntry>;
+
+function buildQueryKey(f: FilterValues): string {
+  return JSON.stringify(buildSearchBody(f));
+}
+
+async function loadQueryCache(): Promise<QueryCache> {
+  try {
+    const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as QueryCache;
+  } catch { return {}; }
+}
+
+async function saveQueryCache(cache: QueryCache): Promise<void> {
+  try { await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(cache)); } catch {}
+}
+
+function pruneExpired(cache: QueryCache): QueryCache {
+  const now = Date.now();
+  const out: QueryCache = {};
+  for (const [k, v] of Object.entries(cache)) {
+    if (now - v.timestamp < CACHE_TTL_MS) out[k] = v;
+  }
+  return out;
+}
 
 const DEFAULT_FILTERS: FilterValues = {
   keywords: "",
@@ -89,6 +119,7 @@ export default function SearchScreen() {
   const [showFilters, setShowFilters] = useState(true);
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   const [isOffline, setIsOffline] = useState(false);
+  const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
   // Local Fuse index seeded from AsyncStorage cache
@@ -140,6 +171,7 @@ export default function SearchScreen() {
       onSuccess: (data) => {
         setIsOffline(false);
         setOfflineResults(null);
+        setOfflineCacheType(null);
         setShowFilters(false);
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
 
@@ -169,27 +201,51 @@ export default function SearchScreen() {
           });
           AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(() => {});
         }
+
+        // Cache results keyed by query (with TTL pruning)
+        const queryKey = buildQueryKey(filtersRef.current);
+        loadQueryCache().then(cache => {
+          const pruned = pruneExpired(cache);
+          pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
+          saveQueryCache(pruned);
+        });
       },
       onError: () => {
-        // Server unreachable — fall back to local Fuse cache
+        // Server unreachable — try exact query cache first, then Fuse fallback
         const f = filtersRef.current;
-        const kw = [
-          f.keywords,
-          f.catalog,
-          f.vendor,
-          f.category,
-          f.voltage,
-          f.amperage,
-        ].filter(Boolean).join(" ");
-        const fuseHits = runFuseSearch(kw);
-        if (fuseHits.length > 0) {
+        const queryKey = buildQueryKey(f);
+
+        loadQueryCache().then(cache => {
+          const pruned = pruneExpired(cache);
+          // Persist pruned cache back to storage so expired entries are removed on disk
+          if (Object.keys(pruned).length !== Object.keys(cache).length) {
+            saveQueryCache(pruned);
+          }
+          const exactEntry = pruned[queryKey];
+
+          if (exactEntry) {
+            setIsOffline(true);
+            setOfflineCacheType("exact");
+            setOfflineResults(exactEntry.results);
+            setShowFilters(false);
+            return;
+          }
+
+          // No exact cache hit — fall back to Fuse keyword search
+          const kw = [
+            f.keywords,
+            f.catalog,
+            f.vendor,
+            f.category,
+            f.voltage,
+            f.amperage,
+          ].filter(Boolean).join(" ");
+          const fuseHits = runFuseSearch(kw);
           setIsOffline(true);
-          setOfflineResults(fuseHits);
-          setShowFilters(false);
-        } else {
-          setIsOffline(true);
-          setOfflineResults([]);
-        }
+          setOfflineCacheType("fuse");
+          setOfflineResults(fuseHits.length > 0 ? fuseHits : []);
+          if (fuseHits.length > 0) setShowFilters(false);
+        });
       },
     },
   });
@@ -201,6 +257,7 @@ export default function SearchScreen() {
   const handleSearch = () => {
     setOfflineResults(null);
     setIsOffline(false);
+    setOfflineCacheType(null);
     const body = buildSearchBody(filters);
     searchMutation.mutate({ data: body });
   };
@@ -210,6 +267,7 @@ export default function SearchScreen() {
     searchMutation.reset();
     setOfflineResults(null);
     setIsOffline(false);
+    setOfflineCacheType(null);
     setShowFilters(true);
     setDimensionCounts(undefined);
   };
@@ -327,7 +385,9 @@ export default function SearchScreen() {
       {isOffline ? (
         <View style={[styles.offlineBanner, { backgroundColor: colors.warning + "15", borderBottomColor: colors.warning + "44" }]}>
           <Text style={[styles.offlineBannerText, { color: colors.warning }]}>
-            ⚡ Offline mode — showing {cachedCount} cached items via local search
+            {offlineCacheType === "exact"
+              ? "Offline — showing cached results"
+              : `Offline — showing ${cachedCount} cached items via local search`}
           </Text>
         </View>
       ) : null}

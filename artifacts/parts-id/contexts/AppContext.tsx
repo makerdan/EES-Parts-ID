@@ -6,7 +6,10 @@ import React, {
   useState,
 } from "react";
 import * as SecureStore from "expo-secure-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
+
+const SEARCH_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
 
 const SESSION_KEY = "parts_id_session";
 const APP_PASSWORD = process.env.EXPO_PUBLIC_APP_PASSWORD ?? "";
@@ -68,6 +71,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await secureDelete(SESSION_KEY);
+    await AsyncStorage.multiRemove(SEARCH_CACHE_KEYS).catch(() => {});
     setIsAuthenticated(false);
   }, []);
 
