@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { resizeImage } from "@/utils/resizeImage";
 import { useSearchInventory, useAiIdentifyPart } from "@workspace/api-client-react";
@@ -33,16 +34,18 @@ export default function PhotoScreen() {
   const [aiSummary, setAiSummary] = useState("");
   const [textFontScale, setTextFontScale] = useState(1.0);
 
-  useEffect(() => {
-    AsyncStorage.getItem(SETTINGS_KEY).then(raw => {
-      if (!raw) return;
-      try {
-        const s = JSON.parse(raw) as { textSize?: string };
-        const sz = s.textSize;
-        setTextFontScale(sz === "small" ? 0.85 : sz === "large" ? 1.18 : 1.0);
-      } catch {}
-    }).catch(() => {});
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      AsyncStorage.getItem(SETTINGS_KEY).then(raw => {
+        if (!raw) return;
+        try {
+          const s = JSON.parse(raw) as { textSize?: string };
+          const sz = s.textSize;
+          setTextFontScale(sz === "small" ? 0.85 : sz === "large" ? 1.18 : 1.0);
+        } catch {}
+      }).catch(() => {});
+    }, []),
+  );
   const [aiTerms, setAiTerms] = useState<string[]>([]);
   const [inlineError, setInlineError] = useState<string | null>(null);
 
