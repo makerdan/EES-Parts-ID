@@ -13,6 +13,7 @@ interface ResultCardProps {
   result: SearchResult;
   onEditKeywords?: (item: InventoryItem) => void;
   rank: number;
+  fontScale?: number;
 }
 
 const CONFIDENCE_COLORS = {
@@ -71,10 +72,11 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, rank }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: ResultCardProps) {
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
+  const fs = (base: number) => Math.round(base * fontScale);
 
   const hasVariants = variants && variants.length > 0;
   const hasKeywords = item.aiKeywords && item.aiKeywords.length > 0;
@@ -100,10 +102,10 @@ export function ResultCard({ result, onEditKeywords, rank }: ResultCardProps) {
               </Text>
             </View>
             <View style={cardStyles.titleGroup}>
-              <Text style={[cardStyles.vendor, { color: colors.mutedForeground }]}>
+              <Text style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]}>
                 {item.vendor}
               </Text>
-              <Text style={[cardStyles.catalog, { color: colors.foreground }]}>
+              <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(17) }]}>
                 {item.catalog}
               </Text>
             </View>
@@ -114,7 +116,7 @@ export function ResultCard({ result, onEditKeywords, rank }: ResultCardProps) {
         </View>
 
         {/* Description */}
-        <Text style={[cardStyles.description, { color: colors.foreground }]} numberOfLines={expanded ? undefined : 2}>
+        <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
           {item.description || "No description"}
         </Text>
 

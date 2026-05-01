@@ -6,6 +6,7 @@ import {
   Pressable,
   SafeAreaView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
@@ -23,7 +24,24 @@ import { Feather } from "@expo/vector-icons";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
+const SETTINGS_KEY = "parts_id_settings_v1";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+type TextSize = "small" | "normal" | "large";
+type AppSettings = { defaultFiltersOpen: boolean; textSize: TextSize };
+const DEFAULT_SETTINGS: AppSettings = { defaultFiltersOpen: true, textSize: "normal" };
+
+async function loadSettings(): Promise<AppSettings> {
+  try {
+    const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+    if (!raw) return DEFAULT_SETTINGS;
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } as AppSettings;
+  } catch { return DEFAULT_SETTINGS; }
+}
+
+async function saveSettings(s: AppSettings): Promise<void> {
+  try { await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+}
 
 type QueryCacheEntry = { timestamp: number; results: SearchResult[] };
 type QueryCache = Record<string, QueryCacheEntry>;
@@ -115,9 +133,12 @@ function buildSearchBody(f: FilterValues) {
 export default function SearchScreen() {
   const colors = useColors();
   const { logout, clearCache } = useApp();
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
-  const [showFilters, setShowFilters] = useState(true);
+  // Start hidden so settings load completes before the filter panel is shown,
+  // preventing a flicker when the user has defaultFiltersOpen=false saved.
+  const [showFilters, setShowFilters] = useState(false);
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
@@ -130,6 +151,14 @@ export default function SearchScreen() {
   // Track latest filters in a ref so the onError closure always reads current values
   const filtersRef = useRef<FilterValues>(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
+
+  // Load persisted settings and apply on mount
+  useEffect(() => {
+    loadSettings().then(s => {
+      setSettings(s);
+      setShowFilters(s.defaultFiltersOpen);
+    });
+  }, []);
 
   // Seed local Fuse index from AsyncStorage on mount
   useEffect(() => {
@@ -270,9 +299,18 @@ export default function SearchScreen() {
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
-    setShowFilters(true);
+    setShowFilters(settings.defaultFiltersOpen);
     setDimensionCounts(undefined);
   };
+
+  const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    const next = { ...settings, [key]: value };
+    setSettings(next);
+    saveSettings(next);
+    if (key === "defaultFiltersOpen") setShowFilters(value as boolean);
+  };
+
+  const textFontScale = settings.textSize === "small" ? 0.85 : settings.textSize === "large" ? 1.18 : 1.0;
 
   // Called by KeywordEditor after debounced save — update local Fuse index immediately
   const handleKeywordsChanged = useCallback((id: number, keywords: string[]) => {
@@ -395,6 +433,54 @@ export default function SearchScreen() {
               >
                 <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>Clear</Text>
               </Pressable>
+            </View>
+
+            {/* Filters open by default row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Filters open by default</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Show the filter panel automatically when you open the app.
+                </Text>
+              </View>
+              <Switch
+                value={settings.defaultFiltersOpen}
+                onValueChange={v => updateSetting("defaultFiltersOpen", v)}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor="#fff"
+              />
+            </View>
+
+            {/* Text size row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Text size</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Adjust how large result text appears.
+                </Text>
+              </View>
+              <View style={styles.textSizePicker}>
+                {(["small", "normal", "large"] as TextSize[]).map(sz => (
+                  <Pressable
+                    key={sz}
+                    onPress={() => updateSetting("textSize", sz)}
+                    style={[
+                      styles.textSizeBtn,
+                      {
+                        backgroundColor: settings.textSize === sz ? colors.primary : colors.muted,
+                        borderColor: settings.textSize === sz ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[
+                      styles.textSizeBtnLabel,
+                      { color: settings.textSize === sz ? colors.primaryForeground : colors.foreground },
+                    ]}>
+                      {sz === "small" ? "S" : sz === "large" ? "L" : "M"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
 
             {/* Sign out row */}
@@ -573,7 +659,7 @@ export default function SearchScreen() {
         )}
         renderItem={({ item: result, index }) => (
           <View style={styles.resultItem}>
-            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} />
+            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} fontScale={textFontScale} />
           </View>
         )}
         contentContainerStyle={styles.listContent}
@@ -681,4 +767,7 @@ const styles = StyleSheet.create({
   settingsRowSuccess: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 },
   clearCacheBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, alignSelf: "center" },
   clearCacheBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  textSizePicker: { flexDirection: "row", gap: 6, alignSelf: "center" },
+  textSizeBtn: { width: 34, height: 34, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  textSizeBtnLabel: { fontSize: 13, fontFamily: "Inter_700Bold" },
 });
