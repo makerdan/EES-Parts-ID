@@ -218,12 +218,25 @@ function itemFullText(item: { vendor: string; catalog: string; description: stri
   return `${item.vendor} ${item.catalog} ${item.description} ${(item.aiKeywords ?? []).join(" ")}`.toLowerCase();
 }
 
+/** Token-aware match: every word in the filter value must appear as a whole word in `text`. */
+function tokenMatch(text: string, filterValue: string): boolean {
+  const tokens = filterValue.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  // Allow prefix-token match for short codes (e.g. "1/2" in "1/2 conduit") via
+  // word-boundary regex so "20" doesn't spuriously match inside "200A".
+  return tokens.every(tok => {
+    // Escape regex special chars in the token
+    const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\w])${escaped}(?![\\w])`, "i").test(text);
+  });
+}
+
 function matchesChipFilters(
   item: { vendor: string; catalog: string; description: string; aiKeywords: string[] | null },
   chipFilters: Array<{ key: string; value: string }>,
 ): boolean {
   const text = itemFullText(item);
-  return chipFilters.every(f => text.includes(f.value.toLowerCase()));
+  return chipFilters.every(f => tokenMatch(text, f.value));
 }
 
 router.post("/search", async (req, res) => {
@@ -373,8 +386,20 @@ router.post("/search", async (req, res) => {
           ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
           LIMIT 200
         `);
-        // Drizzle returns { rows: unknown[] } for raw SQL — validate shape before use
-        pgResults = (pgQueryResult as { rows: unknown[] }).rows as RawRow[];
+        // Drizzle returns { rows: unknown[] } for raw SQL — validate shape at runtime
+        const rawRows = (pgQueryResult as { rows: unknown[] }).rows;
+        pgResults = rawRows.filter((r): r is RawRow => {
+          if (!r || typeof r !== "object") return false;
+          const row = r as Record<string, unknown>;
+          return (
+            typeof row.id === "number" &&
+            typeof row.vendor === "string" &&
+            typeof row.catalog === "string" &&
+            typeof row.description === "string" &&
+            typeof row.fts_rank === "number" &&
+            typeof row.trgm_sim === "number"
+          );
+        });
       }
     } catch (pgErr) {
       console.warn("PG search error, falling back to Fuse:", pgErr);
@@ -486,9 +511,8 @@ router.post("/search", async (req, res) => {
         ? results.filter(r => matchesChipFilters(r.item, otherFilters))
         : results;
       for (const opt of dim.options) {
-        const optLower = opt.toLowerCase();
         dimensionCounts[dim.key][opt] = baseResults.filter(r =>
-          itemFullText(r.item).includes(optLower)
+          tokenMatch(itemFullText(r.item), opt)
         ).length;
       }
     }
