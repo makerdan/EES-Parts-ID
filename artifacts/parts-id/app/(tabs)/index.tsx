@@ -5,6 +5,7 @@ import {
   Modal,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -547,26 +548,32 @@ export default function SearchScreen() {
         </View>
       ) : null}
 
+      {/* Filter panel — stable view outside FlatList to prevent TextInput remount on every render */}
+      {showFilters ? (
+        <ScrollView
+          style={{ maxHeight: "62%" }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <FilterPanel
+              values={filters}
+              onChange={handleChange}
+              onSearch={handleSearch}
+              onClear={handleClear}
+              isLoading={searchMutation.isPending}
+              resultCount={searchMutation.isSuccess ? results.length : undefined}
+              dimensionCounts={dimensionCounts}
+            />
+          </View>
+        </ScrollView>
+      ) : null}
+
       <FlatList
         data={results}
         keyExtractor={item => String(item.item.id)}
         ListHeaderComponent={() => (
           <View>
-            {/* Filter panel */}
-            {showFilters ? (
-              <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <FilterPanel
-                  values={filters}
-                  onChange={handleChange}
-                  onSearch={handleSearch}
-                  onClear={handleClear}
-                  isLoading={searchMutation.isPending}
-                  resultCount={searchMutation.isSuccess ? results.length : undefined}
-                  dimensionCounts={dimensionCounts}
-                />
-              </View>
-            ) : null}
-
             {/* Results header */}
             {hasResults ? (
               <View>
@@ -695,6 +702,8 @@ export default function SearchScreen() {
         )}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
       />
 
       <ReferenceModal />
