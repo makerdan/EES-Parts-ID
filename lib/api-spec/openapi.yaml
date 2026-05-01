@@ -294,6 +294,38 @@ components:
           minimum: 0
           maximum: 1
           default: 0.5
+        partType:
+          type: string
+        voltage:
+          type: string
+        amperage:
+          type: string
+        phase:
+          type: string
+        wireGauge:
+          type: string
+        conduitType:
+          type: string
+        nemaConfig:
+          type: string
+        enclosureRating:
+          type: string
+        mounting:
+          type: string
+        poles:
+          type: string
+        wireType:
+          type: string
+        conduitSize:
+          type: string
+        boxType:
+          type: string
+        lightingType:
+          type: string
+        protectionType:
+          type: string
+        location:
+          type: string
       required: []
 
     SearchResult:
@@ -332,6 +364,13 @@ components:
           type: integer
         belowThreshold:
           type: integer
+        dimensionCounts:
+          type: object
+          description: Per-chip-dimension live match counts (dimKey → optionLabel → count)
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
       required:
         - results
         - totalMatches

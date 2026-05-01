@@ -34,21 +34,29 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   const updateMutation = useUpdateItemKeywords();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestKeywordsRef = useRef<string[]>(keywords);
+  // Keep item in a ref so callbacks always see the latest value without stale closure issues
+  const itemRef = useRef(item);
+  useEffect(() => { itemRef.current = item; }, [item]);
 
-  if (!item) return null;
+  // Sync keywords when item changes (e.g. different item opened)
+  useEffect(() => {
+    setKeywords(item?.aiKeywords ?? []);
+    setSaveStatus("idle");
+  }, [item?.id]);
 
   // Auto-save with debounce whenever keywords change
   const triggerSave = useCallback(
     (kws: string[]) => {
+      const current = itemRef.current;
+      if (!current) return;
       latestKeywordsRef.current = kws;
       if (debounceRef.current) clearTimeout(debounceRef.current);
       setSaveStatus("idle");
       debounceRef.current = setTimeout(async () => {
         setSaveStatus("saving");
         try {
-          await updateMutation.mutateAsync({ id: item.id, data: { keywords: kws } });
-          // Immediately update local Fuse index in parent
-          onKeywordsChanged?.(item.id, kws);
+          await updateMutation.mutateAsync({ id: current.id, data: { keywords: kws } });
+          onKeywordsChanged?.(current.id, kws);
           await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
           setSaveStatus("saved");
           setTimeout(() => setSaveStatus("idle"), 1800);
@@ -57,8 +65,15 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
         }
       }, DEBOUNCE_MS);
     },
-    [item.id, updateMutation, queryClient, onKeywordsChanged],
+    [updateMutation, queryClient, onKeywordsChanged],
   );
+
+  // Flush pending save on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   const handleKeywordsChange = (next: string[]) => {
     setKeywords(next);
@@ -80,28 +95,24 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
     handleKeywordsChange(keywords.filter((k) => k !== kw));
   };
 
-  // Flush pending save on unmount
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, []);
-
   const handleClose = () => {
-    // Flush immediately if there's a pending save
-    if (debounceRef.current) {
+    const current = itemRef.current;
+    if (debounceRef.current && current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
       updateMutation
-        .mutateAsync({ id: item.id, data: { keywords: latestKeywordsRef.current } })
+        .mutateAsync({ id: current.id, data: { keywords: latestKeywordsRef.current } })
         .then(() => {
-          onKeywordsChanged?.(item.id, latestKeywordsRef.current);
+          onKeywordsChanged?.(current.id, latestKeywordsRef.current);
           queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
         })
         .catch(() => {});
     }
     onClose();
   };
+
+  // All hooks declared — now safe to gate rendering on item
+  if (!item) return null;
 
   const statusColor =
     saveStatus === "saving"

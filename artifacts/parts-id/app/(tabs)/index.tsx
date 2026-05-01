@@ -49,25 +49,35 @@ const DEFAULT_FILTERS: FilterValues = {
   location: "",
 };
 
-// Merge chip dimension values into the keywords field for server search
+// Build structured search body — chip dimensions are passed as separate fields
+// (AND-logic applied server-side) not concatenated into keywords.
 function buildSearchBody(f: FilterValues) {
-  const chipValues = [
-    f.partType, f.voltage, f.amperage, f.phase, f.wireGauge,
-    f.conduitType, f.nemaConfig, f.enclosureRating, f.mounting, f.poles,
-    f.wireType, f.conduitSize, f.boxType, f.lightingType, f.protectionType, f.location,
-  ].filter(Boolean);
-
-  const enrichedKeywords = [f.keywords, ...chipValues].filter(Boolean).join(" ");
-
   return {
-    keywords: enrichedKeywords,
+    keywords: f.keywords,
     catalog: f.catalog,
     vendor: f.vendor,
-    color: f.color || chipValues.find(v => ["white","black","gray","ivory","almond","red","blue","green"].includes(v.toLowerCase())) || "",
-    size: f.size || f.conduitSize || f.amperage || f.wireGauge || "",
-    material: f.material || "",
-    textNumbers: f.textNumbers || "",
+    color: f.color,
+    size: f.size,
+    material: f.material,
+    textNumbers: f.textNumbers,
     confidenceThreshold: f.confidenceThreshold,
+    // 16 structured chip dimensions — each non-empty value is an AND filter
+    partType: f.partType,
+    voltage: f.voltage,
+    amperage: f.amperage,
+    phase: f.phase,
+    wireGauge: f.wireGauge,
+    conduitType: f.conduitType,
+    nemaConfig: f.nemaConfig,
+    enclosureRating: f.enclosureRating,
+    mounting: f.mounting,
+    poles: f.poles,
+    wireType: f.wireType,
+    conduitSize: f.conduitSize,
+    boxType: f.boxType,
+    lightingType: f.lightingType,
+    protectionType: f.protectionType,
+    location: f.location,
   };
 }
 
@@ -80,6 +90,7 @@ export default function SearchScreen() {
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
   const fuseItemsRef = useRef<InventoryItem[]>([]);
@@ -130,6 +141,7 @@ export default function SearchScreen() {
         setIsOffline(false);
         setOfflineResults(null);
         setShowFilters(false);
+        setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
 
         // Cache all returned items for offline Fuse use
         if (data.results?.length) {
@@ -199,6 +211,7 @@ export default function SearchScreen() {
     setOfflineResults(null);
     setIsOffline(false);
     setShowFilters(true);
+    setDimensionCounts(undefined);
   };
 
   // Called by KeywordEditor after debounced save — update local Fuse index immediately
@@ -325,6 +338,7 @@ export default function SearchScreen() {
                   onClear={handleClear}
                   isLoading={searchMutation.isPending}
                   resultCount={searchMutation.isSuccess ? results.length : undefined}
+                  dimensionCounts={dimensionCounts}
                 />
               </View>
             ) : null}

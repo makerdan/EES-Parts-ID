@@ -19,4 +19,20 @@ export interface SearchInventoryBody {
    * @maximum 1
    */
   confidenceThreshold?: number;
+  partType?: string;
+  voltage?: string;
+  amperage?: string;
+  phase?: string;
+  wireGauge?: string;
+  conduitType?: string;
+  nemaConfig?: string;
+  enclosureRating?: string;
+  mounting?: string;
+  poles?: string;
+  wireType?: string;
+  conduitSize?: string;
+  boxType?: string;
+  lightingType?: string;
+  protectionType?: string;
+  location?: string;
 }

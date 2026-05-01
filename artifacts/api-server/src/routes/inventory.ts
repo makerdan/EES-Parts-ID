@@ -194,6 +194,38 @@ router.get("/", async (req, res) => {
 });
 
 // ── POST /inventory/search ────────────────────────────────────────────────────
+// ── 16 chip dimensions (must mirror FilterPanel.tsx CHIP_DIMS) ───────────────
+const CHIP_DIMS_SERVER = [
+  { key: "partType",       options: ["Receptacle","Switch","Breaker","Wire","Conduit","Fitting","Box","Panel","Transformer","Fuse","Lighting","Motor","Enclosure","Connector","Dimmer","Sensor"] },
+  { key: "voltage",        options: ["120V","240V","208V","277V","480V","24V","12V","600V"] },
+  { key: "amperage",       options: ["15A","20A","30A","40A","50A","60A","100A","150A","200A","400A"] },
+  { key: "phase",          options: ["1 Phase","3 Phase"] },
+  { key: "wireGauge",      options: ["#14","#12","#10","#8","#6","#4","#2","1/0","2/0","3/0","4/0"] },
+  { key: "conduitType",    options: ["EMT","PVC","RMC","IMC","FMC","LFMC","ENT","HDPE"] },
+  { key: "nemaConfig",     options: ["5-15","5-20","6-20","6-50","14-30","14-50","L5-30","L14-30","L21-20"] },
+  { key: "enclosureRating",options: ["NEMA 1","NEMA 3R","NEMA 4","NEMA 4X","NEMA 12","NEMA 7"] },
+  { key: "mounting",       options: ["Surface","Flush","New Work","Old Work","DIN Rail","Panel Mount"] },
+  { key: "poles",          options: ["1 Pole","2 Pole","3 Pole"] },
+  { key: "wireType",       options: ["THHN","THWN","NM-B","MC","UF","SER","Armored","Plenum"] },
+  { key: "conduitSize",    options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"'] },
+  { key: "boxType",        options: ["1-Gang","2-Gang","3-Gang","4-Square","Round","Handy","Weatherproof","Fan Box"] },
+  { key: "lightingType",   options: ["LED","Fluorescent","HID","Incandescent","Emergency","Exit","Recessed","Outdoor"] },
+  { key: "protectionType", options: ["GFCI","AFCI","Dual Function","Surge","Tamper Resistant","Weather Resistant","Explosion Proof"] },
+  { key: "location",       options: ["Indoor","Outdoor","Wet","Damp","Plenum","Direct Burial","Hazardous"] },
+] as const;
+
+function itemFullText(item: { vendor: string; catalog: string; description: string; aiKeywords: string[] | null }): string {
+  return `${item.vendor} ${item.catalog} ${item.description} ${(item.aiKeywords ?? []).join(" ")}`.toLowerCase();
+}
+
+function matchesChipFilters(
+  item: { vendor: string; catalog: string; description: string; aiKeywords: string[] | null },
+  chipFilters: Array<{ key: string; value: string }>,
+): boolean {
+  const text = itemFullText(item);
+  return chipFilters.every(f => text.includes(f.value.toLowerCase()));
+}
+
 router.post("/search", async (req, res) => {
   try {
     const {
@@ -205,6 +237,23 @@ router.post("/search", async (req, res) => {
       material = "",
       textNumbers = "",
       confidenceThreshold = 0.5,
+      // 16 structured chip filters
+      partType = "",
+      voltage = "",
+      amperage = "",
+      phase = "",
+      wireGauge = "",
+      conduitType = "",
+      nemaConfig = "",
+      enclosureRating = "",
+      mounting = "",
+      poles = "",
+      wireType = "",
+      conduitSize = "",
+      boxType = "",
+      lightingType = "",
+      protectionType = "",
+      location = "",
     } = req.body as {
       keywords?: string;
       catalog?: string;
@@ -214,7 +263,23 @@ router.post("/search", async (req, res) => {
       material?: string;
       textNumbers?: string;
       confidenceThreshold?: number;
+      partType?: string; voltage?: string; amperage?: string; phase?: string;
+      wireGauge?: string; conduitType?: string; nemaConfig?: string;
+      enclosureRating?: string; mounting?: string; poles?: string;
+      wireType?: string; conduitSize?: string; boxType?: string;
+      lightingType?: string; protectionType?: string; location?: string;
     };
+
+    const activeChipFilters: Array<{ key: string; value: string }> = [
+      { key: "partType", value: partType }, { key: "voltage", value: voltage },
+      { key: "amperage", value: amperage }, { key: "phase", value: phase },
+      { key: "wireGauge", value: wireGauge }, { key: "conduitType", value: conduitType },
+      { key: "nemaConfig", value: nemaConfig }, { key: "enclosureRating", value: enclosureRating },
+      { key: "mounting", value: mounting }, { key: "poles", value: poles },
+      { key: "wireType", value: wireType }, { key: "conduitSize", value: conduitSize },
+      { key: "boxType", value: boxType }, { key: "lightingType", value: lightingType },
+      { key: "protectionType", value: protectionType }, { key: "location", value: location },
+    ].filter(f => f.value.trim() !== "");
 
     // Load dictionaries in parallel
     const [misspellings, abbreviations, vendors, synonyms, slang] = await Promise.all([
@@ -403,9 +468,30 @@ router.post("/search", async (req, res) => {
 
     results.sort((a, b) => b.confidence - a.confidence);
 
+    // ── Compute per-dimension counts (AND logic, using other active chip filters) ─
+    const dimensionCounts: Record<string, Record<string, number>> = {};
+    for (const dim of CHIP_DIMS_SERVER) {
+      dimensionCounts[dim.key] = {};
+      const otherFilters = activeChipFilters.filter(f => f.key !== dim.key);
+      const baseResults = otherFilters.length > 0
+        ? results.filter(r => matchesChipFilters(r.item, otherFilters))
+        : results;
+      for (const opt of dim.options) {
+        const optLower = opt.toLowerCase();
+        dimensionCounts[dim.key][opt] = baseResults.filter(r =>
+          itemFullText(r.item).includes(optLower)
+        ).length;
+      }
+    }
+
+    // ── Apply structured chip AND-filters to narrow results ─────────────────
+    const chipFiltered = activeChipFilters.length > 0
+      ? results.filter(r => matchesChipFilters(r.item, activeChipFilters))
+      : results;
+
     // Group into series + find variants
     const seriesGroups = new Map<string, { label: string; items: typeof inventoryTable.$inferSelect[] }>();
-    for (const r of results) {
+    for (const r of chipFiltered) {
       const series = getSeriesBase(r.item.vendor, r.item.catalog, r.item.description);
       if (series) {
         const existing = seriesGroups.get(series.key) ?? { label: series.label, items: [] };
@@ -415,7 +501,7 @@ router.post("/search", async (req, res) => {
     }
 
     const variantMap = new Map<number, typeof inventoryTable.$inferSelect[]>();
-    const resultIds = new Set(results.map(r => r.item.id));
+    const resultIds = new Set(chipFiltered.map(r => r.item.id));
 
     if (seriesGroups.size > 0) {
       const allInventory = await db.select().from(inventoryTable);
@@ -435,8 +521,8 @@ router.post("/search", async (req, res) => {
       }
     }
 
-    const aboveThreshold = results.filter(r => r.confidence >= confidenceThreshold);
-    const belowCount = results.length - aboveThreshold.length;
+    const aboveThreshold = chipFiltered.filter(r => r.confidence >= confidenceThreshold);
+    const belowCount = chipFiltered.length - aboveThreshold.length;
 
     aboveThreshold.sort((a, b) => {
       const diff = b.confidence - a.confidence;
@@ -453,7 +539,12 @@ router.post("/search", async (req, res) => {
       variants: (variantMap.get(r.item.id) ?? []),
     }));
 
-    res.json({ results: finalResults, totalMatches: results.length, belowThreshold: belowCount });
+    res.json({
+      results: finalResults,
+      totalMatches: chipFiltered.length,
+      belowThreshold: belowCount,
+      dimensionCounts,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Search failed" });

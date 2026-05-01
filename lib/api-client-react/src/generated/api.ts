@@ -744,6 +744,93 @@ export const useAiIdentifyPart = <
 /**
  * @summary Ask a question about electrical terms (SSE streaming)
  */
+export const getAskReferenceUrl = () => {
+  return `/api/reference/ask`;
+};
+
+export const askReference = async (
+  aiReferenceBody: AiReferenceBody,
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getAskReferenceUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(aiReferenceBody),
+  });
+};
+
+export const getAskReferenceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof askReference>>,
+    TError,
+    { data: BodyType<AiReferenceBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof askReference>>,
+  TError,
+  { data: BodyType<AiReferenceBody> },
+  TContext
+> => {
+  const mutationKey = ["askReference"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof askReference>>,
+    { data: BodyType<AiReferenceBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return askReference(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AskReferenceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof askReference>>
+>;
+export type AskReferenceMutationBody = BodyType<AiReferenceBody>;
+export type AskReferenceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Ask a question about electrical terms (SSE streaming)
+ */
+export const useAskReference = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof askReference>>,
+    TError,
+    { data: BodyType<AiReferenceBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof askReference>>,
+  TError,
+  { data: BodyType<AiReferenceBody> },
+  TContext
+> => {
+  return useMutation(getAskReferenceMutationOptions(options));
+};
+
+/**
+ * @deprecated
+ * @summary [Deprecated] Use /reference/ask instead
+ */
 export const getAiReferenceUrl = () => {
   return `/api/ai/reference`;
 };
@@ -761,7 +848,7 @@ export const aiReference = async (
 };
 
 export const getAiReferenceMutationOptions = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<void>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -802,13 +889,14 @@ export type AiReferenceMutationResult = NonNullable<
   Awaited<ReturnType<typeof aiReference>>
 >;
 export type AiReferenceMutationBody = BodyType<AiReferenceBody>;
-export type AiReferenceMutationError = ErrorType<unknown>;
+export type AiReferenceMutationError = ErrorType<void>;
 
 /**
- * @summary Ask a question about electrical terms (SSE streaming)
+ * @deprecated
+ * @summary [Deprecated] Use /reference/ask instead
  */
 export const useAiReference = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<void>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
