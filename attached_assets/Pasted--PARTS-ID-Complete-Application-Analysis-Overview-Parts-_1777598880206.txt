@@ -1,0 +1,255 @@
+⚡ PARTS ID — Complete Application Analysis
+Overview
+Parts ID is a single-page electrical parts identification and warehouse inventory lookup tool (4,765 lines, ~60k tokens). It's built for Poe's Canvas iframe environment and targets electrical supply warehouse workers who need to identify parts visually or by keyword and locate them in bin storage.
+
+Tech stack: Vanilla HTML/CSS/JS, Tailwind CSS, Fuse.js (fuzzy search), SheetJS/XLSX (file parsing), Poe Embed API (AI integration). No build tools, no frameworks.
+
+1. DATA LAYER
+1A. Inventory Data Structure
+Each inventory item has 4 fields:
+
+json
+{"Vendor":"ETN", "Catalog":"BR120", "Description":"1P 20A 120V BR BREAKER", "BinLocation":"20-01-001"}
+
+Vendor — 2-4 character manufacturer code (ETN=Eaton, HUB=Hubbell, SQD=Square D, etc.)
+Catalog — Manufacturer catalog/part number
+Description — Abbreviated technical description using industry shorthand
+BinLocation — Physical warehouse bin address (format: XX-XX-XXX)
+Currently ships with 50 hardcoded sample entries spanning housings, wire/cable, generators, transformers, receptacles, breakers, tape, and wire ties.
+
+1B. Inventory Upload
+Users can upload .xlsx/.xls/.csv/.ods files via SheetJS. The upload handler:
+
+Reads the file as an ArrayBuffer
+Iterates all sheets looking for one with a Vendor column
+Maps flexible column names (e.g., Bin Location, BinLocation, Bin all work)
+Replaces currentInventory and re-initializes the search index
+1C. Runtime Enrichment (_keywords property)
+On load (and after upload), enrichInventoryWithKeywords() runs generateItemKeywords() on every item. This is a ~250-line rule-based keyword generator that adds a _keywords array to each item by analyzing the catalog number and description. It detects:
+
+Wire types (THHN, THWN, NM/Romex, MC, UF, SER, etc.) and adds full-word expansions
+Wire gauge — Parses AWG numbers and handles aught notation (e.g., catalog 20 → 2/0 AWG, 2 aught) when no SOL/STR marker is present
+Wire configuration — Extracts patterns like 12/2 WG and generates 12/2, 12 2 wire, with ground
+Colors — Maps 2-3 letter codes (BK, WHI, GRY, etc.) to full color names
+Lengths — Extracts footage from descriptions
+Breaker attributes — Detects breaker series (BR/QO/CH/HOM), extracts amperage and pole count
+Receptacle/switch/conduit attributes — Pattern-based detection with keyword expansion
+Description words — Splits and adds all words > 2 chars (filtered for stop words)
+2. SEARCH SYSTEM (Three Layers)
+2A. Fuse.js Fuzzy Search Index
+initializeFuse() creates a weighted fuzzy search index across 5 fields:
+
+Field	Weight	Source
+Catalog	0.30	Raw catalog number
+Description	0.25	Raw description text
+Vendor	0.10	2-4 char vendor code
+EnrichedTerms	0.15	Abbreviation expansions (from ABBREVIATION_MAP + VENDOR_MAP)
+Keywords	0.20	Rule-based generated keywords (_keywords)
+Config: threshold: 0.4, ignoreLocation: true, minMatchCharLength: 2, findAllMatches: true.
+
+2B. Abbreviation & Vendor Expansion Dictionaries
+ABBREVIATION_MAP (~120 entries) — Maps electrical abbreviations to full words:
+
+rcpt → receptacle, outlet, plug
+wg → with ground, grounded
+emt → electrical metallic tubing, thin wall conduit
+1p → single pole, 1 pole
+etc.
+VENDOR_MAP (~60 entries) — Maps 2-4 letter vendor codes to manufacturer names:
+
+etn → eaton, cutler hammer, cutler-hammer
+sqd → square d, schneider, schneider electric
+hub → hubbell, hubbell wiring
+etc.
+Both dictionaries support bidirectional lookup — searching for "eaton" will find items with vendor code "ETN" and vice versa.
+
+2C. Synonym Dictionary (SYNONYM_MAP)
+A massive ~400-entry synonym dictionary covering the entire electrical trade vocabulary:
+
+Outlets/Receptacles — outlet↔receptacle↔plug↔socket↔duplex, NEMA configurations (5-15, 14-50, L5-30, etc.)
+Switches — toggle↔dimmer↔rocker, 3-way↔three way, single pole↔sp↔1p
+Breakers — breaker↔circuit breaker↔CB, series names (BR, QO, CH, HOM, THQL)
+Wire/Cable — wire↔cable↔conductor, romex↔NM, gauge patterns (14/2↔14-2↔14 AWG 2 conductor)
+Conduit — EMT↔thin wall, rigid↔RMC, PVC↔schedule 40, ENT↔smurf tube
+Fittings — connector↔coupling↔fitting, LB/LL/LR↔condulet, set screw↔compression
+Boxes — junction box↔j-box, handy box↔utility box, gang sizes
+Lighting — troffer↔recessed, T8↔fluorescent, can light↔pot light↔downlight
+Colors — white↔wh↔wht↔ivory, black↔bk↔blk
+Wire sizes — 14 AWG↔14 gauge↔14g↔#14
+Conduit sizes — 1/2 inch conduit↔half inch conduit↔.5 conduit
+Location/environment — wet location, plenum, direct burial, hazardous location
+Mounting types — surface mount, flush mount, DIN rail, snap-in
+Finishes — brushed, satin, chrome, galvanized, powder coated
+UL/Code — UL listed, NEC, NFPA, IC rated, airtight
+NEMA configurations — Every standard receptacle/plug type from 5-15 through L21-30
+Tools — ladder, drill, pliers, etc.
+2D. Misspelling Correction (MISSPELLING_MAP)
+~150 common misspellings → correct terms:
+
+Manufacturer typos: hubel→hubbell, levitron→leviton, sqaure→square, siemans→siemens
+Electrical terms: recptacle→receptacle, braker→breaker, condut→conduit, gfic→gfci
+Materials: alumnum→aluminum, galvenized→galvanized, stainles→stainless
+Applied at search time via correctMisspelling() / correctMisspellings().
+
+2E. Catalog Number Parser (parseCatalogNumber)
+Structural analysis of catalog numbers to extract implicit attributes:
+
+Breakers (BR/QO/CH/HOM prefix): extracts series, pole count, amperage, voltage
+Receptacles (DR/CR prefix): extracts amperage, color from suffix codes
+Wire/Cable (RX/NM/MC prefix): extracts gauge, conductor count, length, ground marker
+Transformers (V-prefix or XFMR): extracts KVA rating
+3. SEARCH MODES
+3A. AI Search (Photo-Based Identification)
+Flow: Photo(s) + optional context → GPT-5.1 with web search → structured JSON → fuzzy match against inventory
+
+User uploads 1-2 photos (camera or gallery)
+User optionally fills in context fields: Keywords, Manufacturer/Vendor, Color, Size, Material, Text/Numbers
+Sends to GPT-5.1 with web_search: true via Poe Embed API
+The prompt asks the AI to:
+Identify part type, brand, numbers, material, size, features
+Web-search for exact product matches
+Provide synonyms and alternative names
+Verify manufacturer if user specified one
+Return structured JSON with searchTerms, synonyms, relatedTerms, manufacturerVerified
+Response handler (handleAIResponse) parses JSON, displays AI analysis summary
+Calls performFuzzyMatch(analysis) which:
+Builds search queries from all AI-provided fields
+Expands with built-in synonyms
+Adds user context keywords
+Runs vendor code matching (exact code match → 0.85 confidence)
+Runs Fuse.js fuzzy search on all expanded queries
+Boosts/penalizes based on vendor filter match
+Applies manufacturer verification priority (vendor matches get +0.15 boost if AI verified)
+Groups by series, filters by confidence threshold
+3B. Keyword Search (Manual Text-Based)
+Flow: Text fields → multi-strategy local search → scored results
+
+Searches across 7 input fields: Keywords, Catalog, Manufacturer/Vendor, Color, Size, Material, Text/Numbers.
+
+Search strategy cascade (highest to lowest priority):
+
+Priority	Strategy	Confidence	Description
+1	Exact catalog field match	1.00	Catalog input exactly matches item catalog
+2	Partial catalog field match	0.90-0.98	Catalog contains search or vice versa
+3	Exact vendor code match	0.95	2-4 letter keyword matches vendor code
+4	Exact catalog from keywords	0.98	Keyword exactly matches catalog
+5	Partial catalog from keywords	0.85-0.95	Keyword partially matches catalog
+6	Description contains keyword	0.80	Direct substring match in description
+7	Vendor code per keyword	0.90	Individual keyword matches vendor code
+8	Keyword in catalog	0.75	Keyword found in catalog number
+9	Keyword in description	0.70	Keyword found in description
+10	Keyword in enriched keywords	0.72	Keyword matches generated _keywords
+11	Expanded term in enriched keywords	0.68	Abbreviation/synonym expansion matches
+12	Fuzzy search (original keywords)	×0.65	Fuse.js fuzzy match, scaled down
+13	Fuzzy search (expanded terms)	×0.60	Fuzzy on abbreviation/vendor expansions
+14	Fuzzy search (catalog-parsed terms)	×0.70	Fuzzy on terms derived from catalog parsing
+15	Fuzzy search (full phrase)	×0.65	Fuse.js on entire search string
+Results are de-duplicated by Catalog number (Map), keeping highest confidence.
+
+Vendor filter (if specified): matching vendors get +0.15 boost; non-matching get ×0.5 penalty.
+
+4. MEASUREMENT NORMALIZATION
+Two functions handle converting natural language measurements to searchable formats:
+
+normalizeMeasurement() — For descriptions:
+
+Word-to-number: "three" → 3, "hundred" → 100
+Fraction words: "three quarters" → 3/4, "one-half" → 1/2, "seven eighths" → 7/8
+Decimals to fractions: 0.5→1/2, 0.75→3/4, 0.375→3/8 (16 mappings up to sixteenths)
+normalizeMeasurementInput() — For user input fields:
+
+Same word/fraction/decimal conversions
+Normalizes "inches"/"in" to "
+This ensures searching "half inch" matches "1/2"" and "0.5" inch" in descriptions.
+
+5. RESULT GROUPING & SORTING
+5A. Series Grouping (getSeriesBase)
+Groups related products by extracting a "series base" from catalog numbers:
+
+Pattern	Example	Group Key	Label
+Breakers	BR120, BR130, BR140	ETN_BR1	OTHER AMPERAGES
+Receptacles	DR15WHI, DR15GRY	HUB_DR15	OTHER COLORS
+Wire	RX122WG250, RX122WG500	COP_RX122	OTHER LENGTHS
+Leviton	5320WCP, 5320ICP	LEV_5320	OTHER COLORS
+Tape	35WHITE, 35RED	3M_TAPE_35	OTHER COLORS
+Wire ties	WT1, WT2, WT3	IDE_WT	OTHER SIZES
+Transformers	V48M28T3016, V48M28T7516	ETN_V48M28T	OTHER CAPACITIES
+Generators	7043, 7209	GNR_GEN_7xxx	OTHER MODELS
+5B. Variant Discovery
+findSeriesVariantsFromInventory() finds items from the full inventory that share the same series base but weren't in the search results. This means finding a BR120 also shows BR130, BR140, BR150 as "other amperages."
+
+5C. Size-Based Sorting (extractSizeValue)
+16-priority cascade for extracting a numeric sort value:
+
+Amperage (20A → 20)
+Wire gauge (12 AWG → 88, inverted so thicker wire sorts larger)
+Mixed fractions (1-1/2" → 1.5)
+Simple fractions (3/4" → 0.75)
+Metric (25mm → ~1")
+Decimal inches
+Gang count
+Wattage
+Voltage (only if no amperage present)
+Feet/length
+11-16. Catalog number fallbacks
+Secondary sort (extractSecondarySortKey): Breakers by pole count, colored items by a fixed color order (white→ivory→almond→gray→brown→black→red→blue→green→orange→yellow).
+
+6. POST-SEARCH FILTER SYSTEM
+After results appear, a collapsible filter panel with chip-based toggles lets users narrow results across 6 dimensions:
+
+Filter	Options	Detection Method
+Category	Breakers, Receptacles, Switches, Wire, Conduit, Fittings, Boxes, Covers, Lighting, Connectors	Regex patterns against catalog+description+vendor
+Amperage	15A, 20A, 30A, 40A, 50A, 60A, 100A, 200A	Regex patterns
+Color	White, Ivory, Almond, Black, Gray, Brown, Red, Blue, Orange	Regex patterns (includes abbreviations)
+Manufacturer	Eaton, Square D, Leviton, Hubbell, Siemens, GE, Lutron, Cooper, Legrand, Arlington	Regex on vendor codes + full names
+Size	1/2", 3/4", 1", 1-1/4", 1-1/2", 2", 14 AWG, 12 AWG, 10 AWG, 8 AWG, 6 AWG	Regex patterns
+Rating	GFCI, AFCI, Tamper Resistant, Weather Resistant, Decora, LED, Dimmer	Regex patterns
+Each chip dynamically shows match counts. Chips with zero matches are grayed out and unclickable. Multiple filters combine with AND logic. Active filter count badge shown in header.
+
+7. CONFIDENCE THRESHOLD SYSTEM
+Slider (0-100%) with tick marks at 25% intervals, default 50%
+Results below threshold are hidden
+"More matches available" banner: Detects if matches exist below current threshold, shows count and suggested threshold, one-click to lower
+"No results" suggestion: When zero matches above threshold, calculates the highest-confidence match below and offers to lower threshold to that level
+8. AI ENRICHMENT PIPELINE (Post-Upload)
+Optional batch AI enrichment after inventory upload:
+
+Sends inventory items in batches of 50 to Grok-4-Fast-Non-Reasoning
+Asks for 3-5 searchable keywords per item (abbreviation expansions, alternative names, categories)
+Caches results in aiEnrichmentCache (Map by catalog number)
+Re-initializes Fuse.js index with combined rule-based + AI keywords
+Shows progress percentage in status bar
+9. REFERENCE MODAL
+A floating "📖 Reference" button opens a modal for quick electrical term lookups:
+
+Free-text input for any question
+12 quick-lookup buttons: 1G, GFCI, AFCI, TRWR, Decora, Romex, MC Cable, EMT, Toggle vs Rocker, Duplex, 15A vs 20A, AWG
+Sends to Grok-4-Fast-Non-Reasoning with streaming enabled
+Basic markdown rendering (bold, bullets, line breaks)
+Example prompts shown: "What does BR120 mean?", "How to identify a 20A receptacle?"
+10. UI/UX FEATURES
+Dark/light mode — CSS custom properties, auto-detected via prefers-color-scheme
+Mobile-first responsive — 16px minimum input fonts, touch-friendly buttons with active press states
+Dual photo input — Camera (with capture="environment") and gallery, up to 2 photos. Photo 1 can be removed with auto-shift of photo 2 to slot 1
+Sticky header — Shows app name, inventory count, and loaded status
+Scroll-to-results animation — Smooth scroll + pulsing glow effect (2 cycles)
+Card-based results — Confidence badge (green ≥85%, yellow ≥60%, red <60%), highlighted catalog number with gradient, bin location with 📍, collapsible variant list
+Custom modals — All notifications use custom overlay modals (no alert()/confirm())
+Loading states — CSS spinner during AI analysis
+Three "Clear All" buttons — Strategically placed between sections for quick reset
+Individual clear buttons — Per-section clear for AI context fields, keyword fields, and results
+11. ARCHITECTURAL NOTES
+Strengths:
+
+Zero-dependency search that works offline after initial load (only AI features need network)
+Extremely deep domain knowledge encoded in dictionaries — handles the heavily abbreviated language of electrical supply
+Multi-strategy search ensures high recall (exact → substring → enriched → fuzzy)
+Series grouping is genuinely useful for warehouse workers comparing related SKUs
+Limitations:
+
+All data and logic in a single 4,765-line HTML file — no modularization
+No persistence (no localStorage per iframe restrictions)
+The 50-item sample inventory is too small to demonstrate the search sophistication
+AI enrichment uses a global mutable state pattern (window._currentEnrichmentBatch)
+SYNONYM_MAP and ABBREVIATION_MAP have significant overlap — could be unified
+normalizeMeasurement() and normalizeMeasurementInput() duplicate ~80% of their logic
