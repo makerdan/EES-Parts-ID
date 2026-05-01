@@ -584,22 +584,34 @@ export default function SearchScreen() {
 
       {/* ── Persistent search bar — always visible ── */}
       <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <TextInput
-          value={filters.keywords}
-          onChangeText={v => handleChange("keywords", v)}
-          placeholder="Search parts — keyword, catalog #, vendor…"
-          placeholderTextColor={colors.mutedForeground}
-          style={[styles.searchBarInput, {
-            backgroundColor: colors.muted,
-            borderColor: filters.keywords ? colors.primary : colors.border,
-            color: colors.foreground,
-          }]}
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="search"
-          onSubmitEditing={handleSearch}
-          blurOnSubmit={false}
-        />
+        <View style={styles.searchBarInputWrapper}>
+          <TextInput
+            value={filters.keywords}
+            onChangeText={v => handleChange("keywords", v)}
+            placeholder="Search parts — keyword, catalog #, vendor…"
+            placeholderTextColor={colors.mutedForeground}
+            style={[styles.searchBarInput, {
+              backgroundColor: colors.muted,
+              borderColor: filters.keywords ? colors.primary : colors.border,
+              color: colors.foreground,
+              paddingRight: filters.keywords ? 36 : 12,
+            }]}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            onSubmitEditing={handleSearch}
+            blurOnSubmit={false}
+          />
+          {filters.keywords ? (
+            <Pressable
+              onPress={() => handleChange("keywords", "")}
+              style={styles.searchBarClearX}
+              hitSlop={8}
+            >
+              <Feather name="x-circle" size={16} color={colors.mutedForeground} />
+            </Pressable>
+          ) : null}
+        </View>
         <View style={styles.searchBarButtons}>
           <Pressable
             onPress={handleSearch}
@@ -829,6 +841,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 8,
   },
+  searchBarInputWrapper: {
+    position: "relative",
+    justifyContent: "center",
+  },
   searchBarInput: {
     borderWidth: 1,
     borderRadius: 8,
@@ -836,6 +852,11 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
+  },
+  searchBarClearX: {
+    position: "absolute",
+    right: 10,
+    padding: 2,
   },
   searchBarButtons: {
     flexDirection: "row",
