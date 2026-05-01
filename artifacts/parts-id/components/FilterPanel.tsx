@@ -1,4 +1,5 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Animated,
   LayoutAnimation,
@@ -348,10 +349,23 @@ function ConfidenceSlider({
   );
 }
 
+const DIM_COLLAPSED_KEY = "@partsid/dim_collapsed";
+
 export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, resultCount, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
   const [dimCollapsed, setDimCollapsed] = useState(true);
   const chevronAnim = useRef(new Animated.Value(0)).current;
+
+  // Load persisted collapse state on mount (default: collapsed)
+  useEffect(() => {
+    AsyncStorage.getItem(DIM_COLLAPSED_KEY).then(stored => {
+      if (stored === null) return; // no saved value — keep default (true = collapsed)
+      const collapsed = stored === "1";
+      setDimCollapsed(collapsed);
+      chevronAnim.setValue(collapsed ? 0 : 1);
+    }).catch(() => {}); // ignore storage errors, keep default
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleDimensions = useCallback(() => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -362,6 +376,7 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
       duration: 200,
       useNativeDriver: true,
     }).start();
+    AsyncStorage.setItem(DIM_COLLAPSED_KEY, toCollapsed ? "1" : "0").catch(() => {});
   }, [dimCollapsed, chevronAnim]);
 
   const chevronRotate = chevronAnim.interpolate({
