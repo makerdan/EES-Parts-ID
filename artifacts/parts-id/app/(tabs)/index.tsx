@@ -377,7 +377,7 @@ export default function SearchScreen() {
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Pressable
             onPress={() => setShowFilters(!showFilters)}
-            style={[styles.filterToggle, {
+            style={[styles.headerBtn, styles.filterToggle, {
               backgroundColor: showFilters ? colors.primary : colors.muted,
               borderColor: activeChipCount > 0 ? colors.primary : colors.border,
             }]}
@@ -388,7 +388,7 @@ export default function SearchScreen() {
           </Pressable>
           <Pressable
             onPress={() => setShowLogoutModal(true)}
-            style={[styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+            style={[styles.headerBtn, styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
           >
             <Feather name="log-out" size={16} color={colors.mutedForeground} />
             <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Settings</Text>
@@ -694,7 +694,8 @@ const styles = StyleSheet.create({
   offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
   offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
   offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  logoutBtn: { width: 48, height: 44, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 2, paddingVertical: 4 },
+  headerBtn: { height: 44, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  logoutBtn: { width: 48, flexDirection: "column", gap: 2, paddingVertical: 4 },
   logoutBtnLabel: { fontSize: 9, fontFamily: "Inter_500Medium", letterSpacing: 0.2 },
   modalOverlay: { flex: 1, backgroundColor: "#00000055", alignItems: "center", justifyContent: "center", padding: 32 },
   logoutModal: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 24 },
@@ -706,10 +707,7 @@ const styles = StyleSheet.create({
   logoutModalConfirm: { flex: 1, borderRadius: 8, paddingVertical: 12, alignItems: "center" },
   logoutModalConfirmText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   filterToggle: {
-    borderRadius: 8,
-    borderWidth: 1,
     paddingHorizontal: 12,
-    paddingVertical: 7,
   },
   filterToggleText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   filterCard: {
