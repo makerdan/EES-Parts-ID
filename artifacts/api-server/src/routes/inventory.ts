@@ -361,27 +361,38 @@ router.post("/search", async (req, res) => {
       fts_rank: number; trgm_sim: number;
     };
 
+    const rawKeywords = keywords.trim();
+    const kwLike = rawKeywords ? `%${rawKeywords}%` : null;
+
     let pgResults: RawRow[] = [];
     try {
-      if (tsQuery.trim()) {
+      if (tsQuery.trim() || kwLike) {
+        // Pass raw keyword string alongside expanded terms for catalog trigram scoring
+        const catalogTrgmTerms = [
+          rawKeywords,
+          ...allTermsArr.slice(0, 3),
+        ].filter(Boolean).join(" ").trim() || allTermsArr.slice(0, 3).join(" ");
+
         const pgQueryResult = await db.execute(sql`
           SELECT
             i.id, i.vendor, i.catalog, i.description,
             i.bin_location, i.ai_keywords, i.enriched_at, i.created_at, i.updated_at,
-            ts_rank_cd(
+            ${tsQuery.trim() ? sql`ts_rank_cd(
               to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,'')),
               to_tsquery('english', ${tsQuery})
-            ) AS fts_rank,
+            )` : sql`0`} AS fts_rank,
             greatest(
-              similarity(i.catalog, ${allTermsArr.slice(0,3).join(" ")}),
+              similarity(i.catalog, ${catalogTrgmTerms}),
               similarity(i.description, ${allTermsArr.slice(0,5).join(" ")})
             ) AS trgm_sim
           FROM inventory i
           WHERE
-            to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,''))
+            ${tsQuery.trim() ? sql`to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,''))
               @@ to_tsquery('english', ${tsQuery})
-            OR similarity(i.catalog, ${allTermsArr.slice(0,3).join(" ")}) > 0.1
+            OR` : sql``}
+            similarity(i.catalog, ${catalogTrgmTerms}) > 0.1
             OR similarity(i.description, ${allTermsArr.slice(0,5).join(" ")}) > 0.1
+            ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
             ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
           ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
           LIMIT 200
@@ -437,23 +448,45 @@ router.post("/search", async (req, res) => {
         updatedAt: row.updated_at,
       };
 
-      // Boost for exact catalog
-      if (catalogInput && row.catalog.toUpperCase() === catalogInput.toUpperCase()) {
+      const catalogUpper = row.catalog.toUpperCase();
+      const catalogInputUpper = catalogInput.toUpperCase();
+      const rawKwUpper = rawKeywords.toUpperCase();
+
+      // Boost for exact catalog match (dedicated Catalog # field or keyword field)
+      if ((catalogInput && catalogUpper === catalogInputUpper) ||
+          (rawKeywords && catalogUpper === rawKwUpper)) {
         updateScore(item, 1.0, "exact catalog");
         continue;
       }
-      if (catalogInput && row.catalog.toUpperCase().includes(catalogInput.toUpperCase())) {
-        updateScore(item, Math.max(pgScore, 0.9), "catalog prefix");
+      // Boost for prefix/substring catalog match from either field
+      if ((catalogInput && catalogUpper.startsWith(catalogInputUpper)) ||
+          (rawKeywords && catalogUpper.startsWith(rawKwUpper))) {
+        updateScore(item, Math.max(pgScore, 0.93), "catalog prefix");
+        continue;
+      }
+      if ((catalogInput && catalogUpper.includes(catalogInputUpper)) ||
+          (rawKeywords && catalogUpper.includes(rawKwUpper))) {
+        updateScore(item, Math.max(pgScore, 0.85), "catalog substring");
         continue;
       }
       updateScore(item, pgScore, ftsRank > 0 ? "fts match" : "trigram match");
     }
 
-    // Exact catalog fallback if PG didn't catch it
-    if (catalogInput && pgResults.length === 0) {
-      const exactRows = await db.select().from(inventoryTable)
-        .where(sql`upper(${inventoryTable.catalog}) = upper(${catalogInput})`);
-      for (const item of exactRows) updateScore(item, 1.0, "exact catalog fallback");
+    // Exact catalog fallback if PG didn't catch it (checks both Catalog # field and raw keywords)
+    if (pgResults.length === 0) {
+      const lookups = [catalogInput, rawKeywords].filter(Boolean).map(v => v.toUpperCase());
+      if (lookups.length > 0) {
+        for (const lookupVal of lookups) {
+          const exactRows = await db.select().from(inventoryTable)
+            .where(sql`upper(${inventoryTable.catalog}) = ${lookupVal}`);
+          for (const item of exactRows) updateScore(item, 1.0, "exact catalog fallback");
+          // Also try ILIKE prefix fallback
+          const prefixRows = await db.select().from(inventoryTable)
+            .where(sql`upper(${inventoryTable.catalog}) LIKE ${lookupVal + "%"}`)
+            .limit(20);
+          for (const item of prefixRows) updateScore(item, 0.93, "catalog prefix fallback");
+        }
+      }
     }
 
     // Fuse.js fallback for small datasets or when PG returns nothing
