@@ -34,7 +34,6 @@ externalPort = 3000
 [userenv]
 
 [userenv.shared]
-EXPO_PUBLIC_APP_PASSWORD = "warehouse2024"
 
 [nix]
 channel = "stable-25_05"
