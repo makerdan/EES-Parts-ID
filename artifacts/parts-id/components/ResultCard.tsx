@@ -23,7 +23,7 @@ const CONFIDENCE_COLORS = {
 
 function getConfidenceLevel(confidence: number): "high" | "medium" | "low" {
   if (confidence >= 0.85) return "high";
-  if (confidence >= 0.65) return "medium";
+  if (confidence >= 0.60) return "medium";
   return "low";
 }
 
