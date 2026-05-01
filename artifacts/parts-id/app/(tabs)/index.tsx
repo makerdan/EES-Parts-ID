@@ -28,6 +28,10 @@ const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
 const SETTINGS_KEY = "parts_id_settings_v1";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+  : "http://localhost:8080/api";
+
 type TextSize = "small" | "normal" | "large";
 type AppSettings = { defaultFiltersOpen: boolean; textSize: TextSize; defaultConfidenceThreshold: number };
 const DEFAULT_SETTINGS: AppSettings = { defaultFiltersOpen: true, textSize: "normal", defaultConfidenceThreshold: 50 };
@@ -150,6 +154,7 @@ export default function SearchScreen() {
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
   const fuseItemsRef = useRef<InventoryItem[]>([]);
   const [cachedCount, setCachedCount] = useState(0);
+  const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
   // Track latest filters in a ref so the onError closure always reads current values
   const filtersRef = useRef<FilterValues>(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -163,29 +168,65 @@ export default function SearchScreen() {
     });
   }, []);
 
-  // Seed local Fuse index from AsyncStorage on mount
+  const buildFuseIndex = useCallback((items: InventoryItem[]) => {
+    fuseItemsRef.current = items;
+    setCachedCount(items.length);
+    fuseRef.current = new Fuse(items, {
+      keys: [
+        { name: "catalog", weight: 0.35 },
+        { name: "description", weight: 0.30 },
+        { name: "vendor", weight: 0.10 },
+        { name: "aiKeywords", weight: 0.25 },
+      ],
+      threshold: 0.45,
+      ignoreLocation: true,
+      minMatchCharLength: 2,
+      findAllMatches: true,
+      includeScore: true,
+    });
+  }, []);
+
+  // Fetch all inventory items in pages and build the Fuse cache
+  const syncAllInventory = useCallback(async () => {
+    const PAGE_SIZE = 500;
+    let page = 1;
+    let total = 0;
+    const allItems: InventoryItem[] = [];
+    try {
+      do {
+        const res = await fetch(`${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`);
+        if (!res.ok) return;
+        const data: { items: InventoryItem[]; total: number } = await res.json();
+        total = data.total;
+        allItems.push(...data.items);
+        setSyncProgress({ loaded: allItems.length, total });
+        page++;
+      } while (allItems.length < total);
+      buildFuseIndex(allItems);
+      await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
+    } catch {
+      // Silently fail — app still works online; retry on next launch
+    } finally {
+      setSyncProgress(null);
+    }
+  }, [buildFuseIndex]);
+
+  // Seed local Fuse index from AsyncStorage on mount; sync from API if cache is empty
   useEffect(() => {
     AsyncStorage.getItem(FUSE_CACHE_KEY)
       .then(raw => {
-        if (!raw) return;
+        if (!raw) {
+          // Cache empty — fetch all inventory in background
+          syncAllInventory();
+          return;
+        }
         const items: InventoryItem[] = JSON.parse(raw);
-        fuseItemsRef.current = items;
-        setCachedCount(items.length);
-        fuseRef.current = new Fuse(items, {
-          keys: [
-            { name: "catalog", weight: 0.35 },
-            { name: "description", weight: 0.30 },
-            { name: "vendor", weight: 0.10 },
-            { name: "aiKeywords", weight: 0.25 },
-          ],
-          threshold: 0.45,
-          ignoreLocation: true,
-          minMatchCharLength: 2,
-          findAllMatches: true,
-          includeScore: true,
-        });
+        buildFuseIndex(items);
       })
-      .catch(() => {});
+      .catch(() => {
+        syncAllInventory();
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const runFuseSearch = useCallback((kw: string): SearchResult[] => {
@@ -220,21 +261,7 @@ export default function SearchScreen() {
             if (idx >= 0) merged[idx] = item;
             else merged.push(item);
           }
-          fuseItemsRef.current = merged;
-          setCachedCount(merged.length);
-          fuseRef.current = new Fuse(merged, {
-            keys: [
-              { name: "catalog", weight: 0.35 },
-              { name: "description", weight: 0.30 },
-              { name: "vendor", weight: 0.10 },
-              { name: "aiKeywords", weight: 0.25 },
-            ],
-            threshold: 0.45,
-            ignoreLocation: true,
-            minMatchCharLength: 2,
-            findAllMatches: true,
-            includeScore: true,
-          });
+          buildFuseIndex(merged);
           AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(() => {});
         }
 
@@ -323,22 +350,9 @@ export default function SearchScreen() {
     const items = fuseItemsRef.current.map(item =>
       item.id === id ? { ...item, aiKeywords: keywords } : item,
     );
-    fuseItemsRef.current = items;
-    fuseRef.current = new Fuse(items, {
-      keys: [
-        { name: "catalog", weight: 0.35 },
-        { name: "description", weight: 0.30 },
-        { name: "vendor", weight: 0.10 },
-        { name: "aiKeywords", weight: 0.25 },
-      ],
-      threshold: 0.45,
-      ignoreLocation: true,
-      minMatchCharLength: 2,
-      findAllMatches: true,
-      includeScore: true,
-    });
+    buildFuseIndex(items);
     AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
-  }, []);
+  }, [buildFuseIndex]);
 
   const results: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
   const totalMatches = searchMutation.data?.totalMatches ?? 0;
@@ -359,14 +373,21 @@ export default function SearchScreen() {
         <View style={{ flex: 1 }}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>⚡ Parts ID</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
-            {/* Offline cache status — only shown when cache is populated */}
-            {cachedCount > 0 && (
+            {/* Sync progress — while fetching all inventory for offline cache */}
+            {syncProgress ? (
+              <View style={[styles.statusBadge, { backgroundColor: colors.muted }]}>
+                <ActivityIndicator size={10} color={colors.mutedForeground} style={{ marginRight: 4 }} />
+                <Text style={[styles.statusBadgeText, { color: colors.mutedForeground }]}>
+                  {`Syncing ${syncProgress.loaded} / ${syncProgress.total}`}
+                </Text>
+              </View>
+            ) : cachedCount > 0 ? (
               <View style={[styles.statusBadge, { backgroundColor: colors.primary + "18" }]}>
                 <Text style={[styles.statusBadgeText, { color: colors.primary }]}>
                   {`✓ Ready · ${cachedCount} items`}
                 </Text>
               </View>
-            )}
+            ) : null}
             {isOffline ? (
               <View style={[styles.offlineBadge, { backgroundColor: colors.warning + "22" }]}>
                 <Text style={[styles.offlineBadgeText, { color: colors.warning }]}>OFFLINE</Text>
@@ -427,8 +448,10 @@ export default function SearchScreen() {
                   fuseItemsRef.current = [];
                   setCachedCount(0);
                   setOfflineResults(null);
-                  setCacheClearedMsg("✓ Cache cleared");
-                  setTimeout(() => setCacheClearedMsg(null), 3000);
+                  setCacheClearedMsg("✓ Cache cleared — resyncing…");
+                  syncAllInventory().then(() => {
+                    setCacheClearedMsg(null);
+                  });
                 }}
                 style={[styles.clearCacheBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
               >
@@ -728,7 +751,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
-  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 },
+  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, flexDirection: "row", alignItems: "center" },
   statusBadgeText: { fontSize: 11, fontFamily: "Inter_500Medium" },
   offlineBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
   offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
