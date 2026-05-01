@@ -41,22 +41,38 @@ export interface SearchInventoryBody {
    * @maximum 1
    */
   confidenceThreshold?: number;
-  partType?: string;
-  voltage?: string;
+  /** Part category / type chip filter */
+  category?: string;
+  /** Current rating chip filter */
   amperage?: string;
-  phase?: string;
-  wireGauge?: string;
-  conduitType?: string;
-  nemaConfig?: string;
-  enclosureRating?: string;
-  mounting?: string;
-  poles?: string;
+  /** Color quick-pick chip filter */
+  colorChip?: string;
+  /** Major manufacturer chip filter */
+  manufacturer?: string;
+  /** Trade size quick-pick chip filter */
+  sizeChip?: string;
+  /** NEMA / IP / UL rating chip filter */
+  rating?: string;
+  /** Wire insulation type chip filter */
   wireType?: string;
+  /** AWG gauge chip filter */
+  wireGauge?: string;
+  /** Conduit material/type chip filter */
+  conduitType?: string;
+  /** Conduit trade size chip filter */
   conduitSize?: string;
+  /** Electrical box type chip filter */
   boxType?: string;
-  lightingType?: string;
-  protectionType?: string;
-  location?: string;
+  /** Box gang count chip filter */
+  boxGangCount?: string;
+  /** Mounting method chip filter */
+  mountingType?: string;
+  /** Installation environment chip filter */
+  environment?: string;
+  /** Voltage rating chip filter */
+  voltage?: string;
+  /** Pole count chip filter (breakers/switches) */
+  poleCount?: string;
 }
 
 export interface SearchResult {

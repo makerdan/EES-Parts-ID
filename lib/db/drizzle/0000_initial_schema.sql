@@ -31,12 +31,18 @@ CREATE INDEX IF NOT EXISTS "inventory_vendor_trgm_idx"
   ON "inventory" USING GIN ("vendor" gin_trgm_ops);
 
 -- Full-text search index on vendor + catalog + description
+-- IMMUTABLE wrapper so array_to_string can be used in a functional GIN index
+CREATE OR REPLACE FUNCTION immutable_array_to_string(arr text[], sep text)
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
+$$ SELECT array_to_string(arr, sep); $$;
+
 CREATE INDEX IF NOT EXISTS "inventory_fts_idx"
   ON "inventory" USING GIN (
     to_tsvector('english',
       coalesce("vendor", '') || ' ' ||
       coalesce("catalog", '') || ' ' ||
-      coalesce("description", '')
+      coalesce("description", '') || ' ' ||
+      immutable_array_to_string("ai_keywords", ' ')
     )
   );
 

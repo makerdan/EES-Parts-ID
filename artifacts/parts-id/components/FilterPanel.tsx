@@ -13,6 +13,7 @@ import {
 import { useColors } from "@/hooks/useColors";
 
 export interface FilterValues {
+  // ── 7 text / numeric search fields ───────────────────────────────────────
   keywords: string;
   catalog: string;
   vendor: string;
@@ -21,23 +22,23 @@ export interface FilterValues {
   material: string;
   textNumbers: string;
   confidenceThreshold: number;
-  // 16 categorical chip dimensions
-  partType: string;
-  voltage: string;
-  amperage: string;
-  phase: string;
-  wireGauge: string;
-  conduitType: string;
-  nemaConfig: string;
-  enclosureRating: string;
-  mounting: string;
-  poles: string;
-  wireType: string;
-  conduitSize: string;
-  boxType: string;
-  lightingType: string;
-  protectionType: string;
-  location: string;
+  // ── 16 structured chip dimensions (AND-logic on server) ───────────────────
+  category: string;       // Part category / type
+  amperage: string;       // Current rating
+  colorChip: string;      // Quick-pick color (separate from free-text color field)
+  manufacturer: string;   // Major manufacturer quick-pick
+  sizeChip: string;       // Quick-pick size (conduit/box/wire size)
+  rating: string;         // NEMA / IP / UL enclosure or equipment rating
+  wireType: string;       // Wire insulation type
+  wireGauge: string;      // AWG gauge
+  conduitType: string;    // Conduit material/type
+  conduitSize: string;    // Conduit trade size
+  boxType: string;        // Electrical box type
+  boxGangCount: string;   // Box gang count
+  mountingType: string;   // Mounting method
+  environment: string;    // Installation environment
+  voltage: string;        // Voltage rating
+  poleCount: string;      // Pole count (breakers/switches)
 }
 
 export type DimensionCounts = Record<string, Record<string, number>>;
@@ -53,24 +54,16 @@ interface FilterPanelProps {
   dimensionCounts?: DimensionCounts;
 }
 
-// ── 16 chip dimensions ───────────────────────────────────────────────────────
+// ── 16 required chip dimensions (must mirror CHIP_DIMS_SERVER in inventory.ts) ─
 const CHIP_DIMS: Array<{
   key: keyof FilterValues;
   label: string;
   options: string[];
 }> = [
   {
-    key: "partType",
-    label: "Part Type",
-    options: [
-      "Receptacle","Switch","Breaker","Wire","Conduit","Fitting","Box","Panel",
-      "Transformer","Fuse","Lighting","Motor","Enclosure","Connector","Dimmer","Sensor",
-    ],
-  },
-  {
-    key: "voltage",
-    label: "Voltage",
-    options: ["120V","240V","208V","277V","480V","24V","12V","600V"],
+    key: "category",
+    label: "Category",
+    options: ["Receptacle","Switch","Breaker","Wire","Conduit","Fitting","Box","Panel","Transformer","Fuse","Lighting","Motor","Connector","Dimmer","Sensor","Enclosure"],
   },
   {
     key: "amperage",
@@ -78,44 +71,39 @@ const CHIP_DIMS: Array<{
     options: ["15A","20A","30A","40A","50A","60A","100A","150A","200A","400A"],
   },
   {
-    key: "phase",
-    label: "Phase",
-    options: ["1 Phase","3 Phase"],
+    key: "colorChip",
+    label: "Color",
+    options: ["White","Black","Gray","Ivory","Almond","Red","Blue","Brown","Orange","Yellow"],
   },
   {
-    key: "wireGauge",
-    label: "Wire Gauge",
-    options: ["#14","#12","#10","#8","#6","#4","#2","1/0","2/0","3/0","4/0"],
+    key: "manufacturer",
+    label: "Manufacturer",
+    options: ["Eaton","Square D","Hubbell","Leviton","Siemens","GE","Legrand","Cooper","Lutron","3M","Panduit","T&B","Belden","Southwire","ABB","Rockwell"],
   },
   {
-    key: "conduitType",
-    label: "Conduit Type",
-    options: ["EMT","PVC","RMC","IMC","FMC","LFMC","ENT","HDPE"],
+    key: "sizeChip",
+    label: "Size",
+    options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"','6"'],
   },
   {
-    key: "nemaConfig",
-    label: "NEMA Config",
-    options: ["5-15","5-20","6-20","6-50","14-30","14-50","L5-30","L14-30","L21-20"],
-  },
-  {
-    key: "enclosureRating",
-    label: "Enclosure",
-    options: ["NEMA 1","NEMA 3R","NEMA 4","NEMA 4X","NEMA 12","NEMA 7"],
-  },
-  {
-    key: "mounting",
-    label: "Mounting",
-    options: ["Surface","Flush","New Work","Old Work","DIN Rail","Panel Mount"],
-  },
-  {
-    key: "poles",
-    label: "Poles",
-    options: ["1 Pole","2 Pole","3 Pole"],
+    key: "rating",
+    label: "Rating",
+    options: ["NEMA 1","NEMA 3R","NEMA 4","NEMA 4X","NEMA 12","NEMA 7","IP65","IP67","UL Listed","CSA"],
   },
   {
     key: "wireType",
     label: "Wire Type",
-    options: ["THHN","THWN","NM-B","MC","UF","SER","Armored","Plenum"],
+    options: ["THHN","THWN","NM-B","MC","UF","SER","Armored","Plenum","URD","USE"],
+  },
+  {
+    key: "wireGauge",
+    label: "Wire Gauge",
+    options: ["#14","#12","#10","#8","#6","#4","#2","1/0","2/0","3/0","4/0","350","500"],
+  },
+  {
+    key: "conduitType",
+    label: "Conduit Type",
+    options: ["EMT","PVC","RMC","IMC","FMC","LFMC","ENT","HDPE","RTRC","GRC"],
   },
   {
     key: "conduitSize",
@@ -125,22 +113,32 @@ const CHIP_DIMS: Array<{
   {
     key: "boxType",
     label: "Box Type",
-    options: ["1-Gang","2-Gang","3-Gang","4-Square","Round","Handy","Weatherproof","Fan Box"],
+    options: ["New Work","Old Work","Junction","Weatherproof","Fan Box","Handy","Pull Box","Extension"],
   },
   {
-    key: "lightingType",
-    label: "Lighting",
-    options: ["LED","Fluorescent","HID","Incandescent","Emergency","Exit","Recessed","Outdoor"],
+    key: "boxGangCount",
+    label: "Box Gang Count",
+    options: ["1-Gang","2-Gang","3-Gang","4-Gang","Multi-Gang"],
   },
   {
-    key: "protectionType",
-    label: "Protection",
-    options: ["GFCI","AFCI","Dual Function","Surge","Tamper Resistant","Weather Resistant","Explosion Proof"],
+    key: "mountingType",
+    label: "Mounting Type",
+    options: ["Surface","Flush","DIN Rail","Panel Mount","Pole Mount","Pendant","Track"],
   },
   {
-    key: "location",
-    label: "Location",
+    key: "environment",
+    label: "Environment",
     options: ["Indoor","Outdoor","Wet","Damp","Plenum","Direct Burial","Hazardous"],
+  },
+  {
+    key: "voltage",
+    label: "Voltage",
+    options: ["120V","240V","208V","277V","480V","24V","12V","600V"],
+  },
+  {
+    key: "poleCount",
+    label: "Pole Count",
+    options: ["1 Pole","2 Pole","3 Pole","4 Pole"],
   },
 ];
 
@@ -398,7 +396,7 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
             label="Size / Rating"
             value={values.size}
             onChange={v => onChange("size", v)}
-            placeholder="20A, 1/2\", #12..."
+            placeholder={'20A, 1/2", #12...'}
             colors={colors}
           />
         </View>

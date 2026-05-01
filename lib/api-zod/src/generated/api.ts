@@ -65,22 +65,49 @@ export const SearchInventoryBody = zod.object({
     .min(searchInventoryBodyConfidenceThresholdMin)
     .max(searchInventoryBodyConfidenceThresholdMax)
     .default(searchInventoryBodyConfidenceThresholdDefault),
-  partType: zod.string().optional(),
-  voltage: zod.string().optional(),
-  amperage: zod.string().optional(),
-  phase: zod.string().optional(),
-  wireGauge: zod.string().optional(),
-  conduitType: zod.string().optional(),
-  nemaConfig: zod.string().optional(),
-  enclosureRating: zod.string().optional(),
-  mounting: zod.string().optional(),
-  poles: zod.string().optional(),
-  wireType: zod.string().optional(),
-  conduitSize: zod.string().optional(),
-  boxType: zod.string().optional(),
-  lightingType: zod.string().optional(),
-  protectionType: zod.string().optional(),
-  location: zod.string().optional(),
+  category: zod
+    .string()
+    .optional()
+    .describe("Part category \/ type chip filter"),
+  amperage: zod.string().optional().describe("Current rating chip filter"),
+  colorChip: zod.string().optional().describe("Color quick-pick chip filter"),
+  manufacturer: zod
+    .string()
+    .optional()
+    .describe("Major manufacturer chip filter"),
+  sizeChip: zod
+    .string()
+    .optional()
+    .describe("Trade size quick-pick chip filter"),
+  rating: zod
+    .string()
+    .optional()
+    .describe("NEMA \/ IP \/ UL rating chip filter"),
+  wireType: zod
+    .string()
+    .optional()
+    .describe("Wire insulation type chip filter"),
+  wireGauge: zod.string().optional().describe("AWG gauge chip filter"),
+  conduitType: zod
+    .string()
+    .optional()
+    .describe("Conduit material\/type chip filter"),
+  conduitSize: zod
+    .string()
+    .optional()
+    .describe("Conduit trade size chip filter"),
+  boxType: zod.string().optional().describe("Electrical box type chip filter"),
+  boxGangCount: zod.string().optional().describe("Box gang count chip filter"),
+  mountingType: zod.string().optional().describe("Mounting method chip filter"),
+  environment: zod
+    .string()
+    .optional()
+    .describe("Installation environment chip filter"),
+  voltage: zod.string().optional().describe("Voltage rating chip filter"),
+  poleCount: zod
+    .string()
+    .optional()
+    .describe("Pole count chip filter (breakers\/switches)"),
 });
 
 export const SearchInventoryResponse = zod.object({
