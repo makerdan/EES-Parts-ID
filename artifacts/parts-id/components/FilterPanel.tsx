@@ -55,10 +55,6 @@ export type DimensionCounts = Record<string, Record<string, number>>;
 interface FilterPanelProps {
   values: FilterValues;
   onChange: (key: keyof FilterValues, value: string | number) => void;
-  onSearch: () => void;
-  onClear: () => void;
-  isLoading: boolean;
-  resultCount?: number;
   /** Per-chip counts returned from the last search (key → option → count) */
   dimensionCounts?: DimensionCounts;
 }
@@ -359,7 +355,7 @@ function ConfidenceSlider({
 const BASIC_COLLAPSED_KEY = "@partsid/basic_collapsed";
 const DIM_COLLAPSED_KEY = "@partsid/dim_collapsed";
 
-export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, resultCount, dimensionCounts }: FilterPanelProps) {
+export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
 
   // ── Basic Filters collapse state ─────────────────────────────────────────
@@ -433,17 +429,6 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
 
   return (
     <View>
-      {/* ── Always-visible keyword search bar ── */}
-      <Field
-        label="Keywords / Description"
-        value={values.keywords}
-        onChange={v => onChange("keywords", v)}
-        placeholder="e.g. 20a outlet, BR120..."
-        colors={colors}
-        returnKeyType="search"
-        onSubmitEditing={onSearch}
-      />
-
       {/* ── Basic Filters collapsible card ── */}
       <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <Pressable
@@ -588,31 +573,6 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
         )}
       </View>
 
-      {/* Action buttons */}
-      <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
-        <Pressable
-          onPress={onSearch}
-          style={[
-            actionStyles.searchBtn,
-            { backgroundColor: isLoading ? colors.muted : colors.primary },
-          ]}
-          disabled={isLoading}
-        >
-          <Text style={[actionStyles.searchBtnText, { color: colors.primaryForeground }]}>
-            {isLoading
-              ? "Searching…"
-              : resultCount !== undefined
-              ? `🔍 Search (${resultCount})`
-              : "🔍 Search"}
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={onClear}
-          style={[actionStyles.clearBtn, { borderColor: colors.border }]}
-        >
-          <Text style={[actionStyles.clearBtnText, { color: colors.mutedForeground }]}>Clear</Text>
-        </Pressable>
-      </View>
     </View>
   );
 }
@@ -701,20 +661,3 @@ const fieldStyles = StyleSheet.create({
   },
 });
 
-const actionStyles = StyleSheet.create({
-  searchBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  searchBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
-  clearBtn: {
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    borderRadius: 8,
-    borderWidth: 1,
-    alignItems: "center",
-  },
-  clearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-});
