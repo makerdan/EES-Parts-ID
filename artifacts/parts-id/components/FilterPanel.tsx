@@ -387,7 +387,7 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
   });
 
   const activeBasicCount = [
-    values.keywords, values.catalog, values.vendor,
+    values.catalog, values.vendor,
     values.color, values.size, values.material, values.textNumbers,
   ].filter(v => v.trim() !== "").length;
 
@@ -426,6 +426,15 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
 
   return (
     <View>
+      {/* ── Always-visible keyword search bar ── */}
+      <Field
+        label="Keywords / Description"
+        value={values.keywords}
+        onChange={v => onChange("keywords", v)}
+        placeholder="e.g. 20a outlet, BR120..."
+        colors={colors}
+      />
+
       {/* ── Basic Filters collapsible card ── */}
       <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <Pressable
@@ -451,16 +460,7 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
 
         {!basicCollapsed && (
           <>
-            {/* Row 1: Keywords */}
-            <Field
-              label="Keywords / Description"
-              value={values.keywords}
-              onChange={v => onChange("keywords", v)}
-              placeholder="e.g. 20a outlet, BR120..."
-              colors={colors}
-            />
-
-            {/* Row 2: Catalog # + Vendor */}
+            {/* Row 1: Catalog # + Vendor */}
             <View style={{ flexDirection: "row", gap: 10 }}>
               <View style={{ flex: 1 }}>
                 <Field
