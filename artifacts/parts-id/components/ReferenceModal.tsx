@@ -43,7 +43,7 @@ export function ReferenceModal() {
     pulseButton();
 
     try {
-      const res = await fetch(`${API_BASE}/ai/reference`, {
+      const res = await fetch(`${API_BASE}/reference/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: question.trim() }),

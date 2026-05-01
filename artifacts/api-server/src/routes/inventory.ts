@@ -216,7 +216,7 @@ router.post("/search", async (req, res) => {
       confidenceThreshold?: number;
     };
 
-    // Load dictionaries
+    // Load dictionaries in parallel
     const [misspellings, abbreviations, vendors, synonyms, slang] = await Promise.all([
       db.select().from(misspellingMapTable),
       db.select().from(abbreviationMapTable),
@@ -227,19 +227,15 @@ router.post("/search", async (req, res) => {
 
     const correctionMap = new Map(misspellings.map(m => [m.misspelling, m.correction]));
     const abbrevMap = new Map(abbreviations.map(a => [a.abbreviation, a.expansions]));
-    const vendorMap = new Map(vendors.map(v => [v.code, v.names]));
+    const vendorMapData = new Map(vendors.map(v => [v.code, v.names]));
     const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
     const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
 
-    // Build reverse vendor map (name -> code)
     const reverseVendorMap = new Map<string, string>();
     for (const v of vendors) {
-      for (const name of v.names) {
-        reverseVendorMap.set(name.toLowerCase(), v.code);
-      }
+      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
     }
 
-    // Combine all search text
     const allSearchText = [keywords, catalogInput, vendorInput, color, size, material, textNumbers]
       .filter(Boolean).join(" ");
 
@@ -247,159 +243,168 @@ router.post("/search", async (req, res) => {
       return res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
     }
 
-    // Normalize and correct misspellings
+    // Normalize, correct misspellings, expand terms
     const normalized = normalizeMeasurement(allSearchText);
     const words = normalized.split(/\s+/).filter(w => w.length > 1);
     const corrected = words.map(w => correctMisspelling(w, correctionMap));
 
-    // Expand with abbreviations, synonyms, slang
     const expandedTerms = new Set<string>(corrected);
     for (const word of corrected) {
-      const abbrevExpansions = abbrevMap.get(word.toLowerCase());
-      if (abbrevExpansions) abbrevExpansions.forEach(e => expandedTerms.add(e));
-      const synonymExpansions = synonymMapLookup.get(word.toLowerCase());
-      if (synonymExpansions) synonymExpansions.forEach(e => expandedTerms.add(e));
-      const slangExpansions = slangMap.get(word.toLowerCase());
-      if (slangExpansions) slangExpansions.forEach(e => expandedTerms.add(e));
-      // Reverse vendor lookup
-      const vendorCode = reverseVendorMap.get(word.toLowerCase());
+      const wl = word.toLowerCase();
+      abbrevMap.get(wl)?.forEach(e => expandedTerms.add(e));
+      synonymMapLookup.get(wl)?.forEach(e => expandedTerms.add(e));
+      slangMap.get(wl)?.forEach(e => expandedTerms.add(e));
+      const vendorCode = reverseVendorMap.get(wl);
       if (vendorCode) expandedTerms.add(vendorCode);
-      // Forward vendor expansion
-      const vendorNames = vendorMap.get(word.toUpperCase());
-      if (vendorNames) vendorNames.forEach(n => expandedTerms.add(n));
+      vendorMapData.get(word.toUpperCase())?.forEach(n => expandedTerms.add(n));
     }
 
-    // Catalog parsing
     const catalogTerms = catalogInput ? parseCatalogNumber(catalogInput) : [];
     const keywordCatalogTerms = keywords ? parseCatalogNumber(keywords) : [];
     catalogTerms.forEach(t => expandedTerms.add(t));
     keywordCatalogTerms.forEach(t => expandedTerms.add(t));
 
-    // Get all inventory for scoring
-    const inventory = await db.select().from(inventoryTable);
+    const vendorFilter = vendorInput.trim().toUpperCase();
+    const allTermsArr = Array.from(expandedTerms).filter(t => t.length >= 2);
+    const tsQuery = allTermsArr.map(t => t.replace(/[^\w\s]/g, " ").trim()).filter(Boolean).join(" | ");
 
-    if (inventory.length === 0) {
-      return res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
+    // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
+    type RawRow = {
+      id: number; vendor: string; catalog: string; description: string;
+      bin_location: string; ai_keywords: string[]; enriched_at: Date | null;
+      created_at: Date; updated_at: Date;
+      fts_rank: number; trgm_sim: number;
+    };
+
+    let pgResults: RawRow[] = [];
+    try {
+      if (tsQuery.trim()) {
+        pgResults = await db.execute(sql`
+          SELECT
+            i.id, i.vendor, i.catalog, i.description,
+            i.bin_location, i.ai_keywords, i.enriched_at, i.created_at, i.updated_at,
+            ts_rank_cd(
+              to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,'')),
+              to_tsquery('english', ${tsQuery})
+            ) AS fts_rank,
+            greatest(
+              similarity(i.catalog, ${allTermsArr.slice(0,3).join(" ")}),
+              similarity(i.description, ${allTermsArr.slice(0,5).join(" ")})
+            ) AS trgm_sim
+          FROM inventory i
+          WHERE
+            to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,''))
+              @@ to_tsquery('english', ${tsQuery})
+            OR similarity(i.catalog, ${allTermsArr.slice(0,3).join(" ")}) > 0.1
+            OR similarity(i.description, ${allTermsArr.slice(0,5).join(" ")}) > 0.1
+            ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
+          ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
+          LIMIT 200
+        `) as unknown as RawRow[];
+      }
+    } catch (pgErr) {
+      console.warn("PG search error, falling back to Fuse:", pgErr);
     }
 
-    // Fuse.js fuzzy search
-    const fuse = new Fuse(inventory, {
-      keys: [
-        { name: "catalog", weight: 0.30 },
-        { name: "description", weight: 0.25 },
-        { name: "vendor", weight: 0.10 },
-        { name: "aiKeywords", weight: 0.35 },
-      ],
-      threshold: 0.4,
-      ignoreLocation: true,
-      minMatchCharLength: 2,
-      findAllMatches: true,
-      includeScore: true,
-    });
+    // Map PG results into scored items
+    type ScoredItem = {
+      item: typeof inventoryTable.$inferSelect;
+      confidence: number;
+      reason: string;
+    };
 
-    // Score all items
-    const scoreMap = new Map<number, { item: typeof inventory[0]; confidence: number; reason: string }>();
-
-    const updateScore = (id: number, confidence: number, reason: string) => {
-      const current = scoreMap.get(id);
+    const scoreMap = new Map<number, ScoredItem>();
+    const updateScore = (item: typeof inventoryTable.$inferSelect, confidence: number, reason: string) => {
+      const current = scoreMap.get(item.id);
       if (!current || confidence > current.confidence) {
-        const item = inventory.find(i => i.id === id)!;
-        scoreMap.set(id, { item, confidence, reason });
+        scoreMap.set(item.id, { item, confidence, reason });
       }
     };
 
-    const vendorFilter = vendorInput.trim().toUpperCase();
+    // Process PG results
+    for (const row of pgResults) {
+      const ftsRank = Number(row.fts_rank) || 0;
+      const trgmSim = Number(row.trgm_sim) || 0;
+      const pgScore = Math.min(0.95, ftsRank * 0.6 + trgmSim * 0.4 + 0.4);
+      const item: typeof inventoryTable.$inferSelect = {
+        id: row.id,
+        vendor: row.vendor,
+        catalog: row.catalog,
+        description: row.description,
+        binLocation: row.bin_location,
+        aiKeywords: row.ai_keywords ?? [],
+        enrichedAt: row.enriched_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
 
-    // Strategy cascade
-    for (const item of inventory) {
-      const catLower = item.catalog.toLowerCase();
-      const descLower = item.description.toLowerCase();
-      const vendorUpper = item.vendor.toUpperCase();
-      const kwJoined = item.aiKeywords.join(" ").toLowerCase();
-
-      // 1. Exact catalog match
-      if (catalogInput && item.catalog.toUpperCase() === catalogInput.toUpperCase()) {
-        updateScore(item.id, 1.0, "exact catalog");
+      // Boost for exact catalog
+      if (catalogInput && row.catalog.toUpperCase() === catalogInput.toUpperCase()) {
+        updateScore(item, 1.0, "exact catalog");
         continue;
       }
-      // 2. Partial catalog match
-      if (catalogInput) {
-        const ci = catalogInput.toLowerCase();
-        if (catLower.includes(ci)) updateScore(item.id, 0.95, "catalog contains input");
-        else if (ci.includes(catLower)) updateScore(item.id, 0.90, "input contains catalog");
+      if (catalogInput && row.catalog.toUpperCase().includes(catalogInput.toUpperCase())) {
+        updateScore(item, Math.max(pgScore, 0.9), "catalog prefix");
+        continue;
       }
-      // 3. Exact vendor code match
-      if (vendorFilter && vendorFilter === vendorUpper) {
-        updateScore(item.id, 0.92, "exact vendor match");
-      }
+      updateScore(item, pgScore, ftsRank > 0 ? "fts match" : "trigram match");
+    }
 
-      for (const word of corrected) {
-        const wl = word.toLowerCase();
-        if (wl.length < 2) continue;
-        // 4. Exact catalog from keywords
-        if (item.catalog.toLowerCase() === wl) {
-          updateScore(item.id, 0.98, "keyword=catalog");
-          continue;
+    // Exact catalog fallback if PG didn't catch it
+    if (catalogInput && pgResults.length === 0) {
+      const exactRows = await db.select().from(inventoryTable)
+        .where(sql`upper(${inventoryTable.catalog}) = upper(${catalogInput})`);
+      for (const item of exactRows) updateScore(item, 1.0, "exact catalog fallback");
+    }
+
+    // Fuse.js fallback for small datasets or when PG returns nothing
+    if (scoreMap.size < 5) {
+      const inventory = await db.select().from(inventoryTable);
+      const fuse = new Fuse(inventory, {
+        keys: [
+          { name: "catalog", weight: 0.35 },
+          { name: "description", weight: 0.30 },
+          { name: "vendor", weight: 0.10 },
+          { name: "aiKeywords", weight: 0.25 },
+        ],
+        threshold: 0.45,
+        ignoreLocation: true,
+        minMatchCharLength: 2,
+        findAllMatches: true,
+        includeScore: true,
+      });
+
+      const fuseQuery = corrected.join(" ");
+      if (fuseQuery.trim()) {
+        for (const r of fuse.search(fuseQuery)) {
+          const conf = (1 - (r.score ?? 0.5)) * 0.70;
+          if (conf > 0.2) updateScore(r.item, conf, "fuzzy fallback");
         }
-        // 5. Partial catalog from keywords
-        if (catLower.includes(wl) && wl.length >= 3) updateScore(item.id, 0.88, "keyword in catalog");
-        // 6. Description contains keyword  
-        if (descLower.includes(wl)) updateScore(item.id, 0.80, "keyword in description");
-        // 7. Vendor code per keyword
-        if (vendorUpper === wl.toUpperCase()) updateScore(item.id, 0.90, "keyword=vendor code");
-        // 8. Keyword in enriched keywords
-        if (kwJoined.includes(wl)) updateScore(item.id, 0.72, "keyword in ai_keywords");
       }
-
-      // 9. Expanded terms
-      for (const expanded of expandedTerms) {
-        const el = expanded.toLowerCase();
-        if (el.length < 2) continue;
-        if (catLower.includes(el)) updateScore(item.id, 0.75, "expanded term in catalog");
-        if (descLower.includes(el)) updateScore(item.id, 0.68, "expanded term in description");
-        if (kwJoined.includes(el)) updateScore(item.id, 0.68, "expanded term in ai_keywords");
-      }
-    }
-
-    // Fuse.js fuzzy search
-    const fuseQuery = corrected.join(" ");
-    if (fuseQuery.trim()) {
-      const fuseResults = fuse.search(fuseQuery);
-      for (const r of fuseResults) {
-        const confidence = (1 - (r.score ?? 0.5)) * 0.65;
-        updateScore(r.item.id, confidence, "fuzzy search");
-      }
-    }
-
-    // Expanded fuse search
-    for (const term of Array.from(expandedTerms).slice(0, 10)) {
-      if (term.length < 3) continue;
-      const fuseExp = fuse.search(term);
-      for (const r of fuseExp.slice(0, 20)) {
-        const confidence = (1 - (r.score ?? 0.5)) * 0.60;
-        updateScore(r.item.id, confidence, "fuzzy expanded");
+      for (const term of allTermsArr.slice(0, 8)) {
+        if (term.length < 3) continue;
+        for (const r of fuse.search(term).slice(0, 15)) {
+          const conf = (1 - (r.score ?? 0.5)) * 0.60;
+          if (conf > 0.2) updateScore(r.item, conf, "fuzzy expanded fallback");
+        }
       }
     }
 
     // Apply vendor boost/penalty
-    const results: Array<{ item: typeof inventory[0]; confidence: number; reason: string }> = [];
+    const results: ScoredItem[] = [];
     for (const entry of scoreMap.values()) {
       let conf = entry.confidence;
       if (vendorFilter) {
-        if (entry.item.vendor.toUpperCase() === vendorFilter) {
-          conf = Math.min(1.0, conf + 0.15);
-        } else {
-          conf *= 0.5;
-        }
+        if (entry.item.vendor.toUpperCase() === vendorFilter) conf = Math.min(1.0, conf + 0.15);
+        else conf *= 0.5;
       }
       results.push({ ...entry, confidence: conf });
     }
 
-    // Sort by confidence
     results.sort((a, b) => b.confidence - a.confidence);
 
-    // Group into series and find variants
-    const seriesGroups = new Map<string, { label: string; items: typeof inventory }>();
+    // Group into series + find variants
+    const seriesGroups = new Map<string, { label: string; items: typeof inventoryTable.$inferSelect[] }>();
     for (const r of results) {
       const series = getSeriesBase(r.item.vendor, r.item.catalog, r.item.description);
       if (series) {
@@ -409,20 +414,23 @@ router.post("/search", async (req, res) => {
       }
     }
 
-    // Find variants from full inventory
-    const variantMap = new Map<number, typeof inventory>();
+    const variantMap = new Map<number, typeof inventoryTable.$inferSelect[]>();
     const resultIds = new Set(results.map(r => r.item.id));
-    for (const item of inventory) {
-      if (resultIds.has(item.id)) continue;
-      const series = getSeriesBase(item.vendor, item.catalog, item.description);
-      if (!series) continue;
-      const group = seriesGroups.get(series.key);
-      if (group) {
-        const primaryItem = group.items[0];
-        if (primaryItem) {
-          const variants = variantMap.get(primaryItem.id) ?? [];
-          variants.push(item);
-          variantMap.set(primaryItem.id, variants);
+
+    if (seriesGroups.size > 0) {
+      const allInventory = await db.select().from(inventoryTable);
+      for (const item of allInventory) {
+        if (resultIds.has(item.id)) continue;
+        const series = getSeriesBase(item.vendor, item.catalog, item.description);
+        if (!series) continue;
+        const group = seriesGroups.get(series.key);
+        if (group) {
+          const primaryItem = group.items[0];
+          if (primaryItem) {
+            const variants = variantMap.get(primaryItem.id) ?? [];
+            variants.push(item);
+            variantMap.set(primaryItem.id, variants);
+          }
         }
       }
     }
@@ -430,7 +438,6 @@ router.post("/search", async (req, res) => {
     const aboveThreshold = results.filter(r => r.confidence >= confidenceThreshold);
     const belowCount = results.length - aboveThreshold.length;
 
-    // Sort above-threshold results by size
     aboveThreshold.sort((a, b) => {
       const diff = b.confidence - a.confidence;
       if (Math.abs(diff) > 0.05) return diff;
@@ -438,27 +445,15 @@ router.post("/search", async (req, res) => {
     });
 
     const finalResults = aboveThreshold.map(r => ({
-      item: {
-        ...r.item,
-        binLocation: r.item.binLocation,
-        aiKeywords: r.item.aiKeywords,
-      },
+      item: r.item,
       confidence: r.confidence,
       matchReason: r.reason,
       seriesBase: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.key ?? null,
       seriesLabel: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.label ?? null,
-      variants: (variantMap.get(r.item.id) ?? []).map(v => ({
-        ...v,
-        binLocation: v.binLocation,
-        aiKeywords: v.aiKeywords,
-      })),
+      variants: (variantMap.get(r.item.id) ?? []),
     }));
 
-    res.json({
-      results: finalResults,
-      totalMatches: results.length,
-      belowThreshold: belowCount,
-    });
+    res.json({ results: finalResults, totalMatches: results.length, belowThreshold: belowCount });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Search failed" });

@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import * as XLSX from "xlsx";
 import { useUpsertInventoryBatch, useListInventory } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { ReferenceModal } from "@/components/ReferenceModal";
@@ -36,22 +37,104 @@ type EnrichProgress = {
   item?: { id: number; keywords: string[] };
 };
 
+// ── Column header aliases ──────────────────────────────────────────────────
+const VENDOR_ALIASES = ["vendor", "mfr", "manufacturer", "brand", "make", "supplier"];
+const CATALOG_ALIASES = ["catalog", "catalog#", "cat#", "part", "part#", "partno", "item", "itemno", "sku", "model", "partnumber", "part number", "cat no", "catalog no"];
+const DESC_ALIASES = ["description", "desc", "name", "product", "productname", "title", "item description"];
+const BIN_ALIASES = ["bin", "bin location", "binlocation", "location", "loc", "shelf", "aisle", "bin#", "bin no"];
+
+function findCol(headers: string[], aliases: string[]): number {
+  return aliases.map(a => headers.indexOf(a)).find(i => i >= 0) ?? -1;
+}
+
+// ── Parse CSV text ─────────────────────────────────────────────────────────
 function parseCSV(text: string): ParsedRow[] {
-  const lines = text.split("\n").filter((l) => l.trim());
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
 
-  const headers = lines[0]!.split(",").map((h) => h.trim().toLowerCase().replace(/['"]/g, ""));
-  const findCol = (...names: string[]) =>
-    names.map((n) => headers.indexOf(n)).find((i) => i >= 0) ?? -1;
-
-  const vendorCol = findCol("vendor", "mfr", "manufacturer", "brand");
-  const catalogCol = findCol("catalog", "catalog#", "cat#", "part", "part#", "partno", "item", "itemno");
-  const descCol = findCol("description", "desc", "name", "product", "productname");
-  const binCol = findCol("bin", "bin location", "binlocation", "location", "loc", "shelf");
+  const headers = lines[0]!.split(",").map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
+  const vendorCol = findCol(headers, VENDOR_ALIASES);
+  const catalogCol = findCol(headers, CATALOG_ALIASES);
+  const descCol = findCol(headers, DESC_ALIASES);
+  const binCol = findCol(headers, BIN_ALIASES);
 
   const rows: ParsedRow[] = [];
   for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i]!.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+    const cells = splitCSVLine(lines[i]!);
+    const vendor = vendorCol >= 0 ? cells[vendorCol]?.trim() ?? "" : "";
+    const catalog = catalogCol >= 0 ? cells[catalogCol]?.trim() ?? "" : "";
+    if (!vendor && !catalog) continue;
+    rows.push({
+      vendor: vendor || "UNKNOWN",
+      catalog: catalog || "UNKNOWN",
+      description: descCol >= 0 ? cells[descCol]?.trim() ?? "" : "",
+      binLocation: binCol >= 0 ? cells[binCol]?.trim() ?? "" : "",
+    });
+  }
+  return rows;
+}
+
+function splitCSVLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === "," && !inQuotes) {
+      cells.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells.map(c => c.replace(/^"|"$/g, ""));
+}
+
+// ── Parse xlsx/xls/ods via SheetJS ────────────────────────────────────────
+async function parseXlsx(uri: string): Promise<ParsedRow[]> {
+  const response = await fetch(uri);
+  const arrayBuffer = await response.arrayBuffer();
+  const uint8 = new Uint8Array(arrayBuffer);
+  const workbook = XLSX.read(uint8, { type: "array" });
+
+  // Find the sheet with a Vendor or Catalog column
+  let bestSheet: XLSX.WorkSheet | null = null;
+  let bestScore = -1;
+  for (const sheetName of workbook.SheetNames) {
+    const ws = workbook.Sheets[sheetName];
+    if (!ws) continue;
+    const rows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as string[][];
+    if (!rows[0]) continue;
+    const headers = rows[0].map(h => String(h).trim().toLowerCase());
+    let score = 0;
+    if (VENDOR_ALIASES.some(a => headers.includes(a))) score += 2;
+    if (CATALOG_ALIASES.some(a => headers.includes(a))) score += 2;
+    if (score > bestScore) { bestScore = score; bestSheet = ws; }
+  }
+
+  if (!bestSheet) {
+    // Fallback: just use first sheet
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]!];
+    if (!firstSheet) return [];
+    bestSheet = firstSheet;
+  }
+
+  const rawRows: string[][] = XLSX.utils.sheet_to_json(bestSheet, { header: 1, defval: "" }) as string[][];
+  if (rawRows.length < 2) return [];
+
+  const headers = rawRows[0]!.map(h => String(h).trim().toLowerCase());
+  const vendorCol = findCol(headers, VENDOR_ALIASES);
+  const catalogCol = findCol(headers, CATALOG_ALIASES);
+  const descCol = findCol(headers, DESC_ALIASES);
+  const binCol = findCol(headers, BIN_ALIASES);
+
+  const rows: ParsedRow[] = [];
+  for (let i = 1; i < rawRows.length; i++) {
+    const cells = rawRows[i]!.map(c => String(c ?? "").trim());
     const vendor = vendorCol >= 0 ? cells[vendorCol] ?? "" : "";
     const catalog = catalogCol >= 0 ? cells[catalogCol] ?? "" : "";
     if (!vendor && !catalog) continue;
@@ -65,6 +148,7 @@ function parseCSV(text: string): ParsedRow[] {
   return rows;
 }
 
+// ── Inventory row component ───────────────────────────────────────────────
 function InventoryRow({ item, colors }: { item: InventoryItem; colors: ReturnType<typeof useColors> }) {
   const isEnriched = !!item.enrichedAt;
   return (
@@ -111,24 +195,32 @@ const rowStyles = StyleSheet.create({
   enrichText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
 });
 
+// ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
   const colors = useColors();
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [tab, setTab] = useState<"upload" | "inventory">("upload");
   const [inventoryPage, setInventoryPage] = useState(1);
 
   const upsertMutation = useUpsertInventoryBatch();
-  const inventoryQuery = useListInventory({
-    page: inventoryPage,
-    limit: 50,
-  });
+  const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
 
   const handlePickFile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ["text/csv", "text/comma-separated-values", "text/plain", "application/octet-stream"],
+        type: [
+          "text/csv",
+          "text/comma-separated-values",
+          "text/plain",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.oasis.opendocument.spreadsheet",
+          "application/octet-stream",
+          "*/*",
+        ],
         copyToCacheDirectory: true,
       });
 
@@ -137,20 +229,40 @@ export default function UploadScreen() {
       const asset = result.assets[0];
       setFileName(asset.name);
 
-      const response = await fetch(asset.uri);
-      const text = await response.text();
-      const rows = parseCSV(text);
+      const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
+      let rows: ParsedRow[] = [];
+
+      if (ext === "csv" || ext === "txt") {
+        const response = await fetch(asset.uri);
+        const text = await response.text();
+        rows = parseCSV(text);
+        setFileType("csv");
+      } else if (["xlsx", "xls", "xlsm", "ods"].includes(ext)) {
+        rows = await parseXlsx(asset.uri);
+        setFileType("xlsx");
+      } else {
+        // Try CSV first, fallback to xlsx
+        try {
+          const response = await fetch(asset.uri);
+          const text = await response.text();
+          rows = parseCSV(text);
+          setFileType("csv");
+        } catch {
+          rows = await parseXlsx(asset.uri);
+          setFileType("xlsx");
+        }
+      }
 
       if (rows.length === 0) {
         Alert.alert(
           "Parse Error",
-          "No data rows found. Ensure columns are: vendor, catalog, description, binLocation",
+          "No data rows found.\n\nEnsure your file has columns named:\nvendor, catalog (required)\ndescription, bin (optional)",
         );
         return;
       }
       setParsedRows(rows);
-    } catch {
-      Alert.alert("Error", "Failed to read file.");
+    } catch (err) {
+      Alert.alert("Error", "Failed to read file. Please try again.");
     }
   };
 
@@ -162,7 +274,7 @@ export default function UploadScreen() {
       });
       Alert.alert(
         "Upload Complete",
-        `Inserted: ${result.inserted} | Updated: ${result.updated} | Total: ${result.total}`,
+        `Inserted: ${result.inserted}\nUpdated: ${result.updated}\nTotal: ${result.total}`,
         [
           { text: "View Inventory", onPress: () => setTab("inventory") },
           { text: "OK" },
@@ -170,6 +282,7 @@ export default function UploadScreen() {
       );
       setParsedRows([]);
       setFileName(null);
+      setFileType(null);
     } catch {
       Alert.alert("Upload Failed", "Could not upload inventory items.");
     }
@@ -193,15 +306,12 @@ export default function UploadScreen() {
           const { done, value } = await reader.read();
           if (done) break;
           const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
-          for (const line of lines) {
+          for (const line of chunk.split("\n")) {
             if (!line.startsWith("data: ")) continue;
             try {
               const data: EnrichProgress = JSON.parse(line.slice(6));
               setEnrichProgress(data);
-              if (data.done) {
-                await inventoryQuery.refetch();
-              }
+              if (data.done) await inventoryQuery.refetch();
             } catch {}
           }
         }
@@ -214,22 +324,20 @@ export default function UploadScreen() {
 
   const inventory = inventoryQuery.data?.items ?? [];
   const inventoryTotal = inventoryQuery.data?.total ?? 0;
-  const enrichedCount = inventory.filter((i) => i.enrichedAt).length;
-  const unEnrichedCount = inventory.filter((i) => !i.enrichedAt).length;
+  const enrichedCount = inventory.filter(i => i.enrichedAt).length;
+  const unEnrichedCount = inventory.filter(i => !i.enrichedAt).length;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>📤 Inventory</Text>
-        <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
-          Upload & AI Enrich
-        </Text>
+        <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
       </View>
 
       {/* Tab bar */}
       <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-        {(["upload", "inventory"] as const).map((t) => (
+        {(["upload", "inventory"] as const).map(t => (
           <Pressable
             key={t}
             onPress={() => setTab(t)}
@@ -238,13 +346,8 @@ export default function UploadScreen() {
               { borderBottomColor: tab === t ? colors.primary : "transparent" },
             ]}
           >
-            <Text
-              style={[
-                styles.tabLabel,
-                { color: tab === t ? colors.primary : colors.mutedForeground },
-              ]}
-            >
-              {t === "upload" ? "Upload CSV" : `Inventory (${inventoryTotal})`}
+            <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
+              {t === "upload" ? "Upload File" : `Inventory (${inventoryTotal})`}
             </Text>
           </Pressable>
         ))}
@@ -252,28 +355,26 @@ export default function UploadScreen() {
 
       {tab === "upload" ? (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
-          {/* CSV upload card */}
+          {/* File upload card */}
           <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.cardTitle, { color: colors.foreground }]}>
-              📁 Import CSV File
-            </Text>
+            <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
             <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+              Accepts: CSV, Excel (.xlsx/.xls), ODS{"\n"}
               Required columns: vendor, catalog{"\n"}
-              Optional: description, binLocation (or bin)
+              Optional: description, bin (or binLocation)
             </Text>
 
-            <Pressable
-              onPress={handlePickFile}
-              style={[styles.pickBtn, { borderColor: colors.primary }]}
-            >
+            <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
               <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                📂 Choose CSV File
+                📂 Choose CSV or Excel File
               </Text>
             </Pressable>
 
             {fileName ? (
               <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
-                <Text style={[styles.fileChipText, { color: colors.foreground }]}>📄 {fileName}</Text>
+                <Text style={[styles.fileChipText, { color: colors.foreground }]}>
+                  {fileType === "xlsx" ? "📊" : "📄"} {fileName}
+                </Text>
               </View>
             ) : null}
           </View>
@@ -285,20 +386,19 @@ export default function UploadScreen() {
                 Preview ({parsedRows.length} rows)
               </Text>
 
-              {/* Header row */}
               <View style={[styles.previewHeaderRow, { backgroundColor: colors.muted }]}>
-                {["VENDOR", "CATALOG", "DESCRIPTION", "BIN"].map((h) => (
-                  <Text key={h} style={[styles.previewHeaderCell, { color: colors.mutedForeground, flex: h === "DESCRIPTION" ? 2 : 1 }]}>
+                {["VENDOR", "CATALOG", "DESCRIPTION", "BIN"].map(h => (
+                  <Text
+                    key={h}
+                    style={[styles.previewHeaderCell, { color: colors.mutedForeground, flex: h === "DESCRIPTION" ? 2 : 1 }]}
+                  >
                     {h}
                   </Text>
                 ))}
               </View>
 
               {parsedRows.slice(0, 8).map((row, i) => (
-                <View
-                  key={i}
-                  style={[styles.previewRow, { borderBottomColor: colors.border }]}
-                >
+                <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border }]}>
                   <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
                     {row.vendor}
                   </Text>
@@ -313,6 +413,7 @@ export default function UploadScreen() {
                   </Text>
                 </View>
               ))}
+
               {parsedRows.length > 8 ? (
                 <Text style={[styles.moreRows, { color: colors.mutedForeground }]}>
                   +{parsedRows.length - 8} more rows
@@ -382,27 +483,21 @@ export default function UploadScreen() {
               </View>
             </View>
 
-            <View style={styles.enrichBtnRow}>
-              <Pressable
-                onPress={() => handleEnrich()}
-                disabled={!!enrichProgress && !enrichProgress.done}
-                style={[
-                  styles.enrichBtn,
-                  {
-                    backgroundColor: (enrichProgress && !enrichProgress.done) ? colors.muted : colors.primary,
-                    flex: 2,
-                  },
-                ]}
-              >
-                <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                  {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Enrich All Pending"}
-                </Text>
-              </Pressable>
-            </View>
+            <Pressable
+              onPress={() => handleEnrich()}
+              disabled={!!enrichProgress && !enrichProgress.done}
+              style={[
+                styles.enrichBtn,
+                { backgroundColor: (enrichProgress && !enrichProgress.done) ? colors.muted : colors.primary },
+              ]}
+            >
+              <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Enrich All Pending"}
+              </Text>
+            </Pressable>
           </View>
         </ScrollView>
       ) : (
-        /* Inventory list tab */
         <View style={{ flex: 1 }}>
           {inventoryQuery.isLoading ? (
             <View style={styles.loadingContainer}>
@@ -414,7 +509,7 @@ export default function UploadScreen() {
               <Text style={styles.emptyEmoji}>📦</Text>
               <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
               <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-                Upload a CSV file to add inventory items.
+                Upload a CSV or Excel file to add inventory items.
               </Text>
               <Pressable
                 onPress={() => setTab("upload")}
@@ -426,7 +521,7 @@ export default function UploadScreen() {
           ) : (
             <FlatList
               data={inventory}
-              keyExtractor={(item) => String(item.id)}
+              keyExtractor={item => String(item.id)}
               renderItem={({ item }) => <InventoryRow item={item} colors={colors} />}
               contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
               ListHeaderComponent={() => (
@@ -438,16 +533,14 @@ export default function UploadScreen() {
                     onPress={() => handleEnrich()}
                     style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
                   >
-                    <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>
-                      🤖 Enrich All
-                    </Text>
+                    <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
                   </Pressable>
                 </View>
               )}
               ListFooterComponent={() =>
                 inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
                   <Pressable
-                    onPress={() => setInventoryPage((p) => p + 1)}
+                    onPress={() => setInventoryPage(p => p + 1)}
                     style={[styles.loadMoreBtn, { borderColor: colors.border }]}
                   >
                     <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
@@ -474,13 +567,13 @@ const styles = StyleSheet.create({
   tabLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   uploadCard: { borderRadius: 12, padding: 16, borderWidth: 1, marginBottom: 14, gap: 10 },
   cardTitle: { fontSize: 16, fontFamily: "Inter_700Bold" },
-  cardHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  cardHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   pickBtn: { borderWidth: 2, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   pickBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   fileChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, alignSelf: "flex-start" },
   fileChipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  previewCard: { borderRadius: 12, padding: 14, borderWidth: 1, marginBottom: 14, gap: 0 },
-  previewHeaderRow: { flexDirection: "row", paddingHorizontal: 6, paddingVertical: 6, borderRadius: 4, marginBottom: 2 },
+  previewCard: { borderRadius: 12, padding: 14, borderWidth: 1, marginBottom: 14 },
+  previewHeaderRow: { flexDirection: "row", paddingHorizontal: 6, paddingVertical: 6, borderRadius: 4, marginBottom: 2, marginTop: 8 },
   previewHeaderCell: { fontSize: 10, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5 },
   previewRow: { flexDirection: "row", paddingHorizontal: 6, paddingVertical: 7, borderBottomWidth: 1 },
   previewCell: { fontSize: 12, fontFamily: "Inter_400Regular", paddingRight: 4 },
@@ -498,7 +591,6 @@ const styles = StyleSheet.create({
   statChip: { flex: 1, alignItems: "center", padding: 12, borderRadius: 8 },
   statValue: { fontSize: 22, fontFamily: "Inter_700Bold" },
   statLabel: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  enrichBtnRow: { flexDirection: "row", gap: 10 },
   enrichBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   enrichBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
   loadingContainer: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },

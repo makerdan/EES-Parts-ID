@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -19,46 +19,114 @@ import { useColors } from "@/hooks/useColors";
 interface KeywordEditorProps {
   item: InventoryItem | null;
   onClose: () => void;
+  /** Called after keywords are saved so parent can update local Fuse index */
+  onKeywordsChanged?: (id: number, keywords: string[]) => void;
 }
 
-export function KeywordEditor({ item, onClose }: KeywordEditorProps) {
+const DEBOUNCE_MS = 900;
+
+export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEditorProps) {
   const colors = useColors();
   const queryClient = useQueryClient();
   const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const updateMutation = useUpdateItemKeywords();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestKeywordsRef = useRef<string[]>(keywords);
 
   if (!item) return null;
 
+  // Auto-save with debounce whenever keywords change
+  const triggerSave = useCallback(
+    (kws: string[]) => {
+      latestKeywordsRef.current = kws;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      setSaveStatus("idle");
+      debounceRef.current = setTimeout(async () => {
+        setSaveStatus("saving");
+        try {
+          await updateMutation.mutateAsync({ id: item.id, data: { keywords: kws } });
+          // Immediately update local Fuse index in parent
+          onKeywordsChanged?.(item.id, kws);
+          await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+          setSaveStatus("saved");
+          setTimeout(() => setSaveStatus("idle"), 1800);
+        } catch {
+          setSaveStatus("error");
+        }
+      }, DEBOUNCE_MS);
+    },
+    [item.id, updateMutation, queryClient, onKeywordsChanged],
+  );
+
+  const handleKeywordsChange = (next: string[]) => {
+    setKeywords(next);
+    triggerSave(next);
+  };
+
   const addKeyword = () => {
-    const trimmed = newKeyword.trim();
+    const trimmed = newKeyword.trim().toLowerCase();
     if (!trimmed || keywords.includes(trimmed)) {
       setNewKeyword("");
       return;
     }
-    setKeywords([...keywords, trimmed]);
+    const next = [...keywords, trimmed];
     setNewKeyword("");
+    handleKeywordsChange(next);
   };
 
   const removeKeyword = (kw: string) => {
-    setKeywords(keywords.filter((k) => k !== kw));
+    handleKeywordsChange(keywords.filter((k) => k !== kw));
   };
 
-  const handleSave = async () => {
-    await updateMutation.mutateAsync({
-      id: item.id,
-      data: { keywords },
-    });
-    await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+  // Flush pending save on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  const handleClose = () => {
+    // Flush immediately if there's a pending save
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+      updateMutation
+        .mutateAsync({ id: item.id, data: { keywords: latestKeywordsRef.current } })
+        .then(() => {
+          onKeywordsChanged?.(item.id, latestKeywordsRef.current);
+          queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+        })
+        .catch(() => {});
+    }
     onClose();
   };
+
+  const statusColor =
+    saveStatus === "saving"
+      ? colors.warning
+      : saveStatus === "saved"
+      ? colors.success
+      : saveStatus === "error"
+      ? "#ef4444"
+      : "transparent";
+
+  const statusLabel =
+    saveStatus === "saving"
+      ? "Saving…"
+      : saveStatus === "saved"
+      ? "✓ Saved"
+      : saveStatus === "error"
+      ? "Save failed"
+      : "";
 
   return (
     <Modal
       visible
       animationType="slide"
       presentationStyle="pageSheet"
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
     >
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -66,13 +134,23 @@ export function KeywordEditor({ item, onClose }: KeywordEditorProps) {
       >
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <View>
-            <Text style={[styles.title, { color: colors.foreground }]}>Edit Keywords</Text>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Text style={[styles.title, { color: colors.foreground }]}>Edit Keywords</Text>
+              {saveStatus !== "idle" && (
+                <View style={[styles.statusBadge, { backgroundColor: statusColor + "22" }]}>
+                  {saveStatus === "saving" ? (
+                    <ActivityIndicator size="small" color={statusColor} style={{ marginRight: 4 }} />
+                  ) : null}
+                  <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+                </View>
+              )}
+            </View>
             <Text style={[styles.sub, { color: colors.mutedForeground }]} numberOfLines={1}>
               {item.vendor} · {item.catalog}
             </Text>
           </View>
-          <Pressable onPress={onClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]}>
+          <Pressable onPress={handleClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]}>
             <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
           </Pressable>
         </View>
@@ -80,6 +158,10 @@ export function KeywordEditor({ item, onClose }: KeywordEditorProps) {
         <ScrollView style={{ flex: 1, padding: 16 }}>
           <Text style={[styles.desc, { color: colors.mutedForeground }]} numberOfLines={2}>
             {item.description}
+          </Text>
+
+          <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+            Changes save automatically as you edit. Tap a keyword to remove it.
           </Text>
 
           {/* Current keywords */}
@@ -113,7 +195,7 @@ export function KeywordEditor({ item, onClose }: KeywordEditorProps) {
             <TextInput
               value={newKeyword}
               onChangeText={setNewKeyword}
-              placeholder="Type keyword..."
+              placeholder="Type keyword and press Add…"
               placeholderTextColor={colors.mutedForeground}
               style={[
                 styles.addInput,
@@ -133,24 +215,13 @@ export function KeywordEditor({ item, onClose }: KeywordEditorProps) {
           </View>
         </ScrollView>
 
-        {/* Footer */}
+        {/* Footer — just Done, no separate Save button */}
         <View style={[styles.footer, { borderTopColor: colors.border }]}>
           <Pressable
-            onPress={onClose}
-            style={[styles.cancelBtn, { borderColor: colors.border }]}
+            onPress={handleClose}
+            style={[styles.doneBtn, { backgroundColor: colors.primary }]}
           >
-            <Text style={[styles.cancelText, { color: colors.mutedForeground }]}>Cancel</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleSave}
-            disabled={updateMutation.isPending}
-            style={[styles.saveBtn, { backgroundColor: colors.primary }]}
-          >
-            {updateMutation.isPending ? (
-              <ActivityIndicator color={colors.primaryForeground} />
-            ) : (
-              <Text style={[styles.saveBtnText, { color: colors.primaryForeground }]}>Save Keywords</Text>
-            )}
+            <Text style={[styles.doneBtnText, { color: colors.primaryForeground }]}>Done</Text>
           </Pressable>
         </View>
       </KeyboardAvoidingView>
@@ -167,11 +238,22 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingTop: 20,
     borderBottomWidth: 1,
+    gap: 8,
   },
   title: { fontSize: 18, fontFamily: "Inter_700Bold" },
   sub: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
   closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  desc: { fontSize: 13, fontFamily: "Inter_400Regular", marginBottom: 16, lineHeight: 19 },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 3,
+  },
+  statusText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  hint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 16, lineHeight: 18 },
+  desc: { fontSize: 13, fontFamily: "Inter_400Regular", marginBottom: 10, lineHeight: 19 },
   sectionLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",
@@ -209,24 +291,13 @@ const styles = StyleSheet.create({
   },
   addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   footer: {
-    flexDirection: "row",
-    gap: 10,
     padding: 16,
     borderTopWidth: 1,
   },
-  cancelBtn: {
-    flex: 1,
-    borderWidth: 1,
+  doneBtn: {
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: "center",
   },
-  cancelText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  saveBtn: {
-    flex: 2,
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  saveBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  doneBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
 });

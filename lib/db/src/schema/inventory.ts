@@ -25,7 +25,9 @@ export const inventoryTable = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
-  (table) => [uniqueIndex("inventory_vendor_catalog_idx").on(table.vendor, table.catalog)],
+  (table) => [
+    uniqueIndex("inventory_vendor_catalog_idx").on(table.vendor, table.catalog),
+  ],
 );
 
 export const insertInventorySchema = createInsertSchema(inventoryTable).omit({
