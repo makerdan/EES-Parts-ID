@@ -224,6 +224,8 @@ function Field({
   placeholder,
   colors,
   autoCapitalize = "none",
+  onSubmitEditing,
+  returnKeyType,
 }: {
   label: string;
   value: string;
@@ -231,6 +233,8 @@ function Field({
   placeholder: string;
   colors: ReturnType<typeof useColors>;
   autoCapitalize?: "none" | "words" | "sentences" | "characters";
+  onSubmitEditing?: () => void;
+  returnKeyType?: "search" | "done" | "go" | "next" | "send";
 }) {
   return (
     <View style={{ marginBottom: 12 }}>
@@ -250,6 +254,9 @@ function Field({
         ]}
         autoCapitalize={autoCapitalize}
         autoCorrect={false}
+        returnKeyType={returnKeyType}
+        onSubmitEditing={onSubmitEditing}
+        blurOnSubmit={false}
       />
     </View>
   );
@@ -433,6 +440,8 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
         onChange={v => onChange("keywords", v)}
         placeholder="e.g. 20a outlet, BR120..."
         colors={colors}
+        returnKeyType="search"
+        onSubmitEditing={onSearch}
       />
 
       {/* ── Basic Filters collapsible card ── */}
