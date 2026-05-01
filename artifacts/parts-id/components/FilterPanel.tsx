@@ -390,6 +390,8 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
     values.color, values.size, values.material, values.textNumbers,
   ].filter(v => v.trim() !== "").length;
 
+  const activeChipCount = CHIP_DIMS.filter(d => values[d.key]).length;
+
   return (
     <View>
       {/* ── Basic Filters collapsible card ── */}
@@ -501,6 +503,22 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
 
       {/* ── 16-Dimension chip rows (always visible) ── */}
       <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
+        {/* Non-collapsible status header */}
+        <View style={[chipAreaStyles.header, { marginBottom: 12 }]}>
+          <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>Filter Dimensions</Text>
+          <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+            {activeChipCount > 0 && (
+              <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
+                <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
+                  {activeChipCount} active
+                </Text>
+              </View>
+            )}
+            {dimensionCounts && (
+              <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>live counts</Text>
+            )}
+          </View>
+        </View>
         {CHIP_DIMS.map((dim) => (
           <ChipRow
             key={dim.key}
