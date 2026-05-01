@@ -40,6 +40,8 @@ export interface FilterValues {
   location: string;
 }
 
+export type DimensionCounts = Record<string, Record<string, number>>;
+
 interface FilterPanelProps {
   values: FilterValues;
   onChange: (key: keyof FilterValues, value: string | number) => void;
@@ -47,6 +49,8 @@ interface FilterPanelProps {
   onClear: () => void;
   isLoading: boolean;
   resultCount?: number;
+  /** Per-chip counts returned from the last search (key → option → count) */
+  dimensionCounts?: DimensionCounts;
 }
 
 // ── 16 chip dimensions ───────────────────────────────────────────────────────
@@ -146,12 +150,15 @@ function ChipRow({
   value,
   onChange,
   colors,
+  counts,
 }: {
   label: string;
   options: string[];
   value: string;
   onChange: (v: string) => void;
   colors: ReturnType<typeof useColors>;
+  /** Live per-option match counts from last search; undefined = not yet searched */
+  counts?: Record<string, number>;
 }) {
   return (
     <View style={{ marginBottom: 10 }}>
@@ -160,26 +167,40 @@ function ChipRow({
         <View style={{ flexDirection: "row", gap: 6, paddingVertical: 2 }}>
           {options.map((opt) => {
             const active = value === opt;
+            const count = counts?.[opt];
+            const hasCount = count !== undefined;
+            const disabled = hasCount && count === 0 && !active;
             return (
               <Pressable
                 key={opt}
-                onPress={() => onChange(active ? "" : opt)}
+                onPress={() => !disabled && onChange(active ? "" : opt)}
                 style={[
                   chipStyles.chip,
                   {
-                    backgroundColor: active ? colors.primary : colors.muted,
-                    borderColor: active ? colors.primary : colors.border,
+                    backgroundColor: active ? colors.primary : disabled ? colors.muted + "55" : colors.muted,
+                    borderColor: active ? colors.primary : disabled ? colors.border + "55" : colors.border,
+                    opacity: disabled ? 0.45 : 1,
                   },
                 ]}
               >
                 <Text
                   style={[
                     chipStyles.chipText,
-                    { color: active ? colors.primaryForeground : colors.foreground },
+                    { color: active ? colors.primaryForeground : disabled ? colors.mutedForeground : colors.foreground },
                   ]}
                 >
                   {opt}
                 </Text>
+                {hasCount && (
+                  <Text
+                    style={[
+                      chipStyles.countBadge,
+                      { color: active ? colors.primaryForeground + "cc" : colors.mutedForeground },
+                    ]}
+                  >
+                    {count > 99 ? "99+" : count}
+                  </Text>
+                )}
               </Pressable>
             );
           })}
@@ -320,14 +341,14 @@ function ConfidenceSlider({
   );
 }
 
-export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, resultCount }: FilterPanelProps) {
+export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, resultCount, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
 
   const activeChipCount = CHIP_DIMS.filter(d => values[d.key]).length;
 
   return (
     <View>
-      {/* Free-text search fields */}
+      {/* ── Row 1: Keywords ── */}
       <Field
         label="Keywords / Description"
         value={values.keywords}
@@ -335,6 +356,8 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
         placeholder="e.g. 20a duplex white outlet..."
         colors={colors}
       />
+
+      {/* ── Row 2: Catalog # + Vendor ── */}
       <View style={{ flexDirection: "row", gap: 10 }}>
         <View style={{ flex: 1 }}>
           <Field
@@ -358,19 +381,70 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
         </View>
       </View>
 
-      {/* 16-Dimension chip filter panel */}
+      {/* ── Row 3: Color + Size ── */}
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        <View style={{ flex: 1 }}>
+          <Field
+            label="Color"
+            value={values.color}
+            onChange={v => onChange("color", v)}
+            placeholder="White, Black..."
+            colors={colors}
+            autoCapitalize="words"
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Field
+            label="Size / Rating"
+            value={values.size}
+            onChange={v => onChange("size", v)}
+            placeholder="20A, 1/2\", #12..."
+            colors={colors}
+          />
+        </View>
+      </View>
+
+      {/* ── Row 4: Material + Text/Numbers ── */}
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        <View style={{ flex: 1 }}>
+          <Field
+            label="Material"
+            value={values.material}
+            onChange={v => onChange("material", v)}
+            placeholder="Steel, PVC, Copper..."
+            colors={colors}
+            autoCapitalize="words"
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Field
+            label="Text / Numbers"
+            value={values.textNumbers}
+            onChange={v => onChange("textNumbers", v)}
+            placeholder="Markings, UPC..."
+            colors={colors}
+          />
+        </View>
+      </View>
+
+      {/* ── 16-Dimension chip filter panel ── */}
       <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <View style={chipAreaStyles.header}>
           <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>
             Filter Dimensions
           </Text>
-          {activeChipCount > 0 && (
-            <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
-              <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
-                {activeChipCount} active
-              </Text>
-            </View>
-          )}
+          <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+            {activeChipCount > 0 && (
+              <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
+                <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
+                  {activeChipCount} active
+                </Text>
+              </View>
+            )}
+            {dimensionCounts && (
+              <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>live counts</Text>
+            )}
+          </View>
         </View>
 
         {CHIP_DIMS.map((dim) => (
@@ -381,6 +455,7 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
             value={String(values[dim.key] ?? "")}
             onChange={(v) => onChange(dim.key, v)}
             colors={colors}
+            counts={dimensionCounts?.[dim.key]}
           />
         ))}
 
@@ -430,12 +505,16 @@ const chipStyles = StyleSheet.create({
     marginBottom: 5,
   },
   chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
     borderWidth: 1,
     borderRadius: 16,
     paddingHorizontal: 11,
     paddingVertical: 5,
   },
   chipText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  countBadge: { fontSize: 10, fontFamily: "Inter_400Regular" },
 });
 
 const chipAreaStyles = StyleSheet.create({
@@ -454,6 +533,7 @@ const chipAreaStyles = StyleSheet.create({
   title: { fontSize: 13, fontFamily: "Inter_700Bold" },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  liveLabel: { fontSize: 10, fontFamily: "Inter_400Regular", fontStyle: "italic" },
 });
 
 const sliderStyles = StyleSheet.create({

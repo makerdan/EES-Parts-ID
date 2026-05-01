@@ -18,6 +18,7 @@ export * from "./listInventoryParams";
 export * from "./lookupDictionaryParams";
 export * from "./searchInventoryBody";
 export * from "./searchInventoryResponse";
+export * from "./searchInventoryResponseDimensionCounts";
 export * from "./searchResult";
 export * from "./updateKeywordsBody";
 export * from "./upsertInventoryBody";

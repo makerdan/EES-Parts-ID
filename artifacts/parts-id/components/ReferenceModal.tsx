@@ -201,26 +201,26 @@ export function ReferenceModal() {
                   Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical term.
                 </Text>
                 <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>QUICK LOOKUPS</Text>
-                {[
-                  "What is the difference between THHN and THWN?",
-                  "What does GFCI stand for and when is it required?",
-                  "What breaker do I need for a 20A 240V circuit?",
-                  "What is AFCI and where is it required by code?",
-                  "What wire gauge is needed for a 30 amp circuit?",
-                  "What is the difference between EMT and rigid conduit?",
-                  "What does NEMA 5-20R mean?",
-                  "What is a MWBC (multi-wire branch circuit)?",
-                  "What is the NEC rule for box fill calculations?",
-                  "What is the difference between a fuse and a circuit breaker?",
-                  "What does 'listed' mean on electrical equipment?",
-                  "What is the max distance between conduit supports?",
-                ].map((q) => (
+                {([
+                  { label: "THHN vs THWN",         question: "What is the difference between THHN and THWN wire?" },
+                  { label: "GFCI — When Required",  question: "What does GFCI stand for and when is it required by code?" },
+                  { label: "20A 240V Breaker",       question: "What breaker do I need for a 20 amp 240 volt circuit?" },
+                  { label: "AFCI Explained",          question: "What is AFCI and where is it required by the NEC?" },
+                  { label: "30A Wire Gauge",          question: "What wire gauge is needed for a 30 amp circuit?" },
+                  { label: "EMT vs Rigid Conduit",    question: "What is the difference between EMT and rigid metal conduit?" },
+                  { label: "NEMA 5-20R Meaning",      question: "What does NEMA 5-20R mean on a receptacle?" },
+                  { label: "MWBC Explained",          question: "What is a multi-wire branch circuit (MWBC) and when is it allowed?" },
+                  { label: "Box Fill NEC Rule",       question: "What is the NEC rule for box fill calculations?" },
+                  { label: "Fuse vs Breaker",         question: "What is the difference between a fuse and a circuit breaker?" },
+                  { label: "UL Listed Meaning",       question: "What does 'listed' or 'UL listed' mean on electrical equipment?" },
+                  { label: "Conduit Support Spacing",  question: "What is the maximum distance between conduit supports per the NEC?" },
+                ] as const).map(({ label, question: q }) => (
                   <Pressable
-                    key={q}
+                    key={label}
                     onPress={() => setQuestion(q)}
                     style={[emptyStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}
                   >
-                    <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{q}</Text>
+                    <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{label}</Text>
                   </Pressable>
                 ))}
               </View>

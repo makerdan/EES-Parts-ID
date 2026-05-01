@@ -65,6 +65,22 @@ export const SearchInventoryBody = zod.object({
     .min(searchInventoryBodyConfidenceThresholdMin)
     .max(searchInventoryBodyConfidenceThresholdMax)
     .default(searchInventoryBodyConfidenceThresholdDefault),
+  partType: zod.string().optional(),
+  voltage: zod.string().optional(),
+  amperage: zod.string().optional(),
+  phase: zod.string().optional(),
+  wireGauge: zod.string().optional(),
+  conduitType: zod.string().optional(),
+  nemaConfig: zod.string().optional(),
+  enclosureRating: zod.string().optional(),
+  mounting: zod.string().optional(),
+  poles: zod.string().optional(),
+  wireType: zod.string().optional(),
+  conduitSize: zod.string().optional(),
+  boxType: zod.string().optional(),
+  lightingType: zod.string().optional(),
+  protectionType: zod.string().optional(),
+  location: zod.string().optional(),
 });
 
 export const SearchInventoryResponse = zod.object({
@@ -102,6 +118,12 @@ export const SearchInventoryResponse = zod.object({
   ),
   totalMatches: zod.number(),
   belowThreshold: zod.number(),
+  dimensionCounts: zod
+    .record(zod.string(), zod.record(zod.string(), zod.number()))
+    .optional()
+    .describe(
+      "Per-chip-dimension live match counts (dimKey → optionLabel → count)",
+    ),
 });
 
 /**
@@ -234,6 +256,14 @@ export const AiIdentifyPartResponse = zod.object({
 
 /**
  * @summary Ask a question about electrical terms (SSE streaming)
+ */
+export const AskReferenceBody = zod.object({
+  question: zod.string(),
+});
+
+/**
+ * @deprecated
+ * @summary [Deprecated] Use /reference/ask instead
  */
 export const AiReferenceBody = zod.object({
   question: zod.string(),

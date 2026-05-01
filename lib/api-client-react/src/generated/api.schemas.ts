@@ -41,6 +41,22 @@ export interface SearchInventoryBody {
    * @maximum 1
    */
   confidenceThreshold?: number;
+  partType?: string;
+  voltage?: string;
+  amperage?: string;
+  phase?: string;
+  wireGauge?: string;
+  conduitType?: string;
+  nemaConfig?: string;
+  enclosureRating?: string;
+  mounting?: string;
+  poles?: string;
+  wireType?: string;
+  conduitSize?: string;
+  boxType?: string;
+  lightingType?: string;
+  protectionType?: string;
+  location?: string;
 }
 
 export interface SearchResult {
@@ -52,10 +68,19 @@ export interface SearchResult {
   variants: InventoryItem[];
 }
 
+/**
+ * Per-chip-dimension live match counts (dimKey → optionLabel → count)
+ */
+export type SearchInventoryResponseDimensionCounts = {
+  [key: string]: { [key: string]: number };
+};
+
 export interface SearchInventoryResponse {
   results: SearchResult[];
   totalMatches: number;
   belowThreshold: number;
+  /** Per-chip-dimension live match counts (dimKey → optionLabel → count) */
+  dimensionCounts?: SearchInventoryResponseDimensionCounts;
 }
 
 export type UpsertInventoryBodyItemsItem = {
