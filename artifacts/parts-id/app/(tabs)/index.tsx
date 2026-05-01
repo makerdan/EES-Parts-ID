@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -34,7 +35,7 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
 
 type TextSize = "small" | "normal" | "large";
 type AppSettings = { defaultFiltersOpen: boolean; textSize: TextSize; defaultConfidenceThreshold: number };
-const DEFAULT_SETTINGS: AppSettings = { defaultFiltersOpen: true, textSize: "normal", defaultConfidenceThreshold: 50 };
+const DEFAULT_SETTINGS: AppSettings = { defaultFiltersOpen: false, textSize: "normal", defaultConfidenceThreshold: 50 };
 
 async function loadSettings(): Promise<AppSettings> {
   try {
@@ -581,10 +582,51 @@ export default function SearchScreen() {
         </View>
       ) : null}
 
-      {/* Filter panel — stable view outside FlatList to prevent TextInput remount on every render */}
+      {/* ── Persistent search bar — always visible ── */}
+      <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <TextInput
+          value={filters.keywords}
+          onChangeText={v => handleChange("keywords", v)}
+          placeholder="Search parts — keyword, catalog #, vendor…"
+          placeholderTextColor={colors.mutedForeground}
+          style={[styles.searchBarInput, {
+            backgroundColor: colors.muted,
+            borderColor: filters.keywords ? colors.primary : colors.border,
+            color: colors.foreground,
+          }]}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          onSubmitEditing={handleSearch}
+          blurOnSubmit={false}
+        />
+        <View style={styles.searchBarButtons}>
+          <Pressable
+            onPress={handleSearch}
+            disabled={searchMutation.isPending}
+            style={[styles.searchBarSearchBtn, {
+              backgroundColor: searchMutation.isPending ? colors.muted : colors.primary,
+            }]}
+          >
+            <Text style={[styles.searchBarSearchBtnText, { color: colors.primaryForeground }]}>
+              {searchMutation.isPending ? "…" : "Search"}
+            </Text>
+          </Pressable>
+          {(hasResults || filters.keywords) ? (
+            <Pressable
+              onPress={handleClear}
+              style={[styles.searchBarClearBtn, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.searchBarClearBtnText, { color: colors.mutedForeground }]}>Clear</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
+      {/* ── Advanced filters (collapsible) — stable outside FlatList ── */}
       {showFilters ? (
         <ScrollView
-          style={{ maxHeight: "62%" }}
+          style={{ maxHeight: "50%" }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -592,10 +634,6 @@ export default function SearchScreen() {
             <FilterPanel
               values={filters}
               onChange={handleChange}
-              onSearch={handleSearch}
-              onClear={handleClear}
-              isLoading={searchMutation.isPending}
-              resultCount={searchMutation.isSuccess ? results.length : undefined}
               dimensionCounts={dimensionCounts}
             />
           </View>
@@ -708,7 +746,7 @@ export default function SearchScreen() {
                   Search Electrical Parts
                 </Text>
                 <Text style={[styles.welcomeHint, { color: colors.mutedForeground }]}>
-                  Search by keywords, catalog #, vendor, or use the 16-dimension filter chips below. Handles abbreviations, synonyms, and misspellings automatically.
+                  Search by keywords, catalog #, or vendor. Tap Filters for 16-dimension chip filters. Handles abbreviations, synonyms, and misspellings automatically.
                 </Text>
                 <View style={[styles.tipCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Text style={[styles.tipTitle, { color: colors.foreground }]}>💡 Quick Tips</Text>
@@ -783,8 +821,44 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   filterToggleText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  filterCard: {
+  searchBar: {
     margin: 12,
+    marginBottom: 6,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 8,
+  },
+  searchBarInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+  },
+  searchBarButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  searchBarSearchBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  searchBarSearchBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  searchBarClearBtn: {
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  filterCard: {
+    marginHorizontal: 12,
+    marginBottom: 6,
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
