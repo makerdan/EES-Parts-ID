@@ -350,6 +350,7 @@ function ConfidenceSlider({
 }
 
 const BASIC_COLLAPSED_KEY = "@partsid/basic_collapsed";
+const DIM_COLLAPSED_KEY = "@partsid/dim_collapsed";
 
 export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, resultCount, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
@@ -391,6 +392,37 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
   ].filter(v => v.trim() !== "").length;
 
   const activeChipCount = CHIP_DIMS.filter(d => values[d.key]).length;
+
+  // ── Filter Dimensions collapse state ─────────────────────────────────────
+  const [dimCollapsed, setDimCollapsed] = useState(true);
+  const dimChevronAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    AsyncStorage.getItem(DIM_COLLAPSED_KEY).then(stored => {
+      if (stored === null) return;
+      const collapsed = stored === "1";
+      setDimCollapsed(collapsed);
+      dimChevronAnim.setValue(collapsed ? 0 : 1);
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toggleDimensions = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const toCollapsed = !dimCollapsed;
+    setDimCollapsed(toCollapsed);
+    Animated.timing(dimChevronAnim, {
+      toValue: toCollapsed ? 0 : 1,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+    AsyncStorage.setItem(DIM_COLLAPSED_KEY, toCollapsed ? "1" : "0").catch(() => {});
+  }, [dimCollapsed, dimChevronAnim]);
+
+  const dimChevronRotate = dimChevronAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
 
   return (
     <View>
@@ -501,10 +533,12 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
         )}
       </View>
 
-      {/* ── 16-Dimension chip rows (always visible) ── */}
+      {/* ── Filter Dimensions collapsible card ── */}
       <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        {/* Non-collapsible status header */}
-        <View style={[chipAreaStyles.header, { marginBottom: 12 }]}>
+        <Pressable
+          style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12 }]}
+          onPress={toggleDimensions}
+        >
           <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>Filter Dimensions</Text>
           <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
             {activeChipCount > 0 && (
@@ -517,26 +551,32 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
             {dimensionCounts && (
               <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>live counts</Text>
             )}
+            <Animated.View style={{ transform: [{ rotate: dimChevronRotate }] }}>
+              <Feather name="chevron-down" size={16} color={colors.mutedForeground} />
+            </Animated.View>
           </View>
-        </View>
-        {CHIP_DIMS.map((dim) => (
-          <ChipRow
-            key={dim.key}
-            label={dim.label}
-            options={dim.options}
-            value={String(values[dim.key] ?? "")}
-            onChange={(v) => onChange(dim.key, v)}
-            colors={colors}
-            counts={dimensionCounts?.[dim.key]}
-          />
-        ))}
+        </Pressable>
 
-        {/* Confidence slider */}
-        <ConfidenceSlider
-          value={values.confidenceThreshold}
-          onChange={v => onChange("confidenceThreshold", v)}
-          colors={colors}
-        />
+        {!dimCollapsed && (
+          <>
+            {CHIP_DIMS.map((dim) => (
+              <ChipRow
+                key={dim.key}
+                label={dim.label}
+                options={dim.options}
+                value={String(values[dim.key] ?? "")}
+                onChange={(v) => onChange(dim.key, v)}
+                colors={colors}
+                counts={dimensionCounts?.[dim.key]}
+              />
+            ))}
+            <ConfidenceSlider
+              value={values.confidenceThreshold}
+              onChange={v => onChange("confidenceThreshold", v)}
+              colors={colors}
+            />
+          </>
+        )}
       </View>
 
       {/* Action buttons */}
