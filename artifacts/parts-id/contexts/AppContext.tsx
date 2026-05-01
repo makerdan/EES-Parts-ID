@@ -18,6 +18,7 @@ interface AppContextValue {
   isAuthenticated: boolean;
   login: (password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
+  clearCache: () => Promise<void>;
   isLoading: boolean;
 }
 
@@ -75,8 +76,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticated(false);
   }, []);
 
+  const clearCache = useCallback(async () => {
+    await AsyncStorage.multiRemove(SEARCH_CACHE_KEYS).catch(() => {});
+  }, []);
+
   return (
-    <AppContext.Provider value={{ isAuthenticated, login, logout, isLoading }}>
+    <AppContext.Provider value={{ isAuthenticated, login, logout, clearCache, isLoading }}>
       {children}
     </AppContext.Provider>
   );
