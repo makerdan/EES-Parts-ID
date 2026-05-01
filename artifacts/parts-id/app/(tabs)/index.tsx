@@ -352,7 +352,8 @@ export default function SearchScreen() {
             onPress={() => setShowLogoutModal(true)}
             style={[styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
           >
-            <Feather name="log-out" size={18} color={colors.mutedForeground} />
+            <Feather name="log-out" size={16} color={colors.mutedForeground} />
+            <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Settings</Text>
           </Pressable>
         </View>
       </View>
@@ -607,7 +608,8 @@ const styles = StyleSheet.create({
   offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
   offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
   offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  logoutBtn: { width: 34, height: 34, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  logoutBtn: { width: 48, height: 44, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 2, paddingVertical: 4 },
+  logoutBtnLabel: { fontSize: 9, fontFamily: "Inter_500Medium", letterSpacing: 0.2 },
   modalOverlay: { flex: 1, backgroundColor: "#00000055", alignItems: "center", justifyContent: "center", padding: 32 },
   logoutModal: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 24 },
   logoutModalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
