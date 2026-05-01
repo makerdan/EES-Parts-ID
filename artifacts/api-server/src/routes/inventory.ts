@@ -351,7 +351,7 @@ router.post("/search", async (req, res) => {
     let pgResults: RawRow[] = [];
     try {
       if (tsQuery.trim()) {
-        pgResults = await db.execute(sql`
+        const pgQueryResult = await db.execute(sql`
           SELECT
             i.id, i.vendor, i.catalog, i.description,
             i.bin_location, i.ai_keywords, i.enriched_at, i.created_at, i.updated_at,
@@ -372,7 +372,9 @@ router.post("/search", async (req, res) => {
             ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
           ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
           LIMIT 200
-        `) as unknown as RawRow[];
+        `);
+        // Drizzle returns { rows: unknown[] } for raw SQL — validate shape before use
+        pgResults = (pgQueryResult as { rows: unknown[] }).rows as RawRow[];
       }
     } catch (pgErr) {
       console.warn("PG search error, falling back to Fuse:", pgErr);

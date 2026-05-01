@@ -257,9 +257,18 @@ export default function SearchScreen() {
         <View style={{ flex: 1 }}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>⚡ Parts ID</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
-            <Text style={[styles.headerSubtitle, { color: colors.mutedForeground }]}>
-              {cachedCount > 0 ? `${cachedCount} cached` : "Electrical Inventory"}
-            </Text>
+            {/* Explicit Ready / Empty loaded status */}
+            <View style={[
+              styles.statusBadge,
+              { backgroundColor: cachedCount > 0 ? colors.primary + "18" : colors.muted },
+            ]}>
+              <Text style={[
+                styles.statusBadgeText,
+                { color: cachedCount > 0 ? colors.primary : colors.mutedForeground },
+              ]}>
+                {cachedCount > 0 ? `✓ Ready · ${cachedCount} items` : "⊘ Empty · no items loaded"}
+              </Text>
+            </View>
             {isOffline ? (
               <View style={[styles.offlineBadge, { backgroundColor: colors.warning + "22" }]}>
                 <Text style={[styles.offlineBadgeText, { color: colors.warning }]}>OFFLINE</Text>
@@ -468,7 +477,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
-  headerSubtitle: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 },
+  statusBadgeText: { fontSize: 11, fontFamily: "Inter_500Medium" },
   offlineBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
   offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
   offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
