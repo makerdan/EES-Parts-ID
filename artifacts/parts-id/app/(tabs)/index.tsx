@@ -19,6 +19,7 @@ import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
 import { useApp } from "@/contexts/AppContext";
+import { Feather } from "@expo/vector-icons";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
@@ -351,7 +352,7 @@ export default function SearchScreen() {
             onPress={() => setShowLogoutModal(true)}
             style={[styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
           >
-            <Text style={[styles.logoutBtnText, { color: colors.mutedForeground }]}>⎋</Text>
+            <Feather name="log-out" size={18} color={colors.mutedForeground} />
           </Pressable>
         </View>
       </View>
@@ -607,7 +608,6 @@ const styles = StyleSheet.create({
   offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
   offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   logoutBtn: { width: 34, height: 34, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  logoutBtnText: { fontSize: 16 },
   modalOverlay: { flex: 1, backgroundColor: "#00000055", alignItems: "center", justifyContent: "center", padding: 32 },
   logoutModal: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 24 },
   logoutModalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
