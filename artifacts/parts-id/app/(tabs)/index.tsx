@@ -31,26 +31,26 @@ const DEFAULT_FILTERS: FilterValues = {
   material: "",
   textNumbers: "",
   confidenceThreshold: 0.5,
-  partType: "",
-  voltage: "",
+  // 16 required chip dimensions
+  category: "",
   amperage: "",
-  phase: "",
+  colorChip: "",
+  manufacturer: "",
+  sizeChip: "",
+  rating: "",
+  wireType: "",
   wireGauge: "",
   conduitType: "",
-  nemaConfig: "",
-  enclosureRating: "",
-  mounting: "",
-  poles: "",
-  wireType: "",
   conduitSize: "",
   boxType: "",
-  lightingType: "",
-  protectionType: "",
-  location: "",
+  boxGangCount: "",
+  mountingType: "",
+  environment: "",
+  voltage: "",
+  poleCount: "",
 };
 
-// Build structured search body — chip dimensions are passed as separate fields
-// (AND-logic applied server-side) not concatenated into keywords.
+// Build structured search body — chip dimensions passed as separate AND-filter fields
 function buildSearchBody(f: FilterValues) {
   return {
     keywords: f.keywords,
@@ -61,23 +61,23 @@ function buildSearchBody(f: FilterValues) {
     material: f.material,
     textNumbers: f.textNumbers,
     confidenceThreshold: f.confidenceThreshold,
-    // 16 structured chip dimensions — each non-empty value is an AND filter
-    partType: f.partType,
-    voltage: f.voltage,
+    // 16 structured chip dimensions
+    category: f.category,
     amperage: f.amperage,
-    phase: f.phase,
+    colorChip: f.colorChip,
+    manufacturer: f.manufacturer,
+    sizeChip: f.sizeChip,
+    rating: f.rating,
+    wireType: f.wireType,
     wireGauge: f.wireGauge,
     conduitType: f.conduitType,
-    nemaConfig: f.nemaConfig,
-    enclosureRating: f.enclosureRating,
-    mounting: f.mounting,
-    poles: f.poles,
-    wireType: f.wireType,
     conduitSize: f.conduitSize,
     boxType: f.boxType,
-    lightingType: f.lightingType,
-    protectionType: f.protectionType,
-    location: f.location,
+    boxGangCount: f.boxGangCount,
+    mountingType: f.mountingType,
+    environment: f.environment,
+    voltage: f.voltage,
+    poleCount: f.poleCount,
   };
 }
 
@@ -177,7 +177,7 @@ export default function SearchScreen() {
           f.keywords,
           f.catalog,
           f.vendor,
-          f.partType,
+          f.category,
           f.voltage,
           f.amperage,
         ].filter(Boolean).join(" ");
@@ -242,10 +242,10 @@ export default function SearchScreen() {
   const cachedCount = fuseItemsRef.current.length;
 
   const activeChipCount = [
-    filters.partType, filters.voltage, filters.amperage, filters.phase, filters.wireGauge,
-    filters.conduitType, filters.nemaConfig, filters.enclosureRating, filters.mounting,
-    filters.poles, filters.wireType, filters.conduitSize, filters.boxType, filters.lightingType,
-    filters.protectionType, filters.location,
+    filters.category, filters.amperage, filters.colorChip, filters.manufacturer,
+    filters.sizeChip, filters.rating, filters.wireType, filters.wireGauge,
+    filters.conduitType, filters.conduitSize, filters.boxType, filters.boxGangCount,
+    filters.mountingType, filters.environment, filters.voltage, filters.poleCount,
   ].filter(Boolean).length;
 
   const hasResults = searchMutation.isSuccess || offlineResults !== null;

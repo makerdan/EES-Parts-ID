@@ -202,18 +202,18 @@ export function ReferenceModal() {
                 </Text>
                 <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>QUICK LOOKUPS</Text>
                 {([
-                  { label: "THHN vs THWN",         question: "What is the difference between THHN and THWN wire?" },
-                  { label: "GFCI — When Required",  question: "What does GFCI stand for and when is it required by code?" },
-                  { label: "20A 240V Breaker",       question: "What breaker do I need for a 20 amp 240 volt circuit?" },
-                  { label: "AFCI Explained",          question: "What is AFCI and where is it required by the NEC?" },
-                  { label: "30A Wire Gauge",          question: "What wire gauge is needed for a 30 amp circuit?" },
-                  { label: "EMT vs Rigid Conduit",    question: "What is the difference between EMT and rigid metal conduit?" },
-                  { label: "NEMA 5-20R Meaning",      question: "What does NEMA 5-20R mean on a receptacle?" },
-                  { label: "MWBC Explained",          question: "What is a multi-wire branch circuit (MWBC) and when is it allowed?" },
-                  { label: "Box Fill NEC Rule",       question: "What is the NEC rule for box fill calculations?" },
-                  { label: "Fuse vs Breaker",         question: "What is the difference between a fuse and a circuit breaker?" },
-                  { label: "UL Listed Meaning",       question: "What does 'listed' or 'UL listed' mean on electrical equipment?" },
-                  { label: "Conduit Support Spacing",  question: "What is the maximum distance between conduit supports per the NEC?" },
+                  { label: "1G",              question: "What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?" },
+                  { label: "GFCI",            question: "What does GFCI stand for, how does it work, and where is it required by the NEC?" },
+                  { label: "AFCI",            question: "What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?" },
+                  { label: "TRWR",            question: "What does TRWR mean on a receptacle — what is Tamper Resistant and Weather Resistant, and where is each required?" },
+                  { label: "Decora",          question: "What is a Decora style switch or receptacle, who makes them, and how do they differ from standard toggle style?" },
+                  { label: "Romex",           question: "What is Romex (NM-B cable), what do the numbers on the sheath mean, and when is it allowed by code?" },
+                  { label: "MC Cable",        question: "What is MC cable (Metal Clad armored cable), how does it differ from Romex, and when should it be used?" },
+                  { label: "EMT",             question: "What is EMT (Electrical Metallic Tubing) conduit, what are its common uses, and how does it differ from rigid conduit?" },
+                  { label: "Toggle vs Rocker",question: "What is the difference between a toggle switch and a rocker (paddle) switch — are they interchangeable?" },
+                  { label: "Duplex",          question: "What is a duplex receptacle, how does it differ from simplex and quadplex outlets, and what are standard amperage ratings?" },
+                  { label: "15A vs 20A",      question: "What is the difference between 15 amp and 20 amp circuits, receptacles, and breakers — how do I tell them apart?" },
+                  { label: "AWG",             question: "What does AWG mean, how does wire gauge numbering work, and which gauge should I use for common circuits?" },
                 ] as const).map(({ label, question: q }) => (
                   <Pressable
                     key={label}

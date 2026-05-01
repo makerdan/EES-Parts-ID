@@ -294,38 +294,54 @@ components:
           minimum: 0
           maximum: 1
           default: 0.5
-        partType:
+        category:
           type: string
-        voltage:
-          type: string
+          description: Part category / type chip filter
         amperage:
           type: string
-        phase:
+          description: Current rating chip filter
+        colorChip:
           type: string
-        wireGauge:
+          description: Color quick-pick chip filter
+        manufacturer:
           type: string
-        conduitType:
+          description: Major manufacturer chip filter
+        sizeChip:
           type: string
-        nemaConfig:
+          description: Trade size quick-pick chip filter
+        rating:
           type: string
-        enclosureRating:
-          type: string
-        mounting:
-          type: string
-        poles:
-          type: string
+          description: NEMA / IP / UL rating chip filter
         wireType:
           type: string
+          description: Wire insulation type chip filter
+        wireGauge:
+          type: string
+          description: AWG gauge chip filter
+        conduitType:
+          type: string
+          description: Conduit material/type chip filter
         conduitSize:
           type: string
+          description: Conduit trade size chip filter
         boxType:
           type: string
-        lightingType:
+          description: Electrical box type chip filter
+        boxGangCount:
           type: string
-        protectionType:
+          description: Box gang count chip filter
+        mountingType:
           type: string
-        location:
+          description: Mounting method chip filter
+        environment:
           type: string
+          description: Installation environment chip filter
+        voltage:
+          type: string
+          description: Voltage rating chip filter
+        poleCount:
+          type: string
+          description: Pole count chip filter (breakers/switches)
       required: []
 
     SearchResult:

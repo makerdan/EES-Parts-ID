@@ -2074,13 +2074,7 @@ async function seedVendors() {
 
 async function seedSynonyms() {
   console.log("Seeding synonyms...");
-  // Filter out entries that have 'synonymions' key (typo in data)
-  const cleaned = SYNONYMS.map(s => ({
-    term: s.term,
-    synonyms: (s.synonyms || (s as { synonymions?: string[] }).synonymions || []),
-    category: s.category,
-  }));
-  for (const entry of cleaned) {
+  for (const entry of SYNONYMS) {
     await db
       .insert(synonymMapTable)
       .values(entry)
@@ -2089,7 +2083,7 @@ async function seedSynonyms() {
         set: { synonyms: entry.synonyms, category: entry.category },
       });
   }
-  console.log(`✓ Seeded ${cleaned.length} synonyms`);
+  console.log(`✓ Seeded ${SYNONYMS.length} synonyms`);
 }
 
 async function seedMisspellings() {
