@@ -321,7 +321,7 @@ function ConfidenceSlider({
         {[0, 20, 40, 60, 80].map((s) => (
           <Pressable
             key={s}
-            onPress={() => onChange(s / 100)}
+            onPress={() => onChange(s)}
             style={[
               sliderStyles.presetChip,
               {
