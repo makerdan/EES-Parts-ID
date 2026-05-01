@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import { resizeImage } from "@/utils/resizeImage";
 import { useSearchInventory, useAiIdentifyPart } from "@workspace/api-client-react";
@@ -17,6 +18,8 @@ import type { SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
+
+const SETTINGS_KEY = "parts_id_settings_v1";
 
 export default function PhotoScreen() {
   const colors = useColors();
@@ -28,6 +31,18 @@ export default function PhotoScreen() {
   const [textNumbers, setTextNumbers] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [aiSummary, setAiSummary] = useState("");
+  const [textFontScale, setTextFontScale] = useState(1.0);
+
+  useEffect(() => {
+    AsyncStorage.getItem(SETTINGS_KEY).then(raw => {
+      if (!raw) return;
+      try {
+        const s = JSON.parse(raw) as { textSize?: string };
+        const sz = s.textSize;
+        setTextFontScale(sz === "small" ? 0.85 : sz === "large" ? 1.18 : 1.0);
+      } catch {}
+    }).catch(() => {});
+  }, []);
   const [aiTerms, setAiTerms] = useState<string[]>([]);
   const [inlineError, setInlineError] = useState<string | null>(null);
 
@@ -276,7 +291,7 @@ export default function PhotoScreen() {
                 {results.length} Matching Parts
               </Text>
               {results.map((result, index) => (
-                <ResultCard key={result.item.id} result={result} rank={index} />
+                <ResultCard key={result.item.id} result={result} rank={index} fontScale={textFontScale} />
               ))}
             </View>
           ) : null}
