@@ -59,5 +59,9 @@
     "xlsx": "^0.18.5",
     "zod": "catalog:",
     "zod-validation-error": "^3.4.0"
+  },
+  "dependencies": {
+    "expo-file-system": "^55.0.17",
+    "expo-image-manipulator": "^55.0.15"
   }
 }

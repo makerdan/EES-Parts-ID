@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { resizeImage } from "@/utils/resizeImage";
 import { useSearchInventory, useAiIdentifyPart } from "@workspace/api-client-react";
 import type { SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -43,7 +44,6 @@ export default function PhotoScreen() {
     const options: ImagePicker.ImagePickerOptions = {
       mediaTypes: "images",
       quality: 0.7,
-      base64: true,
       allowsEditing: true,
       aspect: [4, 3],
     };
@@ -62,8 +62,8 @@ export default function PhotoScreen() {
 
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      const base64 = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
-      setImages((prev) => [...prev, { uri: asset.uri, base64 }]);
+      const resized = await resizeImage(asset.uri, asset.width ?? 0);
+      setImages((prev) => [...prev, { uri: resized.uri, base64: resized.base64 }]);
     }
   };
 
