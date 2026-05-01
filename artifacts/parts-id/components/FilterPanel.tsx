@@ -378,7 +378,7 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
         label="Keywords / Description"
         value={values.keywords}
         onChange={v => onChange("keywords", v)}
-        placeholder="e.g. 20a duplex white outlet..."
+        placeholder="e.g. 20a outlet, BR120..."
         colors={colors}
       />
 
