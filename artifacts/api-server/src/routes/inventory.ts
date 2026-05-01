@@ -56,9 +56,9 @@ function parseCatalogNumber(catalog: string): string[] {
     if (wireGauge[2] === "3") terms.push("3 conductor");
   }
 
-  // Wire gauge alone
+  // Wire gauge alone (AWG sizes range from 0000=4/0 up to 750 MCM)
   const awg = c.match(/^(\d+)\s*(AWG|GA)?/);
-  if (awg && parseInt(awg[1]) <= 4/0) {
+  if (awg && parseInt(awg[1]) <= 750) {
     terms.push(`${awg[1]} awg`, `${awg[1]} gauge`, `#${awg[1]}`);
   }
 

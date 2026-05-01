@@ -173,9 +173,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/AiIdentifyResponse"
 
-  /ai/reference:
+  /reference/ask:
     post:
-      operationId: aiReference
+      operationId: askReference
       tags: [ai]
       summary: Ask a question about electrical terms (SSE streaming)
       requestBody:
@@ -186,9 +186,25 @@ paths:
               $ref: "#/components/schemas/AiReferenceBody"
       responses:
         "200":
-          description: SSE stream of answer
+          description: SSE stream of answer chunks
           content:
             text/event-stream: {}
+
+  /ai/reference:
+    post:
+      operationId: aiReference
+      tags: [ai]
+      deprecated: true
+      summary: "[Deprecated] Use /reference/ask instead"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiReferenceBody"
+      responses:
+        "308":
+          description: Redirect to /reference/ask
 
 components:
   schemas:

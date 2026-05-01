@@ -1,5 +1,7 @@
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
+  LayoutChangeEvent,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -225,7 +227,7 @@ function Field({
   );
 }
 
-// Native slider using a custom track + thumb (cross-platform, no native module)
+// Continuous 0–100 confidence slider using PanResponder (no native module needed)
 function ConfidenceSlider({
   value,
   onChange,
@@ -235,46 +237,84 @@ function ConfidenceSlider({
   onChange: (v: number) => void;
   colors: ReturnType<typeof useColors>;
 }) {
-  const trackRef = useRef<View>(null);
-
   const pct = Math.round(value * 100);
+  const trackWidth = useRef(0);
 
-  const STEPS = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+  const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (e) => {
+        if (trackWidth.current === 0) return;
+        const x = e.nativeEvent.locationX;
+        onChange(clamp((x / trackWidth.current) * 100) / 100);
+      },
+      onPanResponderMove: (e) => {
+        if (trackWidth.current === 0) return;
+        const x = e.nativeEvent.locationX;
+        onChange(clamp((x / trackWidth.current) * 100) / 100);
+      },
+    }),
+  ).current;
+
+  const thumbPos = pct;
 
   return (
     <View style={{ marginBottom: 16 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }}>
         <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>MIN CONFIDENCE</Text>
-        <Text style={[sliderStyles.pctLabel, { color: colors.primary }]}>{pct}%</Text>
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={{ flexDirection: "row", gap: 6, paddingVertical: 2 }}>
-          {STEPS.map((s) => {
-            const active = pct === s;
-            return (
-              <Pressable
-                key={s}
-                onPress={() => onChange(s / 100)}
-                style={[
-                  sliderStyles.stepChip,
-                  {
-                    backgroundColor: pct >= s ? colors.primary : colors.muted,
-                    borderColor: active ? colors.primary : colors.border,
-                    opacity: pct >= s ? 1 : 0.5,
-                  },
-                ]}
-              >
-                <Text style={[sliderStyles.stepText, { color: pct >= s ? colors.primaryForeground : colors.foreground }]}>
-                  {s}%
-                </Text>
-              </Pressable>
-            );
-          })}
+        <View style={[sliderStyles.pctBadge, { backgroundColor: colors.primary + "22" }]}>
+          <Text style={[sliderStyles.pctLabel, { color: colors.primary }]}>{pct}%</Text>
         </View>
-      </ScrollView>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
-        <Text style={[sliderStyles.rangeLabel, { color: colors.mutedForeground }]}>Lenient</Text>
-        <Text style={[sliderStyles.rangeLabel, { color: colors.mutedForeground }]}>Strict</Text>
+      </View>
+
+      {/* Track */}
+      <View
+        style={sliderStyles.trackContainer}
+        onLayout={(e: LayoutChangeEvent) => { trackWidth.current = e.nativeEvent.layout.width; }}
+        {...panResponder.panHandlers}
+      >
+        <View style={[sliderStyles.trackBg, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+          <View style={[sliderStyles.trackFill, { backgroundColor: colors.primary, width: `${thumbPos}%` }]} />
+          <View
+            style={[
+              sliderStyles.thumb,
+              {
+                backgroundColor: colors.primary,
+                borderColor: colors.primaryForeground,
+                left: `${thumbPos}%`,
+              },
+            ]}
+          />
+        </View>
+      </View>
+
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 6 }}>
+        <Text style={[sliderStyles.rangeLabel, { color: colors.mutedForeground }]}>0% lenient</Text>
+        <Text style={[sliderStyles.rangeLabel, { color: colors.mutedForeground }]}>100% strict</Text>
+      </View>
+
+      {/* Quick presets */}
+      <View style={{ flexDirection: "row", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+        {[0, 20, 40, 60, 80].map((s) => (
+          <Pressable
+            key={s}
+            onPress={() => onChange(s / 100)}
+            style={[
+              sliderStyles.presetChip,
+              {
+                backgroundColor: pct === s ? colors.primary : colors.muted,
+                borderColor: pct === s ? colors.primary : colors.border,
+              },
+            ]}
+          >
+            <Text style={[sliderStyles.presetText, { color: pct === s ? colors.primaryForeground : colors.mutedForeground }]}>
+              {s === 0 ? "All" : `${s}%`}
+            </Text>
+          </Pressable>
+        ))}
       </View>
     </View>
   );
@@ -417,15 +457,29 @@ const chipAreaStyles = StyleSheet.create({
 });
 
 const sliderStyles = StyleSheet.create({
-  pctLabel: { fontSize: 16, fontFamily: "Inter_700Bold" },
-  stepChip: {
+  pctBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  pctLabel: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  trackContainer: { height: 36, justifyContent: "center" },
+  trackBg: {
+    height: 8,
+    borderRadius: 4,
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    overflow: "visible",
+    position: "relative",
   },
-  stepText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  trackFill: { height: "100%", borderRadius: 4 },
+  thumb: {
+    position: "absolute",
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    top: -7,
+    marginLeft: -11,
+  },
   rangeLabel: { fontSize: 10, fontFamily: "Inter_400Regular" },
+  presetChip: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
+  presetText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
 });
 
 const fieldStyles = StyleSheet.create({
