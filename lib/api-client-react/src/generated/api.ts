@@ -5,18 +5,37 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  AiIdentifyBody,
+  AiIdentifyResponse,
+  AiReferenceBody,
+  DictionaryLookupResponse,
+  EnrichInventoryBody,
+  HealthStatus,
+  InventoryItem,
+  InventoryListResponse,
+  ListInventoryParams,
+  LookupDictionaryParams,
+  SearchInventoryBody,
+  SearchInventoryResponse,
+  UpdateKeywordsBody,
+  UpsertInventoryBody,
+  UpsertInventoryResponse,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -99,3 +118,711 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List inventory items (paginated)
+ */
+export const getListInventoryUrl = (params?: ListInventoryParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/inventory?${stringifiedParams}`
+    : `/api/inventory`;
+};
+
+export const listInventory = async (
+  params?: ListInventoryParams,
+  options?: RequestInit,
+): Promise<InventoryListResponse> => {
+  return customFetch<InventoryListResponse>(getListInventoryUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListInventoryQueryKey = (params?: ListInventoryParams) => {
+  return [`/api/inventory`, ...(params ? [params] : [])] as const;
+};
+
+export const getListInventoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof listInventory>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListInventoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listInventory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListInventoryQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listInventory>>> = ({
+    signal,
+  }) => listInventory(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listInventory>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListInventoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listInventory>>
+>;
+export type ListInventoryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List inventory items (paginated)
+ */
+
+export function useListInventory<
+  TData = Awaited<ReturnType<typeof listInventory>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListInventoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listInventory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListInventoryQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Search inventory with multi-strategy cascade
+ */
+export const getSearchInventoryUrl = () => {
+  return `/api/inventory/search`;
+};
+
+export const searchInventory = async (
+  searchInventoryBody: SearchInventoryBody,
+  options?: RequestInit,
+): Promise<SearchInventoryResponse> => {
+  return customFetch<SearchInventoryResponse>(getSearchInventoryUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(searchInventoryBody),
+  });
+};
+
+export const getSearchInventoryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchInventory>>,
+    TError,
+    { data: BodyType<SearchInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof searchInventory>>,
+  TError,
+  { data: BodyType<SearchInventoryBody> },
+  TContext
+> => {
+  const mutationKey = ["searchInventory"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof searchInventory>>,
+    { data: BodyType<SearchInventoryBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return searchInventory(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SearchInventoryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof searchInventory>>
+>;
+export type SearchInventoryMutationBody = BodyType<SearchInventoryBody>;
+export type SearchInventoryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Search inventory with multi-strategy cascade
+ */
+export const useSearchInventory = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchInventory>>,
+    TError,
+    { data: BodyType<SearchInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof searchInventory>>,
+  TError,
+  { data: BodyType<SearchInventoryBody> },
+  TContext
+> => {
+  return useMutation(getSearchInventoryMutationOptions(options));
+};
+
+/**
+ * @summary Add or update inventory items (upsert by vendor+catalog)
+ */
+export const getUpsertInventoryBatchUrl = () => {
+  return `/api/inventory/upsert-batch`;
+};
+
+export const upsertInventoryBatch = async (
+  upsertInventoryBody: UpsertInventoryBody,
+  options?: RequestInit,
+): Promise<UpsertInventoryResponse> => {
+  return customFetch<UpsertInventoryResponse>(getUpsertInventoryBatchUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(upsertInventoryBody),
+  });
+};
+
+export const getUpsertInventoryBatchMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof upsertInventoryBatch>>,
+    TError,
+    { data: BodyType<UpsertInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof upsertInventoryBatch>>,
+  TError,
+  { data: BodyType<UpsertInventoryBody> },
+  TContext
+> => {
+  const mutationKey = ["upsertInventoryBatch"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof upsertInventoryBatch>>,
+    { data: BodyType<UpsertInventoryBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return upsertInventoryBatch(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpsertInventoryBatchMutationResult = NonNullable<
+  Awaited<ReturnType<typeof upsertInventoryBatch>>
+>;
+export type UpsertInventoryBatchMutationBody = BodyType<UpsertInventoryBody>;
+export type UpsertInventoryBatchMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Add or update inventory items (upsert by vendor+catalog)
+ */
+export const useUpsertInventoryBatch = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof upsertInventoryBatch>>,
+    TError,
+    { data: BodyType<UpsertInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof upsertInventoryBatch>>,
+  TError,
+  { data: BodyType<UpsertInventoryBody> },
+  TContext
+> => {
+  return useMutation(getUpsertInventoryBatchMutationOptions(options));
+};
+
+/**
+ * @summary AI enrich inventory items with keywords (SSE streaming)
+ */
+export const getEnrichInventoryUrl = () => {
+  return `/api/inventory/enrich`;
+};
+
+export const enrichInventory = async (
+  enrichInventoryBody: EnrichInventoryBody,
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getEnrichInventoryUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(enrichInventoryBody),
+  });
+};
+
+export const getEnrichInventoryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enrichInventory>>,
+    TError,
+    { data: BodyType<EnrichInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof enrichInventory>>,
+  TError,
+  { data: BodyType<EnrichInventoryBody> },
+  TContext
+> => {
+  const mutationKey = ["enrichInventory"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof enrichInventory>>,
+    { data: BodyType<EnrichInventoryBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return enrichInventory(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EnrichInventoryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof enrichInventory>>
+>;
+export type EnrichInventoryMutationBody = BodyType<EnrichInventoryBody>;
+export type EnrichInventoryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary AI enrich inventory items with keywords (SSE streaming)
+ */
+export const useEnrichInventory = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enrichInventory>>,
+    TError,
+    { data: BodyType<EnrichInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof enrichInventory>>,
+  TError,
+  { data: BodyType<EnrichInventoryBody> },
+  TContext
+> => {
+  return useMutation(getEnrichInventoryMutationOptions(options));
+};
+
+/**
+ * @summary Manually update keywords for an inventory item
+ */
+export const getUpdateItemKeywordsUrl = (id: number) => {
+  return `/api/inventory/${id}/keywords`;
+};
+
+export const updateItemKeywords = async (
+  id: number,
+  updateKeywordsBody: UpdateKeywordsBody,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getUpdateItemKeywordsUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateKeywordsBody),
+  });
+};
+
+export const getUpdateItemKeywordsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemKeywords>>,
+    TError,
+    { id: number; data: BodyType<UpdateKeywordsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateItemKeywords>>,
+  TError,
+  { id: number; data: BodyType<UpdateKeywordsBody> },
+  TContext
+> => {
+  const mutationKey = ["updateItemKeywords"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateItemKeywords>>,
+    { id: number; data: BodyType<UpdateKeywordsBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateItemKeywords(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateItemKeywordsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateItemKeywords>>
+>;
+export type UpdateItemKeywordsMutationBody = BodyType<UpdateKeywordsBody>;
+export type UpdateItemKeywordsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Manually update keywords for an inventory item
+ */
+export const useUpdateItemKeywords = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemKeywords>>,
+    TError,
+    { id: number; data: BodyType<UpdateKeywordsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateItemKeywords>>,
+  TError,
+  { id: number; data: BodyType<UpdateKeywordsBody> },
+  TContext
+> => {
+  return useMutation(getUpdateItemKeywordsMutationOptions(options));
+};
+
+/**
+ * @summary Lookup a term across all dictionaries
+ */
+export const getLookupDictionaryUrl = (params: LookupDictionaryParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/dictionaries/lookup?${stringifiedParams}`
+    : `/api/dictionaries/lookup`;
+};
+
+export const lookupDictionary = async (
+  params: LookupDictionaryParams,
+  options?: RequestInit,
+): Promise<DictionaryLookupResponse> => {
+  return customFetch<DictionaryLookupResponse>(getLookupDictionaryUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getLookupDictionaryQueryKey = (
+  params?: LookupDictionaryParams,
+) => {
+  return [`/api/dictionaries/lookup`, ...(params ? [params] : [])] as const;
+};
+
+export const getLookupDictionaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof lookupDictionary>>,
+  TError = ErrorType<unknown>,
+>(
+  params: LookupDictionaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupDictionary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getLookupDictionaryQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof lookupDictionary>>
+  > = ({ signal }) => lookupDictionary(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof lookupDictionary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type LookupDictionaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof lookupDictionary>>
+>;
+export type LookupDictionaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Lookup a term across all dictionaries
+ */
+
+export function useLookupDictionary<
+  TData = Awaited<ReturnType<typeof lookupDictionary>>,
+  TError = ErrorType<unknown>,
+>(
+  params: LookupDictionaryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupDictionary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getLookupDictionaryQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Identify electrical part from images using AI vision
+ */
+export const getAiIdentifyPartUrl = () => {
+  return `/api/ai/identify`;
+};
+
+export const aiIdentifyPart = async (
+  aiIdentifyBody: AiIdentifyBody,
+  options?: RequestInit,
+): Promise<AiIdentifyResponse> => {
+  return customFetch<AiIdentifyResponse>(getAiIdentifyPartUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(aiIdentifyBody),
+  });
+};
+
+export const getAiIdentifyPartMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiIdentifyPart>>,
+    TError,
+    { data: BodyType<AiIdentifyBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiIdentifyPart>>,
+  TError,
+  { data: BodyType<AiIdentifyBody> },
+  TContext
+> => {
+  const mutationKey = ["aiIdentifyPart"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiIdentifyPart>>,
+    { data: BodyType<AiIdentifyBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return aiIdentifyPart(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiIdentifyPartMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiIdentifyPart>>
+>;
+export type AiIdentifyPartMutationBody = BodyType<AiIdentifyBody>;
+export type AiIdentifyPartMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Identify electrical part from images using AI vision
+ */
+export const useAiIdentifyPart = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiIdentifyPart>>,
+    TError,
+    { data: BodyType<AiIdentifyBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof aiIdentifyPart>>,
+  TError,
+  { data: BodyType<AiIdentifyBody> },
+  TContext
+> => {
+  return useMutation(getAiIdentifyPartMutationOptions(options));
+};
+
+/**
+ * @summary Ask a question about electrical terms (SSE streaming)
+ */
+export const getAiReferenceUrl = () => {
+  return `/api/ai/reference`;
+};
+
+export const aiReference = async (
+  aiReferenceBody: AiReferenceBody,
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getAiReferenceUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(aiReferenceBody),
+  });
+};
+
+export const getAiReferenceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiReference>>,
+    TError,
+    { data: BodyType<AiReferenceBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiReference>>,
+  TError,
+  { data: BodyType<AiReferenceBody> },
+  TContext
+> => {
+  const mutationKey = ["aiReference"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiReference>>,
+    { data: BodyType<AiReferenceBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return aiReference(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiReferenceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiReference>>
+>;
+export type AiReferenceMutationBody = BodyType<AiReferenceBody>;
+export type AiReferenceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Ask a question about electrical terms (SSE streaming)
+ */
+export const useAiReference = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiReference>>,
+    TError,
+    { data: BodyType<AiReferenceBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof aiReference>>,
+  TError,
+  { data: BodyType<AiReferenceBody> },
+  TContext
+> => {
+  return useMutation(getAiReferenceMutationOptions(options));
+};
