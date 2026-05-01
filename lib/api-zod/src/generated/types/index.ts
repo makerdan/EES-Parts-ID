@@ -6,4 +6,20 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./aiIdentifyBody";
+export * from "./aiIdentifyResponse";
+export * from "./aiReferenceBody";
+export * from "./dictionaryLookupResponse";
+export * from "./enrichInventoryBody";
 export * from "./healthStatus";
+export * from "./inventoryItem";
+export * from "./inventoryListResponse";
+export * from "./listInventoryParams";
+export * from "./lookupDictionaryParams";
+export * from "./searchInventoryBody";
+export * from "./searchInventoryResponse";
+export * from "./searchResult";
+export * from "./updateKeywordsBody";
+export * from "./upsertInventoryBody";
+export * from "./upsertInventoryBodyItemsItem";
+export * from "./upsertInventoryResponse";

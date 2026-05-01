@@ -14,3 +14,227 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * @summary List inventory items (paginated)
+ */
+export const listInventoryQueryPageDefault = 1;
+export const listInventoryQueryLimitDefault = 50;
+
+export const ListInventoryQueryParams = zod.object({
+  page: zod.coerce.number().default(listInventoryQueryPageDefault),
+  limit: zod.coerce.number().default(listInventoryQueryLimitDefault),
+});
+
+export const ListInventoryResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.number(),
+      vendor: zod.string(),
+      catalog: zod.string(),
+      description: zod.string(),
+      binLocation: zod.string(),
+      aiKeywords: zod.array(zod.string()),
+      enrichedAt: zod.coerce.date().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
+
+/**
+ * @summary Search inventory with multi-strategy cascade
+ */
+export const searchInventoryBodyConfidenceThresholdDefault = 0.5;
+export const searchInventoryBodyConfidenceThresholdMin = 0;
+export const searchInventoryBodyConfidenceThresholdMax = 1;
+
+export const SearchInventoryBody = zod.object({
+  keywords: zod.string().optional(),
+  catalog: zod.string().optional(),
+  vendor: zod.string().optional(),
+  color: zod.string().optional(),
+  size: zod.string().optional(),
+  material: zod.string().optional(),
+  textNumbers: zod.string().optional(),
+  confidenceThreshold: zod
+    .number()
+    .min(searchInventoryBodyConfidenceThresholdMin)
+    .max(searchInventoryBodyConfidenceThresholdMax)
+    .default(searchInventoryBodyConfidenceThresholdDefault),
+});
+
+export const SearchInventoryResponse = zod.object({
+  results: zod.array(
+    zod.object({
+      item: zod.object({
+        id: zod.number(),
+        vendor: zod.string(),
+        catalog: zod.string(),
+        description: zod.string(),
+        binLocation: zod.string(),
+        aiKeywords: zod.array(zod.string()),
+        enrichedAt: zod.coerce.date().nullish(),
+        createdAt: zod.coerce.date(),
+        updatedAt: zod.coerce.date(),
+      }),
+      confidence: zod.number(),
+      matchReason: zod.string(),
+      seriesBase: zod.string().nullish(),
+      seriesLabel: zod.string().nullish(),
+      variants: zod.array(
+        zod.object({
+          id: zod.number(),
+          vendor: zod.string(),
+          catalog: zod.string(),
+          description: zod.string(),
+          binLocation: zod.string(),
+          aiKeywords: zod.array(zod.string()),
+          enrichedAt: zod.coerce.date().nullish(),
+          createdAt: zod.coerce.date(),
+          updatedAt: zod.coerce.date(),
+        }),
+      ),
+    }),
+  ),
+  totalMatches: zod.number(),
+  belowThreshold: zod.number(),
+});
+
+/**
+ * @summary Add or update inventory items (upsert by vendor+catalog)
+ */
+export const UpsertInventoryBatchBody = zod.object({
+  items: zod.array(
+    zod.object({
+      vendor: zod.string(),
+      catalog: zod.string(),
+      description: zod.string().optional(),
+      binLocation: zod.string().optional(),
+    }),
+  ),
+});
+
+export const UpsertInventoryBatchResponse = zod.object({
+  inserted: zod.number(),
+  updated: zod.number(),
+  total: zod.number(),
+});
+
+/**
+ * @summary AI enrich inventory items with keywords (SSE streaming)
+ */
+export const EnrichInventoryBody = zod.object({
+  ids: zod
+    .array(zod.number())
+    .optional()
+    .describe(
+      "Inventory IDs to enrich. If empty, enriches all un-enriched items.",
+    ),
+});
+
+/**
+ * @summary Manually update keywords for an inventory item
+ */
+export const UpdateItemKeywordsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateItemKeywordsBody = zod.object({
+  keywords: zod.array(zod.string()),
+});
+
+export const UpdateItemKeywordsResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  description: zod.string(),
+  binLocation: zod.string(),
+  aiKeywords: zod.array(zod.string()),
+  enrichedAt: zod.coerce.date().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Lookup a term across all dictionaries
+ */
+export const LookupDictionaryQueryParams = zod.object({
+  term: zod.coerce.string(),
+});
+
+export const LookupDictionaryResponse = zod.object({
+  abbreviations: zod.array(zod.string()),
+  synonyms: zod.array(zod.string()),
+  correction: zod.string().nullish(),
+  vendorNames: zod.array(zod.string()),
+  slangTerms: zod.array(zod.string()),
+});
+
+/**
+ * @summary Identify electrical part from images using AI vision
+ */
+export const aiIdentifyPartBodyImagesMax = 2;
+
+export const AiIdentifyPartBody = zod.object({
+  images: zod
+    .array(zod.string().describe("Base64-encoded image data (data URI)"))
+    .max(aiIdentifyPartBodyImagesMax),
+  keywords: zod.string().optional(),
+  vendor: zod.string().optional(),
+  color: zod.string().optional(),
+  size: zod.string().optional(),
+  material: zod.string().optional(),
+  textNumbers: zod.string().optional(),
+});
+
+export const AiIdentifyPartResponse = zod.object({
+  searchTerms: zod.array(zod.string()),
+  synonyms: zod.array(zod.string()),
+  relatedTerms: zod.array(zod.string()),
+  manufacturerVerified: zod.boolean(),
+  detectedVendor: zod.string().nullish(),
+  summary: zod.string(),
+  results: zod.array(
+    zod.object({
+      item: zod.object({
+        id: zod.number(),
+        vendor: zod.string(),
+        catalog: zod.string(),
+        description: zod.string(),
+        binLocation: zod.string(),
+        aiKeywords: zod.array(zod.string()),
+        enrichedAt: zod.coerce.date().nullish(),
+        createdAt: zod.coerce.date(),
+        updatedAt: zod.coerce.date(),
+      }),
+      confidence: zod.number(),
+      matchReason: zod.string(),
+      seriesBase: zod.string().nullish(),
+      seriesLabel: zod.string().nullish(),
+      variants: zod.array(
+        zod.object({
+          id: zod.number(),
+          vendor: zod.string(),
+          catalog: zod.string(),
+          description: zod.string(),
+          binLocation: zod.string(),
+          aiKeywords: zod.array(zod.string()),
+          enrichedAt: zod.coerce.date().nullish(),
+          createdAt: zod.coerce.date(),
+          updatedAt: zod.coerce.date(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/**
+ * @summary Ask a question about electrical terms (SSE streaming)
+ */
+export const AiReferenceBody = zod.object({
+  question: zod.string(),
+});

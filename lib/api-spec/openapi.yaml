@@ -10,6 +10,12 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: inventory
+    description: Inventory management and search
+  - name: dictionaries
+    description: Dictionary lookups
+  - name: ai
+    description: AI identification and reference
 paths:
   /healthz:
     get:
@@ -24,6 +30,166 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /inventory:
+    get:
+      operationId: listInventory
+      tags: [inventory]
+      summary: List inventory items (paginated)
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Paginated inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryListResponse"
+
+  /inventory/search:
+    post:
+      operationId: searchInventory
+      tags: [inventory]
+      summary: Search inventory with multi-strategy cascade
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchInventoryBody"
+      responses:
+        "200":
+          description: Search results with confidence scores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchInventoryResponse"
+
+  /inventory/upsert-batch:
+    post:
+      operationId: upsertInventoryBatch
+      tags: [inventory]
+      summary: Add or update inventory items (upsert by vendor+catalog)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertInventoryBody"
+      responses:
+        "200":
+          description: Upsert summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpsertInventoryResponse"
+
+  /inventory/enrich:
+    post:
+      operationId: enrichInventory
+      tags: [inventory]
+      summary: AI enrich inventory items with keywords (SSE streaming)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrichInventoryBody"
+      responses:
+        "200":
+          description: SSE stream of enrichment progress
+          content:
+            text/event-stream: {}
+
+  /inventory/{id}/keywords:
+    patch:
+      operationId: updateItemKeywords
+      tags: [inventory]
+      summary: Manually update keywords for an inventory item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateKeywordsBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+
+  /dictionaries/lookup:
+    get:
+      operationId: lookupDictionary
+      tags: [dictionaries]
+      summary: Lookup a term across all dictionaries
+      parameters:
+        - name: term
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Dictionary lookup results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DictionaryLookupResponse"
+
+  /ai/identify:
+    post:
+      operationId: aiIdentifyPart
+      tags: [ai]
+      summary: Identify electrical part from images using AI vision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiIdentifyBody"
+      responses:
+        "200":
+          description: AI identification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiIdentifyResponse"
+
+  /ai/reference:
+    post:
+      operationId: aiReference
+      tags: [ai]
+      summary: Ask a question about electrical terms (SSE streaming)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiReferenceBody"
+      responses:
+        "200":
+          description: SSE stream of answer
+          content:
+            text/event-stream: {}
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +200,273 @@ components:
       required:
         - status
 
+    InventoryItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        vendor:
+          type: string
+        catalog:
+          type: string
+        description:
+          type: string
+        binLocation:
+          type: string
+        aiKeywords:
+          type: array
+          items:
+            type: string
+        enrichedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - vendor
+        - catalog
+        - description
+        - binLocation
+        - aiKeywords
+        - createdAt
+        - updatedAt
+
+    InventoryListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryItem"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required:
+        - items
+        - total
+        - page
+        - limit
+
+    SearchInventoryBody:
+      type: object
+      properties:
+        keywords:
+          type: string
+        catalog:
+          type: string
+        vendor:
+          type: string
+        color:
+          type: string
+        size:
+          type: string
+        material:
+          type: string
+        textNumbers:
+          type: string
+        confidenceThreshold:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.5
+      required: []
+
+    SearchResult:
+      type: object
+      properties:
+        item:
+          $ref: "#/components/schemas/InventoryItem"
+        confidence:
+          type: number
+        matchReason:
+          type: string
+        seriesBase:
+          type: string
+          nullable: true
+        seriesLabel:
+          type: string
+          nullable: true
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryItem"
+      required:
+        - item
+        - confidence
+        - matchReason
+        - variants
+
+    SearchInventoryResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        totalMatches:
+          type: integer
+        belowThreshold:
+          type: integer
+      required:
+        - results
+        - totalMatches
+        - belowThreshold
+
+    UpsertInventoryBody:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              vendor:
+                type: string
+              catalog:
+                type: string
+              description:
+                type: string
+              binLocation:
+                type: string
+            required:
+              - vendor
+              - catalog
+      required:
+        - items
+
+    UpsertInventoryResponse:
+      type: object
+      properties:
+        inserted:
+          type: integer
+        updated:
+          type: integer
+        total:
+          type: integer
+      required:
+        - inserted
+        - updated
+        - total
+
+    EnrichInventoryBody:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: integer
+          description: Inventory IDs to enrich. If empty, enriches all un-enriched items.
+      required: []
+
+    UpdateKeywordsBody:
+      type: object
+      properties:
+        keywords:
+          type: array
+          items:
+            type: string
+      required:
+        - keywords
+
+    DictionaryLookupResponse:
+      type: object
+      properties:
+        abbreviations:
+          type: array
+          items:
+            type: string
+        synonyms:
+          type: array
+          items:
+            type: string
+        correction:
+          type: string
+          nullable: true
+        vendorNames:
+          type: array
+          items:
+            type: string
+        slangTerms:
+          type: array
+          items:
+            type: string
+      required:
+        - abbreviations
+        - synonyms
+        - vendorNames
+        - slangTerms
+
+    AiIdentifyBody:
+      type: object
+      properties:
+        images:
+          type: array
+          items:
+            type: string
+            description: Base64-encoded image data (data URI)
+          maxItems: 2
+        keywords:
+          type: string
+        vendor:
+          type: string
+        color:
+          type: string
+        size:
+          type: string
+        material:
+          type: string
+        textNumbers:
+          type: string
+      required:
+        - images
+
+    AiIdentifyResponse:
+      type: object
+      properties:
+        searchTerms:
+          type: array
+          items:
+            type: string
+        synonyms:
+          type: array
+          items:
+            type: string
+        relatedTerms:
+          type: array
+          items:
+            type: string
+        manufacturerVerified:
+          type: boolean
+        detectedVendor:
+          type: string
+          nullable: true
+        summary:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+      required:
+        - searchTerms
+        - synonyms
+        - relatedTerms
+        - manufacturerVerified
+        - summary
+        - results
+
+    AiReferenceBody:
+      type: object
+      properties:
+        question:
+          type: string
+      required:
+        - question

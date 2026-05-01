@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "qVrYr6eChY4qdWEnTdp5g"
+uri = "file://artifacts/parts-id/assets/images/icon.png"
+type = "image"
+title = "parts-id-icon"

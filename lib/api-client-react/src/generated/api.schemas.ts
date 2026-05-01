@@ -8,3 +8,120 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface InventoryItem {
+  id: number;
+  vendor: string;
+  catalog: string;
+  description: string;
+  binLocation: string;
+  aiKeywords: string[];
+  enrichedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InventoryListResponse {
+  items: InventoryItem[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface SearchInventoryBody {
+  keywords?: string;
+  catalog?: string;
+  vendor?: string;
+  color?: string;
+  size?: string;
+  material?: string;
+  textNumbers?: string;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  confidenceThreshold?: number;
+}
+
+export interface SearchResult {
+  item: InventoryItem;
+  confidence: number;
+  matchReason: string;
+  seriesBase?: string | null;
+  seriesLabel?: string | null;
+  variants: InventoryItem[];
+}
+
+export interface SearchInventoryResponse {
+  results: SearchResult[];
+  totalMatches: number;
+  belowThreshold: number;
+}
+
+export type UpsertInventoryBodyItemsItem = {
+  vendor: string;
+  catalog: string;
+  description?: string;
+  binLocation?: string;
+};
+
+export interface UpsertInventoryBody {
+  items: UpsertInventoryBodyItemsItem[];
+}
+
+export interface UpsertInventoryResponse {
+  inserted: number;
+  updated: number;
+  total: number;
+}
+
+export interface EnrichInventoryBody {
+  /** Inventory IDs to enrich. If empty, enriches all un-enriched items. */
+  ids?: number[];
+}
+
+export interface UpdateKeywordsBody {
+  keywords: string[];
+}
+
+export interface DictionaryLookupResponse {
+  abbreviations: string[];
+  synonyms: string[];
+  correction?: string | null;
+  vendorNames: string[];
+  slangTerms: string[];
+}
+
+export interface AiIdentifyBody {
+  /** @maxItems 2 */
+  images: string[];
+  keywords?: string;
+  vendor?: string;
+  color?: string;
+  size?: string;
+  material?: string;
+  textNumbers?: string;
+}
+
+export interface AiIdentifyResponse {
+  searchTerms: string[];
+  synonyms: string[];
+  relatedTerms: string[];
+  manufacturerVerified: boolean;
+  detectedVendor?: string | null;
+  summary: string;
+  results: SearchResult[];
+}
+
+export interface AiReferenceBody {
+  question: string;
+}
+
+export type ListInventoryParams = {
+  page?: number;
+  limit?: number;
+};
+
+export type LookupDictionaryParams = {
+  term: string;
+};
