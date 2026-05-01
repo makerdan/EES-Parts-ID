@@ -113,7 +113,7 @@ function buildSearchBody(f: FilterValues) {
 
 export default function SearchScreen() {
   const colors = useColors();
-  const { logout } = useApp();
+  const { logout, clearCache } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(true);
@@ -121,6 +121,7 @@ export default function SearchScreen() {
   const [isOffline, setIsOffline] = useState(false);
   const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
@@ -355,23 +356,53 @@ export default function SearchScreen() {
         </View>
       </View>
 
-      {/* Logout confirmation modal */}
-      <Modal visible={showLogoutModal} transparent animationType="fade" onRequestClose={() => setShowLogoutModal(false)}>
+      {/* Settings modal (logout + cache clear) */}
+      <Modal
+        visible={showLogoutModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setShowLogoutModal(false); setCacheClearedMsg(null); }}
+      >
         <View style={styles.modalOverlay}>
           <View style={[styles.logoutModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.logoutModalTitle, { color: colors.foreground }]}>Sign Out</Text>
-            <Text style={[styles.logoutModalHint, { color: colors.mutedForeground }]}>
-              You will be returned to the password screen.
+            <Text style={[styles.logoutModalTitle, { color: colors.foreground }]}>Settings</Text>
+
+            {/* Clear cache row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Search cache</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Clears locally stored search results. Useful when inventory changes.
+                </Text>
+                {cacheClearedMsg ? (
+                  <Text style={[styles.settingsRowSuccess, { color: colors.success }]}>{cacheClearedMsg}</Text>
+                ) : null}
+              </View>
+              <Pressable
+                onPress={async () => {
+                  await clearCache();
+                  setCacheClearedMsg("✓ Cache cleared");
+                  setTimeout(() => setCacheClearedMsg(null), 3000);
+                }}
+                style={[styles.clearCacheBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+              >
+                <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>Clear</Text>
+              </Pressable>
+            </View>
+
+            {/* Sign out row */}
+            <Text style={[styles.logoutModalHint, { color: colors.mutedForeground, marginTop: 16 }]}>
+              Sign out to return to the password screen.
             </Text>
             <View style={styles.logoutModalBtns}>
               <Pressable
-                onPress={() => setShowLogoutModal(false)}
+                onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); }}
                 style={[styles.logoutModalCancel, { borderColor: colors.border, backgroundColor: colors.muted }]}
               >
                 <Text style={[styles.logoutModalCancelText, { color: colors.foreground }]}>Cancel</Text>
               </Pressable>
               <Pressable
-                onPress={() => { setShowLogoutModal(false); logout(); }}
+                onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); logout(); }}
                 style={[styles.logoutModalConfirm, { backgroundColor: colors.destructive }]}
               >
                 <Text style={[styles.logoutModalConfirmText, { color: "#fff" }]}>Sign Out</Text>
@@ -631,4 +662,16 @@ const styles = StyleSheet.create({
   tipText: { fontSize: 13, fontFamily: "Inter_400Regular", marginBottom: 4, lineHeight: 18 },
   resultItem: { paddingHorizontal: 12 },
   listContent: { paddingBottom: 120 },
+  settingsRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  settingsRowLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
+  settingsRowHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  settingsRowSuccess: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 },
+  clearCacheBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, alignSelf: "center" },
+  clearCacheBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
 });
