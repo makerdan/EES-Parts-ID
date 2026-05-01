@@ -200,12 +200,26 @@ export function ReferenceModal() {
                 <Text style={[emptyStyles.hint, { color: colors.mutedForeground }]}>
                   Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical term.
                 </Text>
+                <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>QUICK LOOKUPS</Text>
                 {[
                   "What is the difference between THHN and THWN?",
                   "What does GFCI stand for and when is it required?",
                   "What breaker do I need for a 20A 240V circuit?",
+                  "What is AFCI and where is it required by code?",
+                  "What wire gauge is needed for a 30 amp circuit?",
+                  "What is the difference between EMT and rigid conduit?",
+                  "What does NEMA 5-20R mean?",
+                  "What is a MWBC (multi-wire branch circuit)?",
+                  "What is the NEC rule for box fill calculations?",
+                  "What is the difference between a fuse and a circuit breaker?",
+                  "What does 'listed' mean on electrical equipment?",
+                  "What is the max distance between conduit supports?",
                 ].map((q) => (
-                  <Pressable key={q} onPress={() => setQuestion(q)} style={[emptyStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                  <Pressable
+                    key={q}
+                    onPress={() => setQuestion(q)}
+                    style={[emptyStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                  >
                     <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{q}</Text>
                   </Pressable>
                 ))}
@@ -295,6 +309,7 @@ const emptyStyles = StyleSheet.create({
   emoji: { fontSize: 40, marginBottom: 12 },
   title: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   hint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 16 },
+  sectionLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 1, textTransform: "uppercase", marginBottom: 10, alignSelf: "flex-start" },
   chip: { width: "100%", padding: 12, borderRadius: 8, borderWidth: 1, marginBottom: 8 },
   chipText: { fontSize: 13, fontFamily: "Inter_400Regular" },
 });

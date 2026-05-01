@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Pressable,
   SafeAreaView,
@@ -29,15 +28,17 @@ export default function PhotoScreen() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [aiSummary, setAiSummary] = useState("");
   const [aiTerms, setAiTerms] = useState<string[]>([]);
+  const [inlineError, setInlineError] = useState<string | null>(null);
 
   const identifyMutation = useAiIdentifyPart();
   const searchMutation = useSearchInventory();
 
   const pickImage = async (source: "camera" | "library") => {
     if (images.length >= 2) {
-      Alert.alert("Max 2 images", "Remove an image first to add another.");
+      setInlineError("Max 2 images — remove one first before adding another.");
       return;
     }
+    setInlineError(null);
 
     const options: ImagePicker.ImagePickerOptions = {
       mediaTypes: "images",
@@ -51,7 +52,7 @@ export default function PhotoScreen() {
     if (source === "camera") {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Camera permission needed", "Please allow camera access in Settings.");
+        setInlineError("Camera access denied — please enable it in your device Settings.");
         return;
       }
       result = await ImagePicker.launchCameraAsync(options);
@@ -72,10 +73,11 @@ export default function PhotoScreen() {
 
   const handleIdentify = async () => {
     if (!images.length) {
-      Alert.alert("No image", "Please take or select at least one photo.");
+      setInlineError("Add at least one photo before identifying.");
       return;
     }
 
+    setInlineError(null);
     identifyMutation.reset();
     searchMutation.reset();
     setResults([]);
@@ -117,7 +119,7 @@ export default function PhotoScreen() {
         setResults(searchResult.results);
       }
     } catch (err) {
-      Alert.alert("Identification failed", "Could not identify the part. Try again.");
+      setInlineError("Identification failed — could not analyze the part. Please try again.");
     }
   };
 
@@ -236,6 +238,16 @@ export default function PhotoScreen() {
               </Text>
             )}
           </Pressable>
+
+          {/* Inline error banner */}
+          {inlineError ? (
+            <View style={[styles.inlineBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
+              <Text style={[styles.inlineBannerText, { color: colors.destructive }]}>⚠ {inlineError}</Text>
+              <Pressable onPress={() => setInlineError(null)} style={styles.inlineBannerClose}>
+                <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           {/* AI summary */}
           {aiSummary ? (
@@ -361,6 +373,9 @@ const styles = StyleSheet.create({
   resultsTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginBottom: 10 },
   noResultsCard: { borderRadius: 10, padding: 16, borderWidth: 1 },
   noResultsText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
+  inlineBanner: { borderRadius: 8, padding: 12, borderWidth: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
+  inlineBannerClose: { paddingLeft: 10 },
   errorCard: { borderRadius: 8, padding: 14, borderWidth: 1 },
   errorText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   welcomeCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 8 },

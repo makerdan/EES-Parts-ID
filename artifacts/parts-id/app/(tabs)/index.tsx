@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -17,6 +18,7 @@ import { FilterPanel, type FilterValues } from "@/components/FilterPanel";
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
+import { useApp } from "@/contexts/AppContext";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 
@@ -71,12 +73,19 @@ function buildSearchBody(f: FilterValues) {
 
 export default function SearchScreen() {
   const colors = useColors();
+  const { logout } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(true);
+  const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
+  const [isOffline, setIsOffline] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
   const fuseItemsRef = useRef<InventoryItem[]>([]);
+  // Track latest filters in a ref so the onError closure always reads current values
+  const filtersRef = useRef<FilterValues>(filters);
+  useEffect(() => { filtersRef.current = filters; }, [filters]);
 
   // Seed local Fuse index from AsyncStorage on mount
   useEffect(() => {
@@ -102,10 +111,26 @@ export default function SearchScreen() {
       .catch(() => {});
   }, []);
 
+  const runFuseSearch = useCallback((kw: string): SearchResult[] => {
+    if (!fuseRef.current || !kw.trim()) return [];
+    return fuseRef.current
+      .search(kw.trim(), { limit: 30 })
+      .map((r, index) => ({
+        item: r.item,
+        confidence: Math.max(0, 1 - (r.score ?? 0.5)),
+        matchReason: "offline Fuse match",
+        seriesLabel: undefined,
+        variants: [],
+      }));
+  }, []);
+
   const searchMutation = useSearchInventory({
     mutation: {
       onSuccess: (data) => {
+        setIsOffline(false);
+        setOfflineResults(null);
         setShowFilters(false);
+
         // Cache all returned items for offline Fuse use
         if (data.results?.length) {
           const newItems = data.results.map(r => r.item);
@@ -133,6 +158,27 @@ export default function SearchScreen() {
           AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(() => {});
         }
       },
+      onError: () => {
+        // Server unreachable — fall back to local Fuse cache
+        const f = filtersRef.current;
+        const kw = [
+          f.keywords,
+          f.catalog,
+          f.vendor,
+          f.partType,
+          f.voltage,
+          f.amperage,
+        ].filter(Boolean).join(" ");
+        const fuseHits = runFuseSearch(kw);
+        if (fuseHits.length > 0) {
+          setIsOffline(true);
+          setOfflineResults(fuseHits);
+          setShowFilters(false);
+        } else {
+          setIsOffline(true);
+          setOfflineResults([]);
+        }
+      },
     },
   });
 
@@ -141,6 +187,8 @@ export default function SearchScreen() {
   };
 
   const handleSearch = () => {
+    setOfflineResults(null);
+    setIsOffline(false);
     const body = buildSearchBody(filters);
     searchMutation.mutate({ data: body });
   };
@@ -148,6 +196,8 @@ export default function SearchScreen() {
   const handleClear = () => {
     setFilters(DEFAULT_FILTERS);
     searchMutation.reset();
+    setOfflineResults(null);
+    setIsOffline(false);
     setShowFilters(true);
   };
 
@@ -173,9 +223,10 @@ export default function SearchScreen() {
     AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
   }, []);
 
-  const results: SearchResult[] = searchMutation.data?.results ?? [];
+  const results: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
   const totalMatches = searchMutation.data?.totalMatches ?? 0;
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
+  const cachedCount = fuseItemsRef.current.length;
 
   const activeChipCount = [
     filters.partType, filters.voltage, filters.amperage, filters.phase, filters.wireGauge,
@@ -184,28 +235,80 @@ export default function SearchScreen() {
     filters.protectionType, filters.location,
   ].filter(Boolean).length;
 
+  const hasResults = searchMutation.isSuccess || offlineResults !== null;
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>⚡ Parts ID</Text>
-          <Text style={[styles.headerSubtitle, { color: colors.mutedForeground }]}>
-            Electrical Inventory Lookup
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+            <Text style={[styles.headerSubtitle, { color: colors.mutedForeground }]}>
+              {cachedCount > 0 ? `${cachedCount} cached` : "Electrical Inventory"}
+            </Text>
+            {isOffline ? (
+              <View style={[styles.offlineBadge, { backgroundColor: colors.warning + "22" }]}>
+                <Text style={[styles.offlineBadgeText, { color: colors.warning }]}>OFFLINE</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Pressable
+            onPress={() => setShowFilters(!showFilters)}
+            style={[styles.filterToggle, {
+              backgroundColor: showFilters ? colors.primary : colors.muted,
+              borderColor: activeChipCount > 0 ? colors.primary : colors.border,
+            }]}
+          >
+            <Text style={[styles.filterToggleText, { color: showFilters ? colors.primaryForeground : colors.foreground }]}>
+              {showFilters ? "▼ Filters" : `▲ Filters${activeChipCount > 0 ? ` (${activeChipCount})` : ""}`}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setShowLogoutModal(true)}
+            style={[styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+          >
+            <Text style={[styles.logoutBtnText, { color: colors.mutedForeground }]}>⎋</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Logout confirmation modal */}
+      <Modal visible={showLogoutModal} transparent animationType="fade" onRequestClose={() => setShowLogoutModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.logoutModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.logoutModalTitle, { color: colors.foreground }]}>Sign Out</Text>
+            <Text style={[styles.logoutModalHint, { color: colors.mutedForeground }]}>
+              You will be returned to the password screen.
+            </Text>
+            <View style={styles.logoutModalBtns}>
+              <Pressable
+                onPress={() => setShowLogoutModal(false)}
+                style={[styles.logoutModalCancel, { borderColor: colors.border, backgroundColor: colors.muted }]}
+              >
+                <Text style={[styles.logoutModalCancelText, { color: colors.foreground }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => { setShowLogoutModal(false); logout(); }}
+                style={[styles.logoutModalConfirm, { backgroundColor: colors.destructive }]}
+              >
+                <Text style={[styles.logoutModalConfirmText, { color: "#fff" }]}>Sign Out</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Offline banner */}
+      {isOffline ? (
+        <View style={[styles.offlineBanner, { backgroundColor: colors.warning + "15", borderBottomColor: colors.warning + "44" }]}>
+          <Text style={[styles.offlineBannerText, { color: colors.warning }]}>
+            ⚡ Offline mode — showing {cachedCount} cached items via local search
           </Text>
         </View>
-        <Pressable
-          onPress={() => setShowFilters(!showFilters)}
-          style={[styles.filterToggle, {
-            backgroundColor: showFilters ? colors.primary : colors.muted,
-            borderColor: activeChipCount > 0 ? colors.primary : colors.border,
-          }]}
-        >
-          <Text style={[styles.filterToggleText, { color: showFilters ? colors.primaryForeground : colors.foreground }]}>
-            {showFilters ? "▼ Filters" : `▲ Filters${activeChipCount > 0 ? ` (${activeChipCount})` : ""}`}
-          </Text>
-        </Pressable>
-      </View>
+      ) : null}
 
       <FlatList
         data={results}
@@ -227,13 +330,13 @@ export default function SearchScreen() {
             ) : null}
 
             {/* Results header */}
-            {searchMutation.isSuccess ? (
+            {hasResults ? (
               <View style={styles.resultsHeader}>
                 <View>
                   <Text style={[styles.resultsCount, { color: colors.foreground }]}>
-                    {results.length} matches found
+                    {results.length} {isOffline ? "offline" : ""} matches found
                   </Text>
-                  {belowThreshold > 0 ? (
+                  {!isOffline && belowThreshold > 0 ? (
                     <Text style={[styles.belowThreshold, { color: colors.mutedForeground }]}>
                       +{belowThreshold} below threshold
                     </Text>
@@ -260,17 +363,24 @@ export default function SearchScreen() {
               </View>
             ) : null}
 
-            {/* Error */}
-            {searchMutation.isError ? (
+            {/* Error: server failed + no offline cache */}
+            {searchMutation.isError && !isOffline ? (
               <View style={[styles.errorCard, { backgroundColor: colors.destructive + "11", borderColor: colors.destructive + "44" }]}>
                 <Text style={[styles.errorText, { color: colors.destructive }]}>
                   Search failed. Check your connection and try again.
                 </Text>
               </View>
             ) : null}
+            {isOffline && offlineResults !== null && offlineResults.length === 0 ? (
+              <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+                <Text style={[styles.errorText, { color: colors.warning }]}>
+                  Offline — no cached items match your search. Connect to load more results.
+                </Text>
+              </View>
+            ) : null}
 
             {/* Empty state */}
-            {searchMutation.isSuccess && results.length === 0 ? (
+            {hasResults && results.length === 0 && !isOffline ? (
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyEmoji}>🔍</Text>
                 <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Results Found</Text>
@@ -286,7 +396,7 @@ export default function SearchScreen() {
             ) : null}
 
             {/* Welcome state */}
-            {!searchMutation.isSuccess && !searchMutation.isPending ? (
+            {!hasResults && !searchMutation.isPending ? (
               <View style={styles.welcomeContainer}>
                 <Text style={styles.welcomeEmoji}>⚡</Text>
                 <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>
@@ -344,7 +454,22 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
-  headerSubtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  headerSubtitle: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  offlineBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
+  offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
+  offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
+  offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  logoutBtn: { width: 34, height: 34, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  logoutBtnText: { fontSize: 16 },
+  modalOverlay: { flex: 1, backgroundColor: "#00000055", alignItems: "center", justifyContent: "center", padding: 32 },
+  logoutModal: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 24 },
+  logoutModalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
+  logoutModalHint: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20, marginBottom: 20 },
+  logoutModalBtns: { flexDirection: "row", gap: 10 },
+  logoutModalCancel: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 12, alignItems: "center" },
+  logoutModalCancelText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  logoutModalConfirm: { flex: 1, borderRadius: 8, paddingVertical: 12, alignItems: "center" },
+  logoutModalConfirmText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   filterToggle: {
     borderRadius: 8,
     borderWidth: 1,

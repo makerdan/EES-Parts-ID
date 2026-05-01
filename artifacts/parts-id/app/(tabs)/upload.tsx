@@ -1,7 +1,6 @@
 import React, { useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   SafeAreaView,
@@ -203,6 +202,8 @@ export default function UploadScreen() {
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [tab, setTab] = useState<"upload" | "inventory">("upload");
+  const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [inventoryPage, setInventoryPage] = useState(1);
 
   const upsertMutation = useUpsertInventoryBatch();
@@ -254,37 +255,32 @@ export default function UploadScreen() {
       }
 
       if (rows.length === 0) {
-        Alert.alert(
-          "Parse Error",
-          "No data rows found.\n\nEnsure your file has columns named:\nvendor, catalog (required)\ndescription, bin (optional)",
-        );
+        setUploadError("No data rows found. Ensure your file has columns named: vendor, catalog (required), description, bin (optional).");
         return;
       }
+      setUploadError(null);
+      setUploadSuccess(null);
       setParsedRows(rows);
     } catch (err) {
-      Alert.alert("Error", "Failed to read file. Please try again.");
+      setUploadError("Failed to read file. Please try again.");
     }
   };
 
   const handleUpload = async () => {
     if (!parsedRows.length) return;
+    setUploadError(null);
+    setUploadSuccess(null);
     try {
       const result = await upsertMutation.mutateAsync({
         data: { items: parsedRows },
       });
-      Alert.alert(
-        "Upload Complete",
-        `Inserted: ${result.inserted}\nUpdated: ${result.updated}\nTotal: ${result.total}`,
-        [
-          { text: "View Inventory", onPress: () => setTab("inventory") },
-          { text: "OK" },
-        ],
-      );
+      setUploadSuccess({ inserted: result.inserted, updated: result.updated, total: result.total });
       setParsedRows([]);
       setFileName(null);
       setFileType(null);
+      await inventoryQuery.refetch();
     } catch {
-      Alert.alert("Upload Failed", "Could not upload inventory items.");
+      setUploadError("Upload failed — could not save inventory items. Please try again.");
     }
   };
 
@@ -317,7 +313,7 @@ export default function UploadScreen() {
         }
       }
     } catch {
-      Alert.alert("Enrichment Error", "Failed to start AI enrichment.");
+      setUploadError("AI enrichment failed — please check your connection and try again.");
       setEnrichProgress(null);
     }
   };
@@ -334,6 +330,31 @@ export default function UploadScreen() {
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>📤 Inventory</Text>
         <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
       </View>
+
+      {/* Inline error/success banners */}
+      {uploadError ? (
+        <View style={[styles.inlineBanner, styles.errorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
+          <Text style={[styles.inlineBannerText, { color: colors.destructive }]}>⚠ {uploadError}</Text>
+          <Pressable onPress={() => setUploadError(null)} style={styles.bannerClose}>
+            <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {uploadSuccess ? (
+        <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
+          <Text style={[styles.inlineBannerText, { color: "#059669" }]}>
+            Upload complete — inserted {uploadSuccess.inserted}, updated {uploadSuccess.updated} ({uploadSuccess.total} total)
+          </Text>
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+            <Pressable onPress={() => { setUploadSuccess(null); setTab("inventory"); }}>
+              <Text style={{ color: "#059669", fontSize: 12, fontFamily: "Inter_600SemiBold" }}>View →</Text>
+            </Pressable>
+            <Pressable onPress={() => setUploadSuccess(null)} style={styles.bannerClose}>
+              <Text style={{ color: "#059669", fontSize: 14 }}>✕</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
       {/* Tab bar */}
       <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
@@ -607,4 +628,9 @@ const styles = StyleSheet.create({
   enrichSmallText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   loadMoreBtn: { borderWidth: 1, borderRadius: 8, padding: 12, alignItems: "center", marginTop: 8 },
   loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  inlineBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
+  errorBanner: {},
+  successBanner: {},
+  inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
+  bannerClose: { paddingLeft: 10 },
 });
