@@ -291,9 +291,10 @@ components:
           type: string
         confidenceThreshold:
           type: number
+          description: Minimum confidence percentage (0–100); default 50
           minimum: 0
-          maximum: 1
-          default: 0.5
+          maximum: 100
+          default: 50
         category:
           type: string
           description: Part category / type chip filter

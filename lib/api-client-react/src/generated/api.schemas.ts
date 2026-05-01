@@ -37,8 +37,9 @@ export interface SearchInventoryBody {
   material?: string;
   textNumbers?: string;
   /**
+   * Minimum confidence percentage (0–100); default 50
    * @minimum 0
-   * @maximum 1
+   * @maximum 100
    */
   confidenceThreshold?: number;
   /** Part category / type chip filter */

@@ -236,7 +236,7 @@ router.post("/search", async (req, res) => {
       size = "",
       material = "",
       textNumbers = "",
-      confidenceThreshold = 0.5,
+      confidenceThreshold = 50,  // 0–100 percentage; divided by 100 for internal comparison
       // 16 structured chip dimensions (AND-logic applied post-FTS)
       category = "",
       amperage = "",
@@ -530,7 +530,9 @@ router.post("/search", async (req, res) => {
       }
     }
 
-    const aboveThreshold = chipFiltered.filter(r => r.confidence >= confidenceThreshold);
+    // confidenceThreshold is 0–100 from client; confidence scores are 0–1 internally
+    const thresholdFraction = Math.max(0, Math.min(100, confidenceThreshold)) / 100;
+    const aboveThreshold = chipFiltered.filter(r => r.confidence >= thresholdFraction);
     const belowCount = chipFiltered.length - aboveThreshold.length;
 
     aboveThreshold.sort((a, b) => {
@@ -620,18 +622,21 @@ router.post("/enrich", async (req, res) => {
   try {
     const { ids } = req.body as { ids?: number[] };
 
+    // Enrichment runs in batches of 50 items max per request to allow
+    // progress + ETA reporting without long-running unbounded requests.
+    const BATCH_SIZE = 50;
     let itemsToEnrich;
     if (ids?.length) {
       itemsToEnrich = await db
         .select()
         .from(inventoryTable)
-        .where(sql`${inventoryTable.id} = ANY(${ids})`);
+        .where(sql`${inventoryTable.id} = ANY(${ids.slice(0, BATCH_SIZE)})`);
     } else {
       itemsToEnrich = await db
         .select()
         .from(inventoryTable)
         .where(sql`${inventoryTable.enrichedAt} IS NULL`)
-        .limit(500);
+        .limit(BATCH_SIZE);
     }
 
     res.setHeader("Content-Type", "text/event-stream");
@@ -646,6 +651,7 @@ router.post("/enrich", async (req, res) => {
 
     let processed = 0;
     const total = itemsToEnrich.length;
+    const startTime = Date.now();
 
     await batchProcessWithSSE(
       itemsToEnrich,
@@ -688,10 +694,21 @@ router.post("/enrich", async (req, res) => {
         return { id: item.id, keywords };
       },
       (event) => {
-        if (event.type === "progress") {
-          res.write(`data: ${JSON.stringify({ progress: processed, total, item: event.result })}\n\n`);
-        } else if (event.type === "started") {
-          res.write(`data: ${JSON.stringify({ progress: 0, total: event.total })}\n\n`);
+        if (event.type === "started") {
+          res.write(`data: ${JSON.stringify({ progress: 0, total: event.total, batchSize: BATCH_SIZE })}\n\n`);
+        } else if (event.type === "progress") {
+          // Compute ETA based on elapsed time and items remaining
+          const elapsed = Date.now() - startTime;
+          const avgMs = processed > 0 ? elapsed / processed : 0;
+          const remaining = total - processed;
+          const etaSeconds = avgMs > 0 ? Math.round((avgMs * remaining) / 1000) : null;
+          res.write(`data: ${JSON.stringify({
+            progress: processed,
+            total,
+            batchSize: BATCH_SIZE,
+            etaSeconds,
+            item: event.result,
+          })}\n\n`);
         }
       },
       { retries: 3 },

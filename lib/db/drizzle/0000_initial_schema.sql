@@ -104,6 +104,12 @@ CREATE INDEX IF NOT EXISTS slang_map_term_trgm_idx
 CREATE INDEX IF NOT EXISTS slang_map_term_fts_idx
   ON "electrical_slang_map" USING GIN (to_tsvector('english', "slang_term"));
 
+CREATE INDEX IF NOT EXISTS vendor_map_code_trgm_idx
+  ON "vendor_map" USING GIN ("code" gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS vendor_map_names_fts_idx
+  ON "vendor_map" USING GIN (immutable_array_to_string("names", ' ') gin_trgm_ops);
+
 -- ── Conversation / message tables (reference chat history) ─────────────────
 CREATE TABLE IF NOT EXISTS "conversations" (
   "id"         serial PRIMARY KEY,

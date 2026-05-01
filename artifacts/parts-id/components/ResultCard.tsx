@@ -32,9 +32,9 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
   const color = CONFIDENCE_COLORS[level];
   const pct = Math.round(confidence * 100);
   return (
-    <View style={[styles.badge, { backgroundColor: color + "22" }]}>
-      <View style={[styles.badgeDot, { backgroundColor: color }]} />
-      <Text style={[styles.badgeText, { color }]}>{pct}%</Text>
+    <View style={[cardStyles.badge, { backgroundColor: color + "22" }]}>
+      <View style={[cardStyles.badgeDot, { backgroundColor: color }]} />
+      <Text style={[cardStyles.badgeText, { color }]}>{pct}%</Text>
     </View>
   );
 }
@@ -285,15 +285,3 @@ const cardStyles = StyleSheet.create({
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
 });
 
-const styles = StyleSheet.create({
-  badge: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    gap: 4,
-  },
-  badgeDot: { width: 6, height: 6, borderRadius: 3 },
-  badgeText: { fontSize: 12, fontFamily: "Inter_700Bold" },
-});
