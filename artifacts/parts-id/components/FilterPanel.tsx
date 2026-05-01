@@ -350,20 +350,58 @@ function ConfidenceSlider({
 }
 
 const DIM_COLLAPSED_KEY = "@partsid/dim_collapsed";
+const BASIC_COLLAPSED_KEY = "@partsid/basic_collapsed";
 
 export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, resultCount, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
+
+  // ── Basic Filters collapse state ─────────────────────────────────────────
+  const [basicCollapsed, setBasicCollapsed] = useState(true);
+  const basicChevronAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    AsyncStorage.getItem(BASIC_COLLAPSED_KEY).then(stored => {
+      if (stored === null) return;
+      const collapsed = stored === "1";
+      setBasicCollapsed(collapsed);
+      basicChevronAnim.setValue(collapsed ? 0 : 1);
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toggleBasic = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const toCollapsed = !basicCollapsed;
+    setBasicCollapsed(toCollapsed);
+    Animated.timing(basicChevronAnim, {
+      toValue: toCollapsed ? 0 : 1,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+    AsyncStorage.setItem(BASIC_COLLAPSED_KEY, toCollapsed ? "1" : "0").catch(() => {});
+  }, [basicCollapsed, basicChevronAnim]);
+
+  const basicChevronRotate = basicChevronAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
+
+  const activeBasicCount = [
+    values.keywords, values.catalog, values.vendor,
+    values.color, values.size, values.material, values.textNumbers,
+  ].filter(v => v.trim() !== "").length;
+
+  // ── Filter Dimensions collapse state ─────────────────────────────────────
   const [dimCollapsed, setDimCollapsed] = useState(true);
   const chevronAnim = useRef(new Animated.Value(0)).current;
 
-  // Load persisted collapse state on mount (default: collapsed)
   useEffect(() => {
     AsyncStorage.getItem(DIM_COLLAPSED_KEY).then(stored => {
-      if (stored === null) return; // no saved value — keep default (true = collapsed)
+      if (stored === null) return;
       const collapsed = stored === "1";
       setDimCollapsed(collapsed);
       chevronAnim.setValue(collapsed ? 0 : 1);
-    }).catch(() => {}); // ignore storage errors, keep default
+    }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -388,88 +426,116 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
 
   return (
     <View>
-      {/* ── Row 1: Keywords ── */}
-      <Field
-        label="Keywords / Description"
-        value={values.keywords}
-        onChange={v => onChange("keywords", v)}
-        placeholder="e.g. 20a outlet, BR120..."
-        colors={colors}
-      />
+      {/* ── Basic Filters collapsible card ── */}
+      <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
+        <Pressable
+          style={[chipAreaStyles.header, { marginBottom: basicCollapsed ? 0 : 12 }]}
+          onPress={toggleBasic}
+        >
+          <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>
+            Basic Filters
+          </Text>
+          <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+            {activeBasicCount > 0 && (
+              <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
+                <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
+                  {activeBasicCount} active
+                </Text>
+              </View>
+            )}
+            <Animated.View style={{ transform: [{ rotate: basicChevronRotate }] }}>
+              <Feather name="chevron-down" size={16} color={colors.mutedForeground} />
+            </Animated.View>
+          </View>
+        </Pressable>
 
-      {/* ── Row 2: Catalog # + Vendor ── */}
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        <View style={{ flex: 1 }}>
-          <Field
-            label="Catalog #"
-            value={values.catalog}
-            onChange={v => onChange("catalog", v)}
-            placeholder="e.g. BR120..."
-            colors={colors}
-            autoCapitalize="characters"
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Field
-            label="Vendor"
-            value={values.vendor}
-            onChange={v => onChange("vendor", v)}
-            placeholder="Eaton, SQD..."
-            colors={colors}
-            autoCapitalize="words"
-          />
-        </View>
-      </View>
+        {!basicCollapsed && (
+          <>
+            {/* Row 1: Keywords */}
+            <Field
+              label="Keywords / Description"
+              value={values.keywords}
+              onChange={v => onChange("keywords", v)}
+              placeholder="e.g. 20a outlet, BR120..."
+              colors={colors}
+            />
 
-      {/* ── Row 3: Color + Size ── */}
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        <View style={{ flex: 1 }}>
-          <Field
-            label="Color"
-            value={values.color}
-            onChange={v => onChange("color", v)}
-            placeholder="White, Black..."
-            colors={colors}
-            autoCapitalize="words"
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Field
-            label="Size / Rating"
-            value={values.size}
-            onChange={v => onChange("size", v)}
-            placeholder={'20A, 1/2", #12...'}
-            colors={colors}
-          />
-        </View>
-      </View>
+            {/* Row 2: Catalog # + Vendor */}
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Field
+                  label="Catalog #"
+                  value={values.catalog}
+                  onChange={v => onChange("catalog", v)}
+                  placeholder="e.g. BR120..."
+                  colors={colors}
+                  autoCapitalize="characters"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Field
+                  label="Vendor"
+                  value={values.vendor}
+                  onChange={v => onChange("vendor", v)}
+                  placeholder="Eaton, SQD..."
+                  colors={colors}
+                  autoCapitalize="words"
+                />
+              </View>
+            </View>
 
-      {/* ── Row 4: Material + Text/Numbers ── */}
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        <View style={{ flex: 1 }}>
-          <Field
-            label="Material"
-            value={values.material}
-            onChange={v => onChange("material", v)}
-            placeholder="Steel, PVC, Copper..."
-            colors={colors}
-            autoCapitalize="words"
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Field
-            label="Text / Numbers"
-            value={values.textNumbers}
-            onChange={v => onChange("textNumbers", v)}
-            placeholder="Markings, UPC..."
-            colors={colors}
-          />
-        </View>
+            {/* Row 3: Color + Size */}
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Field
+                  label="Color"
+                  value={values.color}
+                  onChange={v => onChange("color", v)}
+                  placeholder="White, Black..."
+                  colors={colors}
+                  autoCapitalize="words"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Field
+                  label="Size / Rating"
+                  value={values.size}
+                  onChange={v => onChange("size", v)}
+                  placeholder={'20A, 1/2", #12...'}
+                  colors={colors}
+                />
+              </View>
+            </View>
+
+            {/* Row 4: Material + Text/Numbers */}
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Field
+                  label="Material"
+                  value={values.material}
+                  onChange={v => onChange("material", v)}
+                  placeholder="Steel, PVC, Copper..."
+                  colors={colors}
+                  autoCapitalize="words"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Field
+                  label="Text / Numbers"
+                  value={values.textNumbers}
+                  onChange={v => onChange("textNumbers", v)}
+                  placeholder="Markings, UPC..."
+                  colors={colors}
+                />
+              </View>
+            </View>
+          </>
+        )}
       </View>
 
       {/* ── 16-Dimension chip filter panel ── */}
       <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <Pressable style={chipAreaStyles.header} onPress={toggleDimensions}>
+        <Pressable style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12 }]} onPress={toggleDimensions}>
           <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>
             Filter Dimensions
           </Text>
