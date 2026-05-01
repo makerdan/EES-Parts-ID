@@ -19,7 +19,8 @@
     "express": "^5",
     "fuse.js": "^7.1.0",
     "pino": "^9",
-    "pino-http": "^10"
+    "pino-http": "^10",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",
