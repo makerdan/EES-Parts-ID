@@ -28,8 +28,8 @@ const SETTINGS_KEY = "parts_id_settings_v1";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 type TextSize = "small" | "normal" | "large";
-type AppSettings = { defaultFiltersOpen: boolean; textSize: TextSize };
-const DEFAULT_SETTINGS: AppSettings = { defaultFiltersOpen: true, textSize: "normal" };
+type AppSettings = { defaultFiltersOpen: boolean; textSize: TextSize; defaultConfidenceThreshold: number };
+const DEFAULT_SETTINGS: AppSettings = { defaultFiltersOpen: true, textSize: "normal", defaultConfidenceThreshold: 50 };
 
 async function loadSettings(): Promise<AppSettings> {
   try {
@@ -157,6 +157,7 @@ export default function SearchScreen() {
     loadSettings().then(s => {
       setSettings(s);
       setShowFilters(s.defaultFiltersOpen);
+      setFilters(f => ({ ...f, confidenceThreshold: s.defaultConfidenceThreshold }));
     });
   }, []);
 
@@ -294,7 +295,7 @@ export default function SearchScreen() {
   };
 
   const handleClear = () => {
-    setFilters(DEFAULT_FILTERS);
+    setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settings.defaultConfidenceThreshold });
     searchMutation.reset();
     setOfflineResults(null);
     setIsOffline(false);
@@ -308,6 +309,7 @@ export default function SearchScreen() {
     setSettings(next);
     saveSettings(next);
     if (key === "defaultFiltersOpen") setShowFilters(value as boolean);
+    if (key === "defaultConfidenceThreshold") setFilters(f => ({ ...f, confidenceThreshold: value as number }));
   };
 
   const textFontScale = settings.textSize === "small" ? 0.85 : settings.textSize === "large" ? 1.18 : 1.0;
@@ -477,6 +479,37 @@ export default function SearchScreen() {
                       { color: settings.textSize === sz ? colors.primaryForeground : colors.foreground },
                     ]}>
                       {sz === "small" ? "S" : sz === "large" ? "L" : "M"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Default confidence threshold row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 8 }]}>
+              <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Default min confidence</Text>
+              <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                Pre-fills the confidence slider on each new search.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                {([0, 30, 50, 70, 90] as number[]).map(pct => (
+                  <Pressable
+                    key={pct}
+                    onPress={() => updateSetting("defaultConfidenceThreshold", pct)}
+                    style={[
+                      styles.textSizeBtn,
+                      {
+                        backgroundColor: settings.defaultConfidenceThreshold === pct ? colors.primary : colors.muted,
+                        borderColor: settings.defaultConfidenceThreshold === pct ? colors.primary : colors.border,
+                        width: 50,
+                      },
+                    ]}
+                  >
+                    <Text style={[
+                      styles.textSizeBtnLabel,
+                      { color: settings.defaultConfidenceThreshold === pct ? colors.primaryForeground : colors.foreground, fontSize: 12 },
+                    ]}>
+                      {pct === 0 ? "All" : `${pct}%`}
                     </Text>
                   </Pressable>
                 ))}
