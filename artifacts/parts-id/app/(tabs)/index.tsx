@@ -381,6 +381,11 @@ export default function SearchScreen() {
               <Pressable
                 onPress={async () => {
                   await clearCache();
+                  // Reset in-memory Fuse pool so "Ready · N items" badge
+                  // drops to zero immediately without waiting for next load
+                  fuseRef.current = null;
+                  fuseItemsRef.current = [];
+                  setOfflineResults(null);
                   setCacheClearedMsg("✓ Cache cleared");
                   setTimeout(() => setCacheClearedMsg(null), 3000);
                 }}
