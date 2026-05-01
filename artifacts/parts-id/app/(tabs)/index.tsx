@@ -148,6 +148,7 @@ export default function SearchScreen() {
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
   const fuseItemsRef = useRef<InventoryItem[]>([]);
+  const [cachedCount, setCachedCount] = useState(0);
   // Track latest filters in a ref so the onError closure always reads current values
   const filtersRef = useRef<FilterValues>(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -168,6 +169,7 @@ export default function SearchScreen() {
         if (!raw) return;
         const items: InventoryItem[] = JSON.parse(raw);
         fuseItemsRef.current = items;
+        setCachedCount(items.length);
         fuseRef.current = new Fuse(items, {
           keys: [
             { name: "catalog", weight: 0.35 },
@@ -218,6 +220,7 @@ export default function SearchScreen() {
             else merged.push(item);
           }
           fuseItemsRef.current = merged;
+          setCachedCount(merged.length);
           fuseRef.current = new Fuse(merged, {
             keys: [
               { name: "catalog", weight: 0.35 },
@@ -339,8 +342,6 @@ export default function SearchScreen() {
   const results: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
   const totalMatches = searchMutation.data?.totalMatches ?? 0;
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
-  const cachedCount = fuseItemsRef.current.length;
-
   const activeChipCount = [
     filters.category, filters.amperage, filters.colorChip, filters.manufacturer,
     filters.sizeChip, filters.rating, filters.wireType, filters.wireGauge,
@@ -357,18 +358,14 @@ export default function SearchScreen() {
         <View style={{ flex: 1 }}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>⚡ Parts ID</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
-            {/* Explicit Ready / Empty loaded status */}
-            <View style={[
-              styles.statusBadge,
-              { backgroundColor: cachedCount > 0 ? colors.primary + "18" : colors.muted },
-            ]}>
-              <Text style={[
-                styles.statusBadgeText,
-                { color: cachedCount > 0 ? colors.primary : colors.mutedForeground },
-              ]}>
-                {cachedCount > 0 ? `✓ Ready · ${cachedCount} items` : "⊘ Empty · no items loaded"}
-              </Text>
-            </View>
+            {/* Offline cache status — only shown when cache is populated */}
+            {cachedCount > 0 && (
+              <View style={[styles.statusBadge, { backgroundColor: colors.primary + "18" }]}>
+                <Text style={[styles.statusBadgeText, { color: colors.primary }]}>
+                  {`✓ Ready · ${cachedCount} items`}
+                </Text>
+              </View>
+            )}
             {isOffline ? (
               <View style={[styles.offlineBadge, { backgroundColor: colors.warning + "22" }]}>
                 <Text style={[styles.offlineBadgeText, { color: colors.warning }]}>OFFLINE</Text>
@@ -427,6 +424,7 @@ export default function SearchScreen() {
                   // drops to zero immediately without waiting for next load
                   fuseRef.current = null;
                   fuseItemsRef.current = [];
+                  setCachedCount(0);
                   setOfflineResults(null);
                   setCacheClearedMsg("✓ Cache cleared");
                   setTimeout(() => setCacheClearedMsg(null), 3000);
