@@ -56,10 +56,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (password: string) => {
     if (!APP_PASSWORD) {
-      // No password set — allow all
-      await secureSet(SESSION_KEY, "authenticated");
-      setIsAuthenticated(true);
-      return { success: true };
+      return { success: false, error: "App password not configured. Contact your administrator." };
     }
     if (password === APP_PASSWORD) {
       await secureSet(SESSION_KEY, "authenticated");

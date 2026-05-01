@@ -1,14 +1,15 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Pressable,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import Fuse from "fuse.js";
 import { useSearchInventory } from "@workspace/api-client-react";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -16,6 +17,8 @@ import { FilterPanel, type FilterValues } from "@/components/FilterPanel";
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
+
+const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 
 const DEFAULT_FILTERS: FilterValues = {
   keywords: "",
@@ -26,44 +29,160 @@ const DEFAULT_FILTERS: FilterValues = {
   material: "",
   textNumbers: "",
   confidenceThreshold: 0.5,
+  partType: "",
+  voltage: "",
+  amperage: "",
+  phase: "",
+  wireGauge: "",
+  conduitType: "",
+  nemaConfig: "",
+  enclosureRating: "",
+  mounting: "",
+  poles: "",
+  wireType: "",
+  conduitSize: "",
+  boxType: "",
+  lightingType: "",
+  protectionType: "",
+  location: "",
 };
+
+// Merge chip dimension values into the keywords field for server search
+function buildSearchBody(f: FilterValues) {
+  const chipValues = [
+    f.partType, f.voltage, f.amperage, f.phase, f.wireGauge,
+    f.conduitType, f.nemaConfig, f.enclosureRating, f.mounting, f.poles,
+    f.wireType, f.conduitSize, f.boxType, f.lightingType, f.protectionType, f.location,
+  ].filter(Boolean);
+
+  const enrichedKeywords = [f.keywords, ...chipValues].filter(Boolean).join(" ");
+
+  return {
+    keywords: enrichedKeywords,
+    catalog: f.catalog,
+    vendor: f.vendor,
+    color: f.color || chipValues.find(v => ["white","black","gray","ivory","almond","red","blue","green"].includes(v.toLowerCase())) || "",
+    size: f.size || f.conduitSize || f.amperage || f.wireGauge || "",
+    material: f.material || "",
+    textNumbers: f.textNumbers || "",
+    confidenceThreshold: f.confidenceThreshold,
+  };
+}
 
 export default function SearchScreen() {
   const colors = useColors();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
-  const [searchBody, setSearchBody] = useState<FilterValues | null>(null);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(true);
+  // Local Fuse index seeded from AsyncStorage cache
+  const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
+  const fuseItemsRef = useRef<InventoryItem[]>([]);
+
+  // Seed local Fuse index from AsyncStorage on mount
+  useEffect(() => {
+    AsyncStorage.getItem(FUSE_CACHE_KEY)
+      .then(raw => {
+        if (!raw) return;
+        const items: InventoryItem[] = JSON.parse(raw);
+        fuseItemsRef.current = items;
+        fuseRef.current = new Fuse(items, {
+          keys: [
+            { name: "catalog", weight: 0.35 },
+            { name: "description", weight: 0.30 },
+            { name: "vendor", weight: 0.10 },
+            { name: "aiKeywords", weight: 0.25 },
+          ],
+          threshold: 0.45,
+          ignoreLocation: true,
+          minMatchCharLength: 2,
+          findAllMatches: true,
+          includeScore: true,
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   const searchMutation = useSearchInventory({
     mutation: {
-      onSuccess: () => setShowFilters(false),
+      onSuccess: (data) => {
+        setShowFilters(false);
+        // Cache all returned items for offline Fuse use
+        if (data.results?.length) {
+          const newItems = data.results.map(r => r.item);
+          // Merge into existing cache — deduplicate by id
+          const merged = [...fuseItemsRef.current];
+          for (const item of newItems) {
+            const idx = merged.findIndex(m => m.id === item.id);
+            if (idx >= 0) merged[idx] = item;
+            else merged.push(item);
+          }
+          fuseItemsRef.current = merged;
+          fuseRef.current = new Fuse(merged, {
+            keys: [
+              { name: "catalog", weight: 0.35 },
+              { name: "description", weight: 0.30 },
+              { name: "vendor", weight: 0.10 },
+              { name: "aiKeywords", weight: 0.25 },
+            ],
+            threshold: 0.45,
+            ignoreLocation: true,
+            minMatchCharLength: 2,
+            findAllMatches: true,
+            includeScore: true,
+          });
+          AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(() => {});
+        }
+      },
     },
   });
 
   const handleChange = (key: keyof FilterValues, value: string | number) => {
-    setFilters((f) => ({ ...f, [key]: value }));
+    setFilters(f => ({ ...f, [key]: value }));
   };
 
   const handleSearch = () => {
-    setSearchBody(filters);
-    searchMutation.mutate({ data: filters });
+    const body = buildSearchBody(filters);
+    searchMutation.mutate({ data: body });
   };
 
   const handleClear = () => {
     setFilters(DEFAULT_FILTERS);
-    setSearchBody(null);
     searchMutation.reset();
     setShowFilters(true);
   };
 
-  const results = searchMutation.data?.results ?? [];
+  // Called by KeywordEditor after debounced save — update local Fuse index immediately
+  const handleKeywordsChanged = useCallback((id: number, keywords: string[]) => {
+    const items = fuseItemsRef.current.map(item =>
+      item.id === id ? { ...item, aiKeywords: keywords } : item,
+    );
+    fuseItemsRef.current = items;
+    fuseRef.current = new Fuse(items, {
+      keys: [
+        { name: "catalog", weight: 0.35 },
+        { name: "description", weight: 0.30 },
+        { name: "vendor", weight: 0.10 },
+        { name: "aiKeywords", weight: 0.25 },
+      ],
+      threshold: 0.45,
+      ignoreLocation: true,
+      minMatchCharLength: 2,
+      findAllMatches: true,
+      includeScore: true,
+    });
+    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
+  }, []);
+
+  const results: SearchResult[] = searchMutation.data?.results ?? [];
   const totalMatches = searchMutation.data?.totalMatches ?? 0;
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
 
-  const hasQuery =
-    !!filters.keywords || !!filters.catalog || !!filters.vendor ||
-    !!filters.color || !!filters.size || !!filters.material || !!filters.textNumbers;
+  const activeChipCount = [
+    filters.partType, filters.voltage, filters.amperage, filters.phase, filters.wireGauge,
+    filters.conduitType, filters.nemaConfig, filters.enclosureRating, filters.mounting,
+    filters.poles, filters.wireType, filters.conduitSize, filters.boxType, filters.lightingType,
+    filters.protectionType, filters.location,
+  ].filter(Boolean).length;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
@@ -79,18 +198,18 @@ export default function SearchScreen() {
           onPress={() => setShowFilters(!showFilters)}
           style={[styles.filterToggle, {
             backgroundColor: showFilters ? colors.primary : colors.muted,
-            borderColor: colors.border,
+            borderColor: activeChipCount > 0 ? colors.primary : colors.border,
           }]}
         >
           <Text style={[styles.filterToggleText, { color: showFilters ? colors.primaryForeground : colors.foreground }]}>
-            {showFilters ? "▼ Filters" : "▲ Filters"}
+            {showFilters ? "▼ Filters" : `▲ Filters${activeChipCount > 0 ? ` (${activeChipCount})` : ""}`}
           </Text>
         </Pressable>
       </View>
 
       <FlatList
         data={results}
-        keyExtractor={(item) => String(item.item.id)}
+        keyExtractor={item => String(item.item.id)}
         ListHeaderComponent={() => (
           <View>
             {/* Filter panel */}
@@ -102,6 +221,7 @@ export default function SearchScreen() {
                   onSearch={handleSearch}
                   onClear={handleClear}
                   isLoading={searchMutation.isPending}
+                  resultCount={searchMutation.isSuccess ? results.length : undefined}
                 />
               </View>
             ) : null}
@@ -109,7 +229,7 @@ export default function SearchScreen() {
             {/* Results header */}
             {searchMutation.isSuccess ? (
               <View style={styles.resultsHeader}>
-                <View style={styles.resultsHeaderLeft}>
+                <View>
                   <Text style={[styles.resultsCount, { color: colors.foreground }]}>
                     {results.length} matches found
                   </Text>
@@ -155,11 +275,11 @@ export default function SearchScreen() {
                 <Text style={styles.emptyEmoji}>🔍</Text>
                 <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Results Found</Text>
                 <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-                  Try broader search terms, check spelling, or lower the confidence threshold.
+                  Try broader terms, check spelling, or lower the confidence threshold.
                 </Text>
                 {belowThreshold > 0 ? (
                   <Text style={[styles.belowHint, { color: colors.warning }]}>
-                    {belowThreshold} items matched below threshold — try "Any 30%"
+                    {belowThreshold} items matched below threshold — try 10% or 20%
                   </Text>
                 ) : null}
               </View>
@@ -173,15 +293,16 @@ export default function SearchScreen() {
                   Search Electrical Parts
                 </Text>
                 <Text style={[styles.welcomeHint, { color: colors.mutedForeground }]}>
-                  Search by keywords, catalog number, vendor, size, color, or material. Supports abbreviations and common misspellings.
+                  Search by keywords, catalog #, vendor, or use the 16-dimension filter chips below. Handles abbreviations, synonyms, and misspellings automatically.
                 </Text>
                 <View style={[styles.tipCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Text style={[styles.tipTitle, { color: colors.foreground }]}>💡 Quick Tips</Text>
                   {[
                     "Type '20a duplex white' for white 20A outlet",
                     "Type 'BR120' for Eaton BR 20A breaker",
-                    "Type '3/4 emt' for 3/4\" EMT conduit",
-                    "Use Photo ID tab for camera identification",
+                    "Type '3/4 emt' for 3/4\" EMT conduit fittings",
+                    "Select chips to narrow by voltage, amperage, part type…",
+                    "Use Photo ID tab to identify parts by camera",
                   ].map((tip, i) => (
                     <Text key={i} style={[styles.tipText, { color: colors.mutedForeground }]}>
                       • {tip}
@@ -194,22 +315,20 @@ export default function SearchScreen() {
         )}
         renderItem={({ item: result, index }) => (
           <View style={styles.resultItem}>
-            <ResultCard
-              result={result}
-              onEditKeywords={setEditItem}
-              rank={index}
-            />
+            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} />
           </View>
         )}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       />
 
-      {/* Floating reference button */}
       <ReferenceModal />
 
-      {/* Keyword editor modal */}
-      <KeywordEditor item={editItem} onClose={() => setEditItem(null)} />
+      <KeywordEditor
+        item={editItem}
+        onClose={() => setEditItem(null)}
+        onKeywordsChanged={handleKeywordsChanged}
+      />
     </SafeAreaView>
   );
 }
@@ -246,7 +365,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 8,
   },
-  resultsHeaderLeft: {},
   resultsCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   belowThreshold: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   newSearchBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },

@@ -1,5 +1,13 @@
-import React from "react";
-import { ScrollView, StyleSheet, Text, TextInput, View, Pressable } from "react-native";
+import React, { useCallback, useRef } from "react";
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useColors } from "@/hooks/useColors";
 
 export interface FilterValues {
@@ -11,6 +19,23 @@ export interface FilterValues {
   material: string;
   textNumbers: string;
   confidenceThreshold: number;
+  // 16 categorical chip dimensions
+  partType: string;
+  voltage: string;
+  amperage: string;
+  phase: string;
+  wireGauge: string;
+  conduitType: string;
+  nemaConfig: string;
+  enclosureRating: string;
+  mounting: string;
+  poles: string;
+  wireType: string;
+  conduitSize: string;
+  boxType: string;
+  lightingType: string;
+  protectionType: string;
+  location: string;
 }
 
 interface FilterPanelProps {
@@ -19,15 +44,148 @@ interface FilterPanelProps {
   onSearch: () => void;
   onClear: () => void;
   isLoading: boolean;
+  resultCount?: number;
 }
 
-const THRESHOLD_PRESETS = [
-  { label: "Strict 90%", value: 0.9 },
-  { label: "High 80%", value: 0.8 },
-  { label: "Med 65%", value: 0.65 },
-  { label: "Low 50%", value: 0.5 },
-  { label: "Any 30%", value: 0.3 },
+// ── 16 chip dimensions ───────────────────────────────────────────────────────
+const CHIP_DIMS: Array<{
+  key: keyof FilterValues;
+  label: string;
+  options: string[];
+}> = [
+  {
+    key: "partType",
+    label: "Part Type",
+    options: [
+      "Receptacle","Switch","Breaker","Wire","Conduit","Fitting","Box","Panel",
+      "Transformer","Fuse","Lighting","Motor","Enclosure","Connector","Dimmer","Sensor",
+    ],
+  },
+  {
+    key: "voltage",
+    label: "Voltage",
+    options: ["120V","240V","208V","277V","480V","24V","12V","600V"],
+  },
+  {
+    key: "amperage",
+    label: "Amperage",
+    options: ["15A","20A","30A","40A","50A","60A","100A","150A","200A","400A"],
+  },
+  {
+    key: "phase",
+    label: "Phase",
+    options: ["1 Phase","3 Phase"],
+  },
+  {
+    key: "wireGauge",
+    label: "Wire Gauge",
+    options: ["#14","#12","#10","#8","#6","#4","#2","1/0","2/0","3/0","4/0"],
+  },
+  {
+    key: "conduitType",
+    label: "Conduit Type",
+    options: ["EMT","PVC","RMC","IMC","FMC","LFMC","ENT","HDPE"],
+  },
+  {
+    key: "nemaConfig",
+    label: "NEMA Config",
+    options: ["5-15","5-20","6-20","6-50","14-30","14-50","L5-30","L14-30","L21-20"],
+  },
+  {
+    key: "enclosureRating",
+    label: "Enclosure",
+    options: ["NEMA 1","NEMA 3R","NEMA 4","NEMA 4X","NEMA 12","NEMA 7"],
+  },
+  {
+    key: "mounting",
+    label: "Mounting",
+    options: ["Surface","Flush","New Work","Old Work","DIN Rail","Panel Mount"],
+  },
+  {
+    key: "poles",
+    label: "Poles",
+    options: ["1 Pole","2 Pole","3 Pole"],
+  },
+  {
+    key: "wireType",
+    label: "Wire Type",
+    options: ["THHN","THWN","NM-B","MC","UF","SER","Armored","Plenum"],
+  },
+  {
+    key: "conduitSize",
+    label: "Conduit Size",
+    options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"'],
+  },
+  {
+    key: "boxType",
+    label: "Box Type",
+    options: ["1-Gang","2-Gang","3-Gang","4-Square","Round","Handy","Weatherproof","Fan Box"],
+  },
+  {
+    key: "lightingType",
+    label: "Lighting",
+    options: ["LED","Fluorescent","HID","Incandescent","Emergency","Exit","Recessed","Outdoor"],
+  },
+  {
+    key: "protectionType",
+    label: "Protection",
+    options: ["GFCI","AFCI","Dual Function","Surge","Tamper Resistant","Weather Resistant","Explosion Proof"],
+  },
+  {
+    key: "location",
+    label: "Location",
+    options: ["Indoor","Outdoor","Wet","Damp","Plenum","Direct Burial","Hazardous"],
+  },
 ];
+
+function ChipRow({
+  label,
+  options,
+  value,
+  onChange,
+  colors,
+}: {
+  label: string;
+  options: string[];
+  value: string;
+  onChange: (v: string) => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  return (
+    <View style={{ marginBottom: 10 }}>
+      <Text style={[chipStyles.rowLabel, { color: colors.mutedForeground }]}>{label}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={{ flexDirection: "row", gap: 6, paddingVertical: 2 }}>
+          {options.map((opt) => {
+            const active = value === opt;
+            return (
+              <Pressable
+                key={opt}
+                onPress={() => onChange(active ? "" : opt)}
+                style={[
+                  chipStyles.chip,
+                  {
+                    backgroundColor: active ? colors.primary : colors.muted,
+                    borderColor: active ? colors.primary : colors.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    chipStyles.chipText,
+                    { color: active ? colors.primaryForeground : colors.foreground },
+                  ]}
+                >
+                  {opt}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
 
 function Field({
   label,
@@ -67,71 +225,135 @@ function Field({
   );
 }
 
-const fieldStyles = StyleSheet.create({
-  label: { fontSize: 12, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 5 },
-  input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, fontFamily: "Inter_400Regular" },
-});
+// Native slider using a custom track + thumb (cross-platform, no native module)
+function ConfidenceSlider({
+  value,
+  onChange,
+  colors,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const trackRef = useRef<View>(null);
 
-export function FilterPanel({ values, onChange, onSearch, onClear, isLoading }: FilterPanelProps) {
+  const pct = Math.round(value * 100);
+
+  const STEPS = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+
+  return (
+    <View style={{ marginBottom: 16 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+        <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>MIN CONFIDENCE</Text>
+        <Text style={[sliderStyles.pctLabel, { color: colors.primary }]}>{pct}%</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={{ flexDirection: "row", gap: 6, paddingVertical: 2 }}>
+          {STEPS.map((s) => {
+            const active = pct === s;
+            return (
+              <Pressable
+                key={s}
+                onPress={() => onChange(s / 100)}
+                style={[
+                  sliderStyles.stepChip,
+                  {
+                    backgroundColor: pct >= s ? colors.primary : colors.muted,
+                    borderColor: active ? colors.primary : colors.border,
+                    opacity: pct >= s ? 1 : 0.5,
+                  },
+                ]}
+              >
+                <Text style={[sliderStyles.stepText, { color: pct >= s ? colors.primaryForeground : colors.foreground }]}>
+                  {s}%
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </ScrollView>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
+        <Text style={[sliderStyles.rangeLabel, { color: colors.mutedForeground }]}>Lenient</Text>
+        <Text style={[sliderStyles.rangeLabel, { color: colors.mutedForeground }]}>Strict</Text>
+      </View>
+    </View>
+  );
+}
+
+export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, resultCount }: FilterPanelProps) {
   const colors = useColors();
+
+  const activeChipCount = CHIP_DIMS.filter(d => values[d.key]).length;
 
   return (
     <View>
-      {/* Primary search */}
-      <Field label="Keywords / Description" value={values.keywords} onChange={v => onChange("keywords", v)} placeholder="e.g. 20a duplex white outlet..." colors={colors} />
-      <Field label="Catalog #" value={values.catalog} onChange={v => onChange("catalog", v)} placeholder="e.g. BR120, QO230..." colors={colors} autoCapitalize="characters" />
-      <Field label="Vendor / Manufacturer" value={values.vendor} onChange={v => onChange("vendor", v)} placeholder="e.g. Eaton, Square D, Leviton..." colors={colors} autoCapitalize="words" />
-
-      {/* Secondary filters */}
+      {/* Free-text search fields */}
+      <Field
+        label="Keywords / Description"
+        value={values.keywords}
+        onChange={v => onChange("keywords", v)}
+        placeholder="e.g. 20a duplex white outlet..."
+        colors={colors}
+      />
       <View style={{ flexDirection: "row", gap: 10 }}>
         <View style={{ flex: 1 }}>
-          <Field label="Color" value={values.color} onChange={v => onChange("color", v)} placeholder="white, gray, black..." colors={colors} />
+          <Field
+            label="Catalog #"
+            value={values.catalog}
+            onChange={v => onChange("catalog", v)}
+            placeholder="e.g. BR120..."
+            colors={colors}
+            autoCapitalize="characters"
+          />
         </View>
         <View style={{ flex: 1 }}>
-          <Field label="Size / Rating" value={values.size} onChange={v => onChange("size", v)} placeholder={'20A, 1/2", 100W...'} colors={colors} />
+          <Field
+            label="Vendor"
+            value={values.vendor}
+            onChange={v => onChange("vendor", v)}
+            placeholder="Eaton, SQD..."
+            colors={colors}
+            autoCapitalize="words"
+          />
         </View>
       </View>
 
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        <View style={{ flex: 1 }}>
-          <Field label="Material" value={values.material} onChange={v => onChange("material", v)} placeholder="aluminum, steel, pvc..." colors={colors} />
+      {/* 16-Dimension chip filter panel */}
+      <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
+        <View style={chipAreaStyles.header}>
+          <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>
+            Filter Dimensions
+          </Text>
+          {activeChipCount > 0 && (
+            <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
+              <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
+                {activeChipCount} active
+              </Text>
+            </View>
+          )}
         </View>
-        <View style={{ flex: 1 }}>
-          <Field label="Text / Numbers Seen" value={values.textNumbers} onChange={v => onChange("textNumbers", v)} placeholder="visible markings..." colors={colors} />
-        </View>
-      </View>
 
-      {/* Confidence threshold */}
-      <Text style={[fieldStyles.label, { color: colors.mutedForeground, marginBottom: 8 }]}>
-        MIN CONFIDENCE THRESHOLD
-      </Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-        {THRESHOLD_PRESETS.map((preset) => (
-          <Pressable
-            key={preset.value}
-            onPress={() => onChange("confidenceThreshold", preset.value)}
-            style={[
-              thresholdStyles.chip,
-              {
-                backgroundColor: values.confidenceThreshold === preset.value ? colors.primary : colors.muted,
-                borderColor: values.confidenceThreshold === preset.value ? colors.primary : colors.border,
-              },
-            ]}
-          >
-            <Text
-              style={[
-                thresholdStyles.chipText,
-                { color: values.confidenceThreshold === preset.value ? colors.primaryForeground : colors.foreground },
-              ]}
-            >
-              {preset.label}
-            </Text>
-          </Pressable>
+        {CHIP_DIMS.map((dim) => (
+          <ChipRow
+            key={dim.key}
+            label={dim.label}
+            options={dim.options}
+            value={String(values[dim.key] ?? "")}
+            onChange={(v) => onChange(dim.key, v)}
+            colors={colors}
+          />
         ))}
-      </ScrollView>
+
+        {/* Confidence slider inside the chip panel */}
+        <ConfidenceSlider
+          value={values.confidenceThreshold}
+          onChange={v => onChange("confidenceThreshold", v)}
+          colors={colors}
+        />
+      </View>
 
       {/* Action buttons */}
-      <View style={{ flexDirection: "row", gap: 10 }}>
+      <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
         <Pressable
           onPress={onSearch}
           style={[
@@ -141,7 +363,11 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading }: 
           disabled={isLoading}
         >
           <Text style={[actionStyles.searchBtnText, { color: colors.primaryForeground }]}>
-            {isLoading ? "Searching…" : "🔍 Search"}
+            {isLoading
+              ? "Searching…"
+              : resultCount !== undefined
+              ? `🔍 Search (${resultCount})`
+              : "🔍 Search"}
           </Text>
         </Pressable>
         <Pressable
@@ -155,15 +381,69 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading }: 
   );
 }
 
-const thresholdStyles = StyleSheet.create({
+const chipStyles = StyleSheet.create({
+  rowLabel: {
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    marginBottom: 5,
+  },
   chip: {
     borderWidth: 1,
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    marginRight: 8,
+    borderRadius: 16,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
   },
   chipText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+});
+
+const chipAreaStyles = StyleSheet.create({
+  container: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  title: { fontSize: 13, fontFamily: "Inter_700Bold" },
+  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+});
+
+const sliderStyles = StyleSheet.create({
+  pctLabel: { fontSize: 16, fontFamily: "Inter_700Bold" },
+  stepChip: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  stepText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  rangeLabel: { fontSize: 10, fontFamily: "Inter_400Regular" },
+});
+
+const fieldStyles = StyleSheet.create({
+  label: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 5,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+  },
 });
 
 const actionStyles = StyleSheet.create({
