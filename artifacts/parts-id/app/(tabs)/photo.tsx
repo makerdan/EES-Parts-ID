@@ -113,7 +113,7 @@ export default function PhotoScreen() {
             color: color.trim() || undefined,
             size: size.trim() || undefined,
             textNumbers: textNumbers.trim() || undefined,
-            confidenceThreshold: 0.4,
+            confidenceThreshold: 40,
           },
         });
         setResults(searchResult.results);

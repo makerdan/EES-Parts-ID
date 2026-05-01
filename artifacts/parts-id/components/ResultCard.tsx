@@ -136,14 +136,14 @@ export function ResultCard({ result, onEditKeywords, rank }: ResultCardProps) {
         {/* Expanded content */}
         {expanded ? (
           <>
-            {/* Keywords */}
-            {hasKeywords ? (
-              <View style={cardStyles.section}>
-                <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
-                  AI KEYWORDS
-                </Text>
+            {/* Keywords — always shown when expanded; edit button always accessible */}
+            <View style={cardStyles.section}>
+              <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
+                AI KEYWORDS
+              </Text>
+              {hasKeywords ? (
                 <View style={cardStyles.keywordRow}>
-                  {item.aiKeywords.map((kw, i) => (
+                  {(item.aiKeywords ?? []).map((kw, i) => (
                     <View key={i} style={[cardStyles.keyword, { backgroundColor: colors.muted }]}>
                       <Text style={[cardStyles.keywordText, { color: colors.foreground }]}>
                         {kw}
@@ -151,18 +151,22 @@ export function ResultCard({ result, onEditKeywords, rank }: ResultCardProps) {
                     </View>
                   ))}
                 </View>
-                {onEditKeywords ? (
-                  <Pressable
-                    onPress={() => onEditKeywords(item)}
-                    style={[cardStyles.editBtn, { borderColor: colors.border }]}
-                  >
-                    <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
-                      ✏️ Edit Keywords
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            ) : null}
+              ) : (
+                <Text style={[cardStyles.keywordText, { color: colors.mutedForeground, marginBottom: 6 }]}>
+                  No keywords yet — tap Edit to add some.
+                </Text>
+              )}
+              {onEditKeywords ? (
+                <Pressable
+                  onPress={() => onEditKeywords(item)}
+                  style={[cardStyles.editBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
+                    ✏️ Edit Keywords
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
 
             {/* Variants */}
             {hasVariants ? (
