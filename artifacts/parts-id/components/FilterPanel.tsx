@@ -1,5 +1,7 @@
 import React, { useCallback, useRef, useState } from "react";
 import {
+  Animated,
+  LayoutAnimation,
   LayoutChangeEvent,
   PanResponder,
   Platform,
@@ -8,9 +10,15 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  UIManager,
   View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
+
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 export interface FilterValues {
   // ── 7 text / numeric search fields ───────────────────────────────────────
@@ -342,6 +350,24 @@ function ConfidenceSlider({
 
 export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, resultCount, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
+  const [dimCollapsed, setDimCollapsed] = useState(true);
+  const chevronAnim = useRef(new Animated.Value(0)).current;
+
+  const toggleDimensions = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const toCollapsed = !dimCollapsed;
+    setDimCollapsed(toCollapsed);
+    Animated.timing(chevronAnim, {
+      toValue: toCollapsed ? 0 : 1,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [dimCollapsed, chevronAnim]);
+
+  const chevronRotate = chevronAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
 
   const activeChipCount = CHIP_DIMS.filter(d => values[d.key]).length;
 
@@ -428,7 +454,7 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
 
       {/* ── 16-Dimension chip filter panel ── */}
       <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <View style={chipAreaStyles.header}>
+        <Pressable style={chipAreaStyles.header} onPress={toggleDimensions}>
           <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>
             Filter Dimensions
           </Text>
@@ -443,27 +469,34 @@ export function FilterPanel({ values, onChange, onSearch, onClear, isLoading, re
             {dimensionCounts && (
               <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>live counts</Text>
             )}
+            <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+              <Feather name="chevron-down" size={16} color={colors.mutedForeground} />
+            </Animated.View>
           </View>
-        </View>
+        </Pressable>
 
-        {CHIP_DIMS.map((dim) => (
-          <ChipRow
-            key={dim.key}
-            label={dim.label}
-            options={dim.options}
-            value={String(values[dim.key] ?? "")}
-            onChange={(v) => onChange(dim.key, v)}
-            colors={colors}
-            counts={dimensionCounts?.[dim.key]}
-          />
-        ))}
+        {!dimCollapsed && (
+          <>
+            {CHIP_DIMS.map((dim) => (
+              <ChipRow
+                key={dim.key}
+                label={dim.label}
+                options={dim.options}
+                value={String(values[dim.key] ?? "")}
+                onChange={(v) => onChange(dim.key, v)}
+                colors={colors}
+                counts={dimensionCounts?.[dim.key]}
+              />
+            ))}
 
-        {/* Confidence slider inside the chip panel */}
-        <ConfidenceSlider
-          value={values.confidenceThreshold}
-          onChange={v => onChange("confidenceThreshold", v)}
-          colors={colors}
-        />
+            {/* Confidence slider inside the chip panel */}
+            <ConfidenceSlider
+              value={values.confidenceThreshold}
+              onChange={v => onChange("confidenceThreshold", v)}
+              colors={colors}
+            />
+          </>
+        )}
       </View>
 
       {/* Action buttons */}
