@@ -647,7 +647,7 @@ export default function UploadScreen() {
                 ]}
               >
                 <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
-                  {t === "upload" ? "Upload File" : `Inventory (${inventoryTotal})`}
+                  {t === "upload" ? "Upload File" : `New Inventory (${inventoryTotal})`}
                 </Text>
               </Pressable>
             ))}
