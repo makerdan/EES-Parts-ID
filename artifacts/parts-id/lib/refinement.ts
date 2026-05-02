@@ -10,7 +10,26 @@
  */
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 
-export type RefinementState = Record<string, string | undefined>;
+/**
+ * Refinement state shape. Chip-dimension keys (e.g. `manufacturer`,
+ * `amperage`) hold a single chosen option string; the reserved key
+ * `extraKeywords` holds free-text the user typed in the results-screen
+ * "Add keywords" input. Both are applied as AND-logic filters against the
+ * combined item text.
+ */
+export type RefinementState = {
+  /**
+   * Free-text keywords typed on the results screen to narrow the in-memory
+   * result list. Matched against the same combined item text used for chip
+   * refinements via `tokenMatch` so behavior stays consistent.
+   */
+  extraKeywords?: string;
+  /** Chip-dimension selections, keyed by FilterValues chip key. */
+  [chipKey: string]: string | undefined;
+};
+
+/** Reserved key in RefinementState that holds free-text refinement input. */
+export const EXTRA_KEYWORDS_KEY = "extraKeywords" as const;
 
 export function itemFullText(
   item: Pick<InventoryItem, "vendor" | "catalog" | "description" | "aiKeywords">,
@@ -28,12 +47,21 @@ export function tokenMatch(text: string, value: string): boolean {
   });
 }
 
-/** Filter a results list by the active drill-down chip selections (AND-logic). */
+/**
+ * Filter a results list by the active drill-down chip selections AND any
+ * free-text "extra keywords" the user typed in the results-screen input
+ * (AND-logic across both). Both kinds of refinement reuse `tokenMatch`
+ * against `itemFullText`, so behavior is consistent with how a chip would
+ * have narrowed the original server response.
+ */
 export function applyRefinement(results: SearchResult[], refinement: RefinementState): SearchResult[] {
-  const active = Object.entries(refinement).filter(([, v]) => !!v) as Array<[string, string]>;
-  if (active.length === 0) return results;
+  const { [EXTRA_KEYWORDS_KEY]: rawExtra, ...chipRefinement } = refinement;
+  const activeChips = Object.entries(chipRefinement).filter(([, v]) => !!v) as Array<[string, string]>;
+  const extra = rawExtra?.trim() ? rawExtra.trim() : null;
+  if (activeChips.length === 0 && !extra) return results;
   return results.filter(r => {
     const text = itemFullText(r.item);
-    return active.every(([, v]) => tokenMatch(text, v));
+    if (extra && !tokenMatch(text, extra)) return false;
+    return activeChips.every(([, v]) => tokenMatch(text, v));
   });
 }

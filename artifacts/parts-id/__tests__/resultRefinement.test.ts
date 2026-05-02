@@ -121,4 +121,75 @@ describe("applyRefinement", () => {
     expect(applyRefinement([r], { colorChip: "White" })).toHaveLength(1);
     expect(applyRefinement([r], { colorChip: "Black" })).toHaveLength(0);
   });
+
+  describe("extraKeywords (results-screen 'Add keywords' input)", () => {
+    const baseResults: SearchResult[] = [
+      makeResult({
+        id: 10,
+        vendor: "HUB",
+        catalog: "5252W",
+        description: "Hubbell 20A White Receptacle",
+        aiKeywords: ["receptacle", "white", "duplex"],
+      }),
+      makeResult({
+        id: 11,
+        vendor: "HUB",
+        catalog: "5252BL",
+        description: "Hubbell 20A Blue Receptacle",
+        aiKeywords: ["receptacle", "blue", "duplex"],
+      }),
+      makeResult({
+        id: 12,
+        vendor: "LEV",
+        catalog: "WPB-50",
+        description: "Leviton 50A Weatherproof Receptacle Cover",
+        aiKeywords: ["receptacle", "weatherproof", "cover"],
+      }),
+    ];
+
+    it("returns the input list unchanged when extraKeywords is empty or whitespace", () => {
+      expect(applyRefinement(baseResults, { extraKeywords: "" })).toBe(baseResults);
+      expect(applyRefinement(baseResults, { extraKeywords: "   " })).toBe(baseResults);
+    });
+
+    it("filters by a single extra keyword via whole-word match", () => {
+      const out = applyRefinement(baseResults, { extraKeywords: "blue" });
+      expect(out.map(r => r.item.id)).toEqual([11]);
+    });
+
+    it("ANDs multiple extra keywords (every word must match)", () => {
+      const out = applyRefinement(baseResults, { extraKeywords: "weatherproof receptacle" });
+      expect(out.map(r => r.item.id)).toEqual([12]);
+    });
+
+    it("ANDs extra keywords with chip refinements (AND across both)", () => {
+      const out = applyRefinement(baseResults, {
+        category: "Receptacle",
+        extraKeywords: "blue",
+      });
+      expect(out.map(r => r.item.id)).toEqual([11]);
+    });
+
+    it("returns no results when extra keywords match no item", () => {
+      const out = applyRefinement(baseResults, { extraKeywords: "nonexistent" });
+      expect(out).toEqual([]);
+    });
+
+    it("trims surrounding whitespace before matching", () => {
+      const out = applyRefinement(baseResults, { extraKeywords: "  white  " });
+      expect(out.map(r => r.item.id)).toEqual([10]);
+    });
+
+    it("matches keywords found in aiKeywords as well as description", () => {
+      const r = makeResult({
+        id: 20,
+        vendor: "X",
+        catalog: "Y",
+        description: "no clue",
+        aiKeywords: ["weatherproof", "outdoor"],
+      });
+      expect(applyRefinement([r], { extraKeywords: "weatherproof" })).toHaveLength(1);
+      expect(applyRefinement([r], { extraKeywords: "indoor" })).toHaveLength(0);
+    });
+  });
 });
