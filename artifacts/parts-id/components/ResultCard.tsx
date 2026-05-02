@@ -23,6 +23,9 @@ interface ResultCardProps {
    * Pass [] (or omit) to disable highlighting.
    */
   highlightTokens?: string[];
+  /** When set, the matching bin in the bin list is visually emphasized so
+   *  the worker knows which physical bin matches the current Browse path. */
+  highlightBin?: string;
 }
 
 /**
@@ -123,7 +126,7 @@ const varStyles = StyleSheet.create({
   binEmpty: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens, highlightBin }: ResultCardProps) {
   const colors = useColors();
   // Match style: a soft tint background + bold weight. Uses the theme's
   // primary color so it stays legible in light/dark mode.
@@ -209,9 +212,21 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
             <View style={cardStyles.binTextWrap}>
               <Text style={[cardStyles.binText, { color: colors.accentForeground }]}>
                 {(item.binLocations ?? []).length === 1 ? "Bin: " : "Bins: "}
-                {expanded
-                  ? (item.binLocations ?? []).join("\n      ")
-                  : (item.binLocations ?? []).join(", ")}
+                {(item.binLocations ?? []).map((b, i) => {
+                  const isMatch = !!highlightBin && b.toUpperCase() === highlightBin.toUpperCase();
+                  const sep = i === 0 ? "" : (expanded ? "\n      " : ", ");
+                  return (
+                    <Text key={`${b}-${i}`}>
+                      {sep}
+                      <Text
+                        style={isMatch ? { fontFamily: "Inter_700Bold", textDecorationLine: "underline" } : undefined}
+                      >
+                        {b}
+                      </Text>
+                      {isMatch ? <Text style={{ fontFamily: "Inter_400Regular" }}>{" ← here"}</Text> : null}
+                    </Text>
+                  );
+                })}
               </Text>
             </View>
           </View>

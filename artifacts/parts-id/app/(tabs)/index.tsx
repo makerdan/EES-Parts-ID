@@ -28,6 +28,7 @@ import {
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
 import BrowseTaxonomy, { type CategoryTreeNode } from "@/components/BrowseTaxonomy";
+import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
@@ -189,6 +190,11 @@ export default function SearchScreen() {
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
   const [cacheAge, setCacheAge] = useState<string | null>(null);
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
+  // ── Browse-by-Aisle overlay (separate from the taxonomy Browse mode) ─────
+  // Opens a full-screen drill-down view (Aisle → Section → Shelf → Parts)
+  // sourced from the local Fuse cache. Closing returns the worker to the
+  // exact Search/Browse state they had — we don't touch `filters` or `mode`.
+  const [aisleBrowseOpen, setAisleBrowseOpen] = useState(false);
   // ── Search vs Browse mode ─────────────────────────────────────────────────
   const [mode, setMode] = useState<Mode>("search");
   const [browseResults, setBrowseResults] = useState<SearchResult[] | null>(null);
@@ -1034,8 +1040,40 @@ export default function SearchScreen() {
         </View>
       ) : null}
 
+      {/* ── Browse-by-Aisle entry point ──────────────────────────────────── */}
+      {!aisleBrowseOpen ? (
+        <Pressable
+          onPress={() => setAisleBrowseOpen(true)}
+          style={[styles.aisleEntryBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+          accessibilityRole="button"
+          accessibilityLabel="Browse parts by aisle, section, and shelf"
+        >
+          <Feather name="map-pin" size={16} color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.aisleEntryTitle, { color: colors.foreground }]}>
+              Browse by Aisle
+            </Text>
+            <Text style={[styles.aisleEntryHint, { color: colors.mutedForeground }]}>
+              Walk the warehouse: Aisle › Section › Shelf
+            </Text>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+        </Pressable>
+      ) : null}
+
+      {/* ── Browse-by-Aisle overlay ──────────────────────────────────────── */}
+      {aisleBrowseOpen ? (
+        <BrowseByAisle
+          inventory={fuseItemsRef.current}
+          cacheReady={!isSyncing}
+          onClose={() => setAisleBrowseOpen(false)}
+          fontScale={textFontScale}
+          onEditKeywords={setEditItem}
+        />
+      ) : null}
+
       {/* ── Search bar — only shown in Search mode (Browse drives its own picker) ── */}
-      {mode === "browse" ? null : (
+      {!aisleBrowseOpen && mode === "search" ? (
       <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <View style={styles.searchBarInputWrapper}>
           <TextInput
@@ -1090,8 +1128,10 @@ export default function SearchScreen() {
         </View>
 
       </View>
-      )}
+      ) : null}
 
+      {!aisleBrowseOpen ? (
+      <>
       {/* ── Search / Browse mode toggle ─────────────────────────────────── */}
       <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
         <Pressable
@@ -1327,6 +1367,8 @@ export default function SearchScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
       />
+      </>
+      ) : null}
 
       <ReferenceModal />
 
@@ -1418,6 +1460,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
+  aisleEntryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginHorizontal: 12,
+    marginTop: 12,
+    marginBottom: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  aisleEntryTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  aisleEntryHint: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   modeToggleRow: {
     flexDirection: "row",
     gap: 8,
