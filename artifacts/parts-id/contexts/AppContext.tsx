@@ -7,7 +7,7 @@ import React, {
 } from "react";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Platform } from "react-native";
+import { Appearance, Platform } from "react-native";
 
 const SEARCH_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
 
@@ -39,6 +39,21 @@ export async function loadSettings(): Promise<AppSettings> {
 
 export async function saveSettings(s: AppSettings): Promise<void> {
   try { await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+}
+
+/**
+ * Propagates the stored theme preference to React Native's Appearance API so
+ * that ALL native components — including NativeTabs / Liquid Glass tabs on iOS
+ * — immediately reflect the manually chosen Light / Dark mode.
+ *
+ * Passing `null` resets to the system preference ("system" option).
+ */
+function applyThemeMode(mode: ThemeMode) {
+  try {
+    Appearance.setColorScheme(mode === "system" ? null : mode);
+  } catch {
+    // `setColorScheme` is a no-op on platforms that don't support it (old RN, some web runtimes).
+  }
 }
 const APP_PASSWORD = process.env.EXPO_PUBLIC_APP_PASSWORD ?? "";
 
@@ -102,6 +117,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (session === "authenticated") setIsAuthenticated(true);
       if (token) setAdminToken(token);
       setSettings(s);
+      applyThemeMode(s.themeMode);
       setIsLoading(false);
     }).catch(() => {
       // SecureStore failure (e.g. keychain unavailable) — start in clean logged-out state
@@ -113,6 +129,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSettings(prev => {
       const next = { ...prev, [key]: value };
       saveSettings(next);
+      if (key === "themeMode") applyThemeMode(value as ThemeMode);
       return next;
     });
   }, []);

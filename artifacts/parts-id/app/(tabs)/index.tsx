@@ -522,6 +522,8 @@ export default function SearchScreen() {
                       styles.secondaryBtn,
                       styles.textSizeBtn,
                       {
+                        width: "auto",
+                        paddingHorizontal: 12,
                         backgroundColor: settings.themeMode === mode ? colors.primary : colors.muted,
                         borderColor: settings.themeMode === mode ? colors.primary : colors.border,
                       },
@@ -531,7 +533,7 @@ export default function SearchScreen() {
                       styles.textSizeBtnLabel,
                       { color: settings.themeMode === mode ? colors.primaryForeground : colors.foreground },
                     ]}>
-                      {mode === "light" ? "☀" : mode === "dark" ? "☾" : "⊙"}
+                      {mode === "light" ? "Light" : mode === "dark" ? "Dark" : "System"}
                     </Text>
                   </Pressable>
                 ))}
