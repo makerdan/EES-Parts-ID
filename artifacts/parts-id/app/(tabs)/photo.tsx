@@ -526,7 +526,7 @@ const styles = StyleSheet.create({
   resultsTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginBottom: 10 },
   noResultsCard: { borderRadius: 10, padding: 16, borderWidth: 1 },
   noResultsText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
-  inlineBanner: { ...secondaryBtnBase, padding: 12, flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const },
+  inlineBanner: { ...secondaryBtnBase, padding: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
   inlineBannerClose: { paddingLeft: 10 },
   errorCard: { ...secondaryBtnBase, padding: 14 },
