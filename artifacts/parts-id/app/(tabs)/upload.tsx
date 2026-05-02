@@ -1869,7 +1869,10 @@ export default function UploadScreen() {
                 <ActivityIndicator color={colors.primaryForeground} />
               ) : (
                 <Text style={[styles.reviewConfirmText, { color: colors.primaryForeground }]}>
-                  Apply {selectedKeysFromReview.length} {selectedKeysFromReview.length === 1 ? "change" : "changes"}
+                  {`Apply ${selectedKeysFromReview.length} ${selectedKeysFromReview.length === 1 ? "change" : "changes"}`}
+                  {previewData && previewData.newCount > 0
+                    ? ` (${previewData.newCount} new ${previewData.newCount === 1 ? "row" : "rows"} will still be added)`
+                    : ""}
                 </Text>
               )}
             </Pressable>
