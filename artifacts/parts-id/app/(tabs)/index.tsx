@@ -20,33 +20,17 @@ import { FilterPanel, ConfidenceSlider, type FilterValues } from "@/components/F
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
-import { useApp } from "@/contexts/AppContext";
+import { useApp, DEFAULT_SETTINGS, type TextSize } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
-const SETTINGS_KEY = "parts_id_settings_v1";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "http://localhost:8080/api";
 
-type TextSize = "small" | "normal" | "large";
-type AppSettings = { textSize: TextSize; defaultConfidenceThreshold: number };
-const DEFAULT_SETTINGS: AppSettings = { textSize: "normal", defaultConfidenceThreshold: 50 };
-
-async function loadSettings(): Promise<AppSettings> {
-  try {
-    const raw = await AsyncStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } as AppSettings;
-  } catch { return DEFAULT_SETTINGS; }
-}
-
-async function saveSettings(s: AppSettings): Promise<void> {
-  try { await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
-}
 
 type QueryCacheEntry = { timestamp: number; results: SearchResult[] };
 type QueryCache = Record<string, QueryCacheEntry>;
@@ -162,8 +146,7 @@ function buildSearchBody(f: FilterValues) {
 
 export default function SearchScreen() {
   const colors = useColors();
-  const { logout, clearCache } = useApp();
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const { logout, clearCache, settings, updateSetting, textFontScale } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
@@ -187,14 +170,12 @@ export default function SearchScreen() {
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchAbortedRef = useRef(false);
 
-  // Load persisted settings and apply on mount
+  // Sync filters + text input whenever the persisted default threshold changes
   useEffect(() => {
-    loadSettings().then(s => {
-      setSettings(s);
-      setFilters(f => ({ ...f, confidenceThreshold: s.defaultConfidenceThreshold }));
-      setConfThresholdInput(String(s.defaultConfidenceThreshold));
-    });
-  }, []);
+    setFilters(f => ({ ...f, confidenceThreshold: settings.defaultConfidenceThreshold }));
+    setConfThresholdInput(String(settings.defaultConfidenceThreshold));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.defaultConfidenceThreshold]);
 
   const buildFuseIndex = useCallback((items: InventoryItem[]) => {
     fuseItemsRef.current = items;
@@ -365,18 +346,6 @@ export default function SearchScreen() {
     setOfflineCacheType(null);
     setDimensionCounts(undefined);
   };
-
-  const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-    const next = { ...settings, [key]: value };
-    setSettings(next);
-    saveSettings(next);
-    if (key === "defaultConfidenceThreshold") {
-      setFilters(f => ({ ...f, confidenceThreshold: value as number }));
-      setConfThresholdInput(String(value));
-    }
-  };
-
-  const textFontScale = settings.textSize === "small" ? 0.85 : settings.textSize === "large" ? 1.18 : 1.0;
 
   // Called by KeywordEditor after debounced save — update local Fuse index immediately
   const handleKeywordsChanged = useCallback((id: number, keywords: string[]) => {
