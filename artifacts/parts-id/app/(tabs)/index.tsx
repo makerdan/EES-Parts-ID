@@ -1478,13 +1478,14 @@ const styles = StyleSheet.create({
   aisleEntryHint: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   modeToggleRow: {
     flexDirection: "row",
+    justifyContent: "center",
     gap: 8,
     paddingHorizontal: 12,
     paddingBottom: 6,
   },
   modeToggleBtn: {
-    flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
     borderRadius: 8,
     borderWidth: 1,
     alignItems: "center",
