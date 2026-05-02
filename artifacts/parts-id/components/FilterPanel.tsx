@@ -259,18 +259,23 @@ function Field({
 }
 
 // Continuous 0–100 confidence slider using PanResponder (no native module needed)
-function ConfidenceSlider({
+export function ConfidenceSlider({
   value,
   onChange,
   colors,
+  presets = [0, 20, 40, 60, 80],
 }: {
   value: number;
   onChange: (v: number) => void;
   colors: ReturnType<typeof useColors>;
+  /** Quick-pick preset values. Defaults to [0,20,40,60,80]. Pass a custom list to hide 0/"All". */
+  presets?: number[];
 }) {
   // value is 0–100 (integer percentage)
   const pct = Math.round(value);
   const trackWidth = useRef(0);
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
 
   const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 
@@ -281,12 +286,12 @@ function ConfidenceSlider({
       onPanResponderGrant: (e) => {
         if (trackWidth.current === 0) return;
         const x = e.nativeEvent.locationX;
-        onChange(clamp((x / trackWidth.current) * 100));
+        onChangeRef.current(clamp((x / trackWidth.current) * 100));
       },
       onPanResponderMove: (e) => {
         if (trackWidth.current === 0) return;
         const x = e.nativeEvent.locationX;
-        onChange(clamp((x / trackWidth.current) * 100));
+        onChangeRef.current(clamp((x / trackWidth.current) * 100));
       },
     }),
   ).current;
@@ -330,7 +335,7 @@ function ConfidenceSlider({
 
       {/* Quick presets */}
       <View style={{ flexDirection: "row", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-        {[0, 20, 40, 60, 80].map((s) => (
+        {presets.map((s) => (
           <Pressable
             key={s}
             onPress={() => onChange(s)}
