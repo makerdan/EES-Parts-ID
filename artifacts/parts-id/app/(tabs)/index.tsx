@@ -1149,7 +1149,7 @@ export default function SearchScreen() {
             styles.modeToggleBtn,
             {
               backgroundColor: mode === "browse" ? colors.primary : colors.card,
-              borderColor: colors.border,
+              borderColor: colors.border + "BF",
             },
           ]}
         >
