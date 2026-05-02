@@ -10,7 +10,19 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  // Keep TCP connections alive so Replit's PostgreSQL doesn't silently
+  // close idle connections and leave the pool serving dead sockets.
+  keepAlive: true,
+  // Fail fast if a new connection can't be established within 5s.
+  connectionTimeoutMillis: 5_000,
+  // Release idle connections after 30s to avoid accumulating stale sockets.
+  idleTimeoutMillis: 30_000,
+  // Cap pool size — 10 concurrent DB connections is ample for this app.
+  max: 10,
+});
+
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";

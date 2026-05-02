@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { pool } from "@workspace/db";
 
 const rawPort = process.env["PORT"];
 
@@ -15,12 +16,53 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+// ── Global error safety net ────────────────────────────────────────────────────
+// Catch async errors that escaped every try/catch. Log them but don't crash
+// the process — the request will time out rather than taking the whole server down.
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "Unhandled promise rejection");
+});
+
+// Uncaught synchronous exceptions are unrecoverable — log and exit so the
+// workflow manager can restart the process cleanly.
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "Uncaught exception — exiting");
+  process.exit(1);
+});
+
+// ── Port-conflict retry ────────────────────────────────────────────────────────
 const MAX_RETRIES = 5;
-const RETRY_DELAY_MS = 1000;
+const RETRY_DELAY_MS = 1_000;
 
 function startServer(retries: number): void {
   const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");
+
+    // ── Graceful shutdown ──────────────────────────────────────────────────────
+    // Stop accepting new connections, drain in-flight requests, then close the
+    // DB pool. Forced exit after 10 s if drain takes too long (e.g. hung SSE).
+    const shutdown = (signal: string) => {
+      logger.info({ signal }, "Shutdown signal — draining connections…");
+
+      server.close(async () => {
+        logger.info("HTTP server closed");
+        try {
+          await pool.end();
+          logger.info("Database pool closed");
+        } catch (err) {
+          logger.error({ err }, "Error closing database pool");
+        }
+        process.exit(0);
+      });
+
+      setTimeout(() => {
+        logger.warn("Graceful shutdown timed out after 10 s — forcing exit");
+        process.exit(1);
+      }, 10_000).unref();
+    };
+
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
   });
 
   server.on("error", (err: NodeJS.ErrnoException) => {
