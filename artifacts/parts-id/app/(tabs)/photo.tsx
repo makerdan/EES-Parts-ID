@@ -48,6 +48,7 @@ export default function PhotoScreen() {
   );
   const [aiTerms, setAiTerms] = useState<string[]>([]);
   const [inlineError, setInlineError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const identifyMutation = useAiIdentifyPart();
   const searchMutation = useSearchInventory();
@@ -88,10 +89,17 @@ export default function PhotoScreen() {
       if (allowedAssets.length < result.assets.length) {
         setInlineError("Max 4 images — only some photos were added to stay within the limit.");
       }
-      const resized = await Promise.all(
-        allowedAssets.map((asset) => resizeImage(asset.uri, asset.width ?? 0))
-      );
-      setImages((prev) => [...prev, ...resized.map((r) => ({ uri: r.uri, base64: r.base64 }))]);
+      setIsProcessing(true);
+      try {
+        const resized = await Promise.all(
+          allowedAssets.map((asset) => resizeImage(asset.uri, asset.width ?? 0))
+        );
+        setImages((prev) => [...prev, ...resized.map((r) => ({ uri: r.uri, base64: r.base64 }))]);
+      } catch {
+        setInlineError("Could not process the selected photo — please try again.");
+      } finally {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -185,22 +193,31 @@ export default function PhotoScreen() {
               ))}
 
               {images.length < 4 ? (
-                <View style={styles.addImageButtons}>
-                  <Pressable
-                    onPress={() => pickImage("camera")}
-                    style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: '#000' }]}
-                  >
-                    <Text style={styles.addImageEmoji}>📷</Text>
-                    <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Camera</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => pickImage("library")}
-                    style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: '#000' }]}
-                  >
-                    <Text style={styles.addImageEmoji}>🖼️</Text>
-                    <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
-                  </Pressable>
-                </View>
+                isProcessing ? (
+                  <View style={[styles.processingRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text style={[styles.processingLabel, { color: colors.mutedForeground }]}>Processing…</Text>
+                  </View>
+                ) : (
+                  <View style={styles.addImageButtons}>
+                    <Pressable
+                      onPress={() => pickImage("camera")}
+                      disabled={isProcessing}
+                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: '#000' }]}
+                    >
+                      <Text style={styles.addImageEmoji}>📷</Text>
+                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Camera</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => pickImage("library")}
+                      disabled={isProcessing}
+                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: '#000' }]}
+                    >
+                      <Text style={styles.addImageEmoji}>🖼️</Text>
+                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
+                    </Pressable>
+                  </View>
+                )
               ) : null}
             </View>
 
@@ -375,6 +392,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   removeBtnText: { color: "#fff", fontSize: 10, fontFamily: "Inter_700Bold" },
+  processingRow: {
+    width: 270, height: 130, borderRadius: 10, borderWidth: 1,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+  },
+  processingLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
   addImageButtons: { flexDirection: "row", gap: 10, justifyContent: "center" },
   addImageBtn: {
     width: 130,
