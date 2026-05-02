@@ -9,7 +9,6 @@ import {
   misspellingMapTable,
   electricalSlangMapTable,
 } from "@workspace/db";
-import { openai } from "@workspace/integrations-openai-ai-server";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
 import Fuse from "fuse.js";
 import { verifyAdminToken } from "./admin";
@@ -24,6 +23,7 @@ import {
   tokenMatch,
   matchesChipFilters,
 } from "../utils/searchHelpers";
+import { generateKeywords } from "../utils/generateKeywords";
 import {
   blendPgScore,
   catalogScore,
@@ -596,30 +596,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
     await batchProcessWithSSE(
       itemsToEnrich,
       async (item) => {
-        const response = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          max_completion_tokens: 256,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are an expert electrical supply warehouse cataloger. Generate searchable keywords for electrical parts. Return ONLY a JSON array of 6-10 keyword strings. Include: full product name, category, common synonyms, abbreviation expansions, material, ratings, NEMA type if applicable. No explanations.",
-            },
-            {
-              role: "user",
-              content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nDescription: ${item.description}\n\nReturn JSON array of keywords only.`,
-            },
-          ],
-        });
-
-        const text = response.choices[0]?.message?.content ?? "[]";
-        let keywords: string[] = [];
-        try {
-          const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
-          if (Array.isArray(parsed)) keywords = parsed.map(String).slice(0, 10);
-        } catch {
-          keywords = text.split(/[,\n]/).map(k => k.trim().replace(/["\[\]]/g, "")).filter(k => k.length > 1).slice(0, 10);
-        }
+        const keywords = await generateKeywords(item);
 
         await db
           .update(inventoryTable)
@@ -690,41 +667,6 @@ const BULK_ENRICH_CONCUR     = 5;
 const BULK_ENRICH_DELAY_MS   = 200;
 const BULK_ENRICH_MAX_RETRY  = 3;
 
-async function generateKeywordsForItem(item: {
-  vendor: string;
-  catalog: string;
-  description: string | null;
-}): Promise<string[]> {
-  const response = await openai.chat.completions.create({
-    model: BULK_ENRICH_MODEL,
-    max_completion_tokens: 256,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an expert electrical supply warehouse cataloger. Generate searchable keywords for electrical parts. Return ONLY a JSON array of 6-10 keyword strings. Include: full product name, category, common synonyms, abbreviation expansions, material, ratings, NEMA type if applicable. No explanations.",
-      },
-      {
-        role: "user",
-        content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nDescription: ${item.description ?? ""}\n\nReturn JSON array of keywords only.`,
-      },
-    ],
-  });
-
-  const text = response.choices[0]?.message?.content ?? "[]";
-  let keywords: string[] = [];
-  try {
-    const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
-    if (Array.isArray(parsed)) keywords = parsed.map(String).slice(0, 10);
-  } catch {
-    keywords = text
-      .split(/[,\n]/)
-      .map((k: string) => k.trim().replace(/["\[\]]/g, ""))
-      .filter((k: string) => k.length > 1)
-      .slice(0, 10);
-  }
-  return keywords;
-}
 
 async function enrichItemWithRetry(item: {
   id: number;
@@ -735,7 +677,7 @@ async function enrichItemWithRetry(item: {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= BULK_ENRICH_MAX_RETRY; attempt++) {
     try {
-      return await generateKeywordsForItem(item);
+      return await generateKeywords(item, BULK_ENRICH_MODEL);
     } catch (err) {
       lastErr = err;
       if (attempt < BULK_ENRICH_MAX_RETRY) {
