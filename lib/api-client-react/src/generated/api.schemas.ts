@@ -101,22 +101,92 @@ export interface SearchInventoryResponse {
   dimensionCounts?: SearchInventoryResponseDimensionCounts;
 }
 
-export type UpsertInventoryBodyItemsItem = {
+export interface UpsertInventoryItem {
   vendor: string;
   catalog: string;
+  /** Proposed description. Blank/missing values never overwrite an existing description. */
   description?: string;
   /** Bins to merge into the part's bin list (additive — existing bins are preserved). */
   binLocations?: string[];
-};
+}
+
+/**
+ * Identifies a single existing-item update to apply when mode is `selected`. Match is case-insensitive.
+ */
+export interface SelectedKey {
+  vendor: string;
+  catalog: string;
+}
+
+/**
+ * Controls how existing matches are handled:
+- `add-new-only`: only insert rows whose (vendor, catalog) does not exist; never modify existing rows.
+- `overwrite-all`: insert new rows; for matches, additively merge bins and replace description (when proposed description is non-empty). Vendor/catalog text on existing rows is never modified.
+- `selected`: insert new rows; only update existing matches whose (vendor, catalog) appears in `selectedKeys`.
+
+ */
+export type UpsertInventoryBodyMode =
+  (typeof UpsertInventoryBodyMode)[keyof typeof UpsertInventoryBodyMode];
+
+export const UpsertInventoryBodyMode = {
+  "add-new-only": "add-new-only",
+  "overwrite-all": "overwrite-all",
+  selected: "selected",
+} as const;
 
 export interface UpsertInventoryBody {
-  items: UpsertInventoryBodyItemsItem[];
+  items: UpsertInventoryItem[];
+  /** Controls how existing matches are handled:
+- `add-new-only`: only insert rows whose (vendor, catalog) does not exist; never modify existing rows.
+- `overwrite-all`: insert new rows; for matches, additively merge bins and replace description (when proposed description is non-empty). Vendor/catalog text on existing rows is never modified.
+- `selected`: insert new rows; only update existing matches whose (vendor, catalog) appears in `selectedKeys`.
+ */
+  mode?: UpsertInventoryBodyMode;
+  /** Required when `mode = selected`. Existing matches NOT in this list are skipped. */
+  selectedKeys?: SelectedKey[];
 }
 
 export interface UpsertInventoryResponse {
   inserted: number;
   updated: number;
+  /** Existing matches that were intentionally not updated (e.g. mode=add-new-only or not in selectedKeys). */
+  skipped: number;
   total: number;
+}
+
+export interface PreviewUpsertBody {
+  items: UpsertInventoryItem[];
+}
+
+/**
+ * An incoming row that matched an existing inventory item. Includes the current stored values and the proposed merged values.
+ */
+export interface PreviewMatchRow {
+  /** Vendor as stored in the DB (its original casing is preserved). */
+  vendor: string;
+  /** Catalog as stored in the DB. */
+  catalog: string;
+  existingDescription: string;
+  /** Description that will be written if this row is included in an `overwrite-all`/`selected` apply. Empty proposed description means description will not change. */
+  proposedDescription: string;
+  existingBinLocations: string[];
+  /** Bin list after additive merge of incoming bins into the existing list. */
+  proposedBinLocations: string[];
+  binChanged: boolean;
+  descChanged: boolean;
+}
+
+export interface PreviewUpsertResponse {
+  /** Rows whose (vendor, catalog) does not exist in the DB. */
+  newCount: number;
+  /** Existing matches where bin and/or description would change. */
+  changedCount: number;
+  /** Existing matches where nothing would change. */
+  unchangedCount: number;
+  /** Number of distinct (vendor, catalog) rows after de-duplication. */
+  totalIncoming: number;
+  /** Per-row details for every existing match that would change. Unchanged matches are NOT included. */
+  changes: PreviewMatchRow[];
 }
 
 export interface EnrichInventoryBody {

@@ -6,10 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type UpsertInventoryBodyItemsItem = {
+export interface UpsertInventoryItem {
   vendor: string;
   catalog: string;
+  /** Proposed description. Blank/missing values never overwrite an existing description. */
   description?: string;
   /** Bins to merge into the part's bin list (additive — existing bins are preserved). */
   binLocations?: string[];
-};
+}

@@ -31,7 +31,7 @@ import {
   shouldUpdateScore,
   fuseConfidence,
 } from "../utils/scoreHelpers";
-import { mergeBins } from "../utils/binLocations";
+import { mergeBins, dedupeBinsCaseInsensitive } from "../utils/binLocations";
 
 const router = Router();
 
@@ -517,60 +517,187 @@ function requireAdminAuth(
   next();
 }
 
-// ── POST /inventory/upsert-batch ──────────────────────────────────────────────
+// ── Upsert helpers ────────────────────────────────────────────────────────────
 //
-// Bins are merged ADDITIVELY: any bin already on the part stays, and new bins
-// from the request are appended. This matches the behavior of the spreadsheet
-// importers (server seed and mobile upload) so workers cannot accidentally
-// drop a bin by re-uploading a sheet that doesn't list it.
+// Match key is (UPPER(vendor), UPPER(catalog)). On every existing-row update
+// the catalog and vendor TEXT is left exactly as stored — only `binLocations`
+// and `description` may change. A blank/missing description NEVER overwrites
+// a stored description. Bin merge is ADDITIVE.
+
+interface UpsertItemInput {
+  vendor: string;
+  catalog: string;
+  description?: string;
+  binLocations?: string[];
+}
+
+interface ExistingRow {
+  id: number;
+  vendor: string;
+  catalog: string;
+  description: string;
+  binLocations: string[];
+}
+
+/** Case-insensitive `(vendor, catalog)` key. */
+function keyOf(vendor: string, catalog: string): string {
+  return `${vendor.trim().toUpperCase()}|${catalog.trim().toUpperCase()}`;
+}
+
+/** Consolidate incoming items by case-insensitive (vendor, catalog) key.
+ *  Within a single request, duplicate logical keys (including catalog-case
+ *  variants the client may not have caught) are collapsed into one item:
+ *    - vendor / catalog text from the FIRST occurrence wins
+ *    - bins are merged additively (case-insensitive de-dupe)
+ *    - description is the LAST non-empty value (so a later row with text can
+ *      "fill in" an earlier blank, but a blank never wipes a present value)
+ *  This guarantees `/preview-upsert` and `/upsert-batch` operate on a clean,
+ *  one-row-per-key list and is the only place duplicates are resolved server-side. */
+function dedupeItems(items: readonly UpsertItemInput[]): UpsertItemInput[] {
+  const byKey = new Map<string, UpsertItemInput>();
+  for (const raw of items) {
+    const key = keyOf(raw.vendor, raw.catalog);
+    const incomingDesc = typeof raw.description === "string" ? raw.description.trim() : "";
+    const incomingBins = Array.isArray(raw.binLocations) ? raw.binLocations : [];
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, {
+        vendor: raw.vendor,
+        catalog: raw.catalog,
+        description: incomingDesc,
+        binLocations: dedupeBinsCaseInsensitive(incomingBins),
+      });
+      continue;
+    }
+    const prevDesc = typeof prev.description === "string" ? prev.description : "";
+    byKey.set(key, {
+      vendor: prev.vendor,
+      catalog: prev.catalog,
+      description: incomingDesc.length > 0 ? incomingDesc : prevDesc,
+      binLocations: mergeBins(prev.binLocations ?? [], incomingBins),
+    });
+  }
+  return Array.from(byKey.values());
+}
+
+/** Bin lists are equal as case-insensitive sets (after de-duping). */
+function binsEqual(a: readonly string[], b: readonly string[]): boolean {
+  const aSet = new Set(dedupeBinsCaseInsensitive(a).map((s) => s.toUpperCase()));
+  const bSet = new Set(dedupeBinsCaseInsensitive(b).map((s) => s.toUpperCase()));
+  if (aSet.size !== bSet.size) return false;
+  for (const v of aSet) if (!bSet.has(v)) return false;
+  return true;
+}
+
+/** Look up every existing row that matches the (vendor, catalog) of any item.
+ *  Returns a Map keyed by the case-insensitive composite key. Performs one
+ *  per-item SELECT — fine for typical re-upload sizes (≤ a few hundred). */
+async function fetchExistingMatches(
+  items: readonly UpsertItemInput[],
+): Promise<Map<string, ExistingRow>> {
+  const result = new Map<string, ExistingRow>();
+  // De-dupe so we don't query the same key twice.
+  const seenKeys = new Set<string>();
+  for (const item of items) {
+    const key = keyOf(item.vendor, item.catalog);
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(
+        and(
+          sql`UPPER(${inventoryTable.vendor}) = UPPER(${item.vendor})`,
+          sql`UPPER(${inventoryTable.catalog}) = UPPER(${item.catalog})`,
+        ),
+      )
+      .limit(1);
+    const row = rows[0];
+    if (row) {
+      result.set(key, {
+        id: row.id,
+        vendor: row.vendor,
+        catalog: row.catalog,
+        description: row.description ?? "",
+        binLocations: row.binLocations ?? [],
+      });
+    }
+  }
+  return result;
+}
+
+// ── POST /inventory/upsert-batch ──────────────────────────────────────────────
 router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
   try {
-    const { items } = req.body as {
-      items: Array<{
-        vendor: string;
-        catalog: string;
-        description?: string;
-        binLocations?: string[];
-      }>;
+    const { items, mode: rawMode, selectedKeys: rawSelectedKeys } = req.body as {
+      items?: UpsertItemInput[];
+      mode?: string;
+      selectedKeys?: Array<{ vendor: string; catalog: string }>;
     };
 
     if (!items?.length) {
       return void res.status(400).json({ error: "No items provided" });
     }
 
+    const mode: "add-new-only" | "overwrite-all" | "selected" =
+      rawMode === "add-new-only" || rawMode === "selected" || rawMode === "overwrite-all"
+        ? rawMode
+        : "overwrite-all";
+
+    if (mode === "selected" && !Array.isArray(rawSelectedKeys)) {
+      return void res
+        .status(400)
+        .json({ error: "selectedKeys is required when mode = 'selected'" });
+    }
+
+    const selectedSet = new Set<string>(
+      (rawSelectedKeys ?? []).map((k) => keyOf(k.vendor, k.catalog)),
+    );
+
+    // Collapse duplicate logical keys before any DB work — see dedupeItems().
+    const dedupedItems = dedupeItems(items);
+    const existingByKey = await fetchExistingMatches(dedupedItems);
+
     let inserted = 0;
     let updated = 0;
+    let skipped = 0;
 
-    for (const item of items) {
+    for (const item of dedupedItems) {
       const incomingBins = Array.isArray(item.binLocations) ? item.binLocations : [];
+      const incomingDescRaw = typeof item.description === "string" ? item.description.trim() : "";
+      const key = keyOf(item.vendor, item.catalog);
+      const existing = existingByKey.get(key);
 
-      const existing = await db
-        .select()
-        .from(inventoryTable)
-        .where(
-          and(
-            sql`UPPER(${inventoryTable.vendor}) = UPPER(${item.vendor})`,
-            sql`UPPER(${inventoryTable.catalog}) = UPPER(${item.catalog})`,
-          ),
-        )
-        .limit(1);
+      if (existing) {
+        // ── Existing match: respect mode ──
+        if (mode === "add-new-only") {
+          skipped++;
+          continue;
+        }
+        if (mode === "selected" && !selectedSet.has(key)) {
+          skipped++;
+          continue;
+        }
 
-      if (existing.length > 0) {
-        const mergedBins = mergeBins(existing[0]!.binLocations, incomingBins);
+        const mergedBins = mergeBins(existing.binLocations, incomingBins);
+        // Blank/missing description NEVER wipes the stored description.
+        const nextDescription = incomingDescRaw.length > 0 ? incomingDescRaw : existing.description;
         await db
           .update(inventoryTable)
           .set({
-            description: item.description ?? existing[0]?.description,
+            description: nextDescription,
             binLocations: mergedBins,
             updatedAt: new Date(),
           })
-          .where(eq(inventoryTable.id, existing[0]!.id));
+          // NB: vendor/catalog text on existing rows is intentionally NOT updated.
+          .where(eq(inventoryTable.id, existing.id));
         updated++;
       } else {
+        // ── New row: always insert, regardless of mode ──
         await db.insert(inventoryTable).values({
-          vendor: item.vendor.toUpperCase(),
-          catalog: item.catalog,
-          description: item.description ?? "",
+          vendor: item.vendor.trim().toUpperCase(),
+          catalog: item.catalog.trim(),
+          description: incomingDescRaw,
           binLocations: mergeBins([], incomingBins),
           aiKeywords: [],
         });
@@ -578,10 +705,91 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
       }
     }
 
-    res.json({ inserted, updated, total: items.length });
+    res.json({ inserted, updated, skipped, total: dedupedItems.length });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Upsert failed" });
+  }
+});
+
+// ── POST /inventory/preview-upsert ────────────────────────────────────────────
+//
+// Read-only classifier: returns which incoming rows would create new items,
+// which match existing items, and for each match the current vs. proposed
+// `binLocations` and `description`. No DB writes.
+router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
+  try {
+    const { items } = req.body as { items?: UpsertItemInput[] };
+    if (!items?.length) {
+      return void res.status(400).json({ error: "No items provided" });
+    }
+
+    // Collapse duplicate logical keys before classification.
+    const dedupedItems = dedupeItems(items);
+    const existingByKey = await fetchExistingMatches(dedupedItems);
+
+    let newCount = 0;
+    let changedCount = 0;
+    let unchangedCount = 0;
+    const changes: Array<{
+      vendor: string;
+      catalog: string;
+      existingDescription: string;
+      proposedDescription: string;
+      existingBinLocations: string[];
+      proposedBinLocations: string[];
+      binChanged: boolean;
+      descChanged: boolean;
+    }> = [];
+
+    for (const item of dedupedItems) {
+      const key = keyOf(item.vendor, item.catalog);
+      const existing = existingByKey.get(key);
+      const incomingBins = Array.isArray(item.binLocations) ? item.binLocations : [];
+      const incomingDescRaw = typeof item.description === "string" ? item.description.trim() : "";
+
+      if (!existing) {
+        newCount++;
+        continue;
+      }
+
+      const proposedBins = mergeBins(existing.binLocations, incomingBins);
+      const proposedDescription =
+        incomingDescRaw.length > 0 ? incomingDescRaw : existing.description;
+
+      const binChanged = !binsEqual(existing.binLocations, proposedBins);
+      const descChanged =
+        incomingDescRaw.length > 0 && incomingDescRaw !== existing.description;
+
+      if (binChanged || descChanged) {
+        changedCount++;
+        changes.push({
+          // Preserve DB casing — we never mutate vendor/catalog text on existing rows.
+          vendor: existing.vendor,
+          catalog: existing.catalog,
+          existingDescription: existing.description,
+          proposedDescription,
+          existingBinLocations: existing.binLocations,
+          proposedBinLocations: proposedBins,
+          binChanged,
+          descChanged,
+        });
+      } else {
+        unchangedCount++;
+      }
+    }
+
+    res.json({
+      newCount,
+      changedCount,
+      unchangedCount,
+      // Distinct (vendor, catalog) rows after de-duplication, per OpenAPI.
+      totalIncoming: dedupedItems.length,
+      changes,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Preview failed" });
   }
 });
 
