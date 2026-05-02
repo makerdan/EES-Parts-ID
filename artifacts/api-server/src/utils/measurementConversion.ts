@@ -100,7 +100,7 @@ function nearestTradeSize(inches: number): string | null {
   return best?.label ?? null;
 }
 
-/** Produce metric-equivalent search terms for an inch value. */
+/** Produce metric-equivalent search terms for an inch value (mm + cm). */
 function inchToMetricTerms(inches: number): string[] {
   // Pre-round to 2 dp to eliminate IEEE-754 noise (e.g. 0.75 * 25.4 = 19.0499...)
   const mm = Math.round(inches * MM_PER_INCH * 100) / 100;
@@ -109,6 +109,15 @@ function inchToMetricTerms(inches: number): string[] {
   const terms: string[] = [`${mmStr}mm`, `${mmStr} mm`];
   if (mmInt !== mmStr) {
     terms.push(`${mmInt}mm`, `${mmInt} mm`);
+  }
+  // Also emit cm equivalents so parts catalogued in centimetres are found
+  const cm = Math.round(inches * 2.54 * 100) / 100;
+  const cmStr = fmt(cm, 2);
+  const cmStr1 = fmt(cm, 1);
+  terms.push(`${cmStr}cm`, `${cmStr} cm`);
+  // Add 1-dp version when it differs (avoids duplicates like "2.5cm" vs "2.50cm")
+  if (cmStr1 !== cmStr) {
+    terms.push(`${cmStr1}cm`, `${cmStr1} cm`);
   }
   return terms;
 }
