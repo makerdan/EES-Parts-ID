@@ -67,6 +67,31 @@ async function saveQueryCache(cache: QueryCache): Promise<void> {
   try { await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(cache)); } catch {}
 }
 
+function formatRelativeAge(ts: number): string {
+  const diffMs = Date.now() - ts;
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 1) return "Last updated just now";
+  if (mins < 60) return `Last updated ${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `Last updated ${hrs} hour${hrs === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hrs / 24);
+  return `Last updated ${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+async function readNewestCacheTimestamp(): Promise<string> {
+  try {
+    const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
+    if (!raw) return "No cached data";
+    const cache = JSON.parse(raw) as QueryCache;
+    const entries = Object.values(cache);
+    if (entries.length === 0) return "No cached data";
+    const newest = Math.max(...entries.map(e => e.timestamp));
+    return formatRelativeAge(newest);
+  } catch {
+    return "No cached data";
+  }
+}
+
 function pruneExpired(cache: QueryCache): QueryCache {
   const now = Date.now();
   const out: QueryCache = {};
@@ -148,6 +173,7 @@ export default function SearchScreen() {
   const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
+  const [cacheAge, setCacheAge] = useState<string | null>(null);
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
@@ -395,7 +421,10 @@ export default function SearchScreen() {
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Pressable
-            onPress={() => setShowLogoutModal(true)}
+            onPress={() => {
+              setShowLogoutModal(true);
+              readNewestCacheTimestamp().then(setCacheAge);
+            }}
             style={[styles.headerBtn, styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
           >
             <Feather name="settings" size={16} color={colors.mutedForeground} />
@@ -409,7 +438,7 @@ export default function SearchScreen() {
         visible={showLogoutModal}
         transparent
         animationType="fade"
-        onRequestClose={() => { setShowLogoutModal(false); setCacheClearedMsg(null); }}
+        onRequestClose={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); }}
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.logoutModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -422,6 +451,11 @@ export default function SearchScreen() {
                 <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
                   Clears locally stored search results. Useful when inventory changes.
                 </Text>
+                {cacheAge ? (
+                  <Text style={[styles.settingsRowHint, { color: colors.mutedForeground, marginTop: 3 }]}>
+                    {cacheAge}
+                  </Text>
+                ) : null}
                 {cacheClearedMsg ? (
                   <Text style={[styles.settingsRowSuccess, { color: colors.success }]}>{cacheClearedMsg}</Text>
                 ) : null}
@@ -435,6 +469,7 @@ export default function SearchScreen() {
                   fuseItemsRef.current = [];
                   setCachedCount(0);
                   setOfflineResults(null);
+                  setCacheAge("No cached data");
                   setCacheClearedMsg("✓ Cache cleared — resyncing…");
                   syncAllInventory().then(() => {
                     setCacheClearedMsg(null);
@@ -527,13 +562,13 @@ export default function SearchScreen() {
             </Text>
             <View style={styles.logoutModalBtns}>
               <Pressable
-                onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); }}
+                onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); }}
                 style={[styles.logoutModalConfirm, { backgroundColor: colors.primary }]}
               >
                 <Text style={[styles.logoutModalConfirmText, { color: colors.primaryForeground }]}>Done</Text>
               </Pressable>
               <Pressable
-                onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); logout(); }}
+                onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); logout(); }}
                 style={[styles.logoutModalCancel, { borderColor: colors.destructive + "66", backgroundColor: colors.destructive + "11" }]}
               >
                 <Text style={[styles.logoutModalCancelText, { color: colors.destructive }]}>Sign Out</Text>
