@@ -62,6 +62,17 @@ export function ReferenceModal() {
         // Buffer partial lines across chunk boundaries so SSE frames split
         // across network packets are never passed to JSON.parse half-complete.
         let sseBuffer = "";
+        const processLine = (line: string) => {
+          if (!line.startsWith("data: ")) return;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.content) {
+              fullText += data.content;
+              setAnswer(fullText);
+              scrollRef.current?.scrollToEnd({ animated: true });
+            }
+          } catch {}
+        };
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -69,18 +80,10 @@ export function ReferenceModal() {
           const lines = sseBuffer.split("\n");
           // Keep the last (possibly incomplete) line in the buffer
           sseBuffer = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.content) {
-                fullText += data.content;
-                setAnswer(fullText);
-                scrollRef.current?.scrollToEnd({ animated: true });
-              }
-            } catch {}
-          }
+          for (const line of lines) processLine(line);
         }
+        // Process any remaining buffered content when the stream closes
+        if (sseBuffer.trim()) processLine(sseBuffer);
       }
 
       if (fullText) {

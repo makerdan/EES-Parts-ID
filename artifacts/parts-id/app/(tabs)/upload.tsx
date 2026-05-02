@@ -421,6 +421,14 @@ export default function UploadScreen() {
         // Buffer partial lines across chunk boundaries so we never try to parse
         // an incomplete "data: ..." SSE line.
         let sseBuffer = "";
+        const processLine = async (line: string) => {
+          if (!line.startsWith("data: ")) return;
+          try {
+            const data: EnrichProgress = JSON.parse(line.slice(6));
+            setEnrichProgress(data);
+            if (data.done) await inventoryQuery.refetch();
+          } catch {}
+        };
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -428,15 +436,10 @@ export default function UploadScreen() {
           const lines = sseBuffer.split("\n");
           // Keep the last (possibly incomplete) line in the buffer
           sseBuffer = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const data: EnrichProgress = JSON.parse(line.slice(6));
-              setEnrichProgress(data);
-              if (data.done) await inventoryQuery.refetch();
-            } catch {}
-          }
+          for (const line of lines) await processLine(line);
         }
+        // Process any remaining buffered content when the stream closes
+        if (sseBuffer.trim()) await processLine(sseBuffer);
       }
     } catch {
       setUploadError("AI enrichment failed — please check your connection and try again.");
