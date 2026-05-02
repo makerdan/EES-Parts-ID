@@ -24,9 +24,13 @@ import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/conte
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
 
-const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
-const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
+const FUSE_CACHE_KEY = "parts_id_fuse_cache_v3";
+const QUERY_CACHE_KEY = "parts_id_query_cache_v2";
+const INVENTORY_VERSION_KEY = "parts_id_inventory_version";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Old cache keys that should be cleaned up on first load
+const STALE_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -208,7 +212,7 @@ export default function SearchScreen() {
   }, []);
 
   // Fetch all inventory items in pages and build the Fuse cache
-  const syncAllInventory = useCallback(async () => {
+  const syncAllInventory = useCallback(async (serverVersion?: string) => {
     const PAGE_SIZE = 500;
     let page = 1;
     let total = 0;
@@ -228,7 +232,9 @@ export default function SearchScreen() {
         page++;
       } while (allItems.length < total);
       buildFuseIndex(allItems);
-      await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
+      const ops: [string, string][] = [[FUSE_CACHE_KEY, JSON.stringify(allItems)]];
+      if (serverVersion) ops.push([INVENTORY_VERSION_KEY, serverVersion]);
+      await AsyncStorage.multiSet(ops);
     } catch {
       setSyncError(true);
     } finally {
@@ -238,23 +244,53 @@ export default function SearchScreen() {
 
   // Seed local Fuse index from AsyncStorage on mount; sync from API if cache is empty
   useEffect(() => {
-    AsyncStorage.getItem(FUSE_CACHE_KEY)
-      .then(raw => {
-        if (!raw) {
-          // Cache empty — fetch all inventory in background
-          syncAllInventory();
+    // Remove stale cache keys from old versions (fire-and-forget)
+    AsyncStorage.multiRemove(STALE_CACHE_KEYS).catch(() => {});
+
+    AsyncStorage.multiGet([FUSE_CACHE_KEY, INVENTORY_VERSION_KEY])
+      .then(async ([[, rawItems], [, storedVersion]]) => {
+        // Always check server version to detect enrichment / import changes
+        let serverVersion: string | null = null;
+        try {
+          const vRes = await fetch(`${API_BASE}/inventory/version`);
+          if (vRes.ok) {
+            const vData = (await vRes.json()) as { updatedAt: string | null };
+            serverVersion = vData.updatedAt;
+          }
+        } catch {
+          // Network unavailable — proceed with cached data as-is
+        }
+
+        // Treat storedVersion === null as "version unknown" — force a full sync so we
+        // never silently serve a Fuse cache that pre-dates enrichment or imports.
+        const cacheStale =
+          serverVersion !== null &&
+          (storedVersion === null || serverVersion > storedVersion);
+
+        if (!rawItems || cacheStale) {
+          // Cache empty or server has newer data — clear both caches and re-sync
+          if (cacheStale) {
+            await AsyncStorage.multiRemove([FUSE_CACHE_KEY, QUERY_CACHE_KEY]).catch(() => {});
+          }
+          syncAllInventory(serverVersion ?? undefined);
           return;
         }
+
         let items: InventoryItem[];
         try {
-          items = JSON.parse(raw) as InventoryItem[];
+          items = JSON.parse(rawItems) as InventoryItem[];
         } catch {
           // Corrupt cache — clear it and re-sync
-          AsyncStorage.removeItem(FUSE_CACHE_KEY).catch(() => {});
-          syncAllInventory();
+          await AsyncStorage.multiRemove([FUSE_CACHE_KEY, QUERY_CACHE_KEY]).catch(() => {});
+          syncAllInventory(serverVersion ?? undefined);
           return;
         }
         buildFuseIndex(items);
+
+        // If we got a new server version, store it (cache items were already up-to-date)
+        if (serverVersion && serverVersion !== storedVersion) {
+          AsyncStorage.setItem(INVENTORY_VERSION_KEY, serverVersion).catch(() => {});
+        }
       })
       .catch(() => {
         syncAllInventory();
@@ -308,27 +344,73 @@ export default function SearchScreen() {
         setOfflineCacheType(null);
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
 
-        // Cache all returned items for offline Fuse use
-        if (data.results?.length) {
-          const newItems = data.results.map(r => r.item);
-          // Merge into existing cache — deduplicate by id
-          const merged = [...fuseItemsRef.current];
-          for (const item of newItems) {
-            const idx = merged.findIndex(m => m.id === item.id);
-            if (idx >= 0) merged[idx] = item;
-            else merged.push(item);
-          }
-          buildFuseIndex(merged);
-          AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(() => {});
-        }
-
-        // Cache results keyed by query (with TTL pruning)
+        // Check if inventory changed since we last synced; if so, trigger a full re-sync
+        // so the Fuse index and query cache reflect the latest enrichment/import data.
+        // The query-cache write is serialized inside this chain so it never races with
+        // a concurrent multiRemove (which would let stale entries slip back in).
         const queryKey = buildQueryKey(filtersRef.current);
-        loadQueryCache().then(cache => {
-          const pruned = pruneExpired(cache);
-          pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
-          saveQueryCache(pruned);
-        });
+        fetch(`${API_BASE}/inventory/version`)
+          .then(r => r.ok ? r.json() as Promise<{ updatedAt: string | null }> : Promise.reject())
+          .then(async v => {
+            if (!v.updatedAt) {
+              // No version available — still write query-cache entry
+              const cache = await loadQueryCache();
+              const pruned = pruneExpired(cache);
+              pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
+              saveQueryCache(pruned);
+              return;
+            }
+            const storedVersion = await AsyncStorage.getItem(INVENTORY_VERSION_KEY);
+            // Treat storedVersion === null as "version unknown" — same as stale
+            if (storedVersion === null || v.updatedAt > storedVersion) {
+              // Server has newer (or unknown) data — purge stale caches and trigger full re-sync.
+              // Query-cache write is intentionally skipped: syncAllInventory will seed fresh data.
+              await AsyncStorage.multiRemove([FUSE_CACHE_KEY, QUERY_CACHE_KEY]).catch(() => {});
+              syncAllInventory(v.updatedAt);
+              return;
+            }
+
+            // Inventory unchanged — merge search results into the existing Fuse cache,
+            // persist the version stamp, and write the query-cache entry atomically.
+            if (data.results?.length) {
+              const newItems = data.results.map(r => r.item);
+              const merged = [...fuseItemsRef.current];
+              for (const item of newItems) {
+                const idx = merged.findIndex(m => m.id === item.id);
+                if (idx >= 0) merged[idx] = item;
+                else merged.push(item);
+              }
+              buildFuseIndex(merged);
+              AsyncStorage.multiSet([
+                [FUSE_CACHE_KEY, JSON.stringify(merged)],
+                [INVENTORY_VERSION_KEY, v.updatedAt],
+              ]).catch(() => {});
+            }
+
+            // Write query-cache entry after confirming inventory is current
+            const cache = await loadQueryCache();
+            const pruned = pruneExpired(cache);
+            pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
+            saveQueryCache(pruned);
+          })
+          .catch(async () => {
+            // Version fetch failed — fall back to merging search results and writing query cache
+            if (data.results?.length) {
+              const newItems = data.results.map(r => r.item);
+              const merged = [...fuseItemsRef.current];
+              for (const item of newItems) {
+                const idx = merged.findIndex(m => m.id === item.id);
+                if (idx >= 0) merged[idx] = item;
+                else merged.push(item);
+              }
+              buildFuseIndex(merged);
+              AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(() => {});
+            }
+            const cache = await loadQueryCache();
+            const pruned = pruneExpired(cache);
+            pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
+            saveQueryCache(pruned);
+          });
       },
       onError: () => {
         if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }

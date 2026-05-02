@@ -34,6 +34,20 @@ import {
 
 const router = Router();
 
+// ── GET /inventory/version ────────────────────────────────────────────────────
+router.get("/version", async (_req, res) => {
+  try {
+    const result = await db
+      .select({ updatedAt: sql<string>`MAX(updated_at)` })
+      .from(inventoryTable);
+    const updatedAt = result[0]?.updatedAt ?? null;
+    res.json({ updatedAt });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to get inventory version" });
+  }
+});
+
 // ── GET /inventory ────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
