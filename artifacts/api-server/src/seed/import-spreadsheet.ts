@@ -31,6 +31,7 @@ import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { aggregateRowsByPart } from "../utils/binLocations";
+import { deriveTradeSizeTokens } from "../utils/tradeSize";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -116,7 +117,10 @@ async function importSpreadsheet() {
             catalog: item.catalog,
             description: item.description,
             binLocations: item.binLocations,
-            aiKeywords: [],
+            // Pre-seed conduit / pipe rows with their derived trade-size
+            // tokens so the Trade Size filter chip works immediately,
+            // before any AI enrichment runs.
+            aiKeywords: deriveTradeSizeTokens(item),
           }))
         )
         .onConflictDoUpdate({
