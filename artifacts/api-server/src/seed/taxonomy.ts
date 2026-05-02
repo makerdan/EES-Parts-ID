@@ -33,6 +33,7 @@
 import { eq, sql } from "drizzle-orm";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { db, categoryNodeTable } from "@workspace/db";
 
 interface SeedType {
@@ -280,32 +281,120 @@ export const UNCATEGORIZED_TYPE_SLUG = "uncategorized-type";
  * - Existing nodes are upserted on (name, sortOrder); parentId + source
  *   are left intact to preserve references and manual/AI provenance.
  */
-// Prefer attached_assets/eesTaxonomy.json when present, else embedded.
-function loadTaxonomySource(): { source: "file" | "embedded"; tree: SeedCategory[] } {
+// Locate attached_assets/ relative to whichever cwd seed is invoked from.
+function attachedAssetsDir(): string | null {
   const candidates = [
-    path.resolve(process.cwd(), "attached_assets/eesTaxonomy.json"),
-    path.resolve(process.cwd(), "../../attached_assets/eesTaxonomy.json"),
-    path.resolve(__dirname, "../../../../attached_assets/eesTaxonomy.json"),
+    path.resolve(process.cwd(), "attached_assets"),
+    path.resolve(process.cwd(), "../../attached_assets"),
+    path.resolve(__dirname, "../../../../attached_assets"),
   ];
-  for (const p of candidates) {
-    if (!fs.existsSync(p)) continue;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(p, "utf-8")) as unknown;
-      const ok = Array.isArray(parsed) && parsed.every(
-        c => typeof c === "object" && c !== null &&
-          typeof (c as SeedCategory).slug === "string" &&
-          typeof (c as SeedCategory).name === "string" &&
-          Array.isArray((c as SeedCategory).subcategories),
-      );
-      if (!ok) {
-        console.warn(`[seedTaxonomy] ${p} invalid — using embedded seed`);
-        return { source: "embedded", tree: SEED_TAXONOMY };
+  return candidates.find(p => fs.existsSync(p)) ?? null;
+}
+
+// Glob-light: list files in dir whose names match any of the patterns.
+function findAssets(dir: string, patterns: RegExp[]): string[] {
+  try {
+    return fs.readdirSync(dir)
+      .filter(f => patterns.some(rx => rx.test(f)))
+      .map(f => path.join(dir, f));
+  } catch { return []; }
+}
+
+// Parse the EES Product Catalog PDF's table of contents into category
+// names. The TOC lays out one section per letter (A..K) with the heading
+// text on the same or next line — we scan the first few pages of raw text
+// for `^[A-K]\s+<heading>` and the continuation line that follows.
+function parseEesCatalogPdf(pdfPath: string): string[] | null {
+  try {
+    const out = execFileSync(
+      "pdftotext",
+      ["-raw", "-f", "1", "-l", "2", pdfPath, "-"],
+      { encoding: "utf-8", timeout: 30_000, maxBuffer: 5 * 1024 * 1024 },
+    );
+    const lines = out.split("\n").map(l => l.trim()).filter(Boolean);
+    const cats: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^([A-K])\s+(.+)$/.exec(lines[i]!);
+      if (!m) continue;
+      let heading = m[2]!;
+      // Lines like "C Lighting &" continue on the next line ("Lighting Controls").
+      if (/[&,]\s*$/.test(heading) && lines[i + 1] && !/^[A-L]\s/.test(lines[i + 1]!)) {
+        heading = `${heading} ${lines[i + 1]}`.trim();
       }
-      console.log(`[seedTaxonomy] using EES override at ${p}`);
-      return { source: "file", tree: parsed as SeedCategory[] };
-    } catch (err) {
-      console.warn(`[seedTaxonomy] parse failed for ${p}: ${String(err)}`);
-      return { source: "embedded", tree: SEED_TAXONOMY };
+      cats.push(heading.replace(/\s+/g, " ").trim());
+    }
+    return cats.length >= 5 ? cats : null;
+  } catch (err) {
+    console.warn(`[seedTaxonomy] pdftotext failed for ${pdfPath}: ${String(err)}`);
+    return null;
+  }
+}
+
+function fuzzyMatchCategory(target: string, options: SeedCategory[]): SeedCategory | null {
+  const tNorm = target.toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  const tWords = new Set(tNorm.split(" ").filter(w => w.length > 2));
+  let best: { cat: SeedCategory; score: number } | null = null;
+  for (const c of options) {
+    const cNorm = c.name.toLowerCase().replace(/[^a-z]+/g, " ").trim();
+    const cWords = new Set(cNorm.split(" ").filter(w => w.length > 2));
+    let overlap = 0;
+    for (const w of tWords) if (cWords.has(w)) overlap++;
+    const score = overlap / Math.max(1, Math.min(tWords.size, cWords.size));
+    if (score >= 0.5 && (!best || score > best.score)) best = { cat: c, score };
+  }
+  return best?.cat ?? null;
+}
+
+// Resolve the taxonomy source. Priority:
+//   1. attached_assets/eesTaxonomy.json (operator-supplied override)
+//   2. attached_assets/EES*catalog*.pdf — parse TOC, align embedded
+//      category names to the catalog's, return a "pdf" source
+//   3. embedded SEED_TAXONOMY
+function loadTaxonomySource(): { source: "file" | "pdf" | "embedded"; tree: SeedCategory[] } {
+  const dir = attachedAssetsDir();
+  if (dir) {
+    const jsonOverride = path.join(dir, "eesTaxonomy.json");
+    if (fs.existsSync(jsonOverride)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(jsonOverride, "utf-8")) as unknown;
+        const ok = Array.isArray(parsed) && parsed.every(
+          c => typeof c === "object" && c !== null &&
+            typeof (c as SeedCategory).slug === "string" &&
+            typeof (c as SeedCategory).name === "string" &&
+            Array.isArray((c as SeedCategory).subcategories),
+        );
+        if (ok) {
+          console.log(`[seedTaxonomy] using EES override at ${jsonOverride}`);
+          return { source: "file", tree: parsed as SeedCategory[] };
+        }
+        console.warn(`[seedTaxonomy] ${jsonOverride} invalid — falling through`);
+      } catch (err) {
+        console.warn(`[seedTaxonomy] parse failed for ${jsonOverride}: ${String(err)}`);
+      }
+    }
+    const pdfs = findAssets(dir, [/EES.*catalog.*\.pdf$/i, /catalog.*\.pdf$/i, /categories.*\.pdf$/i]);
+    if (pdfs.length > 0) {
+      const cats = parseEesCatalogPdf(pdfs[0]!);
+      if (cats && cats.length > 0) {
+        console.log(`[seedTaxonomy] parsed ${cats.length} categories from ${pdfs[0]}`);
+        const aligned: SeedCategory[] = [];
+        const used = new Set<string>();
+        for (const catName of cats) {
+          const match = fuzzyMatchCategory(catName, SEED_TAXONOMY);
+          if (match) {
+            aligned.push({ ...match, name: catName });
+            used.add(match.slug);
+          } else {
+            aligned.push({
+              slug: catName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+              name: catName,
+              subcategories: [],
+            });
+          }
+        }
+        for (const c of SEED_TAXONOMY) if (!used.has(c.slug)) aligned.push(c);
+        return { source: "pdf", tree: aligned };
+      }
     }
   }
   return { source: "embedded", tree: SEED_TAXONOMY };
@@ -316,7 +405,7 @@ export async function seedTaxonomy(): Promise<{
   insertedSubcategories: number;
   insertedTypes: number;
   updatedNodes: number;
-  source: "file" | "embedded";
+  source: "file" | "pdf" | "embedded";
 }> {
   let insertedCategories = 0;
   let insertedSubcategories = 0;

@@ -336,12 +336,15 @@ router.patch("/:nodeId", requireAdminAuth, async (req, res) => {
       sortOrder?: number;
     };
 
-    const [existing] = await db
+    // Wrap validation + update in a single transaction so a failure between
+    // the parent-existence check and the UPDATE can't leave inconsistent state.
+    const result = await db.transaction(async (tx) => {
+    const [existing] = await tx
       .select()
       .from(categoryNodeTable)
       .where(eq(categoryNodeTable.id, nodeId))
       .limit(1);
-    if (!existing) return void res.status(404).json({ error: "Node not found" });
+    if (!existing) return { status: 404 as const, body: { error: "Node not found" } };
 
     // Guard 1: enforce the legal three-level shape. A category must be a
     // root, a subcategory must hang under a category, a type must hang
@@ -352,41 +355,35 @@ router.patch("/:nodeId", requireAdminAuth, async (req, res) => {
       // no-op
     } else if (parentId === null) {
       if (requiredParentLevel !== null) {
-        return void res.status(400).json({
-          error: `A ${existing.level} must have a ${requiredParentLevel} parent`,
-        });
+        return { status: 400 as const, body: { error: `A ${existing.level} must have a ${requiredParentLevel} parent` } };
       }
     } else {
       if (requiredParentLevel === null) {
-        return void res.status(400).json({
-          error: `A category must be a root node (parentId must be null)`,
-        });
+        return { status: 400 as const, body: { error: `A category must be a root node (parentId must be null)` } };
       }
-      const [parentRow] = await db
+      const [parentRow] = await tx
         .select()
         .from(categoryNodeTable)
         .where(eq(categoryNodeTable.id, parentId))
         .limit(1);
-      if (!parentRow) return void res.status(404).json({ error: "parentId does not exist" });
+      if (!parentRow) return { status: 404 as const, body: { error: "parentId does not exist" } };
       if (parentRow.level !== requiredParentLevel) {
-        return void res.status(400).json({
-          error: `A ${existing.level} must hang under a ${requiredParentLevel}, not a ${parentRow.level}`,
-        });
+        return { status: 400 as const, body: { error: `A ${existing.level} must hang under a ${requiredParentLevel}, not a ${parentRow.level}` } };
       }
     }
 
     // Guard 2: don't let a node become its own ancestor.
     if (parentId != null) {
       if (parentId === nodeId) {
-        return void res.status(400).json({ error: "A node cannot be its own parent" });
+        return { status: 400 as const, body: { error: "A node cannot be its own parent" } };
       }
-      const all = await db.select().from(categoryNodeTable);
+      const all = await tx.select().from(categoryNodeTable);
       const parentOf = new Map(all.map(n => [n.id, n.parentId]));
       let cur: number | null = parentId;
       const seen = new Set<number>();
       while (cur != null) {
         if (cur === nodeId) {
-          return void res.status(400).json({ error: "Re-parent would create a cycle" });
+          return { status: 400 as const, body: { error: "Re-parent would create a cycle" } };
         }
         if (seen.has(cur)) break;
         seen.add(cur);
@@ -399,9 +396,11 @@ router.patch("/:nodeId", requireAdminAuth, async (req, res) => {
     if (parentId !== undefined) updates["parentId"] = parentId;
     if (typeof sortOrder === "number" && Number.isFinite(sortOrder)) updates["sortOrder"] = sortOrder;
 
-    await db.update(categoryNodeTable).set(updates).where(eq(categoryNodeTable.id, nodeId));
-    const [updated] = await db.select().from(categoryNodeTable).where(eq(categoryNodeTable.id, nodeId)).limit(1);
-    res.json({ node: updated });
+    await tx.update(categoryNodeTable).set(updates).where(eq(categoryNodeTable.id, nodeId));
+    const [updated] = await tx.select().from(categoryNodeTable).where(eq(categoryNodeTable.id, nodeId)).limit(1);
+    return { status: 200 as const, body: { node: updated } };
+    });
+    res.status(result.status).json(result.body);
   } catch (err) {
     console.error("[categories/PATCH] failed:", err);
     res.status(500).json({ error: "Failed to update node" });
@@ -417,58 +416,64 @@ router.post("/merge", requireAdminAuth, async (req, res) => {
     if (!Number.isFinite(sourceId) || !Number.isFinite(targetId) || sourceId === targetId) {
       return void res.status(400).json({ error: "sourceId and targetId must be distinct positive integers" });
     }
-    const [source] = await db.select().from(categoryNodeTable).where(eq(categoryNodeTable.id, sourceId!)).limit(1);
-    const [target] = await db.select().from(categoryNodeTable).where(eq(categoryNodeTable.id, targetId!)).limit(1);
-    if (!source || !target) return void res.status(404).json({ error: "Source or target node not found" });
-    if (source.level !== target.level) {
-      return void res.status(400).json({ error: "Cannot merge nodes at different levels" });
-    }
-
-    // Re-point assignments. Skip rows that would collide with an existing
-    // (inventoryId, targetId) pair (composite PK) — those rows just get deleted.
-    const targetExisting = await db
-      .select({ inventoryId: inventoryCategoryTable.inventoryId })
-      .from(inventoryCategoryTable)
-      .where(eq(inventoryCategoryTable.categoryNodeId, targetId!));
-    const targetSet = new Set(targetExisting.map(r => r.inventoryId));
-
-    const sourceRows = await db
-      .select()
-      .from(inventoryCategoryTable)
-      .where(eq(inventoryCategoryTable.categoryNodeId, sourceId!));
-
-    let moved = 0, dropped = 0;
-    for (const row of sourceRows) {
-      if (targetSet.has(row.inventoryId)) {
-        await db
-          .delete(inventoryCategoryTable)
-          .where(and(
-            eq(inventoryCategoryTable.inventoryId, row.inventoryId),
-            eq(inventoryCategoryTable.categoryNodeId, sourceId!),
-          ));
-        dropped++;
-      } else {
-        await db
-          .update(inventoryCategoryTable)
-          .set({ categoryNodeId: targetId! })
-          .where(and(
-            eq(inventoryCategoryTable.inventoryId, row.inventoryId),
-            eq(inventoryCategoryTable.categoryNodeId, sourceId!),
-          ));
-        moved++;
+    // Wrap the entire re-point + child re-parent + delete sequence in a
+    // single transaction so a partial failure can never leave the source
+    // node alive with some assignments missing or vice versa.
+    const result = await db.transaction(async (tx) => {
+      const [source] = await tx.select().from(categoryNodeTable).where(eq(categoryNodeTable.id, sourceId!)).limit(1);
+      const [target] = await tx.select().from(categoryNodeTable).where(eq(categoryNodeTable.id, targetId!)).limit(1);
+      if (!source || !target) return { status: 404 as const, body: { error: "Source or target node not found" } };
+      if (source.level !== target.level) {
+        return { status: 400 as const, body: { error: "Cannot merge nodes at different levels" } };
       }
-    }
 
-    // Re-parent any children of the source node onto the target.
-    await db
-      .update(categoryNodeTable)
-      .set({ parentId: targetId!, updatedAt: new Date() })
-      .where(eq(categoryNodeTable.parentId, sourceId!));
+      // Re-point assignments. Skip rows that would collide with an existing
+      // (inventoryId, targetId) pair (composite PK) — those rows just get deleted.
+      const targetExisting = await tx
+        .select({ inventoryId: inventoryCategoryTable.inventoryId })
+        .from(inventoryCategoryTable)
+        .where(eq(inventoryCategoryTable.categoryNodeId, targetId!));
+      const targetSet = new Set(targetExisting.map(r => r.inventoryId));
 
-    // Delete the now-empty source node.
-    await db.delete(categoryNodeTable).where(eq(categoryNodeTable.id, sourceId!));
+      const sourceRows = await tx
+        .select()
+        .from(inventoryCategoryTable)
+        .where(eq(inventoryCategoryTable.categoryNodeId, sourceId!));
 
-    res.json({ ok: true, sourceId, targetId, moved, dropped });
+      let moved = 0, dropped = 0;
+      for (const row of sourceRows) {
+        if (targetSet.has(row.inventoryId)) {
+          await tx
+            .delete(inventoryCategoryTable)
+            .where(and(
+              eq(inventoryCategoryTable.inventoryId, row.inventoryId),
+              eq(inventoryCategoryTable.categoryNodeId, sourceId!),
+            ));
+          dropped++;
+        } else {
+          await tx
+            .update(inventoryCategoryTable)
+            .set({ categoryNodeId: targetId! })
+            .where(and(
+              eq(inventoryCategoryTable.inventoryId, row.inventoryId),
+              eq(inventoryCategoryTable.categoryNodeId, sourceId!),
+            ));
+          moved++;
+        }
+      }
+
+      // Re-parent any children of the source node onto the target.
+      await tx
+        .update(categoryNodeTable)
+        .set({ parentId: targetId!, updatedAt: new Date() })
+        .where(eq(categoryNodeTable.parentId, sourceId!));
+
+      // Delete the now-empty source node.
+      await tx.delete(categoryNodeTable).where(eq(categoryNodeTable.id, sourceId!));
+
+      return { status: 200 as const, body: { ok: true, sourceId, targetId, moved, dropped } };
+    });
+    res.status(result.status).json(result.body);
   } catch (err) {
     console.error("[categories/merge] failed:", err);
     res.status(500).json({ error: "Failed to merge nodes" });
