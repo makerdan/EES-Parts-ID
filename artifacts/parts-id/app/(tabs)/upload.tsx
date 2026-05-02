@@ -332,17 +332,28 @@ export default function UploadScreen() {
       const token = adminTokenRef.current;
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await fetch(`${API_BASE}/inventory/enrich-summary`, { headers });
+      if (res.status === 401) {
+        logoutAdmin();
+        setUploadError("Admin session expired. Please unlock again.");
+        return;
+      }
       if (!res.ok) return;
       const data = await res.json() as EnrichSummary;
       setEnrichSummary(data);
     } catch {}
-  }, []);
+  }, [logoutAdmin]);
 
   const pollBulkStatus = useCallback(async () => {
     try {
       const token = adminTokenRef.current;
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await fetch(`${API_BASE}/inventory/bulk-enrich/status`, { headers });
+      if (res.status === 401) {
+        stopBulkPoll();
+        logoutAdmin();
+        setUploadError("Admin session expired. Please unlock again.");
+        return;
+      }
       if (!res.ok) return;
       const data = await res.json() as BulkJobStatus;
       setBulkJobStatus(data);
@@ -351,29 +362,40 @@ export default function UploadScreen() {
         fetchEnrichSummary();
       }
     } catch {}
-  }, [stopBulkPoll, fetchEnrichSummary]);
+  }, [stopBulkPoll, fetchEnrichSummary, logoutAdmin]);
 
   const startBulkPoll = useCallback(() => {
     stopBulkPoll();
+    // Fire an immediate fetch so the UI responds before the first 2s tick
+    void pollBulkStatus();
     bulkPollRef.current = setInterval(pollBulkStatus, 2000);
   }, [stopBulkPoll, pollBulkStatus]);
 
-  // On admin login, load coverage summary and check if a job is already running
+  // On admin login, load coverage summary and check if a job is already running.
+  // On admin logout (isAdmin → false), stop any active polling immediately.
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdmin) {
+      stopBulkPoll();
+      return;
+    }
     fetchEnrichSummary();
     (async () => {
       try {
         const token = adminTokenRef.current;
         const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
         const res = await fetch(`${API_BASE}/inventory/bulk-enrich/status`, { headers });
+        if (res.status === 401) {
+          logoutAdmin();
+          setUploadError("Admin session expired. Please unlock again.");
+          return;
+        }
         if (!res.ok) return;
         const data = await res.json() as BulkJobStatus;
         setBulkJobStatus(data);
         if (data.running) startBulkPoll();
       } catch {}
     })();
-  }, [isAdmin, fetchEnrichSummary, startBulkPoll]);
+  }, [isAdmin, fetchEnrichSummary, startBulkPoll, stopBulkPoll, logoutAdmin]);
 
   // Clean up polling on unmount
   useEffect(() => () => stopBulkPoll(), [stopBulkPoll]);
