@@ -1,7 +1,7 @@
 /**
  * Tab bar layout for the authenticated app.
  *
- * Five tabs (Search, Photo, Upload, Shop, +Reference modal trigger) with an
+ * Five tabs (Search, Photo, Upload, Elliott Site, +Reference modal trigger) with an
  * iOS blur background. Tab order matches the worker's task frequency:
  * searching is the most common action so it's the default landing tab.
  */
@@ -32,7 +32,7 @@ function NativeTabLayout() {
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="shop">
         <Icon sf={{ default: "bag", selected: "bag.fill" }} />
-        <Label>Shop</Label>
+        <Label>Elliott Site</Label>
       </NativeTabs.Trigger>
     </NativeTabs>
   );
@@ -113,7 +113,7 @@ function ClassicTabLayout() {
       <Tabs.Screen
         name="shop"
         options={{
-          title: "Shop",
+          title: "Elliott Site",
           tabBarIcon: ({ color }) =>
             isIOS ? (
               <SymbolView name="bag" tintColor={color} size={24} />
