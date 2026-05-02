@@ -24,6 +24,13 @@ import {
   tokenMatch,
   matchesChipFilters,
 } from "../utils/searchHelpers";
+import {
+  blendPgScore,
+  catalogScore,
+  applyVendorBoost,
+  shouldUpdateScore,
+  fuseConfidence,
+} from "../utils/scoreHelpers";
 
 const router = Router();
 
@@ -300,7 +307,7 @@ router.post("/search", async (req, res) => {
     const scoreMap = new Map<number, ScoredItem>();
     const updateScore = (item: typeof inventoryTable.$inferSelect, confidence: number, reason: string) => {
       const current = scoreMap.get(item.id);
-      if (!current || confidence > current.confidence) {
+      if (shouldUpdateScore(current?.confidence, confidence)) {
         scoreMap.set(item.id, { item, confidence, reason });
       }
     };
@@ -309,7 +316,7 @@ router.post("/search", async (req, res) => {
     for (const row of pgResults) {
       const ftsRank = Number(row.fts_rank) || 0;
       const trgmSim = Number(row.trgm_sim) || 0;
-      const pgScore = Math.min(0.95, ftsRank * 0.6 + trgmSim * 0.4 + 0.4);
+      const pgScore = blendPgScore(ftsRank, trgmSim);
       const item: typeof inventoryTable.$inferSelect = {
         id: row.id,
         vendor: row.vendor,
@@ -323,28 +330,8 @@ router.post("/search", async (req, res) => {
         updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
       };
 
-      const catalogUpper = row.catalog.toUpperCase();
-      const catalogInputUpper = catalogInput.toUpperCase();
-      const rawKwUpper = rawKeywords.toUpperCase();
-
-      // Boost for exact catalog match (dedicated Catalog # field or keyword field)
-      if ((catalogInput && catalogUpper === catalogInputUpper) ||
-          (rawKeywords && catalogUpper === rawKwUpper)) {
-        updateScore(item, 1.0, "exact catalog");
-        continue;
-      }
-      // Boost for prefix/substring catalog match from either field
-      if ((catalogInput && catalogUpper.startsWith(catalogInputUpper)) ||
-          (rawKeywords && catalogUpper.startsWith(rawKwUpper))) {
-        updateScore(item, Math.max(pgScore, 0.93), "catalog prefix");
-        continue;
-      }
-      if ((catalogInput && catalogUpper.includes(catalogInputUpper)) ||
-          (rawKeywords && catalogUpper.includes(rawKwUpper))) {
-        updateScore(item, Math.max(pgScore, 0.85), "catalog substring");
-        continue;
-      }
-      updateScore(item, pgScore, ftsRank > 0 ? "fts match" : "trigram match");
+      const { score, reason } = catalogScore(pgScore, row.catalog, catalogInput, rawKeywords, ftsRank);
+      updateScore(item, score, reason);
     }
 
     // Exact catalog fallback if PG didn't catch it (checks both Catalog # field and raw keywords)
@@ -384,14 +371,14 @@ router.post("/search", async (req, res) => {
       const fuseQuery = corrected.join(" ");
       if (fuseQuery.trim()) {
         for (const r of fuse.search(fuseQuery)) {
-          const conf = (1 - (r.score ?? 0.5)) * 0.70;
+          const conf = fuseConfidence(r.score, 0.70);
           if (conf > 0.2) updateScore(r.item, conf, "fuzzy fallback");
         }
       }
       for (const term of allTermsArr.slice(0, 8)) {
         if (term.length < 3) continue;
         for (const r of fuse.search(term).slice(0, 15)) {
-          const conf = (1 - (r.score ?? 0.5)) * 0.60;
+          const conf = fuseConfidence(r.score, 0.60);
           if (conf > 0.2) updateScore(r.item, conf, "fuzzy expanded fallback");
         }
       }
@@ -400,11 +387,7 @@ router.post("/search", async (req, res) => {
     // Apply vendor boost/penalty
     const results: ScoredItem[] = [];
     for (const entry of scoreMap.values()) {
-      let conf = entry.confidence;
-      if (vendorFilter) {
-        if (entry.item.vendor.toUpperCase() === vendorFilter) conf = Math.min(1.0, conf + 0.15);
-        else conf *= 0.5;
-      }
+      const conf = applyVendorBoost(entry.confidence, vendorFilter, entry.item.vendor);
       results.push({ ...entry, confidence: conf });
     }
 
