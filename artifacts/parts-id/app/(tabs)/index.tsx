@@ -665,7 +665,7 @@ export default function SearchScreen() {
             disabled={searchMutation.isPending}
             style={[styles.searchBarSearchBtn, {
               backgroundColor: searchMutation.isPending ? colors.muted : colors.primary,
-              borderWidth: 2,
+              borderWidth: 1,
               borderColor: searchMutation.isPending ? colors.border : '#000',
             }]}
           >
@@ -888,7 +888,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   searchBarInput: {
-    borderWidth: 1,
+    borderWidth: 2,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
