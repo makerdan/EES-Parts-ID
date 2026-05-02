@@ -45,9 +45,20 @@ type EnrichProgress = {
 
 type BulkJobStatus = {
   running: boolean;
+  stopRequested: boolean;
   startedAt: string | null;
   processed: number;
   errors: number;
+  total: number | null;
+  finishedAt: string | null;
+  lastError: string | null;
+};
+
+type MeasureJobStatus = {
+  running: boolean;
+  startedAt: string | null;
+  processed: number;
+  updated: number;
   total: number | null;
   finishedAt: string | null;
   lastError: string | null;
@@ -307,6 +318,12 @@ export default function UploadScreen() {
   const [enrichSummary, setEnrichSummary] = useState<EnrichSummary | null>(null);
   const [bulkEnrichError, setBulkEnrichError] = useState<string | null>(null);
   const [bulkEnrichPending, setBulkEnrichPending] = useState(false);
+  const [bulkStopPending, setBulkStopPending] = useState(false);
+
+  // Measurement enrichment state
+  const [measureJobStatus, setMeasureJobStatus] = useState<MeasureJobStatus | null>(null);
+  const [measureEnrichError, setMeasureEnrichError] = useState<string | null>(null);
+  const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
 
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
 
@@ -320,11 +337,19 @@ export default function UploadScreen() {
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
 
   const bulkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const measurePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopBulkPoll = useCallback(() => {
     if (bulkPollRef.current !== null) {
       clearInterval(bulkPollRef.current);
       bulkPollRef.current = null;
+    }
+  }, []);
+
+  const stopMeasurePoll = useCallback(() => {
+    if (measurePollRef.current !== null) {
+      clearInterval(measurePollRef.current);
+      measurePollRef.current = null;
     }
   }, []);
 
@@ -358,9 +383,11 @@ export default function UploadScreen() {
       if (!res.ok) return;
       const data = await res.json() as BulkJobStatus;
       setBulkJobStatus(data);
-      if (!data.running) {
+      if (data.running) {
+        void fetchEnrichSummary();
+      } else {
         stopBulkPoll();
-        fetchEnrichSummary();
+        void fetchEnrichSummary();
       }
     } catch {}
   }, [stopBulkPoll, fetchEnrichSummary, logoutAdmin]);
@@ -372,11 +399,41 @@ export default function UploadScreen() {
     bulkPollRef.current = setInterval(pollBulkStatus, 2000);
   }, [stopBulkPoll, pollBulkStatus]);
 
-  // On admin login, load coverage summary and check if a job is already running.
+  const pollMeasureStatus = useCallback(async () => {
+    try {
+      const token = adminTokenRef.current;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`${API_BASE}/inventory/enrich-measurements/status`, { headers });
+      if (res.status === 401) {
+        stopMeasurePoll();
+        logoutAdmin();
+        setUploadError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (!res.ok) return;
+      const data = await res.json() as MeasureJobStatus;
+      setMeasureJobStatus(data);
+      if (data.running) {
+        void fetchEnrichSummary();
+      } else {
+        stopMeasurePoll();
+        void fetchEnrichSummary();
+      }
+    } catch {}
+  }, [stopMeasurePoll, fetchEnrichSummary, logoutAdmin]);
+
+  const startMeasurePoll = useCallback(() => {
+    stopMeasurePoll();
+    void pollMeasureStatus();
+    measurePollRef.current = setInterval(pollMeasureStatus, 2000);
+  }, [stopMeasurePoll, pollMeasureStatus]);
+
+  // On admin login, load coverage summary and check if jobs are already running.
   // On admin logout (isAdmin → false), stop any active polling immediately.
   useEffect(() => {
     if (!isAdmin) {
       stopBulkPoll();
+      stopMeasurePoll();
       return;
     }
     fetchEnrichSummary();
@@ -384,22 +441,31 @@ export default function UploadScreen() {
       try {
         const token = adminTokenRef.current;
         const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await fetch(`${API_BASE}/inventory/bulk-enrich/status`, { headers });
-        if (res.status === 401) {
+        const [bulkRes, measureRes] = await Promise.all([
+          fetch(`${API_BASE}/inventory/bulk-enrich/status`, { headers }),
+          fetch(`${API_BASE}/inventory/enrich-measurements/status`, { headers }),
+        ]);
+        if (bulkRes.status === 401 || measureRes.status === 401) {
           logoutAdmin();
           setUploadError("Admin session expired. Please unlock again.");
           return;
         }
-        if (!res.ok) return;
-        const data = await res.json() as BulkJobStatus;
-        setBulkJobStatus(data);
-        if (data.running) startBulkPoll();
+        if (bulkRes.ok) {
+          const data = await bulkRes.json() as BulkJobStatus;
+          setBulkJobStatus(data);
+          if (data.running) startBulkPoll();
+        }
+        if (measureRes.ok) {
+          const data = await measureRes.json() as MeasureJobStatus;
+          setMeasureJobStatus(data);
+          if (data.running) startMeasurePoll();
+        }
       } catch {}
     })();
-  }, [isAdmin, fetchEnrichSummary, startBulkPoll, stopBulkPoll, logoutAdmin]);
+  }, [isAdmin, fetchEnrichSummary, startBulkPoll, stopBulkPoll, startMeasurePoll, stopMeasurePoll, logoutAdmin]);
 
   // Clean up polling on unmount
-  useEffect(() => () => stopBulkPoll(), [stopBulkPoll]);
+  useEffect(() => () => { stopBulkPoll(); stopMeasurePoll(); }, [stopBulkPoll, stopMeasurePoll]);
 
   const handleStartBulkEnrich = async () => {
     setBulkEnrichError(null);
@@ -427,6 +493,53 @@ export default function UploadScreen() {
       setBulkEnrichError("Failed to start bulk enrichment. Check your connection and try again.");
     } finally {
       setBulkEnrichPending(false);
+    }
+  };
+
+  const handleStopBulkEnrich = async () => {
+    setBulkStopPending(true);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/bulk-enrich`, {
+        method: "DELETE",
+        headers: { ...adminHeaders },
+      });
+      if (res.ok) {
+        const data = await res.json() as { job: BulkJobStatus };
+        setBulkJobStatus(data.job);
+      }
+    } catch {
+      // silently ignore — polling will detect the stopped state shortly
+    } finally {
+      setBulkStopPending(false);
+    }
+  };
+
+  const handleStartMeasureEnrich = async () => {
+    setMeasureEnrichError(null);
+    setMeasureEnrichPending(true);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/enrich-measurements`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+      });
+      if (res.status === 409) {
+        const data = await res.json() as { job: MeasureJobStatus };
+        setMeasureJobStatus(data.job);
+        startMeasurePoll();
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setMeasureEnrichError(err.error ?? "Failed to start measurement enrichment");
+        return;
+      }
+      const data = await res.json() as { job: MeasureJobStatus };
+      setMeasureJobStatus(data.job);
+      startMeasurePoll();
+    } catch {
+      setMeasureEnrichError("Failed to start measurement enrichment. Check your connection and try again.");
+    } finally {
+      setMeasureEnrichPending(false);
     }
   };
 
@@ -793,9 +906,25 @@ export default function UploadScreen() {
                   <View style={styles.progressContainer}>
                     <View style={[styles.bulkStatusRow]}>
                       <ActivityIndicator size="small" color={colors.primary} />
-                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8 }]}>
-                        Background enrichment running…
+                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8, flex: 1 }]}>
+                        {bulkJobStatus.stopRequested ? "Stopping after current batch…" : "Background enrichment running…"}
                       </Text>
+                      <Pressable
+                        onPress={handleStopBulkEnrich}
+                        disabled={bulkStopPending || bulkJobStatus.stopRequested}
+                        style={[
+                          styles.stopBtn,
+                          { borderColor: (bulkStopPending || bulkJobStatus.stopRequested) ? colors.border : colors.destructive },
+                        ]}
+                      >
+                        {bulkStopPending ? (
+                          <ActivityIndicator size="small" color={colors.destructive} />
+                        ) : (
+                          <Text style={[styles.stopBtnText, { color: (bulkJobStatus.stopRequested) ? colors.mutedForeground : colors.destructive }]}>
+                            {bulkJobStatus.stopRequested ? "Stopping…" : "Stop"}
+                          </Text>
+                        )}
+                      </Pressable>
                     </View>
                     {bulkJobStatus.total != null && bulkJobStatus.total > 0 ? (
                       <>
@@ -852,6 +981,81 @@ export default function UploadScreen() {
                   ) : (
                     <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
                       {bulkJobStatus?.running ? "⏳ Enrichment Running…" : "🚀 Start Bulk Enrichment"}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+
+              {/* Measurement Enrichment */}
+              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📐 Measurement Enrichment</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Converts measurement terms (e.g. 1/2" → 0.5in, 12mm) into searchable keywords for every part.
+                </Text>
+
+                {/* Running progress */}
+                {measureJobStatus?.running ? (
+                  <View style={styles.progressContainer}>
+                    <View style={styles.bulkStatusRow}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8 }]}>
+                        Measurement enrichment running…
+                      </Text>
+                    </View>
+                    {measureJobStatus.total != null && measureJobStatus.total > 0 ? (
+                      <>
+                        <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                          <View
+                            style={[
+                              styles.progressFill,
+                              {
+                                backgroundColor: colors.primary,
+                                width: `${Math.round((measureJobStatus.processed / measureJobStatus.total) * 100)}%`,
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
+                          {measureJobStatus.processed.toLocaleString()} / {measureJobStatus.total.toLocaleString()} processed
+                          {measureJobStatus.updated > 0 ? ` · ${measureJobStatus.updated} updated` : ""}
+                        </Text>
+                      </>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {/* Done state */}
+                {measureJobStatus && !measureJobStatus.running && measureJobStatus.finishedAt ? (
+                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
+                    <Text style={[styles.doneText, { color: colors.success }]}>
+                      ✓ Last run: {measureJobStatus.processed.toLocaleString()} processed
+                      {measureJobStatus.updated > 0 ? `, ${measureJobStatus.updated} updated` : ""}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Error */}
+                {(measureJobStatus?.lastError || measureEnrichError) ? (
+                  <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
+                    <Text style={[styles.doneText, { color: colors.destructive }]}>
+                      ⚠ {measureEnrichError ?? measureJobStatus?.lastError}
+                    </Text>
+                  </View>
+                ) : null}
+
+                <Pressable
+                  onPress={handleStartMeasureEnrich}
+                  disabled={measureJobStatus?.running || measureEnrichPending}
+                  style={[
+                    styles.enrichBtn,
+                    { backgroundColor: (measureJobStatus?.running || measureEnrichPending) ? colors.muted : colors.primary },
+                  ]}
+                >
+                  {measureEnrichPending ? (
+                    <ActivityIndicator color={colors.primaryForeground} />
+                  ) : (
+                    <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                      {measureJobStatus?.running ? "⏳ Running…" : "📐 Run Measurement Enrichment"}
                     </Text>
                   )}
                 </Pressable>
@@ -1006,6 +1210,8 @@ const styles = StyleSheet.create({
   enrichCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 14 },
   progressContainer: { gap: 8 },
   bulkStatusRow: { flexDirection: "row", alignItems: "center" },
+  stopBtn: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, marginLeft: 8 },
+  stopBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   progressBar: { height: 8, borderRadius: 4, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 4 },
   progressText: { fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
