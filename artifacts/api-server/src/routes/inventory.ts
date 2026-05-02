@@ -1341,7 +1341,7 @@ router.patch("/:id/category", requireAdminForClassify, async (req, res) => {
       confidence: "1.0000",
       classifiedBy: "manual",
     });
-    res.json({ ok: true, inventoryId: id, categoryNodeId });
+    res.json({ ok: true, inventoryId: id, nodeId: categoryNodeId });
   } catch (err) {
     console.error("[inventory/:id/category] failed:", err);
     res.status(500).json({ error: "Failed to set category for item" });
