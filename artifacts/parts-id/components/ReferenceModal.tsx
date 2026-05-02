@@ -13,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { secondaryBtnBase } from "@/styles/shared";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -326,14 +327,14 @@ const modalStyles = StyleSheet.create({
   subtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   closeText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  clearBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+  clearBtn: { ...secondaryBtnBase, paddingHorizontal: 10, paddingVertical: 5 },
   clearText: { fontSize: 12, fontFamily: "Inter_500Medium" },
 });
 
 const msgStyles = StyleSheet.create({
   qBubble: { padding: 10, borderRadius: 8, marginBottom: 6 },
   qText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  aBubble: { padding: 12, borderRadius: 8, borderWidth: 1 },
+  aBubble: { ...secondaryBtnBase, padding: 12 },
   retryBtn: { alignSelf: "flex-start", marginTop: 10, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 6, borderWidth: 1 },
 });
 
@@ -343,7 +344,7 @@ const emptyStyles = StyleSheet.create({
   title: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   hint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 16 },
   sectionLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 1, textTransform: "uppercase", marginBottom: 10, alignSelf: "flex-start" },
-  chip: { width: "100%", padding: 12, borderRadius: 8, borderWidth: 1, marginBottom: 8 },
+  chip: { ...secondaryBtnBase, width: "100%", padding: 12, marginBottom: 8 },
   chipText: { fontSize: 13, fontFamily: "Inter_400Regular" },
 });
 

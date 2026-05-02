@@ -18,6 +18,7 @@ import { useColors } from "@/hooks/useColors";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { useApp } from "@/contexts/AppContext";
 import type { InventoryItem } from "@workspace/api-client-react";
+import { secondaryBtnBase } from "@/styles/shared";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -982,7 +983,7 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
   headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  lockBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
+  lockBtn: { ...secondaryBtnBase, paddingHorizontal: 12, paddingVertical: 7 },
   lockBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   tabBar: { flexDirection: "row", borderBottomWidth: 1 },
   tabItem: { flex: 1, alignItems: "center", paddingVertical: 12, borderBottomWidth: 2 },
@@ -1028,7 +1029,7 @@ const styles = StyleSheet.create({
   inventoryCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   enrichSmallBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8 },
   enrichSmallText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
-  loadMoreBtn: { borderWidth: 1, borderRadius: 8, padding: 12, alignItems: "center", marginTop: 8 },
+  loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: "center" as const, marginTop: 8 },
   loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   inlineBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
   errorBanner: {},
