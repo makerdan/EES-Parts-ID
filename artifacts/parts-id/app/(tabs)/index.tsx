@@ -689,7 +689,7 @@ export default function SearchScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.foreground }]}>
+        <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <FilterPanel
             values={filters}
             onChange={handleChange}
