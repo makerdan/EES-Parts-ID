@@ -10,7 +10,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
  *   - collapsed       current collapsed state
  *   - toggleCollapsed flip + persist the state
  *   - setCollapsed    set to a specific value + persist
- *   - isLoaded        true once the AsyncStorage read has resolved (even if no stored value existed)
+ *   - isLoaded        true once the AsyncStorage read has resolved (even if no stored value existed).
+ *                    Resets to false and re-reads if `key` changes.
  */
 export function usePersistedCollapse(
   key: string,
@@ -20,6 +21,7 @@ export function usePersistedCollapse(
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
+    setIsLoaded(false);
     AsyncStorage.getItem(key)
       .then(stored => {
         if (stored !== null) {
@@ -30,9 +32,7 @@ export function usePersistedCollapse(
       .catch(() => {
         setIsLoaded(true);
       });
-  // key is stable; only run on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [key]);
 
   const setCollapsed = useCallback(
     (v: boolean) => {
