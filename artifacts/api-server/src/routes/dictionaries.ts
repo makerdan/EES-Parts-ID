@@ -15,7 +15,7 @@ const router = Router();
 router.get("/lookup", async (req, res) => {
   try {
     const term = String(req.query["term"] ?? "").toLowerCase().trim();
-    if (!term) return res.status(400).json({ error: "term is required" });
+    if (!term) return void res.status(400).json({ error: "term is required" });
 
     const [abbrevs, vendorRows, synonymRows, misspellingRow, slangRows] = await Promise.all([
       db

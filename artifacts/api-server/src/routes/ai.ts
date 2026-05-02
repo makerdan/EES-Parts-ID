@@ -25,7 +25,7 @@ router.post("/identify", async (req, res) => {
     };
 
     if (!images.length) {
-      return res.status(400).json({ error: "At least one image is required" });
+      return void res.status(400).json({ error: "At least one image is required" });
     }
 
     const contextParts: string[] = [];
