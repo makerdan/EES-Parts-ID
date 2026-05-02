@@ -50,18 +50,9 @@ interface SeedCategory {
   subcategories: SeedSubcategory[];
 }
 
-/**
- * Default seed taxonomy, manually derived from the EES Product Catalog
- * (06.2025) PDF in `attached_assets/`. We keep this as a TypeScript
- * literal because (a) the canonical source is a PDF that needs human
- * review for category structure, (b) it gives us full type safety, and
- * (c) it avoids a runtime dependency on a parser.
- *
- * Override mechanism: if `attached_assets/eesTaxonomy.json` exists at
- * seed time, its contents are used INSTEAD of this default. That lets
- * ops drop a freshly-generated catalog dump into attached_assets without
- * a code change. See `loadTaxonomySource()`.
- */
+// Default seed taxonomy derived from the EES Product Catalog PDF.
+// Overridden at seed time by attached_assets/eesTaxonomy.json if present
+// (see loadTaxonomySource).
 export const SEED_TAXONOMY: SeedCategory[] = [
   {
     slug: "breakers",
@@ -286,28 +277,11 @@ export const UNCATEGORIZED_TYPE_SLUG = "uncategorized-type";
  * Idempotent seed of the taxonomy tree.
  *
  * - Missing nodes are inserted.
- * - Existing nodes (matched by slug) have their `name` and `sortOrder`
- *   refreshed to match the latest seed definition. This lets us rename
- *   or re-order seed nodes without manual SQL.
- *
- * We deliberately do NOT touch `parentId` or `source` on existing rows —
- * a node's parent should never silently move (that would break references
- * from inventory_category and re-parent ops/AI edits), and `source`
- * preserves manual/AI provenance on rows that started life as "seed".
- *
- * Returns counts for logging.
+ * - Existing nodes are upserted on (name, sortOrder); parentId + source
+ *   are left intact to preserve references and manual/AI provenance.
  */
-/**
- * Load the taxonomy source. Prefers `attached_assets/eesTaxonomy.json`
- * (so ops can ship updated EES catalog data without a code change) and
- * falls back to the embedded SEED_TAXONOMY constant.
- *
- * Validation is deliberately minimal — the file is operator-controlled,
- * not user input. We just verify it has the right top-level shape; if
- * anything looks wrong we log and fall back rather than seeding garbage.
- */
+// Prefer attached_assets/eesTaxonomy.json when present, else embedded.
 function loadTaxonomySource(): { source: "file" | "embedded"; tree: SeedCategory[] } {
-  // Try several plausible locations relative to wherever the seed is run from.
   const candidates = [
     path.resolve(process.cwd(), "attached_assets/eesTaxonomy.json"),
     path.resolve(process.cwd(), "../../attached_assets/eesTaxonomy.json"),
@@ -317,26 +291,20 @@ function loadTaxonomySource(): { source: "file" | "embedded"; tree: SeedCategory
     if (!fs.existsSync(p)) continue;
     try {
       const parsed = JSON.parse(fs.readFileSync(p, "utf-8")) as unknown;
-      if (!Array.isArray(parsed)) {
-        console.warn(`[seedTaxonomy] ${p} is not an array — falling back to embedded seed`);
-        return { source: "embedded", tree: SEED_TAXONOMY };
-      }
-      // Light shape validation — accept anything Category[] shaped.
-      const ok = parsed.every(
-        c =>
-          typeof c === "object" && c !== null &&
+      const ok = Array.isArray(parsed) && parsed.every(
+        c => typeof c === "object" && c !== null &&
           typeof (c as SeedCategory).slug === "string" &&
           typeof (c as SeedCategory).name === "string" &&
           Array.isArray((c as SeedCategory).subcategories),
       );
       if (!ok) {
-        console.warn(`[seedTaxonomy] ${p} failed shape validation — falling back to embedded seed`);
+        console.warn(`[seedTaxonomy] ${p} invalid — using embedded seed`);
         return { source: "embedded", tree: SEED_TAXONOMY };
       }
-      console.log(`[seedTaxonomy] using EES catalog override at ${p}`);
+      console.log(`[seedTaxonomy] using EES override at ${p}`);
       return { source: "file", tree: parsed as SeedCategory[] };
     } catch (err) {
-      console.warn(`[seedTaxonomy] failed to parse ${p}: ${String(err)} — falling back`);
+      console.warn(`[seedTaxonomy] parse failed for ${p}: ${String(err)}`);
       return { source: "embedded", tree: SEED_TAXONOMY };
     }
   }

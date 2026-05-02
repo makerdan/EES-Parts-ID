@@ -1,24 +1,7 @@
-/**
- * Browse / classify endpoints for the three-level taxonomy.
- *
- *   GET    /categories/tree                          — full taxonomy
- *   GET    /categories/:slugOrId/items?page&limit    — items under a node (any level)
- *                                                      with optional chip-filter passthrough
- *   GET    /categories/:nodeId/parts                 — alias of /:slugOrId/items keyed by node id
- *   GET    /categories/uncategorized                 — items not yet placed
- *   GET    /categories/coverage                      — counts: total / classified / by source
- *   POST   /categories/classify                      — admin: rule-classify (SSE) — alias of /inventory/classify
- *   POST   /categories/:nodeId/assign                — admin: manually assign one item
- *   PATCH  /categories/:nodeId                       — admin: rename / re-parent / change sort order
- *   POST   /categories/merge                         — admin: merge two nodes (parts re-assigned)
- *
- * The classifier is rule-first (see taxonomyClassifier.ts). It accepts an
- * `useAi: true` flag that wires the AI fallback for unmatched rows; this
- * is opt-in to avoid surprise OpenAI charges from a stray call.
- *
- * Chip filters on /:slugOrId/items reuse `matchesChipFilters` from
- * searchHelpers so Browse stays consistent with the Search experience.
- */
+// Browse + classify endpoints for the three-level taxonomy.
+// Hybrid classifier: rule pass first (taxonomyClassifier), AI fallback for
+// unmatched rows when useAi is on (defaults to true), Uncategorized leaf
+// otherwise.
 
 import { Router } from "express";
 import { eq, sql, inArray, and } from "drizzle-orm";
@@ -533,29 +516,15 @@ router.post("/:nodeId/assign", requireAdminAuth, async (req, res) => {
   }
 });
 
-// ── POST /categories/classify  &&  POST /inventory/classify (alias) ─────
-//
-// Body shape: { mode?: "all" | "unclassified" | "specific-ids", ids?: number[], useAi?: boolean }
-//   • "all"           — re-classify every inventory row (admin override)
-//   • "unclassified"  — classify items with no current assignment (default)
-//   • "specific-ids"  — classify only the rows in `ids`
-//
-// The pipeline is fully resumable + idempotent:
-//   • Pages through inventory in batches of 1,000 — no hard cap.
-//   • Each item's existing assignment is replaced atomically per row.
-//   • Manual overrides (classified_by = "manual") are preserved unless
-//     mode === "all" (in which case the caller explicitly asked to redo
-//     everything).
-//   • Stale assignments referencing an inventory_id that no longer exists
-//     are cleaned up at the end of every run.
-//
-// Streams progress as Server-Sent Events.
+// POST /categories/classify (and /inventory/classify alias).
+// Body: { mode?: "all" | "unclassified" | "specific-ids", ids?: number[], useAi?: boolean }
+// Streams SSE progress; AI fallback runs by default for rule-misses.
 export async function classifyHandler(
   req: import("express").Request,
   res: import("express").Response,
 ): Promise<void> {
   try {
-    const { mode = "unclassified", ids, useAi = false } = req.body as {
+    const { mode = "unclassified", ids, useAi = true } = req.body as {
       mode?: "all" | "unclassified" | "specific-ids";
       ids?: number[];
       useAi?: boolean;
