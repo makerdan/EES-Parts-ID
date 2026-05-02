@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { buildImageContent, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
 
 const router = Router();
 
@@ -37,10 +38,7 @@ router.post("/identify", async (req, res) => {
     if (textNumbers) contextParts.push(`Text/Numbers visible: ${textNumbers}`);
     const contextStr = contextParts.join("\n");
 
-    const imageContent = images.slice(0, 2).map(img => ({
-      type: "image_url" as const,
-      image_url: { url: img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}` },
-    }));
+    const imageContent = buildImageContent(images);
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -67,28 +65,7 @@ router.post("/identify", async (req, res) => {
     });
 
     const text = response.choices[0]?.message?.content ?? "{}";
-    let analysis: {
-      searchTerms: string[];
-      synonyms: string[];
-      relatedTerms: string[];
-      manufacturerVerified: boolean;
-      detectedVendor: string | null;
-      summary: string;
-    };
-
-    try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : { searchTerms: [], synonyms: [], relatedTerms: [], manufacturerVerified: false, detectedVendor: null, summary: "" };
-    } catch {
-      analysis = {
-        searchTerms: text.split(/\s+/).slice(0, 10),
-        synonyms: [],
-        relatedTerms: [],
-        manufacturerVerified: false,
-        detectedVendor: null,
-        summary: text.slice(0, 200),
-      };
-    }
+    const analysis = normalizeAnalysis(extractJsonFromText(text), text);
 
     res.json({
       searchTerms: analysis.searchTerms ?? [],
