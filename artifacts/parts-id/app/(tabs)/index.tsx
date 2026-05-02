@@ -38,9 +38,7 @@ const BROWSE_MODE_KEY = "parts_id_browse_mode_v1";
 // Offline taxonomy assignments — { inventoryId → typeSlug } so Browse mode
 // can list a Type's parts from the local Fuse cache when the network is down.
 const ASSIGNMENTS_CACHE_KEY = "parts_id_category_assignments_v1";
-// Cached category tree, written here during the inventory sync so Browse
-// works the first time it's opened — even offline. Must match the key
-// BrowseTaxonomy.tsx reads from.
+// Cached category tree key — must match BrowseTaxonomy.tsx.
 const BROWSE_TREE_CACHE_KEY = "parts_id_browse_tree_v1";
 
 interface AssignmentRecord {
@@ -387,10 +385,7 @@ export default function SearchScreen() {
       buildFuseIndex(allItems);
       const ops: [string, string][] = [[FUSE_CACHE_KEY, JSON.stringify(allItems)]];
       if (serverVersion) ops.push([INVENTORY_VERSION_KEY, serverVersion]);
-      // Pull the taxonomy assignments + tree alongside inventory so Browse
-      // works fully offline (drill-down + items list) the first time it's
-      // opened. Failure here is non-fatal — the rest of the sync still
-      // completes and any prior cache stays intact.
+      // Cache assignments + tree for offline Browse. Non-fatal on failure.
       try {
         const aRes = await fetch(`${API_BASE}/categories/assignments`);
         if (aRes.ok) {
@@ -401,18 +396,14 @@ export default function SearchScreen() {
           }));
           ops.push([ASSIGNMENTS_CACHE_KEY, JSON.stringify(slim)]);
         }
-      } catch {
-        // Network blip — keep whatever assignment cache we already have.
-      }
+      } catch { /* keep prior cache */ }
       try {
         const tRes = await fetch(`${API_BASE}/categories/tree`);
         if (tRes.ok) {
           const tData = (await tRes.json()) as { tree: unknown };
           ops.push([BROWSE_TREE_CACHE_KEY, JSON.stringify(tData.tree)]);
         }
-      } catch {
-        // Same — non-fatal, keep prior cached tree.
-      }
+      } catch { /* keep prior cache */ }
       await AsyncStorage.multiSet(ops);
     } catch {
       setSyncError(true);
@@ -1137,15 +1128,14 @@ export default function SearchScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {mode === "search" ? (
-          <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <FilterPanel
-              values={filters}
-              onChange={handleChange}
-              dimensionCounts={dimensionCounts}
-            />
-          </View>
-        ) : (
+        <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <FilterPanel
+            values={filters}
+            onChange={handleChange}
+            dimensionCounts={dimensionCounts}
+          />
+        </View>
+        {mode === "browse" ? (
           <View>
             <BrowseTaxonomy onSelectNode={handleBrowseNodeChange} />
             {browseLoading ? (
@@ -1164,7 +1154,7 @@ export default function SearchScreen() {
               </Text>
             ) : null}
           </View>
-        )}
+        ) : null}
       </ScrollView>
 
       <FlatList

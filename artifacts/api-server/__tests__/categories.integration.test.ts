@@ -1,17 +1,5 @@
-/**
- * Integration tests for the /api/categories admin surface.
- *
- * Covers the structural invariants the browse drill-down depends on:
- *   • GET /tree returns the seeded three-level shape.
- *   • PATCH /:nodeId rejects illegal parent re-parents (e.g. type→type).
- *   • POST /:nodeId/assign refuses non-leaf assignment.
- *   • PATCH /inventory/:id/category refuses non-leaf assignment.
- *   • POST /merge refuses cross-level merges.
- *   • GET /coverage returns numeric counts.
- *
- * Uses the live Postgres test DB. OpenAI is mocked so the suite never
- * makes a network call.
- */
+// Integration tests for /api/categories: tree shape, level invariants,
+// leaf-only assignment, cross-level merge guard, coverage counts.
 
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
   openai: {
