@@ -1,11 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -90,6 +92,28 @@ function aggregateRows(rows: readonly ParsedRow[]): ParsedRow[] {
   }
   return Array.from(byKey.values());
 }
+
+// Preview classification of incoming rows against existing inventory.
+// Mirrors PreviewUpsertResponse in the OpenAPI spec.
+type PreviewMatchRow = {
+  vendor: string;
+  catalog: string;
+  existingDescription: string;
+  proposedDescription: string;
+  existingBinLocations: string[];
+  proposedBinLocations: string[];
+  binChanged: boolean;
+  descChanged: boolean;
+};
+type PreviewResponse = {
+  newCount: number;
+  changedCount: number;
+  unchangedCount: number;
+  totalIncoming: number;
+  changes: PreviewMatchRow[];
+};
+type UpsertMode = "add-new-only" | "overwrite-all" | "selected";
+type UpsertResult = { inserted: number; updated: number; skipped: number; total: number };
 
 type EnrichProgress = {
   progress: number;
@@ -407,10 +431,23 @@ export default function UploadScreen() {
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [tab, setTab] = useState<"upload" | "inventory">("upload");
-  const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<UpsertResult | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadPending, setUploadPending] = useState(false);
   const [inventoryPage, setInventoryPage] = useState(1);
+
+  // ── Preview / review modal state ─────────────────────────────────────────
+  // After parsing, we POST rows to /preview-upsert. If any existing rows would
+  // change, we surface a 3-option chooser (add-new / overwrite-all / review).
+  // "Review" expands `previewData.changes` into a per-row include/exclude list.
+  const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
+  const [chooserVisible, setChooserVisible] = useState(false);
+  const [reviewVisible, setReviewVisible] = useState(false);
+  const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
+  const previewKey = useCallback(
+    (vendor: string, catalog: string) => `${vendor.trim().toUpperCase()}|${catalog.trim().toUpperCase()}`,
+    [],
+  );
 
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
@@ -700,44 +737,121 @@ export default function UploadScreen() {
     }
   };
 
-  const handleUpload = async () => {
+  // Apply step — POSTs to /inventory/upsert-batch with the chosen mode and an
+  // optional selectedKeys list (used only when mode === "selected").
+  const applyUpsert = useCallback(
+    async (mode: UpsertMode, selectedKeys?: Array<{ vendor: string; catalog: string }>) => {
+      if (!parsedRows.length) return;
+      setUploadError(null);
+      setUploadSuccess(null);
+      setUploadPending(true);
+      try {
+        const body: { items: ParsedRow[]; mode: UpsertMode; selectedKeys?: Array<{ vendor: string; catalog: string }> } = {
+          items: parsedRows,
+          mode,
+        };
+        if (mode === "selected" && selectedKeys) body.selectedKeys = selectedKeys;
+
+        const response = await fetch(`${API_BASE}/inventory/upsert-batch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...adminHeaders },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => ({})) as { error?: string };
+          if (response.status === 401) {
+            logoutAdmin();
+            setUploadError("Admin session expired. Please unlock again.");
+          } else {
+            setUploadError(errBody.error ?? "Upload failed — could not save inventory items. Please try again.");
+          }
+          return;
+        }
+
+        const result = await response.json() as UpsertResult;
+        setUploadSuccess(result);
+        setParsedRows([]);
+        setFileName(null);
+        setFileType(null);
+        setPreviewData(null);
+        setExcludedKeys(new Set());
+        await inventoryQuery.refetch();
+      } catch {
+        setUploadError("Upload failed — could not save inventory items. Please try again.");
+      } finally {
+        setUploadPending(false);
+      }
+    },
+    [parsedRows, adminHeaders, logoutAdmin, inventoryQuery],
+  );
+
+  // Start step — first calls /inventory/preview-upsert. If existing rows would
+  // change, surfaces the 3-option chooser. Otherwise applies overwrite-all
+  // immediately (which is functionally identical when nothing differs).
+  const handleUploadStart = async () => {
     if (!parsedRows.length) return;
     setUploadError(null);
     setUploadSuccess(null);
     setUploadPending(true);
     try {
-      const response = await fetch(`${API_BASE}/inventory/upsert-batch`, {
+      const response = await fetch(`${API_BASE}/inventory/preview-upsert`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...adminHeaders,
-        },
+        headers: { "Content-Type": "application/json", ...adminHeaders },
         body: JSON.stringify({ items: parsedRows }),
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { error?: string };
+        const errBody = await response.json().catch(() => ({})) as { error?: string };
         if (response.status === 401) {
           logoutAdmin();
           setUploadError("Admin session expired. Please unlock again.");
         } else {
-          setUploadError(body.error ?? "Upload failed — could not save inventory items. Please try again.");
+          setUploadError(errBody.error ?? "Could not analyze the file. Please try again.");
         }
         return;
       }
 
-      const result = await response.json() as { inserted: number; updated: number; total: number };
-      setUploadSuccess({ inserted: result.inserted, updated: result.updated, total: result.total });
-      setParsedRows([]);
-      setFileName(null);
-      setFileType(null);
-      await inventoryQuery.refetch();
+      const preview = await response.json() as PreviewResponse;
+      setPreviewData(preview);
+
+      if (preview.changedCount === 0) {
+        // Nothing to ask about — apply immediately.
+        setUploadPending(false);
+        await applyUpsert("overwrite-all");
+        return;
+      }
+
+      // Ask the user what to do with the existing matches.
+      setExcludedKeys(new Set());
+      setUploadPending(false);
+      setChooserVisible(true);
     } catch {
-      setUploadError("Upload failed — could not save inventory items. Please try again.");
-    } finally {
+      setUploadError("Could not analyze the file. Please try again.");
       setUploadPending(false);
     }
   };
+
+  const toggleExcluded = useCallback(
+    (vendor: string, catalog: string) => {
+      const key = previewKey(vendor, catalog);
+      setExcludedKeys((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+    },
+    [previewKey],
+  );
+
+  // Selected-mode keys = every changed match the user did NOT exclude.
+  const selectedKeysFromReview = useMemo(() => {
+    if (!previewData) return [];
+    return previewData.changes
+      .filter((c) => !excludedKeys.has(previewKey(c.vendor, c.catalog)))
+      .map((c) => ({ vendor: c.vendor, catalog: c.catalog }));
+  }, [previewData, excludedKeys, previewKey]);
 
   const handleEnrich = async (idsToEnrich?: number[]) => {
     setEnrichProgress({ progress: 0, total: 0 });
@@ -834,7 +948,8 @@ export default function UploadScreen() {
           {uploadSuccess ? (
             <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
               <Text style={[styles.inlineBannerText, { color: "#059669" }]}>
-                Upload complete — inserted {uploadSuccess.inserted}, updated {uploadSuccess.updated} ({uploadSuccess.total} total)
+                Upload complete — created {uploadSuccess.inserted}, updated {uploadSuccess.updated}
+                {uploadSuccess.skipped > 0 ? `, skipped ${uploadSuccess.skipped}` : ""} ({uploadSuccess.total} total)
               </Text>
               <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                 <Pressable onPress={() => { setUploadSuccess(null); setTab("inventory"); }}>
@@ -933,7 +1048,7 @@ export default function UploadScreen() {
                   ) : null}
 
                   <Pressable
-                    onPress={handleUpload}
+                    onPress={handleUploadStart}
                     disabled={uploadPending}
                     style={[styles.uploadBtn, { backgroundColor: uploadPending ? colors.muted : colors.primary }]}
                   >
@@ -1276,6 +1391,179 @@ export default function UploadScreen() {
       )}
 
       <ReferenceModal />
+
+      {/* ── Chooser modal: 3 options for handling existing matches ────────── */}
+      <Modal
+        visible={chooserVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setChooserVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.chooserCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.chooserTitle, { color: colors.foreground }]}>
+              Existing items would change
+            </Text>
+            <Text style={[styles.chooserBody, { color: colors.mutedForeground }]}>
+              {previewData
+                ? `${previewData.newCount} new ${previewData.newCount === 1 ? "item" : "items"} to add. ${previewData.changedCount} existing ${previewData.changedCount === 1 ? "item" : "items"} would change (location and/or description).`
+                : ""}
+            </Text>
+
+            <Pressable
+              onPress={() => { setChooserVisible(false); setReviewVisible(true); }}
+              style={[styles.chooserBtn, { backgroundColor: colors.primary }]}
+            >
+              <Text style={[styles.chooserBtnText, { color: colors.primaryForeground }]}>
+                📝 Review case by case
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => { setChooserVisible(false); void applyUpsert("add-new-only"); }}
+              style={[styles.chooserBtnAlt, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.chooserBtnAltText, { color: colors.foreground }]}>
+                ➕ Only add new entries
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => { setChooserVisible(false); void applyUpsert("overwrite-all"); }}
+              style={[styles.chooserBtnAlt, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.chooserBtnAltText, { color: colors.foreground }]}>
+                ♻️ Overwrite all changes
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setChooserVisible(false)}
+              style={styles.chooserCancel}
+            >
+              <Text style={[styles.chooserCancelText, { color: colors.mutedForeground }]}>
+                Cancel
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Review modal: per-row include/exclude toggle ───────────────────── */}
+      <Modal
+        visible={reviewVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReviewVisible(false)}
+      >
+        <SafeAreaView style={[styles.reviewSafeArea, { backgroundColor: colors.background }]}>
+          <View style={[styles.reviewHeader, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.reviewTitle, { color: colors.foreground }]}>
+              Review changes
+            </Text>
+            <Text style={[styles.reviewSub, { color: colors.mutedForeground }]}>
+              {previewData
+                ? `${selectedKeysFromReview.length} of ${previewData.changedCount} included`
+                : ""}
+            </Text>
+          </View>
+
+          <FlatList
+            data={previewData?.changes ?? []}
+            keyExtractor={(c) => previewKey(c.vendor, c.catalog)}
+            contentContainerStyle={{ padding: 12, paddingBottom: 100 }}
+            ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+            renderItem={({ item }) => {
+              const key = previewKey(item.vendor, item.catalog);
+              const included = !excludedKeys.has(key);
+              return (
+                <View
+                  style={[
+                    styles.reviewRow,
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: included ? colors.primary : colors.border,
+                      opacity: included ? 1 : 0.55,
+                    },
+                  ]}
+                >
+                  <View style={styles.reviewRowHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.reviewCatalog, { color: colors.foreground }]} numberOfLines={1}>
+                        {item.catalog}
+                      </Text>
+                      <Text style={[styles.reviewVendor, { color: colors.mutedForeground }]} numberOfLines={1}>
+                        {item.vendor}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={included}
+                      onValueChange={() => toggleExcluded(item.vendor, item.catalog)}
+                    />
+                  </View>
+
+                  {item.binChanged ? (
+                    <View style={styles.diffBlock}>
+                      <Text style={[styles.diffLabel, { color: colors.mutedForeground }]}>BIN LOCATION</Text>
+                      <Text style={[styles.diffOld, { color: colors.mutedForeground }]} numberOfLines={2}>
+                        was: {item.existingBinLocations.length > 0 ? item.existingBinLocations.join(", ") : "(none)"}
+                      </Text>
+                      <Text style={[styles.diffNew, { color: colors.success }]} numberOfLines={2}>
+                        new: {item.proposedBinLocations.join(", ")}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {item.descChanged ? (
+                    <View style={styles.diffBlock}>
+                      <Text style={[styles.diffLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+                      <Text style={[styles.diffOld, { color: colors.mutedForeground }]} numberOfLines={3}>
+                        was: {item.existingDescription || "(empty)"}
+                      </Text>
+                      <Text style={[styles.diffNew, { color: colors.success }]} numberOfLines={3}>
+                        new: {item.proposedDescription}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            }}
+            ListEmptyComponent={() => (
+              <Text style={[styles.reviewEmpty, { color: colors.mutedForeground }]}>
+                No changes to review.
+              </Text>
+            )}
+          />
+
+          <View style={[styles.reviewFooter, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
+            <Pressable
+              onPress={() => setReviewVisible(false)}
+              style={[styles.reviewCancel, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.reviewCancelText, { color: colors.foreground }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setReviewVisible(false);
+                void applyUpsert("selected", selectedKeysFromReview);
+              }}
+              disabled={uploadPending}
+              style={[
+                styles.reviewConfirm,
+                { backgroundColor: uploadPending ? colors.muted : colors.primary },
+              ]}
+            >
+              {uploadPending ? (
+                <ActivityIndicator color={colors.primaryForeground} />
+              ) : (
+                <Text style={[styles.reviewConfirmText, { color: colors.primaryForeground }]}>
+                  Apply {selectedKeysFromReview.length} {selectedKeysFromReview.length === 1 ? "change" : "changes"}
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1341,4 +1629,36 @@ const styles = StyleSheet.create({
   successBanner: {},
   inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
   bannerClose: { paddingLeft: 10 },
+
+  // Chooser modal
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", alignItems: "center", justifyContent: "center", padding: 20 },
+  chooserCard: { width: "100%", maxWidth: 380, borderRadius: 16, padding: 20, borderWidth: 1, gap: 10 },
+  chooserTitle: { fontSize: 18, fontFamily: "Inter_700Bold", textAlign: "center" },
+  chooserBody: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 19, marginBottom: 6 },
+  chooserBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
+  chooserBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  chooserBtnAlt: { borderRadius: 8, paddingVertical: 13, alignItems: "center", borderWidth: 1 },
+  chooserBtnAltText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  chooserCancel: { paddingVertical: 10, alignItems: "center", marginTop: 4 },
+  chooserCancelText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+
+  // Review modal
+  reviewSafeArea: { flex: 1 },
+  reviewHeader: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
+  reviewTitle: { fontSize: 18, fontFamily: "Inter_700Bold" },
+  reviewSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  reviewRow: { borderRadius: 10, borderWidth: 1, padding: 12, gap: 8 },
+  reviewRowHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  reviewCatalog: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  reviewVendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 },
+  diffBlock: { gap: 2, marginTop: 4 },
+  diffLabel: { fontSize: 10, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5 },
+  diffOld: { fontSize: 12, fontFamily: "Inter_400Regular", textDecorationLine: "line-through" },
+  diffNew: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  reviewEmpty: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", marginTop: 40 },
+  reviewFooter: { flexDirection: "row", gap: 10, padding: 12, borderTopWidth: 1 },
+  reviewCancel: { flex: 1, borderRadius: 8, paddingVertical: 13, alignItems: "center", borderWidth: 1 },
+  reviewCancelText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  reviewConfirm: { flex: 2, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
+  reviewConfirmText: { fontSize: 14, fontFamily: "Inter_700Bold" },
 });

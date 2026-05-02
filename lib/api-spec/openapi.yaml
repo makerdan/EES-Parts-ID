@@ -93,6 +93,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/UpsertInventoryResponse"
 
+  /inventory/preview-upsert:
+    post:
+      operationId: previewUpsertInventory
+      tags: [inventory]
+      summary: Classify a batch of rows against existing inventory without writing
+      description: |
+        Classifies each (vendor, catalog) row as `new` (no match), `binChanged`
+        (match exists and the merged bin set differs), `descChanged` (match
+        exists and the proposed description differs), or `unchanged`. A row may
+        be tagged with both `binChanged` and `descChanged`. No database writes
+        are performed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewUpsertBody"
+      responses:
+        "200":
+          description: Classification summary plus per-match details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreviewUpsertResponse"
+
   /inventory/enrich:
     post:
       operationId: enrichInventory
@@ -396,28 +421,61 @@ components:
         - totalMatches
         - belowThreshold
 
+    UpsertInventoryItem:
+      type: object
+      properties:
+        vendor:
+          type: string
+        catalog:
+          type: string
+        description:
+          type: string
+          description: "Proposed description. Blank/missing values never overwrite an existing description."
+        binLocations:
+          type: array
+          items:
+            type: string
+          description: "Bins to merge into the part's bin list (additive — existing bins are preserved)."
+      required:
+        - vendor
+        - catalog
+
+    SelectedKey:
+      type: object
+      description: "Identifies a single existing-item update to apply when mode is `selected`. Match is case-insensitive."
+      properties:
+        vendor:
+          type: string
+        catalog:
+          type: string
+      required:
+        - vendor
+        - catalog
+
     UpsertInventoryBody:
       type: object
       properties:
         items:
           type: array
           items:
-            type: object
-            properties:
-              vendor:
-                type: string
-              catalog:
-                type: string
-              description:
-                type: string
-              binLocations:
-                type: array
-                items:
-                  type: string
-                description: "Bins to merge into the part's bin list (additive — existing bins are preserved)."
-            required:
-              - vendor
-              - catalog
+            $ref: "#/components/schemas/UpsertInventoryItem"
+        mode:
+          type: string
+          enum:
+            - add-new-only
+            - overwrite-all
+            - selected
+          default: overwrite-all
+          description: |
+            Controls how existing matches are handled:
+            - `add-new-only`: only insert rows whose (vendor, catalog) does not exist; never modify existing rows.
+            - `overwrite-all`: insert new rows; for matches, additively merge bins and replace description (when proposed description is non-empty). Vendor/catalog text on existing rows is never modified.
+            - `selected`: insert new rows; only update existing matches whose (vendor, catalog) appears in `selectedKeys`.
+        selectedKeys:
+          type: array
+          items:
+            $ref: "#/components/schemas/SelectedKey"
+          description: "Required when `mode = selected`. Existing matches NOT in this list are skipped."
       required:
         - items
 
@@ -428,12 +486,91 @@ components:
           type: integer
         updated:
           type: integer
+        skipped:
+          type: integer
+          description: "Existing matches that were intentionally not updated (e.g. mode=add-new-only or not in selectedKeys)."
         total:
           type: integer
       required:
         - inserted
         - updated
+        - skipped
         - total
+
+    PreviewUpsertBody:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpsertInventoryItem"
+      required:
+        - items
+
+    PreviewMatchRow:
+      type: object
+      description: "An incoming row that matched an existing inventory item. Includes the current stored values and the proposed merged values."
+      properties:
+        vendor:
+          type: string
+          description: "Vendor as stored in the DB (its original casing is preserved)."
+        catalog:
+          type: string
+          description: "Catalog as stored in the DB."
+        existingDescription:
+          type: string
+        proposedDescription:
+          type: string
+          description: "Description that will be written if this row is included in an `overwrite-all`/`selected` apply. Empty proposed description means description will not change."
+        existingBinLocations:
+          type: array
+          items:
+            type: string
+        proposedBinLocations:
+          type: array
+          items:
+            type: string
+          description: "Bin list after additive merge of incoming bins into the existing list."
+        binChanged:
+          type: boolean
+        descChanged:
+          type: boolean
+      required:
+        - vendor
+        - catalog
+        - existingDescription
+        - proposedDescription
+        - existingBinLocations
+        - proposedBinLocations
+        - binChanged
+        - descChanged
+
+    PreviewUpsertResponse:
+      type: object
+      properties:
+        newCount:
+          type: integer
+          description: "Rows whose (vendor, catalog) does not exist in the DB."
+        changedCount:
+          type: integer
+          description: "Existing matches where bin and/or description would change."
+        unchangedCount:
+          type: integer
+          description: "Existing matches where nothing would change."
+        totalIncoming:
+          type: integer
+          description: "Number of distinct (vendor, catalog) rows after de-duplication."
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PreviewMatchRow"
+          description: "Per-row details for every existing match that would change. Unchanged matches are NOT included."
+      required:
+        - newCount
+        - changedCount
+        - unchangedCount
+        - totalIncoming
+        - changes
 
     EnrichInventoryBody:
       type: object

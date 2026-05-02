@@ -20,6 +20,16 @@
  *   - On upsert, new bins are MERGED ADDITIVELY into the part's existing list
  *     (case-insensitive de-dupe). Re-uploading a sheet never removes a bin.
  *
+ * Existing-row update rules (kept in sync with /api/inventory/upsert-batch):
+ *   - Vendor and Catalog text on existing rows is NEVER modified — they are
+ *     the match key.
+ *   - A blank/missing description cell NEVER overwrites a stored description
+ *     (`row.description || existing.description` below preserves it).
+ *
+ * This route is the legacy server-side CSV importer; the mobile client uses
+ * /api/inventory/upsert-batch which additionally supports a `mode` parameter
+ * for the "ask before changing" review flow.
+ *
  * Response:
  *   200 { inserted: number, updated: number, total: number }
  *   400 { error: string }  — malformed CSV or missing required columns

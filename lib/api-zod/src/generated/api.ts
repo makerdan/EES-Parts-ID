@@ -169,12 +169,81 @@ export const SearchInventoryResponse = zod.object({
 /**
  * @summary Add or update inventory items (upsert by vendor+catalog)
  */
+export const upsertInventoryBatchBodyModeDefault = `overwrite-all`;
+
 export const UpsertInventoryBatchBody = zod.object({
   items: zod.array(
     zod.object({
       vendor: zod.string(),
       catalog: zod.string(),
-      description: zod.string().optional(),
+      description: zod
+        .string()
+        .optional()
+        .describe(
+          "Proposed description. Blank\/missing values never overwrite an existing description.",
+        ),
+      binLocations: zod
+        .array(zod.string())
+        .optional()
+        .describe(
+          "Bins to merge into the part's bin list (additive — existing bins are preserved).",
+        ),
+    }),
+  ),
+  mode: zod
+    .enum(["add-new-only", "overwrite-all", "selected"])
+    .default(upsertInventoryBatchBodyModeDefault)
+    .describe(
+      "Controls how existing matches are handled:\n- `add-new-only`: only insert rows whose (vendor, catalog) does not exist; never modify existing rows.\n- `overwrite-all`: insert new rows; for matches, additively merge bins and replace description (when proposed description is non-empty). Vendor\/catalog text on existing rows is never modified.\n- `selected`: insert new rows; only update existing matches whose (vendor, catalog) appears in `selectedKeys`.\n",
+    ),
+  selectedKeys: zod
+    .array(
+      zod
+        .object({
+          vendor: zod.string(),
+          catalog: zod.string(),
+        })
+        .describe(
+          "Identifies a single existing-item update to apply when mode is `selected`. Match is case-insensitive.",
+        ),
+    )
+    .optional()
+    .describe(
+      "Required when `mode = selected`. Existing matches NOT in this list are skipped.",
+    ),
+});
+
+export const UpsertInventoryBatchResponse = zod.object({
+  inserted: zod.number(),
+  updated: zod.number(),
+  skipped: zod
+    .number()
+    .describe(
+      "Existing matches that were intentionally not updated (e.g. mode=add-new-only or not in selectedKeys).",
+    ),
+  total: zod.number(),
+});
+
+/**
+ * Classifies each (vendor, catalog) row as `new` (no match), `binChanged`
+(match exists and the merged bin set differs), `descChanged` (match
+exists and the proposed description differs), or `unchanged`. A row may
+be tagged with both `binChanged` and `descChanged`. No database writes
+are performed.
+
+ * @summary Classify a batch of rows against existing inventory without writing
+ */
+export const PreviewUpsertInventoryBody = zod.object({
+  items: zod.array(
+    zod.object({
+      vendor: zod.string(),
+      catalog: zod.string(),
+      description: zod
+        .string()
+        .optional()
+        .describe(
+          "Proposed description. Blank\/missing values never overwrite an existing description.",
+        ),
       binLocations: zod
         .array(zod.string())
         .optional()
@@ -185,10 +254,53 @@ export const UpsertInventoryBatchBody = zod.object({
   ),
 });
 
-export const UpsertInventoryBatchResponse = zod.object({
-  inserted: zod.number(),
-  updated: zod.number(),
-  total: zod.number(),
+export const PreviewUpsertInventoryResponse = zod.object({
+  newCount: zod
+    .number()
+    .describe("Rows whose (vendor, catalog) does not exist in the DB."),
+  changedCount: zod
+    .number()
+    .describe("Existing matches where bin and\/or description would change."),
+  unchangedCount: zod
+    .number()
+    .describe("Existing matches where nothing would change."),
+  totalIncoming: zod
+    .number()
+    .describe(
+      "Number of distinct (vendor, catalog) rows after de-duplication.",
+    ),
+  changes: zod
+    .array(
+      zod
+        .object({
+          vendor: zod
+            .string()
+            .describe(
+              "Vendor as stored in the DB (its original casing is preserved).",
+            ),
+          catalog: zod.string().describe("Catalog as stored in the DB."),
+          existingDescription: zod.string(),
+          proposedDescription: zod
+            .string()
+            .describe(
+              "Description that will be written if this row is included in an `overwrite-all`\/`selected` apply. Empty proposed description means description will not change.",
+            ),
+          existingBinLocations: zod.array(zod.string()),
+          proposedBinLocations: zod
+            .array(zod.string())
+            .describe(
+              "Bin list after additive merge of incoming bins into the existing list.",
+            ),
+          binChanged: zod.boolean(),
+          descChanged: zod.boolean(),
+        })
+        .describe(
+          "An incoming row that matched an existing inventory item. Includes the current stored values and the proposed merged values.",
+        ),
+    )
+    .describe(
+      "Per-row details for every existing match that would change. Unchanged matches are NOT included.",
+    ),
 });
 
 /**

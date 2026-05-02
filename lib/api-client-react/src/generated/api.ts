@@ -27,6 +27,8 @@ import type {
   InventoryListResponse,
   ListInventoryParams,
   LookupDictionaryParams,
+  PreviewUpsertBody,
+  PreviewUpsertResponse,
   SearchInventoryBody,
   SearchInventoryResponse,
   UpdateKeywordsBody,
@@ -383,6 +385,98 @@ export const useUpsertInventoryBatch = <
   TContext
 > => {
   return useMutation(getUpsertInventoryBatchMutationOptions(options));
+};
+
+/**
+ * Classifies each (vendor, catalog) row as `new` (no match), `binChanged`
+(match exists and the merged bin set differs), `descChanged` (match
+exists and the proposed description differs), or `unchanged`. A row may
+be tagged with both `binChanged` and `descChanged`. No database writes
+are performed.
+
+ * @summary Classify a batch of rows against existing inventory without writing
+ */
+export const getPreviewUpsertInventoryUrl = () => {
+  return `/api/inventory/preview-upsert`;
+};
+
+export const previewUpsertInventory = async (
+  previewUpsertBody: PreviewUpsertBody,
+  options?: RequestInit,
+): Promise<PreviewUpsertResponse> => {
+  return customFetch<PreviewUpsertResponse>(getPreviewUpsertInventoryUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(previewUpsertBody),
+  });
+};
+
+export const getPreviewUpsertInventoryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewUpsertInventory>>,
+    TError,
+    { data: BodyType<PreviewUpsertBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof previewUpsertInventory>>,
+  TError,
+  { data: BodyType<PreviewUpsertBody> },
+  TContext
+> => {
+  const mutationKey = ["previewUpsertInventory"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof previewUpsertInventory>>,
+    { data: BodyType<PreviewUpsertBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return previewUpsertInventory(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PreviewUpsertInventoryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof previewUpsertInventory>>
+>;
+export type PreviewUpsertInventoryMutationBody = BodyType<PreviewUpsertBody>;
+export type PreviewUpsertInventoryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Classify a batch of rows against existing inventory without writing
+ */
+export const usePreviewUpsertInventory = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof previewUpsertInventory>>,
+    TError,
+    { data: BodyType<PreviewUpsertBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof previewUpsertInventory>>,
+  TError,
+  { data: BodyType<PreviewUpsertBody> },
+  TContext
+> => {
+  return useMutation(getPreviewUpsertInventoryMutationOptions(options));
 };
 
 /**
