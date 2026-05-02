@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -7,19 +7,23 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as XLSX from "xlsx";
-import { useUpsertInventoryBatch, useListInventory } from "@workspace/api-client-react";
+import { useListInventory } from "@workspace/api-client-react";
+
 import { useColors } from "@/hooks/useColors";
 import { ReferenceModal } from "@/components/ReferenceModal";
+import { useApp } from "@/contexts/AppContext";
 import type { InventoryItem } from "@workspace/api-client-react";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
     ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
     : "";
+
 
 type ParsedRow = {
   vendor: string;
@@ -118,7 +122,6 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
   }
 
   if (!bestSheet) {
-    // Fallback: just use first sheet
     const firstSheet = workbook.Sheets[workbook.SheetNames[0]!];
     if (!firstSheet) return [];
     bestSheet = firstSheet;
@@ -196,9 +199,82 @@ const rowStyles = StyleSheet.create({
   enrichText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
 });
 
+// ── Admin gate component ──────────────────────────────────────────────────
+function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const { loginAdmin } = useApp();
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = async () => {
+    setError(null);
+    setLoading(true);
+    const result = await loginAdmin(password);
+    setLoading(false);
+    if (!result.success) {
+      setError(result.error ?? "Incorrect admin password");
+      setPassword("");
+    }
+  };
+
+  return (
+    <View style={[gateStyles.container, { backgroundColor: colors.background }]}>
+      <View style={[gateStyles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Text style={[gateStyles.icon]}>🔒</Text>
+        <Text style={[gateStyles.title, { color: colors.foreground }]}>Admin Access Required</Text>
+        <Text style={[gateStyles.hint, { color: colors.mutedForeground }]}>
+          Inventory import is restricted to administrators. Enter the admin password to continue.
+        </Text>
+
+        <TextInput
+          style={[gateStyles.input, { backgroundColor: colors.muted, color: colors.foreground, borderColor: error ? colors.destructive : colors.border }]}
+          placeholder="Admin password"
+          placeholderTextColor={colors.mutedForeground}
+          secureTextEntry
+          value={password}
+          onChangeText={setPassword}
+          onSubmitEditing={handleLogin}
+          returnKeyType="done"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+
+        {error ? (
+          <Text style={[gateStyles.error, { color: colors.destructive }]}>{error}</Text>
+        ) : null}
+
+        <Pressable
+          onPress={handleLogin}
+          disabled={loading || !password}
+          style={[gateStyles.btn, { backgroundColor: loading || !password ? colors.muted : colors.primary }]}
+        >
+          {loading ? (
+            <ActivityIndicator color={colors.primaryForeground} />
+          ) : (
+            <Text style={[gateStyles.btnText, { color: colors.primaryForeground }]}>Unlock</Text>
+          )}
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const gateStyles = StyleSheet.create({
+  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  card: { width: "100%", maxWidth: 380, borderRadius: 16, padding: 28, borderWidth: 1, alignItems: "center", gap: 14 },
+  icon: { fontSize: 40 },
+  title: { fontSize: 20, fontFamily: "Inter_700Bold", textAlign: "center" },
+  hint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
+  input: { width: "100%", borderRadius: 8, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, fontFamily: "Inter_400Regular" },
+  error: { fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
+  btn: { width: "100%", borderRadius: 8, paddingVertical: 14, alignItems: "center" },
+  btnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
+});
+
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
   const colors = useColors();
+  const { isAdmin, logoutAdmin, adminToken } = useApp();
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
@@ -206,10 +282,15 @@ export default function UploadScreen() {
   const [tab, setTab] = useState<"upload" | "inventory">("upload");
   const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadPending, setUploadPending] = useState(false);
   const [inventoryPage, setInventoryPage] = useState(1);
 
-  const upsertMutation = useUpsertInventoryBatch();
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
+
+  // Build admin auth headers for protected API calls
+  const adminHeaders: Record<string, string> = adminToken
+    ? { "Authorization": `Bearer ${adminToken}` }
+    : {};
 
   const handlePickFile = async () => {
     try {
@@ -244,7 +325,6 @@ export default function UploadScreen() {
         rows = await parseXlsx(asset.uri);
         setFileType("xlsx");
       } else {
-        // Try CSV first, fallback to xlsx
         try {
           const response = await fetch(asset.uri);
           const text = await response.text();
@@ -272,10 +352,29 @@ export default function UploadScreen() {
     if (!parsedRows.length) return;
     setUploadError(null);
     setUploadSuccess(null);
+    setUploadPending(true);
     try {
-      const result = await upsertMutation.mutateAsync({
-        data: { items: parsedRows },
+      const response = await fetch(`${API_BASE}/inventory/upsert-batch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders,
+        },
+        body: JSON.stringify({ items: parsedRows }),
       });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        if (response.status === 401) {
+          logoutAdmin();
+          setUploadError("Admin session expired. Please unlock again.");
+        } else {
+          setUploadError(body.error ?? "Upload failed — could not save inventory items. Please try again.");
+        }
+        return;
+      }
+
+      const result = await response.json() as { inserted: number; updated: number; total: number };
       setUploadSuccess({ inserted: result.inserted, updated: result.updated, total: result.total });
       setParsedRows([]);
       setFileName(null);
@@ -283,6 +382,8 @@ export default function UploadScreen() {
       await inventoryQuery.refetch();
     } catch {
       setUploadError("Upload failed — could not save inventory items. Please try again.");
+    } finally {
+      setUploadPending(false);
     }
   };
 
@@ -292,9 +393,24 @@ export default function UploadScreen() {
       const body = idsToEnrich?.length ? { ids: idsToEnrich } : {};
       const response = await fetch(`${API_BASE}/inventory/enrich`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders,
+        },
         body: JSON.stringify(body),
       });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({})) as { error?: string };
+        if (response.status === 401) {
+          logoutAdmin();
+          setUploadError("Admin session expired. Please unlock again.");
+        } else {
+          setUploadError(errBody.error ?? "AI enrichment failed — please check your connection and try again.");
+        }
+        setEnrichProgress(null);
+        return;
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -329,258 +445,274 @@ export default function UploadScreen() {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>📤 Inventory</Text>
-        <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={[styles.headerTitle, { color: colors.foreground }]}>📤 Inventory</Text>
+            <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
+          </View>
+          {isAdmin ? (
+            <Pressable onPress={logoutAdmin} style={[styles.lockBtn, { borderColor: colors.border }]}>
+              <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>🔓 Lock</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
-      {/* Inline error/success banners */}
-      {uploadError ? (
-        <View style={[styles.inlineBanner, styles.errorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
-          <Text style={[styles.inlineBannerText, { color: colors.destructive }]}>⚠ {uploadError}</Text>
-          <Pressable onPress={() => setUploadError(null)} style={styles.bannerClose}>
-            <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
-          </Pressable>
-        </View>
-      ) : null}
-      {uploadSuccess ? (
-        <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
-          <Text style={[styles.inlineBannerText, { color: "#059669" }]}>
-            Upload complete — inserted {uploadSuccess.inserted}, updated {uploadSuccess.updated} ({uploadSuccess.total} total)
-          </Text>
-          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-            <Pressable onPress={() => { setUploadSuccess(null); setTab("inventory"); }}>
-              <Text style={{ color: "#059669", fontSize: 12, fontFamily: "Inter_600SemiBold" }}>View →</Text>
-            </Pressable>
-            <Pressable onPress={() => setUploadSuccess(null)} style={styles.bannerClose}>
-              <Text style={{ color: "#059669", fontSize: 14 }}>✕</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-
-      {/* Tab bar */}
-      <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-        {(["upload", "inventory"] as const).map(t => (
-          <Pressable
-            key={t}
-            onPress={() => setTab(t)}
-            style={[
-              styles.tabItem,
-              { borderBottomColor: tab === t ? colors.primary : "transparent" },
-            ]}
-          >
-            <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
-              {t === "upload" ? "Upload File" : `Inventory (${inventoryTotal})`}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {tab === "upload" ? (
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
-          {/* File upload card */}
-          <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
-            <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-              Accepts: CSV, Excel (.xlsx/.xls), ODS{"\n"}
-              Required columns: vendor, catalog{"\n"}
-              Optional: description, bin (or binLocation)
-            </Text>
-
-            <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
-              <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                📂 Choose CSV or Excel File
-              </Text>
-            </Pressable>
-
-            {fileName ? (
-              <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
-                <Text style={[styles.fileChipText, { color: colors.foreground }]}>
-                  {fileType === "xlsx" ? "📊" : "📄"} {fileName}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-
-          {/* Preview */}
-          {parsedRows.length > 0 ? (
-            <View style={[styles.previewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.cardTitle, { color: colors.foreground }]}>
-                Preview ({parsedRows.length} rows)
-              </Text>
-
-              <View style={[styles.previewHeaderRow, { backgroundColor: colors.muted }]}>
-                {["VENDOR", "CATALOG", "DESCRIPTION", "BIN"].map(h => (
-                  <Text
-                    key={h}
-                    style={[styles.previewHeaderCell, { color: colors.mutedForeground, flex: h === "DESCRIPTION" ? 2 : 1 }]}
-                  >
-                    {h}
-                  </Text>
-                ))}
-              </View>
-
-              {parsedRows.slice(0, 8).map((row, i) => (
-                <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border }]}>
-                  <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
-                    {row.vendor}
-                  </Text>
-                  <Text style={[styles.previewCell, { color: colors.primary, flex: 1 }]} numberOfLines={1}>
-                    {row.catalog}
-                  </Text>
-                  <Text style={[styles.previewCell, { color: colors.mutedForeground, flex: 2 }]} numberOfLines={1}>
-                    {row.description}
-                  </Text>
-                  <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
-                    {row.binLocation}
-                  </Text>
-                </View>
-              ))}
-
-              {parsedRows.length > 8 ? (
-                <Text style={[styles.moreRows, { color: colors.mutedForeground }]}>
-                  +{parsedRows.length - 8} more rows
-                </Text>
-              ) : null}
-
-              <Pressable
-                onPress={handleUpload}
-                disabled={upsertMutation.isPending}
-                style={[styles.uploadBtn, { backgroundColor: upsertMutation.isPending ? colors.muted : colors.primary }]}
-              >
-                {upsertMutation.isPending ? (
-                  <ActivityIndicator color={colors.primaryForeground} />
-                ) : (
-                  <Text style={[styles.uploadBtnText, { color: colors.primaryForeground }]}>
-                    ⬆️ Upload {parsedRows.length} Items
-                  </Text>
-                )}
+      {/* Admin gate — show when user is not yet authenticated as admin */}
+      {!isAdmin ? (
+        <AdminGate colors={colors} />
+      ) : (
+        <>
+          {/* Inline error/success banners */}
+          {uploadError ? (
+            <View style={[styles.inlineBanner, styles.errorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
+              <Text style={[styles.inlineBannerText, { color: colors.destructive }]}>⚠ {uploadError}</Text>
+              <Pressable onPress={() => setUploadError(null)} style={styles.bannerClose}>
+                <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
               </Pressable>
             </View>
           ) : null}
+          {uploadSuccess ? (
+            <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
+              <Text style={[styles.inlineBannerText, { color: "#059669" }]}>
+                Upload complete — inserted {uploadSuccess.inserted}, updated {uploadSuccess.updated} ({uploadSuccess.total} total)
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                <Pressable onPress={() => { setUploadSuccess(null); setTab("inventory"); }}>
+                  <Text style={{ color: "#059669", fontSize: 12, fontFamily: "Inter_600SemiBold" }}>View →</Text>
+                </Pressable>
+                <Pressable onPress={() => setUploadSuccess(null)} style={styles.bannerClose}>
+                  <Text style={{ color: "#059669", fontSize: 14 }}>✕</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
 
-          {/* AI Enrichment */}
-          <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Enrichment</Text>
-            <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-              AI analyzes each part and generates searchable keywords saved permanently to the database.
-            </Text>
-
-            {enrichProgress && !enrichProgress.done ? (
-              <View style={styles.progressContainer}>
-                <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      {
-                        backgroundColor: colors.primary,
-                        width: enrichProgress.total > 0
-                          ? `${Math.round((enrichProgress.progress / enrichProgress.total) * 100)}%`
-                          : "0%",
-                      },
-                    ]}
-                  />
-                </View>
-                <Text style={[styles.progressText, { color: colors.foreground }]}>
-                  {enrichProgress.progress} / {enrichProgress.total} items
-                  {enrichProgress.batchSize ? ` (batch of ${enrichProgress.batchSize})` : ""}
+          {/* Tab bar */}
+          <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
+            {(["upload", "inventory"] as const).map(t => (
+              <Pressable
+                key={t}
+                onPress={() => setTab(t)}
+                style={[
+                  styles.tabItem,
+                  { borderBottomColor: tab === t ? colors.primary : "transparent" },
+                ]}
+              >
+                <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
+                  {t === "upload" ? "Upload File" : `Inventory (${inventoryTotal})`}
                 </Text>
-                {enrichProgress.etaSeconds != null && enrichProgress.etaSeconds > 0 ? (
-                  <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                    ETA: ~{enrichProgress.etaSeconds < 60
-                      ? `${enrichProgress.etaSeconds}s`
-                      : `${Math.ceil(enrichProgress.etaSeconds / 60)}m`}
+              </Pressable>
+            ))}
+          </View>
+
+          {tab === "upload" ? (
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+              {/* File upload card */}
+              <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Accepts: CSV, Excel (.xlsx/.xls), ODS{"\n"}
+                  Required columns: vendor, catalog{"\n"}
+                  Optional: description, bin (or binLocation)
+                </Text>
+
+                <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
+                  <Text style={[styles.pickBtnText, { color: colors.primary }]}>
+                    📂 Choose CSV or Excel File
                   </Text>
+                </Pressable>
+
+                {fileName ? (
+                  <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
+                    <Text style={[styles.fileChipText, { color: colors.foreground }]}>
+                      {fileType === "xlsx" ? "📊" : "📄"} {fileName}
+                    </Text>
+                  </View>
                 ) : null}
               </View>
-            ) : null}
 
-            {enrichProgress?.done ? (
-              <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                <Text style={[styles.doneText, { color: colors.success }]}>
-                  ✓ Enrichment complete! {enrichProgress.progress} items processed.
-                </Text>
-              </View>
-            ) : null}
-
-            <View style={styles.enrichStats}>
-              <View style={[styles.statChip, { backgroundColor: colors.success + "11" }]}>
-                <Text style={[styles.statValue, { color: colors.success }]}>{enrichedCount}</Text>
-                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Enriched</Text>
-              </View>
-              <View style={[styles.statChip, { backgroundColor: colors.warning + "11" }]}>
-                <Text style={[styles.statValue, { color: colors.warning }]}>{unEnrichedCount}</Text>
-                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Pending</Text>
-              </View>
-            </View>
-
-            <Pressable
-              onPress={() => handleEnrich()}
-              disabled={!!enrichProgress && !enrichProgress.done}
-              style={[
-                styles.enrichBtn,
-                { backgroundColor: (enrichProgress && !enrichProgress.done) ? colors.muted : colors.primary },
-              ]}
-            >
-              <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Enrich All Pending"}
-              </Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      ) : (
-        <View style={{ flex: 1 }}>
-          {inventoryQuery.isLoading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
-            </View>
-          ) : inventory.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyEmoji}>📦</Text>
-              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
-              <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-                Upload a CSV or Excel file to add inventory items.
-              </Text>
-              <Pressable
-                onPress={() => setTab("upload")}
-                style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
-              >
-                <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Upload</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <FlatList
-              data={inventory}
-              keyExtractor={item => String(item.id)}
-              renderItem={({ item }) => <InventoryRow item={item} colors={colors} />}
-              contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
-              ListHeaderComponent={() => (
-                <View style={styles.inventoryHeader}>
-                  <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
-                    {inventoryTotal} items total
+              {/* Preview */}
+              {parsedRows.length > 0 ? (
+                <View style={[styles.previewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <Text style={[styles.cardTitle, { color: colors.foreground }]}>
+                    Preview ({parsedRows.length} rows)
                   </Text>
+
+                  <View style={[styles.previewHeaderRow, { backgroundColor: colors.muted }]}>
+                    {["VENDOR", "CATALOG", "DESCRIPTION", "BIN"].map(h => (
+                      <Text
+                        key={h}
+                        style={[styles.previewHeaderCell, { color: colors.mutedForeground, flex: h === "DESCRIPTION" ? 2 : 1 }]}
+                      >
+                        {h}
+                      </Text>
+                    ))}
+                  </View>
+
+                  {parsedRows.slice(0, 8).map((row, i) => (
+                    <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border }]}>
+                      <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
+                        {row.vendor}
+                      </Text>
+                      <Text style={[styles.previewCell, { color: colors.primary, flex: 1 }]} numberOfLines={1}>
+                        {row.catalog}
+                      </Text>
+                      <Text style={[styles.previewCell, { color: colors.mutedForeground, flex: 2 }]} numberOfLines={1}>
+                        {row.description}
+                      </Text>
+                      <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
+                        {row.binLocation}
+                      </Text>
+                    </View>
+                  ))}
+
+                  {parsedRows.length > 8 ? (
+                    <Text style={[styles.moreRows, { color: colors.mutedForeground }]}>
+                      +{parsedRows.length - 8} more rows
+                    </Text>
+                  ) : null}
+
                   <Pressable
-                    onPress={() => handleEnrich()}
-                    style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
+                    onPress={handleUpload}
+                    disabled={uploadPending}
+                    style={[styles.uploadBtn, { backgroundColor: uploadPending ? colors.muted : colors.primary }]}
                   >
-                    <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
+                    {uploadPending ? (
+                      <ActivityIndicator color={colors.primaryForeground} />
+                    ) : (
+                      <Text style={[styles.uploadBtnText, { color: colors.primaryForeground }]}>
+                        ⬆️ Upload {parsedRows.length} Items
+                      </Text>
+                    )}
                   </Pressable>
                 </View>
-              )}
-              ListFooterComponent={() =>
-                inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
+              ) : null}
+
+              {/* AI Enrichment */}
+              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Enrichment</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  AI analyzes each part and generates searchable keywords saved permanently to the database.
+                </Text>
+
+                {enrichProgress && !enrichProgress.done ? (
+                  <View style={styles.progressContainer}>
+                    <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                      <View
+                        style={[
+                          styles.progressFill,
+                          {
+                            backgroundColor: colors.primary,
+                            width: enrichProgress.total > 0
+                              ? `${Math.round((enrichProgress.progress / enrichProgress.total) * 100)}%`
+                              : "0%",
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text style={[styles.progressText, { color: colors.foreground }]}>
+                      {enrichProgress.progress} / {enrichProgress.total} items
+                      {enrichProgress.batchSize ? ` (batch of ${enrichProgress.batchSize})` : ""}
+                    </Text>
+                    {enrichProgress.etaSeconds != null && enrichProgress.etaSeconds > 0 ? (
+                      <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
+                        ETA: ~{enrichProgress.etaSeconds < 60
+                          ? `${enrichProgress.etaSeconds}s`
+                          : `${Math.ceil(enrichProgress.etaSeconds / 60)}m`}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {enrichProgress?.done ? (
+                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
+                    <Text style={[styles.doneText, { color: colors.success }]}>
+                      ✓ Enrichment complete! {enrichProgress.progress} items processed.
+                    </Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.enrichStats}>
+                  <View style={[styles.statChip, { backgroundColor: colors.success + "11" }]}>
+                    <Text style={[styles.statValue, { color: colors.success }]}>{enrichedCount}</Text>
+                    <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Enriched</Text>
+                  </View>
+                  <View style={[styles.statChip, { backgroundColor: colors.warning + "11" }]}>
+                    <Text style={[styles.statValue, { color: colors.warning }]}>{unEnrichedCount}</Text>
+                    <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Pending</Text>
+                  </View>
+                </View>
+
+                <Pressable
+                  onPress={() => handleEnrich()}
+                  disabled={!!enrichProgress && !enrichProgress.done}
+                  style={[
+                    styles.enrichBtn,
+                    { backgroundColor: (enrichProgress && !enrichProgress.done) ? colors.muted : colors.primary },
+                  ]}
+                >
+                  <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                    {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Enrich All Pending"}
+                  </Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          ) : (
+            <View style={{ flex: 1 }}>
+              {inventoryQuery.isLoading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
+                </View>
+              ) : inventory.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyEmoji}>📦</Text>
+                  <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
+                  <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+                    Upload a CSV or Excel file to add inventory items.
+                  </Text>
                   <Pressable
-                    onPress={() => setInventoryPage(p => p + 1)}
-                    style={[styles.loadMoreBtn, { borderColor: colors.border }]}
+                    onPress={() => setTab("upload")}
+                    style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
                   >
-                    <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
+                    <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Upload</Text>
                   </Pressable>
-                ) : null
-              }
-            />
+                </View>
+              ) : (
+                <FlatList
+                  data={inventory}
+                  keyExtractor={item => String(item.id)}
+                  renderItem={({ item }) => <InventoryRow item={item} colors={colors} />}
+                  contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
+                  ListHeaderComponent={() => (
+                    <View style={styles.inventoryHeader}>
+                      <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
+                        {inventoryTotal} items total
+                      </Text>
+                      <Pressable
+                        onPress={() => handleEnrich()}
+                        style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
+                      >
+                        <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
+                      </Pressable>
+                    </View>
+                  )}
+                  ListFooterComponent={() =>
+                    inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
+                      <Pressable
+                        onPress={() => setInventoryPage(p => p + 1)}
+                        style={[styles.loadMoreBtn, { borderColor: colors.border }]}
+                      >
+                        <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
+                      </Pressable>
+                    ) : null
+                  }
+                />
+              )}
+            </View>
           )}
-        </View>
+        </>
       )}
 
       <ReferenceModal />
@@ -591,8 +723,11 @@ export default function UploadScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   header: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
+  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
   headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  lockBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
+  lockBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   tabBar: { flexDirection: "row", borderBottomWidth: 1 },
   tabItem: { flex: 1, alignItems: "center", paddingVertical: 12, borderBottomWidth: 2 },
   tabLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold" },

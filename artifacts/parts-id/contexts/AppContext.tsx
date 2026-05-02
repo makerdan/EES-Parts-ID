@@ -12,12 +12,21 @@ import { Platform } from "react-native";
 const SEARCH_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
 
 const SESSION_KEY = "parts_id_session";
+const ADMIN_TOKEN_KEY = "parts_id_admin_token";
 const APP_PASSWORD = process.env.EXPO_PUBLIC_APP_PASSWORD ?? "";
+
+const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+  : "";
 
 interface AppContextValue {
   isAuthenticated: boolean;
+  isAdmin: boolean;
+  adminToken: string | null;
   login: (password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
+  loginAdmin: (password: string) => Promise<{ success: boolean; error?: string }>;
+  logoutAdmin: () => Promise<void>;
   clearCache: () => Promise<void>;
   isLoading: boolean;
 }
@@ -49,11 +58,16 @@ async function secureDelete(key: string): Promise<void> {
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    secureGet(SESSION_KEY).then((val) => {
-      if (val === "authenticated") setIsAuthenticated(true);
+    Promise.all([
+      secureGet(SESSION_KEY),
+      secureGet(ADMIN_TOKEN_KEY),
+    ]).then(([session, token]) => {
+      if (session === "authenticated") setIsAuthenticated(true);
+      if (token) setAdminToken(token);
       setIsLoading(false);
     });
   }, []);
@@ -72,8 +86,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     await secureDelete(SESSION_KEY);
+    await secureDelete(ADMIN_TOKEN_KEY);
     await AsyncStorage.multiRemove(SEARCH_CACHE_KEYS).catch(() => {});
     setIsAuthenticated(false);
+    setAdminToken(null);
+  }, []);
+
+  const loginAdmin = useCallback(async (password: string) => {
+    try {
+      const resp = await fetch(`${API_BASE}/admin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const body = await resp.json() as { token?: string; error?: string };
+
+      if (!resp.ok) {
+        if (resp.status === 503) {
+          return { success: false, error: body.error ?? "Admin access is not configured on the server" };
+        }
+        return { success: false, error: body.error ?? "Incorrect admin password" };
+      }
+
+      if (!body.token) {
+        return { success: false, error: "Server did not return a token" };
+      }
+
+      await secureSet(ADMIN_TOKEN_KEY, body.token);
+      setAdminToken(body.token);
+      return { success: true };
+    } catch {
+      return { success: false, error: "Could not reach the server. Check your connection." };
+    }
+  }, []);
+
+  const logoutAdmin = useCallback(async () => {
+    await secureDelete(ADMIN_TOKEN_KEY);
+    setAdminToken(null);
   }, []);
 
   const clearCache = useCallback(async () => {
@@ -81,7 +130,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AppContext.Provider value={{ isAuthenticated, login, logout, clearCache, isLoading }}>
+    <AppContext.Provider value={{
+      isAuthenticated,
+      isAdmin: !!adminToken,
+      adminToken,
+      login,
+      logout,
+      loginAdmin,
+      logoutAdmin,
+      clearCache,
+      isLoading,
+    }}>
       {children}
     </AppContext.Provider>
   );
