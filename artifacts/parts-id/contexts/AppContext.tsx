@@ -29,11 +29,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeMode: "system",
 };
 
+const VALID_TEXT_SIZES: TextSize[] = ["small", "normal", "large"];
+const VALID_THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
+
 export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await AsyncStorage.getItem(SETTINGS_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } as AppSettings;
+    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    return {
+      ...DEFAULT_SETTINGS,
+      ...parsed,
+      textSize: VALID_TEXT_SIZES.includes(parsed.textSize as TextSize)
+        ? (parsed.textSize as TextSize)
+        : DEFAULT_SETTINGS.textSize,
+      themeMode: VALID_THEME_MODES.includes(parsed.themeMode as ThemeMode)
+        ? (parsed.themeMode as ThemeMode)
+        : DEFAULT_SETTINGS.themeMode,
+    };
   } catch { return DEFAULT_SETTINGS; }
 }
 
