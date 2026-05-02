@@ -1,0 +1,316 @@
+/**
+ * Seeded three-level taxonomy.
+ *
+ * No external EES catalog file was available, so this initial taxonomy is
+ * derived from the existing dictionaries (CHIP_DIMS_SERVER, abbreviation
+ * map categories, vendor patterns) and from real inventory shapes seen in
+ * the database. The classifier rules in `taxonomyClassifier.ts` map onto
+ * the leaf "type" slugs defined here — keep them in sync.
+ *
+ * Idempotent: an existing slug is left alone, missing slugs are inserted.
+ */
+
+import { sql } from "drizzle-orm";
+import { db, categoryNodeTable } from "@workspace/db";
+
+interface SeedType {
+  slug: string;
+  name: string;
+}
+interface SeedSubcategory {
+  slug: string;
+  name: string;
+  types: SeedType[];
+}
+interface SeedCategory {
+  slug: string;
+  name: string;
+  subcategories: SeedSubcategory[];
+}
+
+export const SEED_TAXONOMY: SeedCategory[] = [
+  {
+    slug: "breakers",
+    name: "Breakers",
+    subcategories: [
+      {
+        slug: "breakers-by-type",
+        name: "By Type",
+        types: [
+          { slug: "breaker-standard", name: "Standard Circuit Breakers" },
+          { slug: "breaker-gfci", name: "GFCI Breakers" },
+          { slug: "breaker-afci", name: "AFCI Breakers" },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "wire-cable",
+    name: "Wire & Cable",
+    subcategories: [
+      {
+        slug: "wire-by-type",
+        name: "By Type",
+        types: [
+          { slug: "wire-thhn", name: "THHN / THWN Building Wire" },
+          { slug: "wire-romex", name: "Romex / NM-B Cable" },
+          { slug: "wire-mc", name: "MC / Armored Cable" },
+          { slug: "wire-uf", name: "UF Underground Feeder" },
+          { slug: "wire-ser", name: "SER / Service Entrance" },
+          { slug: "wire-other", name: "Other Wire & Cable" },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "conduit-raceway",
+    name: "Conduit & Raceway",
+    subcategories: [
+      {
+        slug: "conduit-by-material",
+        name: "By Material",
+        types: [
+          { slug: "conduit-emt", name: "EMT" },
+          { slug: "conduit-pvc", name: "PVC" },
+          { slug: "conduit-rmc", name: "RMC / Rigid Metal" },
+          { slug: "conduit-imc", name: "IMC" },
+          { slug: "conduit-fmc", name: "FMC / Flexible Metal" },
+          { slug: "conduit-ent", name: "ENT / Smurf Tube" },
+          { slug: "conduit-other", name: "Other Conduit" },
+        ],
+      },
+      {
+        slug: "conduit-fittings",
+        name: "Fittings",
+        types: [
+          { slug: "fitting-coupling", name: "Couplings" },
+          { slug: "fitting-elbow", name: "Elbows" },
+          { slug: "fitting-connector", name: "Connectors" },
+          { slug: "fitting-condulet", name: "Condulets / Conduit Bodies" },
+          { slug: "fitting-strap", name: "Straps & Hangers" },
+          { slug: "fitting-other", name: "Other Fittings" },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "receptacles",
+    name: "Receptacles",
+    subcategories: [
+      {
+        slug: "receptacles-by-type",
+        name: "By Type",
+        types: [
+          { slug: "receptacle-duplex", name: "Duplex Receptacles" },
+          { slug: "receptacle-gfci", name: "GFCI Receptacles" },
+          { slug: "receptacle-usb", name: "USB Receptacles" },
+          { slug: "receptacle-twist-lock", name: "Twist-Lock Receptacles" },
+          { slug: "receptacle-range", name: "Range / Dryer Receptacles" },
+          { slug: "receptacle-other", name: "Other Receptacles" },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "switches",
+    name: "Switches & Dimmers",
+    subcategories: [
+      {
+        slug: "switches-by-type",
+        name: "By Type",
+        types: [
+          { slug: "switch-toggle", name: "Toggle Switches" },
+          { slug: "switch-3way", name: "3-Way Switches" },
+          { slug: "switch-4way", name: "4-Way Switches" },
+          { slug: "switch-dimmer", name: "Dimmers" },
+          { slug: "switch-occupancy", name: "Occupancy Sensors" },
+          { slug: "switch-other", name: "Other Switches" },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "boxes-enclosures",
+    name: "Boxes & Enclosures",
+    subcategories: [
+      {
+        slug: "boxes-by-type",
+        name: "By Type",
+        types: [
+          { slug: "box-device", name: "Device / Switch Boxes" },
+          { slug: "box-junction", name: "Junction / Pull Boxes" },
+          { slug: "box-weatherproof", name: "Weatherproof Boxes" },
+          { slug: "box-floor", name: "Floor Boxes" },
+          { slug: "box-fan", name: "Fan-Rated Boxes" },
+          { slug: "box-other", name: "Other Boxes & Enclosures" },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "panels-distribution",
+    name: "Panels & Distribution",
+    subcategories: [
+      {
+        slug: "panels-by-type",
+        name: "By Type",
+        types: [
+          { slug: "panel-loadcenter", name: "Load Centers / Panelboards" },
+          { slug: "panel-meter", name: "Meter Sockets / Meter Mains" },
+          { slug: "panel-other", name: "Other Panels" },
+        ],
+      },
+      {
+        slug: "transformers",
+        name: "Transformers",
+        types: [
+          { slug: "transformer-control", name: "Control / Buck-Boost Transformers" },
+          { slug: "transformer-other", name: "Other Transformers" },
+        ],
+      },
+      {
+        slug: "fuses",
+        name: "Fuses",
+        types: [
+          { slug: "fuse-cartridge", name: "Cartridge Fuses" },
+          { slug: "fuse-glass", name: "Glass / Automotive Fuses" },
+          { slug: "fuse-other", name: "Other Fuses" },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "lighting",
+    name: "Lighting",
+    subcategories: [
+      {
+        slug: "lighting-by-type",
+        name: "By Type",
+        types: [
+          { slug: "lighting-led-bulb", name: "LED Bulbs" },
+          { slug: "lighting-fluorescent", name: "Fluorescent" },
+          { slug: "lighting-fixture", name: "Fixtures" },
+          { slug: "lighting-recessed", name: "Recessed / Cans" },
+          { slug: "lighting-other", name: "Other Lighting" },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "connectors-terminations",
+    name: "Connectors & Terminations",
+    subcategories: [
+      {
+        slug: "connectors-by-type",
+        name: "By Type",
+        types: [
+          { slug: "connector-wirenut", name: "Wire Nuts" },
+          { slug: "connector-lug", name: "Lugs" },
+          { slug: "connector-terminal", name: "Terminal Blocks" },
+          { slug: "connector-other", name: "Other Connectors" },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "motors-controls-sensors",
+    name: "Motors, Controls & Sensors",
+    subcategories: [
+      {
+        slug: "motor-controls",
+        name: "Motor Controls",
+        types: [{ slug: "motor-control", name: "Starters / Contactors / VFDs" }],
+      },
+      {
+        slug: "sensors",
+        name: "Sensors",
+        types: [{ slug: "sensor-photo", name: "Photocells / Light Sensors" }],
+      },
+    ],
+  },
+];
+
+/**
+ * Insert any missing taxonomy nodes. Existing nodes (matched by slug) are
+ * left intact — this lets ops re-seed without overwriting AI/manual edits.
+ * Returns counts for logging.
+ */
+export async function seedTaxonomy(): Promise<{
+  insertedCategories: number;
+  insertedSubcategories: number;
+  insertedTypes: number;
+}> {
+  let insertedCategories = 0;
+  let insertedSubcategories = 0;
+  let insertedTypes = 0;
+
+  // Build a slug → id map from any nodes already present so we don't duplicate.
+  const existing = await db.select().from(categoryNodeTable);
+  const slugToId = new Map<string, number>();
+  for (const n of existing) slugToId.set(n.slug, n.id);
+
+  for (let ci = 0; ci < SEED_TAXONOMY.length; ci++) {
+    const cat = SEED_TAXONOMY[ci]!;
+    let catId = slugToId.get(cat.slug);
+    if (!catId) {
+      const [row] = await db
+        .insert(categoryNodeTable)
+        .values({
+          parentId: null,
+          level: "category",
+          name: cat.name,
+          slug: cat.slug,
+          sortOrder: ci,
+          source: "seed",
+        })
+        .returning();
+      catId = row!.id;
+      slugToId.set(cat.slug, catId);
+      insertedCategories++;
+    }
+
+    for (let si = 0; si < cat.subcategories.length; si++) {
+      const sub = cat.subcategories[si]!;
+      let subId = slugToId.get(sub.slug);
+      if (!subId) {
+        const [row] = await db
+          .insert(categoryNodeTable)
+          .values({
+            parentId: catId,
+            level: "subcategory",
+            name: sub.name,
+            slug: sub.slug,
+            sortOrder: si,
+            source: "seed",
+          })
+          .returning();
+        subId = row!.id;
+        slugToId.set(sub.slug, subId);
+        insertedSubcategories++;
+      }
+
+      for (let ti = 0; ti < sub.types.length; ti++) {
+        const t = sub.types[ti]!;
+        if (slugToId.has(t.slug)) continue;
+        const [row] = await db
+          .insert(categoryNodeTable)
+          .values({
+            parentId: subId,
+            level: "type",
+            name: t.name,
+            slug: t.slug,
+            sortOrder: ti,
+            source: "seed",
+          })
+          .returning();
+        slugToId.set(t.slug, row!.id);
+        insertedTypes++;
+      }
+    }
+  }
+
+  // bump updated_at on the table even if no inserts (for the `/version` poll)
+  await db.execute(sql`SELECT 1`);
+
+  return { insertedCategories, insertedSubcategories, insertedTypes };
+}

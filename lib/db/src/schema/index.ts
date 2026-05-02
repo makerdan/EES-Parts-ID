@@ -6,3 +6,5 @@ export * from "./misspelling_map";
 export * from "./electrical_slang_map";
 export * from "./conversations";
 export * from "./messages";
+export * from "./category_node";
+export * from "./inventory_category";
