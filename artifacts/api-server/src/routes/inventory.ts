@@ -357,7 +357,21 @@ router.post("/search", async (req, res) => {
 
     const vendorFilter = vendorInput.trim().toUpperCase();
     const allTermsArr = Array.from(expandedTerms).filter(t => t.length >= 2);
-    const tsQuery = allTermsArr.map(t => t.replace(/[^\w\s]/g, " ").trim()).filter(Boolean).join(" | ");
+    // Build the FTS tsquery: strip non-word/non-space chars, split on whitespace so
+    // multi-word terms become separate OR tokens, then filter out tokens that would
+    // cause to_tsquery to fail:
+    //   • pure numeric strings (e.g. "12", "394") — useless for full-text search
+    //   • tokens starting with a digit (e.g. "7mm" from "12.7mm" after dot-strip)
+    //   • common English stopwords that to_tsquery rejects when they appear alone
+    const FTS_STOPWORDS = new Set(["in", "at", "on", "of", "to", "by", "as", "an", "or", "it"]);
+    const tsQuery = allTermsArr
+      .flatMap(t => t.replace(/[^\w\s]/g, " ").trim().split(/\s+/).filter(Boolean))
+      .filter(t =>
+        t.length >= 2 &&
+        /^[a-zA-Z]/.test(t) &&
+        !FTS_STOPWORDS.has(t.toLowerCase()),
+      )
+      .join(" | ");
 
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
@@ -379,27 +393,32 @@ router.post("/search", async (req, res) => {
           ...allTermsArr.slice(0, 3),
         ].filter(Boolean).join(" ").trim() || allTermsArr.slice(0, 3).join(" ");
 
+        // Wrap in a subquery so ORDER BY can reference the computed column aliases.
+        // PostgreSQL only resolves aliases in ORDER BY when used as direct references
+        // (not inside arithmetic expressions like fts_rank * 0.6 + trgm_sim * 0.4).
         const pgQueryResult = await db.execute(sql`
-          SELECT
-            i.id, i.vendor, i.catalog, i.description,
-            i.bin_location, i.ai_keywords, i.enriched_at, i.created_at, i.updated_at,
-            ${tsQuery.trim() ? sql`ts_rank_cd(
-              to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,'')),
-              to_tsquery('english', ${tsQuery})
-            )` : sql`0`} AS fts_rank,
-            greatest(
-              similarity(i.catalog, ${catalogTrgmTerms}),
-              similarity(i.description, ${allTermsArr.slice(0,5).join(" ")})
-            ) AS trgm_sim
-          FROM inventory i
-          WHERE
-            ${tsQuery.trim() ? sql`to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,''))
-              @@ to_tsquery('english', ${tsQuery})
-            OR` : sql``}
-            similarity(i.catalog, ${catalogTrgmTerms}) > 0.1
-            OR similarity(i.description, ${allTermsArr.slice(0,5).join(" ")}) > 0.1
-            ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
-            ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
+          SELECT * FROM (
+            SELECT
+              i.id, i.vendor, i.catalog, i.description,
+              i.bin_location, i.ai_keywords, i.enriched_at, i.created_at, i.updated_at,
+              ${tsQuery.trim() ? sql`ts_rank_cd(
+                to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,'')),
+                to_tsquery('english', ${tsQuery})
+              )` : sql`0`} AS fts_rank,
+              greatest(
+                similarity(i.catalog, ${catalogTrgmTerms}),
+                similarity(i.description, ${allTermsArr.slice(0,5).join(" ")})
+              ) AS trgm_sim
+            FROM inventory i
+            WHERE
+              ${tsQuery.trim() ? sql`to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,''))
+                @@ to_tsquery('english', ${tsQuery})
+              OR` : sql``}
+              similarity(i.catalog, ${catalogTrgmTerms}) > 0.1
+              OR similarity(i.description, ${allTermsArr.slice(0,5).join(" ")}) > 0.1
+              ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
+              ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
+          ) AS __ranked
           ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
           LIMIT 200
         `);
