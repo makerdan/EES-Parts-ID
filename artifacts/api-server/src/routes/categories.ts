@@ -703,7 +703,15 @@ export async function classifyHandler(
         unmatched++;
       }
 
-      offset += batch.length;
+      // For "unclassified", every processed row is now assigned, so it falls
+      // out of the NOT EXISTS set — leaving offset at 0 lets the next page
+      // return the next unprocessed slice. Incrementing offset would skip
+      // rows because the underlying result set is shrinking each iteration.
+      // For "all" and "specific-ids" the candidate set is stable, so paging
+      // by offset is correct.
+      if (mode !== "unclassified") {
+        offset += batch.length;
+      }
       if (mode === "specific-ids" && offset >= (ids?.length ?? 0)) break;
     }
 

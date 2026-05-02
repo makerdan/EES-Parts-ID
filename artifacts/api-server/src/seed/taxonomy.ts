@@ -30,7 +30,7 @@
  * inserted, and node names/sort_order are updated in place.
  */
 
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, categoryNodeTable } from "@workspace/db";
 
 interface SeedType {
@@ -269,23 +269,50 @@ export const SEED_TAXONOMY: SeedCategory[] = [
 export const UNCATEGORIZED_TYPE_SLUG = "uncategorized-type";
 
 /**
- * Insert any missing taxonomy nodes. Existing nodes (matched by slug) are
- * left intact — this lets ops re-seed without overwriting AI/manual edits.
+ * Idempotent seed of the taxonomy tree.
+ *
+ * - Missing nodes are inserted.
+ * - Existing nodes (matched by slug) have their `name` and `sortOrder`
+ *   refreshed to match the latest seed definition. This lets us rename
+ *   or re-order seed nodes without manual SQL.
+ *
+ * We deliberately do NOT touch `parentId` or `source` on existing rows —
+ * a node's parent should never silently move (that would break references
+ * from inventory_category and re-parent ops/AI edits), and `source`
+ * preserves manual/AI provenance on rows that started life as "seed".
+ *
  * Returns counts for logging.
  */
 export async function seedTaxonomy(): Promise<{
   insertedCategories: number;
   insertedSubcategories: number;
   insertedTypes: number;
+  updatedNodes: number;
 }> {
   let insertedCategories = 0;
   let insertedSubcategories = 0;
   let insertedTypes = 0;
+  let updatedNodes = 0;
 
-  // Build a slug → id map from any nodes already present so we don't duplicate.
+  // Build a slug → row map from any nodes already present so we don't duplicate.
   const existing = await db.select().from(categoryNodeTable);
+  const bySlug = new Map<string, (typeof existing)[number]>();
+  for (const n of existing) bySlug.set(n.slug, n);
   const slugToId = new Map<string, number>();
   for (const n of existing) slugToId.set(n.slug, n.id);
+
+  // Helper: refresh name + sortOrder if either differs from what's seeded.
+  const upsertExisting = async (slug: string, name: string, sortOrder: number) => {
+    const cur = bySlug.get(slug);
+    if (!cur) return;
+    if (cur.name !== name || cur.sortOrder !== sortOrder) {
+      await db
+        .update(categoryNodeTable)
+        .set({ name, sortOrder, updatedAt: new Date() })
+        .where(eq(categoryNodeTable.id, cur.id));
+      updatedNodes++;
+    }
+  };
 
   for (let ci = 0; ci < SEED_TAXONOMY.length; ci++) {
     const cat = SEED_TAXONOMY[ci]!;
@@ -305,6 +332,8 @@ export async function seedTaxonomy(): Promise<{
       catId = row!.id;
       slugToId.set(cat.slug, catId);
       insertedCategories++;
+    } else {
+      await upsertExisting(cat.slug, cat.name, ci);
     }
 
     for (let si = 0; si < cat.subcategories.length; si++) {
@@ -325,11 +354,16 @@ export async function seedTaxonomy(): Promise<{
         subId = row!.id;
         slugToId.set(sub.slug, subId);
         insertedSubcategories++;
+      } else {
+        await upsertExisting(sub.slug, sub.name, si);
       }
 
       for (let ti = 0; ti < sub.types.length; ti++) {
         const t = sub.types[ti]!;
-        if (slugToId.has(t.slug)) continue;
+        if (slugToId.has(t.slug)) {
+          await upsertExisting(t.slug, t.name, ti);
+          continue;
+        }
         const [row] = await db
           .insert(categoryNodeTable)
           .values({
@@ -350,5 +384,5 @@ export async function seedTaxonomy(): Promise<{
   // bump updated_at on the table even if no inserts (for the `/version` poll)
   await db.execute(sql`SELECT 1`);
 
-  return { insertedCategories, insertedSubcategories, insertedTypes };
+  return { insertedCategories, insertedSubcategories, insertedTypes, updatedNodes };
 }
