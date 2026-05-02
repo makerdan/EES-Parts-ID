@@ -204,6 +204,13 @@ export default function SearchScreen() {
       setBrowseResults(null);
       return;
     }
+    // Only fetch a result list once the user has drilled all the way down
+    // to a leaf "type" node. Tapping a category or subcategory just drills
+    // deeper — we don't dump 1,500 receptacles on the screen for that.
+    if (node.level !== "type") {
+      setBrowseResults(null);
+      return;
+    }
     setBrowseLoading(true);
     setBrowseError(null);
     fetch(`${API_BASE}/categories/${encodeURIComponent(node.slug)}/items?limit=200`)
@@ -948,7 +955,8 @@ export default function SearchScreen() {
         </View>
       ) : null}
 
-      {/* ── Persistent search bar — always visible ── */}
+      {/* ── Search bar — only shown in Search mode (Browse drives its own picker) ── */}
+      {mode === "browse" ? null : (
       <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <View style={styles.searchBarInputWrapper}>
           <TextInput
@@ -1003,6 +1011,7 @@ export default function SearchScreen() {
         </View>
 
       </View>
+      )}
 
       {/* ── Search / Browse mode toggle ─────────────────────────────────── */}
       <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>

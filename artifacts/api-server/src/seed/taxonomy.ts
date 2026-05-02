@@ -1,13 +1,33 @@
 /**
  * Seeded three-level taxonomy.
  *
- * No external EES catalog file was available, so this initial taxonomy is
- * derived from the existing dictionaries (CHIP_DIMS_SERVER, abbreviation
- * map categories, vendor patterns) and from real inventory shapes seen in
- * the database. The classifier rules in `taxonomyClassifier.ts` map onto
- * the leaf "type" slugs defined here — keep them in sync.
+ * Top-level Categories follow the section structure of the Elliott
+ * Electric Supply (EES) Product Catalog (June 2025) found in
+ * `attached_assets/EES_Product_Catalog_(06.2025)_*.pdf`:
  *
- * Idempotent: an existing slug is left alone, missing slugs are inserted.
+ *   A. Distribution Equipment   → "breakers" + "panels-distribution"
+ *   B. Wiring Devices           → "receptacles" + "switches"
+ *   C. Lighting & Lighting Ctrl → "lighting"
+ *   D. Wire & Cable             → "wire-cable"
+ *   E. Conduit, Fittings, Boxes → "conduit-raceway" + "boxes-enclosures"
+ *                                 + "connectors-terminations"
+ *   F. Enclosures & Wireway     → covered by "boxes-enclosures"
+ *   G. HVAC                     → not seen in current inventory
+ *   H. Motor Control            → "motors-controls-sensors"
+ *   I. Harsh Locations          → folded into existing categories
+ *   J. Datacom                  → not seen in current inventory
+ *   K. Tools / Terminals / Fast → not seen in current inventory
+ *   L. References               → not categorisable
+ *
+ * Subcategory + Type splits below were then refined from existing
+ * dictionaries (CHIP_DIMS_SERVER, abbreviation map categories, vendor
+ * patterns) and from real inventory shapes observed in the database.
+ *
+ * The classifier rules in `taxonomyClassifier.ts` map onto the leaf
+ * "type" slugs defined here — keep them in sync.
+ *
+ * Idempotent: an existing slug is left alone, missing slugs are
+ * inserted, and node names/sort_order are updated in place.
  */
 
 import { sql } from "drizzle-orm";

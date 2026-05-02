@@ -38,6 +38,11 @@ import {
   fuseConfidence,
 } from "../utils/scoreHelpers";
 import { mergeBins, dedupeBinsCaseInsensitive } from "../utils/binLocations";
+import { classifyHandler } from "./categories";
+import {
+  categoryNodeTable,
+  inventoryCategoryTable,
+} from "@workspace/db";
 
 const router = Router();
 
@@ -1273,6 +1278,73 @@ router.post("/:id/suggest-description", async (req, res) => {
   } catch (err) {
     console.error("[inventory/suggest-description] failed:", err);
     res.status(502).json({ error: "Failed to generate description suggestion" });
+  }
+});
+
+// ── POST /inventory/classify ────────────────────────────────────────────
+// Spec-compliant alias of POST /categories/classify. Same body shape:
+//   { mode?: "all" | "unclassified" | "specific-ids", ids?: number[], useAi?: boolean }
+// Streams SSE progress.
+function requireAdminForClassify(
+  req: import("express").Request,
+  res: import("express").Response,
+  next: import("express").NextFunction,
+): void {
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminPassword) {
+    res.status(503).json({ error: "Admin access is not configured. Set ADMIN_PASSWORD." });
+    return;
+  }
+  const authHeader = req.headers["authorization"] ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!token || !verifyAdminToken(token, adminPassword)) {
+    res.status(401).json({ error: "Unauthorized: valid admin token required" });
+    return;
+  }
+  next();
+}
+router.post("/classify", requireAdminForClassify, classifyHandler);
+
+// ── PATCH /inventory/:id/category ───────────────────────────────────────
+// Admin: manually set a part's category node. Always sets classified_by="manual"
+// so subsequent classifier runs in mode="unclassified" leave this row alone.
+router.patch("/:id/category", requireAdminForClassify, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    if (!Number.isFinite(id) || id <= 0) {
+      return void res.status(400).json({ error: "id must be a positive integer" });
+    }
+    const { categoryNodeId } = req.body as { categoryNodeId?: number };
+    if (!Number.isFinite(categoryNodeId) || (categoryNodeId ?? 0) <= 0) {
+      return void res.status(400).json({ error: "categoryNodeId is required" });
+    }
+
+    // Verify both rows exist before mutating.
+    const [item] = await db
+      .select({ id: inventoryTable.id })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .limit(1);
+    if (!item) return void res.status(404).json({ error: "Inventory item not found" });
+
+    const [node] = await db
+      .select({ id: categoryNodeTable.id })
+      .from(categoryNodeTable)
+      .where(eq(categoryNodeTable.id, categoryNodeId!))
+      .limit(1);
+    if (!node) return void res.status(404).json({ error: "Category node not found" });
+
+    await db.delete(inventoryCategoryTable).where(eq(inventoryCategoryTable.inventoryId, id));
+    await db.insert(inventoryCategoryTable).values({
+      inventoryId: id,
+      categoryNodeId: categoryNodeId!,
+      confidence: "1.0000",
+      classifiedBy: "manual",
+    });
+    res.json({ ok: true, inventoryId: id, categoryNodeId });
+  } catch (err) {
+    console.error("[inventory/:id/category] failed:", err);
+    res.status(500).json({ error: "Failed to set category for item" });
   }
 });
 

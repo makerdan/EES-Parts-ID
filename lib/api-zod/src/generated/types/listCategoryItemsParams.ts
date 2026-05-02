@@ -9,4 +9,21 @@
 export type ListCategoryItemsParams = {
   page?: number;
   limit?: number;
+  confidenceThreshold?: number;
+  category?: string;
+  amperage?: string;
+  colorChip?: string;
+  manufacturer?: string;
+  sizeChip?: string;
+  rating?: string;
+  wireType?: string;
+  wireGauge?: string;
+  conduitType?: string;
+  conduitSize?: string;
+  boxType?: string;
+  boxGangCount?: string;
+  mountingType?: string;
+  environment?: string;
+  voltage?: string;
+  poleCount?: string;
 };

@@ -6,8 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface AssignCategoryResponse {
-  ok: boolean;
-  inventoryId: number;
-  nodeId?: number;
-}
+export type ListCategoryPartsByIdParams = {
+  page?: number;
+  limit?: number;
+  confidenceThreshold?: number;
+};

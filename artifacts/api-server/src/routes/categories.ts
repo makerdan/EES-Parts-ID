@@ -1,20 +1,27 @@
 /**
  * Browse / classify endpoints for the three-level taxonomy.
  *
- *   GET    /categories/tree                    — full taxonomy
- *   GET    /categories/:slug/items?page&limit  — items under a node (any level)
- *   GET    /categories/uncategorized           — items not yet placed
- *   GET    /categories/coverage                — counts: total / classified / by source
- *   POST   /categories/classify                — admin: rule-classify a batch (SSE)
- *   POST   /categories/:nodeId/assign          — admin: manually assign one item
+ *   GET    /categories/tree                          — full taxonomy
+ *   GET    /categories/:slugOrId/items?page&limit    — items under a node (any level)
+ *                                                      with optional chip-filter passthrough
+ *   GET    /categories/:nodeId/parts                 — alias of /:slugOrId/items keyed by node id
+ *   GET    /categories/uncategorized                 — items not yet placed
+ *   GET    /categories/coverage                      — counts: total / classified / by source
+ *   POST   /categories/classify                      — admin: rule-classify (SSE) — alias of /inventory/classify
+ *   POST   /categories/:nodeId/assign                — admin: manually assign one item
+ *   PATCH  /categories/:nodeId                       — admin: rename / re-parent / change sort order
+ *   POST   /categories/merge                         — admin: merge two nodes (parts re-assigned)
  *
- * The classifier is rule-first (see taxonomyClassifier.ts). The endpoint
- * accepts an `useAi: true` flag that wires the AI fallback for unmatched
- * rows; this is opt-in to avoid surprise OpenAI charges from a stray call.
+ * The classifier is rule-first (see taxonomyClassifier.ts). It accepts an
+ * `useAi: true` flag that wires the AI fallback for unmatched rows; this
+ * is opt-in to avoid surprise OpenAI charges from a stray call.
+ *
+ * Chip filters on /:slugOrId/items reuse `matchesChipFilters` from
+ * searchHelpers so Browse stays consistent with the Search experience.
  */
 
 import { Router } from "express";
-import { eq, sql, inArray, and } from "drizzle-orm";
+import { eq, sql, inArray, and, ne } from "drizzle-orm";
 import {
   db,
   inventoryTable,
@@ -27,6 +34,14 @@ import {
   buildNodeIndex,
   type ClassifierNode,
 } from "../utils/taxonomyClassifier";
+import { matchesChipFilters } from "../utils/searchHelpers";
+
+// 16 chip dimensions (mirrors CHIP_DIMS_SERVER in inventory.ts)
+const BROWSE_CHIP_KEYS = [
+  "category", "amperage", "colorChip", "manufacturer", "sizeChip", "rating",
+  "wireType", "wireGauge", "conduitType", "conduitSize", "boxType",
+  "boxGangCount", "mountingType", "environment", "voltage", "poleCount",
+] as const;
 
 const router = Router();
 
@@ -209,24 +224,32 @@ router.get("/uncategorized", async (req, res) => {
   }
 });
 
-// ── GET /categories/:slug/items ─────────────────────────────────────────
-router.get("/:slug/items", async (req, res) => {
+// ── GET /categories/:slugOrId/items ─────────────────────────────────────
+// Items belonging to the node (or any descendant). Supports the same 16
+// chip-filter dimensions as POST /inventory/search and a confidenceThreshold.
+// :slugOrId may be a slug ("breakers") or a numeric node id ("42").
+async function listItemsForNode(
+  req: import("express").Request,
+  res: import("express").Response,
+): Promise<void> {
   try {
-    const slug = String(req.params["slug"] ?? "").trim();
-    if (!slug) return void res.status(400).json({ error: "slug is required" });
+    const raw = String(req.params["slugOrId"] ?? req.params["nodeId"] ?? req.params["slug"] ?? "").trim();
+    if (!raw) { res.status(400).json({ error: "node identifier is required" }); return; }
 
     const page = Math.max(1, parseInt(String(req.query["page"] ?? "1")) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(String(req.query["limit"] ?? "50")) || 50));
     const offset = (page - 1) * limit;
+    const confidenceThreshold = Math.max(0, Math.min(100, parseInt(String(req.query["confidenceThreshold"] ?? "0")) || 0));
 
-    // Resolve slug → node, then collect this node + all descendant ids.
-    const [node] = await db
-      .select()
-      .from(categoryNodeTable)
-      .where(eq(categoryNodeTable.slug, slug))
-      .limit(1);
-    if (!node) return void res.status(404).json({ error: "Category not found" });
+    // Resolve identifier → node (numeric → id, otherwise → slug).
+    const asNum = parseInt(raw, 10);
+    const where = Number.isFinite(asNum) && String(asNum) === raw
+      ? eq(categoryNodeTable.id, asNum)
+      : eq(categoryNodeTable.slug, raw);
+    const [node] = await db.select().from(categoryNodeTable).where(where).limit(1);
+    if (!node) { res.status(404).json({ error: "Category not found" }); return; }
 
+    // Collect this node + all descendants.
     const allNodes = await db.select().from(categoryNodeTable);
     const childrenByParent = new Map<number, number[]>();
     for (const n of allNodes) {
@@ -240,36 +263,61 @@ router.get("/:slug/items", async (req, res) => {
       const stack = [rootId];
       while (stack.length) {
         const cur = stack.pop()!;
-        for (const child of childrenByParent.get(cur) ?? []) {
-          out.push(child);
-          stack.push(child);
-        }
+        for (const child of childrenByParent.get(cur) ?? []) { out.push(child); stack.push(child); }
       }
       return out;
     };
     const nodeIds = collect(node.id);
 
-    // Pull inventory matching any assignment to a descendant node id.
-    const assignmentRows = await db
-      .select({ inventoryId: inventoryCategoryTable.inventoryId })
-      .from(inventoryCategoryTable)
-      .where(inArray(inventoryCategoryTable.categoryNodeId, nodeIds));
-    const itemIds = Array.from(new Set(assignmentRows.map(r => r.inventoryId)));
-    const total = itemIds.length;
-
-    if (total === 0) {
-      return void res.json({ items: [], total: 0, page, limit, node: { slug: node.slug, name: node.name, level: node.level } });
+    // Build active chip filters from query string (same shape as /inventory/search).
+    const activeChipFilters: Array<{ key: string; value: string }> = [];
+    for (const k of BROWSE_CHIP_KEYS) {
+      const v = String(req.query[k] ?? "").trim();
+      if (v) activeChipFilters.push({ key: k, value: v });
     }
 
-    const pageIds = itemIds.slice(offset, offset + limit);
-    const items = await db
+    // Items whose assignment lands inside our node-id set, with optional confidence floor.
+    const assignmentRows = await db
+      .select({
+        inventoryId: inventoryCategoryTable.inventoryId,
+        confidence: inventoryCategoryTable.confidence,
+      })
+      .from(inventoryCategoryTable)
+      .where(inArray(inventoryCategoryTable.categoryNodeId, nodeIds));
+    const minConf = confidenceThreshold / 100;
+    const itemIds = Array.from(new Set(
+      assignmentRows
+        .filter(r => Number(r.confidence) >= minConf)
+        .map(r => r.inventoryId)
+    ));
+
+    if (itemIds.length === 0) {
+      res.json({ items: [], total: 0, page, limit, node: { id: node.id, slug: node.slug, name: node.name, level: node.level } });
+      return;
+    }
+
+    // Pull all candidate items (we need the full row to apply chip filters).
+    const candidates = await db
       .select()
       .from(inventoryTable)
-      .where(inArray(inventoryTable.id, pageIds))
+      .where(inArray(inventoryTable.id, itemIds))
       .orderBy(inventoryTable.vendor, inventoryTable.catalog);
 
+    // Apply chip filters (re-uses Search semantics).
+    const filtered = activeChipFilters.length > 0
+      ? candidates.filter(it => matchesChipFilters({
+          vendor: it.vendor,
+          catalog: it.catalog,
+          description: it.description,
+          aiKeywords: it.aiKeywords ?? [],
+        }, activeChipFilters))
+      : candidates;
+
+    const total = filtered.length;
+    const pageItems = filtered.slice(offset, offset + limit);
+
     res.json({
-      items: items.map(item => ({
+      items: pageItems.map(item => ({
         ...item,
         binLocations: item.binLocations ?? [],
         aiKeywords: item.aiKeywords ?? [],
@@ -277,11 +325,136 @@ router.get("/:slug/items", async (req, res) => {
       total,
       page,
       limit,
-      node: { slug: node.slug, name: node.name, level: node.level },
+      node: { id: node.id, slug: node.slug, name: node.name, level: node.level },
     });
   } catch (err) {
-    console.error("[categories/:slug/items] failed:", err);
+    console.error("[categories/:slugOrId/items] failed:", err);
     res.status(500).json({ error: "Failed to list items in category" });
+  }
+}
+
+router.get("/:slug/items", listItemsForNode);
+// Spec-compliant alias: GET /categories/{nodeId}/parts (id-keyed)
+router.get("/:nodeId/parts", listItemsForNode);
+
+// ── PATCH /categories/:nodeId ───────────────────────────────────────────
+// Admin: rename, re-parent, or change sort order.
+router.patch("/:nodeId", requireAdminAuth, async (req, res) => {
+  try {
+    const nodeId = parseInt(String(req.params["nodeId"] ?? "0"));
+    if (!Number.isFinite(nodeId) || nodeId <= 0) {
+      return void res.status(400).json({ error: "nodeId must be a positive integer" });
+    }
+    const { name, parentId, sortOrder } = req.body as {
+      name?: string;
+      parentId?: number | null;
+      sortOrder?: number;
+    };
+
+    const [existing] = await db
+      .select()
+      .from(categoryNodeTable)
+      .where(eq(categoryNodeTable.id, nodeId))
+      .limit(1);
+    if (!existing) return void res.status(404).json({ error: "Node not found" });
+
+    // Guard: don't let a node become its own ancestor.
+    if (parentId != null) {
+      if (parentId === nodeId) {
+        return void res.status(400).json({ error: "A node cannot be its own parent" });
+      }
+      const all = await db.select().from(categoryNodeTable);
+      const parentOf = new Map(all.map(n => [n.id, n.parentId]));
+      let cur: number | null = parentId;
+      const seen = new Set<number>();
+      while (cur != null) {
+        if (cur === nodeId) {
+          return void res.status(400).json({ error: "Re-parent would create a cycle" });
+        }
+        if (seen.has(cur)) break;
+        seen.add(cur);
+        cur = parentOf.get(cur) ?? null;
+      }
+    }
+
+    const updates: Record<string, unknown> = { updatedAt: new Date(), source: "manual" };
+    if (typeof name === "string" && name.trim()) updates["name"] = name.trim();
+    if (parentId !== undefined) updates["parentId"] = parentId;
+    if (typeof sortOrder === "number" && Number.isFinite(sortOrder)) updates["sortOrder"] = sortOrder;
+
+    await db.update(categoryNodeTable).set(updates).where(eq(categoryNodeTable.id, nodeId));
+    const [updated] = await db.select().from(categoryNodeTable).where(eq(categoryNodeTable.id, nodeId)).limit(1);
+    res.json({ node: updated });
+  } catch (err) {
+    console.error("[categories/PATCH] failed:", err);
+    res.status(500).json({ error: "Failed to update node" });
+  }
+});
+
+// ── POST /categories/merge ──────────────────────────────────────────────
+// Admin: move all part assignments from `sourceId` to `targetId`, then
+// delete the (now empty) source node. Both nodes must be at the same level.
+router.post("/merge", requireAdminAuth, async (req, res) => {
+  try {
+    const { sourceId, targetId } = req.body as { sourceId?: number; targetId?: number };
+    if (!Number.isFinite(sourceId) || !Number.isFinite(targetId) || sourceId === targetId) {
+      return void res.status(400).json({ error: "sourceId and targetId must be distinct positive integers" });
+    }
+    const [source] = await db.select().from(categoryNodeTable).where(eq(categoryNodeTable.id, sourceId!)).limit(1);
+    const [target] = await db.select().from(categoryNodeTable).where(eq(categoryNodeTable.id, targetId!)).limit(1);
+    if (!source || !target) return void res.status(404).json({ error: "Source or target node not found" });
+    if (source.level !== target.level) {
+      return void res.status(400).json({ error: "Cannot merge nodes at different levels" });
+    }
+
+    // Re-point assignments. Skip rows that would collide with an existing
+    // (inventoryId, targetId) pair (composite PK) — those rows just get deleted.
+    const targetExisting = await db
+      .select({ inventoryId: inventoryCategoryTable.inventoryId })
+      .from(inventoryCategoryTable)
+      .where(eq(inventoryCategoryTable.categoryNodeId, targetId!));
+    const targetSet = new Set(targetExisting.map(r => r.inventoryId));
+
+    const sourceRows = await db
+      .select()
+      .from(inventoryCategoryTable)
+      .where(eq(inventoryCategoryTable.categoryNodeId, sourceId!));
+
+    let moved = 0, dropped = 0;
+    for (const row of sourceRows) {
+      if (targetSet.has(row.inventoryId)) {
+        await db
+          .delete(inventoryCategoryTable)
+          .where(and(
+            eq(inventoryCategoryTable.inventoryId, row.inventoryId),
+            eq(inventoryCategoryTable.categoryNodeId, sourceId!),
+          ));
+        dropped++;
+      } else {
+        await db
+          .update(inventoryCategoryTable)
+          .set({ categoryNodeId: targetId! })
+          .where(and(
+            eq(inventoryCategoryTable.inventoryId, row.inventoryId),
+            eq(inventoryCategoryTable.categoryNodeId, sourceId!),
+          ));
+        moved++;
+      }
+    }
+
+    // Re-parent any children of the source node onto the target.
+    await db
+      .update(categoryNodeTable)
+      .set({ parentId: targetId!, updatedAt: new Date() })
+      .where(eq(categoryNodeTable.parentId, sourceId!));
+
+    // Delete the now-empty source node.
+    await db.delete(categoryNodeTable).where(eq(categoryNodeTable.id, sourceId!));
+
+    res.json({ ok: true, sourceId, targetId, moved, dropped });
+  } catch (err) {
+    console.error("[categories/merge] failed:", err);
+    res.status(500).json({ error: "Failed to merge nodes" });
   }
 });
 
@@ -312,119 +485,197 @@ router.post("/:nodeId/assign", requireAdminAuth, async (req, res) => {
   }
 });
 
-// ── POST /categories/classify ───────────────────────────────────────────
-router.post("/classify", requireAdminAuth, async (req, res) => {
+// ── POST /categories/classify  &&  POST /inventory/classify (alias) ─────
+//
+// Body shape: { mode?: "all" | "unclassified" | "specific-ids", ids?: number[], useAi?: boolean }
+//   • "all"           — re-classify every inventory row (admin override)
+//   • "unclassified"  — classify items with no current assignment (default)
+//   • "specific-ids"  — classify only the rows in `ids`
+//
+// The pipeline is fully resumable + idempotent:
+//   • Pages through inventory in batches of 1,000 — no hard cap.
+//   • Each item's existing assignment is replaced atomically per row.
+//   • Manual overrides (classified_by = "manual") are preserved unless
+//     mode === "all" (in which case the caller explicitly asked to redo
+//     everything).
+//   • Stale assignments referencing an inventory_id that no longer exists
+//     are cleaned up at the end of every run.
+//
+// Streams progress as Server-Sent Events.
+export async function classifyHandler(
+  req: import("express").Request,
+  res: import("express").Response,
+): Promise<void> {
   try {
-    const { ids, onlyUnclassified = true, useAi = false } = req.body as {
+    const { mode = "unclassified", ids, useAi = false } = req.body as {
+      mode?: "all" | "unclassified" | "specific-ids";
       ids?: number[];
-      onlyUnclassified?: boolean;
       useAi?: boolean;
     };
 
     const nodes = await loadAllNodes();
     if (nodes.length === 0) {
-      return void res.status(503).json({ error: "Taxonomy not seeded — run seed first" });
+      res.status(503).json({ error: "Taxonomy not seeded — run seed first" });
+      return;
     }
     const index = buildNodeIndex(nodes);
 
-    let toClassify;
-    if (ids?.length) {
-      toClassify = await db
-        .select()
-        .from(inventoryTable)
-        .where(inArray(inventoryTable.id, ids));
-    } else if (onlyUnclassified) {
+    // Set up SSE early so progress streams even on long runs.
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    // Page through the candidate set in chunks of 1000 to keep memory bounded.
+    const PAGE = 1000;
+    let totalCandidates = 0;
+    let processed = 0;
+    let classified = 0;
+    let unmatched = 0;
+    let aiUsed = 0;
+
+    // Compute total up front so the SSE consumer can show a progress bar.
+    if (mode === "specific-ids") {
+      totalCandidates = ids?.length ?? 0;
+    } else if (mode === "all") {
+      const [row] = await db.select({ c: sql<number>`count(*)::int` }).from(inventoryTable);
+      totalCandidates = Number(row?.c ?? 0);
+    } else {
+      // unclassified — preserves manual overrides
+      const result = await db.execute(sql`
+        SELECT count(*)::int as c FROM inventory i
+        WHERE NOT EXISTS (
+          SELECT 1 FROM inventory_category ic WHERE ic.inventory_id = i.id
+        )
+      `);
+      totalCandidates = Number((result as unknown as { rows: { c: number }[] }).rows[0]?.c ?? 0);
+    }
+
+    res.write(`data: ${JSON.stringify({ progress: 0, total: totalCandidates })}\n\n`);
+
+    // Batch fetcher: returns the next page of items to classify.
+    const fetchPage = async (offset: number) => {
+      if (mode === "specific-ids") {
+        if (!ids?.length) return [];
+        const slice = ids.slice(offset, offset + PAGE);
+        if (slice.length === 0) return [];
+        return db.select().from(inventoryTable).where(inArray(inventoryTable.id, slice));
+      }
+      if (mode === "all") {
+        return db
+          .select()
+          .from(inventoryTable)
+          .orderBy(inventoryTable.id)
+          .limit(PAGE)
+          .offset(offset);
+      }
+      // unclassified
       const result = await db.execute(sql`
         SELECT i.* FROM inventory i
         WHERE NOT EXISTS (
           SELECT 1 FROM inventory_category ic WHERE ic.inventory_id = i.id
         )
         ORDER BY i.id
-        LIMIT 5000
+        LIMIT ${PAGE} OFFSET ${offset}
       `);
-      toClassify = (result as { rows: Record<string, unknown>[] }).rows.map(rowToInventoryItem);
-    } else {
-      toClassify = await db.select().from(inventoryTable).limit(5000);
-    }
+      return (result as { rows: Record<string, unknown>[] }).rows.map(rowToInventoryItem);
+    };
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
+    let offset = 0;
+    while (true) {
+      const batch = await fetchPage(offset);
+      if (batch.length === 0) break;
 
-    res.write(`data: ${JSON.stringify({ progress: 0, total: toClassify.length })}\n\n`);
+      for (const item of batch) {
+        // Skip rows that were manually pinned, unless the caller explicitly
+        // asked to re-do everything.
+        if (mode !== "all") {
+          const [existing] = await db
+            .select({ classifiedBy: inventoryCategoryTable.classifiedBy })
+            .from(inventoryCategoryTable)
+            .where(eq(inventoryCategoryTable.inventoryId, item.id))
+            .limit(1);
+          if (existing?.classifiedBy === "manual") {
+            processed++;
+            continue;
+          }
+        }
 
-    let classified = 0;
-    let unmatched = 0;
-    let aiUsed = 0;
+        const result = classifyItem(
+          {
+            id: item.id,
+            vendor: item.vendor,
+            catalog: item.catalog,
+            description: item.description,
+            aiKeywords: item.aiKeywords ?? [],
+          },
+          index,
+        );
 
-    for (let i = 0; i < toClassify.length; i++) {
-      const item = toClassify[i]!;
-      const result = classifyItem(
-        {
-          id: item.id,
-          vendor: item.vendor,
-          catalog: item.catalog,
-          description: item.description,
-          aiKeywords: item.aiKeywords ?? [],
-        },
-        index,
-      );
+        let nodeSlug: string | null = result?.typeSlug ?? null;
+        let confidence = result?.confidence ?? 0;
+        let classifiedBy: "rule" | "ai" = "rule";
 
-      let nodeSlug: string | null = result?.typeSlug ?? null;
-      let confidence = result?.confidence ?? 0;
-      let classifiedBy: "rule" | "ai" = "rule";
+        if (!nodeSlug && useAi) {
+          // AI fallback hook — left as a no-op here so the seed run is fast and
+          // costs nothing. Wire to your AI helper if cost/latency are acceptable.
+          // const aiResult = await aiClassify(item, nodes);
+          // if (aiResult) { nodeSlug = aiResult.slug; confidence = aiResult.confidence; classifiedBy = "ai"; aiUsed++; }
+        }
 
-      if (!nodeSlug && useAi) {
-        // AI fallback hook — left as a no-op here so the seed run is fast and
-        // costs nothing. Wire to your AI helper if cost/latency are acceptable.
-        // const aiResult = await aiClassify(item, nodes);
-        // if (aiResult) { nodeSlug = aiResult.slug; confidence = aiResult.confidence; classifiedBy = "ai"; aiUsed++; }
-      }
-
-      if (nodeSlug) {
-        const node = index.bySlug.get(nodeSlug);
-        if (node) {
-          // Replace any existing assignment so re-runs are idempotent.
-          await db.delete(inventoryCategoryTable).where(eq(inventoryCategoryTable.inventoryId, item.id));
-          await db.insert(inventoryCategoryTable).values({
-            inventoryId: item.id,
-            categoryNodeId: node.id,
-            confidence: confidence.toFixed(4),
-            classifiedBy,
-          });
-          classified++;
+        if (nodeSlug) {
+          const node = index.bySlug.get(nodeSlug);
+          if (node) {
+            // Replace any existing assignment so re-runs are idempotent.
+            await db.delete(inventoryCategoryTable).where(eq(inventoryCategoryTable.inventoryId, item.id));
+            await db.insert(inventoryCategoryTable).values({
+              inventoryId: item.id,
+              categoryNodeId: node.id,
+              confidence: confidence.toFixed(4),
+              classifiedBy,
+            });
+            classified++;
+          } else {
+            unmatched++;
+          }
         } else {
           unmatched++;
         }
-      } else {
-        unmatched++;
+
+        processed++;
+        if (processed % 50 === 0) {
+          res.write(
+            `data: ${JSON.stringify({ progress: processed, total: totalCandidates, classified, unmatched, aiUsed })}\n\n`,
+          );
+        }
       }
 
-      if ((i + 1) % 25 === 0 || i === toClassify.length - 1) {
-        res.write(
-          `data: ${JSON.stringify({
-            progress: i + 1,
-            total: toClassify.length,
-            classified,
-            unmatched,
-            aiUsed,
-          })}\n\n`,
-        );
-      }
+      offset += batch.length;
+      if (mode === "specific-ids" && offset >= (ids?.length ?? 0)) break;
     }
+
+    // Cleanup: drop any assignment rows whose inventory_id no longer exists.
+    const cleanup = await db.execute(sql`
+      DELETE FROM inventory_category
+      WHERE inventory_id NOT IN (SELECT id FROM inventory)
+      RETURNING inventory_id
+    `);
+    const cleaned = (cleanup as { rows: unknown[] }).rows.length;
 
     res.write(
       `data: ${JSON.stringify({
         done: true,
-        total: toClassify.length,
+        mode,
+        total: totalCandidates,
+        processed,
         classified,
         unmatched,
         aiUsed,
+        cleanedStale: cleaned,
       })}\n\n`,
     );
     res.end();
   } catch (err) {
-    console.error("[categories/classify] failed:", err);
+    console.error("[classify] failed:", err);
     if (!res.headersSent) {
       res.status(500).json({ error: "Classification failed" });
     } else {
@@ -432,7 +683,9 @@ router.post("/classify", requireAdminAuth, async (req, res) => {
       res.end();
     }
   }
-});
+}
+
+router.post("/classify", requireAdminAuth, classifyHandler);
 
 // ── helpers ──────────────────────────────────────────────────────────────
 function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable.$inferSelect {
@@ -449,7 +702,7 @@ function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable
   };
 }
 
-// suppress unused-import warning when AI hook stays disabled
-void and;
+// suppress unused-import warnings for symbols only used by callers
+void ne;
 
 export default router;
