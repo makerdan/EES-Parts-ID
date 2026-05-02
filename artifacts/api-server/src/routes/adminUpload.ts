@@ -41,6 +41,7 @@ import { and, sql } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
 import { aggregateRowsByPart, mergeBins, type AggregatedRow } from "../utils/binLocations";
+import { deriveTradeSizeTokens } from "../utils/tradeSize";
 
 const router = Router();
 
@@ -221,7 +222,9 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
           catalog: row.catalog,
           description: row.description,
           binLocations: row.binLocations,
-          aiKeywords: [],
+          // Pre-seed conduit / pipe rows with trade-size tokens so the
+          // Trade Size filter chip works without waiting for AI enrichment.
+          aiKeywords: deriveTradeSizeTokens(row),
         });
         inserted++;
       }

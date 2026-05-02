@@ -121,8 +121,12 @@ export const CHIP_DIMS: ChipDim[] = [
     options: ["EMT","PVC","RMC","IMC","FMC","LFMC","ENT","HDPE","RTRC","GRC"],
   },
   {
+    // Reused as the generic Trade Size chip — applies to conduit, pipe,
+    // and any conduit-family fitting whose catalog ends in a trade size.
+    // The aiKeywords backfill (api-server/src/seed/backfill-trade-size.ts)
+    // writes these exact strings into matching inventory rows.
     key: "conduitSize",
-    label: "Conduit Size",
+    label: "Trade Size",
     options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"'],
   },
   {
