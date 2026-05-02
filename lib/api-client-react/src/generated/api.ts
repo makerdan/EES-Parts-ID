@@ -22,6 +22,7 @@ import type {
   AiReferenceBody,
   AssignCategoryBody,
   AssignCategoryResponse,
+  CategoryAssignmentsResponse,
   CategoryCoverageResponse,
   CategoryItemsResponse,
   CategoryTreeResponse,
@@ -1522,6 +1523,85 @@ export function useListCategoryPartsById<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Flat list of every part's current taxonomy node (offline cache)
+ */
+export const getListCategoryAssignmentsUrl = () => {
+  return `/api/categories/assignments`;
+};
+
+export const listCategoryAssignments = async (
+  options?: RequestInit,
+): Promise<CategoryAssignmentsResponse> => {
+  return customFetch<CategoryAssignmentsResponse>(
+    getListCategoryAssignmentsUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListCategoryAssignmentsQueryKey = () => {
+  return [`/api/categories/assignments`] as const;
+};
+
+export const getListCategoryAssignmentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCategoryAssignments>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listCategoryAssignments>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListCategoryAssignmentsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listCategoryAssignments>>
+  > = ({ signal }) => listCategoryAssignments({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listCategoryAssignments>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListCategoryAssignmentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCategoryAssignments>>
+>;
+export type ListCategoryAssignmentsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Flat list of every part's current taxonomy node (offline cache)
+ */
+
+export function useListCategoryAssignments<
+  TData = Awaited<ReturnType<typeof listCategoryAssignments>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listCategoryAssignments>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListCategoryAssignmentsQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

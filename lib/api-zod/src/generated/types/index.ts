@@ -11,6 +11,8 @@ export * from "./aiIdentifyResponse";
 export * from "./aiReferenceBody";
 export * from "./assignCategoryBody";
 export * from "./assignCategoryResponse";
+export * from "./categoryAssignmentsResponse";
+export * from "./categoryAssignmentsResponseAssignmentsItem";
 export * from "./categoryCoverageResponse";
 export * from "./categoryCoverageResponseBySource";
 export * from "./categoryItemsResponse";

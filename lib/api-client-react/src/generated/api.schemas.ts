@@ -294,6 +294,19 @@ export interface CategoryItemsResponse {
   node: CategoryItemsResponseNode;
 }
 
+export type CategoryAssignmentsResponseAssignmentsItem = {
+  inventoryId: number;
+  categoryNodeId: number;
+  typeSlug: string;
+  confidence?: string;
+  classifiedBy: string;
+};
+
+export interface CategoryAssignmentsResponse {
+  assignments: CategoryAssignmentsResponseAssignmentsItem[];
+  updatedAt: string;
+}
+
 /**
  * "all" re-classifies every inventory row (overwrites manual overrides).
 "unclassified" only touches rows with no current assignment (manual rows preserved).
