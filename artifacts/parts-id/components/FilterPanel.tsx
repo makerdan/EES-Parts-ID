@@ -60,11 +60,13 @@ interface FilterPanelProps {
 }
 
 // ── 16 required chip dimensions (must mirror CHIP_DIMS_SERVER in inventory.ts) ─
-const CHIP_DIMS: Array<{
+export type ChipDim = {
   key: keyof FilterValues;
   label: string;
   options: string[];
-}> = [
+};
+
+export const CHIP_DIMS: ChipDim[] = [
   {
     key: "category",
     label: "Category",

@@ -17,8 +17,13 @@ import Fuse from "fuse.js";
 import { useSearchInventory } from "@workspace/api-client-react";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
-import { FilterPanel, ConfidenceSlider, type FilterValues } from "@/components/FilterPanel";
+import { FilterPanel, ConfidenceSlider, CHIP_DIMS, type FilterValues } from "@/components/FilterPanel";
 import { ResultCard } from "@/components/ResultCard";
+import {
+  ResultRefinementBar,
+  applyRefinement,
+  type RefinementState,
+} from "@/components/ResultRefinementBar";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
@@ -169,6 +174,15 @@ export default function SearchScreen() {
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
   const [cacheAge, setCacheAge] = useState<string | null>(null);
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
+  // ── Drill-down refinement on already-returned results ──────────────────────
+  // `searchChipKeys` records which chip-filter dimensions were active on the
+  // search request that produced the current `results`. When that list is
+  // empty the user ran a "plain" search and we surface the drill-down bar so
+  // they can narrow client-side without another round-trip. When chips were
+  // already used up front, Advanced Filters is the source of truth and we
+  // hide the bar (showing a small hint instead).
+  const [searchChipKeys, setSearchChipKeys] = useState<string[]>([]);
+  const [refinement, setRefinement] = useState<RefinementState>({});
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
   const fuseItemsRef = useRef<InventoryItem[]>([]);
@@ -509,6 +523,18 @@ export default function SearchScreen() {
     setOfflineCacheType(null);
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    // Capture which chip dims were set on this request so the drill-down bar
+    // can decide whether to render. Reset any previous refinement — a new
+    // search starts fresh.
+    const chipKeysOnRequest = CHIP_DIMS
+      .map(d => d.key as keyof FilterValues)
+      .filter(k => {
+        const v = filters[k];
+        return typeof v === "string" && v.trim() !== "";
+      })
+      .map(k => String(k));
+    setSearchChipKeys(chipKeysOnRequest);
+    setRefinement({});
     const body = buildSearchBody(filters);
     searchMutation.mutate({ data: body });
     // Fall back to offline if API hasn't responded within the timeout
@@ -529,6 +555,8 @@ export default function SearchScreen() {
     setIsOffline(false);
     setOfflineCacheType(null);
     setDimensionCounts(undefined);
+    setSearchChipKeys([]);
+    setRefinement({});
   };
 
   // Called by KeywordEditor after debounced save — update local Fuse index
@@ -579,6 +607,17 @@ export default function SearchScreen() {
   }, [rawResults, itemOverrides]);
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
+  // Results actually shown in the list — `results` filtered by any active
+  // drill-down chips. When refinement is empty this is just `results`.
+  const visibleResults: SearchResult[] = useMemo(
+    () => applyRefinement(results, refinement),
+    [results, refinement],
+  );
+  const refinementActive = Object.values(refinement).some(v => !!v);
+  // Show the drill-down bar only after a plain search (no chip dims set up
+  // front) that returned at least one result. When chips were active up front
+  // the existing Advanced Filters panel is the source of truth.
+  const showRefinementBar = hasResults && results.length > 0 && searchChipKeys.length === 0;
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -924,7 +963,7 @@ export default function SearchScreen() {
       </ScrollView>
 
       <FlatList
-        data={results}
+        data={visibleResults}
         keyExtractor={item => String(item.item.id)}
         ListHeaderComponent={() => (
           <View>
@@ -932,9 +971,20 @@ export default function SearchScreen() {
             {hasResults ? (
               <View>
                 <View style={styles.resultsHeader}>
-                  <Text style={[styles.resultsCount, { color: colors.foreground }]}>
-                    {results.length} {isOffline ? "offline" : ""} match{results.length !== 1 ? "es" : ""} found
-                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.resultsCount, { color: colors.foreground }]}>
+                      {refinementActive
+                        ? `${visibleResults.length} of ${results.length} shown`
+                        : `${results.length} ${isOffline ? "offline " : ""}match${results.length !== 1 ? "es" : ""} found`}
+                    </Text>
+                    {refinementActive ? (
+                      <Pressable onPress={() => setRefinement({})} hitSlop={6}>
+                        <Text style={[styles.clearRefinementLink, { color: colors.primary }]}>
+                          Clear refinement
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
                   <Pressable
                     onPress={handleClear}
                     style={[styles.secondaryBtn, styles.newSearchBtn, { borderColor: colors.border }]}
@@ -942,6 +992,33 @@ export default function SearchScreen() {
                     <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
                   </Pressable>
                 </View>
+                {/* Drill-down refinement bar — only when initial search was plain */}
+                {showRefinementBar ? (
+                  <ResultRefinementBar
+                    results={results}
+                    refinement={refinement}
+                    onChange={setRefinement}
+                  />
+                ) : null}
+                {/* When chips were activated up front, point users to Advanced Filters */}
+                {hasResults && results.length > 0 && searchChipKeys.length > 0 ? (
+                  <Text style={[styles.refinementHint, { color: colors.mutedForeground }]}>
+                    Tip: adjust chips in Advanced Filters above to narrow further.
+                  </Text>
+                ) : null}
+                {/* Refinement filtered everything out */}
+                {refinementActive && visibleResults.length === 0 ? (
+                  <View style={[styles.refinementEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                    <Text style={[styles.refinementEmptyText, { color: colors.mutedForeground }]}>
+                      No results match the current refinement. Tap a chip again to remove it, or
+                    </Text>
+                    <Pressable onPress={() => setRefinement({})} hitSlop={6}>
+                      <Text style={[styles.clearRefinementLink, { color: colors.primary, marginTop: 4 }]}>
+                        Clear refinement
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
                 {/* Actionable "more matches below threshold" banner */}
                 {!isOffline && belowThreshold > 0 && (
                   <Pressable
@@ -1156,6 +1233,23 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   resultsCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  clearRefinementLink: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 2 },
+  refinementHint: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    fontStyle: "italic",
+    marginHorizontal: 16,
+    marginBottom: 8,
+  },
+  refinementEmpty: {
+    marginHorizontal: 12,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  refinementEmptyText: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 18 },
   belowThresholdBanner: {
     marginHorizontal: 16, marginBottom: 4, padding: 10,
     borderRadius: 8, borderWidth: 1,
