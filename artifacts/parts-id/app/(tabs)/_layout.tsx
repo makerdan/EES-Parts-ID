@@ -23,6 +23,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: "arrow.up.doc", selected: "arrow.up.doc.fill" }} />
         <Label>Upload</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="shop">
+        <Icon sf={{ default: "bag", selected: "bag.fill" }} />
+        <Label>Shop</Label>
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
@@ -96,6 +100,18 @@ function ClassicTabLayout() {
               <SymbolView name="arrow.up.doc" tintColor={color} size={24} />
             ) : (
               <Feather name="upload" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="shop"
+        options={{
+          title: "Shop",
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="bag" tintColor={color} size={24} />
+            ) : (
+              <Feather name="shopping-bag" size={22} color={color} />
             ),
         }}
       />
