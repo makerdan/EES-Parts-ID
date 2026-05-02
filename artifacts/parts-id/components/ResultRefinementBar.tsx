@@ -7,13 +7,14 @@ import { CHIP_DIMS, type ChipDim } from "@/components/FilterPanel";
 import {
   applyRefinement,
   EXTRA_KEYWORDS_KEY,
+  extractHighlightTokens,
   itemFullText,
   tokenMatch,
   type RefinementState,
 } from "@/lib/refinement";
 
 // Re-export so callers can keep importing the helpers + state type from this module.
-export { applyRefinement, itemFullText, tokenMatch };
+export { applyRefinement, itemFullText, tokenMatch, extractHighlightTokens };
 export type { RefinementState };
 
 interface Props {
