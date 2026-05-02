@@ -8,7 +8,7 @@ router.post("/ask", async (req, res) => {
   try {
     const { question } = req.body as { question: string };
     if (!question?.trim()) {
-      return res.status(400).json({ error: "question is required" });
+      return void res.status(400).json({ error: "question is required" });
     }
 
     res.setHeader("Content-Type", "text/event-stream");

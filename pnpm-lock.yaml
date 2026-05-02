@@ -617,7 +617,14 @@ importers:
         specifier: ^0.31.9
         version: 0.31.9
 
-  lib/integrations-openai-ai-react: {}
+  lib/integrations-openai-ai-react:
+    devDependencies:
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.14
+      react:
+        specifier: 'catalog:'
+        version: 19.1.0
 
   lib/integrations-openai-ai-server:
     dependencies:

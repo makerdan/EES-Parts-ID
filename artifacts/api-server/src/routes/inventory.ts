@@ -327,7 +327,7 @@ router.post("/search", async (req, res) => {
       .filter(Boolean).join(" ");
 
     if (!allSearchText.trim()) {
-      return res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
+      return void res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
     }
 
     // Normalize, correct misspellings, expand terms
@@ -481,7 +481,7 @@ router.post("/search", async (req, res) => {
         catalog: row.catalog,
         description: row.description,
         // Safe fallbacks for fields not included in the runtime shape-validation filter
-        binLocation: typeof row.bin_location === "string" ? row.bin_location : null,
+        binLocation: typeof row.bin_location === "string" ? row.bin_location : "",
         aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
@@ -692,7 +692,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     };
 
     if (!items?.length) {
-      return res.status(400).json({ error: "No items provided" });
+      return void res.status(400).json({ error: "No items provided" });
     }
 
     let inserted = 0;
@@ -987,7 +987,7 @@ async function runBulkEnrich() {
 // ── POST /inventory/bulk-enrich ───────────────────────────────────────────────
 router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
   if (bulkEnrichJob.running) {
-    return res.status(409).json({ error: "Bulk enrichment already running", job: bulkEnrichJob });
+    return void res.status(409).json({ error: "Bulk enrichment already running", job: bulkEnrichJob });
   }
 
   bulkEnrichJob.running = true;
@@ -1108,7 +1108,7 @@ async function runMeasureEnrich(): Promise<void> {
 // ── POST /inventory/enrich-measurements ───────────────────────────────────────
 router.post("/enrich-measurements", requireAdminAuth, (_req, res) => {
   if (measureEnrichJob.running) {
-    return res.status(409).json({
+    return void res.status(409).json({
       error: "Measurement enrichment already running",
       job: measureEnrichJob,
     });
@@ -1144,7 +1144,7 @@ router.patch("/:id/keywords", async (req, res) => {
     const { keywords } = req.body as { keywords: string[] };
 
     if (!Array.isArray(keywords)) {
-      return res.status(400).json({ error: "keywords must be an array" });
+      return void res.status(400).json({ error: "keywords must be an array" });
     }
 
     const [updated] = await db
@@ -1153,7 +1153,7 @@ router.patch("/:id/keywords", async (req, res) => {
       .where(eq(inventoryTable.id, id))
       .returning();
 
-    if (!updated) return res.status(404).json({ error: "Item not found" });
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
     res.json(updated);
   } catch (err) {
     console.error(err);
