@@ -397,7 +397,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
     CHIP_DIMS.filter(d => values[d.key]).length +
     [values.color, values.size, values.material].filter(v => v.trim() !== "").length;
 
-  // ── Filter Dimensions collapse state ─────────────────────────────────────
+  // ── Advanced Filters collapse state ──────────────────────────────────────
   const [dimCollapsed, setDimCollapsed] = useState(true);
   const dimChevronAnim = useRef(new Animated.Value(0)).current;
 
@@ -491,13 +491,13 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
         )}
       </View>
 
-      {/* ── Filter Dimensions collapsible card ── */}
+      {/* ── Advanced Filters collapsible card ── */}
       <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <Pressable
           style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12 }]}
           onPress={toggleDimensions}
         >
-          <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>Filter Dimensions</Text>
+          <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>Advanced Filters</Text>
           <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
             {activeChipCount > 0 && (
               <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
