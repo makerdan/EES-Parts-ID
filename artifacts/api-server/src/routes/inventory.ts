@@ -802,6 +802,22 @@ async function runBulkEnrich() {
   );
 }
 
+// ── GET /inventory/enrich-summary ─────────────────────────────────────────────
+router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
+  try {
+    const [{ total }] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(inventoryTable);
+    const [{ enriched }] = await db
+      .select({ enriched: sql<number>`count(*)::int` })
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.enrichedAt} IS NOT NULL`);
+    res.json({ total, enriched, unenriched: total - enriched });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch enrichment summary" });
+  }
+});
+
 // ── POST /inventory/bulk-enrich ───────────────────────────────────────────────
 router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
   if (bulkEnrichJob.running) {

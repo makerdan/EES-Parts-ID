@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -40,6 +40,22 @@ type EnrichProgress = {
   done?: boolean;
   error?: string;
   item?: { id: number; keywords: string[] };
+};
+
+type BulkJobStatus = {
+  running: boolean;
+  startedAt: string | null;
+  processed: number;
+  errors: number;
+  total: number | null;
+  finishedAt: string | null;
+  lastError: string | null;
+};
+
+type EnrichSummary = {
+  total: number;
+  enriched: number;
+  unenriched: number;
 };
 
 // ── Column header aliases ──────────────────────────────────────────────────
@@ -285,12 +301,111 @@ export default function UploadScreen() {
   const [uploadPending, setUploadPending] = useState(false);
   const [inventoryPage, setInventoryPage] = useState(1);
 
+  // Bulk enrichment state
+  const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
+  const [enrichSummary, setEnrichSummary] = useState<EnrichSummary | null>(null);
+  const [bulkEnrichError, setBulkEnrichError] = useState<string | null>(null);
+  const [bulkEnrichPending, setBulkEnrichPending] = useState(false);
+
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
 
   // Build admin auth headers for protected API calls
   const adminHeaders: Record<string, string> = adminToken
     ? { "Authorization": `Bearer ${adminToken}` }
     : {};
+
+  // Keep a ref so interval callbacks always see the current token
+  const adminTokenRef = useRef(adminToken);
+  useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  const bulkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopBulkPoll = useCallback(() => {
+    if (bulkPollRef.current !== null) {
+      clearInterval(bulkPollRef.current);
+      bulkPollRef.current = null;
+    }
+  }, []);
+
+  const fetchEnrichSummary = useCallback(async () => {
+    try {
+      const token = adminTokenRef.current;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`${API_BASE}/inventory/enrich-summary`, { headers });
+      if (!res.ok) return;
+      const data = await res.json() as EnrichSummary;
+      setEnrichSummary(data);
+    } catch {}
+  }, []);
+
+  const pollBulkStatus = useCallback(async () => {
+    try {
+      const token = adminTokenRef.current;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`${API_BASE}/inventory/bulk-enrich/status`, { headers });
+      if (!res.ok) return;
+      const data = await res.json() as BulkJobStatus;
+      setBulkJobStatus(data);
+      if (!data.running) {
+        stopBulkPoll();
+        fetchEnrichSummary();
+      }
+    } catch {}
+  }, [stopBulkPoll, fetchEnrichSummary]);
+
+  const startBulkPoll = useCallback(() => {
+    stopBulkPoll();
+    bulkPollRef.current = setInterval(pollBulkStatus, 2000);
+  }, [stopBulkPoll, pollBulkStatus]);
+
+  // On admin login, load coverage summary and check if a job is already running
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetchEnrichSummary();
+    (async () => {
+      try {
+        const token = adminTokenRef.current;
+        const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+        const res = await fetch(`${API_BASE}/inventory/bulk-enrich/status`, { headers });
+        if (!res.ok) return;
+        const data = await res.json() as BulkJobStatus;
+        setBulkJobStatus(data);
+        if (data.running) startBulkPoll();
+      } catch {}
+    })();
+  }, [isAdmin, fetchEnrichSummary, startBulkPoll]);
+
+  // Clean up polling on unmount
+  useEffect(() => () => stopBulkPoll(), [stopBulkPoll]);
+
+  const handleStartBulkEnrich = async () => {
+    setBulkEnrichError(null);
+    setBulkEnrichPending(true);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/bulk-enrich`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+      });
+      if (res.status === 409) {
+        const data = await res.json() as { job: BulkJobStatus };
+        setBulkJobStatus(data.job);
+        startBulkPoll();
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setBulkEnrichError(err.error ?? "Failed to start bulk enrichment");
+        return;
+      }
+      const data = await res.json() as { job: BulkJobStatus };
+      setBulkJobStatus(data.job);
+      startBulkPoll();
+    } catch {
+      setBulkEnrichError("Failed to start bulk enrichment. Check your connection and try again.");
+    } finally {
+      setBulkEnrichPending(false);
+    }
+  };
 
   const handlePickFile = async () => {
     try {
@@ -449,8 +564,6 @@ export default function UploadScreen() {
 
   const inventory = inventoryQuery.data?.items ?? [];
   const inventoryTotal = inventoryQuery.data?.total ?? 0;
-  const enrichedCount = inventory.filter(i => i.enrichedAt).length;
-  const unEnrichedCount = inventory.filter(i => !i.enrichedAt).length;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
@@ -600,11 +713,132 @@ export default function UploadScreen() {
                 </View>
               ) : null}
 
-              {/* AI Enrichment */}
+              {/* Bulk Enrichment Coverage */}
               <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Enrichment</Text>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📊 Enrichment Coverage</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  AI analyzes each part and generates searchable keywords saved permanently to the database.
+                  AI generates searchable keywords for each part and saves them to the database permanently.
+                </Text>
+
+                {/* Global coverage stats */}
+                {enrichSummary ? (
+                  <>
+                    <View style={styles.enrichStats}>
+                      <View style={[styles.statChip, { backgroundColor: colors.success + "11" }]}>
+                        <Text style={[styles.statValue, { color: colors.success }]}>
+                          {enrichSummary.enriched.toLocaleString()}
+                        </Text>
+                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Enriched</Text>
+                      </View>
+                      <View style={[styles.statChip, { backgroundColor: colors.warning + "11" }]}>
+                        <Text style={[styles.statValue, { color: colors.warning }]}>
+                          {enrichSummary.unenriched.toLocaleString()}
+                        </Text>
+                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Pending</Text>
+                      </View>
+                      <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
+                        <Text style={[styles.statValue, { color: colors.foreground }]}>
+                          {enrichSummary.total > 0
+                            ? `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`
+                            : "—"}
+                        </Text>
+                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Coverage</Text>
+                      </View>
+                    </View>
+
+                    {/* Coverage progress bar */}
+                    {enrichSummary.total > 0 ? (
+                      <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                        <View
+                          style={[
+                            styles.progressFill,
+                            {
+                              backgroundColor: colors.success,
+                              width: `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`,
+                            },
+                          ]}
+                        />
+                      </View>
+                    ) : null}
+                  </>
+                ) : (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                )}
+
+                {/* Bulk job progress (while running) */}
+                {bulkJobStatus?.running ? (
+                  <View style={styles.progressContainer}>
+                    <View style={[styles.bulkStatusRow]}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8 }]}>
+                        Background enrichment running…
+                      </Text>
+                    </View>
+                    {bulkJobStatus.total != null && bulkJobStatus.total > 0 ? (
+                      <>
+                        <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                          <View
+                            style={[
+                              styles.progressFill,
+                              {
+                                backgroundColor: colors.primary,
+                                width: `${Math.round((bulkJobStatus.processed / bulkJobStatus.total) * 100)}%`,
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
+                          {bulkJobStatus.processed.toLocaleString()} / {bulkJobStatus.total.toLocaleString()} processed
+                          {bulkJobStatus.errors > 0 ? ` · ${bulkJobStatus.errors} errors` : ""}
+                        </Text>
+                      </>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {/* Bulk job done state */}
+                {bulkJobStatus && !bulkJobStatus.running && bulkJobStatus.finishedAt ? (
+                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
+                    <Text style={[styles.doneText, { color: colors.success }]}>
+                      ✓ Last run: {bulkJobStatus.processed.toLocaleString()} processed
+                      {bulkJobStatus.errors > 0 ? `, ${bulkJobStatus.errors} errors` : ""}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Bulk job error */}
+                {(bulkJobStatus?.lastError || bulkEnrichError) ? (
+                  <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
+                    <Text style={[styles.doneText, { color: colors.destructive }]}>
+                      ⚠ {bulkEnrichError ?? bulkJobStatus?.lastError}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Start / running button */}
+                <Pressable
+                  onPress={handleStartBulkEnrich}
+                  disabled={bulkJobStatus?.running || bulkEnrichPending}
+                  style={[
+                    styles.enrichBtn,
+                    { backgroundColor: (bulkJobStatus?.running || bulkEnrichPending) ? colors.muted : colors.primary },
+                  ]}
+                >
+                  {bulkEnrichPending ? (
+                    <ActivityIndicator color={colors.primaryForeground} />
+                  ) : (
+                    <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                      {bulkJobStatus?.running ? "⏳ Enrichment Running…" : "🚀 Start Bulk Enrichment"}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+
+              {/* Quick-enrich (SSE streaming for immediate feedback) */}
+              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 Quick Enrich</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Enrich a small batch immediately with live progress. Useful for newly imported items.
                 </Text>
 
                 {enrichProgress && !enrichProgress.done ? (
@@ -639,21 +873,10 @@ export default function UploadScreen() {
                 {enrichProgress?.done ? (
                   <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
                     <Text style={[styles.doneText, { color: colors.success }]}>
-                      ✓ Enrichment complete! {enrichProgress.progress} items processed.
+                      ✓ Done! {enrichProgress.progress} items processed.
                     </Text>
                   </View>
                 ) : null}
-
-                <View style={styles.enrichStats}>
-                  <View style={[styles.statChip, { backgroundColor: colors.success + "11" }]}>
-                    <Text style={[styles.statValue, { color: colors.success }]}>{enrichedCount}</Text>
-                    <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Enriched</Text>
-                  </View>
-                  <View style={[styles.statChip, { backgroundColor: colors.warning + "11" }]}>
-                    <Text style={[styles.statValue, { color: colors.warning }]}>{unEnrichedCount}</Text>
-                    <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Pending</Text>
-                  </View>
-                </View>
 
                 <Pressable
                   onPress={() => handleEnrich()}
@@ -664,7 +887,7 @@ export default function UploadScreen() {
                   ]}
                 >
                   <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                    {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Enrich All Pending"}
+                    {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Quick Enrich Pending"}
                   </Text>
                 </Pressable>
               </View>
@@ -757,8 +980,9 @@ const styles = StyleSheet.create({
   moreRows: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", marginTop: 8 },
   uploadBtn: { marginTop: 12, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   uploadBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
-  enrichCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12 },
+  enrichCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 14 },
   progressContainer: { gap: 8 },
+  bulkStatusRow: { flexDirection: "row", alignItems: "center" },
   progressBar: { height: 8, borderRadius: 4, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 4 },
   progressText: { fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
