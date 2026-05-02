@@ -41,6 +41,7 @@ import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
+import { parseTradeSizeInches, isConduitOrPipe } from "@/lib/tradeSize";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v3";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v2";
@@ -751,16 +752,48 @@ export default function SearchScreen() {
   // Merge in any local edits so the result card immediately reflects what was
   // just saved through the modal. Variants are patched the same way.
   const results: SearchResult[] = useMemo(() => {
-    if (itemOverrides.size === 0) return rawResults;
     const apply = (it: InventoryItem): InventoryItem => {
       const ov = itemOverrides.get(it.id);
       return ov ? { ...it, ...ov } : it;
     };
-    return rawResults.map(r => ({
-      ...r,
-      item: apply(r.item),
-      variants: (r.variants ?? []).map(apply),
-    }));
+    const merged = itemOverrides.size === 0
+      ? rawResults
+      : rawResults.map(r => ({
+          ...r,
+          item: apply(r.item),
+          variants: (r.variants ?? []).map(apply),
+        }));
+
+    // Default ordering: when no explicit sort is asked for, break ties on
+    // relevance score by ascending trade-size for conduit / pipe items.
+    // The server returns Browse results with uniform confidence (1.0), so
+    // this reorders Browse cleanly small → large; in Search mode it only
+    // affects results that are otherwise equivalently ranked.
+    type Indexed = { r: SearchResult; idx: number; size: number | null };
+    const indexed: Indexed[] = merged.map((r, idx) => {
+      const it = r.item;
+      const blob = `${it.catalog ?? ""} ${it.vendor ?? ""} ${it.description ?? ""}`;
+      const size = isConduitOrPipe(blob)
+        ? parseTradeSizeInches(it.catalog) ?? parseTradeSizeInches(it.description)
+        : null;
+      return { r, idx, size };
+    });
+    indexed.sort((a, b) => {
+      // Primary key: relevance (confidence) descending, preserving the
+      // server's ranking when scores differ meaningfully.
+      const cd = (b.r.confidence ?? 0) - (a.r.confidence ?? 0);
+      if (Math.abs(cd) > 1e-6) return cd;
+      // Secondary key: trade size ascending; items without a parseable
+      // size keep their original relative order after sized items.
+      if (a.size !== null && b.size !== null) {
+        if (a.size !== b.size) return a.size - b.size;
+        return a.idx - b.idx;
+      }
+      if (a.size !== null) return -1;
+      if (b.size !== null) return 1;
+      return a.idx - b.idx;
+    });
+    return indexed.map(x => x.r);
   }, [rawResults, itemOverrides]);
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults =
