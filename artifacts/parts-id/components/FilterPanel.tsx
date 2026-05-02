@@ -361,10 +361,16 @@ export function ConfidenceSlider({
 export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
 
+  const activeChipOnlyCount = CHIP_DIMS.filter(d => values[d.key]).length;
+
   const activeChipCount =
-    CHIP_DIMS.filter(d => values[d.key]).length +
+    activeChipOnlyCount +
     [values.catalog, values.vendor, values.color, values.size, values.material, values.textNumbers]
       .filter(v => v.trim() !== "").length;
+
+  const resetChips = useCallback(() => {
+    CHIP_DIMS.forEach(d => onChange(d.key, ""));
+  }, [onChange]);
 
   // ── Advanced Filters collapse state ──────────────────────────────────────
   const [dimCollapsed, , setDimCollapsed, dimCollapsedLoaded] =
@@ -490,6 +496,20 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               </View>
             </View>
 
+            {/* ── Chip dimensions header + reset button ── */}
+            <View style={chipAreaStyles.dimHeader}>
+              <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
+                DIMENSIONS
+              </Text>
+              {activeChipOnlyCount > 0 && (
+                <Pressable onPress={resetChips} hitSlop={8}>
+                  <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>
+                    Reset chips
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+
             {/* ── Chip dimensions ── */}
             {CHIP_DIMS.map((dim) => (
               <ChipRow
@@ -550,6 +570,21 @@ const chipAreaStyles = StyleSheet.create({
     marginBottom: 12,
   },
   title: { fontSize: 13, fontFamily: "Inter_700Bold" },
+  dimHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  dimHeaderLabel: {
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.8,
+  },
+  resetBtn: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+  },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   liveLabel: { fontSize: 10, fontFamily: "Inter_400Regular", fontStyle: "italic" },
