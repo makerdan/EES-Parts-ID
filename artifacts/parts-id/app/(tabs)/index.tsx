@@ -1331,8 +1331,8 @@ export default function SearchScreen() {
               </View>
             ) : null}
 
-            {/* Welcome state */}
-            {!hasResults && !searchMutation.isPending ? (
+            {/* Welcome state — hidden in Browse mode to free up vertical room */}
+            {!hasResults && !searchMutation.isPending && mode !== "browse" ? (
               <View style={styles.welcomeContainer}>
                 <Text style={styles.welcomeEmoji}>⚡</Text>
                 <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>
