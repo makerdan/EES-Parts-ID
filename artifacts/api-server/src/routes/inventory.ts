@@ -13,6 +13,7 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
 import Fuse from "fuse.js";
 import { verifyAdminToken } from "./admin";
+import { expandMeasurements } from "../utils/measurementConversion";
 
 const router = Router();
 
@@ -349,6 +350,10 @@ router.post("/search", async (req, res) => {
     const keywordCatalogTerms = keywords ? parseCatalogNumber(keywords) : [];
     catalogTerms.forEach(t => expandedTerms.add(t));
     keywordCatalogTerms.forEach(t => expandedTerms.add(t));
+
+    // Inject cross-unit measurement conversions (mm ↔ inch, cm → inch, m ↔ ft)
+    // so that e.g. "10mm conduit" surfaces parts described as "3/8 inch conduit"
+    for (const mt of expandMeasurements(normalized)) expandedTerms.add(mt);
 
     const vendorFilter = vendorInput.trim().toUpperCase();
     const allTermsArr = Array.from(expandedTerms).filter(t => t.length >= 2);
@@ -980,6 +985,130 @@ router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
 // ── GET /inventory/bulk-enrich/status ─────────────────────────────────────────
 router.get("/bulk-enrich/status", requireAdminAuth, (_req, res) => {
   res.json(bulkEnrichJob);
+});
+
+// ── Measurement-enrich job state ──────────────────────────────────────────────
+interface MeasureEnrichJob {
+  running: boolean;
+  startedAt: Date | null;
+  processed: number;
+  updated: number;
+  total: number | null;
+  finishedAt: Date | null;
+  lastError: string | null;
+}
+
+const measureEnrichJob: MeasureEnrichJob = {
+  running: false,
+  startedAt: null,
+  processed: 0,
+  updated: 0,
+  total: null,
+  finishedAt: null,
+  lastError: null,
+};
+
+const MEASURE_ENRICH_BATCH = 200;
+const MEASURE_ENRICH_DELAY_MS = 50;
+
+/**
+ * Idempotent batch job: iterate every inventory item, run expandMeasurements
+ * against catalog + description, and APPEND any new converted terms to the
+ * item's aiKeywords array.  Items that already contain all the generated terms
+ * are skipped so the job can be re-run safely without overwriting data.
+ */
+async function runMeasureEnrich(): Promise<void> {
+  const [countRow] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(inventoryTable);
+
+  measureEnrichJob.total = countRow?.total ?? 0;
+  console.log(`[measure-enrich] Starting – ${measureEnrichJob.total} items`);
+
+  let lastId = 0;
+
+  while (true) {
+    const batch = await db
+      .select({
+        id:          inventoryTable.id,
+        catalog:     inventoryTable.catalog,
+        description: inventoryTable.description,
+        aiKeywords:  inventoryTable.aiKeywords,
+      })
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.id} > ${lastId}`)
+      .orderBy(inventoryTable.id)
+      .limit(MEASURE_ENRICH_BATCH);
+
+    if (batch.length === 0) break;
+
+    for (const item of batch) {
+      const text = `${item.catalog} ${item.description}`;
+      const generated = expandMeasurements(text);
+
+      if (generated.length > 0) {
+        const existing = new Set(item.aiKeywords ?? []);
+        const toAdd = generated.filter(t => !existing.has(t));
+
+        if (toAdd.length > 0) {
+          const merged = [...(item.aiKeywords ?? []), ...toAdd];
+          try {
+            await db
+              .update(inventoryTable)
+              .set({ aiKeywords: merged, updatedAt: new Date() })
+              .where(eq(inventoryTable.id, item.id));
+            measureEnrichJob.updated++;
+          } catch (err) {
+            measureEnrichJob.lastError = String(err);
+            console.error(`[measure-enrich] Error updating id=${item.id}:`, err);
+          }
+        }
+      }
+
+      measureEnrichJob.processed++;
+    }
+
+    lastId = batch[batch.length - 1]!.id;
+    await new Promise(r => setTimeout(r, MEASURE_ENRICH_DELAY_MS));
+  }
+
+  measureEnrichJob.running = false;
+  measureEnrichJob.finishedAt = new Date();
+  console.log(
+    `[measure-enrich] Done – processed=${measureEnrichJob.processed} updated=${measureEnrichJob.updated}`,
+  );
+}
+
+// ── POST /inventory/enrich-measurements ───────────────────────────────────────
+router.post("/enrich-measurements", requireAdminAuth, (_req, res) => {
+  if (measureEnrichJob.running) {
+    return res.status(409).json({
+      error: "Measurement enrichment already running",
+      job: measureEnrichJob,
+    });
+  }
+
+  measureEnrichJob.running    = true;
+  measureEnrichJob.startedAt  = new Date();
+  measureEnrichJob.processed  = 0;
+  measureEnrichJob.updated    = 0;
+  measureEnrichJob.total      = null;
+  measureEnrichJob.finishedAt = null;
+  measureEnrichJob.lastError  = null;
+
+  runMeasureEnrich().catch(err => {
+    measureEnrichJob.running    = false;
+    measureEnrichJob.finishedAt = new Date();
+    measureEnrichJob.lastError  = String(err);
+    console.error("[measure-enrich] Fatal error:", err);
+  });
+
+  res.status(202).json({ message: "Measurement enrichment started", job: measureEnrichJob });
+});
+
+// ── GET /inventory/enrich-measurements/status ─────────────────────────────────
+router.get("/enrich-measurements/status", requireAdminAuth, (_req, res) => {
+  res.json(measureEnrichJob);
 });
 
 // ── PATCH /inventory/:id/keywords ─────────────────────────────────────────────
