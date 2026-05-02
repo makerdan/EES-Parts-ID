@@ -639,7 +639,7 @@ export default function SearchScreen() {
             placeholderTextColor={colors.mutedForeground}
             style={[styles.searchBarInput, {
               backgroundColor: colors.muted,
-              borderColor: filters.keywords ? colors.primary : colors.border,
+              borderColor: filters.keywords ? colors.primary : colors.foreground,
               color: colors.foreground,
               paddingRight: filters.keywords ? 36 : 12,
             }]}
@@ -689,7 +689,7 @@ export default function SearchScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.foreground }]}>
           <FilterPanel
             values={filters}
             onChange={handleChange}
