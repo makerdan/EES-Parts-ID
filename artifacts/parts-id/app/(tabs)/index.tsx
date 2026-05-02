@@ -398,7 +398,7 @@ export default function SearchScreen() {
             onPress={() => setShowLogoutModal(true)}
             style={[styles.headerBtn, styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
           >
-            <Feather name="log-out" size={16} color={colors.mutedForeground} />
+            <Feather name="settings" size={16} color={colors.mutedForeground} />
             <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Settings</Text>
           </Pressable>
         </View>
