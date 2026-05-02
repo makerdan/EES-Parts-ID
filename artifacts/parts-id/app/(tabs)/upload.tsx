@@ -1029,7 +1029,7 @@ const styles = StyleSheet.create({
   inventoryCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   enrichSmallBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8 },
   enrichSmallText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
-  loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: "center" as const, marginTop: 8 },
+  loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: "center", marginTop: 8 },
   loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   inlineBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
   errorBanner: {},
