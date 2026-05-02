@@ -440,7 +440,7 @@ export default function SearchScreen() {
                     setCacheClearedMsg(null);
                   });
                 }}
-                style={[styles.clearCacheBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                style={[styles.secondaryBtn, styles.clearCacheBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
               >
                 <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>Clear</Text>
               </Pressable>
@@ -460,6 +460,7 @@ export default function SearchScreen() {
                     key={sz}
                     onPress={() => updateSetting("textSize", sz)}
                     style={[
+                      styles.secondaryBtn,
                       styles.textSizeBtn,
                       {
                         backgroundColor: settings.textSize === sz ? colors.primary : colors.muted,
@@ -636,7 +637,7 @@ export default function SearchScreen() {
                   </Text>
                   <Pressable
                     onPress={handleClear}
-                    style={[styles.newSearchBtn, { borderColor: colors.border }]}
+                    style={[styles.secondaryBtn, styles.newSearchBtn, { borderColor: colors.border }]}
                   >
                     <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
                   </Pressable>
@@ -866,7 +867,8 @@ const styles = StyleSheet.create({
     borderRadius: 10, borderWidth: 1, alignItems: "center",
   },
   lowerThresholdBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", textAlign: "center", lineHeight: 22 },
-  newSearchBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
+  secondaryBtn: { borderWidth: 1, borderRadius: 8 },
+  newSearchBtn: { paddingHorizontal: 12, paddingVertical: 6 },
   newSearchText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   loadingContainer: { alignItems: "center", padding: 40, gap: 12 },
   loadingText: { fontSize: 14, fontFamily: "Inter_400Regular" },
@@ -903,9 +905,9 @@ const styles = StyleSheet.create({
     fontSize: 15, fontFamily: "Inter_700Bold",
     textAlign: "center", width: 60,
   },
-  clearCacheBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, alignSelf: "center" },
+  clearCacheBtn: { paddingHorizontal: 14, paddingVertical: 8, alignSelf: "center" },
   clearCacheBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   textSizePicker: { flexDirection: "row", gap: 6, alignSelf: "center" },
-  textSizeBtn: { width: 34, height: 34, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  textSizeBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
   textSizeBtnLabel: { fontSize: 13, fontFamily: "Inter_700Bold" },
 });
