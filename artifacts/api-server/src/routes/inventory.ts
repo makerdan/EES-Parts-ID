@@ -401,9 +401,12 @@ router.post("/search", async (req, res) => {
         // Drizzle returns { rows: unknown[] } for raw SQL — validate shape at runtime
         const rawRows = (pgQueryResult as { rows: unknown[] }).rows;
         pgResults = rawRows.filter((r): r is RawRow => {
-          if (!r || typeof r !== "object") return false;
+          if (!r || typeof r !== "object") {
+            console.warn("[inventory/search] Unexpected non-object row from raw SQL:", r);
+            return false;
+          }
           const row = r as Record<string, unknown>;
-          return (
+          const valid = (
             typeof row.id === "number" &&
             typeof row.vendor === "string" &&
             typeof row.catalog === "string" &&
@@ -411,6 +414,10 @@ router.post("/search", async (req, res) => {
             typeof row.fts_rank === "number" &&
             typeof row.trgm_sim === "number"
           );
+          if (!valid) {
+            console.warn("[inventory/search] Row has unexpected shape (possible schema drift):", JSON.stringify(row));
+          }
+          return valid;
         });
       }
     } catch (pgErr) {
@@ -740,7 +747,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
       itemsToEnrich,
       async (item) => {
         const response = await openai.chat.completions.create({
-          model: "gpt-5-mini",
+          model: "gpt-4o-mini",
           max_completion_tokens: 256,
           messages: [
             {

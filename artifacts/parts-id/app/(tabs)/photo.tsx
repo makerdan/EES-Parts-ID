@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -36,6 +36,9 @@ export default function PhotoScreen() {
 
   const identifyMutation = useAiIdentifyPart();
   const searchMutation = useSearchInventory();
+  // Incremented on every identify call so stale async responses from a previous
+  // request are discarded (race condition guard).
+  const requestIdRef = useRef(0);
 
   const pickImage = async (source: "camera" | "library") => {
     if (images.length >= 4) {
@@ -97,6 +100,10 @@ export default function PhotoScreen() {
       return;
     }
 
+    // Claim a request slot — any in-flight response from a previous tap will see
+    // a stale ID and discard its results.
+    const thisRequestId = ++requestIdRef.current;
+
     setInlineError(null);
     identifyMutation.reset();
     searchMutation.reset();
@@ -115,6 +122,9 @@ export default function PhotoScreen() {
           textNumbers: textNumbers.trim() || undefined,
         },
       });
+
+      // Discard response if a newer request has started
+      if (requestIdRef.current !== thisRequestId) return;
 
       setAiSummary(identifyResult.summary);
       setAiTerms(identifyResult.searchTerms);
@@ -136,10 +146,28 @@ export default function PhotoScreen() {
             confidenceThreshold: 40,
           },
         });
+
+        if (requestIdRef.current !== thisRequestId) return;
         setResults(searchResult.results);
       }
     } catch (err) {
-      setInlineError("Identification failed — could not analyze the part. Please try again.");
+      if (requestIdRef.current !== thisRequestId) return;
+      // Surface a meaningful message based on HTTP status (ApiError.status) when available
+      const status =
+        err instanceof Error && "status" in err
+          ? (err as { status: number }).status
+          : null;
+      if (err instanceof Error && err.name === "AbortError") {
+        setInlineError("Request timed out — please try again on a faster connection.");
+      } else if (status === 413) {
+        setInlineError("Photo too large — try a smaller or lower-resolution image.");
+      } else if (status === 429) {
+        setInlineError("Too many requests — please wait a moment and try again.");
+      } else if (status != null && status >= 500) {
+        setInlineError("Server error — the AI service is temporarily unavailable. Try again shortly.");
+      } else {
+        setInlineError("Identification failed — could not analyze the part. Please try again.");
+      }
     }
   };
 

@@ -14,15 +14,15 @@ export async function resizeImage(
   uri: string,
   width: number
 ): Promise<ResizedImage> {
-  const inRange = width >= MIN_WIDTH && width <= MAX_WIDTH;
-  const unknownWidth = width <= 0;
-
-  if (inRange || unknownWidth) {
+  // Only skip resize when width is known and already within the acceptable band
+  if (width >= MIN_WIDTH && width <= MAX_WIDTH) {
     const raw = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
     return { uri, base64: `data:image/jpeg;base64,${raw}` };
   }
 
-  const targetWidth = width < MIN_WIDTH ? MIN_WIDTH : MAX_WIDTH;
+  // width <= 0 means the asset metadata didn't provide a dimension — apply a
+  // conservative MAX_WIDTH resize rather than forwarding a potentially huge image.
+  const targetWidth = width <= 0 || width > MAX_WIDTH ? MAX_WIDTH : MIN_WIDTH;
 
   const result = await ImageManipulator.manipulateAsync(
     uri,

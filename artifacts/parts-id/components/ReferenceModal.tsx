@@ -25,9 +25,12 @@ export function ReferenceModal() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isError, setIsError] = useState(false);
   const [history, setHistory] = useState<Array<{ q: string; a: string }>>([]);
   const scrollRef = useRef<ScrollView>(null);
   const pulse = useRef(new Animated.Value(1)).current;
+  // Stores the question text that was sent so the error bubble can show it
+  const askedQuestionRef = useRef("");
 
   const pulseButton = useCallback(() => {
     Animated.sequence([
@@ -38,7 +41,9 @@ export function ReferenceModal() {
 
   const askQuestion = async () => {
     if (!question.trim() || loading) return;
+    askedQuestionRef.current = question.trim();
     setLoading(true);
+    setIsError(false);
     setAnswer("");
     pulseButton();
 
@@ -54,11 +59,16 @@ export function ReferenceModal() {
       let fullText = "";
 
       if (reader) {
+        // Buffer partial lines across chunk boundaries so SSE frames split
+        // across network packets are never passed to JSON.parse half-complete.
+        let sseBuffer = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split("\n");
+          // Keep the last (possibly incomplete) line in the buffer
+          sseBuffer = lines.pop() ?? "";
           for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
             try {
@@ -74,10 +84,10 @@ export function ReferenceModal() {
       }
 
       if (fullText) {
-        setHistory(h => [...h, { q: question.trim(), a: fullText }]);
+        setHistory(h => [...h, { q: askedQuestionRef.current, a: fullText }]);
       }
-    } catch (err) {
-      setAnswer("Failed to get answer. Check connection.");
+    } catch {
+      setIsError(true);
     } finally {
       setLoading(false);
     }
@@ -86,6 +96,7 @@ export function ReferenceModal() {
   const clearAll = () => {
     setQuestion("");
     setAnswer("");
+    setIsError(false);
     setHistory([]);
   };
 
@@ -177,23 +188,41 @@ export function ReferenceModal() {
               </View>
             ))}
 
-            {answer ? (
+            {answer || isError ? (
               <View style={{ marginBottom: 16 }}>
                 <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + "22" }]}>
-                  <Text style={[msgStyles.qText, { color: colors.foreground }]}>Q: {question}</Text>
-                </View>
-                <View style={[msgStyles.aBubble, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                  <Text style={{ fontSize: 14, lineHeight: 22 }}>
-                    {renderAnswer(answer)}
+                  <Text style={[msgStyles.qText, { color: colors.foreground }]}>
+                    Q: {askedQuestionRef.current || question}
                   </Text>
-                  {loading ? (
-                    <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 4 }} />
-                  ) : null}
                 </View>
+                {isError ? (
+                  <View style={[msgStyles.aBubble, { backgroundColor: colors.destructive + "0f", borderColor: colors.destructive + "44" }]}>
+                    <Text style={{ fontSize: 14, lineHeight: 22, color: colors.destructive }}>
+                      Failed to get an answer — check your connection and try again.
+                    </Text>
+                    <Pressable
+                      onPress={askQuestion}
+                      style={[msgStyles.retryBtn, { borderColor: colors.primary }]}
+                    >
+                      <Text style={{ fontSize: 13, color: colors.primary, fontFamily: "Inter_600SemiBold" }}>
+                        ↺  Retry
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View style={[msgStyles.aBubble, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                    <Text style={{ fontSize: 14, lineHeight: 22 }}>
+                      {renderAnswer(answer)}
+                    </Text>
+                    {loading ? (
+                      <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 4 }} />
+                    ) : null}
+                  </View>
+                )}
               </View>
             ) : null}
 
-            {!history.length && !answer ? (
+            {!history.length && !answer && !isError ? (
               <View style={emptyStyles.container}>
                 <Text style={emptyStyles.emoji}>📖</Text>
                 <Text style={[emptyStyles.title, { color: colors.foreground }]}>Electrical Reference</Text>
@@ -302,6 +331,7 @@ const msgStyles = StyleSheet.create({
   qBubble: { padding: 10, borderRadius: 8, marginBottom: 6 },
   qText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   aBubble: { padding: 12, borderRadius: 8, borderWidth: 1 },
+  retryBtn: { alignSelf: "flex-start", marginTop: 10, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 6, borderWidth: 1 },
 });
 
 const emptyStyles = StyleSheet.create({

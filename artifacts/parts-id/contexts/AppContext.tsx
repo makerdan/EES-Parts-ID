@@ -94,6 +94,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (token) setAdminToken(token);
       setSettings(s);
       setIsLoading(false);
+    }).catch(() => {
+      // SecureStore failure (e.g. keychain unavailable) — start in clean logged-out state
+      setIsLoading(false);
     });
   }, []);
 
