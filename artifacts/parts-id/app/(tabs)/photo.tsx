@@ -123,9 +123,13 @@ export default function PhotoScreen() {
 
     // Phase 1 — show "Uploading" immediately; advance to "Analysing" after 2 s,
     // which is roughly when photo data has been sent and the AI is processing.
+    // Clear any lingering timer from a previous (now-superseded) request first.
     if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
     setProgressPhase("uploading");
-    progressTimerRef.current = setTimeout(() => setProgressPhase("analysing"), 2000);
+    progressTimerRef.current = setTimeout(() => {
+      // Guard: only advance if this request is still the active one.
+      if (requestIdRef.current === thisRequestId) setProgressPhase("analysing");
+    }, 2000);
 
     try {
       const identifyResult = await identifyMutation.mutateAsync({
@@ -139,11 +143,12 @@ export default function PhotoScreen() {
         },
       });
 
-      // Phase-advance timer is no longer needed once the AI responds.
-      if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
-
-      // Discard response if a newer request has started
+      // Discard response if a newer request has started — check BEFORE touching
+      // any shared state (timer ref, progressPhase) so we don't clobber request 2.
       if (requestIdRef.current !== thisRequestId) return;
+
+      // Safe to clear: this is the active request's timer.
+      if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
 
       setAiSummary(identifyResult.summary);
       setAiTerms(identifyResult.searchTerms);
@@ -173,8 +178,9 @@ export default function PhotoScreen() {
         setResults(searchResult.results);
       }
     } catch (err) {
-      if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
+      // Check stale-request FIRST — don't touch shared timer/phase if superseded.
       if (requestIdRef.current !== thisRequestId) return;
+      if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
       // Surface a meaningful message based on HTTP status (ApiError.status) when available
       const status =
         err instanceof Error && "status" in err
@@ -192,7 +198,8 @@ export default function PhotoScreen() {
         setInlineError("Identification failed — could not analyze the part. Please try again.");
       }
     } finally {
-      setProgressPhase(null);
+      // Only reset our own progress phase; never overwrite a newer request's state.
+      if (requestIdRef.current === thisRequestId) setProgressPhase(null);
     }
   };
 
