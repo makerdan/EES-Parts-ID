@@ -150,7 +150,6 @@ describe("POST /api/categories/:nodeId/assign — leaf-only invariant", () => {
       .set("Authorization", `Bearer ${adminToken}`)
       .send({ inventoryId: item.id })
       .expect(200);
-    // Second call must replace, not duplicate (composite PK guarantees this).
     await supertest(app)
       .post(`/api/categories/${t.id}/assign`)
       .set("Authorization", `Bearer ${adminToken}`)
@@ -162,6 +161,34 @@ describe("POST /api/categories/:nodeId/assign — leaf-only invariant", () => {
       .where(eq(inventoryCategoryTable.inventoryId, item.id));
     expect(rows).toHaveLength(1);
     expect(rows[0]!.classifiedBy).toBe("manual");
+  });
+
+  it("DB enforces one assignment per inventory item (PK on inventory_id)", async () => {
+    const types = await db
+      .select()
+      .from(categoryNodeTable)
+      .where(eq(categoryNodeTable.level, "type"))
+      .limit(2);
+    const [item] = await db.select({ id: inventoryTable.id }).from(inventoryTable).limit(1);
+    if (types.length < 2 || !item) return;
+    // Reassign to type-A then type-B; PK on inventory_id means the second
+    // assign must replace the first, leaving exactly one row.
+    await supertest(app)
+      .post(`/api/categories/${types[0]!.id}/assign`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ inventoryId: item.id })
+      .expect(200);
+    await supertest(app)
+      .post(`/api/categories/${types[1]!.id}/assign`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ inventoryId: item.id })
+      .expect(200);
+    const rows = await db
+      .select()
+      .from(inventoryCategoryTable)
+      .where(eq(inventoryCategoryTable.inventoryId, item.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.categoryNodeId).toBe(types[1]!.id);
   });
 });
 
