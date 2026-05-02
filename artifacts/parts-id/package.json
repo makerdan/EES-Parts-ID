@@ -68,6 +68,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "@react-native-community/netinfo": "^12.0.1",
     "expo-file-system": "^55.0.17",
     "expo-image-manipulator": "^55.0.15",
     "react-native-webview": "^13.16.1"
