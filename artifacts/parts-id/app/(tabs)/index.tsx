@@ -20,7 +20,7 @@ import { FilterPanel, ConfidenceSlider, type FilterValues } from "@/components/F
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
-import { useApp, DEFAULT_SETTINGS, type TextSize } from "@/contexts/AppContext";
+import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
@@ -499,6 +499,39 @@ export default function SearchScreen() {
                       { color: settings.textSize === sz ? colors.primaryForeground : colors.foreground },
                     ]}>
                       {sz === "small" ? "S" : sz === "large" ? "L" : "M"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Theme row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Theme</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Override the system appearance preference.
+                </Text>
+              </View>
+              <View style={styles.textSizePicker}>
+                {(["light", "dark", "system"] as ThemeMode[]).map(mode => (
+                  <Pressable
+                    key={mode}
+                    onPress={() => updateSetting("themeMode", mode)}
+                    style={[
+                      styles.secondaryBtn,
+                      styles.textSizeBtn,
+                      {
+                        backgroundColor: settings.themeMode === mode ? colors.primary : colors.muted,
+                        borderColor: settings.themeMode === mode ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[
+                      styles.textSizeBtnLabel,
+                      { color: settings.themeMode === mode ? colors.primaryForeground : colors.foreground },
+                    ]}>
+                      {mode === "light" ? "☀" : mode === "dark" ? "☾" : "⊙"}
                     </Text>
                   </Pressable>
                 ))}

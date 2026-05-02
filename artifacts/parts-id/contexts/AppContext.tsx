@@ -17,8 +17,17 @@ const ADMIN_TOKEN_KEY = "parts_id_admin_token";
 // ── App Settings ─────────────────────────────────────────────────────────────
 export const SETTINGS_KEY = "parts_id_settings_v1";
 export type TextSize = "small" | "normal" | "large";
-export type AppSettings = { textSize: TextSize; defaultConfidenceThreshold: number };
-export const DEFAULT_SETTINGS: AppSettings = { textSize: "normal", defaultConfidenceThreshold: 50 };
+export type ThemeMode = "light" | "dark" | "system";
+export type AppSettings = {
+  textSize: TextSize;
+  defaultConfidenceThreshold: number;
+  themeMode: ThemeMode;
+};
+export const DEFAULT_SETTINGS: AppSettings = {
+  textSize: "normal",
+  defaultConfidenceThreshold: 50,
+  themeMode: "system",
+};
 
 export async function loadSettings(): Promise<AppSettings> {
   try {
