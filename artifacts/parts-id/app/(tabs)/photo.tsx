@@ -188,14 +188,14 @@ export default function PhotoScreen() {
                 <View style={styles.addImageButtons}>
                   <Pressable
                     onPress={() => pickImage("camera")}
-                    style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: '#000' }]}
                   >
                     <Text style={styles.addImageEmoji}>📷</Text>
                     <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Camera</Text>
                   </Pressable>
                   <Pressable
                     onPress={() => pickImage("library")}
-                    style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: '#000' }]}
                   >
                     <Text style={styles.addImageEmoji}>🖼️</Text>
                     <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
@@ -228,7 +228,7 @@ export default function PhotoScreen() {
               { label: "Size", value: size, key: "size", ph: "e.g. 20A, 3/4 inch..." },
             ].map(({ label, value, key, ph }) => (
               <View key={key} style={{ marginBottom: 10 }}>
-                <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>{label}</Text>
+                <Text style={[styles.fieldLabel, { color: '#000' }]}>{label}</Text>
                 <TextInput
                   value={value}
                   onChangeText={(v) => {
