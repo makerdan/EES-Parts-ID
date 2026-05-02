@@ -16,7 +16,7 @@ import Fuse from "fuse.js";
 import { useSearchInventory } from "@workspace/api-client-react";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
-import { FilterPanel, type FilterValues } from "@/components/FilterPanel";
+import { FilterPanel, ConfidenceSlider, type FilterValues } from "@/components/FilterPanel";
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
@@ -142,6 +142,8 @@ export default function SearchScreen() {
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
+  // Local string state for the custom threshold TextInput in Settings
+  const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
   const [isOffline, setIsOffline] = useState(false);
   const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -164,6 +166,7 @@ export default function SearchScreen() {
     loadSettings().then(s => {
       setSettings(s);
       setFilters(f => ({ ...f, confidenceThreshold: s.defaultConfidenceThreshold }));
+      setConfThresholdInput(String(s.defaultConfidenceThreshold));
     });
   }, []);
 
@@ -341,7 +344,10 @@ export default function SearchScreen() {
     const next = { ...settings, [key]: value };
     setSettings(next);
     saveSettings(next);
-    if (key === "defaultConfidenceThreshold") setFilters(f => ({ ...f, confidenceThreshold: value as number }));
+    if (key === "defaultConfidenceThreshold") {
+      setFilters(f => ({ ...f, confidenceThreshold: value as number }));
+      setConfThresholdInput(String(value));
+    }
   };
 
   const textFontScale = settings.textSize === "small" ? 0.85 : settings.textSize === "large" ? 1.18 : 1.0;
@@ -473,33 +479,44 @@ export default function SearchScreen() {
             </View>
 
             {/* Default confidence threshold row */}
-            <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 8 }]}>
+            <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 4 }]}>
               <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Default min confidence</Text>
               <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
                 Pre-fills the confidence slider on each new search.
               </Text>
-              <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-                {([0, 30, 50, 70, 90] as number[]).map(pct => (
-                  <Pressable
-                    key={pct}
-                    onPress={() => updateSetting("defaultConfidenceThreshold", pct)}
-                    style={[
-                      styles.textSizeBtn,
-                      {
-                        backgroundColor: settings.defaultConfidenceThreshold === pct ? colors.primary : colors.muted,
-                        borderColor: settings.defaultConfidenceThreshold === pct ? colors.primary : colors.border,
-                        width: 50,
-                      },
-                    ]}
-                  >
-                    <Text style={[
-                      styles.textSizeBtnLabel,
-                      { color: settings.defaultConfidenceThreshold === pct ? colors.primaryForeground : colors.foreground, fontSize: 12 },
-                    ]}>
-                      {pct === 0 ? "All" : `${pct}%`}
-                    </Text>
-                  </Pressable>
-                ))}
+              <ConfidenceSlider
+                value={settings.defaultConfidenceThreshold}
+                onChange={v => updateSetting("defaultConfidenceThreshold", v)}
+                colors={colors}
+                presets={[20, 40, 60, 80]}
+              />
+              {/* Custom value text input */}
+              <View style={styles.confCustomRow}>
+                <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>Custom</Text>
+                <TextInput
+                  value={confThresholdInput}
+                  onChangeText={setConfThresholdInput}
+                  onBlur={() => {
+                    const n = parseInt(confThresholdInput, 10);
+                    const clamped = isNaN(n) ? settings.defaultConfidenceThreshold : Math.max(1, Math.min(100, n));
+                    updateSetting("defaultConfidenceThreshold", clamped);
+                  }}
+                  onSubmitEditing={() => {
+                    const n = parseInt(confThresholdInput, 10);
+                    const clamped = isNaN(n) ? settings.defaultConfidenceThreshold : Math.max(1, Math.min(100, n));
+                    updateSetting("defaultConfidenceThreshold", clamped);
+                  }}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                  style={[styles.confCustomInput, {
+                    backgroundColor: colors.muted,
+                    borderColor: colors.border,
+                    color: colors.foreground,
+                  }]}
+                  returnKeyType="done"
+                  selectTextOnFocus
+                />
+                <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>%</Text>
               </View>
             </View>
 
@@ -878,6 +895,14 @@ const styles = StyleSheet.create({
   settingsRowLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
   settingsRowHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
   settingsRowSuccess: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 },
+  confCustomRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
+  confCustomLabel: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  confCustomInput: {
+    borderWidth: 1, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 7,
+    fontSize: 15, fontFamily: "Inter_700Bold",
+    textAlign: "center", width: 60,
+  },
   clearCacheBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, alignSelf: "center" },
   clearCacheBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   textSizePicker: { flexDirection: "row", gap: 6, alignSelf: "center" },
