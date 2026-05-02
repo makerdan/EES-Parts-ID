@@ -330,7 +330,7 @@ export interface ClassifyInventoryBody {
   mode?: ClassifyInventoryBodyMode;
   /** Required when mode is 'specific-ids'. */
   ids?: number[];
-  /** When true, fall back to AI for items the rule classifier could not place. */
+  /** When true (default), fall back to AI (gpt-4o-mini) for items the rule classifier could not place. Pass false to skip AI and route rule-misses straight to Uncategorized. */
   useAi?: boolean;
 }
 
