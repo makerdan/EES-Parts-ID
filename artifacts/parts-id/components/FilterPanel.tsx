@@ -390,11 +390,12 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
   });
 
   const activeBasicCount = [
-    values.catalog, values.vendor,
-    values.color, values.size, values.material, values.textNumbers,
+    values.catalog, values.vendor, values.textNumbers,
   ].filter(v => v.trim() !== "").length;
 
-  const activeChipCount = CHIP_DIMS.filter(d => values[d.key]).length;
+  const activeChipCount =
+    CHIP_DIMS.filter(d => values[d.key]).length +
+    [values.color, values.size, values.material].filter(v => v.trim() !== "").length;
 
   // ── Filter Dimensions collapse state ─────────────────────────────────────
   const [dimCollapsed, setDimCollapsed] = useState(true);
@@ -478,51 +479,14 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               </View>
             </View>
 
-            {/* Row 3: Color + Size */}
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Color"
-                  value={values.color}
-                  onChange={v => onChange("color", v)}
-                  placeholder="White, Black..."
-                  colors={colors}
-                  autoCapitalize="words"
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Size / Rating"
-                  value={values.size}
-                  onChange={v => onChange("size", v)}
-                  placeholder={'20A, 1/2", #12...'}
-                  colors={colors}
-                />
-              </View>
-            </View>
-
-            {/* Row 4: Material + Text/Numbers */}
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Material"
-                  value={values.material}
-                  onChange={v => onChange("material", v)}
-                  placeholder="Steel, PVC, Copper..."
-                  colors={colors}
-                  autoCapitalize="words"
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Text / Numbers"
-                  value={values.textNumbers}
-                  onChange={v => onChange("textNumbers", v)}
-                  placeholder="Markings, UPC..."
-                  colors={colors}
-                />
-              </View>
-            </View>
+            {/* Row 2: Text/Numbers */}
+            <Field
+              label="Text / Numbers"
+              value={values.textNumbers}
+              onChange={v => onChange("textNumbers", v)}
+              placeholder="Markings, UPC, model numbers..."
+              colors={colors}
+            />
           </>
         )}
       </View>
@@ -553,6 +517,38 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
 
         {!dimCollapsed && (
           <>
+            {/* ── Free-text fields moved from Basic Filters ── */}
+            <View style={{ flexDirection: "row", gap: 10, marginBottom: 4 }}>
+              <View style={{ flex: 1 }}>
+                <Field
+                  label="Color"
+                  value={values.color}
+                  onChange={v => onChange("color", v)}
+                  placeholder="White, Black..."
+                  colors={colors}
+                  autoCapitalize="words"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Field
+                  label="Size / Rating"
+                  value={values.size}
+                  onChange={v => onChange("size", v)}
+                  placeholder={'20A, 1/2", #12...'}
+                  colors={colors}
+                />
+              </View>
+            </View>
+            <Field
+              label="Material"
+              value={values.material}
+              onChange={v => onChange("material", v)}
+              placeholder="Steel, PVC, Copper..."
+              colors={colors}
+              autoCapitalize="words"
+            />
+
+            {/* ── Chip dimensions ── */}
             {CHIP_DIMS.map((dim) => (
               <ChipRow
                 key={dim.key}
