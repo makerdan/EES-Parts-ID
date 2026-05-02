@@ -71,6 +71,13 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
 type QueryCacheEntry = { timestamp: number; results: SearchResult[] };
 type QueryCache = Record<string, QueryCacheEntry>;
 
+function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
 function buildQueryKey(f: FilterValues): string {
   return JSON.stringify(buildSearchBody(f));
 }
@@ -1149,7 +1156,7 @@ export default function SearchScreen() {
             styles.modeToggleBtn,
             {
               backgroundColor: mode === "browse" ? colors.primary : colors.card,
-              borderColor: colors.border + "BF",
+              borderColor: hexToRgba(colors.border, 0.75),
             },
           ]}
         >
