@@ -40,6 +40,12 @@ export const ListInventoryResponse = zod.object({
         ),
       aiKeywords: zod.array(zod.string()),
       enrichedAt: zod.coerce.date().nullish(),
+      vendorFullName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     }),
@@ -130,6 +136,12 @@ export const SearchInventoryResponse = zod.object({
           ),
         aiKeywords: zod.array(zod.string()),
         enrichedAt: zod.coerce.date().nullish(),
+        vendorFullName: zod
+          .string()
+          .nullish()
+          .describe(
+            'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -150,6 +162,12 @@ export const SearchInventoryResponse = zod.object({
             ),
           aiKeywords: zod.array(zod.string()),
           enrichedAt: zod.coerce.date().nullish(),
+          vendorFullName: zod
+            .string()
+            .nullish()
+            .describe(
+              'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+            ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
         }),
@@ -316,17 +334,33 @@ export const EnrichInventoryBody = zod.object({
 });
 
 /**
- * @summary Manually update keywords for an inventory item
+ * Updates only the fields provided in the request body. A blank
+description string is treated as a real edit (the worker explicitly
+cleared it); only `undefined` / missing means "do not change". At
+least one of `description` or `keywords` must be supplied.
+
+ * @summary Update an inventory item's description and/or AI keywords
  */
-export const UpdateItemKeywordsParams = zod.object({
+export const UpdateInventoryItemParams = zod.object({
   id: zod.coerce.number(),
 });
 
-export const UpdateItemKeywordsBody = zod.object({
-  keywords: zod.array(zod.string()),
-});
+export const UpdateInventoryItemBody = zod
+  .object({
+    description: zod
+      .string()
+      .optional()
+      .describe("New description text. Empty string clears the description."),
+    keywords: zod
+      .array(zod.string())
+      .optional()
+      .describe("Replacement AI keywords array."),
+  })
+  .describe(
+    'Partial update for an inventory item. Only the fields explicitly\nprovided are touched. Sending `description: \"\"` is a real edit\n(clears the description); omit the field entirely to leave it\nuntouched. At least one field must be supplied.\n',
+  );
 
-export const UpdateItemKeywordsResponse = zod.object({
+export const UpdateInventoryItemResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
@@ -338,8 +372,32 @@ export const UpdateItemKeywordsResponse = zod.object({
     ),
   aiKeywords: zod.array(zod.string()),
   enrichedAt: zod.coerce.date().nullish(),
+  vendorFullName: zod
+    .string()
+    .nullish()
+    .describe(
+      'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
+});
+
+/**
+ * Returns a single 1–2 sentence improved description that folds the
+most important AI keywords into natural prose, preserving any
+specifics already in the existing description. Nothing is saved —
+the caller decides whether to apply the suggestion.
+
+ * @summary Generate an AI-recommended improved description for a part
+ */
+export const SuggestItemDescriptionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const SuggestItemDescriptionResponse = zod.object({
+  description: zod
+    .string()
+    .describe("AI-suggested description (1–2 sentences)."),
 });
 
 /**
@@ -395,6 +453,12 @@ export const AiIdentifyPartResponse = zod.object({
           ),
         aiKeywords: zod.array(zod.string()),
         enrichedAt: zod.coerce.date().nullish(),
+        vendorFullName: zod
+          .string()
+          .nullish()
+          .describe(
+            'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -415,6 +479,12 @@ export const AiIdentifyPartResponse = zod.object({
             ),
           aiKeywords: zod.array(zod.string()),
           enrichedAt: zod.coerce.date().nullish(),
+          vendorFullName: zod
+            .string()
+            .nullish()
+            .describe(
+              'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+            ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
         }),

@@ -24,6 +24,12 @@ import {
   matchesChipFilters,
 } from "../utils/searchHelpers";
 import { generateKeywords } from "../utils/generateKeywords";
+import { suggestDescription } from "../utils/suggestDescription";
+import {
+  buildVendorFullNameMap,
+  lookupVendorFullName,
+  withVendorFullName,
+} from "../utils/vendorFullName";
 import {
   blendPgScore,
   catalogScore,
@@ -56,17 +62,20 @@ router.get("/", async (req, res) => {
     const limit = Math.min(200, Math.max(1, parseInt(req.query["limit"] as string) || 50));
     const offset = (page - 1) * limit;
 
-    const [items, countResult] = await Promise.all([
+    const [items, countResult, vendors] = await Promise.all([
       db.select().from(inventoryTable).limit(limit).offset(offset).orderBy(inventoryTable.vendor, inventoryTable.catalog),
       db.select({ count: sql<number>`count(*)` }).from(inventoryTable),
+      db.select({ code: vendorMapTable.code, names: vendorMapTable.names }).from(vendorMapTable),
     ]);
 
+    const vendorFullNameMap = buildVendorFullNameMap(vendors);
+
     res.json({
-      items: items.map(item => ({
+      items: items.map(item => withVendorFullName({
         ...item,
         binLocations: item.binLocations ?? [],
         aiKeywords: item.aiKeywords ?? [],
-      })),
+      }, vendorFullNameMap)),
       total: Number(countResult[0]?.count ?? 0),
       page,
       limit,
@@ -172,6 +181,7 @@ router.post("/search", async (req, res) => {
     const correctionMap = new Map(misspellings.map(m => [m.misspelling, m.correction]));
     const abbrevMap = new Map(abbreviations.map(a => [a.abbreviation, a.expansions]));
     const vendorMapData = new Map(vendors.map(v => [v.code, v.names]));
+    const vendorFullNameMap = buildVendorFullNameMap(vendors);
     const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
     const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
 
@@ -472,12 +482,12 @@ router.post("/search", async (req, res) => {
     });
 
     const finalResults = aboveThreshold.map(r => ({
-      item: r.item,
+      item: withVendorFullName(r.item, vendorFullNameMap),
       confidence: r.confidence,
       matchReason: r.reason,
       seriesBase: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.key ?? null,
       seriesLabel: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.label ?? null,
-      variants: (variantMap.get(r.item.id) ?? []),
+      variants: (variantMap.get(r.item.id) ?? []).map(v => withVendorFullName(v, vendorFullNameMap)),
     }));
 
     res.json({
@@ -1166,27 +1176,103 @@ router.get("/enrich-measurements/status", requireAdminAuth, (_req, res) => {
   res.json(measureEnrichJob);
 });
 
-// ── PATCH /inventory/:id/keywords ─────────────────────────────────────────────
-router.patch("/:id/keywords", async (req, res) => {
+// ── PATCH /inventory/:id ──────────────────────────────────────────────────────
+// Partial update for an inventory item. Only the fields present in the
+// request body are touched.
+//   • description: string         → set to that string (blank string is a real
+//                                   edit — the worker explicitly cleared it)
+//   • description: undefined/missing → leave description unchanged
+//   • keywords:    string[]       → replace ai_keywords
+//   • keywords:    undefined/missing → leave ai_keywords unchanged
+// At least one of the two must be supplied.
+router.patch("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params["id"] ?? "0");
-    const { keywords } = req.body as { keywords: string[] };
+    if (!Number.isFinite(id) || id <= 0) {
+      return void res.status(400).json({ error: "id must be a positive integer" });
+    }
 
-    if (!Array.isArray(keywords)) {
-      return void res.status(400).json({ error: "keywords must be an array" });
+    const body = (req.body ?? {}) as { description?: unknown; keywords?: unknown };
+    const hasDescription = Object.prototype.hasOwnProperty.call(body, "description");
+    const hasKeywords = Object.prototype.hasOwnProperty.call(body, "keywords");
+
+    if (!hasDescription && !hasKeywords) {
+      return void res.status(400).json({
+        error: "Provide at least one of `description` or `keywords` to update.",
+      });
+    }
+
+    const updates: Partial<typeof inventoryTable.$inferInsert> = {
+      updatedAt: new Date(),
+    };
+
+    if (hasDescription) {
+      if (typeof body.description !== "string") {
+        return void res.status(400).json({ error: "description must be a string" });
+      }
+      updates.description = body.description;
+    }
+
+    if (hasKeywords) {
+      if (!Array.isArray(body.keywords) || !body.keywords.every(k => typeof k === "string")) {
+        return void res.status(400).json({ error: "keywords must be an array of strings" });
+      }
+      updates.aiKeywords = body.keywords as string[];
     }
 
     const [updated] = await db
       .update(inventoryTable)
-      .set({ aiKeywords: keywords, updatedAt: new Date() })
+      .set(updates)
       .where(eq(inventoryTable.id, id))
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
-    res.json(updated);
+
+    const vendorFullName = await lookupVendorFullName(updated.vendor);
+    res.json(withVendorFullName(updated, new Map(vendorFullName ? [[updated.vendor.toUpperCase(), vendorFullName]] : [])));
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to update keywords" });
+    res.status(500).json({ error: "Failed to update inventory item" });
+  }
+});
+
+// ── POST /inventory/:id/suggest-description ───────────────────────────────────
+// Generate a single AI-recommended improved description that folds the
+// part's AI keywords into natural prose while preserving any specifics
+// already in the description. Nothing is saved here — the caller decides
+// whether to apply the suggestion (and the existing PATCH endpoint is what
+// actually persists it).
+router.post("/:id/suggest-description", async (req, res) => {
+  try {
+    const id = parseInt(req.params["id"] ?? "0");
+    if (!Number.isFinite(id) || id <= 0) {
+      return void res.status(400).json({ error: "id must be a positive integer" });
+    }
+
+    const [item] = await db
+      .select({
+        vendor: inventoryTable.vendor,
+        catalog: inventoryTable.catalog,
+        description: inventoryTable.description,
+        aiKeywords: inventoryTable.aiKeywords,
+      })
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .limit(1);
+
+    if (!item) return void res.status(404).json({ error: "Item not found" });
+
+    const description = await suggestDescription({
+      vendor: item.vendor,
+      catalog: item.catalog,
+      description: item.description ?? "",
+      keywords: item.aiKeywords ?? [],
+    });
+
+    res.json({ description });
+  } catch (err) {
+    console.error("[inventory/suggest-description] failed:", err);
+    res.status(502).json({ error: "Failed to generate description suggestion" });
   }
 });
 

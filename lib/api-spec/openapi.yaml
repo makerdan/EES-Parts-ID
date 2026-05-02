@@ -135,11 +135,16 @@ paths:
           content:
             text/event-stream: {}
 
-  /inventory/{id}/keywords:
+  /inventory/{id}:
     patch:
-      operationId: updateItemKeywords
+      operationId: updateInventoryItem
       tags: [inventory]
-      summary: Manually update keywords for an inventory item
+      summary: Update an inventory item's description and/or AI keywords
+      description: |
+        Updates only the fields provided in the request body. A blank
+        description string is treated as a real edit (the worker explicitly
+        cleared it); only `undefined` / missing means "do not change". At
+        least one of `description` or `keywords` must be supplied.
       parameters:
         - name: id
           in: path
@@ -151,7 +156,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateKeywordsBody"
+              $ref: "#/components/schemas/UpdateInventoryItemBody"
       responses:
         "200":
           description: Updated inventory item
@@ -159,6 +164,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/InventoryItem"
+
+  /inventory/{id}/suggest-description:
+    post:
+      operationId: suggestItemDescription
+      tags: [inventory]
+      summary: Generate an AI-recommended improved description for a part
+      description: |
+        Returns a single 1–2 sentence improved description that folds the
+        most important AI keywords into natural prose, preserving any
+        specifics already in the existing description. Nothing is saved —
+        the caller decides whether to apply the suggestion.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Suggested description
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuggestDescriptionResponse"
 
   /dictionaries/lookup:
     get:
@@ -265,6 +294,13 @@ components:
           type: string
           format: date-time
           nullable: true
+        vendorFullName:
+          type: string
+          nullable: true
+          description: |
+            Canonical full name for the vendor (e.g. "Eaton" for `ETN`),
+            resolved from the `vendor_map` table by case-insensitive match
+            on `vendor_map.code`. `null` when no mapping exists.
         createdAt:
           type: string
           format: date-time
@@ -585,15 +621,32 @@ components:
           description: Inventory IDs to enrich. If empty, enriches all un-enriched items.
       required: []
 
-    UpdateKeywordsBody:
+    UpdateInventoryItemBody:
       type: object
+      description: |
+        Partial update for an inventory item. Only the fields explicitly
+        provided are touched. Sending `description: ""` is a real edit
+        (clears the description); omit the field entirely to leave it
+        untouched. At least one field must be supplied.
       properties:
+        description:
+          type: string
+          description: New description text. Empty string clears the description.
         keywords:
           type: array
           items:
             type: string
+          description: Replacement AI keywords array.
+      required: []
+
+    SuggestDescriptionResponse:
+      type: object
+      properties:
+        description:
+          type: string
+          description: AI-suggested description (1–2 sentences).
       required:
-        - keywords
+        - description
 
     DictionaryLookupResponse:
       type: object
