@@ -60,7 +60,9 @@ export async function generateKeywords(
         content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nDescription: ${item.description ?? ""}\n\nReturn JSON array of keywords only.`,
       },
     ],
-  });
+  // Abort if OpenAI doesn't respond within 30 s — prevents a slow/hung
+  // response from blocking the enrichment worker indefinitely.
+  }, { timeout: 30_000 });
 
   const text = response.choices[0]?.message?.content ?? "[]";
   let keywords: string[] = [];
