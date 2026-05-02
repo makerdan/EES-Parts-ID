@@ -21,7 +21,7 @@
  */
 
 import { Router } from "express";
-import { eq, sql, inArray, and, ne } from "drizzle-orm";
+import { eq, sql, inArray, and } from "drizzle-orm";
 import {
   db,
   inventoryTable,
@@ -360,7 +360,39 @@ router.patch("/:nodeId", requireAdminAuth, async (req, res) => {
       .limit(1);
     if (!existing) return void res.status(404).json({ error: "Node not found" });
 
-    // Guard: don't let a node become its own ancestor.
+    // Guard 1: enforce the legal three-level shape. A category must be a
+    // root, a subcategory must hang under a category, a type must hang
+    // under a subcategory. Anything else would let the browse drill-down
+    // see (e.g.) a type under a type.
+    const requiredParentLevel = LEGAL_PARENT_LEVEL[existing.level as "category" | "subcategory" | "type"];
+    if (parentId === undefined) {
+      // no-op
+    } else if (parentId === null) {
+      if (requiredParentLevel !== null) {
+        return void res.status(400).json({
+          error: `A ${existing.level} must have a ${requiredParentLevel} parent`,
+        });
+      }
+    } else {
+      if (requiredParentLevel === null) {
+        return void res.status(400).json({
+          error: `A category must be a root node (parentId must be null)`,
+        });
+      }
+      const [parentRow] = await db
+        .select()
+        .from(categoryNodeTable)
+        .where(eq(categoryNodeTable.id, parentId))
+        .limit(1);
+      if (!parentRow) return void res.status(404).json({ error: "parentId does not exist" });
+      if (parentRow.level !== requiredParentLevel) {
+        return void res.status(400).json({
+          error: `A ${existing.level} must hang under a ${requiredParentLevel}, not a ${parentRow.level}`,
+        });
+      }
+    }
+
+    // Guard 2: don't let a node become its own ancestor.
     if (parentId != null) {
       if (parentId === nodeId) {
         return void res.status(400).json({ error: "A node cannot be its own parent" });
@@ -470,6 +502,20 @@ router.post("/:nodeId/assign", requireAdminAuth, async (req, res) => {
     const { inventoryId } = req.body as { inventoryId?: number };
     if (!Number.isFinite(inventoryId) || (inventoryId ?? 0) <= 0) {
       return void res.status(400).json({ error: "inventoryId is required" });
+    }
+
+    // Enforce: inventory may only be assigned to a leaf "type" node, so the
+    // browse drill-down always lands on a Category → Subcategory → Type path.
+    const [node] = await db
+      .select()
+      .from(categoryNodeTable)
+      .where(eq(categoryNodeTable.id, nodeId))
+      .limit(1);
+    if (!node) return void res.status(404).json({ error: "Category node not found" });
+    if (node.level !== "type") {
+      return void res.status(400).json({
+        error: "Inventory can only be assigned to a leaf type node",
+      });
     }
 
     // Replace any prior assignment for this item.
@@ -783,6 +829,15 @@ router.get("/assignments", async (_req, res) => {
 });
 
 // ── helpers ──────────────────────────────────────────────────────────────
+/** Legal Category → Subcategory → Type tree shape. Used by PATCH /:nodeId
+ * and the assign endpoints so the browse drill-down never sees a node
+ * parented at the wrong level. */
+const LEGAL_PARENT_LEVEL: Record<"category" | "subcategory" | "type", "category" | "subcategory" | null> = {
+  category: null,
+  subcategory: "category",
+  type: "subcategory",
+};
+
 function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable.$inferSelect {
   return {
     id: Number(row["id"]),
@@ -796,8 +851,5 @@ function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable
     updatedAt: row["updated_at"] instanceof Date ? (row["updated_at"] as Date) : new Date(0),
   };
 }
-
-// suppress unused-import warnings for symbols only used by callers
-void ne;
 
 export default router;

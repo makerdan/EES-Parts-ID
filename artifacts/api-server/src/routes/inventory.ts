@@ -1328,11 +1328,18 @@ router.patch("/:id/category", requireAdminForClassify, async (req, res) => {
     if (!item) return void res.status(404).json({ error: "Inventory item not found" });
 
     const [node] = await db
-      .select({ id: categoryNodeTable.id })
+      .select({ id: categoryNodeTable.id, level: categoryNodeTable.level })
       .from(categoryNodeTable)
       .where(eq(categoryNodeTable.id, categoryNodeId!))
       .limit(1);
     if (!node) return void res.status(404).json({ error: "Category node not found" });
+    // Enforce: inventory may only be assigned to a leaf "type" node so the
+    // browse drill-down always lands on a Category → Subcategory → Type path.
+    if (node.level !== "type") {
+      return void res.status(400).json({
+        error: "Inventory can only be assigned to a leaf type node",
+      });
+    }
 
     await db.delete(inventoryCategoryTable).where(eq(inventoryCategoryTable.inventoryId, id));
     await db.insert(inventoryCategoryTable).values({
