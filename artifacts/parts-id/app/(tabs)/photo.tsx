@@ -53,18 +53,11 @@ export default function PhotoScreen() {
   const searchMutation = useSearchInventory();
 
   const pickImage = async (source: "camera" | "library") => {
-    if (images.length >= 2) {
-      setInlineError("Max 2 images — remove one first before adding another.");
+    if (images.length >= 4) {
+      setInlineError("Max 4 images — remove one first before adding another.");
       return;
     }
     setInlineError(null);
-
-    const options: ImagePicker.ImagePickerOptions = {
-      mediaTypes: "images",
-      quality: 0.7,
-      allowsEditing: true,
-      aspect: [4, 3],
-    };
 
     let result;
     if (source === "camera") {
@@ -73,15 +66,32 @@ export default function PhotoScreen() {
         setInlineError("Camera access denied — please enable it in your device Settings.");
         return;
       }
-      result = await ImagePicker.launchCameraAsync(options);
+      result = await ImagePicker.launchCameraAsync({
+        mediaTypes: "images",
+        quality: 0.7,
+        allowsEditing: true,
+        aspect: [4, 3],
+      });
     } else {
-      result = await ImagePicker.launchImageLibraryAsync(options);
+      const remainingSlots = 4 - images.length;
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: "images",
+        quality: 0.7,
+        allowsMultipleSelection: true,
+        selectionLimit: remainingSlots,
+      });
     }
 
-    if (!result.canceled && result.assets[0]) {
-      const asset = result.assets[0];
-      const resized = await resizeImage(asset.uri, asset.width ?? 0);
-      setImages((prev) => [...prev, { uri: resized.uri, base64: resized.base64 }]);
+    if (!result.canceled && result.assets.length > 0) {
+      const currentCount = images.length;
+      const allowedAssets = result.assets.slice(0, 4 - currentCount);
+      if (allowedAssets.length < result.assets.length) {
+        setInlineError("Max 4 images — only some photos were added to stay within the limit.");
+      }
+      const resized = await Promise.all(
+        allowedAssets.map((asset) => resizeImage(asset.uri, asset.width ?? 0))
+      );
+      setImages((prev) => [...prev, ...resized.map((r) => ({ uri: r.uri, base64: r.base64 }))]);
     }
   };
 
@@ -174,7 +184,7 @@ export default function PhotoScreen() {
                 </View>
               ))}
 
-              {images.length < 2 ? (
+              {images.length < 4 ? (
                 <View style={styles.addImageButtons}>
                   <Pressable
                     onPress={() => pickImage("camera")}
@@ -196,7 +206,7 @@ export default function PhotoScreen() {
 
             {images.length === 0 ? (
               <Text style={[styles.imageHint, { color: colors.mutedForeground }]}>
-                Add 1-2 photos of the part (front + label recommended)
+                Add up to 4 photos of the part (front + label recommended)
               </Text>
             ) : null}
           </View>
@@ -322,7 +332,7 @@ export default function PhotoScreen() {
             <View style={[styles.welcomeCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>How it works</Text>
               {[
-                "📷 Take or select 1-2 photos of the part",
+                "📷 Take or select up to 4 photos of the part",
                 "📝 Add any visible text, numbers, or labels",
                 "🤖 AI identifies the part type and specifications",
                 "📦 Matching items from inventory are shown",
