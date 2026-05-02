@@ -31,7 +31,8 @@ import type {
   PreviewUpsertResponse,
   SearchInventoryBody,
   SearchInventoryResponse,
-  UpdateKeywordsBody,
+  SuggestDescriptionResponse,
+  UpdateInventoryItemBody,
   UpsertInventoryBody,
   UpsertInventoryResponse,
 } from "./api.schemas";
@@ -566,43 +567,48 @@ export const useEnrichInventory = <
 };
 
 /**
- * @summary Manually update keywords for an inventory item
+ * Updates only the fields provided in the request body. A blank
+description string is treated as a real edit (the worker explicitly
+cleared it); only `undefined` / missing means "do not change". At
+least one of `description` or `keywords` must be supplied.
+
+ * @summary Update an inventory item's description and/or AI keywords
  */
-export const getUpdateItemKeywordsUrl = (id: number) => {
-  return `/api/inventory/${id}/keywords`;
+export const getUpdateInventoryItemUrl = (id: number) => {
+  return `/api/inventory/${id}`;
 };
 
-export const updateItemKeywords = async (
+export const updateInventoryItem = async (
   id: number,
-  updateKeywordsBody: UpdateKeywordsBody,
+  updateInventoryItemBody: UpdateInventoryItemBody,
   options?: RequestInit,
 ): Promise<InventoryItem> => {
-  return customFetch<InventoryItem>(getUpdateItemKeywordsUrl(id), {
+  return customFetch<InventoryItem>(getUpdateInventoryItemUrl(id), {
     ...options,
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...options?.headers },
-    body: JSON.stringify(updateKeywordsBody),
+    body: JSON.stringify(updateInventoryItemBody),
   });
 };
 
-export const getUpdateItemKeywordsMutationOptions = <
+export const getUpdateInventoryItemMutationOptions = <
   TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof updateItemKeywords>>,
+    Awaited<ReturnType<typeof updateInventoryItem>>,
     TError,
-    { id: number; data: BodyType<UpdateKeywordsBody> },
+    { id: number; data: BodyType<UpdateInventoryItemBody> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
-  Awaited<ReturnType<typeof updateItemKeywords>>,
+  Awaited<ReturnType<typeof updateInventoryItem>>,
   TError,
-  { id: number; data: BodyType<UpdateKeywordsBody> },
+  { id: number; data: BodyType<UpdateInventoryItemBody> },
   TContext
 > => {
-  const mutationKey = ["updateItemKeywords"];
+  const mutationKey = ["updateInventoryItem"];
   const { mutation: mutationOptions, request: requestOptions } = options
     ? options.mutation &&
       "mutationKey" in options.mutation &&
@@ -612,44 +618,136 @@ export const getUpdateItemKeywordsMutationOptions = <
     : { mutation: { mutationKey }, request: undefined };
 
   const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof updateItemKeywords>>,
-    { id: number; data: BodyType<UpdateKeywordsBody> }
+    Awaited<ReturnType<typeof updateInventoryItem>>,
+    { id: number; data: BodyType<UpdateInventoryItemBody> }
   > = (props) => {
     const { id, data } = props ?? {};
 
-    return updateItemKeywords(id, data, requestOptions);
+    return updateInventoryItem(id, data, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
 };
 
-export type UpdateItemKeywordsMutationResult = NonNullable<
-  Awaited<ReturnType<typeof updateItemKeywords>>
+export type UpdateInventoryItemMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateInventoryItem>>
 >;
-export type UpdateItemKeywordsMutationBody = BodyType<UpdateKeywordsBody>;
-export type UpdateItemKeywordsMutationError = ErrorType<unknown>;
+export type UpdateInventoryItemMutationBody = BodyType<UpdateInventoryItemBody>;
+export type UpdateInventoryItemMutationError = ErrorType<unknown>;
 
 /**
- * @summary Manually update keywords for an inventory item
+ * @summary Update an inventory item's description and/or AI keywords
  */
-export const useUpdateItemKeywords = <
+export const useUpdateInventoryItem = <
   TError = ErrorType<unknown>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof updateItemKeywords>>,
+    Awaited<ReturnType<typeof updateInventoryItem>>,
     TError,
-    { id: number; data: BodyType<UpdateKeywordsBody> },
+    { id: number; data: BodyType<UpdateInventoryItemBody> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
-  Awaited<ReturnType<typeof updateItemKeywords>>,
+  Awaited<ReturnType<typeof updateInventoryItem>>,
   TError,
-  { id: number; data: BodyType<UpdateKeywordsBody> },
+  { id: number; data: BodyType<UpdateInventoryItemBody> },
   TContext
 > => {
-  return useMutation(getUpdateItemKeywordsMutationOptions(options));
+  return useMutation(getUpdateInventoryItemMutationOptions(options));
+};
+
+/**
+ * Returns a single 1–2 sentence improved description that folds the
+most important AI keywords into natural prose, preserving any
+specifics already in the existing description. Nothing is saved —
+the caller decides whether to apply the suggestion.
+
+ * @summary Generate an AI-recommended improved description for a part
+ */
+export const getSuggestItemDescriptionUrl = (id: number) => {
+  return `/api/inventory/${id}/suggest-description`;
+};
+
+export const suggestItemDescription = async (
+  id: number,
+  options?: RequestInit,
+): Promise<SuggestDescriptionResponse> => {
+  return customFetch<SuggestDescriptionResponse>(
+    getSuggestItemDescriptionUrl(id),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getSuggestItemDescriptionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof suggestItemDescription>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof suggestItemDescription>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["suggestItemDescription"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof suggestItemDescription>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return suggestItemDescription(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SuggestItemDescriptionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof suggestItemDescription>>
+>;
+
+export type SuggestItemDescriptionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Generate an AI-recommended improved description for a part
+ */
+export const useSuggestItemDescription = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof suggestItemDescription>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof suggestItemDescription>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getSuggestItemDescriptionMutationOptions(options));
 };
 
 /**

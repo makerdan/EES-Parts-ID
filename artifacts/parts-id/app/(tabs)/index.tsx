@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -155,6 +155,11 @@ export default function SearchScreen() {
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
+  // Local overrides for items edited in the "Edit Part Details" modal — keeps
+  // the displayed result card in sync with what was just saved on the server
+  // without needing to re-run the search. Stored as Partial<InventoryItem> per
+  // item id (currently description and/or aiKeywords).
+  const [itemOverrides, setItemOverrides] = useState<Map<number, Partial<InventoryItem>>>(() => new Map());
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
@@ -526,16 +531,52 @@ export default function SearchScreen() {
     setDimensionCounts(undefined);
   };
 
-  // Called by KeywordEditor after debounced save — update local Fuse index immediately
+  // Called by KeywordEditor after debounced save — update local Fuse index
+  // immediately AND record an override so the currently-displayed result card
+  // reflects the new keywords without waiting for the next search.
   const handleKeywordsChanged = useCallback((id: number, keywords: string[]) => {
     const items = fuseItemsRef.current.map(item =>
       item.id === id ? { ...item, aiKeywords: keywords } : item,
     );
     buildFuseIndex(items);
     AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
+    setItemOverrides(prev => {
+      const next = new Map(prev);
+      next.set(id, { ...(next.get(id) ?? {}), aiKeywords: keywords });
+      return next;
+    });
   }, [buildFuseIndex]);
 
-  const results: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
+  // Same idea for descriptions edited via "Edit Part Details" — keeps the open
+  // card in sync with what was just saved on the server.
+  const handleDescriptionChanged = useCallback((id: number, description: string) => {
+    const items = fuseItemsRef.current.map(item =>
+      item.id === id ? { ...item, description } : item,
+    );
+    buildFuseIndex(items);
+    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
+    setItemOverrides(prev => {
+      const next = new Map(prev);
+      next.set(id, { ...(next.get(id) ?? {}), description });
+      return next;
+    });
+  }, [buildFuseIndex]);
+
+  const rawResults: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
+  // Merge in any local edits so the result card immediately reflects what was
+  // just saved through the modal. Variants are patched the same way.
+  const results: SearchResult[] = useMemo(() => {
+    if (itemOverrides.size === 0) return rawResults;
+    const apply = (it: InventoryItem): InventoryItem => {
+      const ov = itemOverrides.get(it.id);
+      return ov ? { ...it, ...ov } : it;
+    };
+    return rawResults.map(r => ({
+      ...r,
+      item: apply(r.item),
+      variants: (r.variants ?? []).map(apply),
+    }));
+  }, [rawResults, itemOverrides]);
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
   return (
@@ -1023,6 +1064,7 @@ export default function SearchScreen() {
         item={editItem}
         onClose={() => setEditItem(null)}
         onKeywordsChanged={handleKeywordsChanged}
+        onDescriptionChanged={handleDescriptionChanged}
       />
     </SafeAreaView>
   );

@@ -18,6 +18,11 @@ export interface InventoryItem {
   binLocations: string[];
   aiKeywords: string[];
   enrichedAt?: string | null;
+  /** Canonical full name for the vendor (e.g. "Eaton" for `ETN`),
+resolved from the `vendor_map` table by case-insensitive match
+on `vendor_map.code`. `null` when no mapping exists.
+ */
+  vendorFullName?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -194,8 +199,23 @@ export interface EnrichInventoryBody {
   ids?: number[];
 }
 
-export interface UpdateKeywordsBody {
-  keywords: string[];
+/**
+ * Partial update for an inventory item. Only the fields explicitly
+provided are touched. Sending `description: ""` is a real edit
+(clears the description); omit the field entirely to leave it
+untouched. At least one field must be supplied.
+
+ */
+export interface UpdateInventoryItemBody {
+  /** New description text. Empty string clears the description. */
+  description?: string;
+  /** Replacement AI keywords array. */
+  keywords?: string[];
+}
+
+export interface SuggestDescriptionResponse {
+  /** AI-suggested description (1–2 sentences). */
+  description: string;
 }
 
 export interface DictionaryLookupResponse {

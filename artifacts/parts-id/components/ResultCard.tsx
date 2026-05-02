@@ -246,22 +246,20 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: Re
                   style={[cardStyles.editBtn, { borderColor: colors.border }]}
                 >
                   <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
-                    ✏️ Edit Keywords
+                    ✏️ Edit Part Details
                   </Text>
                 </Pressable>
               ) : null}
             </View>
 
-            {/* Last enriched */}
-            {item.enrichedAt ? (
-              <Text style={[cardStyles.enrichedAt, { color: colors.mutedForeground }]}>
-                AI enriched: {new Date(item.enrichedAt).toLocaleDateString()}
+            {/* Vendor full name — only shown when we have a vendor_map entry
+                for this vendor code. Hidden entirely otherwise (no
+                "Unknown vendor" placeholder). */}
+            {item.vendorFullName ? (
+              <Text style={[cardStyles.vendorFullName, { color: colors.mutedForeground }]}>
+                Vendor: {item.vendorFullName}
               </Text>
-            ) : (
-              <Text style={[cardStyles.enrichedAt, { color: colors.mutedForeground }]}>
-                Not AI enriched yet
-              </Text>
-            )}
+            ) : null}
           </>
         ) : null}
 
@@ -373,7 +371,7 @@ const cardStyles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   editBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  enrichedAt: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
+  vendorFullName: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
   moreText: { fontSize: 12, fontFamily: "Inter_400Regular", alignSelf: "center", marginBottom: 6 },
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
 });

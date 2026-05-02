@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface UpdateKeywordsBody {
-  keywords: string[];
+export interface SuggestDescriptionResponse {
+  /** AI-suggested description (1–2 sentences). */
+  description: string;
 }

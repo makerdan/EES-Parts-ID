@@ -15,6 +15,11 @@ export interface InventoryItem {
   binLocations: string[];
   aiKeywords: string[];
   enrichedAt?: Date | null;
+  /** Canonical full name for the vendor (e.g. "Eaton" for `ETN`),
+resolved from the `vendor_map` table by case-insensitive match
+on `vendor_map.code`. `null` when no mapping exists.
+ */
+  vendorFullName?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
