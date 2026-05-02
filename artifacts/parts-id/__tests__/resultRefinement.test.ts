@@ -10,7 +10,13 @@
  * runs cleanly in node-environment Jest without needing component mocks.
  */
 import type { SearchResult } from "@workspace/api-client-react";
-import { applyRefinement, itemFullText, tokenMatch } from "../lib/refinement";
+import {
+  applyRefinement,
+  extractHighlightTokens,
+  itemFullText,
+  splitHighlightSegments,
+  tokenMatch,
+} from "../lib/refinement";
 
 function makeResult(overrides: Partial<SearchResult["item"]> & { id: number }): SearchResult {
   return {
@@ -191,5 +197,80 @@ describe("applyRefinement", () => {
       expect(applyRefinement([r], { extraKeywords: "weatherproof" })).toHaveLength(1);
       expect(applyRefinement([r], { extraKeywords: "indoor" })).toHaveLength(0);
     });
+  });
+});
+
+describe("extractHighlightTokens", () => {
+  it("returns [] for empty refinement", () => {
+    expect(extractHighlightTokens({})).toEqual([]);
+  });
+
+  it("returns [] when only empty/whitespace values are present", () => {
+    expect(extractHighlightTokens({ extraKeywords: "   ", manufacturer: "" })).toEqual([]);
+  });
+
+  it("collects lower-cased tokens from extraKeywords", () => {
+    expect(extractHighlightTokens({ extraKeywords: "20A Breaker" })).toEqual(["20a", "breaker"]);
+  });
+
+  it("collects tokens from chip selections too", () => {
+    const out = extractHighlightTokens({ manufacturer: "Eaton", amperage: "20A" });
+    expect(out).toEqual(expect.arrayContaining(["eaton", "20a"]));
+    expect(out).toHaveLength(2);
+  });
+
+  it("dedupes tokens that appear in both chips and extraKeywords", () => {
+    const out = extractHighlightTokens({ extraKeywords: "eaton 20a", manufacturer: "Eaton" });
+    expect(out.sort()).toEqual(["20a", "eaton"]);
+  });
+});
+
+describe("splitHighlightSegments", () => {
+  it("returns one non-match slice when no tokens", () => {
+    expect(splitHighlightSegments("Eaton 20A Breaker", [])).toEqual([
+      { text: "Eaton 20A Breaker", match: false },
+    ]);
+  });
+
+  it("returns one non-match slice when text has no matches", () => {
+    expect(splitHighlightSegments("Square D 30A", ["eaton"])).toEqual([
+      { text: "Square D 30A", match: false },
+    ]);
+  });
+
+  it("highlights a whole-word token preserving original case", () => {
+    const out = splitHighlightSegments("Eaton 20A Breaker", ["eaton"]);
+    expect(out).toEqual([
+      { text: "Eaton", match: true },
+      { text: " 20A Breaker", match: false },
+    ]);
+  });
+
+  it("does not highlight a substring inside a larger word", () => {
+    // "20a" must NOT match inside "20amp" — same boundary as tokenMatch.
+    const out = splitHighlightSegments("20amp service", ["20a"]);
+    expect(out.every(s => !s.match)).toBe(true);
+  });
+
+  it("highlights every occurrence and across multiple tokens", () => {
+    const out = splitHighlightSegments("Eaton BR120 20A breaker, eaton spec", ["eaton", "20a"]);
+    const matches = out.filter(s => s.match).map(s => s.text.toLowerCase());
+    expect(matches).toEqual(["eaton", "20a", "eaton"]);
+  });
+
+  it("prefers the longest token at overlapping starts", () => {
+    // tokens "20" and "20a" both start at the same position; the longer
+    // one should win so we highlight the full "20A" not just "20".
+    const out = splitHighlightSegments("BR 20A 1P", ["20", "20a"]);
+    const matches = out.filter(s => s.match).map(s => s.text);
+    expect(matches).toEqual(["20A"]);
+  });
+
+  it("ignores empty tokens safely", () => {
+    expect(splitHighlightSegments("Eaton 20A", ["", "  ", "eaton"]))
+      .toEqual([
+        { text: "Eaton", match: true },
+        { text: " 20A", match: false },
+      ]);
   });
 });

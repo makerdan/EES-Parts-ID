@@ -8,12 +8,51 @@ import {
 } from "react-native";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
+import { splitHighlightSegments } from "@/lib/refinement";
 
 interface ResultCardProps {
   result: SearchResult;
   onEditKeywords?: (item: InventoryItem) => void;
   rank: number;
   fontScale?: number;
+  /**
+   * Lower-cased whole-word tokens to visually emphasize inside the card's
+   * vendor / catalog / description / keyword text. Sourced from the active
+   * refinement state (chips + extra keywords) by the parent screen, so
+   * highlighting always reflects exactly what `applyRefinement` filtered on.
+   * Pass [] (or omit) to disable highlighting.
+   */
+  highlightTokens?: string[];
+}
+
+/**
+ * Render `text` with a match-style applied to whole-word matches of any
+ * `tokens`. Falls back to the bare string when no tokens or no matches so
+ * we don't pay the StyleSheet/Array overhead in the common case.
+ */
+function HighlightedText({
+  text,
+  tokens,
+  matchStyle,
+}: {
+  text: string;
+  tokens: string[] | undefined;
+  matchStyle: object;
+}) {
+  if (!text || !tokens || tokens.length === 0) return <>{text}</>;
+  const segments = splitHighlightSegments(text, tokens);
+  if (segments.length === 1 && !segments[0]!.match) return <>{text}</>;
+  return (
+    <>
+      {segments.map((seg, i) =>
+        seg.match ? (
+          <Text key={i} style={matchStyle}>{seg.text}</Text>
+        ) : (
+          <Text key={i}>{seg.text}</Text>
+        ),
+      )}
+    </>
+  );
 }
 
 const CONFIDENCE_COLORS = {
@@ -84,8 +123,19 @@ const varStyles = StyleSheet.create({
   binEmpty: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens }: ResultCardProps) {
   const colors = useColors();
+  // Match style: a soft tint background + bold weight. Uses the theme's
+  // primary color so it stays legible in light/dark mode.
+  const hlStyle = React.useMemo(
+    () => ({
+      backgroundColor: colors.primary + "33",
+      color: colors.foreground,
+      fontFamily: "Inter_700Bold" as const,
+    }),
+    [colors.primary, colors.foreground],
+  );
+  const hl = (highlightTokens && highlightTokens.length > 0) ? highlightTokens : undefined;
   const [expanded, setExpanded] = useState(false);
   // Related-sizes panel toggles independently of the main card expand/collapse
   // so workers can peek at alternate sizes without revealing the rest of the
@@ -128,10 +178,10 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: Re
             </View>
             <View style={cardStyles.titleGroup}>
               <Text style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]}>
-                {item.vendor}
+                <HighlightedText text={item.vendor} tokens={hl} matchStyle={hlStyle} />
               </Text>
               <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(17) }]}>
-                {item.catalog}
+                <HighlightedText text={item.catalog} tokens={hl} matchStyle={hlStyle} />
               </Text>
             </View>
           </View>
@@ -142,7 +192,9 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: Re
 
         {/* Description */}
         <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
-          {item.description || "No description"}
+          {item.description ? (
+            <HighlightedText text={item.description} tokens={hl} matchStyle={hlStyle} />
+          ) : "No description"}
         </Text>
 
         {/* Bin location(s)
@@ -227,13 +279,40 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: Re
               </Text>
               {hasKeywords ? (
                 <View style={cardStyles.keywordRow}>
-                  {(item.aiKeywords ?? []).map((kw, i) => (
-                    <View key={i} style={[cardStyles.keyword, { backgroundColor: colors.muted }]}>
-                      <Text style={[cardStyles.keywordText, { color: colors.foreground }]}>
-                        {kw}
-                      </Text>
-                    </View>
-                  ))}
+                  {(item.aiKeywords ?? []).map((kw, i) => {
+                    // A keyword chip is "matched" when the whole keyword
+                    // string would survive the same whole-word check used
+                    // by applyRefinement — tint the chip background so the
+                    // worker sees which AI tags drove the match.
+                    const matched = hl
+                      ? splitHighlightSegments(kw, hl).some(s => s.match)
+                      : false;
+                    return (
+                      <View
+                        key={i}
+                        style={[
+                          cardStyles.keyword,
+                          {
+                            backgroundColor: matched ? colors.primary + "33" : colors.muted,
+                            borderWidth: matched ? 1 : 0,
+                            borderColor: matched ? colors.primary : "transparent",
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            cardStyles.keywordText,
+                            {
+                              color: colors.foreground,
+                              fontFamily: matched ? "Inter_700Bold" : "Inter_400Regular",
+                            },
+                          ]}
+                        >
+                          {kw}
+                        </Text>
+                      </View>
+                    );
+                  })}
                 </View>
               ) : (
                 <Text style={[cardStyles.keywordText, { color: colors.mutedForeground, marginBottom: 6 }]}>

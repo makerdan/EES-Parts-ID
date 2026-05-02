@@ -22,6 +22,7 @@ import { ResultCard } from "@/components/ResultCard";
 import {
   ResultRefinementBar,
   applyRefinement,
+  extractHighlightTokens,
   type RefinementState,
 } from "@/components/ResultRefinementBar";
 import { ReferenceModal } from "@/components/ReferenceModal";
@@ -751,6 +752,11 @@ export default function SearchScreen() {
     [results, refinement],
   );
   const refinementActive = Object.values(refinement).some(v => typeof v === "string" && v.trim() !== "");
+  // Tokens passed to each ResultCard to highlight matched terms in the
+  // visible text. Sourced from the same `refinement` state used by
+  // applyRefinement so highlighting stays in sync with what the bar is
+  // actually filtering on.
+  const highlightTokens = useMemo(() => extractHighlightTokens(refinement), [refinement]);
   // Show the drill-down bar after any search that returned results. The bar
   // always renders the "Add keywords" input, plus chip rows when there's
   // variation across the result set (or chips were used up front).
@@ -1313,7 +1319,7 @@ export default function SearchScreen() {
         )}
         renderItem={({ item: result, index }) => (
           <View style={styles.resultItem}>
-            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} fontScale={textFontScale} />
+            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} fontScale={textFontScale} highlightTokens={highlightTokens} />
           </View>
         )}
         contentContainerStyle={styles.listContent}
@@ -1435,6 +1441,16 @@ const styles = StyleSheet.create({
   },
   resultsCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   clearRefinementLink: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 2 },
+  // Small inline status text rendered under the Browse panel (loading,
+  // error, "showing items in X"). Re-introduced after task #101 removed
+  // the original refinementHint usage on the search side.
+  refinementHint: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    fontStyle: "italic",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
   refinementEmpty: {
     marginHorizontal: 12,
     marginBottom: 8,
