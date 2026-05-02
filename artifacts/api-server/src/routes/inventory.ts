@@ -402,7 +402,11 @@ router.post("/search", async (req, res) => {
               i.id, i.vendor, i.catalog, i.description,
               i.bin_location, i.ai_keywords, i.enriched_at, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
-                to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,'')),
+                to_tsvector('english',
+                  coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
+                  coalesce(i.description,'') || ' ' ||
+                  coalesce(array_to_string(i.ai_keywords, ' '), '')
+                ),
                 to_tsquery('english', ${tsQuery})
               )` : sql`0`} AS fts_rank,
               greatest(
@@ -411,8 +415,11 @@ router.post("/search", async (req, res) => {
               ) AS trgm_sim
             FROM inventory i
             WHERE
-              ${tsQuery.trim() ? sql`to_tsvector('english', coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' || coalesce(i.description,''))
-                @@ to_tsquery('english', ${tsQuery})
+              ${tsQuery.trim() ? sql`to_tsvector('english',
+                coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
+                coalesce(i.description,'') || ' ' ||
+                coalesce(array_to_string(i.ai_keywords, ' '), '')
+              ) @@ to_tsquery('english', ${tsQuery})
               OR` : sql``}
               similarity(i.catalog, ${catalogTrgmTerms}) > 0.1
               OR similarity(i.description, ${allTermsArr.slice(0,5).join(" ")}) > 0.1
