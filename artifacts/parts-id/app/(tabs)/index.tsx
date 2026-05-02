@@ -1171,7 +1171,7 @@ export default function SearchScreen() {
           state is hidden and there are usually no Search results competing
           for vertical room. */}
       <ScrollView
-        style={mode === "browse" ? { flex: 1 } : { maxHeight: "50%" }}
+        style={mode === "browse" ? { maxHeight: "90%" } : { maxHeight: "50%" }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
