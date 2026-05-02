@@ -12,6 +12,7 @@ import {
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
 import Fuse from "fuse.js";
+import { verifyAdminToken } from "./admin";
 
 const router = Router();
 
@@ -619,8 +620,33 @@ router.post("/search", async (req, res) => {
   }
 });
 
+// ── Admin token middleware ─────────────────────────────────────────────────────
+function requireAdminAuth(
+  req: import("express").Request,
+  res: import("express").Response,
+  next: import("express").NextFunction,
+): void {
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminPassword) {
+    res.status(503).json({
+      error: "Admin access is not configured on this server. Set ADMIN_PASSWORD.",
+    });
+    return;
+  }
+
+  const authHeader = req.headers["authorization"] ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+
+  if (!token || !verifyAdminToken(token, adminPassword)) {
+    res.status(401).json({ error: "Unauthorized: valid admin token required" });
+    return;
+  }
+
+  next();
+}
+
 // ── POST /inventory/upsert-batch ──────────────────────────────────────────────
-router.post("/upsert-batch", async (req, res) => {
+router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
   try {
     const { items } = req.body as {
       items: Array<{ vendor: string; catalog: string; description?: string; binLocation?: string }>;
@@ -675,7 +701,7 @@ router.post("/upsert-batch", async (req, res) => {
 });
 
 // ── POST /inventory/enrich ────────────────────────────────────────────────────
-router.post("/enrich", async (req, res) => {
+router.post("/enrich", requireAdminAuth, async (req, res) => {
   try {
     const { ids } = req.body as { ids?: number[] };
 
