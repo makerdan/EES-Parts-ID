@@ -1,3 +1,9 @@
+/**
+ * API server entry point. Reads PORT from the environment (assigned per
+ * artifact by the Replit proxy), starts the Express app, and wires up a
+ * graceful shutdown that drains the Postgres pool before exit so
+ * in-flight queries complete cleanly.
+ */
 import app from "./app";
 import { logger } from "./lib/logger";
 import { pool } from "@workspace/db";

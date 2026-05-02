@@ -1,3 +1,10 @@
+/**
+ * Global app state container.
+ *
+ * Holds the auth flag (post-password login), the inventory cache used by the
+ * Fuse.js offline fallback, and a few cross-tab UI prefs. Backed by
+ * AsyncStorage so the worker's state survives app relaunches.
+ */
 import React, {
   createContext,
   useCallback,

@@ -1,3 +1,9 @@
+/**
+ * Theme color hook. Returns the active palette (dark amber industrial by
+ * default; light fallback for daylight loading docks) keyed by semantic
+ * names — components never reference hex codes directly so a theme swap
+ * is a one-file change.
+ */
 import { useColorScheme } from "react-native";
 
 import colors from "@/constants/colors";

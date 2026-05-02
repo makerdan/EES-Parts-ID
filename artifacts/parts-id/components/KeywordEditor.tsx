@@ -1,3 +1,11 @@
+/**
+ * Inline AI-keyword editor for a single inventory item.
+ *
+ * Workers tap a chip to remove it or type new ones to add. Edits are
+ * PATCHed to /inventory/:id/keywords; the local cache is updated
+ * optimistically so the row reflects the change before the request
+ * settles.
+ */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,

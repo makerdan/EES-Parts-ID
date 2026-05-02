@@ -1,3 +1,10 @@
+/**
+ * Vite plugin that gives every mockup component its own preview URL.
+ *
+ * Discovers `src/mockups/**` at startup, generates a tiny entry HTML +
+ * bootstrap script per component into `.generated/`, and serves them at
+ * `/preview/<slug>` so the canvas can iframe-embed an isolated render.
+ */
 import { mkdirSync, writeFileSync } from "fs";
 import path from "path";
 import glob from "fast-glob";

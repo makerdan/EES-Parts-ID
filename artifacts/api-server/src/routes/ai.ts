@@ -1,3 +1,12 @@
+/**
+ * AI routes:
+ *   POST /ai/identify   — vision call (gpt-5.1) that turns a photo into
+ *                          ranked candidate parts with confidence scores.
+ *   GET  /ai/reference  — SSE stream powering the Reference modal chat.
+ *
+ * Calls go through the Replit AI Integrations proxy so we don't need
+ * raw OpenAI keys in the environment.
+ */
 import { Router } from "express";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { buildImageContent, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";

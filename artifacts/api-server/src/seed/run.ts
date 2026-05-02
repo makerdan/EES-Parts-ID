@@ -1,3 +1,10 @@
+/**
+ * One-shot seeder: dictionaries + taxonomy. Idempotent — every seed
+ * upserts by slug/key so re-running on a populated DB is a no-op except
+ * for new rows added since the last run.
+ *
+ * Run with: `node --import tsx/esm --no-warnings src/seed/run.ts`
+ */
 import { seedAllDictionaries } from "./dictionaries";
 import { seedTaxonomy } from "./taxonomy";
 

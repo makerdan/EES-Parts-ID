@@ -1,3 +1,11 @@
+/**
+ * Root Expo Router layout.
+ *
+ * Loads Inter font weights, wires up the auth gate (redirects unauthenticated
+ * users to /login), provides AppContext + React Query, and mounts the
+ * ErrorBoundary that catches render errors before they crash the worker's
+ * session on the warehouse floor.
+ */
 import {
   Inter_400Regular,
   Inter_500Medium,

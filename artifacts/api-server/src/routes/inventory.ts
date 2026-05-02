@@ -1,3 +1,9 @@
+/**
+ * Inventory routes — search, list, batch upsert, AI enrichment, per-item
+ * keyword edits. The search endpoint runs a hybrid pg_trgm + ilike query
+ * and returns dimension counts so the mobile app can render filter chips
+ * without a second round-trip.
+ */
 import { Router } from "express";
 import { eq, sql, ilike, or, and, desc } from "drizzle-orm";
 import { db } from "@workspace/db";

@@ -1,3 +1,7 @@
+/**
+ * Shared pino logger. Pretty-prints in development (via pino-pretty) and
+ * emits structured JSON in production for log aggregators.
+ */
 import pino from "pino";
 
 const isProduction = process.env.NODE_ENV === "production";
