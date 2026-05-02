@@ -722,7 +722,7 @@ export const ListCategoryAssignmentsResponse = zod.object({
  * @summary Run the classifier across inventory (SSE streaming)
  */
 export const classifyInventoryBodyModeDefault = `unclassified`;
-export const classifyInventoryBodyUseAiDefault = false;
+export const classifyInventoryBodyUseAiDefault = true;
 
 export const ClassifyInventoryBody = zod.object({
   mode: zod
@@ -739,7 +739,7 @@ export const ClassifyInventoryBody = zod.object({
     .boolean()
     .default(classifyInventoryBodyUseAiDefault)
     .describe(
-      "When true, fall back to AI for items the rule classifier could not place.",
+      "When true (default), fall back to AI (gpt-4o-mini) for items the rule classifier could not place. Pass false to skip AI and route rule-misses straight to Uncategorized.",
     ),
 });
 
@@ -747,7 +747,7 @@ export const ClassifyInventoryBody = zod.object({
  * @summary Spec-compliant alias of POST /categories/classify
  */
 export const classifyInventoryAliasBodyModeDefault = `unclassified`;
-export const classifyInventoryAliasBodyUseAiDefault = false;
+export const classifyInventoryAliasBodyUseAiDefault = true;
 
 export const ClassifyInventoryAliasBody = zod.object({
   mode: zod
@@ -764,7 +764,7 @@ export const ClassifyInventoryAliasBody = zod.object({
     .boolean()
     .default(classifyInventoryAliasBodyUseAiDefault)
     .describe(
-      "When true, fall back to AI for items the rule classifier could not place.",
+      "When true (default), fall back to AI (gpt-4o-mini) for items the rule classifier could not place. Pass false to skip AI and route rule-misses straight to Uncategorized.",
     ),
 });
 

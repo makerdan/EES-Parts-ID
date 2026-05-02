@@ -78,4 +78,38 @@ describe("BrowseTaxonomy helpers", () => {
   it("visibleChildren returns [] when path is broken", () => {
     expect(visibleChildren(TREE, ["nope"])).toEqual([]);
   });
+
+  // Search↔Browse toggle + first drill-down: simulates the user flow on
+  // the Search screen — flip to Browse, drill into a category, then a
+  // subcategory, then pick a leaf type, then flip back to Search.
+  it("supports a Search→Browse→drill→Search round-trip", () => {
+    type Mode = "search" | "browse";
+    let mode: Mode = "search";
+    let path: string[] = [];
+    const setMode = (m: Mode) => { mode = m; };
+    const drill = (slug: string) => { path = [...path, slug]; };
+    const popTo = (depth: number) => { path = path.slice(0, depth); };
+
+    expect(mode).toBe("search");
+    setMode("browse");
+    expect(mode).toBe("browse");
+    expect(visibleChildren(TREE, path).map(n => n.slug)).toEqual(["breakers", "wire-cable"]);
+
+    drill("breakers");
+    expect(nodeAtPath(TREE, path)?.level).toBe("category");
+    expect(visibleChildren(TREE, path)[0]!.slug).toBe("breakers-by-type");
+
+    drill("breakers-by-type");
+    expect(visibleChildren(TREE, path).map(n => n.slug)).toEqual(["breaker-standard", "breaker-gfci"]);
+
+    drill("breaker-gfci");
+    const leaf = nodeAtPath(TREE, path);
+    expect(leaf?.level).toBe("type");
+    expect(leaf?.itemCount).toBe(20);
+
+    popTo(1);
+    expect(path).toEqual(["breakers"]);
+    setMode("search");
+    expect(mode).toBe("search");
+  });
 });
