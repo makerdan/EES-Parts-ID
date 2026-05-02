@@ -503,22 +503,22 @@ export default function SearchScreen() {
               </View>
             </View>
 
-            {/* Sign out row */}
+            {/* Footer */}
             <Text style={[styles.logoutModalHint, { color: colors.mutedForeground, marginTop: 16 }]}>
-              Sign out to return to the password screen.
+              Changes are saved automatically.
             </Text>
             <View style={styles.logoutModalBtns}>
               <Pressable
                 onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); }}
-                style={[styles.logoutModalCancel, { borderColor: colors.border, backgroundColor: colors.muted }]}
+                style={[styles.logoutModalConfirm, { backgroundColor: colors.primary }]}
               >
-                <Text style={[styles.logoutModalCancelText, { color: colors.foreground }]}>Cancel</Text>
+                <Text style={[styles.logoutModalConfirmText, { color: colors.primaryForeground }]}>Done</Text>
               </Pressable>
               <Pressable
                 onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); logout(); }}
-                style={[styles.logoutModalConfirm, { backgroundColor: colors.destructive }]}
+                style={[styles.logoutModalCancel, { borderColor: colors.destructive + "66", backgroundColor: colors.destructive + "11" }]}
               >
-                <Text style={[styles.logoutModalConfirmText, { color: "#fff" }]}>Sign Out</Text>
+                <Text style={[styles.logoutModalCancelText, { color: colors.destructive }]}>Sign Out</Text>
               </Pressable>
             </View>
           </View>
