@@ -703,6 +703,22 @@ export const ListCategoryPartsByIdResponse = zod.object({
 });
 
 /**
+ * @summary Flat list of every part's current taxonomy node (offline cache)
+ */
+export const ListCategoryAssignmentsResponse = zod.object({
+  assignments: zod.array(
+    zod.object({
+      inventoryId: zod.number(),
+      categoryNodeId: zod.number(),
+      typeSlug: zod.string(),
+      confidence: zod.string().optional(),
+      classifiedBy: zod.string(),
+    }),
+  ),
+  updatedAt: zod.string(),
+});
+
+/**
  * @summary Run the classifier across inventory (SSE streaming)
  */
 export const classifyInventoryBodyModeDefault = `unclassified`;

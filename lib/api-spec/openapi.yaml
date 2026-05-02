@@ -372,6 +372,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/CategoryItemsResponse"
 
+  /categories/assignments:
+    get:
+      operationId: listCategoryAssignments
+      tags: [categories]
+      summary: Flat list of every part's current taxonomy node (offline cache)
+      responses:
+        "200":
+          description: Assignment list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryAssignmentsResponse"
+
   /categories/classify:
     post:
       operationId: classifyInventory
@@ -1097,6 +1110,30 @@ components:
         - page
         - limit
         - node
+
+    CategoryAssignmentsResponse:
+      type: object
+      properties:
+        assignments:
+          type: array
+          items:
+            type: object
+            properties:
+              inventoryId: { type: integer }
+              categoryNodeId: { type: integer }
+              typeSlug: { type: string }
+              confidence: { type: string }
+              classifiedBy: { type: string }
+            required:
+              - inventoryId
+              - categoryNodeId
+              - typeSlug
+              - classifiedBy
+        updatedAt:
+          type: string
+      required:
+        - assignments
+        - updatedAt
 
     ClassifyInventoryBody:
       type: object

@@ -35,6 +35,14 @@ const FUSE_CACHE_KEY = "parts_id_fuse_cache_v3";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v2";
 const INVENTORY_VERSION_KEY = "parts_id_inventory_version";
 const BROWSE_MODE_KEY = "parts_id_browse_mode_v1";
+// Offline taxonomy assignments — { inventoryId → typeSlug } so Browse mode
+// can list a Type's parts from the local Fuse cache when the network is down.
+const ASSIGNMENTS_CACHE_KEY = "parts_id_category_assignments_v1";
+
+interface AssignmentRecord {
+  inventoryId: number;
+  typeSlug: string;
+}
 
 type Mode = "search" | "browse";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -213,13 +221,26 @@ export default function SearchScreen() {
     }
     setBrowseLoading(true);
     setBrowseError(null);
-    fetch(`${API_BASE}/categories/${encodeURIComponent(node.slug)}/items?limit=200`)
+
+    // Build the items URL with the same chip filters the user has set on
+    // Search — Browse + chip refinement should compose, not be mutually
+    // exclusive. confidenceThreshold is also forwarded so the existing
+    // results-quality slider works in Browse too.
+    const f = filtersRef.current;
+    const params = new URLSearchParams();
+    params.set("limit", "200");
+    if (f.confidenceThreshold > 0) params.set("confidenceThreshold", String(f.confidenceThreshold));
+    for (const dim of CHIP_DIMS) {
+      const v = f[dim.key];
+      if (typeof v === "string" && v.trim() !== "") params.set(String(dim.key), v);
+    }
+
+    fetch(`${API_BASE}/categories/${encodeURIComponent(node.slug)}/items?${params.toString()}`)
       .then(async r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json() as Promise<{ items: InventoryItem[] }>;
       })
       .then(data => {
-        // Wrap raw inventory items as SearchResult so the existing ResultCard renders them.
         const wrapped: SearchResult[] = data.items.map(item => ({
           item,
           confidence: 1,
@@ -229,7 +250,42 @@ export default function SearchScreen() {
         }));
         setBrowseResults(wrapped);
       })
-      .catch(err => setBrowseError(String(err)))
+      .catch(async err => {
+        // Offline fallback: read the cached { inventoryId → typeSlug } map and
+        // intersect with the cached Fuse items. Same chip filters are applied
+        // client-side so refinement still works without the network.
+        try {
+          const raw = await AsyncStorage.getItem(ASSIGNMENTS_CACHE_KEY);
+          if (raw) {
+            const assignments = JSON.parse(raw) as AssignmentRecord[];
+            const idsForType = new Set(
+              assignments.filter(a => a.typeSlug === node.slug).map(a => a.inventoryId),
+            );
+            const cached = fuseItemsRef.current.filter(it => idsForType.has(it.id));
+            const filteredCached = cached.filter(it => {
+              const text = `${it.vendor} ${it.catalog} ${it.description} ${(it.aiKeywords ?? []).join(" ")}`.toLowerCase();
+              for (const dim of CHIP_DIMS) {
+                const v = f[dim.key];
+                if (typeof v === "string" && v.trim() !== "") {
+                  if (!text.includes(v.toLowerCase())) return false;
+                }
+              }
+              return true;
+            });
+            const wrapped: SearchResult[] = filteredCached.slice(0, 200).map(item => ({
+              item,
+              confidence: 1,
+              matchReason: `In ${node.name} (offline)`,
+              seriesLabel: undefined,
+              variants: [],
+            }));
+            setBrowseResults(wrapped);
+            setBrowseError(null);
+            return;
+          }
+        } catch { /* fall through to surfacing the original error */ }
+        setBrowseError(String(err));
+      })
       .finally(() => setBrowseLoading(false));
   }, []);
   // ── Drill-down refinement on already-returned results ──────────────────────
@@ -327,6 +383,22 @@ export default function SearchScreen() {
       buildFuseIndex(allItems);
       const ops: [string, string][] = [[FUSE_CACHE_KEY, JSON.stringify(allItems)]];
       if (serverVersion) ops.push([INVENTORY_VERSION_KEY, serverVersion]);
+      // Pull the taxonomy assignments alongside inventory so Browse can list
+      // a Type's parts from the local Fuse cache when offline. Failure here
+      // is non-fatal — the rest of the sync should still complete.
+      try {
+        const aRes = await fetch(`${API_BASE}/categories/assignments`);
+        if (aRes.ok) {
+          const aData = (await aRes.json()) as { assignments: AssignmentRecord[] };
+          const slim = aData.assignments.map(a => ({
+            inventoryId: a.inventoryId,
+            typeSlug: a.typeSlug,
+          }));
+          ops.push([ASSIGNMENTS_CACHE_KEY, JSON.stringify(slim)]);
+        }
+      } catch {
+        // Network blip — keep whatever assignment cache we already have.
+      }
       await AsyncStorage.multiSet(ops);
     } catch {
       setSyncError(true);

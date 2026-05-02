@@ -35,6 +35,8 @@ import {
   type ClassifierNode,
 } from "../utils/taxonomyClassifier";
 import { matchesChipFilters } from "../utils/searchHelpers";
+import { aiClassifyBatch, type AiClassifyAllowed } from "../utils/aiClassify";
+import { UNCATEGORIZED_TYPE_SLUG } from "../seed/taxonomy";
 
 // 16 chip dimensions (mirrors CHIP_DIMS_SERVER in inventory.ts)
 const BROWSE_CHIP_KEYS = [
@@ -580,14 +582,55 @@ export async function classifyHandler(
       return (result as { rows: Record<string, unknown>[] }).rows.map(rowToInventoryItem);
     };
 
+    // Resolve the Uncategorized fallback node up front so unmatched rows
+    // always have somewhere to land. Every part must end with exactly one
+    // assignment so Browse never silently hides items.
+    const uncategorizedNode = index.bySlug.get(UNCATEGORIZED_TYPE_SLUG);
+    if (!uncategorizedNode) {
+      res.status(503).json({ error: "Uncategorized fallback node missing — re-run seed" });
+      return;
+    }
+
+    // Pre-compute the AI allow-list once (leaf "type" nodes minus Uncategorized
+    // so the model is forced to make a real choice or skip the row).
+    const aiAllowed: AiClassifyAllowed[] = nodes
+      .filter(n => n.level === "type" && n.slug !== UNCATEGORIZED_TYPE_SLUG)
+      .map(n => {
+        const parent = n.parentId != null ? index.byId.get(n.parentId) : null;
+        const grandparent = parent?.parentId != null ? index.byId.get(parent.parentId) : null;
+        return {
+          slug: n.slug,
+          name: n.name,
+          parentName: parent?.name ?? "",
+          grandparentName: grandparent?.name ?? "",
+        };
+      });
+
+    // Flush a single assignment row, replacing any prior assignment for the id.
+    const writeAssignment = async (
+      inventoryId: number,
+      categoryNodeId: number,
+      confidence: number,
+      classifiedBy: "rule" | "ai" | "manual",
+    ) => {
+      await db.delete(inventoryCategoryTable).where(eq(inventoryCategoryTable.inventoryId, inventoryId));
+      await db.insert(inventoryCategoryTable).values({
+        inventoryId,
+        categoryNodeId,
+        confidence: confidence.toFixed(4),
+        classifiedBy,
+      });
+    };
+
     let offset = 0;
     while (true) {
       const batch = await fetchPage(offset);
       if (batch.length === 0) break;
 
+      // Phase 1 — rule classify everything in the batch, also identifying which
+      // rows are pinned manual (skip) and which need AI/Uncategorized fallback.
+      const needsFallback: typeof batch = [];
       for (const item of batch) {
-        // Skip rows that were manually pinned, unless the caller explicitly
-        // asked to re-do everything.
         if (mode !== "all") {
           const [existing] = await db
             .select({ classifiedBy: inventoryCategoryTable.classifiedBy })
@@ -611,42 +654,53 @@ export async function classifyHandler(
           index,
         );
 
-        let nodeSlug: string | null = result?.typeSlug ?? null;
-        let confidence = result?.confidence ?? 0;
-        let classifiedBy: "rule" | "ai" = "rule";
-
-        if (!nodeSlug && useAi) {
-          // AI fallback hook — left as a no-op here so the seed run is fast and
-          // costs nothing. Wire to your AI helper if cost/latency are acceptable.
-          // const aiResult = await aiClassify(item, nodes);
-          // if (aiResult) { nodeSlug = aiResult.slug; confidence = aiResult.confidence; classifiedBy = "ai"; aiUsed++; }
-        }
-
-        if (nodeSlug) {
-          const node = index.bySlug.get(nodeSlug);
-          if (node) {
-            // Replace any existing assignment so re-runs are idempotent.
-            await db.delete(inventoryCategoryTable).where(eq(inventoryCategoryTable.inventoryId, item.id));
-            await db.insert(inventoryCategoryTable).values({
-              inventoryId: item.id,
-              categoryNodeId: node.id,
-              confidence: confidence.toFixed(4),
-              classifiedBy,
-            });
-            classified++;
-          } else {
-            unmatched++;
-          }
+        const ruleSlug = result?.typeSlug ?? null;
+        const ruleNode = ruleSlug ? index.bySlug.get(ruleSlug) : undefined;
+        if (ruleNode) {
+          await writeAssignment(item.id, ruleNode.id, result?.confidence ?? 0, "rule");
+          classified++;
         } else {
-          unmatched++;
+          needsFallback.push(item);
         }
-
         processed++;
         if (processed % 50 === 0) {
           res.write(
             `data: ${JSON.stringify({ progress: processed, total: totalCandidates, classified, unmatched, aiUsed })}\n\n`,
           );
         }
+      }
+
+      // Phase 2 — AI fallback in micro-batches of 25 (keeps tokens/latency
+      // bounded and lets us stream progress between calls).
+      const aiAssigned = new Set<number>();
+      if (useAi && needsFallback.length > 0 && aiAllowed.length > 0) {
+        const AI_BATCH = 25;
+        for (let i = 0; i < needsFallback.length; i += AI_BATCH) {
+          const slice = needsFallback.slice(i, i + AI_BATCH).map(it => ({
+            id: it.id,
+            vendor: it.vendor,
+            catalog: it.catalog,
+            description: it.description,
+            aiKeywords: it.aiKeywords ?? [],
+          }));
+          const assignments = await aiClassifyBatch(slice, aiAllowed);
+          for (const a of assignments) {
+            const node = index.bySlug.get(a.slug);
+            if (!node) continue;
+            await writeAssignment(a.id, node.id, a.confidence, "ai");
+            aiAssigned.add(a.id);
+            aiUsed++;
+            classified++;
+          }
+        }
+      }
+
+      // Phase 3 — anything still unmatched goes to Uncategorized so every
+      // inventory row has exactly one assignment row.
+      for (const item of needsFallback) {
+        if (aiAssigned.has(item.id)) continue;
+        await writeAssignment(item.id, uncategorizedNode.id, 0, "rule");
+        unmatched++;
       }
 
       offset += batch.length;
@@ -686,6 +740,39 @@ export async function classifyHandler(
 }
 
 router.post("/classify", requireAdminAuth, classifyHandler);
+
+// ── GET /categories/assignments ──────────────────────────────────────────
+// Flat list of every part's current taxonomy node, used by the mobile app
+// to power Browse offline. Returns slugs + node ids so the client can
+// resolve nodes after a tree refresh.
+//
+// Shape:
+//   { assignments: Array<{ inventoryId, categoryNodeId, typeSlug, confidence, classifiedBy }>,
+//     updatedAt: ISO-8601 string }
+//
+// Cheap (single indexed join) so the mobile sync can pull it on every poll
+// alongside the inventory cache.
+router.get("/assignments", async (_req, res) => {
+  try {
+    const rows = await db
+      .select({
+        inventoryId: inventoryCategoryTable.inventoryId,
+        categoryNodeId: inventoryCategoryTable.categoryNodeId,
+        typeSlug: categoryNodeTable.slug,
+        confidence: inventoryCategoryTable.confidence,
+        classifiedBy: inventoryCategoryTable.classifiedBy,
+      })
+      .from(inventoryCategoryTable)
+      .innerJoin(
+        categoryNodeTable,
+        eq(categoryNodeTable.id, inventoryCategoryTable.categoryNodeId),
+      );
+    res.json({ assignments: rows, updatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error("[categories/assignments] failed:", err);
+    res.status(500).json({ error: "Failed to load assignments" });
+  }
+});
 
 // ── helpers ──────────────────────────────────────────────────────────────
 function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable.$inferSelect {

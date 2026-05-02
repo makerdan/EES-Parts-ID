@@ -248,7 +248,25 @@ export const SEED_TAXONOMY: SeedCategory[] = [
       },
     ],
   },
+  // ── Uncategorized fallback ──────────────────────────────────────────────
+  // Every part must map to a Category → Subcategory → Type triple. When the
+  // rule classifier (and optional AI fallback) can't place a row, it lands
+  // here so it stays visible in Browse instead of silently disappearing.
+  {
+    slug: "uncategorized",
+    name: "Uncategorized",
+    subcategories: [
+      {
+        slug: "uncategorized-general",
+        name: "Needs Review",
+        types: [{ slug: "uncategorized-type", name: "Unclassified Items" }],
+      },
+    ],
+  },
 ];
+
+/** Slug of the leaf "type" node every unmatched part is pinned to. */
+export const UNCATEGORIZED_TYPE_SLUG = "uncategorized-type";
 
 /**
  * Insert any missing taxonomy nodes. Existing nodes (matched by slug) are

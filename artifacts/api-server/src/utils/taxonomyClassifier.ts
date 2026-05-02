@@ -163,8 +163,9 @@ function buildText(item: ClassifierItem): string {
   ].join(" ").toLowerCase();
 }
 
-interface NodeIndex {
+export interface NodeIndex {
   bySlug: Map<string, ClassifierNode>;
+  byId: Map<number, ClassifierNode>;
   /** Map a leaf slug → its (subcategorySlug, categorySlug). */
   ancestors: Map<string, { subcategorySlug: string | null; categorySlug: string | null }>;
 }
@@ -187,7 +188,7 @@ export function buildNodeIndex(nodes: ClassifierNode[]): NodeIndex {
       categorySlug: cat?.slug ?? null,
     });
   }
-  return { bySlug, ancestors };
+  return { bySlug, byId, ancestors };
 }
 
 /**
