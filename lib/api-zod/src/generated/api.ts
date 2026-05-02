@@ -650,6 +650,11 @@ export const ListCategoryItemsResponse = zod.object({
 });
 
 /**
+ * Same behavior as GET /categories/{slug}/items but keyed by numeric
+node id. Accepts the same 16 chip-filter dimensions and
+confidenceThreshold so the mobile client can drill in by id without
+losing filter parity.
+
  * @summary List inventory items under a node by numeric id (alias of /:slug/items)
  */
 export const ListCategoryPartsByIdParams = zod.object({
@@ -666,6 +671,22 @@ export const ListCategoryPartsByIdQueryParams = zod.object({
   confidenceThreshold: zod.coerce
     .number()
     .default(listCategoryPartsByIdQueryConfidenceThresholdDefault),
+  category: zod.coerce.string().optional(),
+  amperage: zod.coerce.string().optional(),
+  colorChip: zod.coerce.string().optional(),
+  manufacturer: zod.coerce.string().optional(),
+  sizeChip: zod.coerce.string().optional(),
+  rating: zod.coerce.string().optional(),
+  wireType: zod.coerce.string().optional(),
+  wireGauge: zod.coerce.string().optional(),
+  conduitType: zod.coerce.string().optional(),
+  conduitSize: zod.coerce.string().optional(),
+  boxType: zod.coerce.string().optional(),
+  boxGangCount: zod.coerce.string().optional(),
+  mountingType: zod.coerce.string().optional(),
+  environment: zod.coerce.string().optional(),
+  voltage: zod.coerce.string().optional(),
+  poleCount: zod.coerce.string().optional(),
 });
 
 export const ListCategoryPartsByIdResponse = zod.object({
