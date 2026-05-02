@@ -1,3 +1,11 @@
+/**
+ * Single-password login screen.
+ *
+ * The app is gated by `EXPO_PUBLIC_APP_PASSWORD` (default `warehouse2024`)
+ * because every worker on the floor shares the same device pool — no
+ * per-user accounts. On success we set the auth flag in AppContext, which
+ * unblocks the (tabs) router in `_layout.tsx`.
+ */
 import React, { useState } from "react";
 import {
   ActivityIndicator,

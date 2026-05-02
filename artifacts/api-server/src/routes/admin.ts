@@ -1,3 +1,8 @@
+/**
+ * Admin/ops endpoints — taxonomy reseed, per-item category override,
+ * bulk re-classification. Not exposed in the mobile UI; intended to be
+ * hit from a script or the admin upload tool.
+ */
 import { Router } from "express";
 import crypto from "node:crypto";
 

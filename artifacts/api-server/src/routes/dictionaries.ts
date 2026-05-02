@@ -1,3 +1,8 @@
+/**
+ * Dictionary lookup endpoints (abbreviations, vendors, synonyms,
+ * misspellings, slang). All read-only and cached aggressively on the
+ * client — the maps change on a per-deploy cadence, not per-request.
+ */
 import { Router } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";

@@ -1,3 +1,11 @@
+/**
+ * Single result row used by Search, Browse, and Photo ID.
+ *
+ * Renders catalog/vendor/description, bin locations, and matched keyword
+ * highlights. Accepts optional `highlightTokens` (which words to bold in
+ * the description) and `highlightBin` (which bin code to mark with
+ * "← here" — used by Browse-by-Aisle to point to the exact shelf).
+ */
 import React, { useState } from "react";
 import {
   Animated,

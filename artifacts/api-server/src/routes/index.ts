@@ -1,3 +1,8 @@
+/**
+ * Top-level route tree. Each sub-router lives in its own file and is
+ * mounted under its REST prefix here. Keeping mounting centralised makes
+ * the live URL surface obvious at a glance.
+ */
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import inventoryRouter from "./inventory";

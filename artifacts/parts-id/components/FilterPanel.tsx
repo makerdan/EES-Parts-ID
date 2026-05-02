@@ -1,3 +1,11 @@
+/**
+ * Server-side filter chips for the Search tab.
+ *
+ * `CHIP_DIMS` is the canonical list of refinable dimensions (manufacturer,
+ * amperage, voltage, …). It's consumed both here (for the visible chips)
+ * and by `ResultRefinementBar` (for client-side dim counts) so the two
+ * stay in lockstep. Adding a new chip is a one-place change here.
+ */
 import React, { useCallback, useEffect, useRef } from "react";
 import { usePersistedCollapse } from "@/hooks/usePersistedCollapse";
 import {

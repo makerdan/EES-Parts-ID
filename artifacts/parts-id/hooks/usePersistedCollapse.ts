@@ -1,3 +1,9 @@
+/**
+ * `useState`-shaped hook that persists a collapsed/expanded boolean to
+ * AsyncStorage so settings sections remember their open state across app
+ * relaunches. Async-loaded — the initial render uses `defaultCollapsed`
+ * and re-renders once storage resolves.
+ */
 import { useCallback, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 

@@ -1,3 +1,12 @@
+/**
+ * Floating "Reference" modal — quick-lookup of electrical abbreviations,
+ * vendor full names, synonyms, common misspellings, and trade slang, plus
+ * an SSE-streamed AI chat for free-form questions.
+ *
+ * Dictionaries are fetched from /dictionaries/* and cached in React Query;
+ * the AI chat hits /ai/reference (Server-Sent Events) so the answer
+ * streams in token-by-token.
+ */
 import React, { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,

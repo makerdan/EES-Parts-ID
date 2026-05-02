@@ -1,3 +1,8 @@
+/**
+ * Reference data endpoints consumed by the mobile Reference modal — a
+ * thin alias layer over /dictionaries kept separate so the mobile UI's
+ * URL contract can evolve without churn in the dictionaries router.
+ */
 import { Router } from "express";
 import { openai } from "@workspace/integrations-openai-ai-server";
 

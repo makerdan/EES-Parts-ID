@@ -1,3 +1,8 @@
+/**
+ * Seeds the lookup dictionaries (abbreviations, vendors, synonyms,
+ * misspellings, slang). Each table uses ON CONFLICT DO UPDATE keyed on
+ * its natural key so this stays safe to re-run.
+ */
 import { db } from "@workspace/db";
 import {
   abbreviationMapTable,

@@ -1,3 +1,8 @@
+/**
+ * Shop tab — embedded WebView pinned to the Elliott Electric Supply
+ * storefront so workers can order replacement parts without leaving the
+ * app. Shows a friendly offline state when the network is unreachable.
+ */
 import React, { useState } from "react";
 import {
   ActivityIndicator,

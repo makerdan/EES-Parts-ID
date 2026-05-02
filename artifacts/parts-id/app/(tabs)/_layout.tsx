@@ -1,3 +1,10 @@
+/**
+ * Tab bar layout for the authenticated app.
+ *
+ * Five tabs (Search, Photo, Upload, Shop, +Reference modal trigger) with an
+ * iOS blur background. Tab order matches the worker's task frequency:
+ * searching is the most common action so it's the default landing tab.
+ */
 import { BlurView } from "expo-blur";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { Tabs } from "expo-router";

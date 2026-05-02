@@ -1,3 +1,11 @@
+/**
+ * On-device image resize helper used before /ai/identify uploads.
+ *
+ * Phones in the warehouse routinely produce 12MP photos. Sending those
+ * directly to OpenAI would slow the round-trip and burn token budget
+ * needlessly — the model only needs ~1024px on the long edge to identify
+ * a part. We use `expo-image-manipulator` and return a base64 payload.
+ */
 import * as ImageManipulator from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system/legacy";
 

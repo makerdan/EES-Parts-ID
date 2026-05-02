@@ -1,3 +1,11 @@
+/**
+ * Photo ID tab — snap a part, get candidate matches.
+ *
+ * Pipeline: capture/pick → resize on-device (`utils/resizeImage`) → POST to
+ * /ai/identify → render ranked candidates with confidence + match reason.
+ * We resize before upload because warehouse phones routinely produce 12MP
+ * photos that would otherwise blow the OpenAI request budget.
+ */
 import React, { useState, useRef, useEffect } from "react";
 import {
   ActivityIndicator,

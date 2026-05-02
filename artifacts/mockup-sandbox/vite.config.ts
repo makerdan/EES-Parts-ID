@@ -1,3 +1,8 @@
+/**
+ * Vite config for the canvas mockup sandbox. Each component lives behind
+ * its own `/preview/<slug>` URL (see `mockupPreviewPlugin`) so the
+ * canvas can embed isolated component previews as iframes.
+ */
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

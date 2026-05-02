@@ -1,3 +1,8 @@
+/**
+ * App-wide React error boundary. Catches render-time exceptions so a single
+ * bad component (e.g. malformed bin string, unexpected API shape) doesn't
+ * blank the whole app while a worker is mid-task on the warehouse floor.
+ */
 import React, { Component, ComponentType, PropsWithChildren } from "react";
 
 import { ErrorFallback, ErrorFallbackProps } from "@/components/ErrorFallback";

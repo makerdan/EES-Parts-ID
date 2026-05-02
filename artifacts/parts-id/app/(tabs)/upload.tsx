@@ -1,3 +1,13 @@
+/**
+ * Upload + Inventory tab.
+ *
+ * Two responsibilities:
+ *   1. Bulk-upload a parsed XLSX/CSV via chunked POSTs to /inventory/batch.
+ *      Progress is persisted (`lib/uploadProgress`) so a backgrounded app or
+ *      OS kill doesn't lose the worker's place mid-upload.
+ *   2. Browse / per-item edit the resulting inventory (paginated FlatList,
+ *      KeywordEditor inline edit).
+ */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
