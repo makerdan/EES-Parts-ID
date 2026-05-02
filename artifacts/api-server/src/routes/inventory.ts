@@ -806,6 +806,174 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
   }
 });
 
+// ── Bulk-enrich job state ─────────────────────────────────────────────────────
+interface BulkEnrichJob {
+  running: boolean;
+  startedAt: Date | null;
+  processed: number;
+  errors: number;
+  total: number | null;
+  finishedAt: Date | null;
+  lastError: string | null;
+}
+
+const bulkEnrichJob: BulkEnrichJob = {
+  running: false,
+  startedAt: null,
+  processed: 0,
+  errors: 0,
+  total: null,
+  finishedAt: null,
+  lastError: null,
+};
+
+const BULK_ENRICH_MODEL      = process.env["ENRICH_MODEL"] ?? "gpt-4o-mini";
+const BULK_ENRICH_BATCH      = 10;
+const BULK_ENRICH_CONCUR     = 5;
+const BULK_ENRICH_DELAY_MS   = 200;
+const BULK_ENRICH_MAX_RETRY  = 3;
+
+async function generateKeywordsForItem(item: {
+  vendor: string;
+  catalog: string;
+  description: string | null;
+}): Promise<string[]> {
+  const response = await openai.chat.completions.create({
+    model: BULK_ENRICH_MODEL,
+    max_completion_tokens: 256,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are an expert electrical supply warehouse cataloger. Generate searchable keywords for electrical parts. Return ONLY a JSON array of 6-10 keyword strings. Include: full product name, category, common synonyms, abbreviation expansions, material, ratings, NEMA type if applicable. No explanations.",
+      },
+      {
+        role: "user",
+        content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nDescription: ${item.description ?? ""}\n\nReturn JSON array of keywords only.`,
+      },
+    ],
+  });
+
+  const text = response.choices[0]?.message?.content ?? "[]";
+  let keywords: string[] = [];
+  try {
+    const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
+    if (Array.isArray(parsed)) keywords = parsed.map(String).slice(0, 10);
+  } catch {
+    keywords = text
+      .split(/[,\n]/)
+      .map((k: string) => k.trim().replace(/["\[\]]/g, ""))
+      .filter((k: string) => k.length > 1)
+      .slice(0, 10);
+  }
+  return keywords;
+}
+
+async function enrichItemWithRetry(item: {
+  id: number;
+  vendor: string;
+  catalog: string;
+  description: string | null;
+}): Promise<string[]> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= BULK_ENRICH_MAX_RETRY; attempt++) {
+    try {
+      return await generateKeywordsForItem(item);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < BULK_ENRICH_MAX_RETRY) {
+        const backoffMs = Math.min(1000 * 2 ** (attempt - 1), 8000);
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+async function runBulkEnrich() {
+  const [{ total }] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(inventoryTable)
+    .where(sql`${inventoryTable.enrichedAt} IS NULL`);
+
+  bulkEnrichJob.total = total;
+  console.log(`[bulk-enrich] Starting – ${total} unenriched items (model: ${BULK_ENRICH_MODEL})`);
+
+  while (true) {
+    const batch = await db
+      .select({
+        id: inventoryTable.id,
+        vendor: inventoryTable.vendor,
+        catalog: inventoryTable.catalog,
+        description: inventoryTable.description,
+      })
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.enrichedAt} IS NULL`)
+      .limit(BULK_ENRICH_BATCH);
+
+    if (batch.length === 0) break;
+
+    for (let i = 0; i < batch.length; i += BULK_ENRICH_CONCUR) {
+      const wave = batch.slice(i, i + BULK_ENRICH_CONCUR);
+      const results = await Promise.allSettled(wave.map((item) => enrichItemWithRetry(item)));
+
+      for (let j = 0; j < results.length; j++) {
+        const r = results[j]!;
+        const item = wave[j]!;
+        if (r.status === "fulfilled") {
+          await db
+            .update(inventoryTable)
+            .set({ aiKeywords: r.value, enrichedAt: new Date(), updatedAt: new Date() })
+            .where(eq(inventoryTable.id, item.id));
+          bulkEnrichJob.processed++;
+        } else {
+          // Leave enrichedAt NULL so the item remains retryable on next run
+          bulkEnrichJob.errors++;
+          bulkEnrichJob.lastError = String(r.reason);
+          console.error(`[bulk-enrich] Error id=${item.id} (${item.vendor}/${item.catalog}):`, r.reason);
+        }
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, BULK_ENRICH_DELAY_MS));
+  }
+
+  bulkEnrichJob.running = false;
+  bulkEnrichJob.finishedAt = new Date();
+  console.log(
+    `[bulk-enrich] Done – processed=${bulkEnrichJob.processed} errors=${bulkEnrichJob.errors}`,
+  );
+}
+
+// ── POST /inventory/bulk-enrich ───────────────────────────────────────────────
+router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
+  if (bulkEnrichJob.running) {
+    return res.status(409).json({ error: "Bulk enrichment already running", job: bulkEnrichJob });
+  }
+
+  bulkEnrichJob.running = true;
+  bulkEnrichJob.startedAt = new Date();
+  bulkEnrichJob.processed = 0;
+  bulkEnrichJob.errors = 0;
+  bulkEnrichJob.total = null;
+  bulkEnrichJob.finishedAt = null;
+  bulkEnrichJob.lastError = null;
+
+  runBulkEnrich().catch((err) => {
+    bulkEnrichJob.running = false;
+    bulkEnrichJob.finishedAt = new Date();
+    bulkEnrichJob.lastError = String(err);
+    console.error("[bulk-enrich] Fatal error:", err);
+  });
+
+  res.status(202).json({ message: "Bulk enrichment started", job: bulkEnrichJob });
+});
+
+// ── GET /inventory/bulk-enrich/status ─────────────────────────────────────────
+router.get("/bulk-enrich/status", requireAdminAuth, (_req, res) => {
+  res.json(bulkEnrichJob);
+});
+
 // ── PATCH /inventory/:id/keywords ─────────────────────────────────────────────
 router.patch("/:id/keywords", async (req, res) => {
   try {
