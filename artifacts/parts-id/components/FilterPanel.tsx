@@ -361,15 +361,19 @@ export function ConfidenceSlider({
 export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
 
+  const TEXT_FIELD_KEYS = ["catalog", "vendor", "color", "size", "material", "textNumbers"] as const;
+
+  const activeTextFieldCount = TEXT_FIELD_KEYS.filter(k => values[k].trim() !== "").length;
   const activeChipOnlyCount = CHIP_DIMS.filter(d => values[d.key]).length;
 
-  const activeChipCount =
-    activeChipOnlyCount +
-    [values.catalog, values.vendor, values.color, values.size, values.material, values.textNumbers]
-      .filter(v => v.trim() !== "").length;
+  const activeChipCount = activeChipOnlyCount + activeTextFieldCount;
 
   const resetChips = useCallback(() => {
     CHIP_DIMS.forEach(d => onChange(d.key, ""));
+  }, [onChange]);
+
+  const resetTextFields = useCallback(() => {
+    TEXT_FIELD_KEYS.forEach(k => onChange(k, ""));
   }, [onChange]);
 
   // ── Advanced Filters collapse state ──────────────────────────────────────
@@ -430,6 +434,20 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
 
         {!dimCollapsed && (
           <>
+            {/* ── Text fields header + clear button ── */}
+            <View style={chipAreaStyles.dimHeader}>
+              <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
+                TEXT FILTERS
+              </Text>
+              {activeTextFieldCount > 0 && (
+                <Pressable onPress={resetTextFields} hitSlop={8}>
+                  <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>
+                    Clear text
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+
             {/* ── Text fields ── */}
             <View style={{ flexDirection: "row", gap: 10 }}>
               <View style={{ flex: 1 }}>
