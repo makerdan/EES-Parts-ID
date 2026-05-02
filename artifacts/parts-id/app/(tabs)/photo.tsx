@@ -18,6 +18,7 @@ import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
+import { secondaryBtnBase } from "@/styles/shared";
 
 export default function PhotoScreen() {
   const colors = useColors();
@@ -512,7 +513,7 @@ const styles = StyleSheet.create({
   contextCard: { borderRadius: 12, padding: 14, borderWidth: 1 },
   contextTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 12 },
   fieldLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 5 },
-  fieldInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9, fontSize: 14, fontFamily: "Inter_400Regular" },
+  fieldInput: { ...secondaryBtnBase, paddingHorizontal: 12, paddingVertical: 9, fontSize: 14, fontFamily: "Inter_400Regular" },
   identifyBtn: { borderRadius: 10, paddingVertical: 15, alignItems: "center" },
   identifyBtnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
   summaryCard: { borderRadius: 10, padding: 14, borderWidth: 1 },
@@ -525,10 +526,10 @@ const styles = StyleSheet.create({
   resultsTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginBottom: 10 },
   noResultsCard: { borderRadius: 10, padding: 16, borderWidth: 1 },
   noResultsText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
-  inlineBanner: { borderRadius: 8, padding: 12, borderWidth: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  inlineBanner: { ...secondaryBtnBase, padding: 12, flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const },
   inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
   inlineBannerClose: { paddingLeft: 10 },
-  errorCard: { borderRadius: 8, padding: 14, borderWidth: 1 },
+  errorCard: { ...secondaryBtnBase, padding: 14 },
   errorText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   welcomeCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 8 },
   welcomeTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginBottom: 4 },

@@ -22,6 +22,7 @@ import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
+import { secondaryBtnBase } from "@/styles/shared";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
@@ -939,7 +940,7 @@ const styles = StyleSheet.create({
     borderRadius: 10, borderWidth: 1, alignItems: "center",
   },
   lowerThresholdBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", textAlign: "center", lineHeight: 22 },
-  secondaryBtn: { borderWidth: 1, borderRadius: 8 },
+  secondaryBtn: { ...secondaryBtnBase },
   newSearchBtn: { paddingHorizontal: 12, paddingVertical: 6 },
   newSearchText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   loadingContainer: { alignItems: "center", padding: 40, gap: 12 },
