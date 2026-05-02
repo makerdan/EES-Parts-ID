@@ -411,7 +411,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
       {/* ── Advanced Filters collapsible card ── */}
       <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <Pressable
-          style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12, borderWidth: 1, borderRadius: 8, borderColor: colors.foreground, padding: 10 }]}
+          style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12, borderWidth: 1, borderRadius: 8, borderColor: 'rgba(0,0,0,0.75)', padding: 10 }]}
           onPress={toggleDimensions}
         >
           <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>Advanced Filters</Text>

@@ -639,7 +639,7 @@ export default function SearchScreen() {
             placeholderTextColor={colors.mutedForeground}
             style={[styles.searchBarInput, {
               backgroundColor: colors.muted,
-              borderColor: filters.keywords ? colors.primary : colors.foreground,
+              borderColor: '#000',
               color: colors.foreground,
               paddingRight: filters.keywords ? 36 : 12,
             }]}
@@ -666,15 +666,10 @@ export default function SearchScreen() {
             style={[styles.searchBarSearchBtn, {
               backgroundColor: searchMutation.isPending ? colors.muted : colors.primary,
               borderWidth: 2,
-              borderColor: searchMutation.isPending ? colors.border : colors.foreground,
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 2 },
-              shadowOpacity: 0.18,
-              shadowRadius: 3,
-              elevation: 3,
+              borderColor: searchMutation.isPending ? colors.border : '#000',
             }]}
           >
-            <Text style={[styles.searchBarSearchBtnText, { color: colors.primaryForeground }]}>
+            <Text style={[styles.searchBarSearchBtnText, { color: '#000' }]}>
               {searchMutation.isPending ? "…" : "🔍 Search"}
             </Text>
           </Pressable>
