@@ -1,0 +1,72 @@
+/**
+ * Database helpers for integration tests.
+ * Inserts clearly-labelled fixture rows and removes them after the suite.
+ */
+
+import { db, pool, inventoryTable } from "@workspace/db";
+import { sql } from "drizzle-orm";
+
+/** All fixture catalog numbers inserted by this helper (for cleanup). */
+const FIXTURE_CATALOG_PREFIX = "JEST-ITG-";
+
+export interface FixtureItem {
+  vendor: string;
+  catalog: string;
+  description: string;
+  binLocation?: string;
+}
+
+/**
+ * Insert fixture rows into the inventory table.
+ * Returns the actual inserted rows (with generated ids).
+ */
+export async function seedFixtures(items: FixtureItem[]) {
+  const rows = await db
+    .insert(inventoryTable)
+    .values(
+      items.map(i => ({
+        vendor: i.vendor.toUpperCase(),
+        catalog: i.catalog,
+        description: i.description,
+        binLocation: i.binLocation ?? "",
+        aiKeywords: [] as string[],
+      })),
+    )
+    .onConflictDoNothing()
+    .returning();
+  return rows;
+}
+
+/**
+ * Remove all rows whose catalog starts with the JEST-ITG- prefix.
+ * Safe to call even if nothing was seeded.
+ */
+export async function cleanupFixtures() {
+  await db
+    .delete(inventoryTable)
+    .where(sql`${inventoryTable.catalog} LIKE ${FIXTURE_CATALOG_PREFIX + "%"}`);
+}
+
+/**
+ * Close the shared PostgreSQL pool so Jest can exit cleanly.
+ * Call once in the outermost `afterAll` of each integration test file.
+ */
+export async function closePool() {
+  await pool.end();
+}
+
+/** Convenience: standard fixtures used across multiple suites. */
+export const STANDARD_FIXTURES: FixtureItem[] = [
+  {
+    vendor: "EATON",
+    catalog: "JEST-ITG-BR120",
+    description: "1 Pole 20A 120/240V Breaker",
+    binLocation: "B-01",
+  },
+  {
+    vendor: "HUBBELL",
+    catalog: "JEST-ITG-HBL5262I",
+    description: "20A 125V Duplex Receptacle Ivory",
+    binLocation: "C-07",
+  },
+];
