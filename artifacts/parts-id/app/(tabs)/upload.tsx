@@ -15,6 +15,16 @@ import {
 import * as DocumentPicker from "expo-document-picker";
 import * as XLSX from "xlsx";
 import { useListInventory } from "@workspace/api-client-react";
+import {
+  CHUNK_SIZE,
+  chunkRows,
+  clearUploadProgress,
+  loadUploadProgress,
+  saveUploadCheckpoint,
+  saveUploadSeed,
+  type InProgressUpload,
+  type UploadSeed,
+} from "../../lib/uploadProgress";
 
 import { useColors } from "@/hooks/useColors";
 import { ReferenceModal } from "@/components/ReferenceModal";
@@ -436,6 +446,40 @@ export default function UploadScreen() {
   const [uploadPending, setUploadPending] = useState(false);
   const [inventoryPage, setInventoryPage] = useState(1);
 
+  // ── Chunked / pausable / resumable upload state ──────────────────────────
+  // The upload screen sends the parsed rows to /inventory/upsert-batch in
+  // fixed-size chunks. After every successful chunk we persist progress to
+  // AsyncStorage so the user can pause mid-run or resume after an app crash.
+  // The server is idempotent for the modes we use, so re-sending a chunk is
+  // safe.
+  const [chunkProgress, setChunkProgress] = useState<{
+    processed: number;
+    total: number;
+    inserted: number;
+    updated: number;
+    skipped: number;
+  } | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
+  const pauseRef = useRef(false);
+  // Monotonic id for the current run. Bumped on every start, pause-after,
+  // resume, or cancel. After every awaited fetch we compare runIdRef.current
+  // against the captured myRunId; on mismatch the run aborts without
+  // touching state or storage. This prevents a stale loop from clobbering
+  // user intent (e.g. cancel) or running concurrently with a fresh start.
+  const runIdRef = useRef(0);
+  // AbortController for the in-flight fetch — cancel hits the network too,
+  // not just the loop between chunks.
+  const abortControllerRef = useRef<AbortController | null>(null);
+  // Banner shown on mount when an old upload was left half-finished by a
+  // previous session (e.g. the app was killed). null = nothing to resume.
+  const [resumePrompt, setResumePrompt] = useState<InProgressUpload | null>(null);
+  // Refs that mirror state we need to read inside the auto-resume effect
+  // without causing it to re-run.
+  const parsedRowsRef = useRef(parsedRows);
+  useEffect(() => { parsedRowsRef.current = parsedRows; }, [parsedRows]);
+  const chunkProgressRef = useRef<typeof chunkProgress>(null);
+  useEffect(() => { chunkProgressRef.current = chunkProgress; }, [chunkProgress]);
+
   // ── Preview / review modal state ─────────────────────────────────────────
   // After parsing, we POST rows to /preview-upsert. If any existing rows would
   // change, we surface a 3-option chooser (add-new / overwrite-all / review).
@@ -737,54 +781,244 @@ export default function UploadScreen() {
     }
   };
 
-  // Apply step — POSTs to /inventory/upsert-batch with the chosen mode and an
-  // optional selectedKeys list (used only when mode === "selected").
-  const applyUpsert = useCallback(
-    async (mode: UpsertMode, selectedKeys?: Array<{ vendor: string; catalog: string }>) => {
-      if (!parsedRows.length) return;
+  // ── Chunked upload runner ────────────────────────────────────────────────
+  // Sends rows in fixed-size chunks (CHUNK_SIZE) so the user can pause
+  // between chunks and we can persist progress for crash recovery. The
+  // server's /inventory/upsert-batch is idempotent for the modes we use, so
+  // a re-sent chunk after an error or app kill is safe.
+  //
+  // Concurrency model:
+  //   * Every entry to this function bumps runIdRef.current and aborts any
+  //     prior in-flight controller. The new run captures myRunId at start.
+  //   * After every awaited operation, we re-check runIdRef.current ===
+  //     myRunId. On mismatch the run silently exits without writing state
+  //     or storage. This guarantees that a fresh start, resume, or cancel
+  //     fully supersedes any older loop, even if its fetch was mid-flight.
+  const runChunkedUpload = useCallback(
+    async (initial: InProgressUpload) => {
+      // Supersede any previous run.
+      const myRunId = ++runIdRef.current;
+      abortControllerRef.current?.abort();
+      const ctrl = new AbortController();
+      abortControllerRef.current = ctrl;
+
+      pauseRef.current = false;
+      setIsPaused(false);
       setUploadError(null);
       setUploadSuccess(null);
       setUploadPending(true);
+
+      // Local mutable state — single source of truth during the run.
+      let processedIndex = initial.processedIndex;
+      let totals = { ...initial.totals };
+      const total = initial.parsedRows.length;
+      setChunkProgress({ processed: processedIndex, total, ...totals });
+
+      const chunks = chunkRows(initial.parsedRows.slice(processedIndex), CHUNK_SIZE);
+
+      const isCurrent = () => runIdRef.current === myRunId;
+
       try {
-        const body: { items: ParsedRow[]; mode: UpsertMode; selectedKeys?: Array<{ vendor: string; catalog: string }> } = {
-          items: parsedRows,
-          mode,
-        };
-        if (mode === "selected" && selectedKeys) body.selectedKeys = selectedKeys;
-
-        const response = await fetch(`${API_BASE}/inventory/upsert-batch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...adminHeaders },
-          body: JSON.stringify(body),
-        });
-
-        if (!response.ok) {
-          const errBody = await response.json().catch(() => ({})) as { error?: string };
-          if (response.status === 401) {
-            logoutAdmin();
-            setUploadError("Admin session expired. Please unlock again.");
-          } else {
-            setUploadError(errBody.error ?? "Upload failed — could not save inventory items. Please try again.");
+        for (const chunk of chunks) {
+          if (!isCurrent()) return;
+          if (pauseRef.current) {
+            setUploadPending(false);
+            setIsPaused(true);
+            return;
           }
-          return;
+
+          const body: {
+            items: typeof chunk;
+            mode: UpsertMode;
+            selectedKeys?: Array<{ vendor: string; catalog: string }>;
+          } = { items: chunk, mode: initial.mode };
+          if (initial.mode === "selected" && initial.selectedKeys) {
+            body.selectedKeys = initial.selectedKeys;
+          }
+
+          let response: Response;
+          try {
+            response = await fetch(`${API_BASE}/inventory/upsert-batch`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...adminHeaders },
+              body: JSON.stringify(body),
+              signal: ctrl.signal,
+            });
+          } catch (err) {
+            // Aborted (cancel) or network blip. If a newer run took over,
+            // exit silently. Otherwise keep state so user can Resume.
+            if (!isCurrent()) return;
+            const aborted =
+              err instanceof Error && (err.name === "AbortError" || ctrl.signal.aborted);
+            if (aborted) return;
+            setUploadError(
+              "Network error mid-upload — your progress was saved. Tap Resume to continue.",
+            );
+            setIsPaused(true);
+            setUploadPending(false);
+            return;
+          }
+          if (!isCurrent()) return;
+
+          if (!response.ok) {
+            const errBody = (await response.json().catch(() => ({}))) as { error?: string };
+            if (!isCurrent()) return;
+            if (response.status === 401) {
+              // Auth gone — clear progress; the user can restart after re-unlock.
+              await clearUploadProgress();
+              if (!isCurrent()) return;
+              logoutAdmin();
+              setUploadError("Admin session expired. Please unlock again.");
+              setChunkProgress(null);
+              setUploadPending(false);
+              return;
+            }
+            // Keep persisted state so the user can Resume after fixing the issue.
+            setUploadError(
+              errBody.error ?? "Upload failed mid-run — your progress was saved. Tap Resume to continue.",
+            );
+            setIsPaused(true);
+            setUploadPending(false);
+            return;
+          }
+
+          const partial = (await response.json()) as UpsertResult;
+          if (!isCurrent()) return;
+          totals = {
+            inserted: totals.inserted + partial.inserted,
+            updated: totals.updated + partial.updated,
+            skipped: totals.skipped + partial.skipped,
+          };
+          processedIndex += chunk.length;
+
+          // Persist a tiny checkpoint (no parsedRows) for crash recovery.
+          await saveUploadCheckpoint({ processedIndex, totals });
+          if (!isCurrent()) return;
+          setChunkProgress({ processed: processedIndex, total, ...totals });
         }
 
-        const result = await response.json() as UpsertResult;
-        setUploadSuccess(result);
+        // All chunks done — clear progress and surface the success banner.
+        if (!isCurrent()) return;
+        await clearUploadProgress();
+        if (!isCurrent()) return;
+        setUploadSuccess({ ...totals, total });
+        setChunkProgress(null);
         setParsedRows([]);
         setFileName(null);
         setFileType(null);
         setPreviewData(null);
         setExcludedKeys(new Set());
         await inventoryQuery.refetch();
-      } catch {
-        setUploadError("Upload failed — could not save inventory items. Please try again.");
       } finally {
-        setUploadPending(false);
+        if (isCurrent()) setUploadPending(false);
       }
     },
-    [parsedRows, adminHeaders, logoutAdmin, inventoryQuery],
+    [adminHeaders, logoutAdmin, inventoryQuery],
   );
+
+  // Apply step — kicks off a chunked upload from row 0. Writes the static
+  // seed (rows + metadata + 0 checkpoint) once before the first chunk so a
+  // mid-first-chunk crash is recoverable.
+  const applyUpsert = useCallback(
+    async (mode: UpsertMode, selectedKeys?: Array<{ vendor: string; catalog: string }>) => {
+      if (!parsedRows.length) return;
+      const seed: UploadSeed = {
+        fileName,
+        fileType,
+        parsedRows,
+        mode,
+        selectedKeys: mode === "selected" ? selectedKeys : undefined,
+        startedAt: Date.now(),
+      };
+      await saveUploadSeed(seed);
+      await runChunkedUpload({
+        ...seed,
+        processedIndex: 0,
+        totals: { inserted: 0, updated: 0, skipped: 0 },
+      });
+    },
+    [parsedRows, fileName, fileType, runChunkedUpload],
+  );
+
+  // Pause: flip the ref so the in-flight loop exits between chunks. We do
+  // NOT bump runIdRef here — we want the in-flight chunk to finish and
+  // persist its checkpoint before the loop exits.
+  const handlePauseUpload = useCallback(() => {
+    pauseRef.current = true;
+  }, []);
+
+  // Resume: re-read the persisted checkpoint and continue from there.
+  const handleResumeUpload = useCallback(async () => {
+    const saved = await loadUploadProgress();
+    if (!saved) {
+      setIsPaused(false);
+      setChunkProgress(null);
+      return;
+    }
+    await runChunkedUpload(saved);
+  }, [runChunkedUpload]);
+
+  // Cancel: authoritative — abort the in-flight fetch, supersede the run,
+  // wipe persisted state, reset UI. Any zombie loop will detect the
+  // superseded runId and exit without writing anything.
+  const handleCancelUpload = useCallback(async () => {
+    runIdRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    pauseRef.current = false;
+    await clearUploadProgress();
+    setChunkProgress(null);
+    setIsPaused(false);
+    setUploadPending(false);
+    setUploadError(null);
+    setResumePrompt(null);
+  }, []);
+
+  // ── Auto-resume detection on mount ───────────────────────────────────────
+  // If we find a persisted upload from a previous session AND the user is
+  // an admin AND nothing is currently loaded or in-flight, surface the
+  // banner. We read parsedRows / chunkProgress through refs so the effect
+  // doesn't fight a freshly-started upload that began between mount and the
+  // load promise resolving.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const saved = await loadUploadProgress();
+      if (cancelled) return;
+      if (
+        saved &&
+        isAdmin &&
+        parsedRowsRef.current.length === 0 &&
+        chunkProgressRef.current === null
+      ) {
+        setResumePrompt(saved);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally only on mount + when admin status changes; current
+    // state is read through refs above to avoid stale-closure races.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  // Resume from the banner prompt — same as Resume during a paused run.
+  const handleResumeFromBanner = useCallback(async () => {
+    if (!resumePrompt) return;
+    const saved = resumePrompt;
+    setResumePrompt(null);
+    // Rehydrate the visible "what's being uploaded" labels.
+    setFileName(saved.fileName);
+    setFileType(saved.fileType);
+    setTab("upload");
+    await runChunkedUpload(saved);
+  }, [resumePrompt, runChunkedUpload]);
+
+  // Discard from the banner prompt — drop persisted state, dismiss banner.
+  const handleDiscardFromBanner = useCallback(async () => {
+    await clearUploadProgress();
+    setResumePrompt(null);
+  }, []);
 
   // Start step — first calls /inventory/preview-upsert. If existing rows would
   // change, surfaces the 3-option chooser. Otherwise applies overwrite-all
@@ -957,6 +1191,84 @@ export default function UploadScreen() {
                 </Pressable>
                 <Pressable onPress={() => setUploadSuccess(null)} style={styles.bannerClose}>
                   <Text style={{ color: "#059669", fontSize: 14 }}>✕</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Auto-resume banner — shown when a previous session left an upload
+              partway through (app killed / crash / manual close). */}
+          {resumePrompt ? (
+            <View style={[styles.resumeBanner, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "55" }]}>
+              <Text style={[styles.resumeTitle, { color: colors.primary }]}>
+                Resume previous upload?
+              </Text>
+              <Text style={[styles.resumeBody, { color: colors.foreground }]}>
+                {resumePrompt.fileName ?? "Untitled file"} — {resumePrompt.processedIndex} of {resumePrompt.parsedRows.length} rows processed.
+              </Text>
+              <View style={styles.resumeBtnRow}>
+                <Pressable
+                  onPress={() => { void handleResumeFromBanner(); }}
+                  style={[styles.resumePrimary, { backgroundColor: colors.primary }]}
+                >
+                  <Text style={[styles.resumePrimaryText, { color: colors.primaryForeground }]}>Resume</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => { void handleDiscardFromBanner(); }}
+                  style={[styles.resumeSecondary, { borderColor: colors.border }]}
+                >
+                  <Text style={[styles.resumeSecondaryText, { color: colors.foreground }]}>Discard</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          {/* In-flight upload progress card — visible while a chunked upload
+              is running OR paused. Shows totals so far and Pause / Resume /
+              Cancel controls. */}
+          {chunkProgress ? (
+            <View style={[styles.chunkCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.chunkTitle, { color: colors.foreground }]}>
+                {isPaused ? "⏸ Upload paused" : "⬆️ Uploading…"}
+              </Text>
+              <Text style={[styles.chunkBody, { color: colors.mutedForeground }]}>
+                {chunkProgress.processed} of {chunkProgress.total} rows processed
+                {" — "}
+                created {chunkProgress.inserted}, updated {chunkProgress.updated}
+                {chunkProgress.skipped > 0 ? `, skipped ${chunkProgress.skipped}` : ""}
+              </Text>
+              <View style={[styles.chunkTrack, { backgroundColor: colors.muted }]}>
+                <View
+                  style={[
+                    styles.chunkFill,
+                    {
+                      backgroundColor: isPaused ? colors.mutedForeground : colors.primary,
+                      width: `${chunkProgress.total > 0 ? Math.min(100, (chunkProgress.processed / chunkProgress.total) * 100) : 0}%`,
+                    },
+                  ]}
+                />
+              </View>
+              <View style={styles.chunkBtnRow}>
+                {isPaused ? (
+                  <Pressable
+                    onPress={() => { void handleResumeUpload(); }}
+                    style={[styles.chunkPrimary, { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={[styles.chunkPrimaryText, { color: colors.primaryForeground }]}>Resume</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    onPress={handlePauseUpload}
+                    style={[styles.chunkPrimary, { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={[styles.chunkPrimaryText, { color: colors.primaryForeground }]}>Pause</Text>
+                  </Pressable>
+                )}
+                <Pressable
+                  onPress={() => { void handleCancelUpload(); }}
+                  style={[styles.chunkSecondary, { borderColor: colors.border }]}
+                >
+                  <Text style={[styles.chunkSecondaryText, { color: colors.foreground }]}>Cancel</Text>
                 </Pressable>
               </View>
             </View>
@@ -1580,6 +1892,24 @@ const styles = StyleSheet.create({
   tabItem: { flex: 1, alignItems: "center", paddingVertical: 12, borderBottomWidth: 2 },
   tabLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   uploadCard: { borderRadius: 12, padding: 16, borderWidth: 1, marginBottom: 14, gap: 10 },
+  resumeBanner: { marginHorizontal: 16, marginTop: 10, padding: 12, borderRadius: 10, borderWidth: 1, gap: 6 },
+  resumeTitle: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  resumeBody: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  resumeBtnRow: { flexDirection: "row", gap: 8, marginTop: 6 },
+  resumePrimary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center" },
+  resumePrimaryText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  resumeSecondary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center", borderWidth: 1 },
+  resumeSecondaryText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  chunkCard: { marginHorizontal: 16, marginTop: 10, padding: 14, borderRadius: 12, borderWidth: 1, gap: 8 },
+  chunkTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  chunkBody: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  chunkTrack: { height: 8, borderRadius: 4, overflow: "hidden", marginTop: 4 },
+  chunkFill: { height: "100%", borderRadius: 4 },
+  chunkBtnRow: { flexDirection: "row", gap: 8, marginTop: 6 },
+  chunkPrimary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center" },
+  chunkPrimaryText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  chunkSecondary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center", borderWidth: 1 },
+  chunkSecondaryText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   cardTitle: { fontSize: 16, fontFamily: "Inter_700Bold" },
   cardHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   pickBtn: { borderWidth: 2, borderRadius: 8, paddingVertical: 13, alignItems: "center" },

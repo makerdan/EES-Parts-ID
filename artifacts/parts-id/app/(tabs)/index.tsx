@@ -928,7 +928,7 @@ export default function SearchScreen() {
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color={colors.primary} />
                 <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>
-                  Searching dictionaries…
+                  Searching Database…
                 </Text>
               </View>
             ) : null}
