@@ -1156,7 +1156,7 @@ export default function SearchScreen() {
             styles.modeToggleBtn,
             {
               backgroundColor: mode === "browse" ? colors.primary : colors.card,
-              borderColor: hexToRgba(colors.border, 0.75),
+              borderColor: "rgba(0,0,0,0.75)",
             },
           ]}
         >
