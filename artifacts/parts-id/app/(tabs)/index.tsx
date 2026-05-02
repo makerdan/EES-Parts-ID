@@ -7,7 +7,6 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -34,8 +33,8 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   : "http://localhost:8080/api";
 
 type TextSize = "small" | "normal" | "large";
-type AppSettings = { defaultFiltersOpen: boolean; textSize: TextSize; defaultConfidenceThreshold: number };
-const DEFAULT_SETTINGS: AppSettings = { defaultFiltersOpen: false, textSize: "normal", defaultConfidenceThreshold: 50 };
+type AppSettings = { textSize: TextSize; defaultConfidenceThreshold: number };
+const DEFAULT_SETTINGS: AppSettings = { textSize: "normal", defaultConfidenceThreshold: 50 };
 
 async function loadSettings(): Promise<AppSettings> {
   try {
@@ -142,9 +141,6 @@ export default function SearchScreen() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
-  // Start hidden so settings load completes before the filter panel is shown,
-  // preventing a flicker when the user has defaultFiltersOpen=false saved.
-  const [showFilters, setShowFilters] = useState(false);
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
@@ -167,7 +163,6 @@ export default function SearchScreen() {
   useEffect(() => {
     loadSettings().then(s => {
       setSettings(s);
-      setShowFilters(s.defaultFiltersOpen);
       setFilters(f => ({ ...f, confidenceThreshold: s.defaultConfidenceThreshold }));
     });
   }, []);
@@ -258,7 +253,6 @@ export default function SearchScreen() {
         setIsOffline(true);
         setOfflineCacheType("exact");
         setOfflineResults(exactEntry.results);
-        setShowFilters(false);
         return;
       }
       const kw = [f.keywords, f.catalog, f.vendor, f.category, f.voltage, f.amperage]
@@ -267,7 +261,6 @@ export default function SearchScreen() {
       setIsOffline(true);
       setOfflineCacheType("fuse");
       setOfflineResults(fuseHits.length > 0 ? fuseHits : []);
-      if (fuseHits.length > 0) setShowFilters(false);
     });
   }, [runFuseSearch]);
 
@@ -279,7 +272,6 @@ export default function SearchScreen() {
         setIsOffline(false);
         setOfflineResults(null);
         setOfflineCacheType(null);
-        setShowFilters(false);
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
 
         // Cache all returned items for offline Fuse use
@@ -342,7 +334,6 @@ export default function SearchScreen() {
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
-    setShowFilters(settings.defaultFiltersOpen);
     setDimensionCounts(undefined);
   };
 
@@ -350,7 +341,6 @@ export default function SearchScreen() {
     const next = { ...settings, [key]: value };
     setSettings(next);
     saveSettings(next);
-    if (key === "defaultFiltersOpen") setShowFilters(value as boolean);
     if (key === "defaultConfidenceThreshold") setFilters(f => ({ ...f, confidenceThreshold: value as number }));
   };
 
@@ -366,17 +356,8 @@ export default function SearchScreen() {
   }, [buildFuseIndex]);
 
   const results: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
-  const totalMatches = searchMutation.data?.totalMatches ?? 0;
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
-  const activeChipCount = [
-    filters.category, filters.amperage, filters.colorChip, filters.manufacturer,
-    filters.sizeChip, filters.rating, filters.wireType, filters.wireGauge,
-    filters.conduitType, filters.conduitSize, filters.boxType, filters.boxGangCount,
-    filters.mountingType, filters.environment, filters.voltage, filters.poleCount,
-  ].filter(Boolean).length;
-
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
-
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -457,22 +438,6 @@ export default function SearchScreen() {
               >
                 <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>Clear</Text>
               </Pressable>
-            </View>
-
-            {/* Filters open by default row */}
-            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Filters open by default</Text>
-                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                  Show the filter panel automatically when you open the app.
-                </Text>
-              </View>
-              <Switch
-                value={settings.defaultFiltersOpen}
-                onValueChange={v => updateSetting("defaultFiltersOpen", v)}
-                trackColor={{ false: colors.border, true: colors.primary }}
-                thumbColor="#fff"
-              />
             </View>
 
             {/* Text size row */}
@@ -623,47 +588,22 @@ export default function SearchScreen() {
           ) : null}
         </View>
 
-        {/* Filters toggle — full width, below Search row */}
-        <Pressable
-          onPress={() => setShowFilters(!showFilters)}
-          style={[styles.searchBarFiltersBtn, {
-            backgroundColor: showFilters ? colors.primary + "18" : colors.muted,
-            borderColor: activeChipCount > 0 ? colors.primary : colors.border,
-          }]}
-        >
-          <Feather
-            name={showFilters ? "chevron-up" : "chevron-down"}
-            size={14}
-            color={showFilters ? colors.primary : colors.mutedForeground}
-          />
-          <Text style={[styles.searchBarFiltersBtnText, {
-            color: showFilters ? colors.primary : colors.mutedForeground,
-          }]}>
-            {showFilters
-              ? "Hide Filters"
-              : activeChipCount > 0
-                ? `Filters (${activeChipCount} active)`
-                : "Filters"}
-          </Text>
-        </Pressable>
       </View>
 
-      {/* ── Advanced filters (collapsible) — stable outside FlatList ── */}
-      {showFilters ? (
-        <ScrollView
-          style={{ maxHeight: "50%" }}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <FilterPanel
-              values={filters}
-              onChange={handleChange}
-              dimensionCounts={dimensionCounts}
-            />
-          </View>
-        </ScrollView>
-      ) : null}
+      {/* ── Advanced Filters — always visible, collapsible internally ── */}
+      <ScrollView
+        style={{ maxHeight: "50%" }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <FilterPanel
+            values={filters}
+            onChange={handleChange}
+            dimensionCounts={dimensionCounts}
+          />
+        </View>
+      </ScrollView>
 
       <FlatList
         data={results}
@@ -677,14 +617,12 @@ export default function SearchScreen() {
                   <Text style={[styles.resultsCount, { color: colors.foreground }]}>
                     {results.length} {isOffline ? "offline" : ""} match{results.length !== 1 ? "es" : ""} found
                   </Text>
-                  {!showFilters ? (
-                    <Pressable
-                      onPress={handleClear}
-                      style={[styles.newSearchBtn, { borderColor: colors.border }]}
-                    >
-                      <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
-                    </Pressable>
-                  ) : null}
+                  <Pressable
+                    onPress={handleClear}
+                    style={[styles.newSearchBtn, { borderColor: colors.border }]}
+                  >
+                    <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
+                  </Pressable>
                 </View>
                 {/* Actionable "more matches below threshold" banner */}
                 {!isOffline && belowThreshold > 0 && (
@@ -771,7 +709,7 @@ export default function SearchScreen() {
                   Search Electrical Parts
                 </Text>
                 <Text style={[styles.welcomeHint, { color: colors.mutedForeground }]}>
-                  Search by keywords, catalog #, or vendor. Tap Filters for 16-dimension chip filters. Handles abbreviations, synonyms, and misspellings automatically.
+                  Search by keywords, catalog #, or vendor. Expand Advanced Filters below for 16-dimension chip filters. Handles abbreviations, synonyms, and misspellings automatically.
                 </Text>
                 <View style={[styles.tipCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Text style={[styles.tipTitle, { color: colors.foreground }]}>💡 Quick Tips</Text>
@@ -886,16 +824,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  searchBarFiltersBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  searchBarFiltersBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   filterCard: {
     marginHorizontal: 12,
     marginBottom: 6,
