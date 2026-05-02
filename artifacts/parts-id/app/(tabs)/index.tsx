@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Modal,
   Pressable,
@@ -169,6 +170,19 @@ export default function SearchScreen() {
   const [cachedCount, setCachedCount] = useState(0);
   const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [syncError, setSyncError] = useState(false);
+  // Explicit "sync is running" flag — set true the moment syncAllInventory starts
+  // (before the first page returns), so the search guard fires even during the
+  // initial fetch latency before syncProgress has any value.
+  const [isSyncing, setIsSyncing] = useState(false);
+  // Sync-in-progress warning popup (shown if user tries to search before sync finishes)
+  const [syncWarningSec, setSyncWarningSec] = useState<number | null>(null);
+  // Tracks when current sync started so we can estimate remaining seconds
+  const syncStartedAtRef = useRef<number | null>(null);
+  // Animated value for flashing the sync badge in the header
+  const syncPulse = useRef(new Animated.Value(1)).current;
+  // Track the running pulse animation so we can stop it before starting a new one
+  // (prevents stacked loops from rapid Search taps).
+  const syncPulseAnimRef = useRef<Animated.CompositeAnimation | null>(null);
   // Track latest filters in a ref so the onError closure always reads current values
   const filtersRef = useRef<FilterValues>(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -218,6 +232,8 @@ export default function SearchScreen() {
     let total = 0;
     const allItems: InventoryItem[] = [];
     setSyncError(false);
+    setIsSyncing(true);
+    syncStartedAtRef.current = Date.now();
     try {
       do {
         const res = await fetch(`${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`);
@@ -239,8 +255,44 @@ export default function SearchScreen() {
       setSyncError(true);
     } finally {
       setSyncProgress(null);
+      setIsSyncing(false);
+      syncStartedAtRef.current = null;
     }
   }, [buildFuseIndex]);
+
+  // Auto-dismiss the warning popup the moment sync finishes — prevents the modal
+  // from lingering after the underlying condition is gone.
+  useEffect(() => {
+    if (!isSyncing && syncWarningSec !== null) setSyncWarningSec(null);
+  }, [isSyncing, syncWarningSec]);
+
+  // Pulse the sync badge 3 times to draw attention. Stops any in-flight pulse
+  // first so rapid taps don't stack overlapping animation loops.
+  const flashSyncBadge = useCallback(() => {
+    if (syncPulseAnimRef.current) syncPulseAnimRef.current.stop();
+    syncPulse.setValue(1);
+    const anim = Animated.sequence([
+      Animated.timing(syncPulse, { toValue: 0.25, duration: 220, useNativeDriver: true }),
+      Animated.timing(syncPulse, { toValue: 1, duration: 220, useNativeDriver: true }),
+      Animated.timing(syncPulse, { toValue: 0.25, duration: 220, useNativeDriver: true }),
+      Animated.timing(syncPulse, { toValue: 1, duration: 220, useNativeDriver: true }),
+      Animated.timing(syncPulse, { toValue: 0.25, duration: 220, useNativeDriver: true }),
+      Animated.timing(syncPulse, { toValue: 1, duration: 220, useNativeDriver: true }),
+    ]);
+    syncPulseAnimRef.current = anim;
+    anim.start(() => {
+      // Reset opacity to 1 in case the animation was interrupted mid-cycle.
+      syncPulse.setValue(1);
+      syncPulseAnimRef.current = null;
+    });
+  }, [syncPulse]);
+
+  // Stop any in-flight pulse animation when the screen unmounts.
+  useEffect(() => {
+    return () => {
+      if (syncPulseAnimRef.current) syncPulseAnimRef.current.stop();
+    };
+  }, []);
 
   // Seed local Fuse index from AsyncStorage on mount; sync from API if cache is empty
   useEffect(() => {
@@ -426,6 +478,27 @@ export default function SearchScreen() {
   const SEARCH_TIMEOUT_MS = 8000;
 
   const handleSearch = () => {
+    // If inventory is still syncing, block the search and warn the user.
+    // We estimate remaining time from the throughput observed so far.
+    // Guard on `isSyncing` (not just `syncProgress`) so the popup also fires
+    // during the initial fetch before the first page returns.
+    if (isSyncing) {
+      let estSec: number;
+      if (syncProgress && syncProgress.loaded > 0) {
+        const startedAt = syncStartedAtRef.current ?? Date.now();
+        const elapsedSec = Math.max(1, (Date.now() - startedAt) / 1000);
+        const itemsPerSec = syncProgress.loaded / elapsedSec;
+        const remaining = Math.max(0, syncProgress.total - syncProgress.loaded);
+        estSec = Math.ceil(remaining / itemsPerSec);
+      } else {
+        // No progress yet — show a conservative default so the user knows to wait.
+        estSec = 30;
+      }
+      // Floor at 5 s so we never tell the user "0 seconds".
+      setSyncWarningSec(Math.max(5, estSec));
+      flashSyncBadge();
+      return;
+    }
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
@@ -474,12 +547,12 @@ export default function SearchScreen() {
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
             {/* Sync progress — while fetching all inventory for offline cache */}
             {syncProgress ? (
-              <View style={[styles.statusBadge, { backgroundColor: colors.muted }]}>
+              <Animated.View style={[styles.statusBadge, { backgroundColor: colors.muted, opacity: syncPulse }]}>
                 <ActivityIndicator size={10} color={colors.mutedForeground} style={{ marginRight: 4 }} />
                 <Text style={[styles.statusBadgeText, { color: colors.mutedForeground }]}>
                   {`Syncing ${syncProgress.loaded} / ${syncProgress.total}`}
                 </Text>
-              </View>
+              </Animated.View>
             ) : syncError ? (
               <Pressable
                 onPress={() => syncAllInventory()}
@@ -694,6 +767,33 @@ export default function SearchScreen() {
                 style={[styles.secondaryBtn, styles.logoutModalCancel, { borderColor: colors.destructive + "66", backgroundColor: colors.destructive + "11" }]}
               >
                 <Text style={[styles.logoutModalCancelText, { color: colors.destructive }]}>Sign Out</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Sync-in-progress warning — shown if user tries to search before sync completes */}
+      <Modal
+        visible={syncWarningSec !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSyncWarningSec(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.logoutModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.logoutModalTitle, { color: colors.foreground }]}>
+              ⏳ Inventory still syncing
+            </Text>
+            <Text style={[styles.logoutModalHint, { color: colors.mutedForeground }]}>
+              {`Please wait about ${syncWarningSec ?? 0} second${syncWarningSec === 1 ? "" : "s"} for the inventory to finish loading before searching.`}
+            </Text>
+            <View style={styles.logoutModalBtns}>
+              <Pressable
+                onPress={() => setSyncWarningSec(null)}
+                style={[styles.logoutModalConfirm, { backgroundColor: colors.primary }]}
+              >
+                <Text style={[styles.logoutModalConfirmText, { color: colors.primaryForeground }]}>OK</Text>
               </Pressable>
             </View>
           </View>
