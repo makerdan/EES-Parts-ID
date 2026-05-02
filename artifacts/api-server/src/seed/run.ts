@@ -6,7 +6,7 @@ import { seedTaxonomy } from "./taxonomy";
     await seedAllDictionaries();
     const counts = await seedTaxonomy();
     console.log(
-      `Seed complete — taxonomy: +${counts.insertedCategories} categories, +${counts.insertedSubcategories} subcategories, +${counts.insertedTypes} types, ~${counts.updatedNodes} updated`,
+      `Seed complete — taxonomy (${counts.source}): +${counts.insertedCategories} categories, +${counts.insertedSubcategories} subcategories, +${counts.insertedTypes} types, ~${counts.updatedNodes} updated`,
     );
     process.exit(0);
   } catch (err) {

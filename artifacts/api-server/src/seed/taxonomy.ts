@@ -31,6 +31,8 @@
  */
 
 import { eq, sql } from "drizzle-orm";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { db, categoryNodeTable } from "@workspace/db";
 
 interface SeedType {
@@ -48,6 +50,18 @@ interface SeedCategory {
   subcategories: SeedSubcategory[];
 }
 
+/**
+ * Default seed taxonomy, manually derived from the EES Product Catalog
+ * (06.2025) PDF in `attached_assets/`. We keep this as a TypeScript
+ * literal because (a) the canonical source is a PDF that needs human
+ * review for category structure, (b) it gives us full type safety, and
+ * (c) it avoids a runtime dependency on a parser.
+ *
+ * Override mechanism: if `attached_assets/eesTaxonomy.json` exists at
+ * seed time, its contents are used INSTEAD of this default. That lets
+ * ops drop a freshly-generated catalog dump into attached_assets without
+ * a code change. See `loadTaxonomySource()`.
+ */
 export const SEED_TAXONOMY: SeedCategory[] = [
   {
     slug: "breakers",
@@ -283,16 +297,65 @@ export const UNCATEGORIZED_TYPE_SLUG = "uncategorized-type";
  *
  * Returns counts for logging.
  */
+/**
+ * Load the taxonomy source. Prefers `attached_assets/eesTaxonomy.json`
+ * (so ops can ship updated EES catalog data without a code change) and
+ * falls back to the embedded SEED_TAXONOMY constant.
+ *
+ * Validation is deliberately minimal — the file is operator-controlled,
+ * not user input. We just verify it has the right top-level shape; if
+ * anything looks wrong we log and fall back rather than seeding garbage.
+ */
+function loadTaxonomySource(): { source: "file" | "embedded"; tree: SeedCategory[] } {
+  // Try several plausible locations relative to wherever the seed is run from.
+  const candidates = [
+    path.resolve(process.cwd(), "attached_assets/eesTaxonomy.json"),
+    path.resolve(process.cwd(), "../../attached_assets/eesTaxonomy.json"),
+    path.resolve(__dirname, "../../../../attached_assets/eesTaxonomy.json"),
+  ];
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(p, "utf-8")) as unknown;
+      if (!Array.isArray(parsed)) {
+        console.warn(`[seedTaxonomy] ${p} is not an array — falling back to embedded seed`);
+        return { source: "embedded", tree: SEED_TAXONOMY };
+      }
+      // Light shape validation — accept anything Category[] shaped.
+      const ok = parsed.every(
+        c =>
+          typeof c === "object" && c !== null &&
+          typeof (c as SeedCategory).slug === "string" &&
+          typeof (c as SeedCategory).name === "string" &&
+          Array.isArray((c as SeedCategory).subcategories),
+      );
+      if (!ok) {
+        console.warn(`[seedTaxonomy] ${p} failed shape validation — falling back to embedded seed`);
+        return { source: "embedded", tree: SEED_TAXONOMY };
+      }
+      console.log(`[seedTaxonomy] using EES catalog override at ${p}`);
+      return { source: "file", tree: parsed as SeedCategory[] };
+    } catch (err) {
+      console.warn(`[seedTaxonomy] failed to parse ${p}: ${String(err)} — falling back`);
+      return { source: "embedded", tree: SEED_TAXONOMY };
+    }
+  }
+  return { source: "embedded", tree: SEED_TAXONOMY };
+}
+
 export async function seedTaxonomy(): Promise<{
   insertedCategories: number;
   insertedSubcategories: number;
   insertedTypes: number;
   updatedNodes: number;
+  source: "file" | "embedded";
 }> {
   let insertedCategories = 0;
   let insertedSubcategories = 0;
   let insertedTypes = 0;
   let updatedNodes = 0;
+
+  const { source, tree } = loadTaxonomySource();
 
   // Build a slug → row map from any nodes already present so we don't duplicate.
   const existing = await db.select().from(categoryNodeTable);
@@ -314,8 +377,8 @@ export async function seedTaxonomy(): Promise<{
     }
   };
 
-  for (let ci = 0; ci < SEED_TAXONOMY.length; ci++) {
-    const cat = SEED_TAXONOMY[ci]!;
+  for (let ci = 0; ci < tree.length; ci++) {
+    const cat = tree[ci]!;
     let catId = slugToId.get(cat.slug);
     if (!catId) {
       const [row] = await db
@@ -384,5 +447,5 @@ export async function seedTaxonomy(): Promise<{
   // bump updated_at on the table even if no inserts (for the `/version` poll)
   await db.execute(sql`SELECT 1`);
 
-  return { insertedCategories, insertedSubcategories, insertedTypes, updatedNodes };
+  return { insertedCategories, insertedSubcategories, insertedTypes, updatedNodes, source };
 }
