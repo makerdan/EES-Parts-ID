@@ -18,6 +18,11 @@ import pg from "pg";
 
 const { Pool } = pg;
 
+/**
+ * Canonical junk values — must stay in sync with JUNK_KEYWORD_PATTERNS in
+ * artifacts/api-server/src/utils/generateKeywords.ts which filters these at
+ * generation time. If you add a value here, add it there too (and vice-versa).
+ */
 const JUNK_VALUES = [
   "n/a", "na", "n.a.", "n.a", "null", "none", "nil",
   "undefined", "unknown", "-", "--", "---", "true", "false",
@@ -45,7 +50,7 @@ async function main() {
       SET
         ai_keywords = COALESCE(
           (
-            SELECT array_agg(kw ORDER BY kw)
+            SELECT array_agg(kw)
             FROM unnest(ai_keywords) AS kw
             WHERE NOT ${IS_JUNK}
           ),
