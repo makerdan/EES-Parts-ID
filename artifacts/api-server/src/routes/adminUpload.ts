@@ -11,7 +11,14 @@
  * Required columns (case-insensitive):
  *   Vendor, Catalog     — required
  *   Description         — optional
- *   BinLocation         — optional
+ *   BinLocation / Bin   — optional; one cell may contain several bins
+ *                         separated by `,` `;` `/` or newlines
+ *
+ * Multi-bin behavior:
+ *   - Bins from a single cell are split on `,` `;` `/` `\n`.
+ *   - Multiple rows for the same (vendor, catalog) accumulate their bins.
+ *   - On upsert, new bins are MERGED ADDITIVELY into the part's existing list
+ *     (case-insensitive de-dupe). Re-uploading a sheet never removes a bin.
  *
  * Response:
  *   200 { inserted: number, updated: number, total: number }
@@ -23,6 +30,7 @@ import { Router } from "express";
 import { and, sql } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
+import { aggregateRowsByPart, mergeBins, type AggregatedRow } from "../utils/binLocations";
 
 const router = Router();
 
@@ -47,51 +55,82 @@ function requireAdminAuth(
 }
 
 // ── CSV parser ────────────────────────────────────────────────────────────────
+//
+// Tokenises a full CSV document into records, respecting quoted fields that
+// span multiple physical lines. This matters for the multi-bin feature: a
+// single bin cell may be quoted and contain newlines as bin separators, e.g.
+//
+//   VendorX,CAT-123,"A-1\nB-2\nC-3"
+//
+// The earlier line-by-line implementation split on `\r?\n` first and would
+// silently drop everything after the first newline inside a quoted cell.
 
-/** Split a single CSV line into fields, respecting double-quoted fields. */
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = "";
+/**
+ * Split a CSV document into records. Each record is an array of field strings.
+ * Honours RFC-4180 quoting rules: `""` is an escaped quote, and a quoted field
+ * may contain commas, `\r`, and `\n` literally.
+ */
+function parseCsvRecords(text: string): string[][] {
+  const records: string[][] = [];
+  let current: string[] = [];
+  let field = "";
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
+  const pushField = () => { current.push(field.trim()); field = ""; };
+  const pushRecord = () => {
+    pushField();
+    // Skip blank lines (record with a single empty field).
+    const isBlank = current.length === 1 && current[0] === "";
+    if (!isBlank) records.push(current);
+    current = [];
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
     if (inQuotes) {
       if (ch === '"') {
-        if (line[i + 1] === '"') { current += '"'; i++; } // escaped ""
+        if (text[i + 1] === '"') { field += '"'; i++; } // escaped ""
         else inQuotes = false;
       } else {
-        current += ch;
+        field += ch; // newlines/commas literal inside quotes
       }
     } else if (ch === '"') {
       inQuotes = true;
     } else if (ch === ",") {
-      fields.push(current.trim());
-      current = "";
+      pushField();
+    } else if (ch === "\r") {
+      // swallow; the \n that usually follows triggers the record boundary
+    } else if (ch === "\n") {
+      pushRecord();
     } else {
-      current += ch;
+      field += ch;
     }
   }
-  fields.push(current.trim());
-  return fields;
-}
-
-interface ParsedRow {
-  vendor: string;
-  catalog: string;
-  description: string;
-  binLocation: string;
+  // Trailing record without a final newline.
+  if (field.length > 0 || current.length > 0) pushRecord();
+  return records;
 }
 
 /**
- * Parse a raw CSV string into structured inventory rows.
- * Returns null if the CSV is malformed (no header, or missing required columns).
+ * Raw row as it appears in the CSV — bin cell is kept un-split here and
+ * deferred to `aggregateRowsByPart` so two rows for the same part also merge.
  */
-function parseCsv(csvText: string): ParsedRow[] | null {
-  const lines = csvText.split(/\r?\n/).filter(l => l.trim().length > 0);
-  if (lines.length < 2) return null; // header-only or empty
+interface RawCsvRow {
+  vendor: string;
+  catalog: string;
+  description: string;
+  binCell: string;
+}
 
-  const header = parseCsvLine(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, ""));
+/**
+ * Parse a raw CSV string into structured inventory rows. Returns `null` if
+ * the CSV is malformed (no header, or missing required columns).
+ */
+function parseCsv(csvText: string): RawCsvRow[] | null {
+  const records = parseCsvRecords(csvText);
+  if (records.length < 2) return null; // header-only or empty
+
+  const header = records[0]!.map(h => h.toLowerCase().replace(/\s+/g, ""));
   const vendorIdx = header.findIndex(h => h === "vendor");
   const catalogIdx = header.findIndex(h => h === "catalog" || h === "catalog#" || h === "catalognumber");
   if (vendorIdx === -1 || catalogIdx === -1) return null;
@@ -99,9 +138,9 @@ function parseCsv(csvText: string): ParsedRow[] | null {
   const descIdx = header.findIndex(h => h === "description");
   const binIdx = header.findIndex(h => h === "binlocation" || h === "bin" || h === "binnumber");
 
-  const rows: ParsedRow[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const fields = parseCsvLine(lines[i]);
+  const rows: RawCsvRow[] = [];
+  for (let i = 1; i < records.length; i++) {
+    const fields = records[i]!;
     const vendor = fields[vendorIdx]?.trim() ?? "";
     const catalog = fields[catalogIdx]?.trim() ?? "";
     if (!vendor || !catalog) continue; // skip blank/invalid rows
@@ -109,7 +148,10 @@ function parseCsv(csvText: string): ParsedRow[] | null {
       vendor,
       catalog,
       description: (descIdx >= 0 ? fields[descIdx]?.trim() : "") ?? "",
-      binLocation: (binIdx >= 0 ? fields[binIdx]?.trim() : "") ?? "",
+      // Keep the raw bin cell verbatim — splitting on `,` `;` `/` `\n` is
+      // performed by aggregateRowsByPart so that newline separators inside
+      // a quoted multi-line cell survive parsing.
+      binCell: (binIdx >= 0 ? fields[binIdx] : "") ?? "",
     });
   }
   return rows;
@@ -124,20 +166,24 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
       return void res.status(400).json({ error: "Missing or empty csv field" });
     }
 
-    const rows = parseCsv(csv);
-    if (!rows) {
+    const rawRows = parseCsv(csv);
+    if (!rawRows) {
       return void res.status(400).json({
         error: "Malformed CSV: must have a header row with at least Vendor and Catalog columns",
       });
     }
-    if (rows.length === 0) {
+    if (rawRows.length === 0) {
       return void res.status(400).json({ error: "CSV contains no valid data rows" });
     }
+
+    // Collapse repeated (vendor, catalog) rows and split bin cells on
+    // separators so a part listed twice (or once with several bins) merges.
+    const aggregated: AggregatedRow[] = aggregateRowsByPart(rawRows);
 
     let inserted = 0;
     let updated = 0;
 
-    for (const row of rows) {
+    for (const row of aggregated) {
       const existing = await db
         .select()
         .from(inventoryTable)
@@ -154,7 +200,7 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
           .update(inventoryTable)
           .set({
             description: row.description || (existing[0]?.description ?? ""),
-            binLocation: row.binLocation || (existing[0]?.binLocation ?? ""),
+            binLocations: mergeBins(existing[0]!.binLocations, row.binLocations),
             updatedAt: new Date(),
           })
           .where(sql`${inventoryTable.id} = ${existing[0]!.id}`);
@@ -164,14 +210,14 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
           vendor: row.vendor.toUpperCase(),
           catalog: row.catalog,
           description: row.description,
-          binLocation: row.binLocation,
+          binLocations: row.binLocations,
           aiKeywords: [],
         });
         inserted++;
       }
     }
 
-    res.json({ inserted, updated, total: rows.length });
+    res.json({ inserted, updated, total: aggregated.length });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Upload failed" });

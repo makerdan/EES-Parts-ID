@@ -47,12 +47,15 @@ function VariantChip({
   item: InventoryItem;
   colors: ReturnType<typeof useColors>;
 }) {
+  // Variant chips stay tight — collapse the (usually short) bin list onto
+  // a single comma-separated line. Empty list → no bin row.
+  const bins = item.binLocations ?? [];
   return (
     <View style={[varStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
       <Text style={[varStyles.catalog, { color: colors.primary }]}>{item.catalog}</Text>
-      {item.binLocation ? (
-        <Text style={[varStyles.bin, { color: colors.mutedForeground }]}>
-          {item.binLocation}
+      {bins.length > 0 ? (
+        <Text style={[varStyles.bin, { color: colors.mutedForeground }]} numberOfLines={1}>
+          {bins.join(", ")}
         </Text>
       ) : null}
     </View>
@@ -120,13 +123,23 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: Re
           {item.description || "No description"}
         </Text>
 
-        {/* Bin location */}
-        {item.binLocation ? (
+        {/* Bin location(s)
+            ─────────────────
+            • Collapsed view: comma-separated on one line (tight, scannable).
+            • Expanded view: one bin per line (easy to read on a phone).
+            • Empty list: row hidden entirely so single-bin parts look identical
+              to before the multi-bin migration. */}
+        {(item.binLocations ?? []).length > 0 ? (
           <View style={[cardStyles.binRow, { backgroundColor: colors.accent }]}>
             <Text style={[cardStyles.binIcon, { color: colors.accentForeground }]}>📍</Text>
-            <Text style={[cardStyles.binText, { color: colors.accentForeground }]}>
-              Bin: {item.binLocation}
-            </Text>
+            <View style={cardStyles.binTextWrap}>
+              <Text style={[cardStyles.binText, { color: colors.accentForeground }]}>
+                {(item.binLocations ?? []).length === 1 ? "Bin: " : "Bins: "}
+                {expanded
+                  ? (item.binLocations ?? []).join("\n      ")
+                  : (item.binLocations ?? []).join(", ")}
+              </Text>
+            </View>
           </View>
         ) : null}
 
@@ -263,7 +276,8 @@ const cardStyles = StyleSheet.create({
     gap: 6,
   },
   binIcon: { fontSize: 14 },
-  binText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  binTextWrap: { flex: 1 },
+  binText: { fontSize: 13, fontFamily: "Inter_600SemiBold", flexShrink: 1 },
   reason: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 4 },
   section: { marginTop: 12 },
   sectionTitle: {

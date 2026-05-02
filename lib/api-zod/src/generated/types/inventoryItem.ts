@@ -11,7 +11,8 @@ export interface InventoryItem {
   vendor: string;
   catalog: string;
   description: string;
-  binLocation: string;
+  /** Every bin this part is currently stocked in. Empty array means no bin assigned. */
+  binLocations: string[];
   aiKeywords: string[];
   enrichedAt?: Date | null;
   createdAt: Date;

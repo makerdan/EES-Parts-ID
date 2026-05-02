@@ -14,7 +14,8 @@ export interface InventoryItem {
   vendor: string;
   catalog: string;
   description: string;
-  binLocation: string;
+  /** Every bin this part is currently stocked in. Empty array means no bin assigned. */
+  binLocations: string[];
   aiKeywords: string[];
   enrichedAt?: string | null;
   createdAt: string;
@@ -104,7 +105,8 @@ export type UpsertInventoryBodyItemsItem = {
   vendor: string;
   catalog: string;
   description?: string;
-  binLocation?: string;
+  /** Bins to merge into the part's bin list (additive — existing bins are preserved). */
+  binLocations?: string[];
 };
 
 export interface UpsertInventoryBody {

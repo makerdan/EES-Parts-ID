@@ -6,15 +6,15 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ── Core inventory table ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "inventory" (
-  "id"           serial PRIMARY KEY,
-  "vendor"       text NOT NULL,
-  "catalog"      text NOT NULL,
-  "description"  text NOT NULL DEFAULT '',
-  "bin_location" text NOT NULL DEFAULT '',
-  "ai_keywords"  text[] NOT NULL DEFAULT ARRAY[]::text[],
-  "enriched_at"  timestamp,
-  "created_at"   timestamp DEFAULT now() NOT NULL,
-  "updated_at"   timestamp DEFAULT now() NOT NULL
+  "id"            serial PRIMARY KEY,
+  "vendor"        text NOT NULL,
+  "catalog"       text NOT NULL,
+  "description"   text NOT NULL DEFAULT '',
+  "bin_locations" text[] NOT NULL DEFAULT ARRAY[]::text[],
+  "ai_keywords"   text[] NOT NULL DEFAULT ARRAY[]::text[],
+  "enriched_at"   timestamp,
+  "created_at"    timestamp DEFAULT now() NOT NULL,
+  "updated_at"    timestamp DEFAULT now() NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS "inventory_vendor_catalog_idx"

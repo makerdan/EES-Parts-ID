@@ -26,12 +26,70 @@ const API_BASE =
     : "";
 
 
+// A single part as the upload UI sees it. `binLocations` is always an array;
+// when there's only one bin the array has one entry, when the part appears in
+// multiple bins (either two rows of the spreadsheet or one cell with several
+// bins separated by `,` `;` `/` `\n`) the array carries every bin.
 type ParsedRow = {
   vendor: string;
   catalog: string;
   description: string;
-  binLocation: string;
+  binLocations: string[];
 };
+
+// Bin-cell separators — must match BIN_CELL_SEPARATORS in the server's
+// utils/binLocations.ts. Keep in sync.
+const BIN_CELL_SEPARATORS = /[,;/\n\r]+/;
+
+function splitBinCell(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(BIN_CELL_SEPARATORS)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+}
+
+function dedupeBinsCI(bins: readonly string[]): string[] {
+  const seen = new Map<string, string>();
+  for (const b of bins) {
+    const t = b.trim();
+    if (!t) continue;
+    const key = t.toUpperCase();
+    if (!seen.has(key)) seen.set(key, t);
+  }
+  return Array.from(seen.values());
+}
+
+/**
+ * Collapse two-rows-for-the-same-part into one. The first non-empty
+ * description wins; bins from every row are appended and case-insensitively
+ * de-duplicated. Vendor is upper-cased to match the unique-index semantics
+ * on the server (UPPER(vendor), catalog).
+ */
+function aggregateRows(rows: readonly ParsedRow[]): ParsedRow[] {
+  const byKey = new Map<string, ParsedRow>();
+  for (const row of rows) {
+    const vendor = row.vendor.trim().toUpperCase();
+    const catalog = row.catalog.trim();
+    if (!vendor || !catalog) continue;
+    const key = `${vendor}|${catalog}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.binLocations = dedupeBinsCI([...existing.binLocations, ...row.binLocations]);
+      if (!existing.description && row.description) {
+        existing.description = row.description.trim();
+      }
+    } else {
+      byKey.set(key, {
+        vendor,
+        catalog,
+        description: row.description.trim(),
+        binLocations: dedupeBinsCI(row.binLocations),
+      });
+    }
+  }
+  return Array.from(byKey.values());
+}
 
 type EnrichProgress = {
   progress: number;
@@ -81,50 +139,83 @@ function findCol(headers: string[], aliases: string[]): number {
 }
 
 // ── Parse CSV text ─────────────────────────────────────────────────────────
+//
+// Records are tokenised with full RFC-4180 quote handling so that a quoted
+// bin cell like "A-1\nB-2" survives parsing — splitting on bare `\r?\n`
+// before quotes are honoured would silently drop bins after the first newline.
 function parseCSV(text: string): ParsedRow[] {
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return [];
+  const records = parseCSVRecords(text);
+  if (records.length < 2) return [];
 
-  const headers = lines[0]!.split(",").map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
+  const headers = records[0]!.map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
   const vendorCol = findCol(headers, VENDOR_ALIASES);
   const catalogCol = findCol(headers, CATALOG_ALIASES);
   const descCol = findCol(headers, DESC_ALIASES);
   const binCol = findCol(headers, BIN_ALIASES);
 
   const rows: ParsedRow[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = splitCSVLine(lines[i]!);
+  for (let i = 1; i < records.length; i++) {
+    const cells = records[i]!;
     const vendor = vendorCol >= 0 ? cells[vendorCol]?.trim() ?? "" : "";
     const catalog = catalogCol >= 0 ? cells[catalogCol]?.trim() ?? "" : "";
     if (!vendor && !catalog) continue;
+    // Don't trim the bin cell here — splitBinCell trims each token after
+    // splitting so embedded newline separators are preserved.
+    const binCell = binCol >= 0 ? cells[binCol] ?? "" : "";
     rows.push({
       vendor: vendor || "UNKNOWN",
       catalog: catalog || "UNKNOWN",
       description: descCol >= 0 ? cells[descCol]?.trim() ?? "" : "",
-      binLocation: binCol >= 0 ? cells[binCol]?.trim() ?? "" : "",
+      binLocations: splitBinCell(binCell),
     });
   }
-  return rows;
+  // Collapse duplicate (vendor, catalog) rows so two rows for the same part
+  // merge their bins instead of the second one losing.
+  return aggregateRows(rows);
 }
 
-function splitCSVLine(line: string): string[] {
-  const cells: string[] = [];
-  let current = "";
+/**
+ * Tokenise a full CSV document into records. Honours RFC-4180 quoting rules:
+ * `""` is an escaped quote, and a quoted field may contain commas, `\r`, and
+ * `\n` literally. Blank lines are skipped.
+ */
+function parseCSVRecords(text: string): string[][] {
+  const records: string[][] = [];
+  let current: string[] = [];
+  let field = "";
   let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-      else inQuotes = !inQuotes;
-    } else if (ch === "," && !inQuotes) {
-      cells.push(current);
-      current = "";
+
+  const pushField = () => { current.push(field); field = ""; };
+  const pushRecord = () => {
+    pushField();
+    const isBlank = current.length === 1 && current[0]!.trim() === "";
+    if (!isBlank) records.push(current);
+    current = [];
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      pushField();
+    } else if (ch === "\r") {
+      // swallow; the following \n triggers the record boundary
+    } else if (ch === "\n") {
+      pushRecord();
     } else {
-      current += ch;
+      field += ch;
     }
   }
-  cells.push(current);
-  return cells.map(c => c.replace(/^"|"$/g, ""));
+  if (field.length > 0 || current.length > 0) pushRecord();
+  return records;
 }
 
 // ── Parse xlsx/xls/ods via SheetJS ────────────────────────────────────────
@@ -170,14 +261,17 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
     const vendor = vendorCol >= 0 ? cells[vendorCol] ?? "" : "";
     const catalog = catalogCol >= 0 ? cells[catalogCol] ?? "" : "";
     if (!vendor && !catalog) continue;
+    const binCell = binCol >= 0 ? cells[binCol] ?? "" : "";
     rows.push({
       vendor: vendor || "UNKNOWN",
       catalog: catalog || "UNKNOWN",
       description: descCol >= 0 ? cells[descCol] ?? "" : "",
-      binLocation: binCol >= 0 ? cells[binCol] ?? "" : "",
+      binLocations: splitBinCell(binCell),
     });
   }
-  return rows;
+  // Collapse duplicate (vendor, catalog) rows so two rows for the same part
+  // merge their bins instead of the second one losing.
+  return aggregateRows(rows);
 }
 
 // ── Inventory row component ───────────────────────────────────────────────
@@ -195,8 +289,13 @@ function InventoryRow({ item, colors }: { item: InventoryItem; colors: ReturnTyp
         ) : null}
       </View>
       <View style={rowStyles.right}>
-        {item.binLocation ? (
-          <Text style={[rowStyles.bin, { color: colors.primary }]}>{item.binLocation}</Text>
+        {(item.binLocations ?? []).length > 0 ? (
+          <Text
+            style={[rowStyles.bin, { color: colors.primary }]}
+            numberOfLines={2}
+          >
+            {(item.binLocations ?? []).join(", ")}
+          </Text>
         ) : null}
         <View style={[rowStyles.enrichBadge, { backgroundColor: isEnriched ? colors.success + "22" : colors.muted }]}>
           <Text style={[rowStyles.enrichText, { color: isEnriched ? colors.success : colors.mutedForeground }]}>
@@ -222,7 +321,7 @@ const rowStyles = StyleSheet.create({
   catalog: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   vendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 },
   desc: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  bin: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  bin: { fontSize: 12, fontFamily: "Inter_600SemiBold", textAlign: "right", maxWidth: 120 },
   enrichBadge: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4 },
   enrichText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
 });
@@ -822,7 +921,7 @@ export default function UploadScreen() {
                         {row.description}
                       </Text>
                       <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
-                        {row.binLocation}
+                        {row.binLocations.join(", ")}
                       </Text>
                     </View>
                   ))}

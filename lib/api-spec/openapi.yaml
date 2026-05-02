@@ -227,8 +227,11 @@ components:
           type: string
         description:
           type: string
-        binLocation:
-          type: string
+        binLocations:
+          type: array
+          items:
+            type: string
+          description: "Every bin this part is currently stocked in. Empty array means no bin assigned."
         aiKeywords:
           type: array
           items:
@@ -248,7 +251,7 @@ components:
         - vendor
         - catalog
         - description
-        - binLocation
+        - binLocations
         - aiKeywords
         - createdAt
         - updatedAt
@@ -407,8 +410,11 @@ components:
                 type: string
               description:
                 type: string
-              binLocation:
-                type: string
+              binLocations:
+                type: array
+                items:
+                  type: string
+                description: "Bins to merge into the part's bin list (additive — existing bins are preserved)."
             required:
               - vendor
               - catalog
