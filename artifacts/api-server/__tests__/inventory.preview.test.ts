@@ -158,6 +158,28 @@ describe("POST /api/inventory/preview-upsert", () => {
     expect(res.body.changedCount).toBe(1);
   });
 
+  it("dedupes case-variant duplicate keys in preview (totalIncoming reflects logical rows)", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/preview-upsert")
+      .set(auth())
+      .send({
+        items: [
+          // Three rows that all collapse to the same logical key as CAT_EXISTING_BIN
+          { vendor: "EATON", catalog: CAT_EXISTING_BIN, description: "", binLocations: ["A-77"] },
+          { vendor: "eaton", catalog: CAT_EXISTING_BIN.toLowerCase(), description: "", binLocations: ["A-99"] },
+          { vendor: "Eaton", catalog: CAT_EXISTING_BIN, description: "Updated desc", binLocations: [] },
+        ],
+      })
+      .expect(200);
+
+    expect(res.body.totalIncoming).toBe(1);
+    expect(res.body.changedCount).toBe(1);
+    expect(res.body.changes).toHaveLength(1);
+    const row = res.body.changes[0];
+    expect(row.proposedBinLocations.sort()).toEqual(["A-01", "A-77", "A-99"].sort());
+    expect(row.proposedDescription).toBe("Updated desc");
+  });
+
   it("returns 400 on empty items", async () => {
     await supertest(app)
       .post("/api/inventory/preview-upsert")
