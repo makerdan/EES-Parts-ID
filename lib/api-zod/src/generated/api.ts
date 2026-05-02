@@ -501,6 +501,179 @@ export const AskReferenceBody = zod.object({
 });
 
 /**
+ * @summary Get the full three-level taxonomy with item counts
+ */
+export const GetCategoryTreeResponse = zod.object({
+  tree: zod.array(
+    zod.object({
+      id: zod.number(),
+      slug: zod.string(),
+      name: zod.string(),
+      level: zod.string().describe("category | subcategory | type"),
+      sortOrder: zod.number(),
+      itemCount: zod
+        .number()
+        .describe(
+          "Total inventory items assigned at this node OR any descendant.",
+        ),
+      children: zod.array(zod.unknown()),
+    }),
+  ),
+});
+
+/**
+ * @summary Classification coverage stats (total / classified / by source)
+ */
+export const GetCategoryCoverageResponse = zod.object({
+  total: zod.number(),
+  classified: zod.number(),
+  uncategorized: zod.number(),
+  bySource: zod
+    .record(zod.string(), zod.number())
+    .describe(
+      "Count of distinct items classified by each method (rule\/ai\/manual).",
+    ),
+});
+
+/**
+ * @summary List inventory items not yet placed in any category
+ */
+export const listUncategorizedItemsQueryPageDefault = 1;
+export const listUncategorizedItemsQueryLimitDefault = 50;
+
+export const ListUncategorizedItemsQueryParams = zod.object({
+  page: zod.coerce.number().default(listUncategorizedItemsQueryPageDefault),
+  limit: zod.coerce.number().default(listUncategorizedItemsQueryLimitDefault),
+});
+
+export const ListUncategorizedItemsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.number(),
+      vendor: zod.string(),
+      catalog: zod.string(),
+      description: zod.string(),
+      binLocations: zod
+        .array(zod.string())
+        .describe(
+          "Every bin this part is currently stocked in. Empty array means no bin assigned.",
+        ),
+      aiKeywords: zod.array(zod.string()),
+      enrichedAt: zod.coerce.date().nullish(),
+      vendorFullName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+        ),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+});
+
+/**
+ * Items assigned to the node identified by `slug` OR to any of its
+descendants are returned. This way `/categories/breakers/items`
+returns every breaker (across subcategories), while
+`/categories/breaker-gfci/items` returns only the GFCI leaf.
+
+ * @summary List inventory items under a category, subcategory, or type
+ */
+export const ListCategoryItemsParams = zod.object({
+  slug: zod.coerce.string(),
+});
+
+export const listCategoryItemsQueryPageDefault = 1;
+export const listCategoryItemsQueryLimitDefault = 50;
+
+export const ListCategoryItemsQueryParams = zod.object({
+  page: zod.coerce.number().default(listCategoryItemsQueryPageDefault),
+  limit: zod.coerce.number().default(listCategoryItemsQueryLimitDefault),
+});
+
+export const ListCategoryItemsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.number(),
+      vendor: zod.string(),
+      catalog: zod.string(),
+      description: zod.string(),
+      binLocations: zod
+        .array(zod.string())
+        .describe(
+          "Every bin this part is currently stocked in. Empty array means no bin assigned.",
+        ),
+      aiKeywords: zod.array(zod.string()),
+      enrichedAt: zod.coerce.date().nullish(),
+      vendorFullName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+        ),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+  node: zod.object({
+    slug: zod.string(),
+    name: zod.string(),
+    level: zod.string(),
+  }),
+});
+
+/**
+ * @summary Run the rule-based classifier across inventory (SSE streaming)
+ */
+export const classifyInventoryBodyOnlyUnclassifiedDefault = true;
+export const classifyInventoryBodyUseAiDefault = false;
+
+export const ClassifyInventoryBody = zod.object({
+  ids: zod
+    .array(zod.number())
+    .optional()
+    .describe(
+      "Specific inventory ids to classify. If omitted, all items are considered.",
+    ),
+  onlyUnclassified: zod
+    .boolean()
+    .default(classifyInventoryBodyOnlyUnclassifiedDefault)
+    .describe(
+      "When true (default), skip items that already have an assignment.",
+    ),
+  useAi: zod
+    .boolean()
+    .default(classifyInventoryBodyUseAiDefault)
+    .describe(
+      "When true, fall back to AI for items the rule classifier could not place. Disabled by default to avoid surprise OpenAI charges.",
+    ),
+});
+
+/**
+ * @summary Manually assign one inventory item to a taxonomy node
+ */
+export const AssignInventoryToCategoryParams = zod.object({
+  nodeId: zod.coerce.number(),
+});
+
+export const AssignInventoryToCategoryBody = zod.object({
+  inventoryId: zod.number(),
+});
+
+export const AssignInventoryToCategoryResponse = zod.object({
+  ok: zod.boolean(),
+  inventoryId: zod.number(),
+  nodeId: zod.number(),
+});
+
+/**
  * @deprecated
  * @summary [Deprecated] Use /reference/ask instead
  */

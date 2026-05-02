@@ -26,6 +26,7 @@ import {
 } from "@/components/ResultRefinementBar";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
+import BrowseTaxonomy, { type CategoryTreeNode } from "@/components/BrowseTaxonomy";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
@@ -33,6 +34,9 @@ import { secondaryBtnBase } from "@/styles/shared";
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v3";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v2";
 const INVENTORY_VERSION_KEY = "parts_id_inventory_version";
+const BROWSE_MODE_KEY = "parts_id_browse_mode_v1";
+
+type Mode = "search" | "browse";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // Old cache keys that should be cleaned up on first load
@@ -174,6 +178,53 @@ export default function SearchScreen() {
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
   const [cacheAge, setCacheAge] = useState<string | null>(null);
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
+  // ── Search vs Browse mode ─────────────────────────────────────────────────
+  const [mode, setMode] = useState<Mode>("search");
+  const [browseResults, setBrowseResults] = useState<SearchResult[] | null>(null);
+  const [browseSelectedNode, setBrowseSelectedNode] = useState<CategoryTreeNode | null>(null);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  // Restore last-used mode from AsyncStorage
+  useEffect(() => {
+    AsyncStorage.getItem(BROWSE_MODE_KEY).then(raw => {
+      if (raw === "browse" || raw === "search") setMode(raw);
+    }).catch(() => undefined);
+  }, []);
+  const switchMode = useCallback((next: Mode) => {
+    setMode(next);
+    AsyncStorage.setItem(BROWSE_MODE_KEY, next).catch(() => undefined);
+  }, []);
+  // When the user picks a node in Browse mode, fetch its items and surface
+  // them through the same FlatList the search results use. Drilling further
+  // (selecting a non-leaf) clears the displayed items so the user only sees
+  // results once they reach a focused enough node.
+  const handleBrowseNodeChange = useCallback((node: CategoryTreeNode | null) => {
+    setBrowseSelectedNode(node);
+    if (!node) {
+      setBrowseResults(null);
+      return;
+    }
+    setBrowseLoading(true);
+    setBrowseError(null);
+    fetch(`${API_BASE}/categories/${encodeURIComponent(node.slug)}/items?limit=200`)
+      .then(async r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json() as Promise<{ items: InventoryItem[] }>;
+      })
+      .then(data => {
+        // Wrap raw inventory items as SearchResult so the existing ResultCard renders them.
+        const wrapped: SearchResult[] = data.items.map(item => ({
+          item,
+          confidence: 1,
+          matchReason: `In ${node.name}`,
+          seriesLabel: undefined,
+          variants: [],
+        }));
+        setBrowseResults(wrapped);
+      })
+      .catch(err => setBrowseError(String(err)))
+      .finally(() => setBrowseLoading(false));
+  }, []);
   // ── Drill-down refinement on already-returned results ──────────────────────
   // `searchChipKeys` records which chip-filter dimensions were active on the
   // search request that produced the current `results`. When that list is
@@ -590,7 +641,10 @@ export default function SearchScreen() {
     });
   }, [buildFuseIndex]);
 
-  const rawResults: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
+  const rawResults: SearchResult[] =
+    mode === "browse"
+      ? browseResults ?? []
+      : offlineResults ?? (searchMutation.data?.results ?? []);
   // Merge in any local edits so the result card immediately reflects what was
   // just saved through the modal. Variants are patched the same way.
   const results: SearchResult[] = useMemo(() => {
@@ -606,7 +660,10 @@ export default function SearchScreen() {
     }));
   }, [rawResults, itemOverrides]);
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
-  const hasResults = searchMutation.isSuccess || offlineResults !== null;
+  const hasResults =
+    mode === "browse"
+      ? browseResults !== null
+      : searchMutation.isSuccess || offlineResults !== null;
   // Results actually shown in the list — `results` filtered by any active
   // drill-down chips. When refinement is empty this is just `results`.
   const visibleResults: SearchResult[] = useMemo(
@@ -947,19 +1004,72 @@ export default function SearchScreen() {
 
       </View>
 
-      {/* ── Advanced Filters — always visible, collapsible internally ── */}
+      {/* ── Search / Browse mode toggle ─────────────────────────────────── */}
+      <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
+        <Pressable
+          onPress={() => switchMode("search")}
+          style={[
+            styles.modeToggleBtn,
+            {
+              backgroundColor: mode === "search" ? colors.primary : colors.card,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <Text style={[styles.modeToggleText, { color: mode === "search" ? "#000" : colors.foreground }]}>
+            🔍 Search
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => switchMode("browse")}
+          style={[
+            styles.modeToggleBtn,
+            {
+              backgroundColor: mode === "browse" ? colors.primary : colors.card,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <Text style={[styles.modeToggleText, { color: mode === "browse" ? "#000" : colors.foreground }]}>
+            📂 Browse
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* ── Advanced Filters (Search mode) OR Browse panel (Browse mode) ── */}
       <ScrollView
         style={{ maxHeight: "50%" }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <FilterPanel
-            values={filters}
-            onChange={handleChange}
-            dimensionCounts={dimensionCounts}
-          />
-        </View>
+        {mode === "search" ? (
+          <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <FilterPanel
+              values={filters}
+              onChange={handleChange}
+              dimensionCounts={dimensionCounts}
+            />
+          </View>
+        ) : (
+          <View>
+            <BrowseTaxonomy onSelectNode={handleBrowseNodeChange} />
+            {browseLoading ? (
+              <Text style={[styles.refinementHint, { color: colors.mutedForeground }]}>
+                Loading items in {browseSelectedNode?.name ?? "category"}…
+              </Text>
+            ) : null}
+            {browseError ? (
+              <Text style={[styles.refinementHint, { color: colors.destructive }]}>
+                Couldn't load items: {browseError}
+              </Text>
+            ) : null}
+            {browseSelectedNode && !browseLoading && (browseResults?.length ?? 0) > 0 ? (
+              <Text style={[styles.refinementHint, { color: colors.mutedForeground }]}>
+                Showing items in {browseSelectedNode.name}.
+              </Text>
+            ) : null}
+          </View>
+        )}
       </ScrollView>
 
       <FlatList
@@ -1225,6 +1335,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
+  modeToggleRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingBottom: 6,
+  },
+  modeToggleBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  modeToggleText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   resultsHeader: {
     flexDirection: "row",
     alignItems: "center",

@@ -16,6 +16,8 @@ tags:
     description: Dictionary lookups
   - name: ai
     description: AI identification and reference
+  - name: categories
+    description: Three-level taxonomy browse and classification
 paths:
   /healthz:
     get:
@@ -243,6 +245,132 @@ paths:
           description: SSE stream of answer chunks
           content:
             text/event-stream: {}
+
+  /categories/tree:
+    get:
+      operationId: getCategoryTree
+      tags: [categories]
+      summary: Get the full three-level taxonomy with item counts
+      responses:
+        "200":
+          description: Nested taxonomy tree
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryTreeResponse"
+
+  /categories/coverage:
+    get:
+      operationId: getCategoryCoverage
+      tags: [categories]
+      summary: Classification coverage stats (total / classified / by source)
+      responses:
+        "200":
+          description: Coverage summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryCoverageResponse"
+
+  /categories/uncategorized:
+    get:
+      operationId: listUncategorizedItems
+      tags: [categories]
+      summary: List inventory items not yet placed in any category
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Paginated uncategorized items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryListResponse"
+
+  /categories/{slug}/items:
+    get:
+      operationId: listCategoryItems
+      tags: [categories]
+      summary: List inventory items under a category, subcategory, or type
+      description: |
+        Items assigned to the node identified by `slug` OR to any of its
+        descendants are returned. This way `/categories/breakers/items`
+        returns every breaker (across subcategories), while
+        `/categories/breaker-gfci/items` returns only the GFCI leaf.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Paginated items under the node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryItemsResponse"
+
+  /categories/classify:
+    post:
+      operationId: classifyInventory
+      tags: [categories]
+      summary: Run the rule-based classifier across inventory (SSE streaming)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClassifyInventoryBody"
+      responses:
+        "200":
+          description: SSE stream of classification progress
+          content:
+            text/event-stream: {}
+
+  /categories/{nodeId}/assign:
+    post:
+      operationId: assignInventoryToCategory
+      tags: [categories]
+      summary: Manually assign one inventory item to a taxonomy node
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignCategoryBody"
+      responses:
+        "200":
+          description: Assignment recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssignCategoryResponse"
 
   /ai/reference:
     post:
@@ -741,3 +869,135 @@ components:
           type: string
       required:
         - question
+
+    CategoryNode:
+      type: object
+      properties:
+        id:
+          type: integer
+        slug:
+          type: string
+        name:
+          type: string
+        level:
+          type: string
+          description: "category | subcategory | type"
+        sortOrder:
+          type: integer
+        itemCount:
+          type: integer
+          description: "Total inventory items assigned at this node OR any descendant."
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/CategoryNode"
+      required:
+        - id
+        - slug
+        - name
+        - level
+        - sortOrder
+        - itemCount
+        - children
+
+    CategoryTreeResponse:
+      type: object
+      properties:
+        tree:
+          type: array
+          items:
+            $ref: "#/components/schemas/CategoryNode"
+      required:
+        - tree
+
+    CategoryCoverageResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        classified:
+          type: integer
+        uncategorized:
+          type: integer
+        bySource:
+          type: object
+          additionalProperties:
+            type: integer
+          description: "Count of distinct items classified by each method (rule/ai/manual)."
+      required:
+        - total
+        - classified
+        - uncategorized
+        - bySource
+
+    CategoryItemsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryItem"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+        node:
+          type: object
+          properties:
+            slug:
+              type: string
+            name:
+              type: string
+            level:
+              type: string
+          required:
+            - slug
+            - name
+            - level
+      required:
+        - items
+        - total
+        - page
+        - limit
+        - node
+
+    ClassifyInventoryBody:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: integer
+          description: "Specific inventory ids to classify. If omitted, all items are considered."
+        onlyUnclassified:
+          type: boolean
+          default: true
+          description: "When true (default), skip items that already have an assignment."
+        useAi:
+          type: boolean
+          default: false
+          description: "When true, fall back to AI for items the rule classifier could not place. Disabled by default to avoid surprise OpenAI charges."
+
+    AssignCategoryBody:
+      type: object
+      properties:
+        inventoryId:
+          type: integer
+      required:
+        - inventoryId
+
+    AssignCategoryResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        inventoryId:
+          type: integer
+        nodeId:
+          type: integer
+      required:
+        - ok
+        - inventoryId
+        - nodeId

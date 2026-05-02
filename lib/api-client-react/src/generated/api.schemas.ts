@@ -251,6 +251,68 @@ export interface AiReferenceBody {
   question: string;
 }
 
+export interface CategoryNode {
+  id: number;
+  slug: string;
+  name: string;
+  /** category | subcategory | type */
+  level: string;
+  sortOrder: number;
+  /** Total inventory items assigned at this node OR any descendant. */
+  itemCount: number;
+  children: CategoryNode[];
+}
+
+export interface CategoryTreeResponse {
+  tree: CategoryNode[];
+}
+
+/**
+ * Count of distinct items classified by each method (rule/ai/manual).
+ */
+export type CategoryCoverageResponseBySource = { [key: string]: number };
+
+export interface CategoryCoverageResponse {
+  total: number;
+  classified: number;
+  uncategorized: number;
+  /** Count of distinct items classified by each method (rule/ai/manual). */
+  bySource: CategoryCoverageResponseBySource;
+}
+
+export type CategoryItemsResponseNode = {
+  slug: string;
+  name: string;
+  level: string;
+};
+
+export interface CategoryItemsResponse {
+  items: InventoryItem[];
+  total: number;
+  page: number;
+  limit: number;
+  node: CategoryItemsResponseNode;
+}
+
+export interface ClassifyInventoryBody {
+  /** Specific inventory ids to classify. If omitted, all items are considered. */
+  ids?: number[];
+  /** When true (default), skip items that already have an assignment. */
+  onlyUnclassified?: boolean;
+  /** When true, fall back to AI for items the rule classifier could not place. Disabled by default to avoid surprise OpenAI charges. */
+  useAi?: boolean;
+}
+
+export interface AssignCategoryBody {
+  inventoryId: number;
+}
+
+export interface AssignCategoryResponse {
+  ok: boolean;
+  inventoryId: number;
+  nodeId: number;
+}
+
 export type ListInventoryParams = {
   page?: number;
   limit?: number;
@@ -258,4 +320,14 @@ export type ListInventoryParams = {
 
 export type LookupDictionaryParams = {
   term: string;
+};
+
+export type ListUncategorizedItemsParams = {
+  page?: number;
+  limit?: number;
+};
+
+export type ListCategoryItemsParams = {
+  page?: number;
+  limit?: number;
 };

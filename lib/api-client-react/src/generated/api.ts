@@ -20,12 +20,20 @@ import type {
   AiIdentifyBody,
   AiIdentifyResponse,
   AiReferenceBody,
+  AssignCategoryBody,
+  AssignCategoryResponse,
+  CategoryCoverageResponse,
+  CategoryItemsResponse,
+  CategoryTreeResponse,
+  ClassifyInventoryBody,
   DictionaryLookupResponse,
   EnrichInventoryBody,
   HealthStatus,
   InventoryItem,
   InventoryListResponse,
+  ListCategoryItemsParams,
   ListInventoryParams,
+  ListUncategorizedItemsParams,
   LookupDictionaryParams,
   PreviewUpsertBody,
   PreviewUpsertResponse,
@@ -1017,6 +1025,560 @@ export const useAskReference = <
   TContext
 > => {
   return useMutation(getAskReferenceMutationOptions(options));
+};
+
+/**
+ * @summary Get the full three-level taxonomy with item counts
+ */
+export const getGetCategoryTreeUrl = () => {
+  return `/api/categories/tree`;
+};
+
+export const getCategoryTree = async (
+  options?: RequestInit,
+): Promise<CategoryTreeResponse> => {
+  return customFetch<CategoryTreeResponse>(getGetCategoryTreeUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCategoryTreeQueryKey = () => {
+  return [`/api/categories/tree`] as const;
+};
+
+export const getGetCategoryTreeQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCategoryTree>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCategoryTree>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetCategoryTreeQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getCategoryTree>>> = ({
+    signal,
+  }) => getCategoryTree({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCategoryTree>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCategoryTreeQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCategoryTree>>
+>;
+export type GetCategoryTreeQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the full three-level taxonomy with item counts
+ */
+
+export function useGetCategoryTree<
+  TData = Awaited<ReturnType<typeof getCategoryTree>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCategoryTree>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCategoryTreeQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Classification coverage stats (total / classified / by source)
+ */
+export const getGetCategoryCoverageUrl = () => {
+  return `/api/categories/coverage`;
+};
+
+export const getCategoryCoverage = async (
+  options?: RequestInit,
+): Promise<CategoryCoverageResponse> => {
+  return customFetch<CategoryCoverageResponse>(getGetCategoryCoverageUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetCategoryCoverageQueryKey = () => {
+  return [`/api/categories/coverage`] as const;
+};
+
+export const getGetCategoryCoverageQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCategoryCoverage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCategoryCoverage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetCategoryCoverageQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCategoryCoverage>>
+  > = ({ signal }) => getCategoryCoverage({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCategoryCoverage>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCategoryCoverageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCategoryCoverage>>
+>;
+export type GetCategoryCoverageQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Classification coverage stats (total / classified / by source)
+ */
+
+export function useGetCategoryCoverage<
+  TData = Awaited<ReturnType<typeof getCategoryCoverage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getCategoryCoverage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCategoryCoverageQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List inventory items not yet placed in any category
+ */
+export const getListUncategorizedItemsUrl = (
+  params?: ListUncategorizedItemsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/categories/uncategorized?${stringifiedParams}`
+    : `/api/categories/uncategorized`;
+};
+
+export const listUncategorizedItems = async (
+  params?: ListUncategorizedItemsParams,
+  options?: RequestInit,
+): Promise<InventoryListResponse> => {
+  return customFetch<InventoryListResponse>(
+    getListUncategorizedItemsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListUncategorizedItemsQueryKey = (
+  params?: ListUncategorizedItemsParams,
+) => {
+  return [
+    `/api/categories/uncategorized`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListUncategorizedItemsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listUncategorizedItems>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListUncategorizedItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listUncategorizedItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListUncategorizedItemsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listUncategorizedItems>>
+  > = ({ signal }) =>
+    listUncategorizedItems(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listUncategorizedItems>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListUncategorizedItemsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listUncategorizedItems>>
+>;
+export type ListUncategorizedItemsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List inventory items not yet placed in any category
+ */
+
+export function useListUncategorizedItems<
+  TData = Awaited<ReturnType<typeof listUncategorizedItems>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListUncategorizedItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listUncategorizedItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListUncategorizedItemsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Items assigned to the node identified by `slug` OR to any of its
+descendants are returned. This way `/categories/breakers/items`
+returns every breaker (across subcategories), while
+`/categories/breaker-gfci/items` returns only the GFCI leaf.
+
+ * @summary List inventory items under a category, subcategory, or type
+ */
+export const getListCategoryItemsUrl = (
+  slug: string,
+  params?: ListCategoryItemsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/categories/${slug}/items?${stringifiedParams}`
+    : `/api/categories/${slug}/items`;
+};
+
+export const listCategoryItems = async (
+  slug: string,
+  params?: ListCategoryItemsParams,
+  options?: RequestInit,
+): Promise<CategoryItemsResponse> => {
+  return customFetch<CategoryItemsResponse>(
+    getListCategoryItemsUrl(slug, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListCategoryItemsQueryKey = (
+  slug: string,
+  params?: ListCategoryItemsParams,
+) => {
+  return [
+    `/api/categories/${slug}/items`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListCategoryItemsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCategoryItems>>,
+  TError = ErrorType<unknown>,
+>(
+  slug: string,
+  params?: ListCategoryItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listCategoryItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListCategoryItemsQueryKey(slug, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listCategoryItems>>
+  > = ({ signal }) =>
+    listCategoryItems(slug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!slug,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listCategoryItems>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListCategoryItemsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCategoryItems>>
+>;
+export type ListCategoryItemsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List inventory items under a category, subcategory, or type
+ */
+
+export function useListCategoryItems<
+  TData = Awaited<ReturnType<typeof listCategoryItems>>,
+  TError = ErrorType<unknown>,
+>(
+  slug: string,
+  params?: ListCategoryItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listCategoryItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListCategoryItemsQueryOptions(slug, params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Run the rule-based classifier across inventory (SSE streaming)
+ */
+export const getClassifyInventoryUrl = () => {
+  return `/api/categories/classify`;
+};
+
+export const classifyInventory = async (
+  classifyInventoryBody: ClassifyInventoryBody,
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getClassifyInventoryUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(classifyInventoryBody),
+  });
+};
+
+export const getClassifyInventoryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof classifyInventory>>,
+    TError,
+    { data: BodyType<ClassifyInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof classifyInventory>>,
+  TError,
+  { data: BodyType<ClassifyInventoryBody> },
+  TContext
+> => {
+  const mutationKey = ["classifyInventory"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof classifyInventory>>,
+    { data: BodyType<ClassifyInventoryBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return classifyInventory(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClassifyInventoryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof classifyInventory>>
+>;
+export type ClassifyInventoryMutationBody = BodyType<ClassifyInventoryBody>;
+export type ClassifyInventoryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Run the rule-based classifier across inventory (SSE streaming)
+ */
+export const useClassifyInventory = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof classifyInventory>>,
+    TError,
+    { data: BodyType<ClassifyInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof classifyInventory>>,
+  TError,
+  { data: BodyType<ClassifyInventoryBody> },
+  TContext
+> => {
+  return useMutation(getClassifyInventoryMutationOptions(options));
+};
+
+/**
+ * @summary Manually assign one inventory item to a taxonomy node
+ */
+export const getAssignInventoryToCategoryUrl = (nodeId: number) => {
+  return `/api/categories/${nodeId}/assign`;
+};
+
+export const assignInventoryToCategory = async (
+  nodeId: number,
+  assignCategoryBody: AssignCategoryBody,
+  options?: RequestInit,
+): Promise<AssignCategoryResponse> => {
+  return customFetch<AssignCategoryResponse>(
+    getAssignInventoryToCategoryUrl(nodeId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(assignCategoryBody),
+    },
+  );
+};
+
+export const getAssignInventoryToCategoryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof assignInventoryToCategory>>,
+    TError,
+    { nodeId: number; data: BodyType<AssignCategoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof assignInventoryToCategory>>,
+  TError,
+  { nodeId: number; data: BodyType<AssignCategoryBody> },
+  TContext
+> => {
+  const mutationKey = ["assignInventoryToCategory"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof assignInventoryToCategory>>,
+    { nodeId: number; data: BodyType<AssignCategoryBody> }
+  > = (props) => {
+    const { nodeId, data } = props ?? {};
+
+    return assignInventoryToCategory(nodeId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AssignInventoryToCategoryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof assignInventoryToCategory>>
+>;
+export type AssignInventoryToCategoryMutationBody =
+  BodyType<AssignCategoryBody>;
+export type AssignInventoryToCategoryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Manually assign one inventory item to a taxonomy node
+ */
+export const useAssignInventoryToCategory = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof assignInventoryToCategory>>,
+    TError,
+    { nodeId: number; data: BodyType<AssignCategoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof assignInventoryToCategory>>,
+  TError,
+  { nodeId: number; data: BodyType<AssignCategoryBody> },
+  TContext
+> => {
+  return useMutation(getAssignInventoryToCategoryMutationOptions(options));
 };
 
 /**
