@@ -254,7 +254,7 @@ export default function PhotoScreen() {
                     <Pressable
                       onPress={() => pickImage("camera")}
                       disabled={isProcessing}
-                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
                     >
                       <Text style={styles.addImageEmoji}>📷</Text>
                       <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Camera</Text>
@@ -262,7 +262,7 @@ export default function PhotoScreen() {
                     <Pressable
                       onPress={() => pickImage("library")}
                       disabled={isProcessing}
-                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
                     >
                       <Text style={styles.addImageEmoji}>🖼️</Text>
                       <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
