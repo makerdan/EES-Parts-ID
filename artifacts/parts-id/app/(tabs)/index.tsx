@@ -163,6 +163,7 @@ export default function SearchScreen() {
   const fuseItemsRef = useRef<InventoryItem[]>([]);
   const [cachedCount, setCachedCount] = useState(0);
   const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
+  const [syncError, setSyncError] = useState(false);
   // Track latest filters in a ref so the onError closure always reads current values
   const filtersRef = useRef<FilterValues>(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -201,11 +202,15 @@ export default function SearchScreen() {
     let page = 1;
     let total = 0;
     const allItems: InventoryItem[] = [];
+    setSyncError(false);
     try {
       do {
         const res = await fetch(`${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`);
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
         const data: { items: InventoryItem[]; total: number } = await res.json();
+        // Guard: if the page returned zero items, the server total may be inconsistent —
+        // stop looping to prevent an infinite loop.
+        if (data.items.length === 0) break;
         total = data.total;
         allItems.push(...data.items);
         setSyncProgress({ loaded: allItems.length, total });
@@ -214,7 +219,7 @@ export default function SearchScreen() {
       buildFuseIndex(allItems);
       await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
     } catch {
-      // Silently fail — app still works online; retry on next launch
+      setSyncError(true);
     } finally {
       setSyncProgress(null);
     }
@@ -229,7 +234,15 @@ export default function SearchScreen() {
           syncAllInventory();
           return;
         }
-        const items: InventoryItem[] = JSON.parse(raw);
+        let items: InventoryItem[];
+        try {
+          items = JSON.parse(raw) as InventoryItem[];
+        } catch {
+          // Corrupt cache — clear it and re-sync
+          AsyncStorage.removeItem(FUSE_CACHE_KEY).catch(() => {});
+          syncAllInventory();
+          return;
+        }
         buildFuseIndex(items);
       })
       .catch(() => {
@@ -374,6 +387,15 @@ export default function SearchScreen() {
                   {`Syncing ${syncProgress.loaded} / ${syncProgress.total}`}
                 </Text>
               </View>
+            ) : syncError ? (
+              <Pressable
+                onPress={() => syncAllInventory()}
+                style={[styles.statusBadge, { backgroundColor: colors.destructive + "18" }]}
+              >
+                <Text style={[styles.statusBadgeText, { color: colors.destructive }]}>
+                  ⚠ Sync failed — tap to retry
+                </Text>
+              </Pressable>
             ) : cachedCount > 0 ? (
               <View style={[styles.statusBadge, { backgroundColor: colors.primary + "18" }]}>
                 <Text style={[styles.statusBadgeText, { color: colors.primary }]}>

@@ -318,6 +318,7 @@ export default function UploadScreen() {
 
       if (ext === "csv" || ext === "txt") {
         const response = await fetch(asset.uri);
+        if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
         const text = await response.text();
         rows = parseCSV(text);
         setFileType("csv");
@@ -327,6 +328,7 @@ export default function UploadScreen() {
       } else {
         try {
           const response = await fetch(asset.uri);
+          if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
           const text = await response.text();
           rows = parseCSV(text);
           setFileType("csv");
@@ -416,11 +418,17 @@ export default function UploadScreen() {
       const decoder = new TextDecoder();
 
       if (reader) {
+        // Buffer partial lines across chunk boundaries so we never try to parse
+        // an incomplete "data: ..." SSE line.
+        let sseBuffer = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          for (const line of chunk.split("\n")) {
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split("\n");
+          // Keep the last (possibly incomplete) line in the buffer
+          sseBuffer = lines.pop() ?? "";
+          for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
             try {
               const data: EnrichProgress = JSON.parse(line.slice(6));

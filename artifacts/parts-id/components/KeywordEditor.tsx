@@ -34,6 +34,8 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   const updateMutation = useUpdateItemKeywords();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestKeywordsRef = useRef<string[]>(keywords);
+  // Tracks whether a mutateAsync call is currently in flight to prevent concurrent saves
+  const isSavingRef = useRef(false);
   // Keep item in a ref so callbacks always see the latest value without stale closure issues
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
@@ -53,6 +55,9 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
       if (debounceRef.current) clearTimeout(debounceRef.current);
       setSaveStatus("idle");
       debounceRef.current = setTimeout(async () => {
+        debounceRef.current = null;
+        if (isSavingRef.current) return; // skip if a mutation is already in flight
+        isSavingRef.current = true;
         setSaveStatus("saving");
         try {
           await updateMutation.mutateAsync({ id: current.id, data: { keywords: kws } });
@@ -62,6 +67,8 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
           setTimeout(() => setSaveStatus("idle"), 1800);
         } catch {
           setSaveStatus("error");
+        } finally {
+          isSavingRef.current = false;
         }
       }, DEBOUNCE_MS);
     },
@@ -100,13 +107,23 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
     if (debounceRef.current && current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
-      updateMutation
-        .mutateAsync({ id: current.id, data: { keywords: latestKeywordsRef.current } })
-        .then(() => {
-          onKeywordsChanged?.(current.id, latestKeywordsRef.current);
-          queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-        })
-        .catch(() => {});
+      // Only fire a flush save if no mutation is already in flight (prevents concurrent saves)
+      if (!isSavingRef.current) {
+        isSavingRef.current = true;
+        updateMutation
+          .mutateAsync({ id: current.id, data: { keywords: latestKeywordsRef.current } })
+          .then(() => {
+            onKeywordsChanged?.(current.id, latestKeywordsRef.current);
+            queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+          })
+          .catch((err) => {
+            console.warn("KeywordEditor: background save on close failed:", err);
+          })
+          .finally(() => {
+            isSavingRef.current = false;
+          });
+      }
+      // else: mutation already in flight — it will complete on its own
     }
     onClose();
   };
