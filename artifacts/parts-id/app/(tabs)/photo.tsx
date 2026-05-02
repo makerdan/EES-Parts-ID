@@ -228,7 +228,7 @@ export default function PhotoScreen() {
               { label: "Size", value: size, key: "size", ph: "e.g. 20A, 3/4 inch..." },
             ].map(({ label, value, key, ph }) => (
               <View key={key} style={{ marginBottom: 10 }}>
-                <Text style={[styles.fieldLabel, { color: '#000' }]}>{label}</Text>
+                <Text style={[styles.fieldLabel, { color: '#000' }]}>{label}:</Text>
                 <TextInput
                   value={value}
                   onChangeText={(v) => {
