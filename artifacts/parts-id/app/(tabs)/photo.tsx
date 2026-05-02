@@ -208,7 +208,11 @@ export default function PhotoScreen() {
               <Text style={[styles.imageHint, { color: colors.mutedForeground }]}>
                 Add up to 4 photos of the part (front + label recommended)
               </Text>
-            ) : null}
+            ) : (
+              <Text style={[styles.photoCounter, { color: colors.mutedForeground }]}>
+                {images.length} / 4 photos
+              </Text>
+            )}
           </View>
 
           {/* Optional context */}
@@ -385,6 +389,7 @@ const styles = StyleSheet.create({
   addImageEmoji: { fontSize: 28 },
   addImageLabel: { fontSize: 12, fontFamily: "Inter_500Medium" },
   imageHint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic" },
+  photoCounter: { fontSize: 12, fontFamily: "Inter_500Medium" },
   contextCard: { borderRadius: 12, padding: 14, borderWidth: 1 },
   contextTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 12 },
   fieldLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 5 },
