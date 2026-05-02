@@ -146,7 +146,7 @@ function buildSearchBody(f: FilterValues) {
 
 export default function SearchScreen() {
   const colors = useColors();
-  const { logout, clearCache, settings, updateSetting, textFontScale } = useApp();
+  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
@@ -171,12 +171,22 @@ export default function SearchScreen() {
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchAbortedRef = useRef(false);
 
-  // Sync filters + text input whenever the persisted default threshold changes
+  // Keep the Settings modal text input in sync with the slider / persisted value.
+  // This runs on every settings change so the input always reflects what was saved.
   useEffect(() => {
-    setFilters(f => ({ ...f, confidenceThreshold: settings.defaultConfidenceThreshold }));
     setConfThresholdInput(String(settings.defaultConfidenceThreshold));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.defaultConfidenceThreshold]);
+
+  // Apply the persisted default to the ACTIVE search filters exactly once —
+  // when settings finish loading from AsyncStorage (settingsLoading: true→false).
+  // After that point, changes made in the Settings modal do NOT overwrite the
+  // threshold the worker has already chosen for the current search.
+  // handleClear() already applies the new default when starting a fresh search.
+  useEffect(() => {
+    if (settingsLoading) return;
+    setFilters(f => ({ ...f, confidenceThreshold: settings.defaultConfidenceThreshold }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsLoading]);
 
   const buildFuseIndex = useCallback((items: InventoryItem[]) => {
     fuseItemsRef.current = items;
@@ -544,7 +554,10 @@ export default function SearchScreen() {
             <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 4 }]}>
               <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Default min confidence</Text>
               <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                Pre-fills the confidence slider on each new search.
+                Pre-fills the confidence slider when you start a new search.
+              </Text>
+              <Text style={[styles.settingsRowHint, { color: colors.mutedForeground, fontStyle: "italic" }]}>
+                Changes here won't affect the search you're currently running.
               </Text>
               <ConfidenceSlider
                 value={settings.defaultConfidenceThreshold}
