@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -33,12 +33,22 @@ export default function PhotoScreen() {
   const [aiTerms, setAiTerms] = useState<string[]>([]);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  // Tracks which phase of the multi-step AI identification flow we are in.
+  type ProgressPhase = "uploading" | "analysing" | "searching" | null;
+  const [progressPhase, setProgressPhase] = useState<ProgressPhase>(null);
 
   const identifyMutation = useAiIdentifyPart();
   const searchMutation = useSearchInventory();
   // Incremented on every identify call so stale async responses from a previous
   // request are discarded (race condition guard).
   const requestIdRef = useRef(0);
+  // Timer used to advance "uploading" → "analysing" after a fixed delay.
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up the phase-advance timer if the component unmounts mid-call.
+  useEffect(() => () => {
+    if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
+  }, []);
 
   const pickImage = async (source: "camera" | "library") => {
     if (images.length >= 4) {
@@ -111,6 +121,12 @@ export default function PhotoScreen() {
     setAiSummary("");
     setAiTerms([]);
 
+    // Phase 1 — show "Uploading" immediately; advance to "Analysing" after 2 s,
+    // which is roughly when photo data has been sent and the AI is processing.
+    if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
+    setProgressPhase("uploading");
+    progressTimerRef.current = setTimeout(() => setProgressPhase("analysing"), 2000);
+
     try {
       const identifyResult = await identifyMutation.mutateAsync({
         data: {
@@ -122,6 +138,9 @@ export default function PhotoScreen() {
           textNumbers: textNumbers.trim() || undefined,
         },
       });
+
+      // Phase-advance timer is no longer needed once the AI responds.
+      if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
 
       // Discard response if a newer request has started
       if (requestIdRef.current !== thisRequestId) return;
@@ -136,6 +155,9 @@ export default function PhotoScreen() {
       ].join(" ");
 
       if (allTerms.trim()) {
+        // Phase 3 — AI done, now querying inventory.
+        setProgressPhase("searching");
+
         const searchResult = await searchMutation.mutateAsync({
           data: {
             keywords: allTerms,
@@ -151,6 +173,7 @@ export default function PhotoScreen() {
         setResults(searchResult.results);
       }
     } catch (err) {
+      if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
       if (requestIdRef.current !== thisRequestId) return;
       // Surface a meaningful message based on HTTP status (ApiError.status) when available
       const status =
@@ -168,10 +191,18 @@ export default function PhotoScreen() {
       } else {
         setInlineError("Identification failed — could not analyze the part. Please try again.");
       }
+    } finally {
+      setProgressPhase(null);
     }
   };
 
   const isLoading = identifyMutation.isPending || searchMutation.isPending;
+
+  // Human-readable label for the current progress phase.
+  const progressLabel =
+    progressPhase === "uploading" ? "Uploading photos…" :
+    progressPhase === "analysing" ? "Analysing with AI…" :
+    progressPhase === "searching" ? "Searching inventory…" : null;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
@@ -290,7 +321,7 @@ export default function PhotoScreen() {
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                 <ActivityIndicator color={colors.primaryForeground} />
                 <Text style={[styles.identifyBtnText, { color: colors.primaryForeground }]}>
-                  {identifyMutation.isPending ? "Analyzing with AI…" : "Searching inventory…"}
+                  {progressLabel ?? "Working…"}
                 </Text>
               </View>
             ) : (
@@ -299,6 +330,53 @@ export default function PhotoScreen() {
               </Text>
             )}
           </Pressable>
+
+          {/* Step indicator — visible only while a request is in progress */}
+          {isLoading && progressPhase ? (
+            <View style={styles.stepRow}>
+              {(["uploading", "analysing", "searching"] as const).map((phase, idx) => {
+                const phaseOrder = { uploading: 0, analysing: 1, searching: 2 };
+                const currentIdx = phaseOrder[progressPhase];
+                const isDone = phaseOrder[phase] < currentIdx;
+                const isActive = phase === progressPhase;
+                return (
+                  <React.Fragment key={phase}>
+                    <View style={styles.stepItem}>
+                      <View style={[
+                        styles.stepDot,
+                        {
+                          backgroundColor: isDone
+                            ? colors.primary
+                            : isActive
+                            ? colors.primary
+                            : colors.border,
+                          opacity: isDone ? 0.5 : 1,
+                        },
+                      ]}>
+                        {isDone ? (
+                          <Text style={styles.stepDotCheck}>✓</Text>
+                        ) : isActive ? (
+                          <ActivityIndicator size="small" color={colors.primaryForeground} style={{ transform: [{ scale: 0.55 }] }} />
+                        ) : null}
+                      </View>
+                      <Text style={[
+                        styles.stepLabel,
+                        {
+                          color: isActive ? colors.foreground : colors.mutedForeground,
+                          fontFamily: isActive ? "Inter_600SemiBold" : "Inter_400Regular",
+                        },
+                      ]}>
+                        {phase === "uploading" ? "Upload" : phase === "analysing" ? "Analyse" : "Search"}
+                      </Text>
+                    </View>
+                    {idx < 2 ? (
+                      <View style={[styles.stepConnector, { backgroundColor: phaseOrder[phase] < currentIdx ? colors.primary : colors.border, opacity: phaseOrder[phase] < currentIdx ? 0.5 : 0.3 }]} />
+                    ) : null}
+                  </React.Fragment>
+                );
+              })}
+            </View>
+          ) : null}
 
           {/* Inline error banner */}
           {inlineError ? (
@@ -448,4 +526,39 @@ const styles = StyleSheet.create({
   welcomeCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 8 },
   welcomeTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginBottom: 4 },
   welcomeStep: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 20 },
+  // Progress step indicator
+  stepRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 4,
+  },
+  stepItem: {
+    alignItems: "center",
+    gap: 5,
+    minWidth: 64,
+  },
+  stepDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepDotCheck: {
+    color: "#fff",
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+  },
+  stepLabel: {
+    fontSize: 11,
+    letterSpacing: 0.2,
+  },
+  stepConnector: {
+    flex: 1,
+    height: 2,
+    maxWidth: 32,
+    marginBottom: 18,
+    borderRadius: 1,
+  },
 });
