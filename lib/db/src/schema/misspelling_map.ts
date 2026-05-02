@@ -1,3 +1,7 @@
+/**
+ * `misspelling_map` — common typos to canonical spellings, applied
+ * before search so a query like "recepticle" still finds receptacles.
+ */
 import { pgTable, text, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";

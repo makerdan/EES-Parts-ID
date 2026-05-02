@@ -1,3 +1,12 @@
+/**
+ * Core `inventory` table — one row per part SKU.
+ *
+ * `binLocations` is a text[] of free-form codes (typically `AA-SS-SHP`,
+ * but the warehouse has historical non-conforming codes too — see
+ * `lib/aisleHierarchy.ts` for the parser that tolerates both).
+ * `aiKeywords` is the AI-enriched keyword list used by the trigram
+ * search to match worker queries against electrical jargon.
+ */
 import {
   pgTable,
   text,

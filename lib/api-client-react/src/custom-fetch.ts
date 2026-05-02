@@ -1,3 +1,12 @@
+/**
+ * Fetch shim wired into orval as the default request transport.
+ *
+ * Resolves the API base URL from `EXPO_PUBLIC_API_BASE_URL` (or falls
+ * back to `EXPO_PUBLIC_DOMAIN`) so the same generated client works in
+ * the Expo dev server, the web preview, and production. Centralising
+ * URL resolution here keeps the codegen contract clean — generated
+ * code never has to know about Replit-specific env vars.
+ */
 export type CustomFetchOptions = RequestInit & {
   responseType?: "json" | "text" | "blob" | "auto";
 };

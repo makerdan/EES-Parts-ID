@@ -1,3 +1,9 @@
+/**
+ * Mapping table `inventory_category` — links each inventory row to a
+ * leaf `category_node`. Stores the assignment `source` (`rule` /
+ * `ai` / `manual`) and a confidence score so admins can audit the
+ * hybrid classifier's decisions.
+ */
 import {
   pgTable,
   integer,

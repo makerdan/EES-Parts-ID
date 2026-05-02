@@ -1,3 +1,7 @@
+/**
+ * Expo Router 404 fallback for any unmatched path. Provides a clear
+ * "back to home" link so a deep link typo doesn't trap the worker.
+ */
 import { Link, Stack } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 

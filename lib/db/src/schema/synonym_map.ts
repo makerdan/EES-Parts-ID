@@ -1,3 +1,7 @@
+/**
+ * `synonym_map` — equivalent terms used interchangeably on the floor
+ * (e.g. "breaker" ↔ "circuit breaker"). Used to expand search queries.
+ */
 import { pgTable, text, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";

@@ -1,3 +1,10 @@
+/**
+ * Compatibility shim around `react-native-keyboard-controller`. Falls
+ * back to a plain ScrollView on platforms where the controller is
+ * unavailable (e.g. React Native Web in the preview pane) so the same
+ * layout code runs everywhere without conditional imports at the
+ * call site.
+ */
 import {
   KeyboardAwareScrollView,
   KeyboardAwareScrollViewProps,
