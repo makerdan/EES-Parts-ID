@@ -538,7 +538,7 @@ export default function SearchScreen() {
               </Pressable>
               <Pressable
                 onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); logout(); }}
-                style={[styles.logoutModalCancel, { borderColor: colors.destructive + "66", backgroundColor: colors.destructive + "11" }]}
+                style={[styles.secondaryBtn, styles.logoutModalCancel, { borderColor: colors.destructive + "66", backgroundColor: colors.destructive + "11" }]}
               >
                 <Text style={[styles.logoutModalCancelText, { color: colors.destructive }]}>Sign Out</Text>
               </Pressable>
@@ -603,7 +603,7 @@ export default function SearchScreen() {
           {(hasResults || filters.keywords) ? (
             <Pressable
               onPress={handleClear}
-              style={[styles.searchBarClearBtn, { borderColor: colors.border }]}
+              style={[styles.secondaryBtn, styles.searchBarClearBtn, { borderColor: colors.border }]}
             >
               <Text style={[styles.searchBarClearBtnText, { color: colors.mutedForeground }]}>Clear</Text>
             </Pressable>
@@ -798,7 +798,7 @@ const styles = StyleSheet.create({
   logoutModalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   logoutModalHint: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20, marginBottom: 20 },
   logoutModalBtns: { flexDirection: "row", gap: 10 },
-  logoutModalCancel: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 12, alignItems: "center" },
+  logoutModalCancel: { flex: 1, paddingVertical: 12, alignItems: "center" },
   logoutModalCancelText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   logoutModalConfirm: { flex: 1, borderRadius: 8, paddingVertical: 12, alignItems: "center" },
   logoutModalConfirmText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
@@ -841,8 +841,6 @@ const styles = StyleSheet.create({
   searchBarClearBtn: {
     paddingVertical: 11,
     paddingHorizontal: 16,
-    borderRadius: 8,
-    borderWidth: 1,
     alignItems: "center",
   },
   searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
