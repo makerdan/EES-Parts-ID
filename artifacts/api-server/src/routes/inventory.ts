@@ -643,6 +643,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
 // ── Bulk-enrich job state ─────────────────────────────────────────────────────
 interface BulkEnrichJob {
   running: boolean;
+  stopRequested: boolean;
   startedAt: Date | null;
   processed: number;
   errors: number;
@@ -653,6 +654,7 @@ interface BulkEnrichJob {
 
 const bulkEnrichJob: BulkEnrichJob = {
   running: false,
+  stopRequested: false,
   startedAt: null,
   processed: 0,
   errors: 0,
@@ -699,6 +701,11 @@ async function runBulkEnrich() {
   console.log(`[bulk-enrich] Starting – ${total} unenriched items (model: ${BULK_ENRICH_MODEL})`);
 
   while (true) {
+    if (bulkEnrichJob.stopRequested) {
+      console.log("[bulk-enrich] Stop requested – halting after current batch");
+      break;
+    }
+
     const batch = await db
       .select({
         id: inventoryTable.id,
@@ -767,6 +774,7 @@ router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
   }
 
   bulkEnrichJob.running = true;
+  bulkEnrichJob.stopRequested = false;
   bulkEnrichJob.startedAt = new Date();
   bulkEnrichJob.processed = 0;
   bulkEnrichJob.errors = 0;
@@ -787,6 +795,15 @@ router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
 // ── GET /inventory/bulk-enrich/status ─────────────────────────────────────────
 router.get("/bulk-enrich/status", requireAdminAuth, (_req, res) => {
   res.json(bulkEnrichJob);
+});
+
+// ── DELETE /inventory/bulk-enrich ─────────────────────────────────────────────
+router.delete("/bulk-enrich", requireAdminAuth, (_req, res) => {
+  if (!bulkEnrichJob.running) {
+    return void res.status(409).json({ error: "No bulk enrichment job is currently running" });
+  }
+  bulkEnrichJob.stopRequested = true;
+  res.json({ message: "Stop requested – job will halt after the current batch completes", job: bulkEnrichJob });
 });
 
 // ── Measurement-enrich job state ──────────────────────────────────────────────
