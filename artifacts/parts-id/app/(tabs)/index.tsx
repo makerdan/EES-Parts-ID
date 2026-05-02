@@ -299,13 +299,10 @@ export default function SearchScreen() {
   }, [filters, mode, browseSelectedNode, fetchBrowseItems]);
 
   // ── Drill-down refinement on already-returned results ──────────────────────
-  // `searchChipKeys` records which chip-filter dimensions were active on the
-  // search request that produced the current `results`. When that list is
-  // empty the user ran a "plain" search and we surface the drill-down bar so
-  // they can narrow client-side without another round-trip. When chips were
-  // already used up front, Advanced Filters is the source of truth and we
-  // hide the bar (showing a small hint instead).
-  const [searchChipKeys, setSearchChipKeys] = useState<string[]>([]);
+  // The refinement bar (chips + "Add keywords" input) appears whenever a
+  // search returns results so workers can narrow the in-memory list without
+  // another round-trip — works the same whether chips were used up front or
+  // the user ran a plain search.
   const [refinement, setRefinement] = useState<RefinementState>({});
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
@@ -666,17 +663,9 @@ export default function SearchScreen() {
     setOfflineCacheType(null);
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    // Capture which chip dims were set on this request so the drill-down bar
-    // can decide whether to render. Reset any previous refinement — a new
-    // search starts fresh.
-    const chipKeysOnRequest = CHIP_DIMS
-      .map(d => d.key as keyof FilterValues)
-      .filter(k => {
-        const v = filters[k];
-        return typeof v === "string" && v.trim() !== "";
-      })
-      .map(k => String(k));
-    setSearchChipKeys(chipKeysOnRequest);
+    // A new search resets any in-memory drill-down state — chips, "Add
+    // keywords" input, and any other refinement future fields — so the bar
+    // never silently lingers across searches.
     setRefinement({});
     const body = buildSearchBody(filters);
     searchMutation.mutate({ data: body });
@@ -698,7 +687,6 @@ export default function SearchScreen() {
     setIsOffline(false);
     setOfflineCacheType(null);
     setDimensionCounts(undefined);
-    setSearchChipKeys([]);
     setRefinement({});
   };
 
@@ -762,11 +750,11 @@ export default function SearchScreen() {
     () => applyRefinement(results, refinement),
     [results, refinement],
   );
-  const refinementActive = Object.values(refinement).some(v => !!v);
-  // Show the drill-down bar only after a plain search (no chip dims set up
-  // front) that returned at least one result. When chips were active up front
-  // the existing Advanced Filters panel is the source of truth.
-  const showRefinementBar = hasResults && results.length > 0 && searchChipKeys.length === 0;
+  const refinementActive = Object.values(refinement).some(v => typeof v === "string" && v.trim() !== "");
+  // Show the drill-down bar after any search that returned results. The bar
+  // always renders the "Add keywords" input, plus chip rows when there's
+  // variation across the result set (or chips were used up front).
+  const showRefinementBar = hasResults && results.length > 0;
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -1195,19 +1183,15 @@ export default function SearchScreen() {
                     <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
                   </Pressable>
                 </View>
-                {/* Drill-down refinement bar — only when initial search was plain */}
+                {/* Drill-down refinement bar — "Add keywords" input + chip
+                    rows for any result-set variation. Always shown after a
+                    search returning results. */}
                 {showRefinementBar ? (
                   <ResultRefinementBar
                     results={results}
                     refinement={refinement}
                     onChange={setRefinement}
                   />
-                ) : null}
-                {/* When chips were activated up front, point users to Advanced Filters */}
-                {hasResults && results.length > 0 && searchChipKeys.length > 0 ? (
-                  <Text style={[styles.refinementHint, { color: colors.mutedForeground }]}>
-                    Tip: adjust chips in Advanced Filters above to narrow further.
-                  </Text>
                 ) : null}
                 {/* Refinement filtered everything out */}
                 {refinementActive && visibleResults.length === 0 ? (
@@ -1451,13 +1435,6 @@ const styles = StyleSheet.create({
   },
   resultsCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   clearRefinementLink: { fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 2 },
-  refinementHint: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    fontStyle: "italic",
-    marginHorizontal: 16,
-    marginBottom: 8,
-  },
   refinementEmpty: {
     marginHorizontal: 12,
     marginBottom: 8,
