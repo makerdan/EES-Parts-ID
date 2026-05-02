@@ -1412,6 +1412,11 @@ export function useListCategoryItems<
 }
 
 /**
+ * Same behavior as GET /categories/{slug}/items but keyed by numeric
+node id. Accepts the same 16 chip-filter dimensions and
+confidenceThreshold so the mobile client can drill in by id without
+losing filter parity.
+
  * @summary List inventory items under a node by numeric id (alias of /:slug/items)
  */
 export const getListCategoryPartsByIdUrl = (

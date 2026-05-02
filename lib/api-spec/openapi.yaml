@@ -350,6 +350,11 @@ paths:
       operationId: listCategoryPartsById
       tags: [categories]
       summary: List inventory items under a node by numeric id (alias of /:slug/items)
+      description: |
+        Same behavior as GET /categories/{slug}/items but keyed by numeric
+        node id. Accepts the same 16 chip-filter dimensions and
+        confidenceThreshold so the mobile client can drill in by id without
+        losing filter parity.
       parameters:
         - name: nodeId
           in: path
@@ -364,6 +369,22 @@ paths:
         - name: confidenceThreshold
           in: query
           schema: { type: integer, default: 0 }
+        - { name: category,     in: query, schema: { type: string } }
+        - { name: amperage,     in: query, schema: { type: string } }
+        - { name: colorChip,    in: query, schema: { type: string } }
+        - { name: manufacturer, in: query, schema: { type: string } }
+        - { name: sizeChip,     in: query, schema: { type: string } }
+        - { name: rating,       in: query, schema: { type: string } }
+        - { name: wireType,     in: query, schema: { type: string } }
+        - { name: wireGauge,    in: query, schema: { type: string } }
+        - { name: conduitType,  in: query, schema: { type: string } }
+        - { name: conduitSize,  in: query, schema: { type: string } }
+        - { name: boxType,      in: query, schema: { type: string } }
+        - { name: boxGangCount, in: query, schema: { type: string } }
+        - { name: mountingType, in: query, schema: { type: string } }
+        - { name: environment,  in: query, schema: { type: string } }
+        - { name: voltage,      in: query, schema: { type: string } }
+        - { name: poleCount,    in: query, schema: { type: string } }
       responses:
         "200":
           description: Paginated items under the node
