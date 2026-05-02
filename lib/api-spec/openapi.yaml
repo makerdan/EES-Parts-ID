@@ -479,6 +479,9 @@ components:
       required:
         - items
 
+    # NOTE on counts: `total` is the number of distinct (vendor, catalog) rows
+    # processed AFTER server-side de-duplication (case-insensitive on both
+    # vendor and catalog). `inserted + updated + skipped === total`.
     UpsertInventoryResponse:
       type: object
       properties:
