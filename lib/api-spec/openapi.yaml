@@ -302,10 +302,10 @@ paths:
       tags: [categories]
       summary: List inventory items under a category, subcategory, or type
       description: |
-        Items assigned to the node identified by `slug` OR to any of its
-        descendants are returned. This way `/categories/breakers/items`
-        returns every breaker (across subcategories), while
-        `/categories/breaker-gfci/items` returns only the GFCI leaf.
+        Items assigned to the node identified by `slug` (or numeric node id)
+        OR to any of its descendants are returned. Accepts the same 16 chip
+        filter dimensions as POST /inventory/search and an optional
+        `confidenceThreshold` so Browse can be narrowed exactly like Search.
       parameters:
         - name: slug
           in: path
@@ -314,14 +314,56 @@ paths:
             type: string
         - name: page
           in: query
-          schema:
-            type: integer
-            default: 1
+          schema: { type: integer, default: 1 }
         - name: limit
           in: query
-          schema:
-            type: integer
-            default: 50
+          schema: { type: integer, default: 50 }
+        - name: confidenceThreshold
+          in: query
+          schema: { type: integer, default: 0 }
+        - { name: category,     in: query, schema: { type: string } }
+        - { name: amperage,     in: query, schema: { type: string } }
+        - { name: colorChip,    in: query, schema: { type: string } }
+        - { name: manufacturer, in: query, schema: { type: string } }
+        - { name: sizeChip,     in: query, schema: { type: string } }
+        - { name: rating,       in: query, schema: { type: string } }
+        - { name: wireType,     in: query, schema: { type: string } }
+        - { name: wireGauge,    in: query, schema: { type: string } }
+        - { name: conduitType,  in: query, schema: { type: string } }
+        - { name: conduitSize,  in: query, schema: { type: string } }
+        - { name: boxType,      in: query, schema: { type: string } }
+        - { name: boxGangCount, in: query, schema: { type: string } }
+        - { name: mountingType, in: query, schema: { type: string } }
+        - { name: environment,  in: query, schema: { type: string } }
+        - { name: voltage,      in: query, schema: { type: string } }
+        - { name: poleCount,    in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Paginated items under the node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryItemsResponse"
+
+  /categories/{nodeId}/parts:
+    get:
+      operationId: listCategoryPartsById
+      tags: [categories]
+      summary: List inventory items under a node by numeric id (alias of /:slug/items)
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: confidenceThreshold
+          in: query
+          schema: { type: integer, default: 0 }
       responses:
         "200":
           description: Paginated items under the node
@@ -334,7 +376,7 @@ paths:
     post:
       operationId: classifyInventory
       tags: [categories]
-      summary: Run the rule-based classifier across inventory (SSE streaming)
+      summary: Run the classifier across inventory (SSE streaming)
       requestBody:
         required: true
         content:
@@ -346,6 +388,99 @@ paths:
           description: SSE stream of classification progress
           content:
             text/event-stream: {}
+
+  /inventory/classify:
+    post:
+      operationId: classifyInventoryAlias
+      tags: [inventory]
+      summary: Spec-compliant alias of POST /categories/classify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClassifyInventoryBody"
+      responses:
+        "200":
+          description: SSE stream of classification progress
+          content:
+            text/event-stream: {}
+
+  /inventory/{id}/category:
+    patch:
+      operationId: setInventoryCategory
+      tags: [inventory]
+      summary: Manually set a part's category node (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetInventoryCategoryBody"
+      responses:
+        "200":
+          description: Assignment recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssignCategoryResponse"
+
+  /categories/{nodeId}:
+    patch:
+      operationId: updateCategoryNode
+      tags: [categories]
+      summary: Rename, re-parent, or reorder a category node (admin)
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCategoryNodeBody"
+      responses:
+        "200":
+          description: Updated node
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  node:
+                    type: object
+
+  /categories/merge:
+    post:
+      operationId: mergeCategoryNodes
+      tags: [categories]
+      summary: Merge two category nodes; parts and children move to target (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MergeCategoryBody"
+      responses:
+        "200":
+          description: Merge summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  sourceId: { type: integer }
+                  targetId: { type: integer }
+                  moved: { type: integer }
+                  dropped: { type: integer }
 
   /categories/{nodeId}/assign:
     post:
@@ -966,19 +1101,23 @@ components:
     ClassifyInventoryBody:
       type: object
       properties:
+        mode:
+          type: string
+          enum: [all, unclassified, "specific-ids"]
+          default: unclassified
+          description: |
+            "all" re-classifies every inventory row (overwrites manual overrides).
+            "unclassified" only touches rows with no current assignment (manual rows preserved).
+            "specific-ids" classifies only the rows in `ids`.
         ids:
           type: array
           items:
             type: integer
-          description: "Specific inventory ids to classify. If omitted, all items are considered."
-        onlyUnclassified:
-          type: boolean
-          default: true
-          description: "When true (default), skip items that already have an assignment."
+          description: "Required when mode is 'specific-ids'."
         useAi:
           type: boolean
           default: false
-          description: "When true, fall back to AI for items the rule classifier could not place. Disabled by default to avoid surprise OpenAI charges."
+          description: "When true, fall back to AI for items the rule classifier could not place."
 
     AssignCategoryBody:
       type: object
@@ -1000,4 +1139,33 @@ components:
       required:
         - ok
         - inventoryId
-        - nodeId
+
+    SetInventoryCategoryBody:
+      type: object
+      properties:
+        categoryNodeId:
+          type: integer
+      required:
+        - categoryNodeId
+
+    UpdateCategoryNodeBody:
+      type: object
+      properties:
+        name:
+          type: string
+        parentId:
+          type: integer
+          nullable: true
+        sortOrder:
+          type: integer
+
+    MergeCategoryBody:
+      type: object
+      properties:
+        sourceId:
+          type: integer
+        targetId:
+          type: integer
+      required:
+        - sourceId
+        - targetId

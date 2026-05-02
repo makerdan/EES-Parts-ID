@@ -294,12 +294,30 @@ export interface CategoryItemsResponse {
   node: CategoryItemsResponseNode;
 }
 
+/**
+ * "all" re-classifies every inventory row (overwrites manual overrides).
+"unclassified" only touches rows with no current assignment (manual rows preserved).
+"specific-ids" classifies only the rows in `ids`.
+
+ */
+export type ClassifyInventoryBodyMode =
+  (typeof ClassifyInventoryBodyMode)[keyof typeof ClassifyInventoryBodyMode];
+
+export const ClassifyInventoryBodyMode = {
+  all: "all",
+  unclassified: "unclassified",
+  "specific-ids": "specific-ids",
+} as const;
+
 export interface ClassifyInventoryBody {
-  /** Specific inventory ids to classify. If omitted, all items are considered. */
+  /** "all" re-classifies every inventory row (overwrites manual overrides).
+"unclassified" only touches rows with no current assignment (manual rows preserved).
+"specific-ids" classifies only the rows in `ids`.
+ */
+  mode?: ClassifyInventoryBodyMode;
+  /** Required when mode is 'specific-ids'. */
   ids?: number[];
-  /** When true (default), skip items that already have an assignment. */
-  onlyUnclassified?: boolean;
-  /** When true, fall back to AI for items the rule classifier could not place. Disabled by default to avoid surprise OpenAI charges. */
+  /** When true, fall back to AI for items the rule classifier could not place. */
   useAi?: boolean;
 }
 
@@ -310,7 +328,22 @@ export interface AssignCategoryBody {
 export interface AssignCategoryResponse {
   ok: boolean;
   inventoryId: number;
-  nodeId: number;
+  nodeId?: number;
+}
+
+export interface SetInventoryCategoryBody {
+  categoryNodeId: number;
+}
+
+export interface UpdateCategoryNodeBody {
+  name?: string;
+  parentId?: number | null;
+  sortOrder?: number;
+}
+
+export interface MergeCategoryBody {
+  sourceId: number;
+  targetId: number;
 }
 
 export type ListInventoryParams = {
@@ -330,4 +363,41 @@ export type ListUncategorizedItemsParams = {
 export type ListCategoryItemsParams = {
   page?: number;
   limit?: number;
+  confidenceThreshold?: number;
+  category?: string;
+  amperage?: string;
+  colorChip?: string;
+  manufacturer?: string;
+  sizeChip?: string;
+  rating?: string;
+  wireType?: string;
+  wireGauge?: string;
+  conduitType?: string;
+  conduitSize?: string;
+  boxType?: string;
+  boxGangCount?: string;
+  mountingType?: string;
+  environment?: string;
+  voltage?: string;
+  poleCount?: string;
+};
+
+export type ListCategoryPartsByIdParams = {
+  page?: number;
+  limit?: number;
+  confidenceThreshold?: number;
+};
+
+export type UpdateCategoryNode200Node = { [key: string]: unknown };
+
+export type UpdateCategoryNode200 = {
+  node?: UpdateCategoryNode200Node;
+};
+
+export type MergeCategoryNodes200 = {
+  ok?: boolean;
+  sourceId?: number;
+  targetId?: number;
+  moved?: number;
+  dropped?: number;
 };

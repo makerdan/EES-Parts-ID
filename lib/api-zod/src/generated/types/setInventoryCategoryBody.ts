@@ -6,8 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface AssignCategoryResponse {
-  ok: boolean;
-  inventoryId: number;
-  nodeId?: number;
+export interface SetInventoryCategoryBody {
+  categoryNodeId: number;
 }

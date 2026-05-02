@@ -32,14 +32,20 @@ import type {
   InventoryItem,
   InventoryListResponse,
   ListCategoryItemsParams,
+  ListCategoryPartsByIdParams,
   ListInventoryParams,
   ListUncategorizedItemsParams,
   LookupDictionaryParams,
+  MergeCategoryBody,
+  MergeCategoryNodes200,
   PreviewUpsertBody,
   PreviewUpsertResponse,
   SearchInventoryBody,
   SearchInventoryResponse,
+  SetInventoryCategoryBody,
   SuggestDescriptionResponse,
+  UpdateCategoryNode200,
+  UpdateCategoryNodeBody,
   UpdateInventoryItemBody,
   UpsertInventoryBody,
   UpsertInventoryResponse,
@@ -1284,10 +1290,10 @@ export function useListUncategorizedItems<
 }
 
 /**
- * Items assigned to the node identified by `slug` OR to any of its
-descendants are returned. This way `/categories/breakers/items`
-returns every breaker (across subcategories), while
-`/categories/breaker-gfci/items` returns only the GFCI leaf.
+ * Items assigned to the node identified by `slug` (or numeric node id)
+OR to any of its descendants are returned. Accepts the same 16 chip
+filter dimensions as POST /inventory/search and an optional
+`confidenceThreshold` so Browse can be narrowed exactly like Search.
 
  * @summary List inventory items under a category, subcategory, or type
  */
@@ -1405,7 +1411,127 @@ export function useListCategoryItems<
 }
 
 /**
- * @summary Run the rule-based classifier across inventory (SSE streaming)
+ * @summary List inventory items under a node by numeric id (alias of /:slug/items)
+ */
+export const getListCategoryPartsByIdUrl = (
+  nodeId: number,
+  params?: ListCategoryPartsByIdParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/categories/${nodeId}/parts?${stringifiedParams}`
+    : `/api/categories/${nodeId}/parts`;
+};
+
+export const listCategoryPartsById = async (
+  nodeId: number,
+  params?: ListCategoryPartsByIdParams,
+  options?: RequestInit,
+): Promise<CategoryItemsResponse> => {
+  return customFetch<CategoryItemsResponse>(
+    getListCategoryPartsByIdUrl(nodeId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListCategoryPartsByIdQueryKey = (
+  nodeId: number,
+  params?: ListCategoryPartsByIdParams,
+) => {
+  return [
+    `/api/categories/${nodeId}/parts`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListCategoryPartsByIdQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCategoryPartsById>>,
+  TError = ErrorType<unknown>,
+>(
+  nodeId: number,
+  params?: ListCategoryPartsByIdParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listCategoryPartsById>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListCategoryPartsByIdQueryKey(nodeId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listCategoryPartsById>>
+  > = ({ signal }) =>
+    listCategoryPartsById(nodeId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!nodeId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listCategoryPartsById>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListCategoryPartsByIdQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCategoryPartsById>>
+>;
+export type ListCategoryPartsByIdQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List inventory items under a node by numeric id (alias of /:slug/items)
+ */
+
+export function useListCategoryPartsById<
+  TData = Awaited<ReturnType<typeof listCategoryPartsById>>,
+  TError = ErrorType<unknown>,
+>(
+  nodeId: number,
+  params?: ListCategoryPartsByIdParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listCategoryPartsById>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListCategoryPartsByIdQueryOptions(
+    nodeId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Run the classifier across inventory (SSE streaming)
  */
 export const getClassifyInventoryUrl = () => {
   return `/api/categories/classify`;
@@ -1468,7 +1594,7 @@ export type ClassifyInventoryMutationBody = BodyType<ClassifyInventoryBody>;
 export type ClassifyInventoryMutationError = ErrorType<unknown>;
 
 /**
- * @summary Run the rule-based classifier across inventory (SSE streaming)
+ * @summary Run the classifier across inventory (SSE streaming)
  */
 export const useClassifyInventory = <
   TError = ErrorType<unknown>,
@@ -1488,6 +1614,354 @@ export const useClassifyInventory = <
   TContext
 > => {
   return useMutation(getClassifyInventoryMutationOptions(options));
+};
+
+/**
+ * @summary Spec-compliant alias of POST /categories/classify
+ */
+export const getClassifyInventoryAliasUrl = () => {
+  return `/api/inventory/classify`;
+};
+
+export const classifyInventoryAlias = async (
+  classifyInventoryBody: ClassifyInventoryBody,
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getClassifyInventoryAliasUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(classifyInventoryBody),
+  });
+};
+
+export const getClassifyInventoryAliasMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof classifyInventoryAlias>>,
+    TError,
+    { data: BodyType<ClassifyInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof classifyInventoryAlias>>,
+  TError,
+  { data: BodyType<ClassifyInventoryBody> },
+  TContext
+> => {
+  const mutationKey = ["classifyInventoryAlias"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof classifyInventoryAlias>>,
+    { data: BodyType<ClassifyInventoryBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return classifyInventoryAlias(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClassifyInventoryAliasMutationResult = NonNullable<
+  Awaited<ReturnType<typeof classifyInventoryAlias>>
+>;
+export type ClassifyInventoryAliasMutationBody =
+  BodyType<ClassifyInventoryBody>;
+export type ClassifyInventoryAliasMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Spec-compliant alias of POST /categories/classify
+ */
+export const useClassifyInventoryAlias = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof classifyInventoryAlias>>,
+    TError,
+    { data: BodyType<ClassifyInventoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof classifyInventoryAlias>>,
+  TError,
+  { data: BodyType<ClassifyInventoryBody> },
+  TContext
+> => {
+  return useMutation(getClassifyInventoryAliasMutationOptions(options));
+};
+
+/**
+ * @summary Manually set a part's category node (admin)
+ */
+export const getSetInventoryCategoryUrl = (id: number) => {
+  return `/api/inventory/${id}/category`;
+};
+
+export const setInventoryCategory = async (
+  id: number,
+  setInventoryCategoryBody: SetInventoryCategoryBody,
+  options?: RequestInit,
+): Promise<AssignCategoryResponse> => {
+  return customFetch<AssignCategoryResponse>(getSetInventoryCategoryUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(setInventoryCategoryBody),
+  });
+};
+
+export const getSetInventoryCategoryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setInventoryCategory>>,
+    TError,
+    { id: number; data: BodyType<SetInventoryCategoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof setInventoryCategory>>,
+  TError,
+  { id: number; data: BodyType<SetInventoryCategoryBody> },
+  TContext
+> => {
+  const mutationKey = ["setInventoryCategory"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof setInventoryCategory>>,
+    { id: number; data: BodyType<SetInventoryCategoryBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return setInventoryCategory(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SetInventoryCategoryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof setInventoryCategory>>
+>;
+export type SetInventoryCategoryMutationBody =
+  BodyType<SetInventoryCategoryBody>;
+export type SetInventoryCategoryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Manually set a part's category node (admin)
+ */
+export const useSetInventoryCategory = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setInventoryCategory>>,
+    TError,
+    { id: number; data: BodyType<SetInventoryCategoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof setInventoryCategory>>,
+  TError,
+  { id: number; data: BodyType<SetInventoryCategoryBody> },
+  TContext
+> => {
+  return useMutation(getSetInventoryCategoryMutationOptions(options));
+};
+
+/**
+ * @summary Rename, re-parent, or reorder a category node (admin)
+ */
+export const getUpdateCategoryNodeUrl = (nodeId: number) => {
+  return `/api/categories/${nodeId}`;
+};
+
+export const updateCategoryNode = async (
+  nodeId: number,
+  updateCategoryNodeBody: UpdateCategoryNodeBody,
+  options?: RequestInit,
+): Promise<UpdateCategoryNode200> => {
+  return customFetch<UpdateCategoryNode200>(getUpdateCategoryNodeUrl(nodeId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateCategoryNodeBody),
+  });
+};
+
+export const getUpdateCategoryNodeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateCategoryNode>>,
+    TError,
+    { nodeId: number; data: BodyType<UpdateCategoryNodeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateCategoryNode>>,
+  TError,
+  { nodeId: number; data: BodyType<UpdateCategoryNodeBody> },
+  TContext
+> => {
+  const mutationKey = ["updateCategoryNode"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateCategoryNode>>,
+    { nodeId: number; data: BodyType<UpdateCategoryNodeBody> }
+  > = (props) => {
+    const { nodeId, data } = props ?? {};
+
+    return updateCategoryNode(nodeId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateCategoryNodeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateCategoryNode>>
+>;
+export type UpdateCategoryNodeMutationBody = BodyType<UpdateCategoryNodeBody>;
+export type UpdateCategoryNodeMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Rename, re-parent, or reorder a category node (admin)
+ */
+export const useUpdateCategoryNode = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateCategoryNode>>,
+    TError,
+    { nodeId: number; data: BodyType<UpdateCategoryNodeBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateCategoryNode>>,
+  TError,
+  { nodeId: number; data: BodyType<UpdateCategoryNodeBody> },
+  TContext
+> => {
+  return useMutation(getUpdateCategoryNodeMutationOptions(options));
+};
+
+/**
+ * @summary Merge two category nodes; parts and children move to target (admin)
+ */
+export const getMergeCategoryNodesUrl = () => {
+  return `/api/categories/merge`;
+};
+
+export const mergeCategoryNodes = async (
+  mergeCategoryBody: MergeCategoryBody,
+  options?: RequestInit,
+): Promise<MergeCategoryNodes200> => {
+  return customFetch<MergeCategoryNodes200>(getMergeCategoryNodesUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(mergeCategoryBody),
+  });
+};
+
+export const getMergeCategoryNodesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof mergeCategoryNodes>>,
+    TError,
+    { data: BodyType<MergeCategoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof mergeCategoryNodes>>,
+  TError,
+  { data: BodyType<MergeCategoryBody> },
+  TContext
+> => {
+  const mutationKey = ["mergeCategoryNodes"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof mergeCategoryNodes>>,
+    { data: BodyType<MergeCategoryBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return mergeCategoryNodes(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MergeCategoryNodesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof mergeCategoryNodes>>
+>;
+export type MergeCategoryNodesMutationBody = BodyType<MergeCategoryBody>;
+export type MergeCategoryNodesMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Merge two category nodes; parts and children move to target (admin)
+ */
+export const useMergeCategoryNodes = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof mergeCategoryNodes>>,
+    TError,
+    { data: BodyType<MergeCategoryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof mergeCategoryNodes>>,
+  TError,
+  { data: BodyType<MergeCategoryBody> },
+  TContext
+> => {
+  return useMutation(getMergeCategoryNodesMutationOptions(options));
 };
 
 /**

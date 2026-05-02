@@ -576,10 +576,10 @@ export const ListUncategorizedItemsResponse = zod.object({
 });
 
 /**
- * Items assigned to the node identified by `slug` OR to any of its
-descendants are returned. This way `/categories/breakers/items`
-returns every breaker (across subcategories), while
-`/categories/breaker-gfci/items` returns only the GFCI leaf.
+ * Items assigned to the node identified by `slug` (or numeric node id)
+OR to any of its descendants are returned. Accepts the same 16 chip
+filter dimensions as POST /inventory/search and an optional
+`confidenceThreshold` so Browse can be narrowed exactly like Search.
 
  * @summary List inventory items under a category, subcategory, or type
  */
@@ -589,10 +589,30 @@ export const ListCategoryItemsParams = zod.object({
 
 export const listCategoryItemsQueryPageDefault = 1;
 export const listCategoryItemsQueryLimitDefault = 50;
+export const listCategoryItemsQueryConfidenceThresholdDefault = 0;
 
 export const ListCategoryItemsQueryParams = zod.object({
   page: zod.coerce.number().default(listCategoryItemsQueryPageDefault),
   limit: zod.coerce.number().default(listCategoryItemsQueryLimitDefault),
+  confidenceThreshold: zod.coerce
+    .number()
+    .default(listCategoryItemsQueryConfidenceThresholdDefault),
+  category: zod.coerce.string().optional(),
+  amperage: zod.coerce.string().optional(),
+  colorChip: zod.coerce.string().optional(),
+  manufacturer: zod.coerce.string().optional(),
+  sizeChip: zod.coerce.string().optional(),
+  rating: zod.coerce.string().optional(),
+  wireType: zod.coerce.string().optional(),
+  wireGauge: zod.coerce.string().optional(),
+  conduitType: zod.coerce.string().optional(),
+  conduitSize: zod.coerce.string().optional(),
+  boxType: zod.coerce.string().optional(),
+  boxGangCount: zod.coerce.string().optional(),
+  mountingType: zod.coerce.string().optional(),
+  environment: zod.coerce.string().optional(),
+  voltage: zod.coerce.string().optional(),
+  poleCount: zod.coerce.string().optional(),
 });
 
 export const ListCategoryItemsResponse = zod.object({
@@ -630,30 +650,156 @@ export const ListCategoryItemsResponse = zod.object({
 });
 
 /**
- * @summary Run the rule-based classifier across inventory (SSE streaming)
+ * @summary List inventory items under a node by numeric id (alias of /:slug/items)
  */
-export const classifyInventoryBodyOnlyUnclassifiedDefault = true;
+export const ListCategoryPartsByIdParams = zod.object({
+  nodeId: zod.coerce.number(),
+});
+
+export const listCategoryPartsByIdQueryPageDefault = 1;
+export const listCategoryPartsByIdQueryLimitDefault = 50;
+export const listCategoryPartsByIdQueryConfidenceThresholdDefault = 0;
+
+export const ListCategoryPartsByIdQueryParams = zod.object({
+  page: zod.coerce.number().default(listCategoryPartsByIdQueryPageDefault),
+  limit: zod.coerce.number().default(listCategoryPartsByIdQueryLimitDefault),
+  confidenceThreshold: zod.coerce
+    .number()
+    .default(listCategoryPartsByIdQueryConfidenceThresholdDefault),
+});
+
+export const ListCategoryPartsByIdResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.number(),
+      vendor: zod.string(),
+      catalog: zod.string(),
+      description: zod.string(),
+      binLocations: zod
+        .array(zod.string())
+        .describe(
+          "Every bin this part is currently stocked in. Empty array means no bin assigned.",
+        ),
+      aiKeywords: zod.array(zod.string()),
+      enrichedAt: zod.coerce.date().nullish(),
+      vendorFullName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+        ),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+  total: zod.number(),
+  page: zod.number(),
+  limit: zod.number(),
+  node: zod.object({
+    slug: zod.string(),
+    name: zod.string(),
+    level: zod.string(),
+  }),
+});
+
+/**
+ * @summary Run the classifier across inventory (SSE streaming)
+ */
+export const classifyInventoryBodyModeDefault = `unclassified`;
 export const classifyInventoryBodyUseAiDefault = false;
 
 export const ClassifyInventoryBody = zod.object({
+  mode: zod
+    .enum(["all", "unclassified", "specific-ids"])
+    .default(classifyInventoryBodyModeDefault)
+    .describe(
+      '\"all\" re-classifies every inventory row (overwrites manual overrides).\n\"unclassified\" only touches rows with no current assignment (manual rows preserved).\n\"specific-ids\" classifies only the rows in `ids`.\n',
+    ),
   ids: zod
     .array(zod.number())
     .optional()
-    .describe(
-      "Specific inventory ids to classify. If omitted, all items are considered.",
-    ),
-  onlyUnclassified: zod
-    .boolean()
-    .default(classifyInventoryBodyOnlyUnclassifiedDefault)
-    .describe(
-      "When true (default), skip items that already have an assignment.",
-    ),
+    .describe("Required when mode is 'specific-ids'."),
   useAi: zod
     .boolean()
     .default(classifyInventoryBodyUseAiDefault)
     .describe(
-      "When true, fall back to AI for items the rule classifier could not place. Disabled by default to avoid surprise OpenAI charges.",
+      "When true, fall back to AI for items the rule classifier could not place.",
     ),
+});
+
+/**
+ * @summary Spec-compliant alias of POST /categories/classify
+ */
+export const classifyInventoryAliasBodyModeDefault = `unclassified`;
+export const classifyInventoryAliasBodyUseAiDefault = false;
+
+export const ClassifyInventoryAliasBody = zod.object({
+  mode: zod
+    .enum(["all", "unclassified", "specific-ids"])
+    .default(classifyInventoryAliasBodyModeDefault)
+    .describe(
+      '\"all\" re-classifies every inventory row (overwrites manual overrides).\n\"unclassified\" only touches rows with no current assignment (manual rows preserved).\n\"specific-ids\" classifies only the rows in `ids`.\n',
+    ),
+  ids: zod
+    .array(zod.number())
+    .optional()
+    .describe("Required when mode is 'specific-ids'."),
+  useAi: zod
+    .boolean()
+    .default(classifyInventoryAliasBodyUseAiDefault)
+    .describe(
+      "When true, fall back to AI for items the rule classifier could not place.",
+    ),
+});
+
+/**
+ * @summary Manually set a part's category node (admin)
+ */
+export const SetInventoryCategoryParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const SetInventoryCategoryBody = zod.object({
+  categoryNodeId: zod.number(),
+});
+
+export const SetInventoryCategoryResponse = zod.object({
+  ok: zod.boolean(),
+  inventoryId: zod.number(),
+  nodeId: zod.number().optional(),
+});
+
+/**
+ * @summary Rename, re-parent, or reorder a category node (admin)
+ */
+export const UpdateCategoryNodeParams = zod.object({
+  nodeId: zod.coerce.number(),
+});
+
+export const UpdateCategoryNodeBody = zod.object({
+  name: zod.string().optional(),
+  parentId: zod.number().nullish(),
+  sortOrder: zod.number().optional(),
+});
+
+export const UpdateCategoryNodeResponse = zod.object({
+  node: zod.object({}).passthrough().optional(),
+});
+
+/**
+ * @summary Merge two category nodes; parts and children move to target (admin)
+ */
+export const MergeCategoryNodesBody = zod.object({
+  sourceId: zod.number(),
+  targetId: zod.number(),
+});
+
+export const MergeCategoryNodesResponse = zod.object({
+  ok: zod.boolean().optional(),
+  sourceId: zod.number().optional(),
+  targetId: zod.number().optional(),
+  moved: zod.number().optional(),
+  dropped: zod.number().optional(),
 });
 
 /**
@@ -670,7 +816,7 @@ export const AssignInventoryToCategoryBody = zod.object({
 export const AssignInventoryToCategoryResponse = zod.object({
   ok: zod.boolean(),
   inventoryId: zod.number(),
-  nodeId: zod.number(),
+  nodeId: zod.number().optional(),
 });
 
 /**

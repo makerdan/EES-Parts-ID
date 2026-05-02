@@ -5,12 +5,16 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ClassifyInventoryBodyMode } from "./classifyInventoryBodyMode";
 
 export interface ClassifyInventoryBody {
-  /** Specific inventory ids to classify. If omitted, all items are considered. */
+  /** "all" re-classifies every inventory row (overwrites manual overrides).
+"unclassified" only touches rows with no current assignment (manual rows preserved).
+"specific-ids" classifies only the rows in `ids`.
+ */
+  mode?: ClassifyInventoryBodyMode;
+  /** Required when mode is 'specific-ids'. */
   ids?: number[];
-  /** When true (default), skip items that already have an assignment. */
-  onlyUnclassified?: boolean;
-  /** When true, fall back to AI for items the rule classifier could not place. Disabled by default to avoid surprise OpenAI charges. */
+  /** When true, fall back to AI for items the rule classifier could not place. */
   useAi?: boolean;
 }
