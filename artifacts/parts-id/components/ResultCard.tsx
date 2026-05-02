@@ -48,7 +48,8 @@ function VariantChip({
   colors: ReturnType<typeof useColors>;
 }) {
   // Variant chips stay tight — collapse the (usually short) bin list onto
-  // a single comma-separated line. Empty list → no bin row.
+  // a single comma-separated line. When the part has no bin assigned,
+  // we surface that explicitly so workers don't think the row is broken.
   const bins = item.binLocations ?? [];
   return (
     <View style={[varStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
@@ -57,7 +58,14 @@ function VariantChip({
         <Text style={[varStyles.bin, { color: colors.mutedForeground }]} numberOfLines={1}>
           {bins.join(", ")}
         </Text>
-      ) : null}
+      ) : (
+        <Text
+          style={[varStyles.binEmpty, { color: colors.mutedForeground }]}
+          numberOfLines={1}
+        >
+          No bin assigned
+        </Text>
+      )}
     </View>
   );
 }
@@ -73,19 +81,33 @@ const varStyles = StyleSheet.create({
   },
   catalog: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  binEmpty: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginTop: 2 },
 });
 
 export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: ResultCardProps) {
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
+  // Related-sizes panel toggles independently of the main card expand/collapse
+  // so workers can peek at alternate sizes without revealing the rest of the
+  // card (keywords, enrichment date, etc.). When the card is collapsed by the
+  // worker, we also collapse this panel so card state stays consistent.
+  const [variantsExpanded, setVariantsExpanded] = useState(false);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
 
-  const hasVariants = variants && variants.length > 0;
+  const hasVariants = !!variants && variants.length > 0;
+  const variantCount = hasVariants ? variants!.length : 0;
   const hasKeywords = item.aiKeywords && item.aiKeywords.length > 0;
 
+  const toggleCard = () => {
+    const next = !expanded;
+    setExpanded(next);
+    // Collapsing the card closes the related-sizes panel too.
+    if (!next) setVariantsExpanded(false);
+  };
+
   return (
-    <Pressable onPress={() => setExpanded(!expanded)}>
+    <Pressable onPress={toggleCard}>
       <View
         style={[
           cardStyles.container,
@@ -148,6 +170,53 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: Re
           ↑ {matchReason}
         </Text>
 
+        {/* Dedicated related-sizes control
+            ────────────────────────────────
+            Always visible (when the part has variants) so workers can find
+            other sizes / amperages / lengths without expanding the whole card.
+            Toggles a panel directly underneath; tapping the inner Pressable
+            does NOT bubble to the outer card Pressable, so the rest of the
+            card stays in its current state. */}
+        {hasVariants ? (
+          <Pressable
+            onPress={() => setVariantsExpanded(v => !v)}
+            style={({ pressed }) => [
+              cardStyles.variantsToggle,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.muted,
+                opacity: pressed ? 0.7 : 1,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: variantsExpanded }}
+            accessibilityLabel={`${seriesLabel ?? "Related sizes"}, ${variantCount} ${variantCount === 1 ? "item" : "items"}`}
+          >
+            <Text style={[cardStyles.variantsToggleText, { color: colors.foreground, fontSize: fs(12) }]}>
+              {seriesLabel ?? "RELATED SIZES"} ({variantCount})
+            </Text>
+            <Text style={[cardStyles.variantsToggleChevron, { color: colors.mutedForeground }]}>
+              {variantsExpanded ? "▲" : "▼"}
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {/* Related-sizes panel (independent of card expand state) */}
+        {hasVariants && variantsExpanded ? (
+          <View style={cardStyles.variantsPanel}>
+            <View style={cardStyles.variantRow}>
+              {variants!.slice(0, 12).map((v) => (
+                <VariantChip key={v.id} item={v} colors={colors} />
+              ))}
+              {variants!.length > 12 ? (
+                <Text style={[cardStyles.moreText, { color: colors.mutedForeground }]}>
+                  +{variants!.length - 12} more
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
         {/* Expanded content */}
         {expanded ? (
           <>
@@ -182,25 +251,6 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: Re
                 </Pressable>
               ) : null}
             </View>
-
-            {/* Variants */}
-            {hasVariants ? (
-              <View style={cardStyles.section}>
-                <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
-                  {seriesLabel ?? "OTHER SIZES"} ({variants!.length})
-                </Text>
-                <View style={cardStyles.variantRow}>
-                  {variants!.slice(0, 12).map((v) => (
-                    <VariantChip key={v.id} item={v} colors={colors} />
-                  ))}
-                  {variants!.length > 12 ? (
-                    <Text style={[cardStyles.moreText, { color: colors.mutedForeground }]}>
-                      +{variants!.length - 12} more
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-            ) : null}
 
             {/* Last enriched */}
             {item.enrichedAt ? (
@@ -291,6 +341,29 @@ const cardStyles = StyleSheet.create({
   keyword: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
   keywordText: { fontSize: 12, fontFamily: "Inter_400Regular" },
   variantRow: { flexDirection: "row", flexWrap: "wrap" },
+  variantsToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  variantsToggleText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.5,
+    flexShrink: 1,
+  },
+  variantsToggleChevron: {
+    fontSize: 11,
+    marginLeft: 8,
+  },
+  variantsPanel: {
+    marginTop: 8,
+  },
   editBtn: {
     marginTop: 10,
     borderWidth: 1,
