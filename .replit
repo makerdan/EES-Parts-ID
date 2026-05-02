@@ -44,7 +44,7 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm run test"
+args = "pnpm --filter @workspace/parts-id run test"
 
 [agent]
 stack = "PNPM_WORKSPACE"
