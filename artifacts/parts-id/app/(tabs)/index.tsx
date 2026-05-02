@@ -1141,24 +1141,10 @@ export default function SearchScreen() {
 
       {!aisleBrowseOpen ? (
       <>
-      {/* ── Search / Browse mode toggle ─────────────────────────────────── */}
+      {/* ── Browse mode toggle ──────────────────────────────────────────── */}
       <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
         <Pressable
-          onPress={() => switchMode("search")}
-          style={[
-            styles.modeToggleBtn,
-            {
-              backgroundColor: mode === "search" ? colors.primary : colors.card,
-              borderColor: colors.border,
-            },
-          ]}
-        >
-          <Text style={[styles.modeToggleText, { color: mode === "search" ? "#000" : colors.foreground }]}>
-            🔍 Search
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => switchMode("browse")}
+          onPress={() => switchMode(mode === "browse" ? "search" : "browse")}
           style={[
             styles.modeToggleBtn,
             {
