@@ -1,3 +1,8 @@
+/**
+ * Visible fallback rendered by `ErrorBoundary` when a tree below it
+ * throws. Designed to be obvious on the warehouse floor (large reset
+ * button, clear copy) — the worker should always have a way out.
+ */
 import { Feather } from "@expo/vector-icons";
 import { reloadAppAsync } from "expo";
 import React, { useState } from "react";

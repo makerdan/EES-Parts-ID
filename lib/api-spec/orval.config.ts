@@ -1,3 +1,11 @@
+/**
+ * Orval codegen config. Reads `openapi.yaml`, emits the React Query
+ * hooks into `lib/api-client-react/src/generated/` and the matching
+ * Zod schemas into `lib/api-zod/src/generated/`.
+ *
+ * Run with: `pnpm --filter @workspace/api-spec run codegen`.
+ * The generated output is committed — CI does not regenerate.
+ */
 import { defineConfig, InputTransformerFn } from "orval";
 import path from "path";
 

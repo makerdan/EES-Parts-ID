@@ -1,3 +1,8 @@
+/**
+ * Constructs the OpenAI SDK client pointed at the Replit AI Integrations
+ * proxy. The proxy injects credentials server-side, so we don't need
+ * `OPENAI_API_KEY` in the environment — only the connector token.
+ */
 import OpenAI from "openai";
 
 if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {

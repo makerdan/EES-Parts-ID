@@ -1,3 +1,7 @@
+/**
+ * Single re-export point for the Drizzle schema. Consumers (`@workspace/db`,
+ * api-server routes, seeds) only need to import from here.
+ */
 export * from "./inventory";
 export * from "./abbreviation_map";
 export * from "./vendor_map";

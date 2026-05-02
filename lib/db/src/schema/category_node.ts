@@ -1,3 +1,9 @@
+/**
+ * `category_node` — the three-level taxonomy tree
+ * (category → subcategory → type). Slugs are globally unique by DB
+ * constraint so `/categories/{slug}/items` always resolves to a
+ * single node without having to disambiguate by parent.
+ */
 import {
   pgTable,
   text,

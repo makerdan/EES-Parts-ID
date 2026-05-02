@@ -1,3 +1,8 @@
+/**
+ * Drizzle Kit config — drives `pnpm --filter @workspace/db run push`
+ * and the migration generator. Schema lives in `src/schema/*`; SQL
+ * migrations land in `drizzle/`.
+ */
 import { defineConfig } from "drizzle-kit";
 import path from "path";
 

@@ -1,4 +1,9 @@
-// Browse + classify endpoints for the three-level taxonomy.
+/**
+ * Categories routes — browse + classify against the three-level
+ * taxonomy (category → subcategory → type) backed by `category_node`
+ * + `inventory_category`. Includes coverage stats so admins can
+ * monitor how much of the inventory is still uncategorised.
+ */
 // Hybrid classifier: rule pass first (taxonomyClassifier), AI fallback for
 // unmatched rows when useAi is on (defaults to true), Uncategorized leaf
 // otherwise.

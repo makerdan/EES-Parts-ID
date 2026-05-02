@@ -1,3 +1,7 @@
+/**
+ * `messages` — individual user/assistant turns under a `conversation`.
+ * Persisted so the Reference chat can survive an app reload.
+ */
 import { integer, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";

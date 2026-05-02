@@ -1,3 +1,7 @@
+/**
+ * `vendor_map` — short vendor codes (e.g. "ETN") to full vendor names
+ * (e.g. "Eaton"). Lets workers type either form when searching.
+ */
 import { pgTable, text, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";

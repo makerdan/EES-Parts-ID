@@ -1,3 +1,7 @@
+/**
+ * `abbreviation_map` — maps short electrical abbreviations (e.g.
+ * "GFCI") to their expanded form. Powers the Reference modal lookup.
+ */
 import { pgTable, text, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";

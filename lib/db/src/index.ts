@@ -1,3 +1,9 @@
+/**
+ * Postgres connection pool + Drizzle binding shared by every server-side
+ * package. We expose both `pool` (for graceful shutdown in `index.ts`
+ * of api-server) and `db` (the Drizzle query builder used by routes
+ * and seeds).
+ */
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "./schema";

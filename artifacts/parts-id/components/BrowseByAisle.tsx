@@ -1,3 +1,11 @@
+/**
+ * Aisle drill-down — Aisle → Section → Shelf → Parts.
+ *
+ * Read-only and offline-capable: the hierarchy is built on-device by
+ * `lib/aisleHierarchy.ts` from the cached inventory's `binLocations`
+ * arrays, so workers can keep walking the warehouse with no signal.
+ * Closing the overlay returns them to their prior search/filter state.
+ */
 import React, { useMemo, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";

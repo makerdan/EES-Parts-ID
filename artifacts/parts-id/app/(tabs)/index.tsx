@@ -1,3 +1,12 @@
+/**
+ * Search tab — the default landing screen and most-used surface.
+ *
+ * Hits POST /inventory/search (server-side trigram + ilike + dictionary
+ * expansion) for online queries, with a Fuse.js client-side fallback
+ * over the cached inventory in AppContext when the worker is offline.
+ * Results render via ResultCard with FilterPanel chips and the
+ * ResultRefinementBar for client-side refinement.
+ */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,

@@ -1,3 +1,7 @@
+/**
+ * `conversations` — top-level container for the Reference-modal AI
+ * chat history (one row per chat thread). Linked to `messages`.
+ */
 import { pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
