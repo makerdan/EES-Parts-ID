@@ -983,7 +983,7 @@ export default function SearchScreen() {
               <View style={styles.welcomeContainer}>
                 <Text style={styles.welcomeEmoji}>⚡</Text>
                 <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>
-                  Search Electrical Parts
+                  Search RDC34's Electrical Parts
                 </Text>
                 <Text style={[styles.welcomeHint, { color: colors.mutedForeground }]}>
                   Search by keywords, catalog #, or vendor. Expand Advanced Filters below for 16-dimension chip filters. Handles abbreviations, synonyms, and misspellings automatically.
