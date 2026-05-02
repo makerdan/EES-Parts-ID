@@ -208,19 +208,7 @@ export default function SearchScreen() {
   // them through the same FlatList the search results use. Drilling further
   // (selecting a non-leaf) clears the displayed items so the user only sees
   // results once they reach a focused enough node.
-  const handleBrowseNodeChange = useCallback((node: CategoryTreeNode | null) => {
-    setBrowseSelectedNode(node);
-    if (!node) {
-      setBrowseResults(null);
-      return;
-    }
-    // Only fetch a result list once the user has drilled all the way down
-    // to a leaf "type" node. Tapping a category or subcategory just drills
-    // deeper — we don't dump 1,500 receptacles on the screen for that.
-    if (node.level !== "type") {
-      setBrowseResults(null);
-      return;
-    }
+  const fetchBrowseItems = useCallback((node: CategoryTreeNode) => {
     setBrowseLoading(true);
     setBrowseError(null);
 
@@ -290,6 +278,26 @@ export default function SearchScreen() {
       })
       .finally(() => setBrowseLoading(false));
   }, []);
+
+  const handleBrowseNodeChange = useCallback((node: CategoryTreeNode | null) => {
+    setBrowseSelectedNode(node);
+    if (!node || node.level !== "type") {
+      setBrowseResults(null);
+      return;
+    }
+    fetchBrowseItems(node);
+  }, [fetchBrowseItems]);
+
+  // Re-run the Browse fetch when chip filters change so chip parity matches
+  // Search UX: the user can adjust filters after picking a Type and the
+  // results refresh without re-tapping the leaf.
+  useEffect(() => {
+    if (mode !== "browse") return;
+    if (!browseSelectedNode || browseSelectedNode.level !== "type") return;
+    fetchBrowseItems(browseSelectedNode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, mode, browseSelectedNode, fetchBrowseItems]);
+
   // ── Drill-down refinement on already-returned results ──────────────────────
   // `searchChipKeys` records which chip-filter dimensions were active on the
   // search request that produced the current `results`. When that list is
