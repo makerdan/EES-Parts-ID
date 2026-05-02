@@ -1,4 +1,4 @@
-import { resizeImage } from "../utils/resizeImage";
+import { resizeImage, ImageReadError } from "../utils/resizeImage";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system/legacy";
 
@@ -127,6 +127,57 @@ describe("resizeImage", () => {
 
       expect(result.base64).toBe("resized://fallback.jpg");
       expect(result.uri).toBe("resized://fallback.jpg");
+    });
+  });
+
+  describe("error handling — corrupt or unreadable images", () => {
+    it("throws ImageReadError with readable message when readAsStringAsync fails (pass-through path)", async () => {
+      readAsStringAsync.mockRejectedValueOnce(new Error("File not found"));
+
+      let caught: unknown;
+      try {
+        await resizeImage(TEST_URI, 1000);
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(ImageReadError);
+      expect((caught as ImageReadError).name).toBe("ImageReadError");
+      expect((caught as ImageReadError).message).toBe(
+        "Could not read the image file — it may be corrupt, deleted, or inaccessible."
+      );
+    });
+
+    it("throws ImageReadError with readable message when manipulateAsync fails (resize path)", async () => {
+      manipulateAsync.mockRejectedValueOnce(new Error("Corrupt image data"));
+
+      let caught: unknown;
+      try {
+        await resizeImage(TEST_URI, 400);
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(ImageReadError);
+      expect((caught as ImageReadError).name).toBe("ImageReadError");
+      expect((caught as ImageReadError).message).toBe(
+        "Could not process the image — it may be corrupt, in an unsupported format, or the URI is stale."
+      );
+    });
+
+    it("preserves the original cause on ImageReadError", async () => {
+      const originalError = new Error("Device storage unavailable");
+      readAsStringAsync.mockRejectedValueOnce(originalError);
+
+      let caught: unknown;
+      try {
+        await resizeImage(TEST_URI, 900);
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(ImageReadError);
+      expect((caught as ImageReadError).cause).toBe(originalError);
     });
   });
 });

@@ -10,6 +10,16 @@ export interface ResizedImage {
   base64: string;
 }
 
+export class ImageReadError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "ImageReadError";
+    if (cause !== undefined) {
+      this.cause = cause;
+    }
+  }
+}
+
 export async function resizeImage(
   uri: string,
   width: number
@@ -17,22 +27,36 @@ export async function resizeImage(
   // Unknown width (0 or negative): metadata unavailable — pass through without
   // resize rather than making an assumption about the image size.
   if (width <= 0 || (width >= MIN_WIDTH && width <= MAX_WIDTH)) {
-    const raw = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
-    return { uri, base64: `data:image/jpeg;base64,${raw}` };
+    try {
+      const raw = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
+      return { uri, base64: `data:image/jpeg;base64,${raw}` };
+    } catch (err) {
+      throw new ImageReadError(
+        "Could not read the image file — it may be corrupt, deleted, or inaccessible.",
+        err
+      );
+    }
   }
 
   // width > MAX_WIDTH → downscale; width < MIN_WIDTH → upscale.
   const targetWidth = width > MAX_WIDTH ? MAX_WIDTH : MIN_WIDTH;
 
-  const result = await ImageManipulator.manipulateAsync(
-    uri,
-    [{ resize: { width: targetWidth } }],
-    { compress: JPEG_QUALITY, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-  );
+  try {
+    const result = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: targetWidth } }],
+      { compress: JPEG_QUALITY, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+    );
 
-  const base64 = result.base64
-    ? `data:image/jpeg;base64,${result.base64}`
-    : result.uri;
+    const base64 = result.base64
+      ? `data:image/jpeg;base64,${result.base64}`
+      : result.uri;
 
-  return { uri: result.uri, base64 };
+    return { uri: result.uri, base64 };
+  } catch (err) {
+    throw new ImageReadError(
+      "Could not process the image — it may be corrupt, in an unsupported format, or the URI is stale.",
+      err
+    );
+  }
 }
