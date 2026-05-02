@@ -408,17 +408,6 @@ export default function SearchScreen() {
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Pressable
-            onPress={() => setShowFilters(!showFilters)}
-            style={[styles.headerBtn, styles.filterToggle, {
-              backgroundColor: showFilters ? colors.primary : colors.muted,
-              borderColor: activeChipCount > 0 ? colors.primary : colors.border,
-            }]}
-          >
-            <Text style={[styles.filterToggleText, { color: showFilters ? colors.primaryForeground : colors.foreground }]}>
-              {showFilters ? "▼ Filters" : `▲ Filters${activeChipCount > 0 ? ` (${activeChipCount})` : ""}`}
-            </Text>
-          </Pressable>
-          <Pressable
             onPress={() => setShowLogoutModal(true)}
             style={[styles.headerBtn, styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
           >
@@ -633,6 +622,30 @@ export default function SearchScreen() {
             </Pressable>
           ) : null}
         </View>
+
+        {/* Filters toggle — full width, below Search row */}
+        <Pressable
+          onPress={() => setShowFilters(!showFilters)}
+          style={[styles.searchBarFiltersBtn, {
+            backgroundColor: showFilters ? colors.primary + "18" : colors.muted,
+            borderColor: activeChipCount > 0 ? colors.primary : colors.border,
+          }]}
+        >
+          <Feather
+            name={showFilters ? "chevron-up" : "chevron-down"}
+            size={14}
+            color={showFilters ? colors.primary : colors.mutedForeground}
+          />
+          <Text style={[styles.searchBarFiltersBtnText, {
+            color: showFilters ? colors.primary : colors.mutedForeground,
+          }]}>
+            {showFilters
+              ? "Hide Filters"
+              : activeChipCount > 0
+                ? `Filters (${activeChipCount} active)`
+                : "Filters"}
+          </Text>
+        </Pressable>
       </View>
 
       {/* ── Advanced filters (collapsible) — stable outside FlatList ── */}
@@ -829,10 +842,6 @@ const styles = StyleSheet.create({
   logoutModalCancelText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   logoutModalConfirm: { flex: 1, borderRadius: 8, paddingVertical: 12, alignItems: "center" },
   logoutModalConfirmText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  filterToggle: {
-    paddingHorizontal: 12,
-  },
-  filterToggleText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   searchBar: {
     margin: 12,
     marginBottom: 6,
@@ -877,6 +886,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  searchBarFiltersBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  searchBarFiltersBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   filterCard: {
     marginHorizontal: 12,
     marginBottom: 6,
