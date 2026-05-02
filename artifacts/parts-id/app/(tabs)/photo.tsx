@@ -198,7 +198,7 @@ export default function PhotoScreen() {
                     style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
                   >
                     <Text style={styles.addImageEmoji}>🖼️</Text>
-                    <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Gallery</Text>
+                    <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
                   </Pressable>
                 </View>
               ) : null}
@@ -361,7 +361,7 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   content: { padding: 16, gap: 14 },
   imageSection: { gap: 8 },
-  imageRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  imageRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, justifyContent: "center" },
   imageWrapper: { position: "relative" },
   thumbnail: { width: 130, height: 130, borderRadius: 10, borderWidth: 2 },
   removeBtn: {
@@ -375,7 +375,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   removeBtnText: { color: "#fff", fontSize: 10, fontFamily: "Inter_700Bold" },
-  addImageButtons: { flexDirection: "row", gap: 10 },
+  addImageButtons: { flexDirection: "row", gap: 10, justifyContent: "center" },
   addImageBtn: {
     width: 130,
     height: 130,
