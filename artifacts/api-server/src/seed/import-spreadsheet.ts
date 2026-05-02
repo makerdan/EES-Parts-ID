@@ -9,6 +9,13 @@
  * upsert-batch route semantics. Catalog is stored as-is (trimmed), consistent
  * with the unique index in lib/db/src/schema/inventory.ts.
  *
+ * Multi-bin behavior:
+ *   - A single bin cell may contain several bins separated by `,` `;` `/` or newlines.
+ *   - Multiple rows for the same (vendor, catalog) accumulate their bins.
+ *   - On upsert, new bins are MERGED ADDITIVELY into the part's existing list
+ *     (case-insensitive de-dupe). Re-importing a sheet never removes a bin —
+ *     bin removal is intentionally out of scope of the importer.
+ *
  * Execution results (2026-05-01):
  *   Total rows read:   7397
  *   Valid rows:        7397
@@ -23,6 +30,7 @@ import * as XLSX from "xlsx";
 import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { aggregateRowsByPart } from "../utils/binLocations";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -73,17 +81,22 @@ async function importSpreadsheet() {
     return "";
   }
 
-  // Map rows to inventory schema
-  const items = rawRows
+  // Map raw rows → flat shape, preserving the bin cell un-split so the
+  // aggregator can split-and-merge once across the whole sheet.
+  const flatRows = rawRows
     .map((row) => ({
-      vendor: (normalizeKey(row, "vendor") || "").toString().trim().toUpperCase(),
+      vendor: (normalizeKey(row, "vendor") || "").toString().trim(),
       catalog: (normalizeKey(row, "catalog", "catalognumber", "part", "partnumber", "item") || "").toString().trim(),
       description: (normalizeKey(row, "description", "desc") || "").toString().trim(),
-      binLocation: (normalizeKey(row, "binlocation", "bin", "location", "binloc") || "").toString().trim(),
+      binCell: (normalizeKey(row, "binlocation", "bin", "location", "binloc") || "").toString().trim(),
     }))
-    .filter((item) => item.vendor && item.catalog);
+    .filter((r) => r.vendor && r.catalog);
 
-  console.log(`Valid rows after filtering: ${items.length}`);
+  // Collapse duplicate (vendor, catalog) rows into one part with merged bins.
+  const items = aggregateRowsByPart(flatRows);
+
+  console.log(`Valid rows after filtering: ${flatRows.length}`);
+  console.log(`Unique parts after bin-merge: ${items.length}`);
 
   let inserted = 0;
   let updated = 0;
@@ -93,6 +106,8 @@ async function importSpreadsheet() {
     const batch = items.slice(i, i + BATCH_SIZE);
 
     try {
+      // ON CONFLICT merges bin_locations additively (case-insensitively
+      // de-duplicated) so re-imports never lose a bin.
       const result = await db
         .insert(inventoryTable)
         .values(
@@ -100,7 +115,7 @@ async function importSpreadsheet() {
             vendor: item.vendor,
             catalog: item.catalog,
             description: item.description,
-            binLocation: item.binLocation,
+            binLocations: item.binLocations,
             aiKeywords: [],
           }))
         )
@@ -108,7 +123,19 @@ async function importSpreadsheet() {
           target: [inventoryTable.vendor, inventoryTable.catalog],
           set: {
             description: sql`EXCLUDED.description`,
-            binLocation: sql`EXCLUDED.bin_location`,
+            // COALESCE guards against ARRAY_AGG returning NULL when both the
+            // existing and incoming arrays are empty (after filtering blanks),
+            // since bin_locations is NOT NULL.
+            binLocations: sql`COALESCE((
+              SELECT ARRAY_AGG(b)
+              FROM (
+                SELECT DISTINCT ON (UPPER(b)) b
+                FROM unnest(${inventoryTable.binLocations} || EXCLUDED.bin_locations)
+                  WITH ORDINALITY AS t(b, ord)
+                WHERE TRIM(b) <> ''
+                ORDER BY UPPER(b), ord
+              ) AS deduped
+            ), ARRAY[]::text[])`,
             updatedAt: sql`now()`,
           },
         })

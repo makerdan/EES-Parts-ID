@@ -215,4 +215,118 @@ describe("POST /api/admin/upload", () => {
     expect(res.body.inserted).toBe(1);
     expect(res.body.total).toBe(1);
   });
+
+  // ── Multi-bin behavior ─────────────────────────────────────────────────
+  it("splits a single bin cell containing multiple bins (`,` `;` `/` `\\n`) into an array", async () => {
+    const csv = [
+      "Vendor,Catalog,Description,BinLocation",
+      // Comma separator inside a quoted cell (otherwise it'd be field break).
+      `JEST-VENDOR,${UPLOAD_PREFIX}MULTI1,Comma-sep,"A-1, A-2, A-3"`,
+      // Bare semicolon and slash separators don't need quoting.
+      `JEST-VENDOR,${UPLOAD_PREFIX}MULTI2,Semi-sep,B-1;B-2;B-3`,
+      `JEST-VENDOR,${UPLOAD_PREFIX}MULTI3,Slash-sep,C-1/C-2/C-3`,
+      // Quoted multi-line cell — newlines inside quotes must be honoured by
+      // the parser so all bins survive (regression test for the previous
+      // line-by-line CSV split that silently dropped trailing bins).
+      `JEST-VENDOR,${UPLOAD_PREFIX}MULTI4,Newline-sep,"D-1\nD-2\nD-3"`,
+    ].join("\n");
+
+    const res = await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    expect(res.body.inserted).toBe(4);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} LIKE ${UPLOAD_PREFIX + "MULTI%"}`)
+      .orderBy(inventoryTable.catalog);
+
+    expect(rows.map(r => r.binLocations)).toEqual([
+      ["A-1", "A-2", "A-3"],
+      ["B-1", "B-2", "B-3"],
+      ["C-1", "C-2", "C-3"],
+      ["D-1", "D-2", "D-3"],
+    ]);
+  });
+
+  it("merges bins additively across two CSV rows for the same part", async () => {
+    const csv = [
+      "Vendor,Catalog,Description,BinLocation",
+      `JEST-VENDOR,${UPLOAD_PREFIX}DUPE,First row,A-1`,
+      `JEST-VENDOR,${UPLOAD_PREFIX}DUPE,Second row,B-2`,
+    ].join("\n");
+
+    const res = await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    // Two CSV rows collapse to one part with two bins.
+    expect(res.body.total).toBe(1);
+
+    const [row] = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${UPLOAD_PREFIX + "DUPE"}`);
+
+    expect(row?.binLocations).toEqual(["A-1", "B-2"]);
+  });
+
+  it("never removes an existing bin when a re-upload omits it (additive merge)", async () => {
+    // Seed the part with two bins. Bin cell is quoted because it contains
+    // a comma (otherwise buildCsv's naive `,` join would split it).
+    const seedCsv = [
+      "Vendor,Catalog,Description,BinLocation",
+      `JEST-VENDOR,${UPLOAD_PREFIX}KEEP,Original,"A-1, A-2"`,
+    ].join("\n");
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv: seedCsv })
+      .expect(200);
+
+    // Re-upload the same part with one shared bin and one new bin.
+    const updateCsv = [
+      "Vendor,Catalog,Description,BinLocation",
+      `JEST-VENDOR,${UPLOAD_PREFIX}KEEP,Updated,"A-2, A-3"`,
+    ].join("\n");
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv: updateCsv })
+      .expect(200);
+
+    const [row] = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${UPLOAD_PREFIX + "KEEP"}`);
+
+    // A-1 (old, omitted) must still be present; A-2 deduped; A-3 added.
+    expect(row?.binLocations).toEqual(["A-1", "A-2", "A-3"]);
+  });
+
+  it("dedupes bins case-insensitively, preserving the first-seen casing", async () => {
+    const csv = [
+      "Vendor,Catalog,Description,BinLocation",
+      `JEST-VENDOR,${UPLOAD_PREFIX}CASE,Case test,"a-1, A-1, A-2, a-2"`,
+    ].join("\n");
+
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    const [row] = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${UPLOAD_PREFIX + "CASE"}`);
+
+    expect(row?.binLocations).toEqual(["a-1", "A-2"]);
+  });
 });

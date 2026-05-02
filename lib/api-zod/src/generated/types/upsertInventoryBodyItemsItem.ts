@@ -10,5 +10,6 @@ export type UpsertInventoryBodyItemsItem = {
   vendor: string;
   catalog: string;
   description?: string;
-  binLocation?: string;
+  /** Bins to merge into the part's bin list (additive — existing bins are preserved). */
+  binLocations?: string[];
 };

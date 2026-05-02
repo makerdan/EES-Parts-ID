@@ -13,7 +13,7 @@ export interface FixtureItem {
   vendor: string;
   catalog: string;
   description: string;
-  binLocation?: string;
+  binLocations?: string[];
 }
 
 /**
@@ -28,7 +28,7 @@ export async function seedFixtures(items: FixtureItem[]) {
         vendor: i.vendor.toUpperCase(),
         catalog: i.catalog,
         description: i.description,
-        binLocation: i.binLocation ?? "",
+        binLocations: i.binLocations ?? [],
         aiKeywords: [] as string[],
       })),
     )
@@ -61,12 +61,12 @@ export const STANDARD_FIXTURES: FixtureItem[] = [
     vendor: "EATON",
     catalog: "JEST-ITG-BR120",
     description: "1 Pole 20A 120/240V Breaker",
-    binLocation: "B-01",
+    binLocations: ["B-01"],
   },
   {
     vendor: "HUBBELL",
     catalog: "JEST-ITG-HBL5262I",
     description: "20A 125V Duplex Receptacle Ivory",
-    binLocation: "C-07",
+    binLocations: ["C-07"],
   },
 ];
