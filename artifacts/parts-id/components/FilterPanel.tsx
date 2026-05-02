@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useCallback, useEffect, useRef } from "react";
+import { usePersistedCollapse } from "@/hooks/usePersistedCollapse";
 import {
   Animated,
   LayoutAnimation,
@@ -357,7 +357,6 @@ export function ConfidenceSlider({
   );
 }
 
-const DIM_COLLAPSED_KEY = "@partsid/dim_collapsed";
 
 export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
@@ -368,18 +367,18 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
       .filter(v => v.trim() !== "").length;
 
   // ── Advanced Filters collapse state ──────────────────────────────────────
-  const [dimCollapsed, setDimCollapsed] = useState(true);
+  const [dimCollapsed, , setDimCollapsed, dimCollapsedLoaded] =
+    usePersistedCollapse("@partsid/dim_collapsed", true);
   const dimChevronAnim = useRef(new Animated.Value(0)).current;
 
+  // Silently sync the chevron to the value loaded from AsyncStorage (no animation)
   useEffect(() => {
-    AsyncStorage.getItem(DIM_COLLAPSED_KEY).then(stored => {
-      if (stored === null) return;
-      const collapsed = stored === "1";
-      setDimCollapsed(collapsed);
-      dimChevronAnim.setValue(collapsed ? 0 : 1);
-    }).catch(() => {});
+    if (dimCollapsedLoaded) {
+      dimChevronAnim.setValue(dimCollapsed ? 0 : 1);
+    }
+  // Only fire once when the persisted value first becomes available
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [dimCollapsedLoaded]);
 
   const toggleDimensions = useCallback(() => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -390,8 +389,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
       duration: 200,
       useNativeDriver: true,
     }).start();
-    AsyncStorage.setItem(DIM_COLLAPSED_KEY, toCollapsed ? "1" : "0").catch(() => {});
-  }, [dimCollapsed, dimChevronAnim]);
+  }, [dimCollapsed, setDimCollapsed, dimChevronAnim]);
 
   const dimChevronRotate = dimChevronAnim.interpolate({
     inputRange: [0, 1],
