@@ -34,15 +34,23 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   const updateMutation = useUpdateItemKeywords();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestKeywordsRef = useRef<string[]>(keywords);
+  // The keywords that were last successfully persisted to the server
+  const lastSavedKeywordsRef = useRef<string[]>(item?.aiKeywords ?? []);
   // Tracks whether a mutateAsync call is currently in flight to prevent concurrent saves
   const isSavingRef = useRef(false);
+  // When a save is in flight at close-time, stash the latest keywords here so
+  // the in-flight save's finally block can fire one follow-up flush.
+  const postFlushRef = useRef<{ id: number; keywords: string[] } | null>(null);
   // Keep item in a ref so callbacks always see the latest value without stale closure issues
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
 
   // Sync keywords when item changes (e.g. different item opened)
   useEffect(() => {
-    setKeywords(item?.aiKeywords ?? []);
+    const kws = item?.aiKeywords ?? [];
+    setKeywords(kws);
+    latestKeywordsRef.current = kws;
+    lastSavedKeywordsRef.current = kws;
     setSaveStatus("idle");
   }, [item?.id]);
 
@@ -61,6 +69,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
         setSaveStatus("saving");
         try {
           await updateMutation.mutateAsync({ id: current.id, data: { keywords: kws } });
+          lastSavedKeywordsRef.current = kws;
           onKeywordsChanged?.(current.id, kws);
           await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
           setSaveStatus("saved");
@@ -69,6 +78,21 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
           setSaveStatus("error");
         } finally {
           isSavingRef.current = false;
+          // Fire any post-close flush that was queued while this save was in flight
+          const pending = postFlushRef.current;
+          if (pending) {
+            postFlushRef.current = null;
+            updateMutation
+              .mutateAsync({ id: pending.id, data: { keywords: pending.keywords } })
+              .then(() => {
+                lastSavedKeywordsRef.current = pending.keywords;
+                onKeywordsChanged?.(pending.id, pending.keywords);
+                queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+              })
+              .catch((err) => {
+                console.warn("KeywordEditor: post-close flush failed:", err);
+              });
+          }
         }
       }, DEBOUNCE_MS);
     },
@@ -104,27 +128,44 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
 
   const handleClose = () => {
     const current = itemRef.current;
-    if (debounceRef.current && current) {
+    // Cancel any pending debounce timer
+    if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
-      // Only fire a flush save if no mutation is already in flight (prevents concurrent saves)
-      if (!isSavingRef.current) {
-        isSavingRef.current = true;
-        updateMutation
-          .mutateAsync({ id: current.id, data: { keywords: latestKeywordsRef.current } })
-          .then(() => {
-            onKeywordsChanged?.(current.id, latestKeywordsRef.current);
-            queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-          })
-          .catch((err) => {
-            console.warn("KeywordEditor: background save on close failed:", err);
-          })
-          .finally(() => {
-            isSavingRef.current = false;
-          });
-      }
-      // else: mutation already in flight — it will complete on its own
     }
+
+    if (current) {
+      const latestKws = latestKeywordsRef.current;
+      const hasUnsaved =
+        JSON.stringify(latestKws) !== JSON.stringify(lastSavedKeywordsRef.current);
+
+      if (hasUnsaved) {
+        if (!isSavingRef.current) {
+          // No save in flight — flush immediately with the latest keywords
+          isSavingRef.current = true;
+          const kws = [...latestKws];
+          updateMutation
+            .mutateAsync({ id: current.id, data: { keywords: kws } })
+            .then(() => {
+              lastSavedKeywordsRef.current = kws;
+              onKeywordsChanged?.(current.id, kws);
+              queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+            })
+            .catch((err) => {
+              console.warn("KeywordEditor: background save on close failed:", err);
+            })
+            .finally(() => {
+              isSavingRef.current = false;
+            });
+        } else {
+          // A save is in flight (with older data) — queue the latest keywords so the
+          // in-flight save's finally block can fire one follow-up flush.
+          postFlushRef.current = { id: current.id, keywords: [...latestKws] };
+        }
+      }
+      // else: nothing changed since last save — no action needed
+    }
+
     onClose();
   };
 

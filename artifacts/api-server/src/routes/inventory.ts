@@ -449,11 +449,12 @@ router.post("/search", async (req, res) => {
         vendor: row.vendor,
         catalog: row.catalog,
         description: row.description,
-        binLocation: row.bin_location,
-        aiKeywords: row.ai_keywords ?? [],
-        enrichedAt: row.enriched_at,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
+        // Safe fallbacks for fields not included in the runtime shape-validation filter
+        binLocation: typeof row.bin_location === "string" ? row.bin_location : null,
+        aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
+        enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
+        createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
+        updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
       };
 
       const catalogUpper = row.catalog.toUpperCase();
