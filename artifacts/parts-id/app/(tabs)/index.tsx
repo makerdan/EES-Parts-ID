@@ -665,10 +665,17 @@ export default function SearchScreen() {
             disabled={searchMutation.isPending}
             style={[styles.searchBarSearchBtn, {
               backgroundColor: searchMutation.isPending ? colors.muted : colors.primary,
+              borderWidth: 2,
+              borderColor: searchMutation.isPending ? colors.border : colors.foreground,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.18,
+              shadowRadius: 3,
+              elevation: 3,
             }]}
           >
             <Text style={[styles.searchBarSearchBtnText, { color: colors.primaryForeground }]}>
-              {searchMutation.isPending ? "…" : "Search"}
+              {searchMutation.isPending ? "…" : "🔍 Search"}
             </Text>
           </Pressable>
           {(hasResults || filters.keywords) ? (
@@ -904,11 +911,11 @@ const styles = StyleSheet.create({
   },
   searchBarSearchBtn: {
     flex: 1,
-    paddingVertical: 11,
+    paddingVertical: 14,
     borderRadius: 8,
     alignItems: "center",
   },
-  searchBarSearchBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  searchBarSearchBtnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
   searchBarClearBtn: {
     paddingVertical: 11,
     paddingHorizontal: 16,
