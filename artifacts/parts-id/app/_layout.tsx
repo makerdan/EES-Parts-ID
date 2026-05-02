@@ -18,10 +18,14 @@ import { AppProvider, useApp } from "@/contexts/AppContext";
 
 SplashScreen.preventAutoHideAsync();
 
-// Configure API base URL from env
+// Configure API base URL from env.
+// NOTE: do NOT append "/api" here — the OpenAPI spec declares
+// `servers: - url: /api`, so every generated client path already starts
+// with `/api/...`.  Adding it again here produces `/api/api/...` 404s for
+// every typed-client call (suggest-description, search, AI identify, etc.).
 const domain = process.env.EXPO_PUBLIC_DOMAIN;
 if (domain) {
-  setBaseUrl(`https://${domain}/api`);
+  setBaseUrl(`https://${domain}`);
 }
 
 const queryClient = new QueryClient({
