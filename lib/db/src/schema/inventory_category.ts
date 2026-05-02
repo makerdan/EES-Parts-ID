@@ -11,13 +11,15 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
 /**
- * Assignment of an inventory item to a single category_node (the leaf
- * "type" node when one was found, otherwise the highest level the
- * classifier could place it at).
+ * Assignment of an inventory item to a single leaf category_node ("type"
+ * level). The PRIMARY KEY is `inventory_id` alone, so the database rejects
+ * multi-assignment drift at the schema level — every inventory row maps to
+ * exactly one Category → Subcategory → Type path. The classifier and the
+ * admin assignment endpoints rely on this invariant.
  *
- * One row per (inventory_id, category_node_id). An inventory item MAY have
- * multiple rows when the classifier finds it fits more than one type — in
- * practice the classifier currently picks a single best match per item.
+ * History: prior schema used PK (inventory_id, category_node_id); migration
+ * 0004 swapped to PK (inventory_id) after de-duplicating any pre-existing
+ * rows.
  */
 export const inventoryCategoryTable = pgTable(
   "inventory_category",
@@ -31,11 +33,8 @@ export const inventoryCategoryTable = pgTable(
     classifiedAt: timestamp("classified_at").defaultNow().notNull(),
   },
   (table) => [
-    primaryKey({
-      columns: [table.inventoryId, table.categoryNodeId],
-    }),
+    primaryKey({ columns: [table.inventoryId] }),
     index("inventory_category_node_idx").on(table.categoryNodeId),
-    index("inventory_category_item_idx").on(table.inventoryId),
   ],
 );
 
