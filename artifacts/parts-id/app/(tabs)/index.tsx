@@ -1166,9 +1166,12 @@ export default function SearchScreen() {
         </Pressable>
       </View>
 
-      {/* ── Advanced Filters (Search mode) OR Browse panel (Browse mode) ── */}
+      {/* ── Advanced Filters (Search mode) OR Browse panel (Browse mode) ──
+          In Browse mode we let this region grow (flex: 1) since the welcome
+          state is hidden and there are usually no Search results competing
+          for vertical room. */}
       <ScrollView
-        style={{ maxHeight: "50%" }}
+        style={mode === "browse" ? { flex: 1 } : { maxHeight: "50%" }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
