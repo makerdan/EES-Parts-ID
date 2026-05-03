@@ -19,6 +19,7 @@
     "drizzle-orm": "catalog:",
     "express": "^5",
     "fuse.js": "^7.1.0",
+    "multer": "^2.1.1",
     "pino": "^9",
     "pino-http": "^10",
     "xlsx": "^0.18.5"
@@ -28,6 +29,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
+    "@types/multer": "^2.1.0",
     "@types/node": "catalog:",
     "@types/supertest": "^7.2.0",
     "esbuild": "^0.27.3",
