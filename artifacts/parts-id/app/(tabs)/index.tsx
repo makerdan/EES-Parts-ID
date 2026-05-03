@@ -13,6 +13,7 @@ import {
   Animated,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -1462,7 +1463,16 @@ const styles = StyleSheet.create({
   offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
   offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   headerBtn: { height: 44, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  logoutBtn: { width: 48, flexDirection: "column", gap: 2, paddingVertical: 4 },
+  // iOS renders the 9 pt "Settings" label slightly wider than Android/web,
+  // so the previous fixed 48 px width caused it to wrap onto two lines.
+  // Bump the width on iOS only; other platforms keep the original size.
+  logoutBtn: {
+    width: Platform.OS === "ios" ? 60 : 48,
+    flexDirection: "column",
+    gap: 2,
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+  },
   logoutBtnLabel: { fontSize: 9, fontFamily: "Inter_500Medium", letterSpacing: 0.2 },
   modalOverlay: { flex: 1, backgroundColor: "#00000055", alignItems: "center", justifyContent: "center", padding: 32 },
   logoutModal: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 24 },
