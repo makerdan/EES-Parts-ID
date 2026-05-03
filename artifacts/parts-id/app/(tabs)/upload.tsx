@@ -23,6 +23,7 @@ import {
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import { router } from "expo-router";
 import * as XLSX from "xlsx";
 import { useListInventory } from "@workspace/api-client-react";
 import {
@@ -1426,10 +1427,12 @@ export default function UploadScreen() {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerRow}>
-          <View>
+          {/* Tapping the app title from any tab jumps back to the Search
+              tab's empty welcome state (handled there by tabPress). */}
+          <Pressable onPress={() => router.navigate("/")} hitSlop={8}>
             <Text style={[styles.headerTitle, { color: colors.foreground }]}>📤 Inventory</Text>
             <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
-          </View>
+          </Pressable>
           {isAdmin ? (
             <Pressable onPress={logoutAdmin} style={[styles.lockBtn, { borderColor: colors.border }]}>
               <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>🔓 Lock</Text>

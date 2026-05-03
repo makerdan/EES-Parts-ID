@@ -19,6 +19,7 @@ import {
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { router } from "expo-router";
 import { resizeImage } from "@/utils/resizeImage";
 import { useSearchInventory, useAiIdentifyPart } from "@workspace/api-client-react";
 import type { SearchResult } from "@workspace/api-client-react";
@@ -225,10 +226,14 @@ export default function PhotoScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>📸 Photo ID</Text>
-          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
-            Identify parts from photos
-          </Text>
+          {/* Tapping the app title from any tab jumps back to the Search
+              tab's empty welcome state (handled there by tabPress). */}
+          <Pressable onPress={() => router.navigate("/")} hitSlop={8}>
+            <Text style={[styles.headerTitle, { color: colors.foreground }]}>📸 Photo ID</Text>
+            <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
+              Identify parts from photos
+            </Text>
+          </Pressable>
         </View>
 
         <View style={styles.content}>
