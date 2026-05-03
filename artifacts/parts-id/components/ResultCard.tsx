@@ -8,7 +8,9 @@
  */
 import React, { useState } from "react";
 import {
+  Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -104,11 +106,13 @@ function VariantRow({
   parentVendor,
   colors,
   fontScale,
+  onPress,
 }: {
   item: InventoryItem;
   parentVendor: string;
   colors: ReturnType<typeof useColors>;
   fontScale: number;
+  onPress: () => void;
 }) {
   const fs = (base: number) => Math.round(base * fontScale);
   const bins = item.binLocations ?? [];
@@ -116,7 +120,21 @@ function VariantRow({
   const sameVendor = item.vendor.toUpperCase() === parentVendor.toUpperCase();
   const label = sameVendor ? item.catalog : `${item.vendor} · ${item.catalog}`;
   return (
-    <View style={[varStyles.row, { borderBottomColor: colors.border }]}>
+    <Pressable
+      onPress={onPress}
+      android_ripple={{ color: colors.muted }}
+      hitSlop={4}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${item.vendor} ${item.catalog}${primaryBin ? `, bin ${primaryBin}` : ", no bin"}`}
+      style={({ pressed }) => [
+        varStyles.row,
+        {
+          borderBottomColor: colors.border,
+          backgroundColor: pressed ? colors.accent : "transparent",
+          opacity: pressed ? 0.85 : 1,
+        },
+      ]}
+    >
       <Text
         style={[varStyles.catalog, { color: colors.foreground, fontSize: fs(13) }]}
         numberOfLines={1}
@@ -138,7 +156,7 @@ function VariantRow({
           No bin
         </Text>
       )}
-    </View>
+    </Pressable>
   );
 }
 
@@ -147,8 +165,9 @@ const varStyles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    minHeight: 44,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 8,
   },
@@ -176,6 +195,12 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
   // card (keywords, enrichment date, etc.). When the card is collapsed by the
   // worker, we also collapse this panel so card state stays consistent.
   const [variantsExpanded, setVariantsExpanded] = useState(false);
+  // Tapping a row in the related-sizes panel opens the variant in a modal
+  // showing its full ResultCard. Using a Modal (rather than scrolling to an
+  // existing list row) means this works identically across Search,
+  // Browse-by-Aisle, and Photo ID even when the variant isn't already in
+  // the visible result list.
+  const [detailVariant, setDetailVariant] = useState<InventoryItem | null>(null);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
 
@@ -322,6 +347,7 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
                 parentVendor={item.vendor}
                 colors={colors}
                 fontScale={fontScale}
+                onPress={() => setDetailVariant(v)}
               />
             ))}
             {filteredVariants.length > 12 ? (
@@ -410,6 +436,70 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
           {expanded ? "▲" : "▼"}
         </Text>
       </View>
+      {/* Variant detail modal — rendered as a Modal so it lives outside the
+          outer Pressable's responder tree and can be opened from any of the
+          three result surfaces (Search, Browse-by-Aisle, Photo ID). The
+          inner ResultCard is given an empty variants array so we never
+          recurse into a nested related-sizes panel. */}
+      <Modal
+        visible={detailVariant !== null}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setDetailVariant(null)}
+      >
+        <Pressable
+          style={[cardStyles.detailOverlay, { backgroundColor: "#00000088" }]}
+          onPress={() => setDetailVariant(null)}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss related size"
+        >
+          {/* Inner Pressable absorbs taps inside the sheet so they don't
+              bubble to the backdrop dismiss handler. */}
+          <Pressable
+            onPress={() => undefined}
+            style={[
+              cardStyles.detailSheet,
+              { backgroundColor: colors.background, borderColor: colors.border },
+            ]}
+          >
+            <View style={[cardStyles.detailHeader, { borderColor: colors.border }]}>
+              <Text style={[cardStyles.detailTitle, { color: colors.foreground }]}>
+                Related Size
+              </Text>
+              <Pressable
+                onPress={() => setDetailVariant(null)}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Close related size"
+                style={({ pressed }) => [
+                  cardStyles.detailClose,
+                  { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+                ]}
+              >
+                <Text style={[cardStyles.detailCloseText, { color: colors.foreground }]}>
+                  ✕ Close
+                </Text>
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={cardStyles.detailScroll}>
+              {detailVariant ? (
+                <ResultCard
+                  result={{
+                    item: detailVariant,
+                    confidence: 1,
+                    matchReason: `Related to ${item.vendor} ${item.catalog}`,
+                    seriesLabel: undefined,
+                    variants: [],
+                  }}
+                  rank={0}
+                  fontScale={fontScale}
+                  onEditKeywords={onEditKeywords}
+                />
+              ) : null}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </Pressable>
   );
 }
@@ -518,5 +608,48 @@ const cardStyles = StyleSheet.create({
   editBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   vendorFullName: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
+  detailOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  detailSheet: {
+    maxHeight: "92%",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    overflow: "hidden",
+  },
+  detailHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  detailTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.3,
+  },
+  detailClose: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 44,
+    minWidth: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  detailCloseText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
+  detailScroll: {
+    padding: 14,
+  },
 });
 
