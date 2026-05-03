@@ -11,6 +11,7 @@ import aiRouter from "./ai";
 import referenceRouter from "./reference";
 import adminRouter from "./admin";
 import adminUploadRouter from "./adminUpload";
+import catalogPdfRouter from "./catalogPdf";
 import categoriesRouter from "./categories";
 
 const router: IRouter = Router();
@@ -22,6 +23,7 @@ router.use("/ai", aiRouter);
 router.use("/reference", referenceRouter);
 router.use("/admin", adminRouter);
 router.use("/admin", adminUploadRouter);
+router.use("/admin", catalogPdfRouter);
 router.use("/categories", categoriesRouter);
 
 export default router;

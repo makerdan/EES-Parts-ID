@@ -503,6 +503,46 @@ export default function UploadScreen() {
     [],
   );
 
+  // ── Catalog PDF enrichment state ─────────────────────────────────────────
+  // Worker uploads a vendor catalog PDF (e.g. Bridgeport Fittings 2026); the
+  // server parses the index, fuzzy-matches every catalog number against
+  // existing inventory rows, and returns a tiered report. Exact + high-
+  // confidence rows auto-apply; uncertain rows surface a per-row review modal
+  // so the worker picks the right inventory candidate (or skips).
+  type CatalogTier = "exact" | "highConfidence" | "uncertain" | "unmatched";
+  type CatalogReportRow = {
+    catalogNumber: string;
+    pageNumbers: number[];
+    description: string;
+    dimensions: Record<string, string>;
+    keywords: string[];
+    tier: CatalogTier;
+    candidates: Array<{
+      inventoryId: number;
+      vendor: string;
+      catalog: string;
+      description: string;
+      distance: number;
+      reason: string;
+    }>;
+  };
+  type CatalogReport = {
+    vendor: string;
+    summary: { exact: number; highConfidence: number; uncertain: number; unmatched: number; total: number };
+    rows: CatalogReportRow[];
+  };
+  type CatalogApplyResult = { updated: number; skippedNoOp: number; errors: Array<{ inventoryId: number; error: string }> };
+
+  const [catalogPdfFileName, setCatalogPdfFileName] = useState<string | null>(null);
+  const [catalogPdfVendor, setCatalogPdfVendor] = useState<string>("Bridgeport");
+  const [catalogPdfPending, setCatalogPdfPending] = useState(false);
+  const [catalogPdfError, setCatalogPdfError] = useState<string | null>(null);
+  const [catalogReport, setCatalogReport] = useState<CatalogReport | null>(null);
+  const [catalogApplyResult, setCatalogApplyResult] = useState<CatalogApplyResult | null>(null);
+  const [catalogReviewVisible, setCatalogReviewVisible] = useState(false);
+  // Per-uncertain-row decision: chosen inventoryId, or "skip".
+  const [catalogReviewChoices, setCatalogReviewChoices] = useState<Record<string, number | "skip">>({});
+
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
   const [enrichSummary, setEnrichSummary] = useState<EnrichSummary | null>(null);
@@ -730,6 +770,122 @@ export default function UploadScreen() {
       setMeasureEnrichError("Failed to start measurement enrichment. Check your connection and try again.");
     } finally {
       setMeasureEnrichPending(false);
+    }
+  };
+
+  // ── Catalog PDF handlers ─────────────────────────────────────────────────
+  // Forward the preview report + uncertain picks to the server. The server
+  // itself auto-applies every exact + highConfidence row and applies the
+  // worker's choice for each uncertain row, so the client just relays.
+  const applyCatalogDecisions = useCallback(async (
+    report: CatalogReport,
+    uncertainPicks: Record<string, number | "skip">,
+  ): Promise<CatalogApplyResult | null> => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/catalog-pdf/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({ report, uncertainDecisions: uncertainPicks }),
+      });
+      if (res.status === 401) {
+        logoutAdmin();
+        setCatalogPdfError("Admin session expired. Please unlock again.");
+        return null;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setCatalogPdfError(err.error ?? "Failed to apply catalog updates.");
+        return null;
+      }
+      return (await res.json()) as CatalogApplyResult;
+    } catch {
+      setCatalogPdfError("Network error while applying catalog updates.");
+      return null;
+    }
+  }, [adminHeaders, logoutAdmin]);
+
+  const handleCatalogPdfPick = async () => {
+    setCatalogPdfError(null);
+    setCatalogReport(null);
+    setCatalogApplyResult(null);
+    setCatalogReviewChoices({});
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf"],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      setCatalogPdfFileName(asset.name);
+      setCatalogPdfPending(true);
+
+      // Multipart upload: `file` field carries the PDF, `vendor` field carries
+      // the vendor name. RN's FormData accepts a { uri, name, type } object
+      // for file fields and streams the file directly without loading it into
+      // memory as a blob.
+      const form = new FormData();
+      form.append("vendor", catalogPdfVendor);
+      form.append("file", {
+        // RN-specific FormData file shape; cast for TS.
+        uri: asset.uri,
+        name: asset.name || "catalog.pdf",
+        type: "application/pdf",
+      } as unknown as Blob);
+
+      const previewUrl = `${API_BASE}/admin/catalog-pdf/preview`;
+      const res = await fetch(previewUrl, {
+        method: "POST",
+        // Do NOT set Content-Type — RN sets the multipart boundary itself.
+        headers: { ...adminHeaders },
+        body: form,
+      });
+      if (res.status === 401) {
+        logoutAdmin();
+        setCatalogPdfError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setCatalogPdfError(err.error ?? "Failed to parse the catalog PDF.");
+        return;
+      }
+      const report = (await res.json()) as CatalogReport;
+      setCatalogReport(report);
+
+      // Auto-apply exact + high-confidence rows immediately. Uncertain rows
+      // wait for the worker to open the review modal.
+      const applied = await applyCatalogDecisions(report, {});
+      if (applied) setCatalogApplyResult(applied);
+    } catch (err) {
+      setCatalogPdfError(err instanceof Error ? err.message : "Could not process the catalog PDF.");
+    } finally {
+      setCatalogPdfPending(false);
+    }
+  };
+
+  const handleCatalogReviewApply = async () => {
+    if (!catalogReport) return;
+    setCatalogPdfPending(true);
+    setCatalogPdfError(null);
+    try {
+      // Build a decisions list that includes ONLY the uncertain picks (the
+      // exact + highConfidence rows were already auto-applied on preview).
+      const uncertainOnly: CatalogReport = {
+        ...catalogReport,
+        rows: catalogReport.rows.filter(r => r.tier === "uncertain"),
+      };
+      const applied = await applyCatalogDecisions(uncertainOnly, catalogReviewChoices);
+      if (applied) {
+        const prev = catalogApplyResult ?? { updated: 0, skippedNoOp: 0, errors: [] };
+        setCatalogApplyResult({
+          updated: prev.updated + applied.updated,
+          skippedNoOp: prev.skippedNoOp + applied.skippedNoOp,
+          errors: [...prev.errors, ...applied.errors],
+        });
+        setCatalogReviewVisible(false);
+      }
+    } finally {
+      setCatalogPdfPending(false);
     }
   };
 
@@ -1654,6 +1810,95 @@ export default function UploadScreen() {
                   </Text>
                 </Pressable>
               </View>
+
+              {/* ── Catalog PDF Enrichment ──────────────────────────────────── */}
+              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📕 Catalog PDF</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Upload a vendor catalog PDF (currently Bridgeport Fittings 2026) to
+                  enrich matching inventory rows with descriptions, dimension chips,
+                  and search keywords from the catalog.
+                </Text>
+
+                <View style={{ flexDirection: "row", alignItems: "center", marginVertical: 8 }}>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: "Inter_500Medium", marginRight: 8 }}>
+                    VENDOR
+                  </Text>
+                  <TextInput
+                    value={catalogPdfVendor}
+                    onChangeText={setCatalogPdfVendor}
+                    autoCapitalize="characters"
+                    style={{
+                      flex: 1,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      borderRadius: 8,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      color: colors.foreground,
+                      fontFamily: "Inter_500Medium",
+                    }}
+                  />
+                </View>
+
+                <Pressable
+                  onPress={handleCatalogPdfPick}
+                  disabled={catalogPdfPending}
+                  style={[styles.pickBtn, { borderColor: colors.primary }]}
+                >
+                  {catalogPdfPending ? (
+                    <ActivityIndicator color={colors.primary} />
+                  ) : (
+                    <Text style={[styles.pickBtnText, { color: colors.primary }]}>
+                      📕 Choose Catalog PDF
+                    </Text>
+                  )}
+                </Pressable>
+
+                {catalogPdfFileName ? (
+                  <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
+                    <Text style={[styles.fileChipText, { color: colors.foreground }]}>
+                      📄 {catalogPdfFileName}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {catalogPdfError ? (
+                  <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
+                    <Text style={[styles.doneText, { color: colors.destructive }]}>⚠ {catalogPdfError}</Text>
+                  </View>
+                ) : null}
+
+                {catalogReport ? (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={{ color: colors.foreground, fontFamily: "Inter_500Medium", marginBottom: 4 }}>
+                      Parsed {catalogReport.summary.total.toLocaleString()} catalog entries:
+                    </Text>
+                    <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
+                      ✅ {catalogReport.summary.exact} exact ·{" "}
+                      ⚡ {catalogReport.summary.highConfidence} high-confidence ·{" "}
+                      ❓ {catalogReport.summary.uncertain} uncertain ·{" "}
+                      ❌ {catalogReport.summary.unmatched} no match
+                    </Text>
+                    {catalogApplyResult ? (
+                      <Text style={{ color: colors.success, fontSize: 13, marginTop: 4 }}>
+                        ✓ Applied: {catalogApplyResult.updated} updated, {catalogApplyResult.skippedNoOp} unchanged
+                        {catalogApplyResult.errors.length > 0 ? `, ${catalogApplyResult.errors.length} errors` : ""}
+                      </Text>
+                    ) : null}
+                    {catalogReport.summary.uncertain > 0 ? (
+                      <Pressable
+                        onPress={() => setCatalogReviewVisible(true)}
+                        style={[styles.enrichBtn, { backgroundColor: colors.primary, marginTop: 8 }]}
+                      >
+                        <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                          📝 Review {catalogReport.summary.uncertain} uncertain matches
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
             </ScrollView>
           ) : (
             <View style={{ flex: 1 }}>
@@ -1713,6 +1958,135 @@ export default function UploadScreen() {
       )}
 
       <ReferenceModal />
+
+      {/* ── Catalog PDF: per-row review of uncertain matches ──────────────── */}
+      <Modal
+        visible={catalogReviewVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCatalogReviewVisible(false)}
+      >
+        <SafeAreaView style={[styles.reviewSafeArea, { backgroundColor: colors.background }]}>
+          <View style={[styles.reviewHeader, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.reviewTitle, { color: colors.foreground }]}>
+              Review uncertain matches
+            </Text>
+            <Text style={[styles.reviewSub, { color: colors.mutedForeground }]}>
+              Pick the inventory row each catalog entry should enrich, or skip it.
+            </Text>
+          </View>
+
+          <FlatList
+            data={catalogReport?.rows.filter(r => r.tier === "uncertain") ?? []}
+            keyExtractor={(r) => r.catalogNumber}
+            contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
+            ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+            ListEmptyComponent={() => (
+              <Text style={{ color: colors.mutedForeground, textAlign: "center", marginTop: 40 }}>
+                No uncertain matches.
+              </Text>
+            )}
+            renderItem={({ item }) => {
+              const choice = catalogReviewChoices[item.catalogNumber];
+              return (
+                <View
+                  style={[
+                    styles.reviewRow,
+                    { backgroundColor: colors.card, borderColor: colors.border },
+                  ]}
+                >
+                  <Text style={[styles.reviewCatalog, { color: colors.foreground }]} numberOfLines={1}>
+                    {item.catalogNumber}
+                  </Text>
+                  <Text style={[styles.reviewVendor, { color: colors.mutedForeground }]} numberOfLines={2}>
+                    {item.description}
+                  </Text>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 4 }}>
+                    Pages {item.pageNumbers.join(", ")} · {Object.entries(item.dimensions).map(([k, v]) => `${k}=${v}`).join(" · ") || "no chip dims"}
+                  </Text>
+
+                  <View style={{ marginTop: 10, gap: 6 }}>
+                    {item.candidates.map((c) => {
+                      const selected = choice === c.inventoryId;
+                      return (
+                        <Pressable
+                          key={c.inventoryId}
+                          onPress={() =>
+                            setCatalogReviewChoices((prev) => ({ ...prev, [item.catalogNumber]: c.inventoryId }))
+                          }
+                          style={{
+                            borderWidth: 1,
+                            borderColor: selected ? colors.primary : colors.border,
+                            backgroundColor: selected ? colors.primary + "11" : "transparent",
+                            borderRadius: 8,
+                            padding: 8,
+                          }}
+                        >
+                          <Text style={{ color: colors.foreground, fontFamily: "Inter_500Medium" }}>
+                            {c.catalog} <Text style={{ color: colors.mutedForeground, fontSize: 11 }}>· {c.reason}</Text>
+                          </Text>
+                          {c.description ? (
+                            <Text style={{ color: colors.mutedForeground, fontSize: 12 }} numberOfLines={2}>
+                              {c.description}
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                    <Pressable
+                      onPress={() =>
+                        setCatalogReviewChoices((prev) => ({ ...prev, [item.catalogNumber]: "skip" }))
+                      }
+                      style={{
+                        borderWidth: 1,
+                        borderColor: choice === "skip" ? colors.destructive : colors.border,
+                        backgroundColor: choice === "skip" ? colors.destructive + "11" : "transparent",
+                        borderRadius: 8,
+                        padding: 8,
+                      }}
+                    >
+                      <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_500Medium" }}>
+                        Skip this entry
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              );
+            }}
+          />
+
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 8,
+              padding: 12,
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
+              backgroundColor: colors.background,
+            }}
+          >
+            <Pressable
+              onPress={() => setCatalogReviewVisible(false)}
+              style={[secondaryBtnBase, { flex: 1, borderColor: colors.border }]}
+            >
+              <Text style={{ color: colors.foreground, fontFamily: "Inter_500Medium" }}>Close</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleCatalogReviewApply}
+              disabled={catalogPdfPending}
+              style={[styles.enrichBtn, { backgroundColor: colors.primary, flex: 2, marginTop: 0 }]}
+            >
+              {catalogPdfPending ? (
+                <ActivityIndicator color={colors.primaryForeground} />
+              ) : (
+                <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                  Apply picks
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </Modal>
 
       {/* ── Chooser modal: 3 options for handling existing matches ────────── */}
       <Modal
