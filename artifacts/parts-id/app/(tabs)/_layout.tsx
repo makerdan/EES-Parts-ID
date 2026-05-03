@@ -1,7 +1,7 @@
 /**
  * Tab bar layout for the authenticated app.
  *
- * Five tabs (Search, Photo, Upload, Elliott Site, +Reference modal trigger) with an
+ * Four tabs (Search, Photo, Upload, Elliott Site) plus a +Reference modal trigger, with an
  * iOS blur background. Tab order matches the worker's task frequency:
  * searching is the most common action so it's the default landing tab.
  */

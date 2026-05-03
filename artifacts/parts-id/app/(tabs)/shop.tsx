@@ -1,7 +1,7 @@
 /**
- * Shop tab — embedded WebView pinned to the Elliott Electric Supply
- * storefront so workers can order replacement parts without leaving the
- * app. Shows a friendly offline state when the network is unreachable.
+ * Elliott Site tab — embedded WebView pinned to the Elliott Electric
+ * Supply website so workers can browse it without leaving the app.
+ * Shows a friendly offline state when the network is unreachable.
  */
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -91,7 +91,7 @@ export default function ShopScreen() {
             </Text>
             <Text style={[styles.errorBody, { color: colors.mutedForeground }]}>
               Connect to the internet to browse Elliott Electric Supply. We'll
-              reload the shop automatically once you're back online.
+              reload the page automatically once you're back online.
             </Text>
             <Pressable
               onPress={handleRetry}
@@ -167,7 +167,7 @@ export default function ShopScreen() {
               >
                 <ActivityIndicator size="large" color={colors.primary} />
                 <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>
-                  Loading shop…
+                  Loading…
                 </Text>
               </View>
             ) : null}
