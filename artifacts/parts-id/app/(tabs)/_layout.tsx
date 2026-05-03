@@ -26,7 +26,13 @@ function NativeTabLayout() {
         <Icon sf={{ default: "camera", selected: "camera.fill" }} />
         <Label>Photo ID</Label>
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="scan">
+      {/*
+        Scan was moved out of the tab bar (Task #129) and is now reachable
+        from the Search header. The route file still lives in (tabs)/ so
+        existing safe-area / header behavior is preserved; declaring it
+        with `hidden` keeps NativeTabs from auto-adding a tab for it.
+      */}
+      <NativeTabs.Trigger name="scan" hidden>
         <Icon sf={{ default: "barcode.viewfinder", selected: "barcode.viewfinder" }} />
         <Label>Scan</Label>
       </NativeTabs.Trigger>
@@ -102,18 +108,12 @@ function ClassicTabLayout() {
             ),
         }}
       />
-      <Tabs.Screen
-        name="scan"
-        options={{
-          title: "Scan",
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="barcode.viewfinder" tintColor={color} size={24} />
-            ) : (
-              <Feather name="maximize" size={22} color={color} />
-            ),
-        }}
-      />
+      {/*
+        Scan moved to the Search header (Task #129). Keep the route
+        registered with `href: null` so it's still navigable via
+        router.push("/scan") but does not appear in the tab bar.
+      */}
+      <Tabs.Screen name="scan" options={{ href: null }} />
       <Tabs.Screen
         name="upload"
         options={{
