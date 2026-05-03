@@ -93,17 +93,57 @@ export default function PhotoScreen() {
     if (!result.canceled && result.assets.length > 0) {
       const currentCount = images.length;
       const allowedAssets = result.assets.slice(0, 4 - currentCount);
-      if (allowedAssets.length < result.assets.length) {
-        setInlineError("Max 4 images — only some photos were added to stay within the limit.");
-      }
+      const overflowMessage =
+        allowedAssets.length < result.assets.length
+          ? "Max 4 images — only some photos were added to stay within the limit."
+          : null;
+
       setIsProcessing(true);
       try {
-        const resized = await Promise.all(
-          allowedAssets.map((asset) => resizeImage(asset.uri, asset.width ?? 0))
+        // Process each photo independently so one bad file (corrupt, stale URI,
+        // unsupported format, etc.) doesn't discard the rest of the batch.
+        const settled = await Promise.allSettled(
+          allowedAssets.map((asset) => resizeImage(asset.uri, asset.width ?? 0)),
         );
-        setImages((prev) => [...prev, ...resized.map((r) => ({ uri: r.uri, base64: r.base64 }))]);
-      } catch {
-        setInlineError("Could not process the selected photo — please try again.");
+
+        const successfulImages: { uri: string; base64: string }[] = [];
+        const failedNames: string[] = [];
+        settled.forEach((outcome, index) => {
+          if (outcome.status === "fulfilled") {
+            successfulImages.push({
+              uri: outcome.value.uri,
+              base64: outcome.value.base64,
+            });
+          } else {
+            // Prefer the original file name when the picker provided one
+            // (helps users find the exact file in their library); fall back
+            // to a positional label like "Photo 2 of 3" so the user can still
+            // identify which selection failed.
+            const asset = allowedAssets[index];
+            const fileName = asset?.fileName?.trim();
+            failedNames.push(
+              fileName && fileName.length > 0
+                ? fileName
+                : `Photo ${index + 1} of ${allowedAssets.length}`,
+            );
+          }
+        });
+
+        if (successfulImages.length > 0) {
+          setImages((prev) => [...prev, ...successfulImages]);
+        }
+
+        const errorParts: string[] = [];
+        if (overflowMessage) errorParts.push(overflowMessage);
+        if (failedNames.length > 0) {
+          const list = failedNames.join(", ");
+          errorParts.push(
+            failedNames.length === 1
+              ? `Couldn't process ${list} — please try a different photo.`
+              : `Couldn't process these photos: ${list}. The other photos were added.`,
+          );
+        }
+        setInlineError(errorParts.length > 0 ? errorParts.join(" ") : null);
       } finally {
         setIsProcessing(false);
       }
