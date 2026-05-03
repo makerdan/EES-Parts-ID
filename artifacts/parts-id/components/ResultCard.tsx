@@ -8,7 +8,6 @@
  */
 import React, { useState } from "react";
 import {
-  Animated,
   Pressable,
   StyleSheet,
   Text,
@@ -90,30 +89,53 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
   );
 }
 
-function VariantChip({
+/**
+ * One row in the related-sizes dropdown list.
+ *
+ * Lays out the catalog name on the left and the part's primary bin
+ * (first entry of `binLocations`) on the right. When the variant shares
+ * the parent's vendor we drop the vendor prefix to keep the row tight,
+ * otherwise we show "VENDOR · CATALOG" so workers can disambiguate.
+ * Parts with no bin show a muted "No bin" placeholder so the right column
+ * still aligns vertically down the list.
+ */
+function VariantRow({
   item,
+  parentVendor,
   colors,
+  fontScale,
 }: {
   item: InventoryItem;
+  parentVendor: string;
   colors: ReturnType<typeof useColors>;
+  fontScale: number;
 }) {
-  // Variant chips stay tight — collapse the (usually short) bin list onto
-  // a single comma-separated line. When the part has no bin assigned,
-  // we surface that explicitly so workers don't think the row is broken.
+  const fs = (base: number) => Math.round(base * fontScale);
   const bins = item.binLocations ?? [];
+  const primaryBin = bins[0];
+  const sameVendor = item.vendor.toUpperCase() === parentVendor.toUpperCase();
+  const label = sameVendor ? item.catalog : `${item.vendor} · ${item.catalog}`;
   return (
-    <View style={[varStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-      <Text style={[varStyles.catalog, { color: colors.primary }]}>{item.catalog}</Text>
-      {bins.length > 0 ? (
-        <Text style={[varStyles.bin, { color: colors.mutedForeground }]} numberOfLines={1}>
-          {bins.join(", ")}
+    <View style={[varStyles.row, { borderBottomColor: colors.border }]}>
+      <Text
+        style={[varStyles.catalog, { color: colors.foreground, fontSize: fs(13) }]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      {primaryBin ? (
+        <Text
+          style={[varStyles.bin, { color: colors.foreground, fontSize: fs(13) }]}
+          numberOfLines={1}
+        >
+          {primaryBin}
         </Text>
       ) : (
         <Text
-          style={[varStyles.binEmpty, { color: colors.mutedForeground }]}
+          style={[varStyles.binEmpty, { color: colors.mutedForeground, fontSize: fs(12) }]}
           numberOfLines={1}
         >
-          No bin assigned
+          No bin
         </Text>
       )}
     </View>
@@ -121,17 +143,18 @@ function VariantChip({
 }
 
 const varStyles = StyleSheet.create({
-  chip: {
-    borderRadius: 6,
-    borderWidth: 1,
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginRight: 6,
-    marginBottom: 6,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 8,
   },
-  catalog: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
-  bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
-  binEmpty: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginTop: 2 },
+  catalog: { fontFamily: "Inter_600SemiBold", flexShrink: 1 },
+  bin: { fontFamily: "Inter_500Medium", textAlign: "right" },
+  binEmpty: { fontFamily: "Inter_400Regular", fontStyle: "italic", textAlign: "right" },
 });
 
 export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens, highlightBin }: ResultCardProps) {
@@ -156,8 +179,16 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
   const { item, confidence, matchReason, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
 
-  const hasVariants = !!variants && variants.length > 0;
-  const variantCount = hasVariants ? variants!.length : 0;
+  // Exclude the current part from its own related-sizes list — a card
+  // should never list itself as a "related" size. Server-side filtering
+  // already drops result IDs from variant lists, but we belt-and-suspender
+  // here in case a variant rolls into the current item via id collision.
+  const filteredVariants = React.useMemo(
+    () => (variants ?? []).filter(v => v.id !== item.id),
+    [variants, item.id],
+  );
+  const hasVariants = filteredVariants.length > 0;
+  const variantCount = filteredVariants.length;
   const hasKeywords = item.aiKeywords && item.aiKeywords.length > 0;
 
   const toggleCard = () => {
@@ -278,17 +309,26 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
 
         {/* Related-sizes panel (independent of card expand state) */}
         {hasVariants && variantsExpanded ? (
-          <View style={cardStyles.variantsPanel}>
-            <View style={cardStyles.variantRow}>
-              {variants!.slice(0, 12).map((v) => (
-                <VariantChip key={v.id} item={v} colors={colors} />
-              ))}
-              {variants!.length > 12 ? (
-                <Text style={[cardStyles.moreText, { color: colors.mutedForeground }]}>
-                  +{variants!.length - 12} more
-                </Text>
-              ) : null}
-            </View>
+          <View
+            style={[
+              cardStyles.variantsPanel,
+              { borderColor: colors.border, backgroundColor: colors.card },
+            ]}
+          >
+            {filteredVariants.slice(0, 12).map((v) => (
+              <VariantRow
+                key={v.id}
+                item={v}
+                parentVendor={item.vendor}
+                colors={colors}
+                fontScale={fontScale}
+              />
+            ))}
+            {filteredVariants.length > 12 ? (
+              <Text style={[cardStyles.moreText, { color: colors.mutedForeground }]}>
+                +{filteredVariants.length - 12} more
+              </Text>
+            ) : null}
           </View>
         ) : null}
 
@@ -440,7 +480,6 @@ const cardStyles = StyleSheet.create({
   keywordRow: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
   keyword: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
   keywordText: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  variantRow: { flexDirection: "row", flexWrap: "wrap" },
   variantsToggle: {
     flexDirection: "row",
     alignItems: "center",
@@ -463,7 +502,11 @@ const cardStyles = StyleSheet.create({
   },
   variantsPanel: {
     marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 6,
+    overflow: "hidden",
   },
+  moreText: { fontSize: 12, fontFamily: "Inter_400Regular", alignSelf: "center", paddingVertical: 6 },
   editBtn: {
     marginTop: 10,
     borderWidth: 1,
@@ -474,7 +517,6 @@ const cardStyles = StyleSheet.create({
   },
   editBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   vendorFullName: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
-  moreText: { fontSize: 12, fontFamily: "Inter_400Regular", alignSelf: "center", marginBottom: 6 },
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
 });
 
