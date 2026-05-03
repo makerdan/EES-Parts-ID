@@ -932,7 +932,16 @@ export default function SearchScreen() {
       {Platform.OS === "ios" ? (
         <ScrollView
           ref={repeatTapResetScrollRef}
-          scrollsToTop
+          // IMPORTANT: scrollsToTop must be FALSE here. iOS uses the
+          // `scrollsToTop` flag for the status-bar tap gesture and
+          // refuses to scroll any view if multiple on-screen
+          // scrollviews have it enabled — leaving the default `true`
+          // would silently break status-bar-tap-to-scroll on the
+          // visible results FlatList. The repeat-tab-tap path we
+          // care about uses `RNSScrollViewFinder`, which calls
+          // `setContentOffset` directly and does NOT consult this
+          // flag, so disabling it here costs us nothing.
+          scrollsToTop={false}
           scrollEnabled={false}
           showsVerticalScrollIndicator={false}
           onMomentumScrollEnd={onRepeatTapReset}
