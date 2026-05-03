@@ -841,7 +841,12 @@ export default function SearchScreen() {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>⚡ Parts ID</Text>
+          {/* Tapping the app title resets the Search screen back to the
+              empty welcome state (same effect as the "New Search" button
+              and tapping the Search tab while focused). */}
+          <Pressable onPress={() => handleClearRef.current()} hitSlop={8}>
+            <Text style={[styles.headerTitle, { color: colors.foreground }]}>⚡ Parts ID</Text>
+          </Pressable>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
             {/* Sync progress — while fetching all inventory for offline cache */}
             {syncProgress ? (
