@@ -26,6 +26,8 @@ import {
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
+import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   useBarcodeLookup,
   barcodeLink,
@@ -61,6 +63,56 @@ export default function ScanScreen() {
   const colors = useColors();
   const { textFontScale } = useApp();
   const isWeb = Platform.OS === "web";
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+
+  // Cancel/Close affordance for the Scan screen. The screen is hidden
+  // from the bottom tab bar (Task #129/#133), so without this overlay
+  // a worker who opened Scan from the Search header has no obvious way
+  // back. router.back() returns to wherever they came from; if there's
+  // no back history (deep link / refresh on web) we fall back to "/".
+  // Rendered in every return path (camera, permission gates, web/no-
+  // permission placeholder) so it's always reachable. Hardware back on
+  // Android is handled by the OS as before — this overlay does not
+  // intercept it.
+  const handleCancel = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/");
+    }
+  }, [router]);
+
+  const renderCancelButton = (variant: "onCamera" | "onSurface") => {
+    const onCamera = variant === "onCamera";
+    return (
+      <Pressable
+        onPress={handleCancel}
+        hitSlop={12}
+        accessibilityRole="button"
+        accessibilityLabel="Cancel scan"
+        style={[
+          styles.cancelBtn,
+          {
+            top: insets.top + 8,
+            right: 12,
+            backgroundColor: onCamera ? "#000000B3" : colors.card,
+            borderColor: onCamera ? "transparent" : colors.border,
+            borderWidth: onCamera ? 0 : StyleSheet.hairlineWidth,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.cancelBtnText,
+            { color: onCamera ? "#fff" : colors.foreground },
+          ]}
+        >
+          ✕
+        </Text>
+      </Pressable>
+    );
+  };
 
   const [permission, requestPermission] = useCameraPermissions();
   const [permissionExplained, setPermissionExplained] = useState(false);
@@ -265,6 +317,7 @@ export default function ScanScreen() {
   if (!isWeb && permission && !permission.granted && !permissionExplained && !manualEntry) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+        {renderCancelButton("onSurface")}
         <View style={styles.explainerCard}>
           <Text style={[styles.explainerTitle, { color: colors.foreground }]}>
             Scan barcodes to find parts faster
@@ -298,6 +351,7 @@ export default function ScanScreen() {
   if (!isWeb && permission && !permission.granted && !manualEntry) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+        {renderCancelButton("onSurface")}
         <View style={styles.explainerCard}>
           <Text style={[styles.explainerTitle, { color: colors.foreground }]}>
             Camera access is off
@@ -325,6 +379,13 @@ export default function ScanScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
+      {/*
+        Cancel overlay sits above the viewfinder/controls. It's the
+        last child below so it paints on top of the camera, reticle,
+        torch/manual buttons, manual bar, toast, and inline error
+        without obscuring the reticle (top-right corner, away from
+        the centered hint) or the bottom controls row.
+      */}
       {/* Camera viewfinder */}
       {!isWeb && permission?.granted ? (
         <View style={styles.cameraWrap}>
@@ -599,6 +660,8 @@ export default function ScanScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {renderCancelButton("onCamera")}
     </View>
   );
 }
@@ -791,4 +854,21 @@ const styles = StyleSheet.create({
   recentVendor: { fontFamily: "Inter_500Medium", fontSize: 11, letterSpacing: 0.5 },
   recentCatalog: { fontFamily: "Inter_700Bold", fontSize: 16, marginTop: 2 },
   recentDesc: { fontFamily: "Inter_400Regular", fontSize: 12, marginTop: 4 },
+  cancelBtn: {
+    position: "absolute",
+    minWidth: 44,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+    elevation: 4,
+  },
+  cancelBtnText: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 18,
+    lineHeight: 20,
+  },
 });
