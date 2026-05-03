@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Animated,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -951,7 +952,16 @@ export default function SearchScreen() {
         animationType="fade"
         onRequestClose={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); }}
       >
-        <View style={styles.modalOverlay}>
+        {/*
+          KeyboardAvoidingView lifts the entire card on iOS when the
+          keyboard appears, so the pinned footer (Done / Sign Out) and
+          the focused custom-confidence input both stay visible. On
+          Android the platform already resizes the window for us.
+        */}
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
           {/*
             Settings card (Task #127): title pinned, rows scroll inside a
             keyboard-aware ScrollView, footer (Done / Sign Out) pinned at
@@ -1140,7 +1150,7 @@ export default function SearchScreen() {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Sync-in-progress warning — shown if user tries to search before sync completes */}
