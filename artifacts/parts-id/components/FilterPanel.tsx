@@ -98,7 +98,7 @@ export const CHIP_DIMS: ChipDim[] = [
   {
     key: "sizeChip",
     label: "Size",
-    options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"','6"'],
+    options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"','6"','12.7mm','19.1mm','25.4mm','31.8mm','38.1mm','50.8mm','63.5mm','76.2mm','101.6mm','152.4mm'],
   },
   {
     key: "rating",
@@ -127,7 +127,7 @@ export const CHIP_DIMS: ChipDim[] = [
     // writes these exact strings into matching inventory rows.
     key: "conduitSize",
     label: "Trade Size",
-    options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"'],
+    options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"','12.7mm','19.1mm','25.4mm','31.8mm','38.1mm','50.8mm','63.5mm','76.2mm','101.6mm'],
   },
   {
     key: "boxType",
