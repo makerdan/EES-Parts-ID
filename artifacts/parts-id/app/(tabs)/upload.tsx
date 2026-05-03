@@ -816,9 +816,15 @@ export default function UploadScreen() {
   // Forward the preview report + uncertain picks to the server. The server
   // itself auto-applies every exact + highConfidence row and applies the
   // worker's choice for each uncertain row, so the client just relays.
+  // `sourceFilename` is passed in EXPLICITLY (not read from state) because
+  // `handleCatalogPdfPick` calls this immediately after `setCatalogPdfFileName`,
+  // and that state update isn't visible to closures captured from the same
+  // render. Forwarding the name as an argument guarantees we record the file
+  // the worker actually picked, not whatever the previous render had.
   const applyCatalogDecisions = useCallback(async (
     report: CatalogReport,
     uncertainPicks: Record<string, number | "skip">,
+    sourceFilename: string | null,
   ): Promise<CatalogApplyResult | null> => {
     try {
       const res = await fetch(`${API_BASE}/admin/catalog-pdf/apply`, {
@@ -827,7 +833,7 @@ export default function UploadScreen() {
         body: JSON.stringify({
           report,
           uncertainDecisions: uncertainPicks,
-          sourceFilename: catalogPdfFileName,
+          sourceFilename,
         }),
       });
       if (res.status === 401) {
@@ -847,7 +853,7 @@ export default function UploadScreen() {
     }
     // adminHeaders is recomputed every render; the underlying token is what matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminToken, logoutAdmin, catalogPdfFileName]);
+  }, [adminToken, logoutAdmin]);
 
   // Fetch the most recent catalog-PDF apply runs so the worker can revert
   // any of them. The list reloads after every successful apply or revert.
@@ -948,8 +954,9 @@ export default function UploadScreen() {
       setCatalogReport(report);
 
       // Auto-apply exact + high-confidence rows immediately. Uncertain rows
-      // wait for the worker to open the review modal.
-      const applied = await applyCatalogDecisions(report, {});
+      // wait for the worker to open the review modal. Pass `asset.name`
+      // directly so the just-set state isn't relied on.
+      const applied = await applyCatalogDecisions(report, {}, asset.name ?? null);
       if (applied) {
         setCatalogApplyResult(applied);
         void fetchCatalogRuns();
@@ -972,7 +979,7 @@ export default function UploadScreen() {
         ...catalogReport,
         rows: catalogReport.rows.filter(r => r.tier === "uncertain"),
       };
-      const applied = await applyCatalogDecisions(uncertainOnly, catalogReviewChoices);
+      const applied = await applyCatalogDecisions(uncertainOnly, catalogReviewChoices, catalogPdfFileName);
       if (applied) {
         const prev = catalogApplyResult ?? { runId: null, updated: 0, skippedNoOp: 0, errors: [] };
         setCatalogApplyResult({
