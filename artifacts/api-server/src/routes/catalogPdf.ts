@@ -35,7 +35,7 @@
 
 import { Router, raw } from "express";
 import multer from "multer";
-import { sql, desc, eq, and } from "drizzle-orm";
+import { sql, desc, asc, eq, and } from "drizzle-orm";
 import {
   db,
   inventoryTable,
@@ -503,6 +503,70 @@ router.post("/catalog-pdf/runs/:id/revert", requireAdminAuth, async (req, res) =
   } catch (err) {
     console.error("[catalog-pdf/runs/revert]", err);
     res.status(500).json({ error: "Failed to revert enrichment run" });
+  }
+});
+
+// ── POST /admin/catalog-pdf/runs/:id/unrevert ───────────────────────────────
+//
+// Re-applies a previously-reverted enrichment run by writing each history
+// row's `after_*` snapshot back onto its inventory row. Ordered ASC by id so
+// the NEWEST after-snapshot wins per inventory row — the mirror image of
+// revert's DESC/oldest-wins. Single transaction so a partial unrevert is
+// impossible. Clears `reverted_at`. 404 when missing, 409 when the run is
+// not currently reverted (so double-undo is rejected with a clear error).
+router.post("/catalog-pdf/runs/:id/unrevert", requireAdminAuth, async (req, res) => {
+  try {
+    const idParam = req.params["id"];
+    const runId = Number.parseInt(typeof idParam === "string" ? idParam : "", 10);
+    if (!Number.isFinite(runId) || runId <= 0) {
+      return void res.status(400).json({ error: "invalid run id" });
+    }
+
+    const result = await db.transaction(async (tx) => {
+      const runs = await tx
+        .select()
+        .from(enrichmentRunTable)
+        .where(eq(enrichmentRunTable.id, runId))
+        .limit(1);
+      const run = runs[0];
+      if (!run) {
+        return { status: 404 as const, body: { error: "run not found" } };
+      }
+      if (!run.revertedAt) {
+        return { status: 409 as const, body: { error: "run is not reverted" } };
+      }
+
+      const history = await tx
+        .select()
+        .from(enrichmentHistoryTable)
+        .where(eq(enrichmentHistoryTable.runId, runId))
+        .orderBy(asc(enrichmentHistoryTable.id));
+
+      let restored = 0;
+      for (const h of history) {
+        await tx
+          .update(inventoryTable)
+          .set({
+            description: h.afterDescription,
+            aiKeywords: h.afterKeywords,
+            updatedAt: new Date(),
+          })
+          .where(eq(inventoryTable.id, h.inventoryId));
+        restored++;
+      }
+
+      await tx
+        .update(enrichmentRunTable)
+        .set({ revertedAt: null })
+        .where(eq(enrichmentRunTable.id, runId));
+
+      return { status: 200 as const, body: { runId, restored } };
+    });
+
+    res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error("[catalog-pdf/runs/unrevert]", err);
+    res.status(500).json({ error: "Failed to undo revert" });
   }
 });
 
