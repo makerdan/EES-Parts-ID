@@ -35,8 +35,13 @@
 
 import { Router, raw } from "express";
 import multer from "multer";
-import { sql } from "drizzle-orm";
-import { db, inventoryTable } from "@workspace/db";
+import { sql, desc, eq } from "drizzle-orm";
+import {
+  db,
+  inventoryTable,
+  enrichmentRunTable,
+  enrichmentHistoryTable,
+} from "@workspace/db";
 import { verifyAdminToken } from "./admin";
 import {
   parseCatalogPdf,
@@ -101,9 +106,22 @@ interface PreviewReport {
 }
 
 interface ApplyReport {
+  runId: number | null;
   updated: number;
   skippedNoOp: number;
   errors: Array<{ inventoryId: number; error: string }>;
+}
+
+interface RunSummary {
+  id: number;
+  vendor: string;
+  sourceFilename: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  updatedCount: number;
+  skippedCount: number;
+  errorCount: number;
+  revertedAt: string | null;
 }
 
 // ── Multipart parser (file=catalog PDF, vendor=text field) ─────────────────
@@ -219,9 +237,14 @@ router.post("/catalog-pdf/apply", requireAdminAuth, async (req, res) => {
     const body = req.body as {
       report?: PreviewReport;
       uncertainDecisions?: Record<string, number | "skip">;
+      sourceFilename?: string;
     };
     const report = body?.report;
     const uncertainDecisions = body?.uncertainDecisions ?? {};
+    const sourceFilename =
+      typeof body?.sourceFilename === "string" && body.sourceFilename.trim()
+        ? body.sourceFilename.trim().slice(0, 200)
+        : null;
     if (!report || !Array.isArray(report.rows)) {
       return void res.status(400).json({ error: "request body must include a `report` from /preview" });
     }
@@ -255,61 +278,85 @@ router.post("/catalog-pdf/apply", requireAdminAuth, async (req, res) => {
       });
     }
 
-    const result: ApplyReport = { updated: 0, skippedNoOp: 0, errors: [] };
+    // Open the run upfront so every history row references a real id even if
+    // the request crashes midway. The summary counts are written at the end.
+    const [run] = await db
+      .insert(enrichmentRunTable)
+      .values({ vendor: report.vendor, sourceFilename })
+      .returning({ id: enrichmentRunTable.id });
+    const runId = run!.id;
+
+    const result: ApplyReport = { runId, updated: 0, skippedNoOp: 0, errors: [] };
 
     for (const d of decisions) {
       try {
-        const rows = await db
-          .select()
-          .from(inventoryTable)
-          .where(sql`${inventoryTable.id} = ${d.inventoryId}`)
-          .limit(1);
-        const existing = rows[0];
-        if (!existing) {
-          result.errors.push({ inventoryId: d.inventoryId, error: "inventory row not found" });
-          continue;
-        }
-
-        // ── description: fill when empty, replace when catalog text is
-        //    materially longer (≥ 1.5× and at least 30 chars).
-        const newDesc = (d.description ?? "").trim();
-        let nextDesc = existing.description;
-        if (newDesc) {
-          if (!existing.description.trim()) {
-            nextDesc = newDesc;
-          } else if (newDesc.length >= 30 && newDesc.length >= existing.description.length * 1.5) {
-            nextDesc = newDesc;
+        // Per-row transaction: the SELECT-then-UPDATE on inventory and the
+        // history INSERT must succeed or fail together. Wrapping the whole
+        // request in one tx would cause a single bad row to roll back every
+        // earlier update — that's not the contract this route had before.
+        await db.transaction(async (tx) => {
+          const rows = await tx
+            .select()
+            .from(inventoryTable)
+            .where(sql`${inventoryTable.id} = ${d.inventoryId}`)
+            .limit(1);
+          const existing = rows[0];
+          if (!existing) {
+            throw new Error("inventory row not found");
           }
-        }
 
-        // ── aiKeywords: case-insensitive merge of catalog keywords +
-        //    chip-dimension labels. See "Schema note" in the file header for
-        //    why dimension chips are stored as keywords on this schema.
-        const allTokens = [
-          ...(d.keywords ?? []),
-          ...Object.values(d.dimensions ?? {}),
-        ].filter((t): t is string => typeof t === "string" && t.trim().length > 0);
-        const merged = mergeKeywordsCaseInsensitive(existing.aiKeywords ?? [], allTokens);
+          // description: fill when empty, replace when catalog text is
+          // materially longer (≥ 1.5× and at least 30 chars).
+          const newDesc = (d.description ?? "").trim();
+          let nextDesc = existing.description;
+          if (newDesc) {
+            if (!existing.description.trim()) {
+              nextDesc = newDesc;
+            } else if (newDesc.length >= 30 && newDesc.length >= existing.description.length * 1.5) {
+              nextDesc = newDesc;
+            }
+          }
 
-        const noChange =
-          nextDesc === existing.description &&
-          merged.length === (existing.aiKeywords?.length ?? 0) &&
-          merged.every((v, i) => v === existing.aiKeywords?.[i]);
-        if (noChange) {
-          result.skippedNoOp++;
-          continue;
-        }
+          // aiKeywords: case-insensitive merge of catalog keywords +
+          // chip-dimension labels. See "Schema note" in the file header.
+          const allTokens = [
+            ...(d.keywords ?? []),
+            ...Object.values(d.dimensions ?? {}),
+          ].filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+          const merged = mergeKeywordsCaseInsensitive(existing.aiKeywords ?? [], allTokens);
 
-        await db
-          .update(inventoryTable)
-          .set({
-            description: nextDesc,
-            aiKeywords: merged,
-            enrichedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(sql`${inventoryTable.id} = ${d.inventoryId}`);
-        result.updated++;
+          const beforeKeywords = [...(existing.aiKeywords ?? [])];
+          const noChange =
+            nextDesc === existing.description &&
+            merged.length === beforeKeywords.length &&
+            merged.every((v, i) => v === beforeKeywords[i]);
+          if (noChange) {
+            result.skippedNoOp++;
+            return;
+          }
+
+          await tx
+            .update(inventoryTable)
+            .set({
+              description: nextDesc,
+              aiKeywords: merged,
+              enrichedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(sql`${inventoryTable.id} = ${d.inventoryId}`);
+
+          await tx.insert(enrichmentHistoryTable).values({
+            runId,
+            inventoryId: d.inventoryId,
+            catalogNumber: d.catalogNumber,
+            beforeDescription: existing.description,
+            afterDescription: nextDesc,
+            beforeKeywords,
+            afterKeywords: merged,
+          });
+
+          result.updated++;
+        });
       } catch (err) {
         result.errors.push({
           inventoryId: d.inventoryId,
@@ -318,10 +365,122 @@ router.post("/catalog-pdf/apply", requireAdminAuth, async (req, res) => {
       }
     }
 
+    // Stamp summary counts so the history UI doesn't need to re-aggregate.
+    await db
+      .update(enrichmentRunTable)
+      .set({
+        finishedAt: new Date(),
+        updatedCount: result.updated,
+        skippedCount: result.skippedNoOp,
+        errorCount: result.errors.length,
+      })
+      .where(eq(enrichmentRunTable.id, runId));
+
     res.json(result);
   } catch (err) {
     console.error("[catalog-pdf/apply]", err);
     res.status(500).json({ error: "Failed to apply catalog updates" });
+  }
+});
+
+// ── GET /admin/catalog-pdf/runs ─────────────────────────────────────────────
+//
+// Lists the most recent catalog-PDF apply runs (newest first). The mobile
+// admin UI shows these in a "Recent enrichment runs" section and renders a
+// Revert button for each non-reverted run.
+router.get("/catalog-pdf/runs", requireAdminAuth, async (req, res) => {
+  try {
+    const limitParam = req.query["limit"];
+    const limitStr = typeof limitParam === "string" ? limitParam : "20";
+    const limitRaw = Number.parseInt(limitStr, 10);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100, limitRaw)) : 20;
+    const rows = await db
+      .select()
+      .from(enrichmentRunTable)
+      .orderBy(desc(enrichmentRunTable.startedAt))
+      .limit(limit);
+    const runs: RunSummary[] = rows.map((r) => ({
+      id: r.id,
+      vendor: r.vendor,
+      sourceFilename: r.sourceFilename,
+      startedAt: r.startedAt.toISOString(),
+      finishedAt: r.finishedAt?.toISOString() ?? null,
+      updatedCount: r.updatedCount,
+      skippedCount: r.skippedCount,
+      errorCount: r.errorCount,
+      revertedAt: r.revertedAt?.toISOString() ?? null,
+    }));
+    res.json({ runs });
+  } catch (err) {
+    console.error("[catalog-pdf/runs]", err);
+    res.status(500).json({ error: "Failed to load enrichment runs" });
+  }
+});
+
+// ── POST /admin/catalog-pdf/runs/:id/revert ─────────────────────────────────
+//
+// Restores `description` + `aiKeywords` for every inventory row touched by
+// the run, in a single outer transaction so a partial revert is impossible.
+// The run is marked `reverted_at = now()` so the UI can grey it out and
+// reject double-reverts. Returns the count of rows restored.
+router.post("/catalog-pdf/runs/:id/revert", requireAdminAuth, async (req, res) => {
+  try {
+    const idParam = req.params["id"];
+    const runId = Number.parseInt(typeof idParam === "string" ? idParam : "", 10);
+    if (!Number.isFinite(runId) || runId <= 0) {
+      return void res.status(400).json({ error: "invalid run id" });
+    }
+
+    const result = await db.transaction(async (tx) => {
+      const runs = await tx
+        .select()
+        .from(enrichmentRunTable)
+        .where(eq(enrichmentRunTable.id, runId))
+        .limit(1);
+      const run = runs[0];
+      if (!run) {
+        return { status: 404 as const, body: { error: "run not found" } };
+      }
+      if (run.revertedAt) {
+        return { status: 409 as const, body: { error: "run already reverted" } };
+      }
+
+      // Order DESC by id so multiple history rows touching the same
+      // inventory row are restored newest→oldest. The final UPDATE per
+      // inventory row is the OLDEST history's `before_*`, which is the
+      // true pre-run state. (Sorting ASC would leave a row stuck at the
+      // intermediate value its second update saw.)
+      const history = await tx
+        .select()
+        .from(enrichmentHistoryTable)
+        .where(eq(enrichmentHistoryTable.runId, runId))
+        .orderBy(desc(enrichmentHistoryTable.id));
+
+      let restored = 0;
+      for (const h of history) {
+        await tx
+          .update(inventoryTable)
+          .set({
+            description: h.beforeDescription,
+            aiKeywords: h.beforeKeywords,
+            updatedAt: new Date(),
+          })
+          .where(eq(inventoryTable.id, h.inventoryId));
+        restored++;
+      }
+
+      await tx
+        .update(enrichmentRunTable)
+        .set({ revertedAt: new Date() })
+        .where(eq(enrichmentRunTable.id, runId));
+
+      return { status: 200 as const, body: { runId, restored } };
+    });
+
+    res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error("[catalog-pdf/runs/revert]", err);
+    res.status(500).json({ error: "Failed to revert enrichment run" });
   }
 });
 

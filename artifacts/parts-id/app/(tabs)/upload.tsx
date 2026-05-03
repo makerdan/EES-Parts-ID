@@ -531,7 +531,18 @@ export default function UploadScreen() {
     summary: { exact: number; highConfidence: number; uncertain: number; unmatched: number; total: number };
     rows: CatalogReportRow[];
   };
-  type CatalogApplyResult = { updated: number; skippedNoOp: number; errors: Array<{ inventoryId: number; error: string }> };
+  type CatalogApplyResult = { runId: number | null; updated: number; skippedNoOp: number; errors: Array<{ inventoryId: number; error: string }> };
+  type CatalogRun = {
+    id: number;
+    vendor: string;
+    sourceFilename: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+    updatedCount: number;
+    skippedCount: number;
+    errorCount: number;
+    revertedAt: string | null;
+  };
 
   const [catalogPdfFileName, setCatalogPdfFileName] = useState<string | null>(null);
   type CatalogVendorOption = { vendor: string; displayName: string; sourceCatalog: string };
@@ -545,6 +556,9 @@ export default function UploadScreen() {
   const [catalogReviewVisible, setCatalogReviewVisible] = useState(false);
   // Per-uncertain-row decision: chosen inventoryId, or "skip".
   const [catalogReviewChoices, setCatalogReviewChoices] = useState<Record<string, number | "skip">>({});
+  // Recent enrichment runs + per-row revert pending state.
+  const [catalogRuns, setCatalogRuns] = useState<CatalogRun[]>([]);
+  const [revertingRunId, setRevertingRunId] = useState<number | null>(null);
 
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
@@ -810,7 +824,11 @@ export default function UploadScreen() {
       const res = await fetch(`${API_BASE}/admin/catalog-pdf/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...adminHeaders },
-        body: JSON.stringify({ report, uncertainDecisions: uncertainPicks }),
+        body: JSON.stringify({
+          report,
+          uncertainDecisions: uncertainPicks,
+          sourceFilename: catalogPdfFileName,
+        }),
       });
       if (res.status === 401) {
         logoutAdmin();
@@ -827,7 +845,59 @@ export default function UploadScreen() {
       setCatalogPdfError("Network error while applying catalog updates.");
       return null;
     }
-  }, [adminHeaders, logoutAdmin]);
+    // adminHeaders is recomputed every render; the underlying token is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken, logoutAdmin, catalogPdfFileName]);
+
+  // Fetch the most recent catalog-PDF apply runs so the worker can revert
+  // any of them. The list reloads after every successful apply or revert.
+  const fetchCatalogRuns = useCallback(async () => {
+    try {
+      const token = adminTokenRef.current;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`${API_BASE}/admin/catalog-pdf/runs?limit=20`, { headers });
+      if (!res.ok) return;
+      const body = await res.json() as { runs: CatalogRun[] };
+      if (Array.isArray(body.runs)) setCatalogRuns(body.runs);
+    } catch {
+      /* silent — UI just won't show the section */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) { setCatalogRuns([]); return; }
+    void fetchCatalogRuns();
+  }, [isAdmin, fetchCatalogRuns]);
+
+  const handleRevertRun = useCallback(async (runId: number) => {
+    setRevertingRunId(runId);
+    setCatalogPdfError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/catalog-pdf/runs/${runId}/revert`, {
+        method: "POST",
+        headers: { ...adminHeaders },
+      });
+      if (res.status === 401) {
+        logoutAdmin();
+        setCatalogPdfError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setCatalogPdfError(err.error ?? "Failed to revert this run.");
+        return;
+      }
+      await fetchCatalogRuns();
+      void inventoryQuery.refetch();
+      void fetchEnrichSummary();
+    } catch {
+      setCatalogPdfError("Network error while reverting this run.");
+    } finally {
+      setRevertingRunId(null);
+    }
+    // adminHeaders is recomputed every render; the underlying token is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken, fetchCatalogRuns, fetchEnrichSummary, inventoryQuery, logoutAdmin]);
 
   const handleCatalogPdfPick = async () => {
     setCatalogPdfError(null);
@@ -880,7 +950,10 @@ export default function UploadScreen() {
       // Auto-apply exact + high-confidence rows immediately. Uncertain rows
       // wait for the worker to open the review modal.
       const applied = await applyCatalogDecisions(report, {});
-      if (applied) setCatalogApplyResult(applied);
+      if (applied) {
+        setCatalogApplyResult(applied);
+        void fetchCatalogRuns();
+      }
     } catch (err) {
       setCatalogPdfError(err instanceof Error ? err.message : "Could not process the catalog PDF.");
     } finally {
@@ -901,13 +974,15 @@ export default function UploadScreen() {
       };
       const applied = await applyCatalogDecisions(uncertainOnly, catalogReviewChoices);
       if (applied) {
-        const prev = catalogApplyResult ?? { updated: 0, skippedNoOp: 0, errors: [] };
+        const prev = catalogApplyResult ?? { runId: null, updated: 0, skippedNoOp: 0, errors: [] };
         setCatalogApplyResult({
+          runId: applied.runId ?? prev.runId,
           updated: prev.updated + applied.updated,
           skippedNoOp: prev.skippedNoOp + applied.skippedNoOp,
           errors: [...prev.errors, ...applied.errors],
         });
         setCatalogReviewVisible(false);
+        void fetchCatalogRuns();
       }
     } finally {
       setCatalogPdfPending(false);
@@ -1944,6 +2019,68 @@ export default function UploadScreen() {
                 {catalogPdfError ? (
                   <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
                     <Text style={[styles.doneText, { color: colors.destructive }]}>⚠ {catalogPdfError}</Text>
+                  </View>
+                ) : null}
+
+                {/* Recent enrichment runs — each can be reverted to restore
+                    the description + aiKeywords for every inventory row it
+                    touched. Reverted runs show a strikethrough-style label
+                    and lose their button. */}
+                {catalogRuns.length > 0 ? (
+                  <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border }}>
+                    <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", marginBottom: 8 }}>
+                      Recent enrichment runs
+                    </Text>
+                    {catalogRuns.map((run) => {
+                      const when = new Date(run.startedAt).toLocaleString();
+                      const isReverting = revertingRunId === run.id;
+                      const isReverted = !!run.revertedAt;
+                      return (
+                        <View
+                          key={run.id}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            paddingVertical: 8,
+                            borderBottomWidth: 1,
+                            borderBottomColor: colors.border,
+                            opacity: isReverted ? 0.55 : 1,
+                          }}
+                        >
+                          <View style={{ flex: 1, paddingRight: 8 }}>
+                            <Text style={{ color: colors.foreground, fontSize: 13, fontFamily: "Inter_500Medium" }} numberOfLines={1}>
+                              {run.vendor} · {run.sourceFilename ?? "raw upload"}
+                            </Text>
+                            <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 2 }}>
+                              {when} · {run.updatedCount} updated
+                              {run.errorCount > 0 ? ` · ${run.errorCount} errors` : ""}
+                              {isReverted ? " · reverted" : ""}
+                            </Text>
+                          </View>
+                          {isReverted ? null : (
+                            <Pressable
+                              onPress={() => { void handleRevertRun(run.id); }}
+                              disabled={isReverting || revertingRunId !== null}
+                              style={{
+                                paddingHorizontal: 12,
+                                paddingVertical: 6,
+                                borderRadius: 6,
+                                borderWidth: 1,
+                                borderColor: isReverting ? colors.border : colors.destructive,
+                              }}
+                            >
+                              {isReverting ? (
+                                <ActivityIndicator size="small" color={colors.destructive} />
+                              ) : (
+                                <Text style={{ color: colors.destructive, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
+                                  Revert
+                                </Text>
+                              )}
+                            </Pressable>
+                          )}
+                        </View>
+                      );
+                    })}
                   </View>
                 ) : null}
 

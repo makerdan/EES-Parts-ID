@@ -41,7 +41,7 @@ import supertest from "supertest";
 import { and, eq, inArray } from "drizzle-orm";
 import app from "../src/app";
 import { signAdminToken } from "../src/routes/admin";
-import { db, inventoryTable } from "@workspace/db";
+import { db, inventoryTable, enrichmentRunTable, enrichmentHistoryTable } from "@workspace/db";
 import { closePool, cleanupFixtures } from "./helpers/testDb";
 import type { PreviewReport } from "../src/routes/catalogPdf";
 
@@ -221,7 +221,53 @@ describeIfFixture("catalog-pdf route flow (raw upload + uncertainDecisions + ide
       // it produced an UPDATE or was already a no-op) must come back as a
       // no-op on the second pass — no decisions silently dropped.
       expect(reapplyBody.skippedNoOp).toBe(applyBody.updated + applyBody.skippedNoOp);
+
+      // ── 5. Run history + revert (task #118) ────────────────────────────
+      // The two /apply calls above each opened an enrichment_run row; the
+      // first one wrote per-inventory history. Listing runs must surface
+      // them, and reverting the first run must restore the seeded rows to
+      // their pre-enrichment state (empty description + empty aiKeywords).
+      const runsRes = await supertest(app)
+        .get("/api/admin/catalog-pdf/runs?limit=5&sourceFilename=route-test.pdf")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+      const runs = (runsRes.body as { runs: Array<{ id: number; vendor: string; updatedCount: number; revertedAt: string | null }> }).runs;
+      expect(runs.length).toBeGreaterThanOrEqual(2);
+      // Newest first; pick the run with updatedCount > 0 (the first apply).
+      const writingRun = runs.find(r => r.updatedCount > 0 && r.revertedAt === null);
+      expect(writingRun).toBeDefined();
+
+      const revertRes = await supertest(app)
+        .post(`/api/admin/catalog-pdf/runs/${writingRun!.id}/revert`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+      const revertBody = revertRes.body as { runId: number; restored: number };
+      expect(revertBody.runId).toBe(writingRun!.id);
+      expect(revertBody.restored).toBeGreaterThanOrEqual(2);
+
+      // Seeded rows must be back to their pre-enrichment state.
+      const reverted = await db
+        .select()
+        .from(inventoryTable)
+        .where(and(eq(inventoryTable.vendor, "BRIDGEPORT"), inArray(inventoryTable.catalog, [...SEEDED_CATALOGS])));
+      for (const row of reverted) {
+        expect(row.description).toBe("");
+        expect(row.aiKeywords).toEqual([]);
+      }
+
+      // Double-revert must be rejected (409).
+      await supertest(app)
+        .post(`/api/admin/catalog-pdf/runs/${writingRun!.id}/revert`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(409);
+
+      // Clean up the run rows we created so this suite leaves no trace.
+      const ourRunIds = runs.map(r => r.id);
+      if (ourRunIds.length) {
+        await db.delete(enrichmentHistoryTable).where(inArray(enrichmentHistoryTable.runId, ourRunIds));
+        await db.delete(enrichmentRunTable).where(inArray(enrichmentRunTable.id, ourRunIds));
+      }
     },
-    90_000,
+    120_000,
   );
 });
