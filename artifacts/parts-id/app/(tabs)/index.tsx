@@ -732,14 +732,21 @@ export default function SearchScreen() {
   useEffect(() => { handleClearRef.current = handleClear; });
   const navigation = useNavigation();
   useEffect(() => {
-    // `tabPress` is emitted by the Tabs navigator on every tap of the tab
-    // bar item, regardless of whether the screen is already focused.
-    const unsub = navigation.addListener("tabPress" as never, () => {
-      if (navigation.isFocused()) {
-        handleClearRef.current();
-      }
-    });
-    return unsub;
+    // `tabPress` is emitted by the Tabs navigator on every tap of the
+    // tab bar item, regardless of whether the screen is already focused.
+    // Subscribe on BOTH this screen's navigation and its parent — under
+    // expo-router's nested Stack→Tabs structure the event reliably
+    // surfaces on the parent, but we keep the local subscription too so
+    // the behavior also works when this is the top-level navigator
+    // (NativeTabs on iOS Liquid Glass).
+    const unsubs: Array<() => void> = [];
+    const handler = () => {
+      if (navigation.isFocused()) handleClearRef.current();
+    };
+    unsubs.push(navigation.addListener("tabPress" as never, handler));
+    const parent = navigation.getParent();
+    if (parent) unsubs.push(parent.addListener("tabPress" as never, handler));
+    return () => { for (const u of unsubs) u(); };
   }, [navigation]);
 
   // Called by KeywordEditor after debounced save — update local Fuse index
