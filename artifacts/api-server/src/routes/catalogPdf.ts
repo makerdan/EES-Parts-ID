@@ -35,7 +35,7 @@
 
 import { Router, raw } from "express";
 import multer from "multer";
-import { sql, desc, eq } from "drizzle-orm";
+import { sql, desc, eq, and } from "drizzle-orm";
 import {
   db,
   inventoryTable,
@@ -394,9 +394,31 @@ router.get("/catalog-pdf/runs", requireAdminAuth, async (req, res) => {
     const limitStr = typeof limitParam === "string" ? limitParam : "20";
     const limitRaw = Number.parseInt(limitStr, 10);
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100, limitRaw)) : 20;
-    const rows = await db
-      .select()
-      .from(enrichmentRunTable)
+
+    // Optional filters — both string-equal matches. `vendor` is upper-cased
+    // because runs always store the canonical vendor code; `sourceFilename`
+    // matches the trimmed value the apply route stored.
+    const vendorParam = req.query["vendor"];
+    const vendorFilter = typeof vendorParam === "string" && vendorParam.trim()
+      ? vendorParam.trim().toUpperCase()
+      : null;
+    const filenameParam = req.query["sourceFilename"];
+    const filenameFilter = typeof filenameParam === "string" && filenameParam.trim()
+      ? filenameParam.trim()
+      : null;
+
+    const conditions = [];
+    if (vendorFilter) conditions.push(eq(enrichmentRunTable.vendor, vendorFilter));
+    if (filenameFilter) conditions.push(eq(enrichmentRunTable.sourceFilename, filenameFilter));
+    const where = conditions.length === 0
+      ? undefined
+      : conditions.length === 1
+        ? conditions[0]
+        : and(...conditions);
+
+    const baseQuery = db.select().from(enrichmentRunTable);
+    const filtered = where ? baseQuery.where(where) : baseQuery;
+    const rows = await filtered
       .orderBy(desc(enrichmentRunTable.startedAt))
       .limit(limit);
     const runs: RunSummary[] = rows.map((r) => ({

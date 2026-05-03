@@ -228,7 +228,7 @@ describeIfFixture("catalog-pdf route flow (raw upload + uncertainDecisions + ide
       // them, and reverting the first run must restore the seeded rows to
       // their pre-enrichment state (empty description + empty aiKeywords).
       const runsRes = await supertest(app)
-        .get("/api/admin/catalog-pdf/runs?limit=5&sourceFilename=route-test.pdf")
+        .get("/api/admin/catalog-pdf/runs?limit=50&vendor=BRIDGEPORT")
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(200);
       const runs = (runsRes.body as { runs: Array<{ id: number; vendor: string; updatedCount: number; revertedAt: string | null }> }).runs;
@@ -254,6 +254,24 @@ describeIfFixture("catalog-pdf route flow (raw upload + uncertainDecisions + ide
         expect(row.description).toBe("");
         expect(row.aiKeywords).toEqual([]);
       }
+
+      // Filter contract: GET /runs?vendor=…&sourceFilename=… must restrict
+      // results server-side. The apply calls above didn't send a filename,
+      // so a non-matching filename filter must return zero rows; vendor
+      // BRIDGEPORT must include our writing run.
+      const filteredEmpty = await supertest(app)
+        .get("/api/admin/catalog-pdf/runs?sourceFilename=nope-no-such-file.pdf")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+      expect((filteredEmpty.body as { runs: unknown[] }).runs).toEqual([]);
+
+      const filteredVendor = await supertest(app)
+        .get("/api/admin/catalog-pdf/runs?vendor=bridgeport&limit=50")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .expect(200);
+      const vendorRuns = (filteredVendor.body as { runs: Array<{ id: number; vendor: string }> }).runs;
+      expect(vendorRuns.every(r => r.vendor === "BRIDGEPORT")).toBe(true);
+      expect(vendorRuns.some(r => r.id === writingRun!.id)).toBe(true);
 
       // Double-revert must be rejected (409).
       await supertest(app)
