@@ -20,8 +20,11 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Fuse from "fuse.js";
 import { useNavigation, useRouter } from "expo-router";
@@ -734,6 +737,16 @@ export default function SearchScreen() {
   useEffect(() => { handleClearRef.current = handleClear; });
   const navigation = useNavigation();
   const router = useRouter();
+  // Cap the Settings modal so on small iPhones (and at the in-app "L"
+  // text size) the rows scroll inside the card instead of pushing
+  // Done / Sign Out off-screen. We subtract the safe-area insets and a
+  // bit of padding so the card never crowds the notch or home indicator.
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const settingsModalMaxHeight = Math.max(
+    320,
+    windowHeight - insets.top - insets.bottom - 64,
+  );
   useEffect(() => {
     // `tabPress` is emitted by the Tabs navigator on every tap of the
     // tab bar item, regardless of whether the screen is already focused.
@@ -939,164 +952,180 @@ export default function SearchScreen() {
         onRequestClose={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); }}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.logoutModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.logoutModalTitle, { color: colors.foreground }]}>Settings</Text>
+          {/*
+            Settings card (Task #127): title pinned, rows scroll inside a
+            keyboard-aware ScrollView, footer (Done / Sign Out) pinned at
+            the bottom so it's reachable on every iPhone size and at every
+            in-app text size. maxHeight is computed from the window minus
+            safe-area insets so the card never extends off-screen.
+          */}
+          <View
+            style={[
+              styles.settingsModalCard,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                maxHeight: settingsModalMaxHeight,
+              },
+            ]}
+          >
+            <Text style={[styles.settingsModalTitle, { color: colors.foreground }]}>Settings</Text>
 
-            {/* Clear cache row */}
-            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Search cache</Text>
-                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                  Clears locally stored search results. Useful when inventory changes.
-                </Text>
-                {cacheAge ? (
-                  <Text style={[styles.settingsRowHint, { color: colors.mutedForeground, marginTop: 3 }]}>
-                    {cacheAge}
+            <KeyboardAwareScrollViewCompat
+              style={styles.settingsModalScroll}
+              contentContainerStyle={styles.settingsModalScrollContent}
+              bottomOffset={20}
+            >
+              {/* Clear cache row */}
+              <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Search cache</Text>
+                  <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                    Clears locally cached results.
                   </Text>
-                ) : null}
-                {cacheClearedMsg ? (
-                  <Text style={[styles.settingsRowSuccess, { color: colors.success }]}>{cacheClearedMsg}</Text>
-                ) : null}
-              </View>
-              <Pressable
-                onPress={async () => {
-                  await clearCache();
-                  // Reset in-memory Fuse pool so "Ready · N items" badge
-                  // drops to zero immediately without waiting for next load
-                  fuseRef.current = null;
-                  fuseItemsRef.current = [];
-                  setCachedCount(0);
-                  setOfflineResults(null);
-                  setCacheAge("No cached data");
-                  setCacheClearedMsg("✓ Cache cleared — resyncing…");
-                  syncAllInventory().then(() => {
-                    setCacheClearedMsg(null);
-                  });
-                }}
-                style={[styles.secondaryBtn, styles.clearCacheBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
-              >
-                <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>Clear</Text>
-              </Pressable>
-            </View>
-
-            {/* Text size row */}
-            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Text size</Text>
-                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                  Adjust how large result text appears.
-                </Text>
-              </View>
-              <View style={styles.textSizePicker}>
-                {(["small", "normal", "large"] as TextSize[]).map(sz => (
-                  <Pressable
-                    key={sz}
-                    onPress={() => updateSetting("textSize", sz)}
-                    style={[
-                      styles.secondaryBtn,
-                      styles.textSizeBtn,
-                      {
-                        backgroundColor: settings.textSize === sz ? colors.primary : colors.muted,
-                        borderColor: settings.textSize === sz ? colors.primary : colors.border,
-                      },
-                    ]}
-                  >
-                    <Text style={[
-                      styles.textSizeBtnLabel,
-                      { color: settings.textSize === sz ? colors.primaryForeground : colors.foreground },
-                    ]}>
-                      {sz === "small" ? "S" : sz === "large" ? "L" : "M"}
+                  {cacheAge ? (
+                    <Text style={[styles.settingsRowHint, { color: colors.mutedForeground, marginTop: 2 }]}>
+                      {cacheAge}
                     </Text>
-                  </Pressable>
-                ))}
+                  ) : null}
+                  {cacheClearedMsg ? (
+                    <Text style={[styles.settingsRowSuccess, { color: colors.success }]}>{cacheClearedMsg}</Text>
+                  ) : null}
+                </View>
+                <Pressable
+                  onPress={async () => {
+                    await clearCache();
+                    // Reset in-memory Fuse pool so "Ready · N items" badge
+                    // drops to zero immediately without waiting for next load
+                    fuseRef.current = null;
+                    fuseItemsRef.current = [];
+                    setCachedCount(0);
+                    setOfflineResults(null);
+                    setCacheAge("No cached data");
+                    setCacheClearedMsg("✓ Cache cleared — resyncing…");
+                    syncAllInventory().then(() => {
+                      setCacheClearedMsg(null);
+                    });
+                  }}
+                  style={[styles.secondaryBtn, styles.clearCacheBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                >
+                  <Text style={[styles.clearCacheBtnText, { color: colors.foreground }]}>Clear</Text>
+                </Pressable>
               </View>
-            </View>
 
-            {/* Theme row */}
-            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Theme</Text>
+              {/* Text size row */}
+              <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Text size</Text>
+                  <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                    Result text size.
+                  </Text>
+                </View>
+                <View style={styles.textSizePicker}>
+                  {(["small", "normal", "large"] as TextSize[]).map(sz => (
+                    <Pressable
+                      key={sz}
+                      onPress={() => updateSetting("textSize", sz)}
+                      style={[
+                        styles.secondaryBtn,
+                        styles.textSizeBtn,
+                        {
+                          backgroundColor: settings.textSize === sz ? colors.primary : colors.muted,
+                          borderColor: settings.textSize === sz ? colors.primary : colors.border,
+                        },
+                      ]}
+                    >
+                      <Text style={[
+                        styles.textSizeBtnLabel,
+                        { color: settings.textSize === sz ? colors.primaryForeground : colors.foreground },
+                      ]}>
+                        {sz === "small" ? "S" : sz === "large" ? "L" : "M"}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              {/* Theme row */}
+              <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Theme</Text>
+                  <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                    Override system appearance.
+                  </Text>
+                </View>
+                <View style={styles.textSizePicker}>
+                  {(["light", "dark", "system"] as ThemeMode[]).map(mode => (
+                    <Pressable
+                      key={mode}
+                      onPress={() => updateSetting("themeMode", mode)}
+                      style={[
+                        styles.secondaryBtn,
+                        styles.textSizeBtn,
+                        {
+                          width: "auto",
+                          paddingHorizontal: 12,
+                          backgroundColor: settings.themeMode === mode ? colors.primary : colors.muted,
+                          borderColor: settings.themeMode === mode ? colors.primary : colors.border,
+                        },
+                      ]}
+                    >
+                      <Text style={[
+                        styles.textSizeBtnLabel,
+                        { color: settings.themeMode === mode ? colors.primaryForeground : colors.foreground },
+                      ]}>
+                        {mode === "light" ? "Light" : mode === "dark" ? "Dark" : "System"}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              {/* Default confidence threshold row */}
+              <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 2 }]}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Default min confidence</Text>
                 <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                  Override the system appearance preference.
+                  Pre-fills the slider on new searches; doesn't change the current one.
                 </Text>
-              </View>
-              <View style={styles.textSizePicker}>
-                {(["light", "dark", "system"] as ThemeMode[]).map(mode => (
-                  <Pressable
-                    key={mode}
-                    onPress={() => updateSetting("themeMode", mode)}
-                    style={[
-                      styles.secondaryBtn,
-                      styles.textSizeBtn,
-                      {
-                        width: "auto",
-                        paddingHorizontal: 12,
-                        backgroundColor: settings.themeMode === mode ? colors.primary : colors.muted,
-                        borderColor: settings.themeMode === mode ? colors.primary : colors.border,
-                      },
-                    ]}
-                  >
-                    <Text style={[
-                      styles.textSizeBtnLabel,
-                      { color: settings.themeMode === mode ? colors.primaryForeground : colors.foreground },
-                    ]}>
-                      {mode === "light" ? "Light" : mode === "dark" ? "Dark" : "System"}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
-            {/* Default confidence threshold row */}
-            <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 4 }]}>
-              <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Default min confidence</Text>
-              <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                Pre-fills the confidence slider when you start a new search.
-              </Text>
-              <Text style={[styles.settingsRowHint, { color: colors.mutedForeground, fontStyle: "italic" }]}>
-                Changes here won't affect the search you're currently running.
-              </Text>
-              <ConfidenceSlider
-                value={settings.defaultConfidenceThreshold}
-                onChange={v => updateSetting("defaultConfidenceThreshold", v)}
-                colors={colors}
-                presets={[20, 40, 60, 80]}
-              />
-              {/* Custom value text input */}
-              <View style={styles.confCustomRow}>
-                <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>Custom</Text>
-                <TextInput
-                  value={confThresholdInput}
-                  onChangeText={setConfThresholdInput}
-                  onBlur={() => {
-                    const n = parseInt(confThresholdInput, 10);
-                    const clamped = isNaN(n) ? settings.defaultConfidenceThreshold : Math.max(1, Math.min(100, n));
-                    updateSetting("defaultConfidenceThreshold", clamped);
-                  }}
-                  onSubmitEditing={() => {
-                    const n = parseInt(confThresholdInput, 10);
-                    const clamped = isNaN(n) ? settings.defaultConfidenceThreshold : Math.max(1, Math.min(100, n));
-                    updateSetting("defaultConfidenceThreshold", clamped);
-                  }}
-                  keyboardType="number-pad"
-                  maxLength={3}
-                  style={[styles.confCustomInput, {
-                    backgroundColor: colors.muted,
-                    borderColor: colors.border,
-                    color: colors.foreground,
-                  }]}
-                  returnKeyType="done"
-                  selectTextOnFocus
+                <ConfidenceSlider
+                  value={settings.defaultConfidenceThreshold}
+                  onChange={v => updateSetting("defaultConfidenceThreshold", v)}
+                  colors={colors}
+                  presets={[20, 40, 60, 80]}
                 />
-                <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>%</Text>
+                {/* Custom value text input */}
+                <View style={styles.confCustomRow}>
+                  <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>Custom</Text>
+                  <TextInput
+                    value={confThresholdInput}
+                    onChangeText={setConfThresholdInput}
+                    onBlur={() => {
+                      const n = parseInt(confThresholdInput, 10);
+                      const clamped = isNaN(n) ? settings.defaultConfidenceThreshold : Math.max(1, Math.min(100, n));
+                      updateSetting("defaultConfidenceThreshold", clamped);
+                    }}
+                    onSubmitEditing={() => {
+                      const n = parseInt(confThresholdInput, 10);
+                      const clamped = isNaN(n) ? settings.defaultConfidenceThreshold : Math.max(1, Math.min(100, n));
+                      updateSetting("defaultConfidenceThreshold", clamped);
+                    }}
+                    keyboardType="number-pad"
+                    maxLength={3}
+                    style={[styles.confCustomInput, {
+                      backgroundColor: colors.muted,
+                      borderColor: colors.border,
+                      color: colors.foreground,
+                    }]}
+                    returnKeyType="done"
+                    selectTextOnFocus
+                  />
+                  <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>%</Text>
+                </View>
               </View>
-            </View>
+            </KeyboardAwareScrollViewCompat>
 
-            {/* Footer */}
-            <Text style={[styles.logoutModalHint, { color: colors.mutedForeground, marginTop: 16 }]}>
-              Changes are saved automatically.
-            </Text>
-            <View style={styles.logoutModalBtns}>
+            {/* Pinned footer */}
+            <View style={[styles.settingsModalFooter, { borderTopColor: colors.border }]}>
               <Pressable
                 onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); }}
                 style={[styles.logoutModalConfirm, { backgroundColor: colors.primary }]}
@@ -1641,11 +1670,33 @@ const styles = StyleSheet.create({
   emptyHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 8 },
   resultItem: { paddingHorizontal: 12 },
   listContent: { paddingBottom: 120 },
+  // Settings modal (Task #127). The card has a title row, a scrolling
+  // body, and a pinned footer; the card is column-flex so the footer
+  // hugs the bottom regardless of body content.
+  settingsModalCard: {
+    width: "100%",
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 12,
+    flexDirection: "column",
+  },
+  settingsModalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 4 },
+  settingsModalScroll: { flexShrink: 1 },
+  settingsModalScrollContent: { paddingBottom: 8 },
+  settingsModalFooter: {
+    flexDirection: "row",
+    gap: 10,
+    paddingTop: 10,
+    marginTop: 4,
+    borderTopWidth: 1,
+  },
   settingsRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 12,
-    paddingVertical: 12,
+    paddingVertical: 9,
     borderBottomWidth: 1,
   },
   settingsRowLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
