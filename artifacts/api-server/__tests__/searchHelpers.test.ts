@@ -295,6 +295,18 @@ describe("tokenMatch", () => {
   it("matches size codes within a description", () => {
     expect(tokenMatch("1-1/2 inch emt conduit fitting", "1-1/2")).toBe(true);
   });
+
+  it("does not let a smaller trade size leak into a mixed-number larger size", () => {
+    // Regression: chip value 1/2" used to match inside 1-1/2" / 2-1/2"
+    // because - and / aren't \w, so the word-boundary lookarounds let the
+    // substring through.
+    expect(tokenMatch('1-1/2" emt conduit', '1/2"')).toBe(false);
+    expect(tokenMatch('2-1/2" emt conduit', '1/2"')).toBe(false);
+    expect(tokenMatch('1-1/4" emt conduit', '1/4"')).toBe(false);
+    // Sanity: the matching size still selects its own item.
+    expect(tokenMatch('1/2" emt conduit', '1/2"')).toBe(true);
+    expect(tokenMatch('1-1/2" emt conduit', '1-1/2"')).toBe(true);
+  });
 });
 
 // ── matchesChipFilters ────────────────────────────────────────────────────────
