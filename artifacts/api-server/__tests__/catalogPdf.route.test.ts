@@ -38,10 +38,10 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import path from "node:path";
 import fs from "node:fs";
 import supertest from "supertest";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import app from "../src/app";
 import { signAdminToken } from "../src/routes/admin";
-import { db, inventoryTable, enrichmentRunTable, enrichmentHistoryTable } from "@workspace/db";
+import { db, inventoryTable, enrichmentRunTable } from "@workspace/db";
 import { closePool, cleanupFixtures } from "./helpers/testDb";
 import type { PreviewReport } from "../src/routes/catalogPdf";
 
@@ -97,6 +97,16 @@ describeIfFixture("catalog-pdf route flow (raw upload + uncertainDecisions + ide
     "raw application/pdf preview → apply with explicit uncertainDecisions → idempotent re-apply",
     async () => {
       await seedRows();
+
+      // Snapshot the highest existing enrichment_run id so cleanup at the
+      // end of this test only removes the rows WE created — never rows
+      // written by sibling tests in parallel jest workers.
+      const baselineRunRows = await db
+        .select({ id: enrichmentRunTable.id })
+        .from(enrichmentRunTable)
+        .orderBy(desc(enrichmentRunTable.id))
+        .limit(1);
+      const baselineRunId = baselineRunRows[0]?.id ?? 0;
 
       // ── 1. /preview via raw application/pdf body (vendor on querystring) ──
       const pdfBuffer = fs.readFileSync(PDF_PATH);
@@ -279,12 +289,11 @@ describeIfFixture("catalog-pdf route flow (raw upload + uncertainDecisions + ide
         .set("Authorization", `Bearer ${adminToken}`)
         .expect(409);
 
-      // Clean up the run rows we created so this suite leaves no trace.
-      const ourRunIds = runs.map(r => r.id);
-      if (ourRunIds.length) {
-        await db.delete(enrichmentHistoryTable).where(inArray(enrichmentHistoryTable.runId, ourRunIds));
-        await db.delete(enrichmentRunTable).where(inArray(enrichmentRunTable.id, ourRunIds));
-      }
+      // Clean up only the run rows this test execution created (id >
+      // baselineRunId). FK cascade drops the history rows automatically.
+      await db
+        .delete(enrichmentRunTable)
+        .where(gt(enrichmentRunTable.id, baselineRunId));
     },
     120_000,
   );
