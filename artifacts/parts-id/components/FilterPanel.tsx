@@ -266,7 +266,6 @@ function Field({
         autoCorrect={false}
         returnKeyType={returnKeyType}
         onSubmitEditing={onSubmitEditing}
-        blurOnSubmit={false}
       />
     </View>
   );
