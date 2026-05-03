@@ -534,7 +534,10 @@ export default function UploadScreen() {
   type CatalogApplyResult = { updated: number; skippedNoOp: number; errors: Array<{ inventoryId: number; error: string }> };
 
   const [catalogPdfFileName, setCatalogPdfFileName] = useState<string | null>(null);
-  const [catalogPdfVendor, setCatalogPdfVendor] = useState<string>("Bridgeport");
+  type CatalogVendorOption = { vendor: string; displayName: string; sourceCatalog: string };
+  const [catalogVendorOptions, setCatalogVendorOptions] = useState<CatalogVendorOption[]>([]);
+  const [catalogPdfVendor, setCatalogPdfVendor] = useState<string>("BRIDGEPORT");
+  const [vendorPickerOpen, setVendorPickerOpen] = useState(false);
   const [catalogPdfPending, setCatalogPdfPending] = useState(false);
   const [catalogPdfError, setCatalogPdfError] = useState<string | null>(null);
   const [catalogReport, setCatalogReport] = useState<CatalogReport | null>(null);
@@ -696,6 +699,28 @@ export default function UploadScreen() {
 
   // Clean up polling on unmount
   useEffect(() => () => { stopBulkPoll(); stopMeasurePoll(); }, [stopBulkPoll, stopMeasurePoll]);
+
+  // Fetch the supported catalog vendors so the picker shows real options.
+  // Falls back to a Bridgeport-only list if the call fails (older server).
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/admin/catalog-pdf/vendors`, { headers: adminHeaders });
+        if (!res.ok) return;
+        const body = await res.json() as { vendors: CatalogVendorOption[] };
+        if (cancelled || !Array.isArray(body.vendors) || body.vendors.length === 0) return;
+        setCatalogVendorOptions(body.vendors);
+        setCatalogPdfVendor(prev => body.vendors.some(v => v.vendor === prev) ? prev : body.vendors[0]!.vendor);
+      } catch {
+        /* picker keeps default Bridgeport entry */
+      }
+    })();
+    return () => { cancelled = true; };
+    // adminHeaders is recomputed every render but the underlying token is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, adminToken]);
 
   const handleStartBulkEnrich = async () => {
     setBulkEnrichError(null);
@@ -1815,31 +1840,84 @@ export default function UploadScreen() {
               <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>📕 Catalog PDF</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Upload a vendor catalog PDF (currently Bridgeport Fittings 2026) to
-                  enrich matching inventory rows with descriptions, dimension chips,
-                  and search keywords from the catalog.
+                  Pick a supported vendor and upload its catalog PDF to enrich
+                  matching inventory rows with descriptions, dimension chips, and
+                  search keywords from the catalog.
                 </Text>
 
                 <View style={{ flexDirection: "row", alignItems: "center", marginVertical: 8 }}>
                   <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: "Inter_500Medium", marginRight: 8 }}>
                     VENDOR
                   </Text>
-                  <TextInput
-                    value={catalogPdfVendor}
-                    onChangeText={setCatalogPdfVendor}
-                    autoCapitalize="characters"
+                  <Pressable
+                    onPress={() => setVendorPickerOpen(true)}
                     style={{
                       flex: 1,
                       borderWidth: 1,
                       borderColor: colors.border,
                       borderRadius: 8,
                       paddingHorizontal: 10,
-                      paddingVertical: 6,
-                      color: colors.foreground,
-                      fontFamily: "Inter_500Medium",
+                      paddingVertical: 8,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
                     }}
-                  />
+                  >
+                    <Text style={{ color: colors.foreground, fontFamily: "Inter_500Medium" }}>
+                      {catalogVendorOptions.find(v => v.vendor === catalogPdfVendor)?.displayName ?? catalogPdfVendor}
+                    </Text>
+                    <Text style={{ color: colors.mutedForeground }}>▾</Text>
+                  </Pressable>
                 </View>
+
+                {(() => {
+                  const selected = catalogVendorOptions.find(v => v.vendor === catalogPdfVendor);
+                  return selected ? (
+                    <Text style={{ color: colors.mutedForeground, fontSize: 11, marginBottom: 6 }}>
+                      Expects: {selected.sourceCatalog}
+                    </Text>
+                  ) : null;
+                })()}
+
+                <Modal
+                  transparent
+                  visible={vendorPickerOpen}
+                  animationType="fade"
+                  onRequestClose={() => setVendorPickerOpen(false)}
+                >
+                  <Pressable
+                    onPress={() => setVendorPickerOpen(false)}
+                    style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center", padding: 24 }}
+                  >
+                    <View style={{ width: "100%", maxWidth: 380, backgroundColor: colors.card, borderRadius: 12, borderWidth: 1, borderColor: colors.border, padding: 12 }}>
+                      <Text style={{ color: colors.foreground, fontFamily: "Inter_700Bold", fontSize: 14, marginBottom: 8 }}>
+                        Select catalog vendor
+                      </Text>
+                      {(catalogVendorOptions.length > 0
+                        ? catalogVendorOptions
+                        : [{ vendor: "BRIDGEPORT", displayName: "Bridgeport Fittings", sourceCatalog: "Bridgeport Fittings 2026 Catalog" }]
+                      ).map(opt => {
+                        const isActive = opt.vendor === catalogPdfVendor;
+                        return (
+                          <Pressable
+                            key={opt.vendor}
+                            onPress={() => { setCatalogPdfVendor(opt.vendor); setVendorPickerOpen(false); }}
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              borderRadius: 8,
+                              backgroundColor: isActive ? colors.primary + "22" : "transparent",
+                              marginBottom: 4,
+                            }}
+                          >
+                            <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold" }}>{opt.displayName}</Text>
+                            <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 2 }}>{opt.sourceCatalog}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </Pressable>
+                </Modal>
 
                 <Pressable
                   onPress={handleCatalogPdfPick}

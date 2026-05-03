@@ -41,6 +41,7 @@ import { verifyAdminToken } from "./admin";
 import {
   parseCatalogPdf,
   getVendorProfile,
+  listVendorProfiles,
   type CatalogEntry,
 } from "../utils/catalogPdfParser";
 import {
@@ -134,6 +135,16 @@ function pdfBodyParser(
   }
 }
 
+// ── GET /admin/catalog-pdf/vendors ─────────────────────────────────────────
+//
+// Returns the list of supported vendor profiles so the mobile upload picker
+// can render a dropdown instead of a free-text vendor field. Each entry
+// includes the canonical vendor code (sent back to /preview), the display
+// name, and a hint about which catalog PDF the profile expects.
+router.get("/catalog-pdf/vendors", requireAdminAuth, (_req, res) => {
+  res.json({ vendors: listVendorProfiles() });
+});
+
 // ── POST /admin/catalog-pdf/preview ─────────────────────────────────────────
 router.post(
   "/catalog-pdf/preview",
@@ -154,8 +165,9 @@ router.post(
       }
       const profile = getVendorProfile(vendorParam);
       if (!profile) {
+        const supported = listVendorProfiles().map(p => p.displayName).join(", ");
         return void res.status(400).json({
-          error: `No catalog profile is available for vendor "${vendorParam}". Currently only Bridgeport is supported.`,
+          error: `No catalog profile is available for vendor "${vendorParam}". Supported vendors: ${supported}.`,
         });
       }
 

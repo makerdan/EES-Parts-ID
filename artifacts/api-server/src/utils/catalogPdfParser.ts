@@ -1,28 +1,34 @@
 /**
  * Vendor catalog PDF parser.
  *
- * Given a PDF buffer + a vendor profile, returns a list of
- * `{ catalogNumber, pageNumbers, description, dimensions, keywords }`
- * entries by:
+ * Two parsing strategies are supported, picked per-profile:
  *
- *   1. Running `pdftotext -layout` on the buffer (via a tempfile, since
- *      poppler reads from disk) and splitting output on form-feed `\f`
- *      to get per-page text.
- *   2. Locating the vendor's "INDEX BY CATALOG NUMBER" pages, splitting
- *      each line on multi-space gaps to recover the original column
- *      cells, then parsing each cell as
- *      `<catalog-token> <page1>, <page2>, …`.
- *   3. For each entry, mapping the primary referenced page through the
- *      vendor's page-range → dimension table to seed the chip dimensions
- *      we actually know how to derive (category, conduitType, colorChip).
- *      Keywords are seeded from the vendor name + dimension labels +
- *      catalog-suffix hints (e.g. `-DC2`).
- *   4. Optionally pulling a short description snippet from the body
- *      page if the catalog number appears verbatim in the page text.
+ *   strategy: "index" (e.g. Bridgeport Fittings)
+ *     1. Run `pdftotext -layout` on the buffer and split on form-feed `\f`
+ *        to get per-page text.
+ *     2. Locate the vendor's "INDEX BY CATALOG NUMBER" pages, split each
+ *        line on multi-space gaps to recover the original column cells, and
+ *        parse each cell as `<catalog-token> <page1>, <page2>, …`.
+ *     3. Map the primary referenced page through the vendor's
+ *        page-range → dimension table to seed chip dimensions.
  *
- * Currently only the Bridgeport profile ships; the shape is
- * intentionally generic so adding a second vendor is just another
- * profile + page-range table.
+ *   strategy: "vendor-section" (e.g. Arlington / Crouse-Hinds via the
+ *   Elliott Electric Supply distributor catalog)
+ *     1. Walk every page looking for "Vendor Code: <CODE>" markers, where
+ *        <CODE> identifies the manufacturer within a multi-vendor body
+ *        page (e.g. "ARL" → Arlington Industries).
+ *     2. Determine the column band each marker owns by finding the next
+ *        marker to its right (right edge) and the next marker below it in
+ *        the same column (bottom edge).
+ *     3. Within that band, treat the first whitespace-separated token of
+ *        every subsequent line as a candidate catalog number, filtering out
+ *        prices, pure quantities, and obvious header words.
+ *     4. Apply the same page-range → dimension and suffix → dimension
+ *        enrichment as the index strategy.
+ *
+ * Both strategies emit the same `CatalogEntry` shape so downstream
+ * matching/apply code is strategy-agnostic. Body-page snippet extraction is
+ * also shared.
  */
 
 import * as fs from "node:fs";
@@ -57,28 +63,45 @@ export interface SuffixRule {
   keywords: string[];
 }
 
-export interface VendorProfile {
+interface VendorProfileBase {
   /** Canonical vendor code stored in the inventory.vendor column (uppercased). */
   vendor: string;
   /** Human-readable display name (e.g. "Bridgeport Fittings"). */
   displayName: string;
-  /** Pages (1-indexed) that contain the "INDEX BY CATALOG NUMBER" listing. */
-  indexPages: { firstPage: number; lastPage: number };
   /** Page-range → dimension mapping derived from the catalog table of contents. */
   pageRanges: PageRangeRule[];
   /** Catalog-suffix → dimension mapping (color codes etc.). */
   suffixRules: SuffixRule[];
+  /** Hint shown in the vendor picker for which PDF this profile expects. */
+  sourceCatalog: string;
 }
+
+export interface IndexVendorProfile extends VendorProfileBase {
+  strategy: "index";
+  /** Pages (1-indexed) that contain the "INDEX BY CATALOG NUMBER" listing. */
+  indexPages: { firstPage: number; lastPage: number };
+}
+
+export interface VendorSectionProfile extends VendorProfileBase {
+  strategy: "vendor-section";
+  /**
+   * "Vendor Code: <CODE>" marker to scan for on body pages of a distributor
+   * catalog (e.g. "ARL" for Arlington Industries inside the EES catalog).
+   */
+  sourceVendorCode: string;
+}
+
+export type VendorProfile = IndexVendorProfile | VendorSectionProfile;
 
 // ── Bridgeport 2026 profile ──────────────────────────────────────────────────
 //
 // Page ranges below come from the table of contents on pages 6-7 of
 // `attached_assets/Bridgeport_Fittings_2026_Catalog_Part1_*.pdf`.
-// Add a new vendor by exporting a sibling profile constant; the matcher and
-// route are vendor-agnostic.
-export const BRIDGEPORT_PROFILE: VendorProfile = {
+export const BRIDGEPORT_PROFILE: IndexVendorProfile = {
   vendor: "BRIDGEPORT",
   displayName: "Bridgeport Fittings",
+  strategy: "index",
+  sourceCatalog: "Bridgeport Fittings 2026 Catalog",
   indexPages: { firstPage: 8, lastPage: 19 },
   pageRanges: [
     {
@@ -222,12 +245,134 @@ export const BRIDGEPORT_PROFILE: VendorProfile = {
   ],
 };
 
+// ── Distributor (Elliott Electric Supply) vendor-section profiles ────────────
+//
+// EES is a distributor; each body page may stack multiple manufacturer
+// columns. Every column is introduced by a `Vendor Code: <CODE>` marker.
+// We pin a profile to a single CODE and let the vendor-section parser
+// extract that column's catalog tokens.
+//
+// Page ranges are coarse — they map sections (D = Wire & Cable, E =
+// Conduit/Fittings/Boxes, I = Harsh Locations) to the most common item
+// category in that section. Body-text snippets handle the per-row detail.
+
+const EES_SOURCE = "Elliott Electric Supply Product Catalog (06.2025)";
+
+export const ARLINGTON_PROFILE: VendorSectionProfile = {
+  vendor: "ARLINGTON",
+  displayName: "Arlington Industries",
+  strategy: "vendor-section",
+  sourceCatalog: EES_SOURCE,
+  sourceVendorCode: "ARL",
+  pageRanges: [
+    {
+      startPage: 95, endPage: 108,
+      dimensions: { category: "Connector" },
+      keywords: ["nm", "nonmetallic", "cable", "connector"],
+      label: "NM Cable Connector",
+    },
+    {
+      startPage: 109, endPage: 165,
+      dimensions: { category: "Fitting" },
+      keywords: ["fitting", "box"],
+      label: "Conduit / Box Fitting",
+    },
+  ],
+  suffixRules: [
+    { suffix: "AST", dimensions: {}, keywords: ["snap-in"] },
+    { suffix: "DC2", dimensions: {}, keywords: ["die cast"] },
+  ],
+};
+
+export const CROUSE_HINDS_PROFILE: VendorSectionProfile = {
+  vendor: "CROUSE-HINDS",
+  displayName: "Eaton Crouse-Hinds Series",
+  strategy: "vendor-section",
+  sourceCatalog: EES_SOURCE,
+  sourceVendorCode: "CRS",
+  pageRanges: [
+    {
+      startPage: 95, endPage: 108,
+      dimensions: { category: "Connector" },
+      keywords: ["cable", "connector"],
+      label: "Cable Connector",
+    },
+    {
+      startPage: 109, endPage: 165,
+      dimensions: { category: "Fitting", conduitType: "RMC" },
+      keywords: ["rigid", "fitting", "condulet"],
+      label: "Conduit Body / Fitting",
+    },
+    {
+      startPage: 180, endPage: 215,
+      dimensions: { category: "Fitting", environment: "Hazardous" },
+      keywords: ["explosion proof", "hazardous", "harsh location"],
+      label: "Hazardous Location Fitting",
+    },
+  ],
+  suffixRules: [
+    { suffix: "DC", dimensions: {}, keywords: ["die cast"] },
+    { suffix: "SA", dimensions: {}, keywords: ["aluminum"] },
+  ],
+};
+
+export const CANTEX_PROFILE: VendorSectionProfile = {
+  vendor: "CANTEX",
+  displayName: "Cantex, Inc.",
+  strategy: "vendor-section",
+  sourceCatalog: EES_SOURCE,
+  sourceVendorCode: "PVF",
+  pageRanges: [
+    {
+      startPage: 109, endPage: 165,
+      dimensions: { category: "Fitting", conduitType: "PVC" },
+      keywords: ["pvc", "fitting"],
+      label: "PVC Fitting",
+    },
+  ],
+  suffixRules: [
+    { suffix: "ELL90", dimensions: {}, keywords: ["elbow", "90 degree"] },
+    { suffix: "ELL45", dimensions: {}, keywords: ["elbow", "45 degree"] },
+  ],
+};
+
 const VENDOR_PROFILES: Record<string, VendorProfile> = {
   BRIDGEPORT: BRIDGEPORT_PROFILE,
+  ARLINGTON: ARLINGTON_PROFILE,
+  "CROUSE-HINDS": CROUSE_HINDS_PROFILE,
+  CANTEX: CANTEX_PROFILE,
+};
+
+// Aliases: alternate spellings the picker / API may receive.
+const VENDOR_ALIASES: Record<string, string> = {
+  "BRIDGEPORT FITTINGS": "BRIDGEPORT",
+  ARLINGTON_INDUSTRIES: "ARLINGTON",
+  "ARLINGTON INDUSTRIES": "ARLINGTON",
+  "CROUSE HINDS": "CROUSE-HINDS",
+  "EATON CROUSE-HINDS": "CROUSE-HINDS",
+  "EATON CROUSE HINDS": "CROUSE-HINDS",
+  CRS: "CROUSE-HINDS",
+  "CANTEX INC": "CANTEX",
+  "CANTEX, INC.": "CANTEX",
 };
 
 export function getVendorProfile(vendor: string): VendorProfile | null {
-  return VENDOR_PROFILES[vendor.trim().toUpperCase()] ?? null;
+  const norm = vendor.trim().toUpperCase();
+  const canonical = VENDOR_ALIASES[norm] ?? norm;
+  return VENDOR_PROFILES[canonical] ?? null;
+}
+
+export interface VendorOption {
+  vendor: string;
+  displayName: string;
+  sourceCatalog: string;
+}
+
+/** Vendor list for the upload picker. Stable order: alphabetical by display name. */
+export function listVendorProfiles(): VendorOption[] {
+  return Object.values(VENDOR_PROFILES)
+    .map(p => ({ vendor: p.vendor, displayName: p.displayName, sourceCatalog: p.sourceCatalog }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 // ── pdftotext driver ────────────────────────────────────────────────────────
@@ -254,7 +399,7 @@ function pdftotextLayout(pdfPath: string, firstPage?: number, lastPage?: number)
   });
 }
 
-// ── Index page parser ───────────────────────────────────────────────────────
+// ── Index page parser (strategy: "index") ──────────────────────────────────
 //
 // Each line in the layout-preserved index looks like
 //
@@ -303,6 +448,145 @@ export function parseIndexText(indexText: string): Map<string, number[]> {
         }
       } else {
         out.set(entry.catalogNumber, [...entry.pageNumbers]);
+      }
+    }
+  }
+  return out;
+}
+
+// ── Vendor-section page parser (strategy: "vendor-section") ────────────────
+//
+// Distributor catalogs (e.g. Elliott Electric Supply) stack multiple
+// manufacturer tables on the same body page, each introduced by a
+// `Vendor Code: <CODE>` marker. We:
+//   1. Find every marker on the page (line index + char column + code).
+//   2. For each marker matching the target code, compute its column band:
+//      - colLeft  = marker's character column.
+//      - colRight = column of the nearest marker to its right (within a
+//        few lines), else end-of-line.
+//      - endLine  = line index of the nearest later marker that lands
+//        inside the same column band, else end-of-page.
+//   3. For every line strictly between marker and endLine, slice the
+//      [colLeft, colRight) substring and take the first whitespace-split
+//      token. If it looks like a catalog number, record it.
+//
+// Catalog token criteria are stricter than the index parser because the
+// table cells contain prices, sizes, and quantities that must NOT be
+// captured. Rules:
+//   - Matches /^[A-Z0-9][A-Z0-9.\-/]{2,24}$/ (3-25 chars, alphanumeric + . - /)
+//   - Contains at least one digit (rejects pure-letter header words).
+//   - Is NOT pure decimal/numeric (rejects "879.00", "1815.28").
+//   - Is NOT a 1-3 digit integer (rejects qty cells like "100", "25", "50").
+//   - Is NOT in a small stop-word list of column headers / section labels.
+
+const VENDOR_CODE_MARKER_RE = /Vendor Code:\s*([A-Z]+)/g;
+const SECTION_TOKEN_RE = /^[A-Z0-9][A-Z0-9.\-/]{2,24}$/;
+
+const VENDOR_SECTION_STOP_WORDS = new Set<string>([
+  "CATALOG", "NUMBER", "SIZE", "PRICE", "DESCRIPTION", "EACH", "TYPE",
+  "RIGID", "EMT", "PVC", "GALVANIZED", "BONDED", "COPPER", "GROUND", "RODS",
+  "ALUMINUM", "STEEL", "DIE", "CAST", "SCREW", "UL", "LISTED", "INCLUDED",
+  "NEOPRENE", "CARTON", "BUNDLE", "QTY", "QUANTITY", "PCS", "VENDOR", "CODE",
+  "CTN", "HEAVY", "DUTY", "INSULATOR", "CLAMP", "CLAMPS", "BAG", "PIPE",
+  "PLATE", "GROUNDING", "BONDING", "ROOF", "FLASHING", "KITS", "SWITCH",
+  "DIMMER", "PER", "SECTION", "DIECAST", "MIDGET", "MEDIUM", "TOTAL",
+  "CONDUIT", "FITTING", "FITTINGS", "BOX", "BOXES", "ITEM", "MODEL",
+]);
+
+function isVendorSectionToken(t: string): boolean {
+  if (!t) return false;
+  const upper = t.toUpperCase();
+  if (!SECTION_TOKEN_RE.test(upper)) return false;
+  if (!/[0-9]/.test(t)) return false;
+  if (/^[0-9.,]+$/.test(t)) return false; // pure decimals (prices)
+  if (/^[0-9]{1,3}$/.test(t)) return false; // small integers (quantities)
+  if (VENDOR_SECTION_STOP_WORDS.has(upper)) return false;
+  return true;
+}
+
+interface VendorMarker { lineIndex: number; col: number; code: string; }
+
+function findVendorMarkers(lines: readonly string[]): VendorMarker[] {
+  const out: VendorMarker[] = [];
+  for (let li = 0; li < lines.length; li++) {
+    const re = new RegExp(VENDOR_CODE_MARKER_RE.source, "g");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(lines[li]!)) !== null) {
+      out.push({ lineIndex: li, col: m.index, code: m[1]! });
+    }
+  }
+  return out;
+}
+
+export function parseVendorSectionPage(
+  pageText: string,
+  targetCode: string,
+  pageNumber: number,
+): Array<{ catalogNumber: string; pageNumber: number }> {
+  const lines = pageText.split("\n");
+  const markers = findVendorMarkers(lines);
+  if (markers.length === 0) return [];
+
+  const out: Array<{ catalogNumber: string; pageNumber: number }> = [];
+  const seen = new Set<string>();
+
+  for (const mk of markers) {
+    if (mk.code !== targetCode) continue;
+
+    // Right boundary: nearest marker to the right whose line is within
+    // ±60 of this marker's line (same physical table row band).
+    let colRight = Number.POSITIVE_INFINITY;
+    for (const other of markers) {
+      if (other === mk) continue;
+      if (other.col <= mk.col + 5) continue;
+      if (other.lineIndex < mk.lineIndex - 1) continue;
+      if (other.lineIndex > mk.lineIndex + 60) continue;
+      if (other.col < colRight) colRight = other.col;
+    }
+
+    // Bottom boundary: nearest later marker landing inside our column band.
+    let endLine = lines.length;
+    for (const other of markers) {
+      if (other === mk) continue;
+      if (other.lineIndex <= mk.lineIndex) continue;
+      if (other.col >= mk.col && other.col < colRight && other.lineIndex < endLine) {
+        endLine = other.lineIndex;
+      }
+    }
+
+    const sliceEnd = Number.isFinite(colRight) ? colRight : undefined;
+    for (let li = mk.lineIndex + 1; li < endLine; li++) {
+      const line = lines[li]!;
+      const slice = line.slice(mk.col, sliceEnd);
+      const first = slice.trim().split(/\s+/)[0];
+      if (!first) continue;
+      if (!isVendorSectionToken(first)) continue;
+      const key = first.toUpperCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ catalogNumber: key, pageNumber });
+    }
+  }
+
+  return out;
+}
+
+function parseVendorSectionDoc(
+  pageTexts: readonly string[],
+  targetCode: string,
+): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  const marker = `Vendor Code: ${targetCode}`;
+  for (let p = 0; p < pageTexts.length; p++) {
+    const text = pageTexts[p]!;
+    if (!text.includes(marker)) continue;
+    const entries = parseVendorSectionPage(text, targetCode, p + 1);
+    for (const e of entries) {
+      const existing = out.get(e.catalogNumber);
+      if (existing) {
+        if (!existing.includes(e.pageNumber)) existing.push(e.pageNumber);
+      } else {
+        out.set(e.catalogNumber, [e.pageNumber]);
       }
     }
   }
@@ -383,19 +667,23 @@ export async function parseCatalogPdf(
 ): Promise<CatalogEntry[]> {
   const tmp = writeTempPdf(buf);
   try {
-    // 1. Index pages → catalog # → primary pages.
-    const indexText = pdftotextLayout(tmp, profile.indexPages.firstPage, profile.indexPages.lastPage);
-    const indexMap = parseIndexText(indexText);
+    // Whole-doc text once: vendor-section needs every page; index strategy
+    // also benefits because it reuses pageTexts for snippet extraction.
+    const allText = pdftotextLayout(tmp);
+    const pageTexts = allText.split("\f");
 
-    // 2. Optionally extract whole-doc page text once for snippet lookup.
-    let pageTexts: string[] | null = null;
-    if (options.extractBodySnippets !== false) {
-      const allText = pdftotextLayout(tmp);
-      // pdftotext separates pages with form-feed `\f`. Index 0 = page 1.
-      pageTexts = allText.split("\f");
+    // 1. Build catalog # → primary pages map per strategy.
+    let indexMap: Map<string, number[]>;
+    if (profile.strategy === "index") {
+      const indexText = pdftotextLayout(tmp, profile.indexPages.firstPage, profile.indexPages.lastPage);
+      indexMap = parseIndexText(indexText);
+    } else {
+      indexMap = parseVendorSectionDoc(pageTexts, profile.sourceVendorCode);
     }
 
-    // 3. Build entries.
+    const useSnippets = options.extractBodySnippets !== false;
+
+    // 2. Build entries.
     const entries: CatalogEntry[] = [];
     for (const [catalogNumber, pageNumbers] of indexMap) {
       const primaryPage = pageNumbers[0]!;
@@ -413,7 +701,7 @@ export async function parseCatalogPdf(
         ...Object.values(dimensions).map(v => v.toLowerCase()),
       ]);
 
-      const snippet = pageTexts ? snippetFromPage(pageTexts[primaryPage - 1], catalogNumber) : "";
+      const snippet = useSnippets ? snippetFromPage(pageTexts[primaryPage - 1], catalogNumber) : "";
       const label = rangeRule?.label ?? "Catalog item";
       const description = snippet || `${label} ${catalogNumber}`;
 
