@@ -86,16 +86,17 @@ export function isConduitOrPipe(...texts: Array<string | null | undefined>): boo
 }
 
 // Inverse lookup of FRACTION_CODES so we can render a numeric inches value
-// back as the human fraction string workers recognize on the shelf.
-const INCHES_TO_FRACTION: Array<[number, string]> = [
-  [1 / 8, "1/8"],
-  [1 / 4, "1/4"],
-  [3 / 8, "3/8"],
-  [1 / 2, "1/2"],
-  [5 / 8, "5/8"],
-  [3 / 4, "3/4"],
-  [7 / 8, "7/8"],
-];
+// back as the human fraction string workers recognize on the shelf. Built
+// from the same map as the parser so the two stay in lockstep if codes
+// are ever added or changed. Each "12"/"34"/etc. code is split into its
+// numerator/denominator for display ("12" → "1/2", "34" → "3/4").
+const INCHES_TO_FRACTION: Array<[number, string]> = Object.entries(FRACTION_CODES)
+  .map(([code, value]) => {
+    const num = code.slice(0, code.length - 1);
+    const den = code.slice(code.length - 1);
+    return [value, `${num}/${den}`] as [number, string];
+  })
+  .sort((a, b) => a[0] - b[0]);
 
 /**
  * Format a numeric inches value (as returned by `parseTradeSizeInches`)
