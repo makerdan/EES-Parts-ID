@@ -592,7 +592,9 @@ const chipAreaStyles = StyleSheet.create({
   container: {
     borderWidth: 1,
     borderRadius: 10,
-    padding: 12,
+    // Slimmer padding so the collapsed "Advanced Filters" bar is thinner
+    // (no double-padded inner+outer card around just the header row).
+    padding: 6,
     marginBottom: 12,
   },
   header: {
