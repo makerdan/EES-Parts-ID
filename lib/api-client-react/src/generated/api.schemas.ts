@@ -354,6 +354,58 @@ export interface UpdateCategoryNodeBody {
   sortOrder?: number;
 }
 
+export interface BarcodeLookupBody {
+  /** Raw scanned string (server normalizes case + whitespace). */
+  barcode: string;
+}
+
+/**
+ * Where the binding came from:
+- `catalog-auto`: server matched the scan to inventory.catalog
+- `upc-linked`: warehouse worker linked an unknown barcode
+- `manual`: admin imported the binding directly
+
+ */
+export type BarcodeSource = (typeof BarcodeSource)[keyof typeof BarcodeSource];
+
+export const BarcodeSource = {
+  "catalog-auto": "catalog-auto",
+  "upc-linked": "upc-linked",
+  manual: "manual",
+} as const;
+
+export interface BarcodeLookupResponse {
+  /** Matched inventory item, or null when nothing was found. */
+  match: InventoryItem | null;
+  /** How the binding was found, or null on no-match. */
+  source: BarcodeSource | null;
+  /** Recently scanned/linked items, used for the no-match picker. */
+  recentlyViewed: InventoryItem[];
+}
+
+export interface BarcodeLinkBody {
+  barcode: string;
+  inventoryId: number;
+  /** Overwrite an existing binding for this barcode. */
+  force?: boolean;
+  /** Optional opaque identifier for the worker performing the link. */
+  createdBy?: string | null;
+}
+
+export interface BarcodeLinkResponse {
+  ok: boolean;
+  item: InventoryItem;
+}
+
+export interface BarcodeLinkConflict {
+  error: string;
+  currentInventoryId: number;
+}
+
+export interface BarcodeRecentResponse {
+  items: InventoryItem[];
+}
+
 export interface MergeCategoryBody {
   sourceId: number;
   targetId: number;
@@ -429,4 +481,8 @@ export type MergeCategoryNodes200 = {
   targetId?: number;
   moved?: number;
   dropped?: number;
+};
+
+export type BarcodeRecentParams = {
+  limit?: number;
 };

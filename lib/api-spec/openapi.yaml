@@ -18,6 +18,8 @@ tags:
     description: AI identification and reference
   - name: categories
     description: Three-level taxonomy browse and classification
+  - name: barcode
+    description: Barcode / QR scanning lookup and linking
 paths:
   /healthz:
     get:
@@ -540,6 +542,84 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AssignCategoryResponse"
+
+  /barcode/lookup:
+    post:
+      operationId: barcodeLookup
+      tags: [barcode]
+      summary: Look up an inventory item by scanned barcode / QR string
+      description: |
+        Two-stage lookup. First the server compares the scanned string
+        (case-insensitive) against `inventory.catalog`; on a hit it
+        records the binding in `inventory_barcode` with
+        `source = catalog-auto` and returns the part. If no catalog row
+        matches, the `inventory_barcode` mapping table is consulted.
+        When neither stage matches, the response carries
+        `match: null` plus a `recentlyViewed` list so the client can
+        offer the no-match scan-to-link picker without a second
+        round-trip.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BarcodeLookupBody"
+      responses:
+        "200":
+          description: Lookup result (match or no-match with recently viewed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BarcodeLookupResponse"
+
+  /barcode/link:
+    post:
+      operationId: barcodeLink
+      tags: [barcode]
+      summary: Bind a scanned barcode to an inventory item
+      description: |
+        Idempotent for the same `(barcode, inventoryId)` pair. Re-linking
+        a barcode that is already bound to a *different* inventory row
+        returns 409 unless the request includes `force: true`, in which
+        case the binding is overwritten.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BarcodeLinkBody"
+      responses:
+        "200":
+          description: Barcode linked to part
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BarcodeLinkResponse"
+        "409":
+          description: Barcode already linked to a different part (omit `force` to keep)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BarcodeLinkConflict"
+
+  /barcode/recent:
+    get:
+      operationId: barcodeRecent
+      tags: [barcode]
+      summary: Recently scanned / linked inventory items (no-match panel state)
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Recent inventory items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BarcodeRecentResponse"
 
   /ai/reference:
     post:
@@ -1216,6 +1296,98 @@ components:
           nullable: true
         sortOrder:
           type: integer
+
+    BarcodeLookupBody:
+      type: object
+      properties:
+        barcode:
+          type: string
+          description: Raw scanned string (server normalizes case + whitespace).
+      required:
+        - barcode
+
+    BarcodeSource:
+      type: string
+      enum: [catalog-auto, upc-linked, manual]
+      description: |
+        Where the binding came from:
+        - `catalog-auto`: server matched the scan to inventory.catalog
+        - `upc-linked`: warehouse worker linked an unknown barcode
+        - `manual`: admin imported the binding directly
+
+    BarcodeLookupResponse:
+      type: object
+      properties:
+        match:
+          allOf:
+            - $ref: "#/components/schemas/InventoryItem"
+          nullable: true
+          description: Matched inventory item, or null when nothing was found.
+        source:
+          allOf:
+            - $ref: "#/components/schemas/BarcodeSource"
+          nullable: true
+          description: How the binding was found, or null on no-match.
+        recentlyViewed:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryItem"
+          description: Recently scanned/linked items, used for the no-match picker.
+      required:
+        - match
+        - source
+        - recentlyViewed
+
+    BarcodeLinkBody:
+      type: object
+      properties:
+        barcode:
+          type: string
+        inventoryId:
+          type: integer
+        force:
+          type: boolean
+          default: false
+          description: Overwrite an existing binding for this barcode.
+        createdBy:
+          type: string
+          nullable: true
+          description: Optional opaque identifier for the worker performing the link.
+      required:
+        - barcode
+        - inventoryId
+
+    BarcodeLinkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        item:
+          $ref: "#/components/schemas/InventoryItem"
+      required:
+        - ok
+        - item
+
+    BarcodeLinkConflict:
+      type: object
+      properties:
+        error:
+          type: string
+        currentInventoryId:
+          type: integer
+      required:
+        - error
+        - currentInventoryId
+
+    BarcodeRecentResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryItem"
+      required:
+        - items
 
     MergeCategoryBody:
       type: object
