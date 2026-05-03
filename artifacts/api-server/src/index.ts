@@ -7,6 +7,22 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { pool } from "@workspace/db";
+import {
+  refresh as refreshInventoryIndex,
+  start as startInventoryIndex,
+  stop as stopInventoryIndex,
+} from "./lib/inventoryIndex";
+
+// How often to rebuild the in-memory Fuse fuzzy-search index. Defaults
+// to 5 minutes; tunable via env so prod can dial it up or down without
+// a code change.
+const DEFAULT_INVENTORY_INDEX_REFRESH_MS = 5 * 60 * 1000;
+const inventoryIndexRefreshMs = (() => {
+  const raw = process.env["INVENTORY_INDEX_REFRESH_MS"];
+  if (!raw) return DEFAULT_INVENTORY_INDEX_REFRESH_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_INVENTORY_INDEX_REFRESH_MS;
+})();
 
 const rawPort = process.env["PORT"];
 
@@ -44,11 +60,21 @@ function startServer(retries: number): void {
   const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");
 
+    // Warm the in-memory Fuse index, then begin the refresh schedule.
+    // Initial build errors are logged but non-fatal so the server can
+    // still serve Postgres-only traffic.
+    void refreshInventoryIndex().finally(() => {
+      startInventoryIndex(inventoryIndexRefreshMs);
+    });
+
     // ── Graceful shutdown ──────────────────────────────────────────────────────
     // Stop accepting new connections, drain in-flight requests, then close the
     // DB pool. Forced exit after 10 s if drain takes too long (e.g. hung SSE).
     const shutdown = (signal: string) => {
       logger.info({ signal }, "Shutdown signal — draining connections…");
+
+      // Cancel the index refresh timer first so it can't fire mid-shutdown.
+      stopInventoryIndex();
 
       server.close(async () => {
         logger.info("HTTP server closed");
