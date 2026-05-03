@@ -559,6 +559,10 @@ export default function UploadScreen() {
   const [catalogReviewChoices, setCatalogReviewChoices] = useState<Record<string, number | "skip">>({});
   // Recent enrichment runs + per-row revert pending state.
   const [catalogRuns, setCatalogRuns] = useState<CatalogRun[]>([]);
+  // Recent enrichment runs list is collapsed by default (Task #131) so
+  // the Catalog PDFs section stays compact until the user opts in.
+  // Local-only state — no persistence required.
+  const [catalogRunsExpanded, setCatalogRunsExpanded] = useState(false);
   const [revertingRunId, setRevertingRunId] = useState<number | null>(null);
 
   // Bulk enrichment state
@@ -2038,10 +2042,42 @@ export default function UploadScreen() {
                     and lose their button. */}
                 {catalogRuns.length > 0 ? (
                   <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border }}>
-                    <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", marginBottom: 8 }}>
-                      Recent enrichment runs
-                    </Text>
-                    {catalogRuns.map((run) => {
+                    {/* Tappable header — toggles the runs list. Chevron
+                        and count make the affordance obvious without
+                        adding dependencies. */}
+                    <Pressable
+                      onPress={() => setCatalogRunsExpanded((v) => !v)}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        catalogRunsExpanded
+                          ? "Collapse recent enrichment runs"
+                          : "Expand recent enrichment runs"
+                      }
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        paddingVertical: 4,
+                        marginBottom: catalogRunsExpanded ? 8 : 0,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: colors.mutedForeground,
+                          fontFamily: "Inter_600SemiBold",
+                          fontSize: 13,
+                          width: 14,
+                        }}
+                      >
+                        {catalogRunsExpanded ? "▾" : "▸"}
+                      </Text>
+                      <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold" }}>
+                        Recent enrichment runs
+                      </Text>
+                      <Text style={{ color: colors.mutedForeground, marginLeft: 6, fontSize: 13 }}>
+                        ({catalogRuns.length})
+                      </Text>
+                    </Pressable>
+                    {catalogRunsExpanded ? catalogRuns.map((run) => {
                       const when = new Date(run.startedAt).toLocaleString();
                       const isReverting = revertingRunId === run.id;
                       const isReverted = !!run.revertedAt;
@@ -2090,7 +2126,7 @@ export default function UploadScreen() {
                           )}
                         </View>
                       );
-                    })}
+                    }) : null}
                   </View>
                 ) : null}
 
