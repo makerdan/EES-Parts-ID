@@ -13,6 +13,7 @@ import adminRouter from "./admin";
 import adminUploadRouter from "./adminUpload";
 import catalogPdfRouter from "./catalogPdf";
 import categoriesRouter from "./categories";
+import barcodeRouter from "./barcode";
 
 const router: IRouter = Router();
 
@@ -25,5 +26,6 @@ router.use("/admin", adminRouter);
 router.use("/admin", adminUploadRouter);
 router.use("/admin", catalogPdfRouter);
 router.use("/categories", categoriesRouter);
+router.use("/barcode", barcodeRouter);
 
 export default router;

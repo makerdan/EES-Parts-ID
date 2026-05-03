@@ -22,6 +22,13 @@ import type {
   AiReferenceBody,
   AssignCategoryBody,
   AssignCategoryResponse,
+  BarcodeLinkBody,
+  BarcodeLinkConflict,
+  BarcodeLinkResponse,
+  BarcodeLookupBody,
+  BarcodeLookupResponse,
+  BarcodeRecentParams,
+  BarcodeRecentResponse,
   CategoryAssignmentsResponse,
   CategoryCoverageResponse,
   CategoryItemsResponse,
@@ -2139,6 +2146,287 @@ export const useAssignInventoryToCategory = <
 > => {
   return useMutation(getAssignInventoryToCategoryMutationOptions(options));
 };
+
+/**
+ * Two-stage lookup. First the server compares the scanned string
+(case-insensitive) against `inventory.catalog`; on a hit it
+records the binding in `inventory_barcode` with
+`source = catalog-auto` and returns the part. If no catalog row
+matches, the `inventory_barcode` mapping table is consulted.
+When neither stage matches, the response carries
+`match: null` plus a `recentlyViewed` list so the client can
+offer the no-match scan-to-link picker without a second
+round-trip.
+
+ * @summary Look up an inventory item by scanned barcode / QR string
+ */
+export const getBarcodeLookupUrl = () => {
+  return `/api/barcode/lookup`;
+};
+
+export const barcodeLookup = async (
+  barcodeLookupBody: BarcodeLookupBody,
+  options?: RequestInit,
+): Promise<BarcodeLookupResponse> => {
+  return customFetch<BarcodeLookupResponse>(getBarcodeLookupUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(barcodeLookupBody),
+  });
+};
+
+export const getBarcodeLookupMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof barcodeLookup>>,
+    TError,
+    { data: BodyType<BarcodeLookupBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof barcodeLookup>>,
+  TError,
+  { data: BodyType<BarcodeLookupBody> },
+  TContext
+> => {
+  const mutationKey = ["barcodeLookup"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof barcodeLookup>>,
+    { data: BodyType<BarcodeLookupBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return barcodeLookup(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BarcodeLookupMutationResult = NonNullable<
+  Awaited<ReturnType<typeof barcodeLookup>>
+>;
+export type BarcodeLookupMutationBody = BodyType<BarcodeLookupBody>;
+export type BarcodeLookupMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Look up an inventory item by scanned barcode / QR string
+ */
+export const useBarcodeLookup = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof barcodeLookup>>,
+    TError,
+    { data: BodyType<BarcodeLookupBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof barcodeLookup>>,
+  TError,
+  { data: BodyType<BarcodeLookupBody> },
+  TContext
+> => {
+  return useMutation(getBarcodeLookupMutationOptions(options));
+};
+
+/**
+ * Idempotent for the same `(barcode, inventoryId)` pair. Re-linking
+a barcode that is already bound to a *different* inventory row
+returns 409 unless the request includes `force: true`, in which
+case the binding is overwritten.
+
+ * @summary Bind a scanned barcode to an inventory item
+ */
+export const getBarcodeLinkUrl = () => {
+  return `/api/barcode/link`;
+};
+
+export const barcodeLink = async (
+  barcodeLinkBody: BarcodeLinkBody,
+  options?: RequestInit,
+): Promise<BarcodeLinkResponse> => {
+  return customFetch<BarcodeLinkResponse>(getBarcodeLinkUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(barcodeLinkBody),
+  });
+};
+
+export const getBarcodeLinkMutationOptions = <
+  TError = ErrorType<BarcodeLinkConflict>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof barcodeLink>>,
+    TError,
+    { data: BodyType<BarcodeLinkBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof barcodeLink>>,
+  TError,
+  { data: BodyType<BarcodeLinkBody> },
+  TContext
+> => {
+  const mutationKey = ["barcodeLink"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof barcodeLink>>,
+    { data: BodyType<BarcodeLinkBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return barcodeLink(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BarcodeLinkMutationResult = NonNullable<
+  Awaited<ReturnType<typeof barcodeLink>>
+>;
+export type BarcodeLinkMutationBody = BodyType<BarcodeLinkBody>;
+export type BarcodeLinkMutationError = ErrorType<BarcodeLinkConflict>;
+
+/**
+ * @summary Bind a scanned barcode to an inventory item
+ */
+export const useBarcodeLink = <
+  TError = ErrorType<BarcodeLinkConflict>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof barcodeLink>>,
+    TError,
+    { data: BodyType<BarcodeLinkBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof barcodeLink>>,
+  TError,
+  { data: BodyType<BarcodeLinkBody> },
+  TContext
+> => {
+  return useMutation(getBarcodeLinkMutationOptions(options));
+};
+
+/**
+ * @summary Recently scanned / linked inventory items (no-match panel state)
+ */
+export const getBarcodeRecentUrl = (params?: BarcodeRecentParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/barcode/recent?${stringifiedParams}`
+    : `/api/barcode/recent`;
+};
+
+export const barcodeRecent = async (
+  params?: BarcodeRecentParams,
+  options?: RequestInit,
+): Promise<BarcodeRecentResponse> => {
+  return customFetch<BarcodeRecentResponse>(getBarcodeRecentUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getBarcodeRecentQueryKey = (params?: BarcodeRecentParams) => {
+  return [`/api/barcode/recent`, ...(params ? [params] : [])] as const;
+};
+
+export const getBarcodeRecentQueryOptions = <
+  TData = Awaited<ReturnType<typeof barcodeRecent>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: BarcodeRecentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof barcodeRecent>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getBarcodeRecentQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof barcodeRecent>>> = ({
+    signal,
+  }) => barcodeRecent(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof barcodeRecent>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type BarcodeRecentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof barcodeRecent>>
+>;
+export type BarcodeRecentQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Recently scanned / linked inventory items (no-match panel state)
+ */
+
+export function useBarcodeRecent<
+  TData = Awaited<ReturnType<typeof barcodeRecent>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: BarcodeRecentParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof barcodeRecent>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getBarcodeRecentQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @deprecated

@@ -857,6 +857,167 @@ export const AssignInventoryToCategoryResponse = zod.object({
 });
 
 /**
+ * Two-stage lookup. First the server compares the scanned string
+(case-insensitive) against `inventory.catalog`; on a hit it
+records the binding in `inventory_barcode` with
+`source = catalog-auto` and returns the part. If no catalog row
+matches, the `inventory_barcode` mapping table is consulted.
+When neither stage matches, the response carries
+`match: null` plus a `recentlyViewed` list so the client can
+offer the no-match scan-to-link picker without a second
+round-trip.
+
+ * @summary Look up an inventory item by scanned barcode / QR string
+ */
+export const BarcodeLookupBody = zod.object({
+  barcode: zod
+    .string()
+    .describe("Raw scanned string (server normalizes case + whitespace)."),
+});
+
+export const BarcodeLookupResponse = zod.object({
+  match: zod
+    .object({
+      id: zod.number(),
+      vendor: zod.string(),
+      catalog: zod.string(),
+      description: zod.string(),
+      binLocations: zod
+        .array(zod.string())
+        .describe(
+          "Every bin this part is currently stocked in. Empty array means no bin assigned.",
+        ),
+      aiKeywords: zod.array(zod.string()),
+      enrichedAt: zod.coerce.date().nullish(),
+      vendorFullName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+        ),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    })
+    .nullable()
+    .describe("Matched inventory item, or null when nothing was found."),
+  source: zod
+    .enum(["catalog-auto", "upc-linked", "manual"])
+    .describe(
+      "Where the binding came from:\n- `catalog-auto`: server matched the scan to inventory.catalog\n- `upc-linked`: warehouse worker linked an unknown barcode\n- `manual`: admin imported the binding directly\n",
+    )
+    .nullable()
+    .describe("How the binding was found, or null on no-match."),
+  recentlyViewed: zod
+    .array(
+      zod.object({
+        id: zod.number(),
+        vendor: zod.string(),
+        catalog: zod.string(),
+        description: zod.string(),
+        binLocations: zod
+          .array(zod.string())
+          .describe(
+            "Every bin this part is currently stocked in. Empty array means no bin assigned.",
+          ),
+        aiKeywords: zod.array(zod.string()),
+        enrichedAt: zod.coerce.date().nullish(),
+        vendorFullName: zod
+          .string()
+          .nullish()
+          .describe(
+            'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+          ),
+        createdAt: zod.coerce.date(),
+        updatedAt: zod.coerce.date(),
+      }),
+    )
+    .describe("Recently scanned\/linked items, used for the no-match picker."),
+});
+
+/**
+ * Idempotent for the same `(barcode, inventoryId)` pair. Re-linking
+a barcode that is already bound to a *different* inventory row
+returns 409 unless the request includes `force: true`, in which
+case the binding is overwritten.
+
+ * @summary Bind a scanned barcode to an inventory item
+ */
+export const barcodeLinkBodyForceDefault = false;
+
+export const BarcodeLinkBody = zod.object({
+  barcode: zod.string(),
+  inventoryId: zod.number(),
+  force: zod
+    .boolean()
+    .default(barcodeLinkBodyForceDefault)
+    .describe("Overwrite an existing binding for this barcode."),
+  createdBy: zod
+    .string()
+    .nullish()
+    .describe("Optional opaque identifier for the worker performing the link."),
+});
+
+export const BarcodeLinkResponse = zod.object({
+  ok: zod.boolean(),
+  item: zod.object({
+    id: zod.number(),
+    vendor: zod.string(),
+    catalog: zod.string(),
+    description: zod.string(),
+    binLocations: zod
+      .array(zod.string())
+      .describe(
+        "Every bin this part is currently stocked in. Empty array means no bin assigned.",
+      ),
+    aiKeywords: zod.array(zod.string()),
+    enrichedAt: zod.coerce.date().nullish(),
+    vendorFullName: zod
+      .string()
+      .nullish()
+      .describe(
+        'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+      ),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+});
+
+/**
+ * @summary Recently scanned / linked inventory items (no-match panel state)
+ */
+export const barcodeRecentQueryLimitDefault = 20;
+
+export const BarcodeRecentQueryParams = zod.object({
+  limit: zod.coerce.number().default(barcodeRecentQueryLimitDefault),
+});
+
+export const BarcodeRecentResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.number(),
+      vendor: zod.string(),
+      catalog: zod.string(),
+      description: zod.string(),
+      binLocations: zod
+        .array(zod.string())
+        .describe(
+          "Every bin this part is currently stocked in. Empty array means no bin assigned.",
+        ),
+      aiKeywords: zod.array(zod.string()),
+      enrichedAt: zod.coerce.date().nullish(),
+      vendorFullName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+        ),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
  * @deprecated
  * @summary [Deprecated] Use /reference/ask instead
  */

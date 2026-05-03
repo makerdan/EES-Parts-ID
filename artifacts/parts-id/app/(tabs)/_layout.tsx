@@ -26,6 +26,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: "camera", selected: "camera.fill" }} />
         <Label>Photo ID</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="scan">
+        <Icon sf={{ default: "barcode.viewfinder", selected: "barcode.viewfinder" }} />
+        <Label>Scan</Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="upload">
         <Icon sf={{ default: "arrow.up.doc", selected: "arrow.up.doc.fill" }} />
         <Label>Upload</Label>
@@ -95,6 +99,18 @@ function ClassicTabLayout() {
               <SymbolView name="camera" tintColor={color} size={24} />
             ) : (
               <Feather name="camera" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="scan"
+        options={{
+          title: "Scan",
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="barcode.viewfinder" tintColor={color} size={24} />
+            ) : (
+              <Feather name="maximize" size={22} color={color} />
             ),
         }}
       />
