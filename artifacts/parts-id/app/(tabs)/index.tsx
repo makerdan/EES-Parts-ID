@@ -23,6 +23,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Fuse from "fuse.js";
+import { useNavigation } from "expo-router";
 import { useSearchInventory } from "@workspace/api-client-react";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -713,6 +714,25 @@ export default function SearchScreen() {
     setDimensionCounts(undefined);
     setRefinement({});
   };
+
+  // Tap-Search-tab-to-reset: when the worker is already on the Search tab
+  // and has results (or typed filters) on screen, tapping the Search tab
+  // again should bring them back to the empty welcome state — same
+  // behavior as the "New Search" button. We stash handleClear in a ref so
+  // the listener subscribes exactly once and never resubscribes mid-search.
+  const handleClearRef = useRef(handleClear);
+  useEffect(() => { handleClearRef.current = handleClear; });
+  const navigation = useNavigation();
+  useEffect(() => {
+    // `tabPress` is emitted by the Tabs navigator on every tap of the tab
+    // bar item, regardless of whether the screen is already focused.
+    const unsub = navigation.addListener("tabPress" as never, () => {
+      if (navigation.isFocused()) {
+        handleClearRef.current();
+      }
+    });
+    return unsub;
+  }, [navigation]);
 
   // Called by KeywordEditor after debounced save — update local Fuse index
   // immediately AND record an override so the currently-displayed result card
