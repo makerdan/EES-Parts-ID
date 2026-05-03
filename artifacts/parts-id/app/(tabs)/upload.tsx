@@ -1429,7 +1429,7 @@ export default function UploadScreen() {
         <View style={styles.headerRow}>
           {/* Tapping the app title from any tab jumps back to the Search
               tab's empty welcome state (handled there by tabPress). */}
-          <Pressable onPress={() => router.navigate("/")} hitSlop={8}>
+          <Pressable onPress={() => router.replace("/(tabs)")} hitSlop={8}>
             <Text style={[styles.headerTitle, { color: colors.foreground }]}>📤 Inventory</Text>
             <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
           </Pressable>
