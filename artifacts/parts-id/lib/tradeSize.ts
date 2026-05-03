@@ -84,3 +84,80 @@ export function isConduitOrPipe(...texts: Array<string | null | undefined>): boo
   const blob = texts.filter(Boolean).join(" ").toUpperCase();
   return CONDUIT_TOKENS.some(t => blob.includes(t));
 }
+
+// Inverse lookup of FRACTION_CODES so we can render a numeric inches value
+// back as the human fraction string workers recognize on the shelf.
+const INCHES_TO_FRACTION: Array<[number, string]> = [
+  [1 / 8, "1/8"],
+  [1 / 4, "1/4"],
+  [3 / 8, "3/8"],
+  [1 / 2, "1/2"],
+  [5 / 8, "5/8"],
+  [3 / 4, "3/4"],
+  [7 / 8, "7/8"],
+];
+
+/**
+ * Format a numeric inches value (as returned by `parseTradeSizeInches`)
+ * back into the human fraction string electricians use on the shelf:
+ *   0.5  → `1/2"`
+ *   0.75 → `3/4"`
+ *   1    → `1"`
+ *   1.25 → `1 1/4"`
+ *   2.5  → `2 1/2"`
+ * Falls back to a decimal-with-quote string for sizes that don't land on
+ * a known fraction (shouldn't happen for parsed values, but keeps the
+ * helper total).
+ */
+export function formatInchesAsFraction(inches: number | null | undefined): string {
+  if (inches == null || !Number.isFinite(inches) || inches <= 0) return "";
+  const whole = Math.floor(inches);
+  const frac = inches - whole;
+  const EPS = 1e-6;
+  let fracStr = "";
+  if (frac > EPS) {
+    const hit = INCHES_TO_FRACTION.find(([v]) => Math.abs(v - frac) < EPS);
+    if (hit) {
+      fracStr = hit[1];
+    } else {
+      // Unrecognized fractional remainder — render the whole value as a
+      // trimmed decimal so callers always get something readable.
+      return `${inches}"`;
+    }
+  }
+  if (whole > 0 && fracStr) return `${whole} ${fracStr}"`;
+  if (whole > 0) return `${whole}"`;
+  return `${fracStr}"`;
+}
+
+/**
+ * Compute the variant's "differentiator suffix" relative to the parent
+ * catalog by stripping the longest shared leading alpha prefix. Used as
+ * a fallback label for series whose catalog codes don't encode a trade
+ * size (e.g. parent `BR120` → variant `BR130` returns `130`). Digits
+ * always anchor the suffix start so a parent like `BR120` and variant
+ * `BR2120` still produce the trailing distinguishing portion.
+ *
+ * Returns the trimmed suffix, or an empty string when nothing useful
+ * can be extracted (callers should render a placeholder in that case).
+ */
+export function catalogSuffix(
+  variantCatalog: string | null | undefined,
+  parentCatalog: string | null | undefined,
+): string {
+  if (!variantCatalog) return "";
+  const v = variantCatalog.trim();
+  if (!v) return "";
+  const p = (parentCatalog ?? "").trim();
+  // Find longest shared leading alpha-only prefix (case-insensitive).
+  let i = 0;
+  const max = Math.min(v.length, p.length);
+  while (i < max) {
+    const a = v[i];
+    const b = p[i];
+    if (a.toUpperCase() !== b.toUpperCase()) break;
+    if (!/[A-Za-z]/.test(a)) break;
+    i += 1;
+  }
+  return v.slice(i).trim();
+}
