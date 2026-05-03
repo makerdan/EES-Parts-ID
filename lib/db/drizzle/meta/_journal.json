@@ -36,6 +36,13 @@
       "when": 1746345600000,
       "tag": "0004_inventory_category_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1746432000000,
+      "tag": "0005_enrichment_history",
+      "breakpoints": true
     }
   ]
 }
