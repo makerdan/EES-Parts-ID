@@ -713,6 +713,14 @@ export default function SearchScreen() {
     setOfflineCacheType(null);
     setDimensionCounts(undefined);
     setRefinement({});
+    // Returning to the empty Search screen also exits Browse mode — this
+    // is the only way out now that the Browse toggle is hidden while
+    // browsing. Reset the browse selection too so reopening Browse
+    // starts at the top of the taxonomy.
+    switchMode("search");
+    setBrowseSelectedNode(null);
+    setBrowseResults(null);
+    setBrowseError(null);
   };
 
   // Tap-Search-tab-to-reset: when the worker is already on the Search tab
@@ -1207,22 +1215,28 @@ export default function SearchScreen() {
       {!aisleBrowseOpen ? (
       <>
       {/* ── Browse mode toggle ──────────────────────────────────────────── */}
-      <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
-        <Pressable
-          onPress={() => switchMode(mode === "browse" ? "search" : "browse")}
-          style={[
-            styles.modeToggleBtn,
-            {
-              backgroundColor: mode === "browse" ? colors.primary : colors.card,
-              borderColor: "rgba(0,0,0,0.75)",
-            },
-          ]}
-        >
-          <Text style={[styles.modeToggleText, { color: mode === "browse" ? "#000" : colors.foreground }]}>
-            📂 Browse
-          </Text>
-        </Pressable>
-      </View>
+      {/* Only visible in Search mode — once the worker is browsing the
+          taxonomy, the toggle is hidden to free up vertical space. To
+          return to Search mode, tap the "⚡ Parts ID" title in the
+          header (which clears state) or re-tap the Search tab. */}
+      {mode !== "browse" ? (
+        <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
+          <Pressable
+            onPress={() => switchMode("browse")}
+            style={[
+              styles.modeToggleBtn,
+              {
+                backgroundColor: colors.card,
+                borderColor: "rgba(0,0,0,0.75)",
+              },
+            ]}
+          >
+            <Text style={[styles.modeToggleText, { color: colors.foreground }]}>
+              📂 Browse
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* ── Advanced Filters (Search mode) OR Browse panel (Browse mode) ──
           In Browse mode we let this region grow (flex: 1) since the welcome
