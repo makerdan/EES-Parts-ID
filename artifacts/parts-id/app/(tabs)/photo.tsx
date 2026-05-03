@@ -137,11 +137,20 @@ export default function PhotoScreen() {
         if (overflowMessage) errorParts.push(overflowMessage);
         if (failedNames.length > 0) {
           const list = failedNames.join(", ");
-          errorParts.push(
-            failedNames.length === 1
-              ? `Couldn't process ${list} — please try a different photo.`
-              : `Couldn't process these photos: ${list}. The other photos were added.`,
-          );
+          const someSucceeded = successfulImages.length > 0;
+          if (failedNames.length === 1) {
+            errorParts.push(
+              `Couldn't process ${list} — please try a different photo.`,
+            );
+          } else if (someSucceeded) {
+            errorParts.push(
+              `Couldn't process these photos: ${list}. The other photos were added.`,
+            );
+          } else {
+            errorParts.push(
+              `Couldn't process any of the selected photos: ${list}. Please try different photos.`,
+            );
+          }
         }
         setInlineError(errorParts.length > 0 ? errorParts.join(" ") : null);
       } finally {
