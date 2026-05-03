@@ -16,11 +16,7 @@ import {
   electricalSlangMapTable,
 } from "@workspace/db";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
-import Fuse from "fuse.js";
-import {
-  getIndex as getInventoryFuseIndex,
-  FUSE_OPTIONS_FOR_INVENTORY,
-} from "../lib/inventoryIndex";
+import { getIndex as getInventoryFuseIndex } from "../lib/inventoryIndex";
 import { verifyAdminToken } from "./admin";
 import { expandMeasurements } from "../utils/measurementConversion";
 import {
@@ -392,18 +388,13 @@ router.post("/search", async (req, res) => {
     }
 
     // Fuse.js fallback for small datasets or when PG returns nothing.
-    // Prefer the long-lived shared index built+refreshed by
-    // `lib/inventoryIndex` so we don't re-read the whole inventory table
-    // and rebuild Fuse on every request. During the brief startup window
-    // before the first refresh completes (or in the rare case the
-    // scheduler is unhealthy), fall back to building Fuse inline to
-    // preserve prior search behavior — same config either way.
-    if (scoreMap.size < 5) {
-      let fuse = getInventoryFuseIndex();
-      if (!fuse) {
-        const inventory = await db.select().from(inventoryTable);
-        fuse = new Fuse(inventory, FUSE_OPTIONS_FOR_INVENTORY);
-      }
+    // Uses the long-lived shared index built+refreshed by
+    // `lib/inventoryIndex`. The whole point of the shared index is to
+    // avoid the SELECT * + Fuse rebuild on every request, so if the
+    // index isn't ready yet (brief startup window) we just skip fuzzy
+    // and return PG-only results rather than reintroducing that cost.
+    const fuse = getInventoryFuseIndex();
+    if (scoreMap.size < 5 && fuse) {
       const fuseQuery = corrected.join(" ");
       if (fuseQuery.trim()) {
         for (const r of fuse.search(fuseQuery)) {

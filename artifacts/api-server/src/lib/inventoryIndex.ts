@@ -44,8 +44,6 @@ let lastError: unknown = null;
 // after shutdown began doesn't resurrect the refresh timer.
 let stopped = false;
 
-export const FUSE_OPTIONS_FOR_INVENTORY = FUSE_OPTIONS;
-
 /**
  * Returns the current cached Fuse instance, or null if the very first
  * build hasn't completed yet (callers should fall back to skipping the

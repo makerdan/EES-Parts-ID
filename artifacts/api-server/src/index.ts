@@ -57,15 +57,21 @@ const MAX_RETRIES = 5;
 const RETRY_DELAY_MS = 1_000;
 
 function startServer(retries: number): void {
-  const server = app.listen(port, () => {
+  const server = app.listen(port, async () => {
     logger.info({ port }, "Server listening");
 
     // Warm the in-memory Fuse index, then begin the refresh schedule.
-    // Initial build errors are logged but non-fatal so the server can
-    // still serve Postgres-only traffic.
-    void refreshInventoryIndex().finally(() => {
-      startInventoryIndex(inventoryIndexRefreshMs);
-    });
+    // We await the initial refresh so the cache is populated before
+    // the scheduler kicks off; refresh() catches and logs its own
+    // errors so a failed warm-up is non-fatal. start() is also a no-op
+    // if shutdown was requested while we were awaiting.
+    await refreshInventoryIndex();
+    startInventoryIndex(inventoryIndexRefreshMs);
+  });
+
+  // Defer the rest of server-startup wiring to a separate handler so
+  // it isn't gated on the async warm-up above.
+  server.on("listening", () => {
 
     // ── Graceful shutdown ──────────────────────────────────────────────────────
     // Stop accepting new connections, drain in-flight requests, then close the
