@@ -729,6 +729,11 @@ export default function SearchScreen() {
     setBrowseSelectedNode(null);
     setBrowseResults(null);
     setBrowseError(null);
+    // Also dismiss the Browse-by-Aisle overlay so a repeat-tap of the
+    // Search tab (or the "New Search" button / app-title tap) always
+    // lands the worker back on the empty welcome state, regardless of
+    // which secondary view they were in.
+    setAisleBrowseOpen(false);
   };
 
   // Tap-Search-tab-to-reset: when the worker is already on the Search tab
