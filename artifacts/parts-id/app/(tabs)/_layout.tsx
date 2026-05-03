@@ -31,7 +31,7 @@ function NativeTabLayout() {
         <Label>Upload</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="shop">
-        <Icon sf={{ default: "bag", selected: "bag.fill" }} />
+        <Icon sf={{ default: "globe", selected: "globe.americas.fill" }} />
         <Label>Elliott Site</Label>
       </NativeTabs.Trigger>
     </NativeTabs>
@@ -116,9 +116,9 @@ function ClassicTabLayout() {
           title: "Elliott Site",
           tabBarIcon: ({ color }) =>
             isIOS ? (
-              <SymbolView name="bag" tintColor={color} size={24} />
+              <SymbolView name="globe" tintColor={color} size={24} />
             ) : (
-              <Feather name="shopping-bag" size={22} color={color} />
+              <Feather name="globe" size={22} color={color} />
             ),
         }}
       />
