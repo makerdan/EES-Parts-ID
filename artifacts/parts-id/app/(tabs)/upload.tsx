@@ -1977,7 +1977,7 @@ export default function UploadScreen() {
                       </Text>
                       {(catalogVendorOptions.length > 0
                         ? catalogVendorOptions
-                        : [{ vendor: "BRIDGEPORT", displayName: "Bridgeport Fittings", sourceCatalog: "Bridgeport Fittings 2026 Catalog" }]
+                        : [{ vendor: "BRIDGEPORT", displayName: "Bridgeport", sourceCatalog: "Bridgeport Fittings 2026 Catalog" }]
                       ).map(opt => {
                         const isActive = opt.vendor === catalogPdfVendor;
                         return (

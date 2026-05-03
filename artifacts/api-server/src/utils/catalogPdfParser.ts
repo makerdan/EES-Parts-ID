@@ -99,7 +99,7 @@ export type VendorProfile = IndexVendorProfile | VendorSectionProfile;
 // `attached_assets/Bridgeport_Fittings_2026_Catalog_Part1_*.pdf`.
 export const BRIDGEPORT_PROFILE: IndexVendorProfile = {
   vendor: "BRIDGEPORT",
-  displayName: "Bridgeport Fittings",
+  displayName: "Bridgeport",
   strategy: "index",
   sourceCatalog: "Bridgeport Fittings 2026 Catalog",
   indexPages: { firstPage: 8, lastPage: 19 },
