@@ -1397,32 +1397,6 @@ export default function SearchScreen() {
               </View>
             ) : null}
 
-            {/* Welcome state — hidden in Browse mode to free up vertical room */}
-            {!hasResults && !searchMutation.isPending && mode !== "browse" ? (
-              <View style={styles.welcomeContainer}>
-                <Text style={styles.welcomeEmoji}>⚡</Text>
-                <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>
-                  Search RDC34's Electrical Parts
-                </Text>
-                <Text style={[styles.welcomeHint, { color: colors.mutedForeground }]}>
-                  Search by keywords, catalog #, or vendor. Expand Advanced Filters below for 16-dimension chip filters. Handles abbreviations, synonyms, and misspellings automatically.
-                </Text>
-                <View style={[styles.tipCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                  <Text style={[styles.tipTitle, { color: colors.foreground }]}>💡 Quick Tips</Text>
-                  {[
-                    "Type '20a duplex white' for white 20A outlet",
-                    "Type 'BR120' for Eaton BR 20A breaker",
-                    "Type '3/4 emt' for 3/4\" EMT conduit fittings",
-                    "Select chips to narrow by voltage, amperage, part type…",
-                    "Use Photo ID tab to identify parts by camera",
-                  ].map((tip, i) => (
-                    <Text key={i} style={[styles.tipText, { color: colors.mutedForeground }]}>
-                      • {tip}
-                    </Text>
-                  ))}
-                </View>
-              </View>
-            ) : null}
           </View>
         )}
         renderItem={({ item: result, index }) => (
@@ -1613,13 +1587,6 @@ const styles = StyleSheet.create({
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   emptyHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 8 },
-  welcomeContainer: { padding: 24, alignItems: "center" },
-  welcomeEmoji: { fontSize: 48, marginBottom: 12 },
-  welcomeTitle: { fontSize: 20, fontFamily: "Inter_700Bold", marginBottom: 8 },
-  welcomeHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 20 },
-  tipCard: { width: "100%", padding: 16, borderRadius: 8, borderWidth: 1 },
-  tipTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 8 },
-  tipText: { fontSize: 13, fontFamily: "Inter_400Regular", marginBottom: 4, lineHeight: 18 },
   resultItem: { paddingHorizontal: 12 },
   listContent: { paddingBottom: 120 },
   settingsRow: {
