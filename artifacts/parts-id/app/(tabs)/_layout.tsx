@@ -27,15 +27,12 @@ function NativeTabLayout() {
         <Label>Photo ID</Label>
       </NativeTabs.Trigger>
       {/*
-        Scan was moved out of the tab bar (Task #129) and is now reachable
-        from the Search header. The route file still lives in (tabs)/ so
-        existing safe-area / header behavior is preserved; declaring it
-        with `hidden` keeps NativeTabs from auto-adding a tab for it.
+        Scan was moved out of the tab bar (Task #129) and then promoted
+        to a top-level stack route (Task #133) so router.push("/scan")
+        works on the iOS native (Liquid Glass) tab bar — a hidden
+        NativeTabs.Trigger isn't a navigable destination on iOS, so
+        the push was being silently swallowed.
       */}
-      <NativeTabs.Trigger name="scan" hidden>
-        <Icon sf={{ default: "barcode.viewfinder", selected: "barcode.viewfinder" }} />
-        <Label>Scan</Label>
-      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="upload">
         <Icon sf={{ default: "arrow.up.doc", selected: "arrow.up.doc.fill" }} />
         <Label>Upload</Label>
@@ -109,11 +106,10 @@ function ClassicTabLayout() {
         }}
       />
       {/*
-        Scan moved to the Search header (Task #129). Keep the route
-        registered with `href: null` so it's still navigable via
-        router.push("/scan") but does not appear in the tab bar.
+        Scan was promoted to a top-level stack route (Task #133) so
+        navigation behaves identically on iOS NativeTabs and on the
+        classic Tabs layout. No declaration needed here anymore.
       */}
-      <Tabs.Screen name="scan" options={{ href: null }} />
       <Tabs.Screen
         name="upload"
         options={{
