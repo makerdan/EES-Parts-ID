@@ -51,6 +51,12 @@ paths:
           schema:
             type: integer
             default: 50
+        - name: unenrichedOnly
+          in: query
+          description: When true, restricts both `items` and `total` to inventory rows that have not been AI-enriched (`enrichedAt IS NULL`). Default false preserves the global list.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Paginated inventory

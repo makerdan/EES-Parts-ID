@@ -9,4 +9,8 @@
 export type ListInventoryParams = {
   page?: number;
   limit?: number;
+  /**
+   * When true, restricts both `items` and `total` to inventory rows that have not been AI-enriched (`enrichedAt IS NULL`). Default false preserves the global list.
+   */
+  unenrichedOnly?: boolean;
 };

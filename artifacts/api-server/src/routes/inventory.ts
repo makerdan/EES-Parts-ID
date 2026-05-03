@@ -72,10 +72,18 @@ router.get("/", async (req, res) => {
     const page = Math.max(1, parseInt(req.query["page"] as string) || 1);
     const limit = Math.min(200, Math.max(1, parseInt(req.query["limit"] as string) || 50));
     const offset = (page - 1) * limit;
+    const unenrichedOnly = req.query["unenrichedOnly"] === "true";
+    const whereClause = unenrichedOnly
+      ? sql`${inventoryTable.enrichedAt} IS NULL`
+      : undefined;
 
     const [items, countResult, vendors] = await Promise.all([
-      db.select().from(inventoryTable).limit(limit).offset(offset).orderBy(inventoryTable.vendor, inventoryTable.catalog),
-      db.select({ count: sql<number>`count(*)` }).from(inventoryTable),
+      whereClause
+        ? db.select().from(inventoryTable).where(whereClause).limit(limit).offset(offset).orderBy(inventoryTable.vendor, inventoryTable.catalog)
+        : db.select().from(inventoryTable).limit(limit).offset(offset).orderBy(inventoryTable.vendor, inventoryTable.catalog),
+      whereClause
+        ? db.select({ count: sql<number>`count(*)` }).from(inventoryTable).where(whereClause)
+        : db.select({ count: sql<number>`count(*)` }).from(inventoryTable),
       db.select({ code: vendorMapTable.code, names: vendorMapTable.names }).from(vendorMapTable),
     ]);
 
