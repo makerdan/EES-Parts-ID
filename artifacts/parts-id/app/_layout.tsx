@@ -46,13 +46,26 @@ function AuthGate() {
   const { isAuthenticated, isLoading } = useApp();
   const segments = useSegments();
   const router = useRouter();
+  // On every fresh app launch (or hard reload of the web preview), land on
+  // the Search tab — workers expect the app to "open to the main page",
+  // not whatever tab they were on last session. We do this exactly once
+  // per mount, after auth resolves, so in-session tab switches are not
+  // overridden.
+  const didLandRef = React.useRef(false);
 
   useEffect(() => {
     if (isLoading) return;
     const inTabsGroup = segments[0] === "(tabs)";
     if (!isAuthenticated && inTabsGroup) {
       router.replace("/login");
-    } else if (isAuthenticated && !inTabsGroup) {
+      return;
+    }
+    if (isAuthenticated && !inTabsGroup) {
+      router.replace("/(tabs)");
+      return;
+    }
+    if (isAuthenticated && inTabsGroup && !didLandRef.current) {
+      didLandRef.current = true;
       router.replace("/(tabs)");
     }
   }, [isAuthenticated, isLoading, segments, router]);
