@@ -1180,7 +1180,6 @@ export default function SearchScreen() {
             autoCorrect={false}
             returnKeyType="search"
             onSubmitEditing={handleSearch}
-            blurOnSubmit={false}
           />
           {filters.keywords ? (
             <Pressable

@@ -324,6 +324,7 @@ export default function PhotoScreen() {
                   style={[styles.fieldInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                   autoCorrect={false}
                   autoCapitalize="none"
+                  returnKeyType="done"
                 />
               </View>
             ))}
