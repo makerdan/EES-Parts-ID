@@ -18,6 +18,11 @@ import {
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { splitHighlightSegments } from "@/lib/refinement";
+import {
+  parseTradeSizeInches,
+  formatInchesAsFraction,
+  catalogSuffix,
+} from "@/lib/tradeSize";
 
 interface ResultCardProps {
   result: SearchResult;
@@ -94,22 +99,27 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
 /**
  * One row in the related-sizes dropdown list.
  *
- * Lays out the catalog name on the left and the part's primary bin
- * (first entry of `binLocations`) on the right. When the variant shares
- * the parent's vendor we drop the vendor prefix to keep the row tight,
- * otherwise we show "VENDOR · CATALOG" so workers can disambiguate.
- * Parts with no bin show a muted "No bin" placeholder so the right column
- * still aligns vertically down the list.
+ * Lays out three columns: catalog name on the left, parsed trade size in
+ * the middle, and the part's primary bin (first entry of `binLocations`)
+ * on the right. The size is derived client-side via `parseTradeSizeInches`
+ * with a fallback to the catalog suffix relative to the parent so workers
+ * can scan a series at a glance without reading the catalog code itself.
+ * When the variant shares the parent's vendor we drop the vendor prefix
+ * to keep the row tight, otherwise we show "VENDOR · CATALOG" so workers
+ * can disambiguate. Parts with no bin show a muted "No bin" placeholder
+ * so the right column still aligns vertically down the list.
  */
 function VariantRow({
   item,
   parentVendor,
+  parentCatalog,
   colors,
   fontScale,
   onPress,
 }: {
   item: InventoryItem;
   parentVendor: string;
+  parentCatalog: string;
   colors: ReturnType<typeof useColors>;
   fontScale: number;
   onPress: () => void;
@@ -119,13 +129,32 @@ function VariantRow({
   const primaryBin = bins[0];
   const sameVendor = item.vendor.toUpperCase() === parentVendor.toUpperCase();
   const label = sameVendor ? item.catalog : `${item.vendor} · ${item.catalog}`;
+
+  // Size column: prefer a recognized trade-size in inches; fall back to
+  // the catalog suffix that distinguishes this variant from the parent;
+  // final fallback is an em-dash so the column still aligns.
+  const inches =
+    parseTradeSizeInches(item.catalog) ??
+    parseTradeSizeInches(item.description);
+  let sizeLabel = formatInchesAsFraction(inches);
+  const sizeFromInches = sizeLabel.length > 0;
+  if (!sizeLabel) sizeLabel = catalogSuffix(item.catalog, parentCatalog);
+  const hasSize = sizeLabel.trim().length > 0;
+  // Speech-friendly size for screen readers: drop the inch-mark glyph and
+  // append "inches" when the value came from the trade-size parser; for
+  // catalog-suffix fallbacks just speak the raw differentiator.
+  const a11ySize = hasSize
+    ? sizeFromInches
+      ? `, size ${sizeLabel.replace(/"/g, "")} inches`
+      : `, size ${sizeLabel}`
+    : "";
   return (
     <Pressable
       onPress={onPress}
       android_ripple={{ color: colors.muted }}
       hitSlop={4}
       accessibilityRole="button"
-      accessibilityLabel={`Open ${item.vendor} ${item.catalog}${primaryBin ? `, bin ${primaryBin}` : ", no bin"}`}
+      accessibilityLabel={`Open ${item.vendor} ${item.catalog}${a11ySize}${primaryBin ? `, bin ${primaryBin}` : ", no bin"}`}
       style={({ pressed }) => [
         varStyles.row,
         {
@@ -141,6 +170,22 @@ function VariantRow({
       >
         {label}
       </Text>
+      {hasSize ? (
+        <Text
+          style={[varStyles.size, { color: colors.foreground, fontSize: fs(13) }]}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {sizeLabel}
+        </Text>
+      ) : (
+        <Text
+          style={[varStyles.sizeEmpty, { color: colors.mutedForeground, fontSize: fs(13) }]}
+          numberOfLines={1}
+        >
+          —
+        </Text>
+      )}
       {primaryBin ? (
         <Text
           style={[varStyles.bin, { color: colors.foreground, fontSize: fs(13) }]}
@@ -164,16 +209,20 @@ const varStyles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: 12,
     paddingVertical: 12,
     minHeight: 44,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 8,
   },
-  catalog: { fontFamily: "Inter_600SemiBold", flexShrink: 1 },
-  bin: { fontFamily: "Inter_500Medium", textAlign: "right" },
-  binEmpty: { fontFamily: "Inter_400Regular", fontStyle: "italic", textAlign: "right" },
+  // Catalog and size both shrink under pressure so a long catalog won't
+  // squeeze the bin off-screen and a long size suffix won't either. Bin
+  // stays flex-fixed and right-aligned so workers always see it.
+  catalog: { fontFamily: "Inter_600SemiBold", flexShrink: 1, flexGrow: 1, flexBasis: 0 },
+  size: { fontFamily: "Inter_600SemiBold", textAlign: "center", flexShrink: 1, maxWidth: 96 },
+  sizeEmpty: { fontFamily: "Inter_400Regular", textAlign: "center", flexShrink: 0 },
+  bin: { fontFamily: "Inter_500Medium", textAlign: "right", flexShrink: 0 },
+  binEmpty: { fontFamily: "Inter_400Regular", fontStyle: "italic", textAlign: "right", flexShrink: 0 },
 });
 
 export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens, highlightBin }: ResultCardProps) {
@@ -345,6 +394,7 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
                 key={v.id}
                 item={v}
                 parentVendor={item.vendor}
+                parentCatalog={item.catalog}
                 colors={colors}
                 fontScale={fontScale}
                 onPress={() => setDetailVariant(v)}

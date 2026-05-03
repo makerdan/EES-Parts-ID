@@ -4,7 +4,12 @@
  * Unit tests for the trade-size parser used to default-sort conduit and
  * pipe results small → large.
  */
-import { parseTradeSizeInches, isConduitOrPipe } from "../lib/tradeSize";
+import {
+  parseTradeSizeInches,
+  isConduitOrPipe,
+  formatInchesAsFraction,
+  catalogSuffix,
+} from "../lib/tradeSize";
 
 describe("parseTradeSizeInches", () => {
   it.each([
@@ -52,5 +57,60 @@ describe("isConduitOrPipe", () => {
     expect(isConduitOrPipe("BR120", "Eaton 20A breaker")).toBe(false);
     expect(isConduitOrPipe("Duplex receptacle 20A white")).toBe(false);
     expect(isConduitOrPipe(null, undefined, "")).toBe(false);
+  });
+});
+
+describe("formatInchesAsFraction", () => {
+  it.each([
+    [0.125, '1/8"'],
+    [0.25, '1/4"'],
+    [0.375, '3/8"'],
+    [0.5, '1/2"'],
+    [0.625, '5/8"'],
+    [0.75, '3/4"'],
+    [0.875, '7/8"'],
+    [1, '1"'],
+    [1.25, '1 1/4"'],
+    [1.5, '1 1/2"'],
+    [2, '2"'],
+    [2.5, '2 1/2"'],
+    [4, '4"'],
+  ])("formats %s → %s", (inches, expected) => {
+    expect(formatInchesAsFraction(inches)).toBe(expected);
+  });
+
+  it("returns empty string for null/undefined/zero/negative", () => {
+    expect(formatInchesAsFraction(null)).toBe("");
+    expect(formatInchesAsFraction(undefined)).toBe("");
+    expect(formatInchesAsFraction(0)).toBe("");
+    expect(formatInchesAsFraction(-1)).toBe("");
+  });
+});
+
+describe("catalogSuffix", () => {
+  it("strips the longest shared leading alpha prefix", () => {
+    expect(catalogSuffix("BR130", "BR120")).toBe("130");
+    expect(catalogSuffix("EMT34", "EMT12")).toBe("34");
+    expect(catalogSuffix("AFCI30", "AFCI20")).toBe("30");
+  });
+
+  it("stops at the first digit even if both share more chars", () => {
+    expect(catalogSuffix("BR2120", "BR120")).toBe("2120");
+  });
+
+  it("handles missing parent gracefully", () => {
+    expect(catalogSuffix("BR130", null)).toBe("BR130");
+    expect(catalogSuffix("BR130", "")).toBe("BR130");
+    expect(catalogSuffix("BR130", undefined)).toBe("BR130");
+  });
+
+  it("returns empty for empty/missing variant", () => {
+    expect(catalogSuffix(null, "BR120")).toBe("");
+    expect(catalogSuffix("", "BR120")).toBe("");
+    expect(catalogSuffix("   ", "BR120")).toBe("");
+  });
+
+  it("is case-insensitive on the shared prefix", () => {
+    expect(catalogSuffix("br130", "BR120")).toBe("130");
   });
 });
