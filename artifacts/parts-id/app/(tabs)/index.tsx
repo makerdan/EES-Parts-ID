@@ -14,6 +14,8 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Modal,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   Pressable,
   SafeAreaView,
@@ -749,13 +751,20 @@ export default function SearchScreen() {
     windowHeight - insets.top - insets.bottom - 64,
   );
   useEffect(() => {
-    // `tabPress` is emitted by the Tabs navigator on every tap of the
-    // tab bar item, regardless of whether the screen is already focused.
-    // Subscribe on BOTH this screen's navigation and its parent — under
-    // expo-router's nested Stack→Tabs structure the event reliably
-    // surfaces on the parent, but we keep the local subscription too so
-    // the behavior also works when this is the top-level navigator
-    // (NativeTabs on iOS Liquid Glass).
+    // `tabPress` is emitted by the React Navigation Tabs navigator on
+    // every tap of the tab bar item, regardless of whether the screen
+    // is already focused. Subscribe on BOTH this screen's navigation
+    // and its parent — under expo-router's nested Stack→Tabs structure
+    // the event reliably surfaces on the parent. This path covers
+    // Android, web, and the classic (blur) iOS tab bar.
+    //
+    // NOTE: `tabPress` is NOT emitted by `expo-router/unstable-native-tabs`
+    // on iOS — UITabBarController handles repeated tab selection
+    // entirely natively (popToRoot / scrollToTop "special effects")
+    // without re-emitting React Navigation events. The
+    // `repeatTapResetScrollRef` ScrollView below is what catches the
+    // native repeat-tap on iOS Liquid Glass and routes it to the same
+    // `handleClear` flow.
     const unsubs: Array<() => void> = [];
     const handler = () => {
       if (navigation.isFocused()) handleClearRef.current();
@@ -764,6 +773,48 @@ export default function SearchScreen() {
     const parent = navigation.getParent();
     if (parent) unsubs.push(parent.addListener("tabPress" as never, handler));
     return () => { for (const u of unsubs) u(); };
+  }, [navigation]);
+
+  // ── Tap-Search-tab-to-reset on iOS NativeTabs (Task #134) ─────────
+  // `expo-router/unstable-native-tabs` does not emit `tabPress` events
+  // for repeated taps on the focused tab — UITabBarController handles
+  // them natively via react-native-screens' `repeatedTabSelection`
+  // "special effects" (popToRoot / scrollToTop). We piggy-back on the
+  // scrollToTop effect: it walks the first-subview chain (see
+  // `RNSScrollViewFinder.findScrollViewInFirstDescendantChainFrom`)
+  // and animates the first UIScrollView it finds back to its top.
+  //
+  // We keep an invisible 1×1 ScrollView pinned as the literal first
+  // child inside this screen's SafeAreaView, hold it at contentOffset
+  // y=1, and listen for the system scrolling it back to 0. When that
+  // fires (and the screen is focused), we trigger the same
+  // `handleClear` reset the classic-tab `tabPress` listener does, then
+  // restore the offset so the next repeat tap fires again.
+  //
+  // Guarded to iOS only because this trick relies on UIKit semantics;
+  // on Android/web the `tabPress` listener above handles the gesture
+  // and this ScrollView would never be triggered anyway.
+  const repeatTapResetScrollRef = useRef<ScrollView>(null);
+  const repeatTapReadyRef = useRef(false);
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+    // Defer one frame so the ScrollView has laid out (otherwise the
+    // initial scrollTo silently no-ops because contentSize is still 0).
+    const id = setTimeout(() => {
+      repeatTapResetScrollRef.current?.scrollTo({ y: 1, animated: false });
+      repeatTapReadyRef.current = true;
+    }, 50);
+    return () => clearTimeout(id);
+  }, []);
+  const onRepeatTapReset = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (!repeatTapReadyRef.current) return;
+    if (e.nativeEvent.contentOffset.y > 0.5) return;
+    if (!navigation.isFocused()) return;
+    handleClearRef.current();
+    // Restore offset so subsequent repeat taps still trigger.
+    requestAnimationFrame(() => {
+      repeatTapResetScrollRef.current?.scrollTo({ y: 1, animated: false });
+    });
   }, [navigation]);
 
   // Called by KeywordEditor after debounced save — update local Fuse index
@@ -870,6 +921,28 @@ export default function SearchScreen() {
   const showRefinementBar = hasResults && results.length > 0;
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+      {/*
+        Invisible 1×1 ScrollView, MUST stay the literal first child of
+        this SafeAreaView so iOS's `RNSScrollViewFinder` (first-subview
+        chain walk) lands on it before any other ScrollView/FlatList in
+        the screen. Catches the iOS NativeTabs repeated-tab-selection
+        gesture and routes it to `handleClear`. See `onRepeatTapReset`
+        above for the full explanation. iOS-only — no-op elsewhere.
+      */}
+      {Platform.OS === "ios" ? (
+        <ScrollView
+          ref={repeatTapResetScrollRef}
+          scrollsToTop
+          scrollEnabled={false}
+          showsVerticalScrollIndicator={false}
+          onMomentumScrollEnd={onRepeatTapReset}
+          contentContainerStyle={styles.repeatTapResetContent}
+          style={styles.repeatTapResetScroll}
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        />
+      ) : null}
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={{ flex: 1 }}>
@@ -1508,6 +1581,19 @@ export default function SearchScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
+  // Invisible 1×1 ScrollView used to catch the iOS NativeTabs
+  // repeated-tab-selection gesture. Absolutely positioned and pinned to
+  // 1×1 so it never affects layout, with content height > frame height
+  // so the system can actually animate contentOffset back to 0.
+  repeatTapResetScroll: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
+  repeatTapResetContent: { height: 2 },
   header: {
     flexDirection: "row",
     alignItems: "center",
