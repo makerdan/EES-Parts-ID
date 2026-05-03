@@ -1240,7 +1240,12 @@ export default function SearchScreen() {
       <FlatList
         data={visibleResults}
         keyExtractor={item => String(item.item.id)}
-        ListHeaderComponent={() => (
+        // IMPORTANT: pass a JSX element here, NOT an inline `() => (...)`
+        // function. An inline arrow creates a fresh component type on every
+        // render, which makes FlatList unmount/remount the header subtree
+        // and silently swallow in-flight Pressable taps — this is what
+        // broke the "New Search" button.
+        ListHeaderComponent={(
           <View>
             {/* Results header */}
             {hasResults ? (
@@ -1493,8 +1498,13 @@ const styles = StyleSheet.create({
   searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   filterCard: {
     marginHorizontal: 12,
-    marginBottom: 6,
-    padding: 16,
+    // Extra bottom margin opens up breathing room between the (collapsed)
+    // Advanced Filters bar and the results list directly below it.
+    marginBottom: 12,
+    // Slimmer outer padding makes the card itself thinner; combined with
+    // the slimmer FilterPanel container padding, the collapsed bar takes
+    // noticeably less vertical space.
+    padding: 8,
     borderRadius: 12,
     borderWidth: 1,
   },
@@ -1517,7 +1527,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     paddingHorizontal: 12,
-    paddingBottom: 6,
+    // Tighter bottom padding pulls the Advanced Filters card up so it sits
+    // closer to the search bar and further from the results list.
+    paddingBottom: 2,
   },
   modeToggleBtn: {
     paddingVertical: 8,
