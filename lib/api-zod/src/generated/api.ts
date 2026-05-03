@@ -20,10 +20,17 @@ export const HealthCheckResponse = zod.object({
  */
 export const listInventoryQueryPageDefault = 1;
 export const listInventoryQueryLimitDefault = 50;
+export const listInventoryQueryUnenrichedOnlyDefault = false;
 
 export const ListInventoryQueryParams = zod.object({
   page: zod.coerce.number().default(listInventoryQueryPageDefault),
   limit: zod.coerce.number().default(listInventoryQueryLimitDefault),
+  unenrichedOnly: zod.coerce
+    .boolean()
+    .default(listInventoryQueryUnenrichedOnlyDefault)
+    .describe(
+      "When true, restricts both `items` and `total` to inventory rows that have not been AI-enriched (`enrichedAt IS NULL`). Default false preserves the global list.",
+    ),
 });
 
 export const ListInventoryResponse = zod.object({

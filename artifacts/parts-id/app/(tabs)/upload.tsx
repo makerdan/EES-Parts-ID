@@ -577,7 +577,7 @@ export default function UploadScreen() {
   const [measureEnrichError, setMeasureEnrichError] = useState<string | null>(null);
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
 
-  const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
+  const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50, unenrichedOnly: true });
 
   // Build admin auth headers for protected API calls
   const adminHeaders: Record<string, string> = adminToken
