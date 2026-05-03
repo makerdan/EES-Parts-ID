@@ -37,13 +37,19 @@ export function itemFullText(
   return `${item.vendor} ${item.catalog} ${item.description} ${(item.aiKeywords ?? []).join(" ")}`.toLowerCase();
 }
 
-/** Token-aware match: every word in `value` must appear as a whole word in `text`. */
+/**
+ * Token-aware match: every word in `value` must appear as a whole token
+ * in `text`. Token boundaries treat `/` and `-` as part of the token (in
+ * addition to `\w`) so a chip like `1/2"` does NOT match inside `1-1/2"`
+ * or `2-1/2"` — `-` and `/` would otherwise be treated as boundary chars
+ * and let the smaller size leak into mixed-number sizes.
+ */
 export function tokenMatch(text: string, value: string): boolean {
   const tokens = value.toLowerCase().trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true;
   return tokens.every(tok => {
     const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?<![\\w])${escaped}(?![\\w])`, "i").test(text);
+    return new RegExp(`(?<![\\w/-])${escaped}(?![\\w/-])`, "i").test(text);
   });
 }
 
@@ -88,7 +94,7 @@ export function splitHighlightSegments(
   const escaped = cleaned
     .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .sort((a, b) => b.length - a.length); // longer first so "20a" wins over "20"
-  const re = new RegExp(`(?<![\\w])(${escaped.join("|")})(?![\\w])`, "gi");
+  const re = new RegExp(`(?<![\\w/-])(${escaped.join("|")})(?![\\w/-])`, "gi");
   const out: Array<{ text: string; match: boolean }> = [];
   let last = 0;
   let m: RegExpExecArray | null;

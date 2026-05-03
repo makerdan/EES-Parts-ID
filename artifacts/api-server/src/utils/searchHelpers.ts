@@ -155,13 +155,20 @@ export function itemFullText(item: {
   return `${item.vendor} ${item.catalog} ${item.description} ${(item.aiKeywords ?? []).join(" ")}`.toLowerCase();
 }
 
-/** Token-aware match: every word in the filter value must appear as a whole word in `text`. */
+/**
+ * Token-aware match: every word in the filter value must appear as a
+ * whole token in `text`. Token boundaries treat `/` and `-` as part of
+ * the token (in addition to `\w`) so a chip like `1/2"` does NOT match
+ * inside `1-1/2"` or `2-1/2"` — historically those slipped through
+ * because `-` and `/` aren't `\w`, so the smaller size leaked into
+ * larger mixed-number sizes.
+ */
 export function tokenMatch(text: string, filterValue: string): boolean {
   const tokens = filterValue.toLowerCase().trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true;
   return tokens.every(tok => {
     const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?<![\\w])${escaped}(?![\\w])`, "i").test(text);
+    return new RegExp(`(?<![\\w/-])${escaped}(?![\\w/-])`, "i").test(text);
   });
 }
 
