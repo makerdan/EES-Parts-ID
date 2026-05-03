@@ -578,6 +578,10 @@ export default function UploadScreen() {
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
 
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50, unenrichedOnly: true });
+  // Stable ref so callbacks (e.g. bulk poll interval) can refetch without
+  // re-creating themselves on every render.
+  const inventoryRefetchRef = useRef(inventoryQuery.refetch);
+  useEffect(() => { inventoryRefetchRef.current = inventoryQuery.refetch; }, [inventoryQuery.refetch]);
 
   // Build admin auth headers for protected API calls
   const adminHeaders: Record<string, string> = adminToken
@@ -640,6 +644,9 @@ export default function UploadScreen() {
       } else {
         stopBulkPoll();
         void fetchEnrichSummary();
+        // Bulk job finished — refresh the New Inventory list so newly
+        // enriched items drop out without a manual reload.
+        void inventoryRefetchRef.current();
       }
     } catch {}
   }, [stopBulkPoll, fetchEnrichSummary, logoutAdmin]);
