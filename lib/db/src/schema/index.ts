@@ -3,6 +3,7 @@
  * api-server routes, seeds) only need to import from here.
  */
 export * from "./inventory";
+export * from "./enrichment_history";
 export * from "./abbreviation_map";
 export * from "./vendor_map";
 export * from "./synonym_map";
