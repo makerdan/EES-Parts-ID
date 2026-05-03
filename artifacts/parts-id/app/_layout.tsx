@@ -56,11 +56,17 @@ function AuthGate() {
   useEffect(() => {
     if (isLoading) return;
     const inTabsGroup = segments[0] === "(tabs)";
-    if (!isAuthenticated && inTabsGroup) {
+    // Top-level authenticated routes that live outside the (tabs)
+    // group but should NOT bounce the user back to the tab bar
+    // (e.g. the Scan camera screen, promoted out of the tab bar in
+    // Task #133 so router.push("/scan") works on iOS NativeTabs).
+    const isAuthedTopLevel = segments[0] === "scan";
+    const inAuthedArea = inTabsGroup || isAuthedTopLevel;
+    if (!isAuthenticated && inAuthedArea) {
       router.replace("/login");
       return;
     }
-    if (isAuthenticated && !inTabsGroup) {
+    if (isAuthenticated && !inAuthedArea) {
       router.replace("/(tabs)");
       return;
     }
@@ -96,6 +102,13 @@ export default function RootLayout() {
               <Stack screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="login" options={{ headerShown: false }} />
+                {/*
+                  Scan camera screen — top-level stack route so it works
+                  with the iOS native tab bar (Task #133). Pushed onto
+                  the stack from the Search header; back-navigation
+                  pops it and lands on the Search tab.
+                */}
+                <Stack.Screen name="scan" options={{ headerShown: false }} />
               </Stack>
               <AuthGate />
             </AppProvider>
