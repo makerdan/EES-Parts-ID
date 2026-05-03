@@ -17,6 +17,10 @@ import {
 } from "@workspace/db";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
 import Fuse from "fuse.js";
+import {
+  getIndex as getInventoryFuseIndex,
+  FUSE_OPTIONS_FOR_INVENTORY,
+} from "../lib/inventoryIndex";
 import { verifyAdminToken } from "./admin";
 import { expandMeasurements } from "../utils/measurementConversion";
 import {
@@ -387,23 +391,19 @@ router.post("/search", async (req, res) => {
       }
     }
 
-    // Fuse.js fallback for small datasets or when PG returns nothing
+    // Fuse.js fallback for small datasets or when PG returns nothing.
+    // Prefer the long-lived shared index built+refreshed by
+    // `lib/inventoryIndex` so we don't re-read the whole inventory table
+    // and rebuild Fuse on every request. During the brief startup window
+    // before the first refresh completes (or in the rare case the
+    // scheduler is unhealthy), fall back to building Fuse inline to
+    // preserve prior search behavior — same config either way.
     if (scoreMap.size < 5) {
-      const inventory = await db.select().from(inventoryTable);
-      const fuse = new Fuse(inventory, {
-        keys: [
-          { name: "catalog", weight: 0.35 },
-          { name: "description", weight: 0.30 },
-          { name: "vendor", weight: 0.10 },
-          { name: "aiKeywords", weight: 0.25 },
-        ],
-        threshold: 0.45,
-        ignoreLocation: true,
-        minMatchCharLength: 2,
-        findAllMatches: true,
-        includeScore: true,
-      });
-
+      let fuse = getInventoryFuseIndex();
+      if (!fuse) {
+        const inventory = await db.select().from(inventoryTable);
+        fuse = new Fuse(inventory, FUSE_OPTIONS_FOR_INVENTORY);
+      }
       const fuseQuery = corrected.join(" ");
       if (fuseQuery.trim()) {
         for (const r of fuse.search(fuseQuery)) {
