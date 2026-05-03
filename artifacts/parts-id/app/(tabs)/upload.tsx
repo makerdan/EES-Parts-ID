@@ -11,6 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -564,6 +565,7 @@ export default function UploadScreen() {
   // Local-only state — no persistence required.
   const [catalogRunsExpanded, setCatalogRunsExpanded] = useState(false);
   const [revertingRunId, setRevertingRunId] = useState<number | null>(null);
+  const [undoingRunId, setUndoingRunId] = useState<number | null>(null);
 
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
@@ -887,7 +889,9 @@ export default function UploadScreen() {
     void fetchCatalogRuns();
   }, [isAdmin, fetchCatalogRuns]);
 
-  const handleRevertRun = useCallback(async (runId: number) => {
+  // Performs the actual revert request after the user confirms. Kept
+  // separate from the confirmation prompt so the prompt can be reused.
+  const performRevertRun = useCallback(async (runId: number) => {
     setRevertingRunId(runId);
     setCatalogPdfError(null);
     try {
@@ -916,6 +920,60 @@ export default function UploadScreen() {
     // adminHeaders is recomputed every render; the underlying token is what matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminToken, fetchCatalogRuns, fetchEnrichSummary, inventoryQuery, logoutAdmin]);
+
+  // Confirm-before-destruct wrapper for Revert. The native Alert is the
+  // shared destructive-confirm pattern in this app; OK on Web treats the
+  // OK as confirm and Cancel as no-op. Cancelling leaves state untouched.
+  const handleRevertRun = useCallback((runId: number) => {
+    Alert.alert(
+      "Revert this enrichment run?",
+      "This will restore the description and AI keywords for every inventory row this run touched, undoing the enrichment. You can Undo afterwards.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Revert", style: "destructive", onPress: () => { void performRevertRun(runId); } },
+      ],
+    );
+  }, [performRevertRun]);
+
+  const performUndoRevert = useCallback(async (runId: number) => {
+    setUndoingRunId(runId);
+    setCatalogPdfError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/catalog-pdf/runs/${runId}/unrevert`, {
+        method: "POST",
+        headers: { ...adminHeaders },
+      });
+      if (res.status === 401) {
+        logoutAdmin();
+        setCatalogPdfError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setCatalogPdfError(err.error ?? "Failed to undo this revert.");
+        return;
+      }
+      await fetchCatalogRuns();
+      void inventoryQuery.refetch();
+      void fetchEnrichSummary();
+    } catch {
+      setCatalogPdfError("Network error while undoing this revert.");
+    } finally {
+      setUndoingRunId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken, fetchCatalogRuns, fetchEnrichSummary, inventoryQuery, logoutAdmin]);
+
+  const handleUndoRevert = useCallback((runId: number) => {
+    Alert.alert(
+      "Undo revert?",
+      "This will re-apply this run's enrichments, restoring the description and AI keywords for every inventory row it touched. Manual edits made since the revert will be overwritten.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Undo Revert", onPress: () => { void performUndoRevert(runId); } },
+      ],
+    );
+  }, [performUndoRevert]);
 
   const handleCatalogPdfPick = async () => {
     setCatalogPdfError(null);
@@ -2087,7 +2145,12 @@ export default function UploadScreen() {
                     {catalogRunsExpanded ? catalogRuns.map((run) => {
                       const when = new Date(run.startedAt).toLocaleString();
                       const isReverting = revertingRunId === run.id;
+                      const isUndoing = undoingRunId === run.id;
                       const isReverted = !!run.revertedAt;
+                      // Any in-flight revert/undo (anywhere in the list)
+                      // disables both buttons on every row, matching the
+                      // existing "one action at a time" pattern.
+                      const anyInFlight = revertingRunId !== null || undoingRunId !== null;
                       return (
                         <View
                           key={run.id}
@@ -2110,16 +2173,45 @@ export default function UploadScreen() {
                               {isReverted ? " · reverted" : ""}
                             </Text>
                           </View>
-                          {isReverted ? null : (
+                          {isReverted ? (
+                            // Non-destructive secondary action — outlined in
+                            // the muted border color so it reads distinctly
+                            // from the destructive Revert button.
                             <Pressable
-                              onPress={() => { void handleRevertRun(run.id); }}
-                              disabled={isReverting || revertingRunId !== null}
+                              onPress={() => { handleUndoRevert(run.id); }}
+                              disabled={anyInFlight}
+                              accessibilityRole="button"
+                              accessibilityLabel="Undo revert"
+                              style={{
+                                paddingHorizontal: 12,
+                                paddingVertical: 6,
+                                borderRadius: 6,
+                                borderWidth: 1,
+                                borderColor: isUndoing ? colors.border : colors.foreground,
+                                opacity: anyInFlight && !isUndoing ? 0.5 : 1,
+                              }}
+                            >
+                              {isUndoing ? (
+                                <ActivityIndicator size="small" color={colors.foreground} />
+                              ) : (
+                                <Text style={{ color: colors.foreground, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
+                                  Undo
+                                </Text>
+                              )}
+                            </Pressable>
+                          ) : (
+                            <Pressable
+                              onPress={() => { handleRevertRun(run.id); }}
+                              disabled={anyInFlight}
+                              accessibilityRole="button"
+                              accessibilityLabel="Revert this enrichment run"
                               style={{
                                 paddingHorizontal: 12,
                                 paddingVertical: 6,
                                 borderRadius: 6,
                                 borderWidth: 1,
                                 borderColor: isReverting ? colors.border : colors.destructive,
+                                opacity: anyInFlight && !isReverting ? 0.5 : 1,
                               }}
                             >
                               {isReverting ? (
