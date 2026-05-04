@@ -97,31 +97,46 @@ export function tradeSizeChipLabel(inches: number): string | null {
  * All keyword variants worth indexing for a parsed trade size. The first
  * entry always matches the chip label exactly so the Trade Size filter
  * works; the rest are natural-language phrasings users might type into
- * free-text search ("1/2 inch", "0.5 in", "half inch", etc.).
+ * free-text search ("1/2 inch", "1/2in.", "0.5 inches", etc.).
  */
 export function tradeSizeKeywordTokens(inches: number): string[] {
   const chip = tradeSizeChipLabel(inches);
   if (!chip) return [];
   const tokens = new Set<string>([chip]);
 
-  // Strip the trailing inch mark for an unquoted variant so plain
-  // "1/2" and "1-1/4" also match.
+  // Strip the trailing inch mark for the bare fraction/mixed-number form.
   const bare = chip.replace(/"$/, "");
-  tokens.add(bare);
 
-  // "1 1/4" form (space instead of dash) helps when users type the
-  // mixed number naturally. Only meaningful for mixed numbers.
+  // Collect every "display form" of the number that users might type.
+  const forms: string[] = [bare];
+
+  // "1 1/4" form (space instead of dash) for mixed numbers.
   if (bare.includes("-")) {
-    tokens.add(bare.replace("-", " "));
+    forms.push(bare.replace("-", " "));
   }
 
-  // "<n> inch" / "<n> in" phrasings.
-  tokens.add(`${bare} inch`);
-  tokens.add(`${bare} in`);
+  // Decimal form (e.g. 1.25, 0.5) for vendor descriptions that use decimals.
+  forms.push(inches.toString());
 
-  // Decimal form for items where a vendor description quotes 0.75" etc.
-  const decimal = inches.toString();
-  if (!tokens.has(`${decimal}"`)) tokens.add(`${decimal}"`);
+  // For each display form emit every suffix variant a worker might type.
+  const suffixes = [
+    "",        // bare number alone
+    '"',       // with inch mark  (e.g. 0.5")
+    "in.",     // e.g. 1/2in.
+    " in.",    // e.g. 1/2 in.
+    "in",      // e.g. 1/2in
+    " in",     // e.g. 1/2 in
+    "inch",    // e.g. 1/2inch
+    " inch",   // e.g. 1/2 inch
+    "inches",  // e.g. 1/2inches
+    " inches", // e.g. 1/2 inches
+  ];
+
+  for (const form of forms) {
+    for (const suffix of suffixes) {
+      tokens.add(`${form}${suffix}`);
+    }
+  }
 
   return [...tokens];
 }

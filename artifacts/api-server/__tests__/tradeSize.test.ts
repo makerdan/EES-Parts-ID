@@ -67,6 +67,104 @@ describe("tradeSizeKeywordTokens", () => {
     const t = tradeSizeKeywordTokens(1.25);
     expect(t).toEqual(expect.arrayContaining(['1-1/4"', "1-1/4", "1 1/4", "1-1/4 inch"]));
   });
+
+  describe("fractional size (1/2\")", () => {
+    it("includes all abbreviated inch variants", () => {
+      const t = tradeSizeKeywordTokens(0.5);
+      expect(t).toEqual(expect.arrayContaining([
+        "1/2 in.",
+        "1/2in.",
+        "1/2 in",
+        "1/2in",
+        "1/2inch",
+        "1/2 inch",
+        "1/2 inches",
+        "1/2inches",
+      ]));
+    });
+
+    it("includes decimal variants", () => {
+      const t = tradeSizeKeywordTokens(0.5);
+      expect(t).toEqual(expect.arrayContaining([
+        '0.5"',
+        "0.5in.",
+        "0.5 in.",
+        "0.5in",
+        "0.5 in",
+        "0.5inch",
+        "0.5 inch",
+        "0.5 inches",
+      ]));
+    });
+  });
+
+  describe("whole-number size (2\")", () => {
+    it("includes all abbreviated inch variants", () => {
+      const t = tradeSizeKeywordTokens(2);
+      expect(t).toEqual(expect.arrayContaining([
+        "2 in.",
+        "2in.",
+        "2 in",
+        "2in",
+        "2inch",
+        "2 inch",
+        "2 inches",
+        "2inches",
+      ]));
+    });
+  });
+
+  describe("mixed-number size (1-1/2\")", () => {
+    it("includes all abbreviated inch variants for dash form", () => {
+      const t = tradeSizeKeywordTokens(1.5);
+      expect(t).toEqual(expect.arrayContaining([
+        "1-1/2 in.",
+        "1-1/2in.",
+        "1-1/2 in",
+        "1-1/2in",
+        "1-1/2inch",
+        "1-1/2 inch",
+        "1-1/2 inches",
+        "1-1/2inches",
+      ]));
+    });
+
+    it("includes all abbreviated inch variants for space form", () => {
+      const t = tradeSizeKeywordTokens(1.5);
+      expect(t).toEqual(expect.arrayContaining([
+        "1 1/2 in.",
+        "1 1/2in.",
+        "1 1/2 in",
+        "1 1/2in",
+        "1 1/2inch",
+        "1 1/2 inch",
+        "1 1/2 inches",
+        "1 1/2inches",
+      ]));
+    });
+
+    it("includes decimal form variants", () => {
+      const t = tradeSizeKeywordTokens(1.5);
+      expect(t).toEqual(expect.arrayContaining([
+        '1.5"',
+        "1.5in.",
+        "1.5 in.",
+        "1.5in",
+        "1.5 in",
+        "1.5inch",
+        "1.5 inch",
+        "1.5 inches",
+      ]));
+    });
+  });
+
+  it("does not contain duplicate tokens", () => {
+    for (const inches of [0.5, 1, 1.25, 1.5, 2, 2.5]) {
+      const t = tradeSizeKeywordTokens(inches);
+      const unique = new Set(t);
+      expect(unique.size).toBe(t.length);
+    }
+  });
 });
 
 describe("deriveTradeSizeTokens", () => {
