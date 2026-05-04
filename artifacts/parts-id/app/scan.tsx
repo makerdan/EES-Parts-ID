@@ -45,6 +45,8 @@ import { resizeImage } from "@/utils/resizeImage";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
+import { Toast } from "@/components/Toast";
+import { ErrorBanner } from "@/components/ErrorBanner";
 
 const BARCODE_TYPES = [
   "ean13",
@@ -478,18 +480,10 @@ export default function ScanScreen() {
       ) : null}
 
       {/* Toast */}
-      {toast ? (
-        <View style={[styles.toast, { backgroundColor: colors.foreground }]}>
-          <Text style={[styles.toastText, { color: colors.background }]}>{toast}</Text>
-        </View>
-      ) : null}
+      {toast ? <Toast message={toast} type="success" /> : null}
 
       {/* Inline error */}
-      {error ? (
-        <View style={[styles.errorBar, { backgroundColor: colors.destructive + "22", borderColor: colors.destructive }]}>
-          <Text style={{ color: colors.destructive, fontFamily: "Inter_500Medium" }}>{error}</Text>
-        </View>
-      ) : null}
+      {error ? <ErrorBanner message={error} style={styles.errorBarOuter} /> : null}
 
       {/* Match modal — opened when lookup returns a real part. */}
       <Modal
@@ -790,20 +784,9 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     minHeight: 44,
   },
-  toast: {
-    position: "absolute",
-    top: 12,
-    alignSelf: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 16,
-  },
-  toastText: { fontFamily: "Inter_600SemiBold" },
-  errorBar: {
+  errorBarOuter: {
     margin: 12,
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
+    marginBottom: 0,
   },
   modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "#00000088" },
   modalSheet: {

@@ -21,7 +21,6 @@ import { splitHighlightSegments } from "@/lib/refinement";
 import {
   parseTradeSizeInches,
   formatInchesAsFraction,
-  catalogSuffix,
 } from "@/lib/tradeSize";
 
 interface ResultCardProps {
@@ -130,24 +129,17 @@ function VariantRow({
   const sameVendor = item.vendor.toUpperCase() === parentVendor.toUpperCase();
   const label = sameVendor ? item.catalog : `${item.vendor} · ${item.catalog}`;
 
-  // Size column: prefer a recognized trade-size in inches; fall back to
-  // the catalog suffix that distinguishes this variant from the parent;
-  // final fallback is an em-dash so the column still aligns.
+  // Size column: parsed trade size in inches only. If neither the catalog
+  // code nor the description encodes a recognizable size, leave the column
+  // empty (renders as an em-dash) so the middle column always shows inches,
+  // never a catalog SKU fragment.
   const inches =
     parseTradeSizeInches(item.catalog) ??
     parseTradeSizeInches(item.description);
-  let sizeLabel = formatInchesAsFraction(inches);
-  const sizeFromInches = sizeLabel.length > 0;
-  if (!sizeLabel) sizeLabel = catalogSuffix(item.catalog, parentCatalog);
-  const hasSize = sizeLabel.trim().length > 0;
-  // Speech-friendly size for screen readers: drop the inch-mark glyph and
-  // append "inches" when the value came from the trade-size parser; for
-  // catalog-suffix fallbacks just speak the raw differentiator.
-  const a11ySize = hasSize
-    ? sizeFromInches
-      ? `, size ${sizeLabel.replace(/"/g, "")} inches`
-      : `, size ${sizeLabel}`
-    : "";
+  const sizeLabel = formatInchesAsFraction(inches);
+  const hasSize = sizeLabel.length > 0;
+  // Speech-friendly size: strip the inch-mark glyph and append "inches".
+  const a11ySize = hasSize ? `, size ${sizeLabel.replace(/"/g, "")} inches` : "";
   return (
     <Pressable
       onPress={onPress}

@@ -26,6 +26,7 @@ import {
 } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
+import { ErrorBanner } from "@/components/ErrorBanner";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -194,10 +195,8 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                 </Text>
               </View>
               {isError ? (
-                <View style={[msgStyles.aBubble, { backgroundColor: colors.destructive + "0f", borderColor: colors.destructive + "44" }]}>
-                  <Text style={{ fontSize: 14, lineHeight: 22, color: colors.destructive }}>
-                    Failed to get an answer — check your connection and try again.
-                  </Text>
+                <View style={msgStyles.errorWrap}>
+                  <ErrorBanner message="No answer — check your connection and try again." />
                   <Pressable
                     onPress={askQuestion}
                     style={[msgStyles.retryBtn, { borderColor: colors.primary }]}
@@ -305,7 +304,8 @@ const msgStyles = StyleSheet.create({
   qBubble: { padding: 10, borderRadius: 8, marginBottom: 6 },
   qText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   aBubble: { ...secondaryBtnBase, padding: 12 },
-  retryBtn: { alignSelf: "flex-start", marginTop: 10, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 6, borderWidth: 1 },
+  errorWrap: { marginBottom: 4 },
+  retryBtn: { alignSelf: "flex-start", marginTop: 4, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 6, borderWidth: 1 },
 });
 
 const emptyStyles = StyleSheet.create({

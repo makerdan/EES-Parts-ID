@@ -20,6 +20,7 @@ import {
 import { router } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
+import { ErrorBanner } from "@/components/ErrorBanner";
 
 export default function LoginScreen() {
   const colors = useColors();
@@ -102,12 +103,6 @@ export default function LoginScreen() {
       color: colors.foreground,
       fontFamily: "Inter_400Regular",
     },
-    error: {
-      fontSize: 13,
-      color: colors.destructive,
-      marginTop: 8,
-      fontFamily: "Inter_400Regular",
-    },
     button: {
       marginTop: 20,
       backgroundColor: colors.primary,
@@ -161,7 +156,7 @@ export default function LoginScreen() {
           onSubmitEditing={handleLogin}
           returnKeyType="go"
         />
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {error ? <ErrorBanner message={error} /> : null}
         <Pressable style={styles.button} onPress={handleLogin}>
           {loading ? (
             <ActivityIndicator color={colors.primaryForeground} />
