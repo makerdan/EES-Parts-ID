@@ -23,6 +23,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import { router } from "expo-router";
 import * as XLSX from "xlsx";
@@ -185,13 +186,30 @@ function findCol(headers: string[], aliases: string[]): number {
   return aliases.map(a => headers.indexOf(a)).find(i => i >= 0) ?? -1;
 }
 
+// ── Delimiter detection ────────────────────────────────────────────────────
+// Counts tabs vs commas in the first 5 non-empty lines. If tabs outnumber
+// commas, the data is almost certainly copied from Excel/Calc/ODS (which
+// always puts TSV on the clipboard). Otherwise assume CSV.
+function detectDelimiter(text: string): "," | "\t" {
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0).slice(0, 5);
+  let tabs = 0;
+  let commas = 0;
+  for (const line of lines) {
+    for (const ch of line) {
+      if (ch === "\t") tabs++;
+      else if (ch === ",") commas++;
+    }
+  }
+  return tabs > commas ? "\t" : ",";
+}
+
 // ── Parse CSV text ─────────────────────────────────────────────────────────
 //
 // Records are tokenised with full RFC-4180 quote handling so that a quoted
 // bin cell like "A-1\nB-2" survives parsing — splitting on bare `\r?\n`
 // before quotes are honoured would silently drop bins after the first newline.
-function parseCSV(text: string): ParsedRow[] {
-  const records = parseCSVRecords(text);
+function parseCSV(text: string, delimiter: "," | "\t" = ","): ParsedRow[] {
+  const records = parseCSVRecords(text, delimiter);
   if (records.length < 2) return [];
 
   const headers = records[0]!.map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
@@ -222,11 +240,12 @@ function parseCSV(text: string): ParsedRow[] {
 }
 
 /**
- * Tokenise a full CSV document into records. Honours RFC-4180 quoting rules:
- * `""` is an escaped quote, and a quoted field may contain commas, `\r`, and
- * `\n` literally. Blank lines are skipped.
+ * Tokenise a full CSV/TSV document into records. Honours RFC-4180 quoting
+ * rules: `""` is an escaped quote, and a quoted field may contain the
+ * delimiter, `\r`, and `\n` literally. Blank lines are skipped.
+ * Pass delimiter="\t" for TSV (Excel/Calc clipboard copies).
  */
-function parseCSVRecords(text: string): string[][] {
+function parseCSVRecords(text: string, delimiter: "," | "\t" = ","): string[][] {
   const records: string[][] = [];
   let current: string[] = [];
   let field = "";
@@ -251,7 +270,7 @@ function parseCSVRecords(text: string): string[][] {
       }
     } else if (ch === '"') {
       inQuotes = true;
-    } else if (ch === ",") {
+    } else if (ch === delimiter) {
       pushField();
     } else if (ch === "\r") {
       // swallow; the following \n triggers the record boundary
@@ -1132,6 +1151,29 @@ export default function UploadScreen() {
     }
   };
 
+  const handlePasteClipboard = async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      if (!text || !text.trim()) {
+        setUploadError("Clipboard is empty. Copy rows from your spreadsheet first.");
+        return;
+      }
+      const delimiter = detectDelimiter(text);
+      const rows = parseCSV(text, delimiter);
+      if (rows.length === 0) {
+        setUploadError("No data rows found in clipboard. Ensure your spreadsheet has columns named: vendor, catalog (required), description, bin (optional).");
+        return;
+      }
+      setUploadError(null);
+      setUploadSuccess(null);
+      setFileName("Pasted data");
+      setFileType("csv");
+      setParsedRows(rows);
+    } catch {
+      setUploadError("Failed to read clipboard. Please try again.");
+    }
+  };
+
   // ── Chunked upload runner ────────────────────────────────────────────────
   // Sends rows in fixed-size chunks (CHUNK_SIZE) so the user can pause
   // between chunks and we can persist progress for crash recovery. The
@@ -1646,7 +1688,7 @@ export default function UploadScreen() {
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Accepts: CSV, Excel (.xlsx/.xls), ODS{"\n"}
+                  Accepts: CSV, Excel (.xlsx/.xls), ODS, or pasted spreadsheet data{"\n"}
                   Required columns: vendor, catalog{"\n"}
                   Optional: description, bin (or binLocation)
                 </Text>
@@ -1654,6 +1696,15 @@ export default function UploadScreen() {
                 <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
                   <Text style={[styles.pickBtnText, { color: colors.primary }]}>
                     📂 Choose CSV or Excel File
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={handlePasteClipboard}
+                  style={[secondaryBtnBase, styles.pasteBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[styles.pasteBtnText, { color: colors.foreground }]}>
+                    Paste from Clipboard
                   </Text>
                 </Pressable>
 
@@ -2664,6 +2715,8 @@ const styles = StyleSheet.create({
   cardHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   pickBtn: { borderWidth: 2, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   pickBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  pasteBtn: { paddingVertical: 11, alignItems: "center" },
+  pasteBtnText: { fontSize: 15, fontFamily: "Inter_500Medium" },
   fileChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, alignSelf: "flex-start" },
   fileChipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   previewCard: { borderRadius: 12, padding: 14, borderWidth: 1, marginBottom: 14 },
