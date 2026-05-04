@@ -265,6 +265,7 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
   };
 
   return (
+    <>
     <Pressable onPress={toggleCard}>
       <View
         style={[
@@ -389,7 +390,7 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
                 parentCatalog={item.catalog}
                 colors={colors}
                 fontScale={fontScale}
-                onPress={() => setDetailVariant(v)}
+                onPress={() => { setVariantsExpanded(false); setDetailVariant(v); }}
               />
             ))}
             {filteredVariants.length > 12 ? (
@@ -478,11 +479,11 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
           {expanded ? "▲" : "▼"}
         </Text>
       </View>
-      {/* Variant detail modal — rendered as a Modal so it lives outside the
-          outer Pressable's responder tree and can be opened from any of the
-          three result surfaces (Search, Browse-by-Aisle, Photo ID). The
-          inner ResultCard is given an empty variants array so we never
-          recurse into a nested related-sizes panel. */}
+    </Pressable>
+    {/* Variant detail modal — lives outside the outer card Pressable so the
+        slide animation's touch-up event cannot leak into toggleCard. The
+        inner ResultCard gets an empty variants array so we never recurse
+        into a nested related-sizes panel. */}
       <Modal
         visible={detailVariant !== null}
         animationType="slide"
@@ -542,7 +543,7 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
           </Pressable>
         </Pressable>
       </Modal>
-    </Pressable>
+    </>
   );
 }
 
