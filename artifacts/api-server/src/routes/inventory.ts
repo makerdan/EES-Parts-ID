@@ -262,8 +262,8 @@ router.post("/search", async (req, res) => {
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
-      bin_locations: string[]; ai_keywords: string[]; enriched_at: Date | null;
-      created_at: Date; updated_at: Date;
+      bin_locations: string[]; ai_keywords: string[]; trade_size: string | null;
+      enriched_at: Date | null; created_at: Date; updated_at: Date;
       fts_rank: number; trgm_sim: number;
     };
 
@@ -369,6 +369,7 @@ router.post("/search", async (req, res) => {
         // Safe fallbacks for fields not included in the runtime shape-validation filter
         binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as string[] : [],
         aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
+        tradeSize: typeof row.trade_size === "string" ? row.trade_size : null,
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
         updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),

@@ -825,6 +825,7 @@ function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable
     description: String(row["description"] ?? ""),
     binLocations: Array.isArray(row["bin_locations"]) ? (row["bin_locations"] as string[]) : [],
     aiKeywords: Array.isArray(row["ai_keywords"]) ? (row["ai_keywords"] as string[]) : [],
+    tradeSize: typeof row["trade_size"] === "string" ? row["trade_size"] : null,
     enrichedAt: row["enriched_at"] instanceof Date ? (row["enriched_at"] as Date) : null,
     createdAt: row["created_at"] instanceof Date ? (row["created_at"] as Date) : new Date(0),
     updatedAt: row["updated_at"] instanceof Date ? (row["updated_at"] as Date) : new Date(0),
