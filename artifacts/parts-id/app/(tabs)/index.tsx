@@ -1280,8 +1280,9 @@ export default function SearchScreen() {
         </View>
       ) : null}
 
-      {/* ── Browse-by-Aisle entry point ──────────────────────────────────── */}
-      {!aisleBrowseOpen ? (
+      {/* ── Browse-by-Aisle entry point — hidden while results are showing
+          so the list can fill most of the screen. ─────────────────────── */}
+      {!aisleBrowseOpen && !hasResults ? (
         <Pressable
           onPress={() => setAisleBrowseOpen(true)}
           style={[styles.aisleEntryBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
@@ -1376,7 +1377,7 @@ export default function SearchScreen() {
           taxonomy, the toggle is hidden to free up vertical space. To
           return to Search mode, tap the "⚡ Parts ID" title in the
           header (which clears state) or re-tap the Search tab. */}
-      {mode !== "browse" ? (
+      {mode !== "browse" && !hasResults ? (
         <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
           <Pressable
             onPress={() => switchMode("browse")}
@@ -1400,7 +1401,7 @@ export default function SearchScreen() {
           state is hidden and there are usually no Search results competing
           for vertical room. */}
       <ScrollView
-        style={mode === "browse" ? { maxHeight: "90%" } : { maxHeight: "50%" }}
+        style={mode === "browse" ? { maxHeight: "90%" } : hasResults ? { maxHeight: 96 } : { maxHeight: "50%" }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
