@@ -129,14 +129,15 @@ function VariantRow({
   const sameVendor = item.vendor.toUpperCase() === parentVendor.toUpperCase();
   const label = sameVendor ? item.catalog : `${item.vendor} · ${item.catalog}`;
 
-  // Size column: parsed trade size in inches only. If neither the catalog
-  // code nor the description encodes a recognizable size, leave the column
-  // empty (renders as an em-dash) so the middle column always shows inches,
-  // never a catalog SKU fragment.
-  const inches =
-    parseTradeSizeInches(item.catalog) ??
-    parseTradeSizeInches(item.description);
-  const sizeLabel = formatInchesAsFraction(inches);
+  // Size column: use the stored tradeSize first; fall back to parsing the
+  // catalog code / description so parts without a manual trade size still
+  // show a useful label.
+  const sizeLabel: string = item.tradeSize
+    ? item.tradeSize
+    : formatInchesAsFraction(
+        parseTradeSizeInches(item.catalog) ??
+        parseTradeSizeInches(item.description),
+      );
   const hasSize = sizeLabel.length > 0;
   // Speech-friendly size: strip the inch-mark glyph and append "inches".
   const a11ySize = hasSize ? `, size ${sizeLabel.replace(/"/g, "")} inches` : "";
