@@ -602,7 +602,7 @@ const cardStyles = StyleSheet.create({
   binTextWrap: { flex: 1 },
   binText: { fontSize: 13, fontFamily: "Inter_600SemiBold", flexShrink: 1 },
   reason: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 4 },
-  tradeSizeLabel: { fontSize: 11, fontFamily: "Inter_500Medium", marginTop: 3 },
+  tradeSizeLabel: { fontSize: 22, fontFamily: "Inter_700Bold", marginTop: 3 },
   section: { marginTop: 12 },
   sectionTitle: {
     fontSize: 11,
