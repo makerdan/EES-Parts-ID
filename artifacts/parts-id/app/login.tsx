@@ -156,7 +156,7 @@ export default function LoginScreen() {
           onSubmitEditing={handleLogin}
           returnKeyType="go"
         />
-        {error ? <ErrorBanner message={error} /> : null}
+        {error ? <ErrorBanner message={error} onDismiss={() => setError(null)} /> : null}
         <Pressable style={styles.button} onPress={handleLogin}>
           {loading ? (
             <ActivityIndicator color={colors.primaryForeground} />

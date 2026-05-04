@@ -483,7 +483,13 @@ export default function ScanScreen() {
       {toast ? <Toast message={toast} type="success" /> : null}
 
       {/* Inline error */}
-      {error ? <ErrorBanner message={error} style={styles.errorBarOuter} /> : null}
+      {error ? (
+        <ErrorBanner
+          message={error}
+          style={styles.errorBarOuter}
+          onDismiss={() => setError(null)}
+        />
+      ) : null}
 
       {/* Match modal — opened when lookup returns a real part. */}
       <Modal
