@@ -1519,12 +1519,7 @@ export default function UploadScreen() {
         <>
           {/* Inline error/success banners */}
           {uploadError ? (
-            <View style={styles.errorBannerWrap}>
-              <ErrorBanner message={uploadError} />
-              <Pressable onPress={() => setUploadError(null)} style={styles.bannerDismiss} hitSlop={8}>
-                <Text style={{ color: colors.mutedForeground, fontSize: 18, lineHeight: 20 }}>✕</Text>
-              </Pressable>
-            </View>
+            <ErrorBanner message={uploadError} onDismiss={() => setUploadError(null)} />
           ) : null}
           {uploadSuccess ? (
             <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
@@ -1833,7 +1828,10 @@ export default function UploadScreen() {
 
                 {/* Bulk job error */}
                 {(bulkJobStatus?.lastError || bulkEnrichError) ? (
-                  <ErrorBanner message={bulkEnrichError ?? bulkJobStatus?.lastError ?? "Enrichment error"} />
+                  <ErrorBanner
+                    message={bulkEnrichError ?? bulkJobStatus?.lastError ?? "Enrichment error"}
+                    onDismiss={bulkEnrichError ? () => setBulkEnrichError(null) : undefined}
+                  />
                 ) : null}
 
                 {/* Start / running button */}
@@ -1905,7 +1903,10 @@ export default function UploadScreen() {
 
                 {/* Error */}
                 {(measureJobStatus?.lastError || measureEnrichError) ? (
-                  <ErrorBanner message={measureEnrichError ?? measureJobStatus?.lastError ?? "Enrichment error"} />
+                  <ErrorBanner
+                    message={measureEnrichError ?? measureJobStatus?.lastError ?? "Enrichment error"}
+                    onDismiss={measureEnrichError ? () => setMeasureEnrichError(null) : undefined}
+                  />
                 ) : null}
 
                 <Pressable
@@ -2090,7 +2091,7 @@ export default function UploadScreen() {
                 ) : null}
 
                 {catalogPdfError ? (
-                  <ErrorBanner message={catalogPdfError} />
+                  <ErrorBanner message={catalogPdfError} onDismiss={() => setCatalogPdfError(null)} />
                 ) : null}
 
                 {/* Recent enrichment runs — each can be reverted to restore
@@ -2693,8 +2694,6 @@ const styles = StyleSheet.create({
   enrichSmallText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: "center", marginTop: 8 },
   loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  errorBannerWrap: { flexDirection: "row", alignItems: "center", paddingRight: 8 },
-  bannerDismiss: { paddingLeft: 6, paddingVertical: 4 },
   inlineBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
   successBanner: {},
   inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
