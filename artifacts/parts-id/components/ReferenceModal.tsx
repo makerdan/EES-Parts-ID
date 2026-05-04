@@ -1,16 +1,19 @@
 /**
- * Floating "Reference" modal — quick-lookup of electrical abbreviations,
+ * Reference modal — quick-lookup of electrical abbreviations,
  * vendor full names, synonyms, common misspellings, and trade slang, plus
  * an SSE-streamed AI chat for free-form questions.
  *
  * Dictionaries are fetched from /dictionaries/* and cached in React Query;
  * the AI chat hits /ai/reference (Server-Sent Events) so the answer
  * streams in token-by-token.
+ *
+ * The trigger button that opens this modal lives in the Search screen's
+ * top bar (next to Scan). This component only renders the modal itself;
+ * open/close state is owned by the parent.
  */
 import React, { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -29,33 +32,28 @@ const API_BASE =
     ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
     : "";
 
-export function ReferenceModal() {
+interface ReferenceModalProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
   const colors = useColors();
-  const [visible, setVisible] = useState(false);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
   const [isError, setIsError] = useState(false);
   const [history, setHistory] = useState<Array<{ q: string; a: string }>>([]);
   const scrollRef = useRef<ScrollView>(null);
-  const pulse = useRef(new Animated.Value(1)).current;
   // Stores the question text that was sent so the error bubble can show it
   const askedQuestionRef = useRef("");
 
-  const pulseButton = useCallback(() => {
-    Animated.sequence([
-      Animated.timing(pulse, { toValue: 1.08, duration: 100, useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 1, duration: 100, useNativeDriver: true }),
-    ]).start();
-  }, [pulse]);
-
-  const askQuestion = async () => {
+  const askQuestion = useCallback(async () => {
     if (!question.trim() || loading) return;
     askedQuestionRef.current = question.trim();
     setLoading(true);
     setIsError(false);
     setAnswer("");
-    pulseButton();
 
     try {
       const res = await fetch(`${API_BASE}/reference/ask`, {
@@ -104,7 +102,7 @@ export function ReferenceModal() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [question, loading]);
 
   const clearAll = () => {
     setQuestion("");
@@ -133,194 +131,157 @@ export function ReferenceModal() {
   };
 
   return (
-    <>
-      {/* Floating button */}
-      <Animated.View style={[fabStyles.fab, { transform: [{ scale: pulse }] }]}>
-        <Pressable
-          onPress={() => setVisible(true)}
-          style={[fabStyles.fabBtn, { backgroundColor: colors.primary }]}
-        >
-          <Text style={fabStyles.fabIcon}>⚡</Text>
-          <Text style={[fabStyles.fabLabel, { color: colors.primaryForeground }]}>REF</Text>
-        </Pressable>
-      </Animated.View>
-
-      {/* Modal */}
-      <Modal
-        visible={visible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setVisible(false)}
+    <Modal
+      visible={open}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={[modalStyles.container, { backgroundColor: colors.background }]}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={[modalStyles.container, { backgroundColor: colors.background }]}
-        >
-          {/* Header */}
-          <View style={[modalStyles.header, { borderBottomColor: colors.border }]}>
-            <View>
-              <Text style={[modalStyles.title, { color: colors.foreground }]}>
-                ⚡ Reference AI
-              </Text>
-              <Text style={[modalStyles.subtitle, { color: colors.mutedForeground }]}>
-                Ask about electrical terms & codes
-              </Text>
-            </View>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              {history.length > 0 ? (
-                <Pressable onPress={clearAll} style={[modalStyles.clearBtn, { borderColor: colors.border }]}>
-                  <Text style={[modalStyles.clearText, { color: colors.mutedForeground }]}>Clear</Text>
-                </Pressable>
-              ) : null}
-              <Pressable
-                onPress={() => setVisible(false)}
-                style={[modalStyles.closeBtn, { backgroundColor: colors.muted }]}
-              >
-                <Text style={[modalStyles.closeText, { color: colors.foreground }]}>✕</Text>
-              </Pressable>
-            </View>
+        {/* Header */}
+        <View style={[modalStyles.header, { borderBottomColor: colors.border }]}>
+          <View>
+            <Text style={[modalStyles.title, { color: colors.foreground }]}>
+              ⚡ Reference AI
+            </Text>
+            <Text style={[modalStyles.subtitle, { color: colors.mutedForeground }]}>
+              Ask about electrical terms & codes
+            </Text>
           </View>
-
-          {/* History */}
-          <ScrollView
-            ref={scrollRef}
-            style={{ flex: 1 }}
-            contentContainerStyle={{ padding: 16 }}
-            keyboardShouldPersistTaps="handled"
-          >
-            {history.map((h, i) => (
-              <View key={i} style={{ marginBottom: 16 }}>
-                <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + "22" }]}>
-                  <Text style={[msgStyles.qText, { color: colors.foreground }]}>Q: {h.q}</Text>
-                </View>
-                <View style={[msgStyles.aBubble, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                  <Text style={{ fontSize: 14, lineHeight: 22 }}>
-                    {renderAnswer(h.a)}
-                  </Text>
-                </View>
-              </View>
-            ))}
-
-            {answer || isError ? (
-              <View style={{ marginBottom: 16 }}>
-                <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + "22" }]}>
-                  <Text style={[msgStyles.qText, { color: colors.foreground }]}>
-                    Q: {askedQuestionRef.current || question}
-                  </Text>
-                </View>
-                {isError ? (
-                  <View style={[msgStyles.aBubble, { backgroundColor: colors.destructive + "0f", borderColor: colors.destructive + "44" }]}>
-                    <Text style={{ fontSize: 14, lineHeight: 22, color: colors.destructive }}>
-                      Failed to get an answer — check your connection and try again.
-                    </Text>
-                    <Pressable
-                      onPress={askQuestion}
-                      style={[msgStyles.retryBtn, { borderColor: colors.primary }]}
-                    >
-                      <Text style={{ fontSize: 13, color: colors.primary, fontFamily: "Inter_600SemiBold" }}>
-                        ↺  Retry
-                      </Text>
-                    </Pressable>
-                  </View>
-                ) : (
-                  <View style={[msgStyles.aBubble, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                    <Text style={{ fontSize: 14, lineHeight: 22 }}>
-                      {renderAnswer(answer)}
-                    </Text>
-                    {loading ? (
-                      <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 4 }} />
-                    ) : null}
-                  </View>
-                )}
-              </View>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {history.length > 0 ? (
+              <Pressable onPress={clearAll} style={[modalStyles.clearBtn, { borderColor: colors.border }]}>
+                <Text style={[modalStyles.clearText, { color: colors.mutedForeground }]}>Clear</Text>
+              </Pressable>
             ) : null}
-
-            {!history.length && !answer && !isError ? (
-              <View style={emptyStyles.container}>
-                <Text style={emptyStyles.emoji}>📖</Text>
-                <Text style={[emptyStyles.title, { color: colors.foreground }]}>Electrical Reference</Text>
-                <Text style={[emptyStyles.hint, { color: colors.mutedForeground }]}>
-                  Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical term.
-                </Text>
-                <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>QUICK LOOKUPS</Text>
-                {([
-                  { label: "1G",              question: "What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?" },
-                  { label: "GFCI",            question: "What does GFCI stand for, how does it work, and where is it required by the NEC?" },
-                  { label: "AFCI",            question: "What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?" },
-                  { label: "TRWR",            question: "What does TRWR mean on a receptacle — what is Tamper Resistant and Weather Resistant, and where is each required?" },
-                  { label: "Decora",          question: "What is a Decora style switch or receptacle, who makes them, and how do they differ from standard toggle style?" },
-                  { label: "Romex",           question: "What is Romex (NM-B cable), what do the numbers on the sheath mean, and when is it allowed by code?" },
-                  { label: "MC Cable",        question: "What is MC cable (Metal Clad armored cable), how does it differ from Romex, and when should it be used?" },
-                  { label: "EMT",             question: "What is EMT (Electrical Metallic Tubing) conduit, what are its common uses, and how does it differ from rigid conduit?" },
-                  { label: "Toggle vs Rocker",question: "What is the difference between a toggle switch and a rocker (paddle) switch — are they interchangeable?" },
-                  { label: "Duplex",          question: "What is a duplex receptacle, how does it differ from simplex and quadplex outlets, and what are standard amperage ratings?" },
-                  { label: "15A vs 20A",      question: "What is the difference between 15 amp and 20 amp circuits, receptacles, and breakers — how do I tell them apart?" },
-                  { label: "AWG",             question: "What does AWG mean, how does wire gauge numbering work, and which gauge should I use for common circuits?" },
-                ] as const).map(({ label, question: q }) => (
-                  <Pressable
-                    key={label}
-                    onPress={() => setQuestion(q)}
-                    style={[emptyStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}
-                  >
-                    <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
-          </ScrollView>
-
-          {/* Input bar */}
-          <View style={[inputStyles.bar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-            <TextInput
-              value={question}
-              onChangeText={setQuestion}
-              placeholder="Ask about any electrical term..."
-              placeholderTextColor={colors.mutedForeground}
-              style={[inputStyles.input, { backgroundColor: colors.muted, color: colors.foreground, borderColor: colors.border }]}
-              multiline
-              returnKeyType="send"
-              onSubmitEditing={askQuestion}
-            />
             <Pressable
-              onPress={askQuestion}
-              disabled={loading || !question.trim()}
-              style={[inputStyles.sendBtn, { backgroundColor: loading ? colors.muted : colors.primary }]}
+              onPress={onClose}
+              style={[modalStyles.closeBtn, { backgroundColor: colors.muted }]}
             >
-              {loading ? (
-                <ActivityIndicator size="small" color={colors.primaryForeground} />
-              ) : (
-                <Text style={[inputStyles.sendText, { color: colors.primaryForeground }]}>→</Text>
-              )}
+              <Text style={[modalStyles.closeText, { color: colors.foreground }]}>✕</Text>
             </Pressable>
           </View>
-        </KeyboardAvoidingView>
-      </Modal>
-    </>
+        </View>
+
+        {/* History */}
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 16 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {history.map((h, i) => (
+            <View key={i} style={{ marginBottom: 16 }}>
+              <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + "22" }]}>
+                <Text style={[msgStyles.qText, { color: colors.foreground }]}>Q: {h.q}</Text>
+              </View>
+              <View style={[msgStyles.aBubble, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={{ fontSize: 14, lineHeight: 22 }}>
+                  {renderAnswer(h.a)}
+                </Text>
+              </View>
+            </View>
+          ))}
+
+          {answer || isError ? (
+            <View style={{ marginBottom: 16 }}>
+              <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + "22" }]}>
+                <Text style={[msgStyles.qText, { color: colors.foreground }]}>
+                  Q: {askedQuestionRef.current || question}
+                </Text>
+              </View>
+              {isError ? (
+                <View style={[msgStyles.aBubble, { backgroundColor: colors.destructive + "0f", borderColor: colors.destructive + "44" }]}>
+                  <Text style={{ fontSize: 14, lineHeight: 22, color: colors.destructive }}>
+                    Failed to get an answer — check your connection and try again.
+                  </Text>
+                  <Pressable
+                    onPress={askQuestion}
+                    style={[msgStyles.retryBtn, { borderColor: colors.primary }]}
+                  >
+                    <Text style={{ fontSize: 13, color: colors.primary, fontFamily: "Inter_600SemiBold" }}>
+                      ↺  Retry
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={[msgStyles.aBubble, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                  <Text style={{ fontSize: 14, lineHeight: 22 }}>
+                    {renderAnswer(answer)}
+                  </Text>
+                  {loading ? (
+                    <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 4 }} />
+                  ) : null}
+                </View>
+              )}
+            </View>
+          ) : null}
+
+          {!history.length && !answer && !isError ? (
+            <View style={emptyStyles.container}>
+              <Text style={emptyStyles.emoji}>📖</Text>
+              <Text style={[emptyStyles.title, { color: colors.foreground }]}>Electrical Reference</Text>
+              <Text style={[emptyStyles.hint, { color: colors.mutedForeground }]}>
+                Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical term.
+              </Text>
+              <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>QUICK LOOKUPS</Text>
+              {([
+                { label: "1G",              question: "What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?" },
+                { label: "GFCI",            question: "What does GFCI stand for, how does it work, and where is it required by the NEC?" },
+                { label: "AFCI",            question: "What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?" },
+                { label: "TRWR",            question: "What does TRWR mean on a receptacle — what is Tamper Resistant and Weather Resistant, and where is each required?" },
+                { label: "Decora",          question: "What is a Decora style switch or receptacle, who makes them, and how do they differ from standard toggle style?" },
+                { label: "Romex",           question: "What is Romex (NM-B cable), what do the numbers on the sheath mean, and when is it allowed by code?" },
+                { label: "MC Cable",        question: "What is MC cable (Metal Clad armored cable), how does it differ from Romex, and when should it be used?" },
+                { label: "EMT",             question: "What is EMT (Electrical Metallic Tubing) conduit, what are its common uses, and how does it differ from rigid conduit?" },
+                { label: "Toggle vs Rocker",question: "What is the difference between a toggle switch and a rocker (paddle) switch — are they interchangeable?" },
+                { label: "Duplex",          question: "What is a duplex receptacle, how does it differ from simplex and quadplex outlets, and what are standard amperage ratings?" },
+                { label: "15A vs 20A",      question: "What is the difference between 15 amp and 20 amp circuits, receptacles, and breakers — how do I tell them apart?" },
+                { label: "AWG",             question: "What does AWG mean, how does wire gauge numbering work, and which gauge should I use for common circuits?" },
+              ] as const).map(({ label, question: q }) => (
+                <Pressable
+                  key={label}
+                  onPress={() => setQuestion(q)}
+                  style={[emptyStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                >
+                  <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </ScrollView>
+
+        {/* Input bar */}
+        <View style={[inputStyles.bar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+          <TextInput
+            value={question}
+            onChangeText={setQuestion}
+            placeholder="Ask about any electrical term..."
+            placeholderTextColor={colors.mutedForeground}
+            style={[inputStyles.input, { backgroundColor: colors.muted, color: colors.foreground, borderColor: colors.border }]}
+            multiline
+            returnKeyType="send"
+            onSubmitEditing={askQuestion}
+          />
+          <Pressable
+            onPress={askQuestion}
+            disabled={loading || !question.trim()}
+            style={[inputStyles.sendBtn, { backgroundColor: loading ? colors.muted : colors.primary }]}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color={colors.primaryForeground} />
+            ) : (
+              <Text style={[inputStyles.sendText, { color: colors.primaryForeground }]}>→</Text>
+            )}
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
-
-const fabStyles = StyleSheet.create({
-  fab: {
-    position: "absolute",
-    bottom: 100,
-    right: 16,
-    zIndex: 100,
-  },
-  fabBtn: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 6,
-  },
-  fabIcon: { fontSize: 20 },
-  fabLabel: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
-});
 
 const modalStyles = StyleSheet.create({
   container: { flex: 1 },

@@ -32,6 +32,7 @@ import { secondaryBtnBase } from "@/styles/shared";
 export default function PhotoScreen() {
   const colors = useColors();
   const { textFontScale } = useApp();
+  const [showRefModal, setShowRefModal] = useState(false);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");
@@ -527,7 +528,7 @@ export default function PhotoScreen() {
           ) : null}
         </View>
       </ScrollView>
-      <ReferenceModal />
+      <ReferenceModal open={showRefModal} onClose={() => setShowRefModal(false)} />
     </SafeAreaView>
   );
 }

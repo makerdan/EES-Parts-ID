@@ -214,6 +214,7 @@ export default function SearchScreen() {
   const [isOffline, setIsOffline] = useState(false);
   const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showRefModal, setShowRefModal] = useState(false);
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
   const [cacheAge, setCacheAge] = useState<string | null>(null);
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
@@ -1022,6 +1023,15 @@ export default function SearchScreen() {
             <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Scan</Text>
           </Pressable>
           <Pressable
+            onPress={() => setShowRefModal(true)}
+            style={[styles.headerBtn, styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Open electrical reference"
+          >
+            <Feather name="book-open" size={16} color={colors.mutedForeground} />
+            <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Ref</Text>
+          </Pressable>
+          <Pressable
             onPress={() => {
               setShowLogoutModal(true);
               readNewestCacheTimestamp().then(setCacheAge);
@@ -1584,7 +1594,7 @@ export default function SearchScreen() {
       </>
       ) : null}
 
-      <ReferenceModal />
+      <ReferenceModal open={showRefModal} onClose={() => setShowRefModal(false)} />
 
       <KeywordEditor
         item={editItem}
