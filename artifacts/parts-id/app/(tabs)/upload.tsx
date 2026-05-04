@@ -1174,6 +1174,13 @@ export default function UploadScreen() {
     }
   };
 
+  const clearPendingFile = useCallback(() => {
+    setParsedRows([]);
+    setFileName(null);
+    setFileType(null);
+    setPreviewData(null);
+  }, []);
+
   // ── Chunked upload runner ────────────────────────────────────────────────
   // Sends rows in fixed-size chunks (CHUNK_SIZE) so the user can pause
   // between chunks and we can persist progress for crash recovery. The
@@ -1713,6 +1720,18 @@ export default function UploadScreen() {
                     <Text style={[styles.fileChipText, { color: colors.foreground }]}>
                       {fileType === "xlsx" ? "📊" : "📄"} {fileName}
                     </Text>
+                    {!uploadPending && !chunkProgress ? (
+                      <Pressable
+                        onPress={clearPendingFile}
+                        hitSlop={8}
+                        style={styles.fileChipDismiss}
+                        accessibilityLabel="Clear selected file"
+                      >
+                        <Text style={[styles.fileChipDismissText, { color: colors.mutedForeground }]}>
+                          ×
+                        </Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 ) : null}
               </View>
@@ -2717,8 +2736,10 @@ const styles = StyleSheet.create({
   pickBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   pasteBtn: { paddingVertical: 11, alignItems: "center" },
   pasteBtnText: { fontSize: 15, fontFamily: "Inter_500Medium" },
-  fileChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, alignSelf: "flex-start" },
+  fileChip: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, alignSelf: "flex-start" },
   fileChipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  fileChipDismiss: { marginLeft: 8, padding: 2 },
+  fileChipDismissText: { fontSize: 18, lineHeight: 20, fontFamily: "Inter_500Medium" },
   previewCard: { borderRadius: 12, padding: 14, borderWidth: 1, marginBottom: 14 },
   previewHeaderRow: { flexDirection: "row", paddingHorizontal: 6, paddingVertical: 6, borderRadius: 4, marginBottom: 2, marginTop: 8 },
   previewHeaderCell: { fontSize: 10, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5 },
