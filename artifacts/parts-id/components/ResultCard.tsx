@@ -294,8 +294,13 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
               </Text>
             </View>
           </View>
-          <View style={cardStyles.headerRight}>
+          <View style={[cardStyles.headerRight, { alignItems: "flex-end" }]}>
             <ConfidenceBadge confidence={confidence} />
+            {item.tradeSize ? (
+              <Text style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}>
+                {item.tradeSize}
+              </Text>
+            ) : null}
           </View>
         </View>
 
@@ -597,6 +602,7 @@ const cardStyles = StyleSheet.create({
   binTextWrap: { flex: 1 },
   binText: { fontSize: 13, fontFamily: "Inter_600SemiBold", flexShrink: 1 },
   reason: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 4 },
+  tradeSizeLabel: { fontSize: 11, fontFamily: "Inter_500Medium", marginTop: 3 },
   section: { marginTop: 12 },
   sectionTitle: {
     fontSize: 11,
