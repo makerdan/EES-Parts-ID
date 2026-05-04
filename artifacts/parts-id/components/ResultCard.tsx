@@ -290,7 +290,7 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
               <Text style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]}>
                 <HighlightedText text={item.vendor} tokens={hl} matchStyle={hlStyle} />
               </Text>
-              <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(17) }]}>
+              <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(34) }]}>
                 <HighlightedText text={item.catalog} tokens={hl} matchStyle={hlStyle} />
               </Text>
             </View>
