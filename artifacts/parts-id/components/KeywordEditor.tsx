@@ -61,6 +61,7 @@ export function KeywordEditor({
   const [description, setDescription] = useState<string>(item?.description ?? "");
   const [tradeSize, setTradeSize] = useState<string>(item?.tradeSize ?? "");
   const [binLocations, setBinLocations] = useState<string[]>(item?.binLocations ?? []);
+  const [binsCollapsed, setBinsCollapsed] = useState(false);
   const [newKeyword, setNewKeyword] = useState("");
   const [newBin, setNewBin] = useState("");
   const [binError, setBinError] = useState<string | null>(null);
@@ -635,64 +636,77 @@ export function KeywordEditor({
             </Pressable>
           </View>
 
-          {/* ── Bin Locations (admin only) ──────────────────────────── */}
+          {/* ── Bin Locations (admin only, collapsible) ────────────── */}
           {isAdmin ? (
             <>
-              <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-                BIN LOCATIONS ({binLocations.length})
-              </Text>
-              <Text style={[styles.subHint, { color: colors.mutedForeground }]}>
-                Tap a bin to remove it. Format: ##-##-### (e.g. 01-02-003)
-              </Text>
-              <View style={styles.kwRow}>
-                {binLocations.map((bin) => (
-                  <Pressable
-                    key={bin}
-                    onPress={() => removeBin(bin)}
-                    style={[styles.kwChip, { backgroundColor: colors.accent, borderColor: colors.warning + "55" }]}
-                  >
-                    <Text style={[styles.kwText, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>{bin}</Text>
-                    <Text style={[styles.kwRemove, { color: colors.mutedForeground }]}>✕</Text>
-                  </Pressable>
-                ))}
-              </View>
-              {binLocations.length === 0 ? (
-                <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-                  No bins assigned.
+              <Pressable
+                onPress={() => setBinsCollapsed(c => !c)}
+                style={[styles.binCollapseRow, { borderTopColor: colors.border, marginTop: 24 }]}
+              >
+                <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0 }]}>
+                  BIN LOCATIONS ({binLocations.length})
                 </Text>
-              ) : null}
-              <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 16 }]}>
-                ADD BIN
-              </Text>
-              <View style={styles.addRow}>
-                <TextInput
-                  value={newBin}
-                  onChangeText={(t) => { setNewBin(t); if (binError) setBinError(null); }}
-                  placeholder="e.g. 01-02-003"
-                  placeholderTextColor={colors.mutedForeground}
-                  style={[
-                    styles.addInput,
-                    {
-                      flex: 1,
-                      backgroundColor: colors.muted,
-                      borderColor: binError ? colors.destructive : colors.border,
-                      color: colors.foreground,
-                    },
-                  ]}
-                  onSubmitEditing={addBin}
-                  returnKeyType="done"
-                  autoCorrect={false}
-                  autoCapitalize="characters"
-                />
-                <Pressable
-                  onPress={addBin}
-                  style={[styles.addBtn, { backgroundColor: colors.primary }]}
-                >
-                  <Text style={[styles.addBtnText, { color: colors.primaryForeground }]}>+ Add</Text>
-                </Pressable>
-              </View>
-              {binError ? (
-                <Text style={[styles.binError, { color: colors.destructive }]}>{binError}</Text>
+                <Text style={[styles.binChevron, { color: colors.mutedForeground }]}>
+                  {binsCollapsed ? "▶" : "▼"}
+                </Text>
+              </Pressable>
+
+              {!binsCollapsed ? (
+                <>
+                  <Text style={[styles.subHint, { color: colors.mutedForeground, marginTop: 8 }]}>
+                    Tap a bin to remove it. Format: ##-##-### (e.g. 01-02-003)
+                  </Text>
+                  <View style={styles.kwRow}>
+                    {binLocations.map((bin) => (
+                      <Pressable
+                        key={bin}
+                        onPress={() => removeBin(bin)}
+                        style={[styles.kwChip, { backgroundColor: colors.accent, borderColor: colors.warning + "55" }]}
+                      >
+                        <Text style={[styles.kwText, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>{bin}</Text>
+                        <Text style={[styles.kwRemove, { color: colors.mutedForeground }]}>✕</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  {binLocations.length === 0 ? (
+                    <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+                      No bins assigned.
+                    </Text>
+                  ) : null}
+                  <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 16 }]}>
+                    ADD BIN
+                  </Text>
+                  <View style={styles.addRow}>
+                    <TextInput
+                      value={newBin}
+                      onChangeText={(t) => { setNewBin(t); if (binError) setBinError(null); }}
+                      placeholder="e.g. 01-02-003"
+                      placeholderTextColor={colors.mutedForeground}
+                      style={[
+                        styles.addInput,
+                        {
+                          flex: 1,
+                          backgroundColor: colors.muted,
+                          borderColor: binError ? colors.destructive : colors.border,
+                          color: colors.foreground,
+                        },
+                      ]}
+                      onSubmitEditing={addBin}
+                      returnKeyType="done"
+                      autoCorrect={false}
+                      autoCapitalize="characters"
+                    />
+                    <Pressable
+                      onPress={addBin}
+                      style={[styles.addBtn, { backgroundColor: colors.primary }]}
+                    >
+                      <Text style={[styles.addBtnText, { color: colors.primaryForeground }]}>+ Add</Text>
+                    </Pressable>
+                  </View>
+                  {binError ? (
+                    <Text style={[styles.binError, { color: colors.destructive }]}>{binError}</Text>
+                  ) : null}
+                </>
               ) : null}
             </>
           ) : null}
@@ -834,6 +848,14 @@ const styles = StyleSheet.create({
   },
   addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   binError: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 6, lineHeight: 18 },
+  binCollapseRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  binChevron: { fontSize: 12 },
   footer: {
     padding: 16,
     borderTopWidth: 1,
