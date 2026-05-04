@@ -72,6 +72,7 @@ export function KeywordEditor({
 
   // Debounce timers — separate per field so a fast keyword tap doesn't keep
   // resetting the description debounce (and vice versa).
+  const kwInputRef = useRef<TextInput>(null);
   const kwDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const descDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tradeSizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -266,11 +267,13 @@ export function KeywordEditor({
     const trimmed = newKeyword.trim().toLowerCase();
     if (!trimmed || keywords.includes(trimmed)) {
       setNewKeyword("");
+      kwInputRef.current?.focus();
       return;
     }
     const next = [...keywords, trimmed];
     setNewKeyword("");
     handleKeywordsChange(next);
+    kwInputRef.current?.focus();
   };
 
   const removeKeyword = (kw: string) => {
@@ -562,6 +565,7 @@ export function KeywordEditor({
           </Text>
           <View style={styles.addRow}>
             <TextInput
+              ref={kwInputRef}
               value={newKeyword}
               onChangeText={setNewKeyword}
               placeholder="Type keyword and press Add…"
