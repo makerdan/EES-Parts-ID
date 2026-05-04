@@ -36,6 +36,8 @@ interface KeywordEditorProps {
   /** Called after the description is saved so parent can update local Fuse index
    *  and surface the new description on the underlying card. */
   onDescriptionChanged?: (id: number, description: string) => void;
+  /** Called after trade size is saved. */
+  onTradeSizeChanged?: (id: number, tradeSize: string | null) => void;
 }
 
 const DEBOUNCE_MS = 900;
@@ -47,6 +49,7 @@ export function KeywordEditor({
   onClose,
   onKeywordsChanged,
   onDescriptionChanged,
+  onTradeSizeChanged,
 }: KeywordEditorProps) {
   const colors = useColors();
   const queryClient = useQueryClient();
@@ -54,6 +57,7 @@ export function KeywordEditor({
   // ── Edited values ──────────────────────────────────────────────────────────
   const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
   const [description, setDescription] = useState<string>(item?.description ?? "");
+  const [tradeSize, setTradeSize] = useState<string>(item?.tradeSize ?? "");
   const [newKeyword, setNewKeyword] = useState("");
 
   // ── Save status — single badge reflects whichever field is in flight ───────
@@ -70,13 +74,16 @@ export function KeywordEditor({
   // resetting the description debounce (and vice versa).
   const kwDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const descDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tradeSizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const latestKeywordsRef = useRef<string[]>(keywords);
   const latestDescriptionRef = useRef<string>(description);
+  const latestTradeSizeRef = useRef<string>(tradeSize);
 
   // Last successfully persisted values
   const lastSavedKeywordsRef = useRef<string[]>(item?.aiKeywords ?? []);
   const lastSavedDescriptionRef = useRef<string>(item?.description ?? "");
+  const lastSavedTradeSizeRef = useRef<string>(item?.tradeSize ?? "");
 
   // Tracks whether a mutateAsync call is currently in flight
   const isSavingRef = useRef(false);
@@ -87,6 +94,7 @@ export function KeywordEditor({
     id: number;
     keywords?: string[];
     description?: string;
+    tradeSize?: string | null;
   } | null>(null);
 
   // Keep item in a ref so callbacks always see the latest value
@@ -97,14 +105,18 @@ export function KeywordEditor({
   useEffect(() => {
     const kws = item?.aiKeywords ?? [];
     const desc = item?.description ?? "";
+    const ts = item?.tradeSize ?? "";
     setKeywords(kws);
     setDescription(desc);
+    setTradeSize(ts);
     setSuggestion(null);
     setSuggestError(null);
     latestKeywordsRef.current = kws;
     latestDescriptionRef.current = desc;
+    latestTradeSizeRef.current = ts;
     lastSavedKeywordsRef.current = kws;
     lastSavedDescriptionRef.current = desc;
+    lastSavedTradeSizeRef.current = ts;
     setSaveStatus("idle");
   }, [item?.id]);
 
@@ -113,9 +125,9 @@ export function KeywordEditor({
   const persist = useCallback(
     async (
       id: number,
-      payload: { keywords?: string[]; description?: string },
+      payload: { keywords?: string[]; description?: string; tradeSize?: string | null },
     ) => {
-      if (payload.keywords === undefined && payload.description === undefined) return;
+      if (payload.keywords === undefined && payload.description === undefined && payload.tradeSize === undefined) return;
       isSavingRef.current = true;
       setSaveStatus("saving");
       try {
@@ -128,6 +140,11 @@ export function KeywordEditor({
           lastSavedDescriptionRef.current = payload.description;
           onDescriptionChanged?.(id, payload.description);
         }
+        if (payload.tradeSize !== undefined) {
+          const ts = payload.tradeSize ?? null;
+          lastSavedTradeSizeRef.current = ts ?? "";
+          onTradeSizeChanged?.(id, ts);
+        }
         await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
         setSaveStatus("saved");
         setTimeout(() => setSaveStatus("idle"), 1800);
@@ -139,9 +156,10 @@ export function KeywordEditor({
         const pending = postFlushRef.current;
         if (pending) {
           postFlushRef.current = null;
-          const next: { keywords?: string[]; description?: string } = {};
+          const next: { keywords?: string[]; description?: string; tradeSize?: string | null } = {};
           if (pending.keywords !== undefined) next.keywords = pending.keywords;
           if (pending.description !== undefined) next.description = pending.description;
+          if (pending.tradeSize !== undefined) next.tradeSize = pending.tradeSize;
           updateMutation
             .mutateAsync({ id: pending.id, data: next })
             .then(() => {
@@ -153,6 +171,11 @@ export function KeywordEditor({
                 lastSavedDescriptionRef.current = next.description;
                 onDescriptionChanged?.(pending.id, next.description);
               }
+              if (next.tradeSize !== undefined) {
+                const ts = next.tradeSize ?? null;
+                lastSavedTradeSizeRef.current = ts ?? "";
+                onTradeSizeChanged?.(pending.id, ts);
+              }
               queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
             })
             .catch((err) => {
@@ -161,7 +184,7 @@ export function KeywordEditor({
         }
       }
     },
-    [updateMutation, queryClient, onKeywordsChanged, onDescriptionChanged],
+    [updateMutation, queryClient, onKeywordsChanged, onDescriptionChanged, onTradeSizeChanged],
   );
 
   // Debounced save for keywords
@@ -198,11 +221,29 @@ export function KeywordEditor({
     [persist],
   );
 
+  // Debounced save for trade size
+  const triggerTradeSizeSave = useCallback(
+    (ts: string) => {
+      const current = itemRef.current;
+      if (!current) return;
+      latestTradeSizeRef.current = ts;
+      if (tradeSizeDebounceRef.current) clearTimeout(tradeSizeDebounceRef.current);
+      setSaveStatus("idle");
+      tradeSizeDebounceRef.current = setTimeout(async () => {
+        tradeSizeDebounceRef.current = null;
+        if (isSavingRef.current) return;
+        await persist(current.id, { tradeSize: ts.trim() === "" ? null : ts.trim() });
+      }, DEBOUNCE_MS);
+    },
+    [persist],
+  );
+
   // Cleanup timers on unmount
   useEffect(() => {
     return () => {
       if (kwDebounceRef.current) clearTimeout(kwDebounceRef.current);
       if (descDebounceRef.current) clearTimeout(descDebounceRef.current);
+      if (tradeSizeDebounceRef.current) clearTimeout(tradeSizeDebounceRef.current);
     };
   }, []);
 
@@ -214,6 +255,11 @@ export function KeywordEditor({
   const handleDescriptionChange = (next: string) => {
     setDescription(next);
     triggerDescriptionSave(next);
+  };
+
+  const handleTradeSizeChange = (next: string) => {
+    setTradeSize(next);
+    triggerTradeSizeSave(next);
   };
 
   const addKeyword = () => {
@@ -269,17 +315,24 @@ export function KeywordEditor({
       clearTimeout(descDebounceRef.current);
       descDebounceRef.current = null;
     }
+    if (tradeSizeDebounceRef.current) {
+      clearTimeout(tradeSizeDebounceRef.current);
+      tradeSizeDebounceRef.current = null;
+    }
 
     if (current) {
       const latestKws = latestKeywordsRef.current;
       const latestDesc = latestDescriptionRef.current;
+      const latestTs = latestTradeSizeRef.current;
       const kwsDirty = JSON.stringify(latestKws) !== JSON.stringify(lastSavedKeywordsRef.current);
       const descDirty = latestDesc !== lastSavedDescriptionRef.current;
+      const tsDirty = latestTs !== lastSavedTradeSizeRef.current;
 
-      if (kwsDirty || descDirty) {
-        const payload: { keywords?: string[]; description?: string } = {};
+      if (kwsDirty || descDirty || tsDirty) {
+        const payload: { keywords?: string[]; description?: string; tradeSize?: string | null } = {};
         if (kwsDirty) payload.keywords = [...latestKws];
         if (descDirty) payload.description = latestDesc;
+        if (tsDirty) payload.tradeSize = latestTs.trim() === "" ? null : latestTs.trim();
 
         if (!isSavingRef.current) {
           // No save in flight — flush immediately
@@ -295,6 +348,11 @@ export function KeywordEditor({
                 lastSavedDescriptionRef.current = payload.description;
                 onDescriptionChanged?.(current.id, payload.description);
               }
+              if (payload.tradeSize !== undefined) {
+                const ts = payload.tradeSize ?? null;
+                lastSavedTradeSizeRef.current = ts ?? "";
+                onTradeSizeChanged?.(current.id, ts);
+              }
               queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
             })
             .catch((err) => {
@@ -306,9 +364,10 @@ export function KeywordEditor({
         } else {
           // A save is in flight (with older data) — queue the latest snapshot
           // so the in-flight save's finally block can fire one follow-up flush.
-          const queued: { id: number; keywords?: string[]; description?: string } = { id: current.id };
+          const queued: { id: number; keywords?: string[]; description?: string; tradeSize?: string | null } = { id: current.id };
           if (payload.keywords !== undefined) queued.keywords = payload.keywords;
           if (payload.description !== undefined) queued.description = payload.description;
+          if (payload.tradeSize !== undefined) queued.tradeSize = payload.tradeSize;
           postFlushRef.current = queued;
         }
       }
@@ -449,6 +508,27 @@ export function KeywordEditor({
               </View>
             </View>
           ) : null}
+
+          {/* ── Trade Size ────────────────────────────────────────────── */}
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
+            TRADE SIZE
+          </Text>
+          <Text style={[styles.subHint, { color: colors.mutedForeground }]}>
+            Groups this part with others of the same product in different sizes.
+          </Text>
+          <TextInput
+            value={tradeSize}
+            onChangeText={handleTradeSizeChange}
+            placeholder={`e.g. 1/2", 3/4", 1"…`}
+            placeholderTextColor={colors.mutedForeground}
+            style={[
+              styles.tradeSizeInput,
+              { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+            ]}
+            autoCorrect={false}
+            autoCapitalize="none"
+            returnKeyType="done"
+          />
 
           {/* ── Keywords ──────────────────────────────────────────────── */}
           <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
@@ -616,6 +696,14 @@ const styles = StyleSheet.create({
   kwRemove: { fontSize: 11 },
   emptyHint: { fontSize: 13, fontFamily: "Inter_400Regular", fontStyle: "italic" },
   addRow: { flexDirection: "row", gap: 8 },
+  tradeSizeInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+  },
   addInput: {
     borderWidth: 1,
     borderRadius: 8,
