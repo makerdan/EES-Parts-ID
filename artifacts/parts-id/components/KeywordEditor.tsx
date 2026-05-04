@@ -26,6 +26,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
+import { ErrorBanner } from "@/components/ErrorBanner";
 
 interface KeywordEditorProps {
   item: InventoryItem | null;
@@ -417,9 +418,7 @@ export function KeywordEditor({
           </Pressable>
 
           {suggestError ? (
-            <Text style={[styles.suggestError, { color: "#ef4444" }]}>
-              {suggestError}
-            </Text>
+            <ErrorBanner message={suggestError} />
           ) : null}
 
           {suggestion ? (

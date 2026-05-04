@@ -25,6 +25,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import {
   nodeAtPath,
   visibleChildren,
@@ -144,10 +145,7 @@ export default function BrowseTaxonomy({
   if (tree.length === 0 && error) {
     return (
       <View style={[styles.container, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.errorText, { color: colors.destructive }]}>Could not load categories.</Text>
-        <Text style={[styles.muted, { color: colors.mutedForeground, marginTop: 4 }]}>
-          Connect to the network and try again.
-        </Text>
+        <ErrorBanner message="Categories unavailable — connect to the network and try again." />
       </View>
     );
   }
@@ -253,5 +251,4 @@ const styles = StyleSheet.create({
   rowMeta: { fontSize: 12, marginTop: 2 },
   sep: { height: StyleSheet.hairlineWidth },
   muted: { fontSize: 12, textAlign: "center" },
-  errorText: { fontSize: 14, textAlign: "center" },
 });

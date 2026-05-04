@@ -40,6 +40,7 @@ import {
 
 import { useColors } from "@/hooks/useColors";
 import { ReferenceModal } from "@/components/ReferenceModal";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { useApp } from "@/contexts/AppContext";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
@@ -1518,10 +1519,10 @@ export default function UploadScreen() {
         <>
           {/* Inline error/success banners */}
           {uploadError ? (
-            <View style={[styles.inlineBanner, styles.errorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
-              <Text style={[styles.inlineBannerText, { color: colors.destructive }]}>⚠ {uploadError}</Text>
-              <Pressable onPress={() => setUploadError(null)} style={styles.bannerClose}>
-                <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
+            <View style={styles.errorBannerWrap}>
+              <ErrorBanner message={uploadError} />
+              <Pressable onPress={() => setUploadError(null)} style={styles.bannerDismiss} hitSlop={8}>
+                <Text style={{ color: colors.mutedForeground, fontSize: 18, lineHeight: 20 }}>✕</Text>
               </Pressable>
             </View>
           ) : null}
@@ -1832,11 +1833,7 @@ export default function UploadScreen() {
 
                 {/* Bulk job error */}
                 {(bulkJobStatus?.lastError || bulkEnrichError) ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.destructive }]}>
-                      ⚠ {bulkEnrichError ?? bulkJobStatus?.lastError}
-                    </Text>
-                  </View>
+                  <ErrorBanner message={bulkEnrichError ?? bulkJobStatus?.lastError ?? "Enrichment error"} />
                 ) : null}
 
                 {/* Start / running button */}
@@ -1908,11 +1905,7 @@ export default function UploadScreen() {
 
                 {/* Error */}
                 {(measureJobStatus?.lastError || measureEnrichError) ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.destructive }]}>
-                      ⚠ {measureEnrichError ?? measureJobStatus?.lastError}
-                    </Text>
-                  </View>
+                  <ErrorBanner message={measureEnrichError ?? measureJobStatus?.lastError ?? "Enrichment error"} />
                 ) : null}
 
                 <Pressable
@@ -2097,9 +2090,7 @@ export default function UploadScreen() {
                 ) : null}
 
                 {catalogPdfError ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.destructive }]}>⚠ {catalogPdfError}</Text>
-                  </View>
+                  <ErrorBanner message={catalogPdfError} />
                 ) : null}
 
                 {/* Recent enrichment runs — each can be reverted to restore
@@ -2702,8 +2693,9 @@ const styles = StyleSheet.create({
   enrichSmallText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: "center", marginTop: 8 },
   loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  errorBannerWrap: { flexDirection: "row", alignItems: "center", paddingRight: 8 },
+  bannerDismiss: { paddingLeft: 6, paddingVertical: 4 },
   inlineBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
-  errorBanner: {},
   successBanner: {},
   inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
   bannerClose: { paddingLeft: 10 },
