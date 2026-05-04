@@ -402,7 +402,13 @@ export default function SearchScreen() {
 
   // Fetch all inventory items in pages and build the Fuse cache
   const syncAllInventory = useCallback(async (serverVersion?: string) => {
-    const PAGE_SIZE = 500;
+    // 1 000 matches the server-side cap so each request returns as many rows
+    // as possible, keeping the total page count low and reducing the chance
+    // of a transient network failure breaking the loop.
+    const PAGE_SIZE = 1000;
+    // 30 s per page — long enough for a slow mobile connection, short enough
+    // to surface a hung request quickly so the retry banner appears promptly.
+    const PAGE_TIMEOUT_MS = 30_000;
     let page = 1;
     let total = 0;
     const allItems: InventoryItem[] = [];
@@ -411,7 +417,17 @@ export default function SearchScreen() {
     syncStartedAtRef.current = Date.now();
     try {
       do {
-        const res = await fetch(`${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS);
+        let res: Response;
+        try {
+          res = await fetch(
+            `${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`,
+            { signal: controller.signal },
+          );
+        } finally {
+          clearTimeout(timeoutId);
+        }
         if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
         const data: { items: InventoryItem[]; total: number } = await res.json();
         // Guard: if the page returned zero items, the server total may be inconsistent —
