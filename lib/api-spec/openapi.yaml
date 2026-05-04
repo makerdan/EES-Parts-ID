@@ -677,6 +677,13 @@ components:
           type: string
           format: date-time
           nullable: true
+        tradeSize:
+          type: string
+          nullable: true
+          description: |
+            User-set trade size that groups this part with others of the same
+            product type but different physical sizes (e.g. `1/2"`, `3/4"`,
+            `1"`). `null` when not assigned.
         vendorFullName:
           type: string
           nullable: true
@@ -1020,6 +1027,10 @@ components:
           items:
             type: string
           description: Replacement AI keywords array.
+        tradeSize:
+          type: string
+          nullable: true
+          description: Trade size to assign (e.g. `1/2"`, `3/4"`). Null clears the value. Omit to leave unchanged.
       required: []
 
     SuggestDescriptionResponse:

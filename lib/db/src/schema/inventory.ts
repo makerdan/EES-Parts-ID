@@ -33,6 +33,7 @@ export const inventoryTable = pgTable(
       .array()
       .notNull()
       .default(sql`ARRAY[]::text[]`),
+    tradeSize: text("trade_size"),
     enrichedAt: timestamp("enriched_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),

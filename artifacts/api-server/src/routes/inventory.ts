@@ -1202,13 +1202,14 @@ router.patch("/:id", async (req, res) => {
       return void res.status(400).json({ error: "id must be a positive integer" });
     }
 
-    const body = (req.body ?? {}) as { description?: unknown; keywords?: unknown };
+    const body = (req.body ?? {}) as { description?: unknown; keywords?: unknown; tradeSize?: unknown };
     const hasDescription = Object.prototype.hasOwnProperty.call(body, "description");
     const hasKeywords = Object.prototype.hasOwnProperty.call(body, "keywords");
+    const hasTradeSize = Object.prototype.hasOwnProperty.call(body, "tradeSize");
 
-    if (!hasDescription && !hasKeywords) {
+    if (!hasDescription && !hasKeywords && !hasTradeSize) {
       return void res.status(400).json({
-        error: "Provide at least one of `description` or `keywords` to update.",
+        error: "Provide at least one of `description`, `keywords`, or `tradeSize` to update.",
       });
     }
 
@@ -1228,6 +1229,13 @@ router.patch("/:id", async (req, res) => {
         return void res.status(400).json({ error: "keywords must be an array of strings" });
       }
       updates.aiKeywords = body.keywords as string[];
+    }
+
+    if (hasTradeSize) {
+      if (body.tradeSize !== null && typeof body.tradeSize !== "string") {
+        return void res.status(400).json({ error: "tradeSize must be a string or null" });
+      }
+      updates.tradeSize = (body.tradeSize as string | null) ?? null;
     }
 
     const [updated] = await db
