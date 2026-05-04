@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Animated,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   type NativeScrollEvent,
@@ -691,6 +692,7 @@ export default function SearchScreen() {
       flashSyncBadge();
       return;
     }
+    Keyboard.dismiss();
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
