@@ -448,6 +448,7 @@ const gateStyles = StyleSheet.create({
 export default function UploadScreen() {
   const colors = useColors();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
+  const [showRefModal, setShowRefModal] = useState(false);
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
@@ -2317,7 +2318,7 @@ export default function UploadScreen() {
         </>
       )}
 
-      <ReferenceModal />
+      <ReferenceModal open={showRefModal} onClose={() => setShowRefModal(false)} />
 
       {/* ── Catalog PDF: per-row review of uncertain matches ──────────────── */}
       <Modal
