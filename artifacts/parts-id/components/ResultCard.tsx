@@ -250,10 +250,21 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
   // should never list itself as a "related" size. Server-side filtering
   // already drops result IDs from variant lists, but we belt-and-suspender
   // here in case a variant rolls into the current item via id collision.
-  const filteredVariants = React.useMemo(
-    () => (variants ?? []).filter(v => v.id !== item.id),
-    [variants, item.id],
-  );
+  const filteredVariants = React.useMemo(() => {
+    const list = (variants ?? []).filter(v => v.id !== item.id);
+    const sizeOf = (v: InventoryItem): number | null =>
+      parseTradeSizeInches(v.tradeSize) ??
+      parseTradeSizeInches(v.catalog) ??
+      parseTradeSizeInches(v.description);
+    return [...list].sort((a, b) => {
+      const sa = sizeOf(a);
+      const sb = sizeOf(b);
+      if (sa === null && sb === null) return 0;
+      if (sa === null) return 1;   // unsized → end
+      if (sb === null) return -1;
+      return sa - sb;
+    });
+  }, [variants, item.id]);
   const hasVariants = filteredVariants.length > 0;
   const variantCount = filteredVariants.length;
   const hasKeywords = item.aiKeywords && item.aiKeywords.length > 0;
