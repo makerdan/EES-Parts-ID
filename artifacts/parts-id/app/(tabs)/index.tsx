@@ -345,6 +345,7 @@ export default function SearchScreen() {
   const [cachedCount, setCachedCount] = useState(0);
   const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [syncError, setSyncError] = useState(false);
+  const [syncRetry, setSyncRetry] = useState<{ attempt: number; max: number } | null>(null);
   // Explicit "sync is running" flag — set true the moment syncAllInventory starts
   // (before the first page returns), so the search guard fires even during the
   // initial fetch latency before syncProgress has any value.
@@ -402,20 +403,19 @@ export default function SearchScreen() {
 
   // Fetch all inventory items in pages and build the Fuse cache
   const syncAllInventory = useCallback(async (serverVersion?: string) => {
-    // 1 000 matches the server-side cap so each request returns as many rows
-    // as possible, keeping the total page count low and reducing the chance
-    // of a transient network failure breaking the loop.
     const PAGE_SIZE = 1000;
-    // 30 s per page — long enough for a slow mobile connection, short enough
-    // to surface a hung request quickly so the retry banner appears promptly.
     const PAGE_TIMEOUT_MS = 30_000;
-    let page = 1;
-    let total = 0;
-    const allItems: InventoryItem[] = [];
-    setSyncError(false);
-    setIsSyncing(true);
-    syncStartedAtRef.current = Date.now();
-    try {
+    // Automatically retry up to MAX_AUTO_RETRIES times before giving up and
+    // showing the manual-retry banner. Backoff doubles each attempt: 2 s, 4 s,
+    // 8 s. The banner shows "Retrying (1/3)…" so workers know something is
+    // happening without needing to act.
+    const MAX_AUTO_RETRIES = 3;
+
+    // Inner function: one full sync attempt (all pages + secondary caches).
+    const attemptSync = async () => {
+      let page = 1;
+      let total = 0;
+      const allItems: InventoryItem[] = [];
       do {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS);
@@ -430,18 +430,16 @@ export default function SearchScreen() {
         }
         if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
         const data: { items: InventoryItem[]; total: number } = await res.json();
-        // Guard: if the page returned zero items, the server total may be inconsistent —
-        // stop looping to prevent an infinite loop.
         if (data.items.length === 0) break;
         total = data.total;
         allItems.push(...data.items);
         setSyncProgress({ loaded: allItems.length, total });
         page++;
       } while (allItems.length < total);
+
       buildFuseIndex(allItems);
       const ops: [string, string][] = [[FUSE_CACHE_KEY, JSON.stringify(allItems)]];
       if (serverVersion) ops.push([INVENTORY_VERSION_KEY, serverVersion]);
-      // Cache assignments + tree for offline Browse. Non-fatal on failure.
       try {
         const aRes = await fetch(`${API_BASE}/categories/assignments`);
         if (aRes.ok) {
@@ -461,13 +459,39 @@ export default function SearchScreen() {
         }
       } catch { /* keep prior cache */ }
       await AsyncStorage.multiSet(ops);
-    } catch {
-      setSyncError(true);
-    } finally {
-      setSyncProgress(null);
-      setIsSyncing(false);
-      syncStartedAtRef.current = null;
+    };
+
+    setSyncError(false);
+    setSyncRetry(null);
+    setIsSyncing(true);
+    syncStartedAtRef.current = Date.now();
+
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= MAX_AUTO_RETRIES; attempt++) {
+      if (attempt > 0) {
+        // Show "Retrying (n/MAX)…" and wait with exponential backoff.
+        setSyncRetry({ attempt, max: MAX_AUTO_RETRIES });
+        setSyncProgress(null);
+        await new Promise<void>(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+      }
+      try {
+        await attemptSync();
+        // Success — clear any retry indicator and exit.
+        setSyncRetry(null);
+        lastErr = undefined;
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
     }
+
+    if (lastErr !== undefined) {
+      setSyncError(true);
+    }
+    setSyncProgress(null);
+    setSyncRetry(null);
+    setIsSyncing(false);
+    syncStartedAtRef.current = null;
   }, [buildFuseIndex]);
 
   // Auto-dismiss the warning popup the moment sync finishes — prevents the modal
@@ -992,6 +1016,13 @@ export default function SearchScreen() {
                 <ActivityIndicator size={10} color={colors.mutedForeground} style={{ marginRight: 4 }} />
                 <Text style={[styles.statusBadgeText, { color: colors.mutedForeground }]}>
                   {`Syncing ${syncProgress.loaded} / ${syncProgress.total}`}
+                </Text>
+              </Animated.View>
+            ) : syncRetry ? (
+              <Animated.View style={[styles.statusBadge, { backgroundColor: colors.warning + "22", opacity: syncPulse }]}>
+                <ActivityIndicator size={10} color={colors.warning} style={{ marginRight: 4 }} />
+                <Text style={[styles.statusBadgeText, { color: colors.warning }]}>
+                  {`Retrying (${syncRetry.attempt}/${syncRetry.max})…`}
                 </Text>
               </Animated.View>
             ) : syncError ? (
