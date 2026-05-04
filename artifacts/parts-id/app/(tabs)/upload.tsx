@@ -575,11 +575,13 @@ export default function UploadScreen() {
   const [bulkEnrichError, setBulkEnrichError] = useState<string | null>(null);
   const [bulkEnrichPending, setBulkEnrichPending] = useState(false);
   const [bulkStopPending, setBulkStopPending] = useState(false);
+  const [bulkServerErrorDismissed, setBulkServerErrorDismissed] = useState(false);
 
   // Measurement enrichment state
   const [measureJobStatus, setMeasureJobStatus] = useState<MeasureJobStatus | null>(null);
   const [measureEnrichError, setMeasureEnrichError] = useState<string | null>(null);
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
+  const [measureServerErrorDismissed, setMeasureServerErrorDismissed] = useState(false);
 
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50, unenrichedOnly: true });
   // Stable ref so callbacks (e.g. bulk poll interval) can refetch without
@@ -729,6 +731,10 @@ export default function UploadScreen() {
 
   // Clean up polling on unmount
   useEffect(() => () => { stopBulkPoll(); stopMeasurePoll(); }, [stopBulkPoll, stopMeasurePoll]);
+
+  // Reset server-error dismissed flags whenever a new lastError value arrives
+  useEffect(() => { setBulkServerErrorDismissed(false); }, [bulkJobStatus?.lastError]);
+  useEffect(() => { setMeasureServerErrorDismissed(false); }, [measureJobStatus?.lastError]);
 
   // Fetch the supported catalog vendors so the picker shows real options.
   // Falls back to a Bridgeport-only list if the call fails (older server).
@@ -1827,10 +1833,12 @@ export default function UploadScreen() {
                 ) : null}
 
                 {/* Bulk job error */}
-                {(bulkJobStatus?.lastError || bulkEnrichError) ? (
+                {(bulkEnrichError || (bulkJobStatus?.lastError && !bulkServerErrorDismissed)) ? (
                   <ErrorBanner
                     message={bulkEnrichError ?? bulkJobStatus?.lastError ?? "Enrichment error"}
-                    onDismiss={bulkEnrichError ? () => setBulkEnrichError(null) : undefined}
+                    onDismiss={bulkEnrichError
+                      ? () => setBulkEnrichError(null)
+                      : () => setBulkServerErrorDismissed(true)}
                   />
                 ) : null}
 
@@ -1902,10 +1910,12 @@ export default function UploadScreen() {
                 ) : null}
 
                 {/* Error */}
-                {(measureJobStatus?.lastError || measureEnrichError) ? (
+                {(measureEnrichError || (measureJobStatus?.lastError && !measureServerErrorDismissed)) ? (
                   <ErrorBanner
                     message={measureEnrichError ?? measureJobStatus?.lastError ?? "Enrichment error"}
-                    onDismiss={measureEnrichError ? () => setMeasureEnrichError(null) : undefined}
+                    onDismiss={measureEnrichError
+                      ? () => setMeasureEnrichError(null)
+                      : () => setMeasureServerErrorDismissed(true)}
                   />
                 ) : null}
 
