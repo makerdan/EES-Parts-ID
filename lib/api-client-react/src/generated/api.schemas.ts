@@ -218,6 +218,8 @@ export interface UpdateInventoryItemBody {
   keywords?: string[];
   /** Trade size to assign (e.g. `1/2"`, `3/4"`). Null clears the value. Omit to leave unchanged. */
   tradeSize?: string | null;
+  /** Replacement bin locations array. Omit to leave unchanged. */
+  binLocations?: string[];
 }
 
 export interface SuggestDescriptionResponse {
