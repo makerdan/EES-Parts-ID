@@ -165,7 +165,7 @@ function VariantRow({
       </Text>
       {hasSize ? (
         <Text
-          style={[varStyles.size, { color: colors.foreground, fontSize: fs(26) }]}
+          style={[varStyles.size, { color: colors.foreground, fontSize: fs(13) }]}
           numberOfLines={1}
           ellipsizeMode="tail"
         >
@@ -173,7 +173,7 @@ function VariantRow({
         </Text>
       ) : (
         <Text
-          style={[varStyles.sizeEmpty, { color: colors.mutedForeground, fontSize: fs(26) }]}
+          style={[varStyles.sizeEmpty, { color: colors.mutedForeground, fontSize: fs(13) }]}
           numberOfLines={1}
         >
           —
