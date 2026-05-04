@@ -1203,14 +1203,15 @@ router.patch("/:id", async (req, res) => {
       return void res.status(400).json({ error: "id must be a positive integer" });
     }
 
-    const body = (req.body ?? {}) as { description?: unknown; keywords?: unknown; tradeSize?: unknown };
+    const body = (req.body ?? {}) as { description?: unknown; keywords?: unknown; tradeSize?: unknown; binLocations?: unknown };
     const hasDescription = Object.prototype.hasOwnProperty.call(body, "description");
     const hasKeywords = Object.prototype.hasOwnProperty.call(body, "keywords");
     const hasTradeSize = Object.prototype.hasOwnProperty.call(body, "tradeSize");
+    const hasBinLocations = Object.prototype.hasOwnProperty.call(body, "binLocations");
 
-    if (!hasDescription && !hasKeywords && !hasTradeSize) {
+    if (!hasDescription && !hasKeywords && !hasTradeSize && !hasBinLocations) {
       return void res.status(400).json({
-        error: "Provide at least one of `description`, `keywords`, or `tradeSize` to update.",
+        error: "Provide at least one of `description`, `keywords`, `tradeSize`, or `binLocations` to update.",
       });
     }
 
@@ -1237,6 +1238,13 @@ router.patch("/:id", async (req, res) => {
         return void res.status(400).json({ error: "tradeSize must be a string or null" });
       }
       updates.tradeSize = (body.tradeSize as string | null) ?? null;
+    }
+
+    if (hasBinLocations) {
+      if (!Array.isArray(body.binLocations) || !body.binLocations.every(b => typeof b === "string")) {
+        return void res.status(400).json({ error: "binLocations must be an array of strings" });
+      }
+      updates.binLocations = dedupeBinsCaseInsensitive(body.binLocations as string[]);
     }
 
     const [updated] = await db

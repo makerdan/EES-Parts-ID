@@ -27,6 +27,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { useApp } from "@/contexts/AppContext";
 
 interface KeywordEditorProps {
   item: InventoryItem | null;
@@ -53,12 +54,16 @@ export function KeywordEditor({
 }: KeywordEditorProps) {
   const colors = useColors();
   const queryClient = useQueryClient();
+  const { isAdmin } = useApp();
 
   // ── Edited values ──────────────────────────────────────────────────────────
   const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
   const [description, setDescription] = useState<string>(item?.description ?? "");
   const [tradeSize, setTradeSize] = useState<string>(item?.tradeSize ?? "");
+  const [binLocations, setBinLocations] = useState<string[]>(item?.binLocations ?? []);
   const [newKeyword, setNewKeyword] = useState("");
+  const [newBin, setNewBin] = useState("");
+  const [binError, setBinError] = useState<string | null>(null);
 
   // ── Save status — single badge reflects whichever field is in flight ───────
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
@@ -76,15 +81,18 @@ export function KeywordEditor({
   const kwDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const descDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tradeSizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const binDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const latestKeywordsRef = useRef<string[]>(keywords);
   const latestDescriptionRef = useRef<string>(description);
   const latestTradeSizeRef = useRef<string>(tradeSize);
+  const latestBinsRef = useRef<string[]>(binLocations);
 
   // Last successfully persisted values
   const lastSavedKeywordsRef = useRef<string[]>(item?.aiKeywords ?? []);
   const lastSavedDescriptionRef = useRef<string>(item?.description ?? "");
   const lastSavedTradeSizeRef = useRef<string>(item?.tradeSize ?? "");
+  const lastSavedBinsRef = useRef<string[]>(item?.binLocations ?? []);
 
   // Tracks whether a mutateAsync call is currently in flight
   const isSavingRef = useRef(false);
@@ -96,6 +104,7 @@ export function KeywordEditor({
     keywords?: string[];
     description?: string;
     tradeSize?: string | null;
+    binLocations?: string[];
   } | null>(null);
 
   // Keep item in a ref so callbacks always see the latest value
@@ -107,17 +116,23 @@ export function KeywordEditor({
     const kws = item?.aiKeywords ?? [];
     const desc = item?.description ?? "";
     const ts = item?.tradeSize ?? "";
+    const bins = item?.binLocations ?? [];
     setKeywords(kws);
     setDescription(desc);
     setTradeSize(ts);
+    setBinLocations(bins);
     setSuggestion(null);
     setSuggestError(null);
+    setNewBin("");
+    setBinError(null);
     latestKeywordsRef.current = kws;
     latestDescriptionRef.current = desc;
     latestTradeSizeRef.current = ts;
+    latestBinsRef.current = bins;
     lastSavedKeywordsRef.current = kws;
     lastSavedDescriptionRef.current = desc;
     lastSavedTradeSizeRef.current = ts;
+    lastSavedBinsRef.current = bins;
     setSaveStatus("idle");
   }, [item?.id]);
 
@@ -126,9 +141,9 @@ export function KeywordEditor({
   const persist = useCallback(
     async (
       id: number,
-      payload: { keywords?: string[]; description?: string; tradeSize?: string | null },
+      payload: { keywords?: string[]; description?: string; tradeSize?: string | null; binLocations?: string[] },
     ) => {
-      if (payload.keywords === undefined && payload.description === undefined && payload.tradeSize === undefined) return;
+      if (payload.keywords === undefined && payload.description === undefined && payload.tradeSize === undefined && payload.binLocations === undefined) return;
       isSavingRef.current = true;
       setSaveStatus("saving");
       try {
@@ -146,6 +161,9 @@ export function KeywordEditor({
           lastSavedTradeSizeRef.current = ts ?? "";
           onTradeSizeChanged?.(id, ts);
         }
+        if (payload.binLocations !== undefined) {
+          lastSavedBinsRef.current = payload.binLocations;
+        }
         await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
         setSaveStatus("saved");
         setTimeout(() => setSaveStatus("idle"), 1800);
@@ -157,10 +175,11 @@ export function KeywordEditor({
         const pending = postFlushRef.current;
         if (pending) {
           postFlushRef.current = null;
-          const next: { keywords?: string[]; description?: string; tradeSize?: string | null } = {};
+          const next: { keywords?: string[]; description?: string; tradeSize?: string | null; binLocations?: string[] } = {};
           if (pending.keywords !== undefined) next.keywords = pending.keywords;
           if (pending.description !== undefined) next.description = pending.description;
           if (pending.tradeSize !== undefined) next.tradeSize = pending.tradeSize;
+          if (pending.binLocations !== undefined) next.binLocations = pending.binLocations;
           updateMutation
             .mutateAsync({ id: pending.id, data: next })
             .then(() => {
@@ -176,6 +195,9 @@ export function KeywordEditor({
                 const ts = next.tradeSize ?? null;
                 lastSavedTradeSizeRef.current = ts ?? "";
                 onTradeSizeChanged?.(pending.id, ts);
+              }
+              if (next.binLocations !== undefined) {
+                lastSavedBinsRef.current = next.binLocations;
               }
               queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
             })
@@ -239,12 +261,30 @@ export function KeywordEditor({
     [persist],
   );
 
+  // Debounced save for bin locations
+  const triggerBinsSave = useCallback(
+    (bins: string[]) => {
+      const current = itemRef.current;
+      if (!current) return;
+      latestBinsRef.current = bins;
+      if (binDebounceRef.current) clearTimeout(binDebounceRef.current);
+      setSaveStatus("idle");
+      binDebounceRef.current = setTimeout(async () => {
+        binDebounceRef.current = null;
+        if (isSavingRef.current) return;
+        await persist(current.id, { binLocations: bins });
+      }, DEBOUNCE_MS);
+    },
+    [persist],
+  );
+
   // Cleanup timers on unmount
   useEffect(() => {
     return () => {
       if (kwDebounceRef.current) clearTimeout(kwDebounceRef.current);
       if (descDebounceRef.current) clearTimeout(descDebounceRef.current);
       if (tradeSizeDebounceRef.current) clearTimeout(tradeSizeDebounceRef.current);
+      if (binDebounceRef.current) clearTimeout(binDebounceRef.current);
     };
   }, []);
 
@@ -261,6 +301,34 @@ export function KeywordEditor({
   const handleTradeSizeChange = (next: string) => {
     setTradeSize(next);
     triggerTradeSizeSave(next);
+  };
+
+  const handleBinsChange = (next: string[]) => {
+    setBinLocations(next);
+    triggerBinsSave(next);
+  };
+
+  const BIN_PATTERN = /^\d{2}-\d{2}-\d{3}$/;
+
+  const addBin = () => {
+    const trimmed = newBin.trim().toUpperCase();
+    if (!trimmed) return;
+    if (!BIN_PATTERN.test(trimmed)) {
+      setBinError("Format must be ##-##-### (e.g. 01-02-003)");
+      return;
+    }
+    if (binLocations.map(b => b.toUpperCase()).includes(trimmed)) {
+      setNewBin("");
+      setBinError(null);
+      return;
+    }
+    setBinError(null);
+    setNewBin("");
+    handleBinsChange([...binLocations, trimmed]);
+  };
+
+  const removeBin = (bin: string) => {
+    handleBinsChange(binLocations.filter(b => b !== bin));
   };
 
   const addKeyword = () => {
@@ -310,67 +378,47 @@ export function KeywordEditor({
   const handleClose = () => {
     const current = itemRef.current;
     // Cancel any pending debounce timers
-    if (kwDebounceRef.current) {
-      clearTimeout(kwDebounceRef.current);
-      kwDebounceRef.current = null;
-    }
-    if (descDebounceRef.current) {
-      clearTimeout(descDebounceRef.current);
-      descDebounceRef.current = null;
-    }
-    if (tradeSizeDebounceRef.current) {
-      clearTimeout(tradeSizeDebounceRef.current);
-      tradeSizeDebounceRef.current = null;
-    }
+    if (kwDebounceRef.current) { clearTimeout(kwDebounceRef.current); kwDebounceRef.current = null; }
+    if (descDebounceRef.current) { clearTimeout(descDebounceRef.current); descDebounceRef.current = null; }
+    if (tradeSizeDebounceRef.current) { clearTimeout(tradeSizeDebounceRef.current); tradeSizeDebounceRef.current = null; }
+    if (binDebounceRef.current) { clearTimeout(binDebounceRef.current); binDebounceRef.current = null; }
 
     if (current) {
       const latestKws = latestKeywordsRef.current;
       const latestDesc = latestDescriptionRef.current;
       const latestTs = latestTradeSizeRef.current;
+      const latestBins = latestBinsRef.current;
       const kwsDirty = JSON.stringify(latestKws) !== JSON.stringify(lastSavedKeywordsRef.current);
       const descDirty = latestDesc !== lastSavedDescriptionRef.current;
       const tsDirty = latestTs !== lastSavedTradeSizeRef.current;
+      const binsDirty = JSON.stringify(latestBins) !== JSON.stringify(lastSavedBinsRef.current);
 
-      if (kwsDirty || descDirty || tsDirty) {
-        const payload: { keywords?: string[]; description?: string; tradeSize?: string | null } = {};
+      if (kwsDirty || descDirty || tsDirty || binsDirty) {
+        const payload: { keywords?: string[]; description?: string; tradeSize?: string | null; binLocations?: string[] } = {};
         if (kwsDirty) payload.keywords = [...latestKws];
         if (descDirty) payload.description = latestDesc;
         if (tsDirty) payload.tradeSize = latestTs.trim() === "" ? null : latestTs.trim();
+        if (binsDirty) payload.binLocations = [...latestBins];
 
         if (!isSavingRef.current) {
-          // No save in flight — flush immediately
           isSavingRef.current = true;
           updateMutation
             .mutateAsync({ id: current.id, data: payload })
             .then(() => {
-              if (payload.keywords !== undefined) {
-                lastSavedKeywordsRef.current = payload.keywords;
-                onKeywordsChanged?.(current.id, payload.keywords);
-              }
-              if (payload.description !== undefined) {
-                lastSavedDescriptionRef.current = payload.description;
-                onDescriptionChanged?.(current.id, payload.description);
-              }
-              if (payload.tradeSize !== undefined) {
-                const ts = payload.tradeSize ?? null;
-                lastSavedTradeSizeRef.current = ts ?? "";
-                onTradeSizeChanged?.(current.id, ts);
-              }
+              if (payload.keywords !== undefined) { lastSavedKeywordsRef.current = payload.keywords; onKeywordsChanged?.(current.id, payload.keywords); }
+              if (payload.description !== undefined) { lastSavedDescriptionRef.current = payload.description; onDescriptionChanged?.(current.id, payload.description); }
+              if (payload.tradeSize !== undefined) { const ts = payload.tradeSize ?? null; lastSavedTradeSizeRef.current = ts ?? ""; onTradeSizeChanged?.(current.id, ts); }
+              if (payload.binLocations !== undefined) { lastSavedBinsRef.current = payload.binLocations; }
               queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
             })
-            .catch((err) => {
-              console.warn("KeywordEditor: background save on close failed:", err);
-            })
-            .finally(() => {
-              isSavingRef.current = false;
-            });
+            .catch((err) => { console.warn("KeywordEditor: background save on close failed:", err); })
+            .finally(() => { isSavingRef.current = false; });
         } else {
-          // A save is in flight (with older data) — queue the latest snapshot
-          // so the in-flight save's finally block can fire one follow-up flush.
-          const queued: { id: number; keywords?: string[]; description?: string; tradeSize?: string | null } = { id: current.id };
+          const queued: { id: number; keywords?: string[]; description?: string; tradeSize?: string | null; binLocations?: string[] } = { id: current.id };
           if (payload.keywords !== undefined) queued.keywords = payload.keywords;
           if (payload.description !== undefined) queued.description = payload.description;
           if (payload.tradeSize !== undefined) queued.tradeSize = payload.tradeSize;
+          if (payload.binLocations !== undefined) queued.binLocations = payload.binLocations;
           postFlushRef.current = queued;
         }
       }
@@ -586,6 +634,68 @@ export function KeywordEditor({
               <Text style={[styles.addBtnText, { color: colors.primaryForeground }]}>+ Add</Text>
             </Pressable>
           </View>
+
+          {/* ── Bin Locations (admin only) ──────────────────────────── */}
+          {isAdmin ? (
+            <>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
+                BIN LOCATIONS ({binLocations.length})
+              </Text>
+              <Text style={[styles.subHint, { color: colors.mutedForeground }]}>
+                Tap a bin to remove it. Format: ##-##-### (e.g. 01-02-003)
+              </Text>
+              <View style={styles.kwRow}>
+                {binLocations.map((bin) => (
+                  <Pressable
+                    key={bin}
+                    onPress={() => removeBin(bin)}
+                    style={[styles.kwChip, { backgroundColor: colors.accent, borderColor: colors.warning + "55" }]}
+                  >
+                    <Text style={[styles.kwText, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>{bin}</Text>
+                    <Text style={[styles.kwRemove, { color: colors.mutedForeground }]}>✕</Text>
+                  </Pressable>
+                ))}
+              </View>
+              {binLocations.length === 0 ? (
+                <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+                  No bins assigned.
+                </Text>
+              ) : null}
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 16 }]}>
+                ADD BIN
+              </Text>
+              <View style={styles.addRow}>
+                <TextInput
+                  value={newBin}
+                  onChangeText={(t) => { setNewBin(t); if (binError) setBinError(null); }}
+                  placeholder="e.g. 01-02-003"
+                  placeholderTextColor={colors.mutedForeground}
+                  style={[
+                    styles.addInput,
+                    {
+                      flex: 1,
+                      backgroundColor: colors.muted,
+                      borderColor: binError ? colors.destructive : colors.border,
+                      color: colors.foreground,
+                    },
+                  ]}
+                  onSubmitEditing={addBin}
+                  returnKeyType="done"
+                  autoCorrect={false}
+                  autoCapitalize="characters"
+                />
+                <Pressable
+                  onPress={addBin}
+                  style={[styles.addBtn, { backgroundColor: colors.primary }]}
+                >
+                  <Text style={[styles.addBtnText, { color: colors.primaryForeground }]}>+ Add</Text>
+                </Pressable>
+              </View>
+              {binError ? (
+                <Text style={[styles.binError, { color: colors.destructive }]}>{binError}</Text>
+              ) : null}
+            </>
+          ) : null}
         </ScrollView>
 
         {/* Footer — just Done, no separate Save button */}
@@ -723,6 +833,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  binError: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 6, lineHeight: 18 },
   footer: {
     padding: 16,
     borderTopWidth: 1,
