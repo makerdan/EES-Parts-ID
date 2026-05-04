@@ -338,11 +338,6 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
           </View>
         ) : null}
 
-        {/* Match reason */}
-        <Text style={[cardStyles.reason, { color: colors.mutedForeground }]}>
-          ↑ {matchReason}
-        </Text>
-
         {/* Dedicated related-sizes control
             ────────────────────────────────
             Always visible (when the part has variants) so workers can find
