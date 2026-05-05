@@ -585,6 +585,7 @@ export default function UploadScreen() {
     skippedCount: number;
     errorCount: number;
     revertedAt: string | null;
+    undoBlocked?: boolean;
   };
 
   const [catalogPdfFileName, setCatalogPdfFileName] = useState<string | null>(null);
@@ -2332,8 +2333,8 @@ export default function UploadScreen() {
                           </View>
                           {isReverted ? (
                             <Pressable
-                              onPress={() => { handleUndoRevert(run.id); }}
-                              disabled={anyInFlight}
+                              onPress={run.undoBlocked ? undefined : () => { handleUndoRevert(run.id); }}
+                              disabled={anyInFlight || !!run.undoBlocked}
                               accessibilityRole="button"
                               accessibilityLabel="Undo revert"
                               style={{
@@ -2341,14 +2342,14 @@ export default function UploadScreen() {
                                 paddingVertical: 6,
                                 borderRadius: 6,
                                 borderWidth: 1,
-                                borderColor: isUndoing ? colors.border : colors.foreground,
-                                opacity: anyInFlight && !isUndoing ? 0.5 : 1,
+                                borderColor: run.undoBlocked ? colors.border : isUndoing ? colors.border : colors.foreground,
+                                opacity: run.undoBlocked ? 0.35 : anyInFlight && !isUndoing ? 0.5 : 1,
                               }}
                             >
                               {isUndoing ? (
                                 <ActivityIndicator size="small" color={colors.foreground} />
                               ) : (
-                                <Text style={{ color: colors.foreground, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
+                                <Text style={{ color: run.undoBlocked ? colors.mutedForeground : colors.foreground, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
                                   Undo
                                 </Text>
                               )}
