@@ -1887,6 +1887,15 @@ export default function UploadScreen() {
                 </View>
               ) : null}
 
+            </ScrollView>
+          ) : (
+            <FlatList
+              data={inventory}
+              keyExtractor={item => String(item.id)}
+              renderItem={({ item }) => <InventoryRow item={item} colors={colors} />}
+              contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 120 }}
+              ListHeaderComponent={() => (
+                <View>
               {/* Bulk Enrichment Coverage */}
               <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>📊 Enrichment Coverage</Text>
@@ -1894,7 +1903,6 @@ export default function UploadScreen() {
                   AI generates searchable keywords for each part and saves them to the database permanently.
                 </Text>
 
-                {/* Global coverage stats */}
                 {enrichSummary ? (
                   <>
                     <View style={styles.enrichStats}>
@@ -1920,7 +1928,6 @@ export default function UploadScreen() {
                       </View>
                     </View>
 
-                    {/* Coverage progress bar */}
                     {enrichSummary.total > 0 ? (
                       <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
                         <View
@@ -1939,7 +1946,6 @@ export default function UploadScreen() {
                   <ActivityIndicator size="small" color={colors.primary} />
                 )}
 
-                {/* Bulk job progress (while running) */}
                 {bulkJobStatus?.running ? (
                   <View style={styles.progressContainer}>
                     <View style={[styles.bulkStatusRow]}>
@@ -1986,7 +1992,6 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
 
-                {/* Bulk job done state */}
                 {bulkJobStatus && !bulkJobStatus.running && bulkJobStatus.finishedAt ? (
                   <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
                     <Text style={[styles.doneText, { color: colors.success }]}>
@@ -1996,7 +2001,6 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
 
-                {/* Bulk job error */}
                 {(bulkEnrichError || (bulkJobStatus?.lastError && !bulkServerErrorDismissed)) ? (
                   <ErrorBanner
                     message={bulkEnrichError ?? bulkJobStatus?.lastError ?? "Enrichment error"}
@@ -2006,7 +2010,6 @@ export default function UploadScreen() {
                   />
                 ) : null}
 
-                {/* Start / running button */}
                 <Pressable
                   onPress={handleStartBulkEnrich}
                   disabled={bulkJobStatus?.running || bulkEnrichPending}
@@ -2032,7 +2035,6 @@ export default function UploadScreen() {
                   Converts measurement terms (e.g. 1/2" → 0.5in, 12mm) into searchable keywords for every part.
                 </Text>
 
-                {/* Running progress */}
                 {measureJobStatus?.running ? (
                   <View style={styles.progressContainer}>
                     <View style={styles.bulkStatusRow}>
@@ -2063,7 +2065,6 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
 
-                {/* Done state */}
                 {measureJobStatus && !measureJobStatus.running && measureJobStatus.finishedAt ? (
                   <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
                     <Text style={[styles.doneText, { color: colors.success }]}>
@@ -2073,7 +2074,6 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
 
-                {/* Error */}
                 {(measureEnrichError || (measureJobStatus?.lastError && !measureServerErrorDismissed)) ? (
                   <ErrorBanner
                     message={measureEnrichError ?? measureJobStatus?.lastError ?? "Enrichment error"}
@@ -2268,15 +2268,8 @@ export default function UploadScreen() {
                   <ErrorBanner message={catalogPdfError} onDismiss={() => setCatalogPdfError(null)} />
                 ) : null}
 
-                {/* Recent enrichment runs — each can be reverted to restore
-                    the description + aiKeywords for every inventory row it
-                    touched. Reverted runs show a strikethrough-style label
-                    and lose their button. */}
                 {catalogRuns.length > 0 ? (
                   <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border }}>
-                    {/* Tappable header — toggles the runs list. Chevron
-                        and count make the affordance obvious without
-                        adding dependencies. */}
                     <Pressable
                       onPress={() => setCatalogRunsExpanded((v) => !v)}
                       accessibilityRole="button"
@@ -2314,9 +2307,6 @@ export default function UploadScreen() {
                       const isReverting = revertingRunId === run.id;
                       const isUndoing = undoingRunId === run.id;
                       const isReverted = !!run.revertedAt;
-                      // Any in-flight revert/undo (anywhere in the list)
-                      // disables both buttons on every row, matching the
-                      // existing "one action at a time" pattern.
                       const anyInFlight = revertingRunId !== null || undoingRunId !== null;
                       return (
                         <View
@@ -2341,9 +2331,6 @@ export default function UploadScreen() {
                             </Text>
                           </View>
                           {isReverted ? (
-                            // Non-destructive secondary action — outlined in
-                            // the muted border color so it reads distinctly
-                            // from the destructive Revert button.
                             <Pressable
                               onPress={() => { handleUndoRevert(run.id); }}
                               disabled={anyInFlight}
@@ -2426,60 +2413,49 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
               </View>
-            </ScrollView>
-          ) : (
-            <View style={{ flex: 1 }}>
-              {inventoryQuery.isLoading ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color={colors.primary} />
-                  <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
-                </View>
-              ) : inventory.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyEmoji}>📦</Text>
-                  <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
-                  <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-                    Upload a CSV or Excel file to add inventory items.
-                  </Text>
-                  <Pressable
-                    onPress={() => setTab("upload")}
-                    style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
-                  >
-                    <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Upload</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <FlatList
-                  data={inventory}
-                  keyExtractor={item => String(item.id)}
-                  renderItem={({ item }) => <InventoryRow item={item} colors={colors} />}
-                  contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
-                  ListHeaderComponent={() => (
+
+                  {inventoryTotal > 0 ? (
                     <View style={styles.inventoryHeader}>
                       <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
                         {inventoryTotal} items total
                       </Text>
-                      <Pressable
-                        onPress={() => handleEnrich()}
-                        style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
-                      >
-                        <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
-                      </Pressable>
                     </View>
-                  )}
-                  ListFooterComponent={() =>
-                    inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
-                      <Pressable
-                        onPress={() => setInventoryPage(p => p + 1)}
-                        style={[styles.loadMoreBtn, { borderColor: colors.border }]}
-                      >
-                        <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
-                      </Pressable>
-                    ) : null
-                  }
-                />
+                  ) : null}
+                </View>
               )}
-            </View>
+              ListEmptyComponent={() =>
+                inventoryQuery.isLoading ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={colors.primary} />
+                    <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
+                  </View>
+                ) : (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyEmoji}>📦</Text>
+                    <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
+                    <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+                      Upload a CSV or Excel file to add inventory items.
+                    </Text>
+                    <Pressable
+                      onPress={() => setTab("upload")}
+                      style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
+                    >
+                      <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Upload</Text>
+                    </Pressable>
+                  </View>
+                )
+              }
+              ListFooterComponent={() =>
+                inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
+                  <Pressable
+                    onPress={() => setInventoryPage(p => p + 1)}
+                    style={[styles.loadMoreBtn, { borderColor: colors.border }]}
+                  >
+                    <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
+                  </Pressable>
+                ) : null
+              }
+            />
           )}
         </>
       )}
