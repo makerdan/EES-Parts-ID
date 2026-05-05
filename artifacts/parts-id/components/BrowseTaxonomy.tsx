@@ -12,7 +12,7 @@
  *    screen decides whether to drill or to load items.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -108,8 +108,16 @@ export default function BrowseTaxonomy({
   }, [initialTree]);
 
   // ── Persist drill path ───────────────────────────────────────────────────
+  // Guard: don't call onSelectNode during the initial path/tree restore.
+  // BrowseTaxonomy is conditionally rendered, so this ref resets to false
+  // every time the user enters Browse mode — ensuring the component always
+  // starts with the taxonomy visible and results only load after an explicit
+  // tap, even when a previous path is cached in AsyncStorage.
+  const userHasNavigated = useRef(false);
+
   useEffect(() => {
     AsyncStorage.setItem(BROWSE_PATH_KEY, JSON.stringify(path)).catch(() => undefined);
+    if (!userHasNavigated.current) return;
     onSelectNode(nodeAtPath(tree, path));
   }, [path, tree, onSelectNode]);
 
@@ -127,9 +135,11 @@ export default function BrowseTaxonomy({
   }, [tree, path]);
 
   const drillInto = useCallback((slug: string) => {
+    userHasNavigated.current = true;
     setPath(prev => [...prev, slug]);
   }, []);
   const popTo = useCallback((depth: number) => {
+    userHasNavigated.current = true;
     setPath(prev => prev.slice(0, depth));
   }, []);
 
