@@ -90,6 +90,43 @@ describe("catalogScore", () => {
     const { score } = catalogScore(BASE_PG, "BR120", "", "", 0.3);
     expect(score).toBeCloseTo(BASE_PG);
   });
+
+  // ── Multi-word rawKeywords token matching (Photo ID path) ──────────────────
+
+  it("scores 1.0 when one token in a multi-word rawKeywords exactly matches the catalog", () => {
+    const { score, reason } = catalogScore(BASE_PG, "NMWH43", "", "NMWH43 circuit breaker 20A Square D", 0.3);
+    expect(score).toBe(1.0);
+    expect(reason).toBe("exact catalog");
+  });
+
+  it("scores 1.0 when the exact-match token appears last in rawKeywords", () => {
+    const { score, reason } = catalogScore(BASE_PG, "BR120", "", "circuit breaker Square D BR120", 0.3);
+    expect(score).toBe(1.0);
+    expect(reason).toBe("exact catalog");
+  });
+
+  it("scores ≥ 0.93 when a token in rawKeywords is a prefix of the catalog", () => {
+    const { score, reason } = catalogScore(BASE_PG, "BR120", "", "BR circuit breaker 20A", 0.2);
+    expect(score).toBeGreaterThanOrEqual(0.93);
+    expect(reason).toBe("catalog prefix");
+  });
+
+  it("scores ≥ 0.85 when a token in rawKeywords appears as a substring of the catalog", () => {
+    const { score, reason } = catalogScore(BASE_PG, "BR120", "", "circuit 120 breaker", 0.2);
+    expect(score).toBeGreaterThanOrEqual(0.85);
+    expect(reason).toBe("catalog substring");
+  });
+
+  it("exact token match takes priority over prefix token match", () => {
+    const { reason } = catalogScore(BASE_PG, "BR120", "", "BR BR120 breaker", 0.2);
+    expect(reason).toBe("exact catalog");
+  });
+
+  it("falls through to pgScore when no token matches the catalog", () => {
+    const { score, reason } = catalogScore(BASE_PG, "NMWH43", "", "circuit breaker Square D 20A", 0.4);
+    expect(score).toBeCloseTo(BASE_PG);
+    expect(reason).toBe("fts match");
+  });
 });
 
 // ── applyVendorBoost ──────────────────────────────────────────────────────────
