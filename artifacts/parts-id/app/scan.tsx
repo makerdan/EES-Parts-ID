@@ -419,7 +419,7 @@ export default function ScanScreen() {
               accessibilityLabel={torchOn ? "Turn torch off" : "Turn torch on"}
             >
               <Text style={[styles.controlText, { color: "#fff" }]}>
-                {torchOn ? "Torch on" : "Torch"}
+                {torchOn ? "Light ON" : "Light OFF"}
               </Text>
             </Pressable>
             <Pressable
