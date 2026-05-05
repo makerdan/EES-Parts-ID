@@ -3,8 +3,9 @@
  *
  * Pipeline: capture/pick → resize on-device (`utils/resizeImage`) → POST to
  * /ai/identify → render ranked candidates with confidence + match reason.
- * We resize before upload because warehouse phones routinely produce 12MP
- * photos that would otherwise blow the OpenAI request budget.
+ * Up to 2 photos are accepted (the API also caps at 2) — front and label shots
+ * give the model the most signal. We resize before upload because warehouse
+ * phones routinely produce 12MP photos that would otherwise blow the request budget.
  */
 import React, { useState, useRef, useEffect } from "react";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -63,8 +64,8 @@ export default function PhotoScreen() {
   }, []);
 
   const pickImage = async (source: "camera" | "library") => {
-    if (images.length >= 4) {
-      setInlineError("Max 4 images — remove one first before adding another.");
+    if (images.length >= 2) {
+      setInlineError("Max 2 photos — remove one first.");
       return;
     }
     setInlineError(null);
@@ -83,7 +84,7 @@ export default function PhotoScreen() {
         aspect: [4, 3],
       });
     } else {
-      const remainingSlots = 4 - images.length;
+      const remainingSlots = 2 - images.length;
       result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: "images",
         quality: 0.7,
@@ -94,10 +95,10 @@ export default function PhotoScreen() {
 
     if (!result.canceled && result.assets.length > 0) {
       const currentCount = images.length;
-      const allowedAssets = result.assets.slice(0, 4 - currentCount);
+      const allowedAssets = result.assets.slice(0, 2 - currentCount);
       const overflowMessage =
         allowedAssets.length < result.assets.length
-          ? "Max 4 images — only some photos were added to stay within the limit."
+          ? "Max 2 photos — only the first was added."
           : null;
 
       setIsProcessing(true);
@@ -307,7 +308,7 @@ export default function PhotoScreen() {
                 </View>
               ))}
 
-              {images.length < 4 ? (
+              {images.length < 2 ? (
                 isProcessing ? (
                   <View style={[styles.processingRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
                     <ActivityIndicator size="small" color={colors.primary} />
@@ -352,11 +353,11 @@ export default function PhotoScreen() {
 
             {images.length === 0 ? (
               <Text style={[styles.imageHint, { color: colors.mutedForeground }]}>
-                Add up to 4 photos of the part (front + label recommended)
+                Add up to 2 photos — front and label work best
               </Text>
             ) : (
               <Text style={[styles.photoCounter, { color: colors.mutedForeground }]}>
-                {images.length} / 4 photos
+                {images.length} / 2 photos
               </Text>
             )}
           </View>
@@ -536,7 +537,7 @@ export default function PhotoScreen() {
             <View style={[styles.welcomeCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>How it works</Text>
               {[
-                "📷 Take or select up to 4 photos of the part",
+                "📷 Take or select up to 2 photos of the part",
                 "📝 Add any visible text, numbers, or labels",
                 "🤖 AI identifies the part type and specifications",
                 "📦 Matching items from inventory are shown",
