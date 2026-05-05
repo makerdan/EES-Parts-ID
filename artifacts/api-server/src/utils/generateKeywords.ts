@@ -39,13 +39,18 @@ export function isJunkKeyword(kw: string): boolean {
  * Call OpenAI to generate searchable keywords for an inventory item.
  * Returns an array of up to 10 keyword strings, with junk values removed.
  *
- * @param item   - The inventory item to generate keywords for.
- * @param model  - The OpenAI model to use (defaults to gpt-4o-mini).
+ * @param item       - The inventory item to generate keywords for.
+ * @param model      - The OpenAI model to use (defaults to gpt-4o-mini).
+ * @param tradeSize  - Optional canonical trade-size label (e.g. `1/2"`).
+ *                     When provided it is included in the prompt so the AI
+ *                     can generate more specific size variants.
  */
 export async function generateKeywords(
   item: EnrichItem,
   model: string = DEFAULT_MODEL,
+  tradeSize?: string,
 ): Promise<string[]> {
+  const tradeSizeLine = tradeSize ? `\nTrade size: ${tradeSize}` : "";
   const response = await openai.chat.completions.create({
     model,
     max_completion_tokens: 256,
@@ -57,7 +62,7 @@ export async function generateKeywords(
       },
       {
         role: "user",
-        content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nDescription: ${item.description ?? ""}\n\nReturn JSON array of keywords only.`,
+        content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nDescription: ${item.description ?? ""}${tradeSizeLine}\n\nReturn JSON array of keywords only.`,
       },
     ],
   // Abort if OpenAI doesn't respond within 30 s — prevents a slow/hung

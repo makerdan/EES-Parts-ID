@@ -44,6 +44,7 @@ import {
   fuseConfidence,
 } from "../utils/scoreHelpers";
 import { mergeBins, dedupeBinsCaseInsensitive } from "../utils/binLocations";
+import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel } from "../utils/tradeSize";
 import { classifyHandler } from "./categories";
 import {
   categoryNodeTable,
@@ -878,19 +879,36 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
     await batchProcessWithSSE(
       itemsToEnrich,
       async (item) => {
-        const keywords = await generateKeywords(item);
+        // Derive trade size before AI call so it can be passed as context.
+        const tradeSizeInches =
+          parseTradeSizeInches(item.catalog) ??
+          parseTradeSizeInches(item.description);
+        const tradeSize = tradeSizeInches !== null
+          ? tradeSizeChipLabel(tradeSizeInches)
+          : null;
+
+        const keywords = await generateKeywords(item, undefined, tradeSize ?? undefined);
+
+        // Append trade-size keyword tokens (matching bulk-enrich behaviour).
+        const tradeTokens = deriveTradeSizeTokens(item);
+        const existing = new Set(keywords.map(k => k.toLowerCase()));
+        const merged = [
+          ...keywords,
+          ...tradeTokens.filter(t => !existing.has(t.toLowerCase())),
+        ];
 
         await db
           .update(inventoryTable)
           .set({
-            aiKeywords: keywords,
+            aiKeywords: merged,
             enrichedAt: new Date(),
             updatedAt: new Date(),
+            ...(tradeSize !== null ? { tradeSize } : {}),
           })
           .where(eq(inventoryTable.id, item.id));
 
         processed++;
-        return { id: item.id, keywords };
+        return { id: item.id, keywords: merged };
       },
       (event) => {
         if (event.type === "started") {
