@@ -901,9 +901,9 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
           .update(inventoryTable)
           .set({
             aiKeywords: merged,
+            tradeSize,
             enrichedAt: new Date(),
             updatedAt: new Date(),
-            ...(tradeSize !== null ? { tradeSize } : {}),
           })
           .where(eq(inventoryTable.id, item.id));
 
@@ -970,16 +970,14 @@ const BULK_ENRICH_DELAY_MS   = 200;
 const BULK_ENRICH_MAX_RETRY  = 3;
 
 
-async function enrichItemWithRetry(item: {
-  id: number;
-  vendor: string;
-  catalog: string;
-  description: string | null;
-}): Promise<string[]> {
+async function enrichItemWithRetry(
+  item: { id: number; vendor: string; catalog: string; description: string | null },
+  tradeSize?: string,
+): Promise<string[]> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= BULK_ENRICH_MAX_RETRY; attempt++) {
     try {
-      return await generateKeywords(item, BULK_ENRICH_MODEL);
+      return await generateKeywords(item, BULK_ENRICH_MODEL, tradeSize);
     } catch (err) {
       lastErr = err;
       if (attempt < BULK_ENRICH_MAX_RETRY) {
@@ -1021,15 +1019,35 @@ async function runBulkEnrich() {
 
     for (let i = 0; i < batch.length; i += BULK_ENRICH_CONCUR) {
       const wave = batch.slice(i, i + BULK_ENRICH_CONCUR);
-      const results = await Promise.allSettled(wave.map((item) => enrichItemWithRetry(item)));
+      const results = await Promise.allSettled(wave.map((item) => {
+        const tradeSizeInches =
+          parseTradeSizeInches(item.catalog) ??
+          parseTradeSizeInches(item.description);
+        const tradeSize = tradeSizeInches !== null
+          ? tradeSizeChipLabel(tradeSizeInches) ?? undefined
+          : undefined;
+        return enrichItemWithRetry(item, tradeSize);
+      }));
 
       for (let j = 0; j < results.length; j++) {
         const r = results[j]!;
         const item = wave[j]!;
         if (r.status === "fulfilled") {
+          const tradeSizeInches =
+            parseTradeSizeInches(item.catalog) ??
+            parseTradeSizeInches(item.description);
+          const tradeSize = tradeSizeInches !== null
+            ? tradeSizeChipLabel(tradeSizeInches)
+            : null;
+          const tradeTokens = deriveTradeSizeTokens(item);
+          const existing = new Set(r.value.map((k: string) => k.toLowerCase()));
+          const merged = [
+            ...r.value,
+            ...tradeTokens.filter(t => !existing.has(t.toLowerCase())),
+          ];
           await db
             .update(inventoryTable)
-            .set({ aiKeywords: r.value, enrichedAt: new Date(), updatedAt: new Date() })
+            .set({ aiKeywords: merged, tradeSize, enrichedAt: new Date(), updatedAt: new Date() })
             .where(eq(inventoryTable.id, item.id));
           bulkEnrichJob.processed++;
         } else {

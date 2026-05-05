@@ -118,9 +118,9 @@ async function bulkEnrich() {
             .update(inventoryTable)
             .set({
               aiKeywords: merged,
+              tradeSize,
               enrichedAt: new Date(),
               updatedAt: new Date(),
-              ...(tradeSize !== null ? { tradeSize } : {}),
             })
             .where(eq(inventoryTable.id, item.id));
           processed++;
