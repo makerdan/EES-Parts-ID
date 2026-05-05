@@ -18,7 +18,7 @@ import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { generateKeywords } from "../utils/generateKeywords";
-import { deriveTradeSizeTokens } from "../utils/tradeSize";
+import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel } from "../utils/tradeSize";
 
 const BATCH_SIZE   = parseInt(process.env["ENRICH_BATCH_SIZE"]   ?? "10",  10);
 const CONCURRENCY  = parseInt(process.env["ENRICH_CONCURRENCY"]  ?? "5",   10);
@@ -93,18 +93,29 @@ async function bulkEnrich() {
         const r = results[j]!;
         const item = wave[j]!;
         if (r.status === "fulfilled") {
-          // Append trade-size tokens for conduit/pipe items so the
-          // "Trade Size" filter chip and free-text size searches work
-          // even when the AI didn't volunteer them.
+          // Derive canonical trade size for conduit/pipe items and append
+          // size keyword tokens so the "Trade Size" chip and free-text
+          // searches work even when the AI didn't volunteer them.
           const tradeTokens = deriveTradeSizeTokens(item);
           const existing = new Set(r.value.map(k => k.toLowerCase()));
           const merged = [
             ...r.value,
             ...tradeTokens.filter(t => !existing.has(t.toLowerCase())),
           ];
+          const tradeSizeInches =
+            parseTradeSizeInches(item.catalog) ??
+            parseTradeSizeInches(item.description);
+          const tradeSize = tradeSizeInches !== null
+            ? tradeSizeChipLabel(tradeSizeInches)
+            : null;
           await db
             .update(inventoryTable)
-            .set({ aiKeywords: merged, enrichedAt: new Date(), updatedAt: new Date() })
+            .set({
+              aiKeywords: merged,
+              enrichedAt: new Date(),
+              updatedAt: new Date(),
+              ...(tradeSize !== null ? { tradeSize } : {}),
+            })
             .where(eq(inventoryTable.id, item.id));
           processed++;
         } else {
