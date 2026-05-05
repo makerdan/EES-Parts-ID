@@ -1926,7 +1926,7 @@ export default function UploadScreen() {
                     <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_600SemiBold", fontSize: 26, width: 28 }}>
                       {enrichOpen ? "▾" : "▸"}
                     </Text>
-                    <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 30 }}>
+                    <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 22 }}>
                       Enrichment
                     </Text>
                   </Pressable>
