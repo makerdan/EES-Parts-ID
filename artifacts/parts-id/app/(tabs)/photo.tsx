@@ -592,7 +592,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
   },
-  addImageLabel: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  addImageLabel: { fontSize: 12, fontFamily: "Inter_500Medium", textAlign: "center" },
   imageHint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic" },
   photoCounter: { fontSize: 12, fontFamily: "Inter_500Medium" },
   contextCard: { borderRadius: 12, padding: 14, borderWidth: 1 },
