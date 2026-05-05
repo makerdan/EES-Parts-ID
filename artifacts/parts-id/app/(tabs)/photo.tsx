@@ -330,6 +330,16 @@ export default function PhotoScreen() {
                       <Text style={styles.addImageEmoji}>🖼️</Text>
                       <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
                     </Pressable>
+                    <Pressable
+                      onPress={() => router.push("/scan")}
+                      disabled={isProcessing}
+                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Scan barcode"
+                    >
+                      <Text style={styles.addImageEmoji}>🔍</Text>
+                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Scan</Text>
+                    </Pressable>
                   </View>
                 )
               ) : null}

@@ -32,7 +32,6 @@ import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollV
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Fuse from "fuse.js";
 import { useNavigation, useRouter } from "expo-router";
-import { SymbolView } from "expo-symbols";
 import { useSearchInventory } from "@workspace/api-client-react";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -1049,26 +1048,6 @@ export default function SearchScreen() {
           </View>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          {/*
-            Scan was lifted out of the bottom tab bar (Task #129) and now
-            sits here as a quick action immediately to the left of
-            Settings. Matches the Settings button's sizing/border/treatment
-            so the two read as a pair. SF Symbol on iOS, Feather on
-            Android/web — same icon family the old tab used.
-          */}
-          <Pressable
-            onPress={() => router.push("/scan")}
-            style={[styles.headerBtn, styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
-            accessibilityRole="button"
-            accessibilityLabel="Scan barcode"
-          >
-            {Platform.OS === "ios" ? (
-              <SymbolView name="barcode.viewfinder" tintColor={colors.mutedForeground} size={16} />
-            ) : (
-              <Feather name="maximize" size={16} color={colors.mutedForeground} />
-            )}
-            <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Scan</Text>
-          </Pressable>
           <Pressable
             onPress={() => setShowRefModal(true)}
             style={[styles.headerBtn, styles.logoutBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
