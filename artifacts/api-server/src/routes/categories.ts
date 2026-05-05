@@ -774,6 +774,214 @@ export async function classifyHandler(
 
 router.post("/classify", requireAdminAuth, classifyHandler);
 
+// ── POST /admin/reclassify ───────────────────────────────────────────────
+// Runs a full re-classification pass over every inventory item whose current
+// assignment is NOT manual (or that has no assignment at all). Manual overrides
+// are always preserved. Safe to re-run: two consecutive runs produce the same
+// result.
+//
+// Body: { useAi?: boolean }  (defaults to true)
+//
+// Streams SSE progress events, then a final summary:
+//   { done, total, processed, ruleHits, aiHits, uncategorized, skippedManual }
+router.post("/reclassify", requireAdminAuth, async (req, res) => {
+  try {
+    const { useAi = true } = (req.body ?? {}) as { useAi?: boolean };
+
+    const nodes = await loadAllNodes();
+    if (nodes.length === 0) {
+      res.status(503).json({ error: "Taxonomy not seeded — run seed first" });
+      return;
+    }
+    const nodeIndex = buildNodeIndex(nodes);
+
+    const uncategorizedNode = nodeIndex.bySlug.get(UNCATEGORIZED_TYPE_SLUG);
+    if (!uncategorizedNode) {
+      res.status(503).json({ error: "Uncategorized fallback node missing — re-run seed" });
+      return;
+    }
+
+    // Set up SSE early so progress streams even on long runs.
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    // Count all non-manual candidates up front for progress reporting.
+    // "Non-manual" = no row in inventory_category yet, OR classifiedBy != 'manual'.
+    const totalResult = await db.execute(sql`
+      SELECT count(*)::int AS c FROM inventory i
+      WHERE NOT EXISTS (
+        SELECT 1 FROM inventory_category ic
+        WHERE ic.inventory_id = i.id AND ic.classified_by = 'manual'
+      )
+    `);
+    const totalCandidates = Number(
+      (totalResult as unknown as { rows: { c: number }[] }).rows[0]?.c ?? 0,
+    );
+
+    res.write(
+      `data: ${JSON.stringify({ progress: 0, total: totalCandidates })}\n\n`,
+    );
+
+    // Pre-compute AI allow-list once (leaf "type" nodes minus Uncategorized).
+    const aiAllowed: AiClassifyAllowed[] = nodes
+      .filter(n => n.level === "type" && n.slug !== UNCATEGORIZED_TYPE_SLUG)
+      .map(n => {
+        const parent = n.parentId != null ? nodeIndex.byId.get(n.parentId) : null;
+        const grandparent =
+          parent?.parentId != null ? nodeIndex.byId.get(parent.parentId) : null;
+        return {
+          slug: n.slug,
+          name: n.name,
+          parentName: parent?.name ?? "",
+          grandparentName: grandparent?.name ?? "",
+        };
+      });
+
+    const writeAssignment = async (
+      inventoryId: number,
+      categoryNodeId: number,
+      confidence: number,
+      classifiedBy: "rule" | "ai",
+    ) => {
+      await db
+        .delete(inventoryCategoryTable)
+        .where(eq(inventoryCategoryTable.inventoryId, inventoryId));
+      await db.insert(inventoryCategoryTable).values({
+        inventoryId,
+        categoryNodeId,
+        confidence: confidence.toFixed(4),
+        classifiedBy,
+      });
+    };
+
+    let processed = 0;
+    let skippedManual = 0;
+    let ruleHits = 0;
+    let aiHits = 0;
+    let uncategorized = 0;
+    const PAGE = 1000;
+    let offset = 0;
+
+    while (true) {
+      // Fetch a page of non-manual candidates. Using a stable ORDER BY id and
+      // fixed OFFSET is correct here because we re-assign rows in place (we
+      // don't delete them from the candidate set between pages).
+      const pageResult = await db.execute(sql`
+        SELECT i.* FROM inventory i
+        WHERE NOT EXISTS (
+          SELECT 1 FROM inventory_category ic
+          WHERE ic.inventory_id = i.id AND ic.classified_by = 'manual'
+        )
+        ORDER BY i.id
+        LIMIT ${PAGE} OFFSET ${offset}
+      `);
+      const batch = (pageResult as { rows: Record<string, unknown>[] }).rows.map(
+        rowToInventoryItem,
+      );
+      if (batch.length === 0) break;
+
+      // Phase 1 — rule classifier.
+      const needsFallback: typeof batch = [];
+      for (const item of batch) {
+        const result = classifyItem(
+          {
+            id: item.id,
+            vendor: item.vendor,
+            catalog: item.catalog,
+            description: item.description,
+            aiKeywords: item.aiKeywords ?? [],
+          },
+          nodeIndex,
+        );
+        const ruleSlug = result?.typeSlug ?? null;
+        const ruleNode = ruleSlug ? nodeIndex.bySlug.get(ruleSlug) : undefined;
+        if (ruleNode) {
+          await writeAssignment(item.id, ruleNode.id, result?.confidence ?? 0, "rule");
+          ruleHits++;
+        } else {
+          needsFallback.push(item);
+        }
+        processed++;
+        if (processed % 50 === 0) {
+          res.write(
+            `data: ${JSON.stringify({
+              progress: processed,
+              total: totalCandidates,
+              ruleHits,
+              aiHits,
+              uncategorized,
+              skippedManual,
+            })}\n\n`,
+          );
+        }
+      }
+
+      // Phase 2 — AI fallback in micro-batches of 25.
+      const aiAssigned = new Set<number>();
+      if (useAi && needsFallback.length > 0 && aiAllowed.length > 0) {
+        const AI_BATCH = 25;
+        for (let i = 0; i < needsFallback.length; i += AI_BATCH) {
+          const slice = needsFallback.slice(i, i + AI_BATCH).map(it => ({
+            id: it.id,
+            vendor: it.vendor,
+            catalog: it.catalog,
+            description: it.description,
+            aiKeywords: it.aiKeywords ?? [],
+          }));
+          const assignments = await aiClassifyBatch(slice, aiAllowed);
+          for (const a of assignments) {
+            const node = nodeIndex.bySlug.get(a.slug);
+            if (!node) continue;
+            await writeAssignment(a.id, node.id, a.confidence, "ai");
+            aiAssigned.add(a.id);
+            aiHits++;
+          }
+        }
+      }
+
+      // Phase 3 — send remaining unmatched items to Uncategorized.
+      for (const item of needsFallback) {
+        if (aiAssigned.has(item.id)) continue;
+        await writeAssignment(item.id, uncategorizedNode.id, 0, "rule");
+        uncategorized++;
+      }
+
+      offset += batch.length;
+    }
+
+    // Count manual assignments that were intentionally skipped.
+    const manualResult = await db.execute(sql`
+      SELECT count(*)::int AS c FROM inventory_category
+      WHERE classified_by = 'manual'
+    `);
+    skippedManual = Number(
+      (manualResult as unknown as { rows: { c: number }[] }).rows[0]?.c ?? 0,
+    );
+
+    res.write(
+      `data: ${JSON.stringify({
+        done: true,
+        total: totalCandidates,
+        processed,
+        ruleHits,
+        aiHits,
+        uncategorized,
+        skippedManual,
+      })}\n\n`,
+    );
+    res.end();
+  } catch (err) {
+    console.error("[admin/reclassify] failed:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Reclassification failed" });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+      res.end();
+    }
+  }
+});
+
 // ── GET /categories/assignments ──────────────────────────────────────────
 // Flat list of every part's current taxonomy node, used by the mobile app
 // to power Browse offline. Returns slugs + node ids so the client can
