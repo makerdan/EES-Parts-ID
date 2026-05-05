@@ -25,7 +25,7 @@ export const SEED_KEY = "@partsid/upload_seed_v1";
 export const CHECKPOINT_KEY = "@partsid/upload_checkpoint_v1";
 
 /** Mirror of the mobile-side upsert mode union. */
-export type UploadMode = "add-new-only" | "overwrite-all" | "selected";
+export type UploadMode = "add-new-only" | "overwrite-all" | "selected" | "bins-only";
 
 /** Match the row shape consumed by /inventory/upsert-batch. */
 export interface UploadRow {
@@ -60,7 +60,7 @@ function isValidSeed(v: unknown): v is UploadSeed {
   return (
     Array.isArray(o.parsedRows) &&
     typeof o.startedAt === "number" &&
-    (o.mode === "add-new-only" || o.mode === "overwrite-all" || o.mode === "selected")
+    (o.mode === "add-new-only" || o.mode === "overwrite-all" || o.mode === "selected" || o.mode === "bins-only")
   );
 }
 
