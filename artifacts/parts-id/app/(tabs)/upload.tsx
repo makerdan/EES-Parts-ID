@@ -534,7 +534,7 @@ export default function UploadScreen() {
 
   // ── Preview / review modal state ─────────────────────────────────────────
   // After parsing, we POST rows to /preview-upsert. If any existing rows would
-  // change, we surface a 3-option chooser (add-new / overwrite-all / review).
+  // change, we surface a chooser (add-new / overwrite-all / review / bins-only).
   // "Review" expands `previewData.changes` into a per-row include/exclude list.
   const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
   const [chooserVisible, setChooserVisible] = useState(false);
@@ -1445,7 +1445,7 @@ export default function UploadScreen() {
 
   // Start step — first calls /inventory/preview-upsert. If bins-only mode,
   // applies directly after showing the count summary. Otherwise surfaces the
-  // 3-option chooser when existing rows would change.
+  // chooser when existing rows would change.
   const handleUploadStart = async () => {
     if (!parsedRows.length) return;
     setUploadError(null);
@@ -1482,6 +1482,14 @@ export default function UploadScreen() {
         const skipped = preview.binsOnlySkipped ?? 0;
         const filteredRows = buildBinsOnlyRows(parsedRows, preview.matchedKeys ?? []);
         setUploadPending(false);
+        if (filteredRows.length === 0) {
+          Alert.alert(
+            "No Matches Found",
+            "None of the rows in this file matched existing catalog items. Nothing was updated.",
+            [{ text: "OK" }],
+          );
+          return;
+        }
         Alert.alert(
           "Update Bins Only",
           `${updated} item${updated !== 1 ? "s" : ""} will have bin locations updated.\n${skipped} row${skipped !== 1 ? "s" : ""} not found — will be skipped.\n\nDescriptions will not be changed.`,
@@ -1537,6 +1545,14 @@ export default function UploadScreen() {
       const skipped = preview.binsOnlySkipped ?? 0;
       const filteredRows = buildBinsOnlyRows(parsedRows, preview.matchedKeys ?? []);
       setUploadPending(false);
+      if (filteredRows.length === 0) {
+        Alert.alert(
+          "No Matches Found",
+          "None of the rows in this file matched existing catalog items. Nothing was updated.",
+          [{ text: "OK" }],
+        );
+        return;
+      }
       Alert.alert(
         "Update Bins Only",
         `${updated} item${updated !== 1 ? "s" : ""} will have bin locations updated.\n${skipped} row${skipped !== 1 ? "s" : ""} not found — will be skipped.\n\nDescriptions will not be changed.`,
@@ -2643,7 +2659,7 @@ export default function UploadScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* ── Chooser modal: 3 options for handling existing matches ────────── */}
+      {/* ── Chooser modal: options for handling existing matches ───────────── */}
       <Modal
         visible={chooserVisible}
         transparent
