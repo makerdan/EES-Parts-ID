@@ -12,6 +12,10 @@ import {
   start as startInventoryIndex,
   stop as stopInventoryIndex,
 } from "./lib/inventoryIndex";
+import {
+  start as startEnrichmentRunCleanup,
+  stop as stopEnrichmentRunCleanup,
+} from "./lib/enrichmentRunCleanup";
 
 // How often to rebuild the in-memory Fuse fuzzy-search index. Defaults
 // to 5 minutes; tunable via env so prod can dial it up or down without
@@ -67,6 +71,7 @@ function startServer(retries: number): void {
     // if shutdown was requested while we were awaiting.
     await refreshInventoryIndex();
     startInventoryIndex(inventoryIndexRefreshMs);
+    startEnrichmentRunCleanup();
   });
 
   // Defer the rest of server-startup wiring to a separate handler so
@@ -79,8 +84,9 @@ function startServer(retries: number): void {
     const shutdown = (signal: string) => {
       logger.info({ signal }, "Shutdown signal — draining connections…");
 
-      // Cancel the index refresh timer first so it can't fire mid-shutdown.
+      // Cancel background timers first so they can't fire mid-shutdown.
       stopInventoryIndex();
+      stopEnrichmentRunCleanup();
 
       server.close(async () => {
         logger.info("HTTP server closed");
