@@ -13,7 +13,9 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  LayoutAnimation,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -21,6 +23,7 @@ import {
   Switch,
   Text,
   TextInput,
+  UIManager,
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
@@ -482,11 +485,17 @@ function buildBinsOnlyRows(
   );
 }
 
+// Enable LayoutAnimation on Android (iOS has it by default).
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
   const colors = useColors();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
   const [showRefModal, setShowRefModal] = useState(false);
+  const [enrichOpen, setEnrichOpen] = useState(false);
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
@@ -1897,6 +1906,32 @@ export default function UploadScreen() {
               contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 120 }}
               ListHeaderComponent={() => (
                 <View>
+                  <Pressable
+                    onPress={() => {
+                      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                      setEnrichOpen(v => !v);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={enrichOpen ? "Collapse enrichment tools" : "Expand enrichment tools"}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      paddingVertical: 10,
+                      paddingHorizontal: 4,
+                      borderBottomWidth: enrichOpen ? StyleSheet.hairlineWidth : 0,
+                      borderBottomColor: colors.border,
+                      marginBottom: enrichOpen ? 8 : 0,
+                    }}
+                  >
+                    <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_600SemiBold", fontSize: 13, width: 14 }}>
+                      {enrichOpen ? "▾" : "▸"}
+                    </Text>
+                    <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 15 }}>
+                      Enrichment
+                    </Text>
+                  </Pressable>
+                  {enrichOpen && (
+                    <View>
               {/* Bulk Enrichment Coverage */}
               <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>📊 Enrichment Coverage</Text>
@@ -2414,6 +2449,8 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
               </View>
+                    </View>
+                  )}
 
                   {inventoryTotal > 0 ? (
                     <View style={styles.inventoryHeader}>
