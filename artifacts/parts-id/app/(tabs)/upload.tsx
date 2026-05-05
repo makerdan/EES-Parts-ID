@@ -23,7 +23,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import { router } from "expo-router";
 import * as XLSX from "xlsx";
@@ -472,6 +471,7 @@ export default function UploadScreen() {
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
+  const [pasteInputText, setPasteInputText] = useState("");
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [tab, setTab] = useState<"upload" | "inventory">("upload");
   const [uploadSuccess, setUploadSuccess] = useState<UpsertResult | null>(null);
@@ -1151,27 +1151,24 @@ export default function UploadScreen() {
     }
   };
 
-  const handlePasteClipboard = async () => {
-    try {
-      const text = await Clipboard.getStringAsync();
-      if (!text || !text.trim()) {
-        setUploadError("Clipboard is empty. Copy rows from your spreadsheet first.");
-        return;
-      }
-      const delimiter = detectDelimiter(text);
-      const rows = parseCSV(text, delimiter);
-      if (rows.length === 0) {
-        setUploadError("No data rows found in clipboard. Ensure your spreadsheet has columns named: vendor, catalog (required), description, bin (optional).");
-        return;
-      }
-      setUploadError(null);
-      setUploadSuccess(null);
-      setFileName("Pasted data");
-      setFileType("csv");
-      setParsedRows(rows);
-    } catch {
-      setUploadError("Failed to read clipboard. Please try again.");
+  const handleParsePastedText = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      setUploadError("Paste box is empty. Copy rows from your spreadsheet first.");
+      return;
     }
+    const delimiter = detectDelimiter(trimmed);
+    const rows = parseCSV(trimmed, delimiter);
+    if (rows.length === 0) {
+      setUploadError("No data rows found. Ensure your spreadsheet has columns named: vendor, catalog (required), description, bin (optional).");
+      return;
+    }
+    setUploadError(null);
+    setUploadSuccess(null);
+    setFileName("Pasted data");
+    setFileType("csv");
+    setParsedRows(rows);
+    setPasteInputText("");
   };
 
   const clearPendingFile = useCallback(() => {
@@ -1179,6 +1176,7 @@ export default function UploadScreen() {
     setFileName(null);
     setFileType(null);
     setPreviewData(null);
+    setPasteInputText("");
   }, []);
 
   // ── Chunked upload runner ────────────────────────────────────────────────
@@ -1706,14 +1704,30 @@ export default function UploadScreen() {
                   </Text>
                 </Pressable>
 
-                <Pressable
-                  onPress={handlePasteClipboard}
-                  style={[secondaryBtnBase, styles.pasteBtn, { borderColor: colors.border }]}
-                >
-                  <Text style={[styles.pasteBtnText, { color: colors.foreground }]}>
-                    Paste from Clipboard
-                  </Text>
-                </Pressable>
+                <TextInput
+                  value={pasteInputText}
+                  onChangeText={setPasteInputText}
+                  placeholder="Paste spreadsheet rows here…"
+                  placeholderTextColor={colors.mutedForeground}
+                  multiline
+                  numberOfLines={3}
+                  style={[
+                    styles.pasteInput,
+                    { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                  ]}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                />
+                {pasteInputText.trim().length > 0 ? (
+                  <Pressable
+                    onPress={() => handleParsePastedText(pasteInputText)}
+                    style={[styles.pasteParseBtn, { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={[styles.pasteParseBtnText, { color: colors.primaryForeground }]}>
+                      Import Pasted Data
+                    </Text>
+                  </Pressable>
+                ) : null}
 
                 {fileName ? (
                   <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
@@ -2734,8 +2748,24 @@ const styles = StyleSheet.create({
   cardHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   pickBtn: { borderWidth: 2, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   pickBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  pasteBtn: { paddingVertical: 11, alignItems: "center" },
-  pasteBtnText: { fontSize: 15, fontFamily: "Inter_500Medium" },
+  pasteInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    minHeight: 72,
+    textAlignVertical: "top",
+    marginTop: 10,
+  },
+  pasteParseBtn: {
+    borderRadius: 8,
+    paddingVertical: 11,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  pasteParseBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   fileChip: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, alignSelf: "flex-start" },
   fileChipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   fileChipDismiss: { marginLeft: 8, padding: 2 },
