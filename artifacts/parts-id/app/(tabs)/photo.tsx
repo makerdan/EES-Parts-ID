@@ -319,16 +319,20 @@ export default function PhotoScreen() {
                       onPress={() => pickImage("camera")}
                       disabled={isProcessing}
                       style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Take photo with camera"
                     >
-                      <Text style={styles.addImageEmoji}>📷</Text>
+                      <MaterialCommunityIcons name="camera" size={28} color={colors.foreground} />
                       <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Camera</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => pickImage("library")}
                       disabled={isProcessing}
                       style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Pick from photo library"
                     >
-                      <Text style={styles.addImageEmoji}>🖼️</Text>
+                      <MaterialCommunityIcons name="image-multiple" size={28} color={colors.foreground} />
                       <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
                     </Pressable>
                     <Pressable
@@ -581,7 +585,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
   },
-  addImageEmoji: { fontSize: 22 },
   addImageLabel: { fontSize: 12, fontFamily: "Inter_500Medium" },
   imageHint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic" },
   photoCounter: { fontSize: 12, fontFamily: "Inter_500Medium" },
