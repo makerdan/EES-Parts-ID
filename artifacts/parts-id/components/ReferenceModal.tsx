@@ -144,13 +144,16 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
       >
         {/* Header */}
         <View style={[modalStyles.header, { borderBottomColor: colors.border }]}>
-          <View>
-            <Text style={[modalStyles.title, { color: colors.foreground }]}>
-              ⚡ Reference AI
-            </Text>
-            <Text style={[modalStyles.subtitle, { color: colors.mutedForeground }]}>
-              Ask about electrical terms & codes
-            </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <View style={[modalStyles.accentBar, { backgroundColor: colors.primary }]} />
+            <View>
+              <Text style={[modalStyles.title, { color: colors.foreground }]}>
+                ⚡ Reference AI
+              </Text>
+              <Text style={[modalStyles.subtitle, { color: colors.mutedForeground }]}>
+                Ask about electrical terms & codes
+              </Text>
+            </View>
           </View>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {history.length > 0 ? (
@@ -292,6 +295,7 @@ const modalStyles = StyleSheet.create({
     paddingTop: 20,
     borderBottomWidth: 1,
   },
+  accentBar: { width: 3, height: 20, borderRadius: 2 },
   title: { fontSize: 18, fontFamily: "Inter_700Bold" },
   subtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },

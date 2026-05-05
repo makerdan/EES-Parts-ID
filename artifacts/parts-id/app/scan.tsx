@@ -499,15 +499,18 @@ export default function ScanScreen() {
         transparent
         onRequestClose={resetScanner}
       >
-        <Pressable style={styles.modalOverlay} onPress={resetScanner}>
+        <Pressable style={[styles.modalOverlay, { backgroundColor: colors.overlay }]} onPress={resetScanner}>
           <Pressable
             onPress={() => undefined}
             style={[styles.modalSheet, { backgroundColor: colors.background, borderColor: colors.border }]}
           >
             <View style={[styles.modalHeader, { borderColor: colors.border }]}>
-              <Text style={[styles.modalTitle, { color: colors.foreground }]}>
-                Scanned Part
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                <View style={[styles.headerAccent, { backgroundColor: colors.primary }]} />
+                <Text style={[styles.modalTitle, { color: colors.foreground }]}>
+                  Scanned Part
+                </Text>
+              </View>
               <Pressable onPress={resetScanner} hitSlop={10} style={[styles.closeBtn, { borderColor: colors.border }]}>
                 <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold" }}>✕ Close</Text>
               </Pressable>
@@ -538,19 +541,22 @@ export default function ScanScreen() {
         transparent
         onRequestClose={resetScanner}
       >
-        <Pressable style={styles.modalOverlay} onPress={resetScanner}>
+        <Pressable style={[styles.modalOverlay, { backgroundColor: colors.overlay }]} onPress={resetScanner}>
           <Pressable
             onPress={() => undefined}
             style={[styles.modalSheet, { backgroundColor: colors.background, borderColor: colors.border }]}
           >
             <View style={[styles.modalHeader, { borderColor: colors.border }]}>
-              <Text style={[styles.modalTitle, { color: colors.foreground }]}>
-                {pickerMode === "menu"
-                  ? "Don't recognize this barcode yet"
-                  : pickerMode === "search"
-                  ? "Search for the part"
-                  : "Take a photo of the part"}
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                <View style={[styles.headerAccent, { backgroundColor: colors.primary }]} />
+                <Text style={[styles.modalTitle, { color: colors.foreground }]}>
+                  {pickerMode === "menu"
+                    ? "Don't recognize this barcode yet"
+                    : pickerMode === "search"
+                    ? "Search for the part"
+                    : "Take a photo of the part"}
+                </Text>
+              </View>
               <Pressable onPress={resetScanner} hitSlop={10} style={[styles.closeBtn, { borderColor: colors.border }]}>
                 <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold" }}>✕ Cancel</Text>
               </Pressable>
@@ -801,7 +807,8 @@ const styles = StyleSheet.create({
     margin: 12,
     marginBottom: 0,
   },
-  modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "#00000088" },
+  modalOverlay: { flex: 1, justifyContent: "flex-end" },
+  headerAccent: { width: 3, height: 18, borderRadius: 2, flexShrink: 0 },
   modalSheet: {
     maxHeight: "92%",
     borderTopLeftRadius: 16,
