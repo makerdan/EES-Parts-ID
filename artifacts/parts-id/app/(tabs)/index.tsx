@@ -1006,7 +1006,7 @@ export default function SearchScreen() {
               empty welcome state (same effect as the "New Search" button
               and tapping the Search tab while focused). */}
           <Pressable onPress={() => handleClearRef.current()} hitSlop={8}>
-            <Text style={[styles.headerTitle, { color: colors.foreground }]}>⚡ Parts ID</Text>
+            <Text style={[styles.headerTitle, { color: colors.foreground }]}>Parts ID</Text>
           </Pressable>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
             {/* Sync progress — while fetching all inventory for offline cache */}
@@ -1029,8 +1029,9 @@ export default function SearchScreen() {
                 onPress={() => syncAllInventory()}
                 style={[styles.statusBadge, { backgroundColor: colors.destructive + "18" }]}
               >
+                <Feather name="alert-circle" size={10} color={colors.destructive} style={{ marginRight: 4 }} />
                 <Text style={[styles.statusBadgeText, { color: colors.destructive }]}>
-                  ⚠ Sync failed — tap to retry
+                  Sync failed — tap to retry
                 </Text>
               </Pressable>
             ) : cachedCount > 0 ? (
@@ -1389,9 +1390,12 @@ export default function SearchScreen() {
               borderColor: searchMutation.isPending ? colors.border : '#000',
             }]}
           >
-            <Text style={[styles.searchBarSearchBtnText, { color: '#000' }]}>
-              {searchMutation.isPending ? "…" : "🔍 Search"}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              {!searchMutation.isPending && <Feather name="search" size={16} color="#000" />}
+              <Text style={[styles.searchBarSearchBtnText, { color: '#000' }]}>
+                {searchMutation.isPending ? "…" : "Search"}
+              </Text>
+            </View>
           </Pressable>
           {(hasResults || filters.keywords) ? (
             <Pressable
@@ -1425,9 +1429,10 @@ export default function SearchScreen() {
               },
             ]}
           >
-            <Text style={[styles.modeToggleText, { color: colors.foreground }]}>
-              📂 Browse
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Feather name="folder" size={14} color={colors.foreground} />
+              <Text style={[styles.modeToggleText, { color: colors.foreground }]}>Browse</Text>
+            </View>
           </Pressable>
         </View>
       ) : null}
@@ -1579,7 +1584,7 @@ export default function SearchScreen() {
             {/* Empty state */}
             {hasResults && results.length === 0 && !isOffline ? (
               <View style={styles.emptyContainer}>
-                <Text style={styles.emptyEmoji}>🔍</Text>
+                <Feather name="search" size={48} color={colors.mutedForeground} style={{ marginBottom: 12 }} />
                 <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Results Found</Text>
                 <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
                   Try broader terms, check spelling, or lower the confidence threshold.
@@ -1814,7 +1819,6 @@ const styles = StyleSheet.create({
   errorCard: { margin: 16, padding: 16, borderRadius: 8, borderWidth: 1 },
   errorText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   emptyContainer: { alignItems: "center", padding: 40 },
-  emptyEmoji: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   emptyHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 8 },
   resultItem: { paddingHorizontal: 12 },

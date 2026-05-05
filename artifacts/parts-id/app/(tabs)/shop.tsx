@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 import NetInfo from "@react-native-community/netinfo";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 
 const SHOP_URL = "https://www.elliottelectric.com";
@@ -85,7 +86,7 @@ export default function ShopScreen() {
       <View style={styles.container}>
         {showingOffline ? (
           <View style={styles.errorContainer}>
-            <Text style={styles.errorIcon}>📡</Text>
+            <MaterialCommunityIcons name="wifi-off" size={48} color={colors.mutedForeground} />
             <Text style={[styles.errorTitle, { color: colors.foreground }]}>
               You're offline
             </Text>
@@ -104,7 +105,7 @@ export default function ShopScreen() {
           </View>
         ) : showingError ? (
           <View style={styles.errorContainer}>
-            <Text style={styles.errorIcon}>⚠️</Text>
+            <MaterialCommunityIcons name="alert-circle-outline" size={48} color={colors.destructive} />
             <Text style={[styles.errorTitle, { color: colors.foreground }]}>
               Couldn't load Elliott Electric Supply
             </Text>
@@ -200,7 +201,6 @@ const styles = StyleSheet.create({
     padding: 32,
     gap: 12,
   },
-  errorIcon: { fontSize: 48 },
   errorTitle: {
     fontSize: 18,
     fontFamily: "Inter_700Bold",

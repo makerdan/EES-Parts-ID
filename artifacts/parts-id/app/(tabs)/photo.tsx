@@ -280,7 +280,7 @@ export default function PhotoScreen() {
           {/* Tapping the app title from any tab jumps back to the Search
               tab's empty welcome state (handled there by tabPress). */}
           <Pressable onPress={() => router.replace("/(tabs)")} hitSlop={8}>
-            <Text style={[styles.headerTitle, { color: colors.foreground }]}>📸 Photo ID</Text>
+            <Text style={[styles.headerTitle, { color: colors.foreground }]}>Photo ID</Text>
             <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
               Identify parts from photos
             </Text>
@@ -412,9 +412,12 @@ export default function PhotoScreen() {
                 </Text>
               </View>
             ) : (
-              <Text style={[styles.identifyBtnText, { color: images.length === 0 ? colors.mutedForeground : colors.primaryForeground }]}>
-                🔍 Identify Part
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <MaterialCommunityIcons name="magnify" size={20} color={images.length === 0 ? colors.mutedForeground : colors.primaryForeground} />
+                <Text style={[styles.identifyBtnText, { color: images.length === 0 ? colors.mutedForeground : colors.primaryForeground }]}>
+                  Identify Part
+                </Text>
+              </View>
             )}
           </Pressable>
 
@@ -468,7 +471,10 @@ export default function PhotoScreen() {
           {/* Inline error banner */}
           {inlineError ? (
             <View style={[styles.inlineBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
-              <Text style={[styles.inlineBannerText, { color: colors.destructive }]}>⚠ {inlineError}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={14} color={colors.destructive} />
+                <Text style={[styles.inlineBannerText, { color: colors.destructive, flex: 1 }]}>{inlineError}</Text>
+              </View>
               <Pressable onPress={() => setInlineError(null)} style={styles.inlineBannerClose}>
                 <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
               </Pressable>
