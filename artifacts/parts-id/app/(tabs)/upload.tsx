@@ -1923,10 +1923,10 @@ export default function UploadScreen() {
                       marginBottom: enrichOpen ? 8 : 0,
                     }}
                   >
-                    <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_600SemiBold", fontSize: 13, width: 14 }}>
+                    <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_600SemiBold", fontSize: 26, width: 28 }}>
                       {enrichOpen ? "▾" : "▸"}
                     </Text>
-                    <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 15 }}>
+                    <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 30 }}>
                       Enrichment
                     </Text>
                   </Pressable>
@@ -2478,7 +2478,7 @@ export default function UploadScreen() {
                       onPress={() => setTab("upload")}
                       style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
                     >
-                      <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Upload</Text>
+                      <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Back to Upload</Text>
                     </Pressable>
                   </View>
                 )
