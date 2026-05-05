@@ -136,6 +136,7 @@ type PreviewResponse = {
   changes: PreviewMatchRow[];
   binsOnlyUpdated?: number;
   binsOnlySkipped?: number;
+  matchedKeys?: Array<{ vendor: string; catalog: string }>;
 };
 type UpsertMode = "add-new-only" | "overwrite-all" | "selected" | "bins-only";
 type UpsertResult = { inserted: number; updated: number; skipped: number; total: number };
@@ -464,6 +465,21 @@ const gateStyles = StyleSheet.create({
   btn: { width: "100%", borderRadius: 8, paddingVertical: 14, alignItems: "center" },
   btnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
 });
+
+// Returns only the parsed rows whose vendor+catalog appear in matchedKeys,
+// using case-insensitive comparison on catalog (vendor is already upper-cased
+// server-side; we normalise both sides to be safe).
+function buildBinsOnlyRows(
+  rows: ParsedRow[],
+  matchedKeys: Array<{ vendor: string; catalog: string }>,
+): ParsedRow[] {
+  const keySet = new Set(
+    matchedKeys.map(k => `${k.vendor.trim().toUpperCase()}|${k.catalog.trim().toUpperCase()}`),
+  );
+  return rows.filter(r =>
+    keySet.has(`${r.vendor.trim().toUpperCase()}|${r.catalog.trim().toUpperCase()}`),
+  );
+}
 
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
@@ -1322,12 +1338,17 @@ export default function UploadScreen() {
   // seed (rows + metadata + 0 checkpoint) once before the first chunk so a
   // mid-first-chunk crash is recoverable.
   const applyUpsert = useCallback(
-    async (mode: UpsertMode, selectedKeys?: Array<{ vendor: string; catalog: string }>) => {
-      if (!parsedRows.length) return;
+    async (
+      mode: UpsertMode,
+      selectedKeys?: Array<{ vendor: string; catalog: string }>,
+      rowsOverride?: ParsedRow[],
+    ) => {
+      const rows = rowsOverride ?? parsedRows;
+      if (!rows.length) return;
       const seed: UploadSeed = {
         fileName,
         fileType,
-        parsedRows,
+        parsedRows: rows,
         mode,
         selectedKeys: mode === "selected" ? selectedKeys : undefined,
         startedAt: Date.now(),
@@ -1456,16 +1477,17 @@ export default function UploadScreen() {
       setPreviewData(preview);
 
       if (binsOnlyMode) {
-        // Bins-only: show a confirmation with the counts, then apply.
-        const updated = preview.binsOnlyUpdated ?? (preview.totalIncoming - preview.newCount);
-        const skipped = preview.binsOnlySkipped ?? preview.newCount;
+        // Bins-only: filter client-side to only matched rows, then confirm.
+        const updated = preview.binsOnlyUpdated ?? 0;
+        const skipped = preview.binsOnlySkipped ?? 0;
+        const filteredRows = buildBinsOnlyRows(parsedRows, preview.matchedKeys ?? []);
         setUploadPending(false);
         Alert.alert(
           "Update Bins Only",
           `${updated} item${updated !== 1 ? "s" : ""} will have bin locations updated.\n${skipped} row${skipped !== 1 ? "s" : ""} not found — will be skipped.\n\nDescriptions will not be changed.`,
           [
             { text: "Cancel", style: "cancel" },
-            { text: "Update Bins", onPress: () => void applyUpsert("bins-only") },
+            { text: "Update Bins", onPress: () => void applyUpsert("bins-only", undefined, filteredRows) },
           ],
         );
         return;
@@ -1487,6 +1509,47 @@ export default function UploadScreen() {
       setUploadPending(false);
     }
   };
+
+  // Bins-only path from the chooser modal: must re-preview with mode=bins-only
+  // to get matchedKeys so we can filter rows client-side before uploading.
+  const handleApplyBinsOnly = useCallback(async () => {
+    if (!parsedRows.length) return;
+    setUploadPending(true);
+    try {
+      const response = await fetch(`${API_BASE}/inventory/preview-upsert`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({ items: parsedRows, mode: "bins-only" }),
+      });
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({})) as { error?: string };
+        if (response.status === 401) {
+          logoutAdmin();
+          setUploadError("Admin session expired. Please unlock again.");
+        } else {
+          setUploadError(errBody.error ?? "Could not start bins-only update. Please try again.");
+        }
+        setUploadPending(false);
+        return;
+      }
+      const preview = await response.json() as PreviewResponse;
+      const updated = preview.binsOnlyUpdated ?? 0;
+      const skipped = preview.binsOnlySkipped ?? 0;
+      const filteredRows = buildBinsOnlyRows(parsedRows, preview.matchedKeys ?? []);
+      setUploadPending(false);
+      Alert.alert(
+        "Update Bins Only",
+        `${updated} item${updated !== 1 ? "s" : ""} will have bin locations updated.\n${skipped} row${skipped !== 1 ? "s" : ""} not found — will be skipped.\n\nDescriptions will not be changed.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Update Bins", onPress: () => void applyUpsert("bins-only", undefined, filteredRows) },
+        ],
+      );
+    } catch {
+      setUploadError("Could not start bins-only update. Please try again.");
+      setUploadPending(false);
+    }
+  }, [parsedRows, adminHeaders, logoutAdmin, applyUpsert]);
 
   const toggleExcluded = useCallback(
     (vendor: string, catalog: string) => {
@@ -2628,8 +2691,7 @@ export default function UploadScreen() {
             <Pressable
               onPress={() => {
                 setChooserVisible(false);
-                setBinsOnlyMode(true);
-                void applyUpsert("bins-only");
+                void handleApplyBinsOnly();
               }}
               style={[styles.chooserBtnAlt, { borderColor: colors.warning + "88" }]}
             >
