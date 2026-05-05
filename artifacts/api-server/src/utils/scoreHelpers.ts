@@ -21,6 +21,12 @@ export function blendPgScore(ftsRank: number, trgmSim: number): number {
  *   2. Prefix match       → max(pgScore, 0.93)
  *   3. Substring match    → max(pgScore, 0.85)
  *   4. FTS/trigram match  → pgScore (reason "fts match" or "trigram match")
+ *
+ * For rawKeywords, both the full string AND each individual whitespace-delimited
+ * token are checked at every tier. This ensures that when Photo ID returns a
+ * multi-word keyword string like "NMWH43 circuit breaker 20A Square D", the
+ * single token "NMWH43" still triggers an exact-match boost against a catalog
+ * entry of "NMWH43".
  */
 export function catalogScore(
   pgScore: number,
@@ -32,14 +38,27 @@ export function catalogScore(
   const c = catalog.toUpperCase();
   const ci = catalogInput.toUpperCase();
   const rk = rawKeywords.toUpperCase();
+  const tokens = rk ? rk.split(/\s+/).filter(Boolean) : [];
 
-  if ((catalogInput && c === ci) || (rawKeywords && c === rk)) {
+  if (
+    (catalogInput && c === ci) ||
+    (rawKeywords && c === rk) ||
+    tokens.some(t => t === c)
+  ) {
     return { score: 1.0, reason: "exact catalog" };
   }
-  if ((catalogInput && c.startsWith(ci)) || (rawKeywords && c.startsWith(rk))) {
+  if (
+    (catalogInput && c.startsWith(ci)) ||
+    (rawKeywords && c.startsWith(rk)) ||
+    tokens.some(t => c.startsWith(t))
+  ) {
     return { score: Math.max(pgScore, 0.93), reason: "catalog prefix" };
   }
-  if ((catalogInput && c.includes(ci)) || (rawKeywords && c.includes(rk))) {
+  if (
+    (catalogInput && c.includes(ci)) ||
+    (rawKeywords && c.includes(rk)) ||
+    tokens.some(t => c.includes(t))
+  ) {
     return { score: Math.max(pgScore, 0.85), reason: "catalog substring" };
   }
   return { score: pgScore, reason: ftsRank > 0 ? "fts match" : "trigram match" };
