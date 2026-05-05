@@ -44,6 +44,7 @@ import { ErrorBanner } from "@/components/ErrorBanner";
 import { useApp } from "@/contexts/AppContext";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
+import { ImportFileCard } from "@/components/ImportFileCard";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -1792,66 +1793,21 @@ export default function UploadScreen() {
 
           {tab === "upload" ? (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
-              {/* File upload card */}
-              <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Accepts: CSV, Excel (.xlsx/.xls), ODS, or pasted spreadsheet data{"\n"}
-                  Required columns: vendor, catalog{"\n"}
-                  Optional: description, bin (or binLocation)
-                </Text>
-
-                <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
-                  <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                    📂 Choose CSV or Excel File
-                  </Text>
-                </Pressable>
-
-                <TextInput
-                  value={pasteInputText}
-                  onChangeText={setPasteInputText}
-                  placeholder="Paste spreadsheet rows here…"
-                  placeholderTextColor={colors.mutedForeground}
-                  multiline
-                  numberOfLines={3}
-                  style={[
-                    styles.pasteInput,
-                    { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
-                  ]}
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                />
-                {pasteInputText.trim().length > 0 ? (
-                  <Pressable
-                    onPress={() => handleParsePastedText(pasteInputText)}
-                    style={[styles.pasteParseBtn, { backgroundColor: colors.primary }]}
-                  >
-                    <Text style={[styles.pasteParseBtnText, { color: colors.primaryForeground }]}>
-                      Import Pasted Data
-                    </Text>
-                  </Pressable>
-                ) : null}
-
-                {fileName ? (
-                  <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
-                    <Text style={[styles.fileChipText, { color: colors.foreground }]}>
-                      {fileType === "xlsx" ? "📊" : "📄"} {fileName}
-                    </Text>
-                    {!uploadPending && !chunkProgress ? (
-                      <Pressable
-                        onPress={clearPendingFile}
-                        hitSlop={8}
-                        style={styles.fileChipDismiss}
-                        accessibilityLabel="Clear selected file"
-                      >
-                        <Text style={[styles.fileChipDismissText, { color: colors.mutedForeground }]}>
-                          ×
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                ) : null}
-              </View>
+              {/* File import + export card */}
+              <ImportFileCard
+                parsedRows={parsedRows}
+                fileName={fileName}
+                fileType={fileType}
+                uploadPending={uploadPending}
+                chunkProgress={chunkProgress}
+                adminHeaders={adminHeaders}
+                colors={colors}
+                pasteInputText={pasteInputText}
+                onPickFile={handlePickFile}
+                onPasteInputChange={setPasteInputText}
+                onParsePastedText={handleParsePastedText}
+                onClearFile={clearPendingFile}
+              />
 
               {/* Preview */}
               {parsedRows.length > 0 ? (

@@ -1212,6 +1212,52 @@ router.get("/enrich-measurements/status", requireAdminAuth, (_req, res) => {
   res.json(measureEnrichJob);
 });
 
+// ── GET /inventory/export ─────────────────────────────────────────────────────
+// Returns the full inventory as a UTF-8 CSV with four columns:
+//   vendor, catalog, description, binLocations
+//
+// binLocations are joined with "; " (semicolon + space). The server-side CSV
+// parser splits on /[,;/\n\r]+/ so a re-imported file merges the bins back
+// correctly. The column name "binLocations" is recognised by BIN_ALIASES in
+// the mobile CSV parser.
+//
+// Requires admin auth so the full warehouse is not publicly downloadable.
+router.get("/export", requireAdminAuth, async (_req, res) => {
+  try {
+    const items = await db
+      .select()
+      .from(inventoryTable)
+      .orderBy(inventoryTable.vendor, inventoryTable.catalog);
+
+    const csvEscape = (val: string): string => {
+      if (/[",\n\r]/.test(val)) return `"${val.replace(/"/g, '""')}"`;
+      return val;
+    };
+
+    const header = "vendor,catalog,description,binLocations";
+    const dataRows = items.map((item) =>
+      [
+        csvEscape(item.vendor ?? ""),
+        csvEscape(item.catalog ?? ""),
+        csvEscape(item.description ?? ""),
+        csvEscape((item.binLocations ?? []).join("; ")),
+      ].join(","),
+    );
+
+    const csv = [header, ...dataRows].join("\r\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="inventory.csv"',
+    );
+    res.send(csv);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Export failed" });
+  }
+});
+
 // ── PATCH /inventory/:id ──────────────────────────────────────────────────────
 // Partial update for an inventory item. Only the fields present in the
 // request body are touched.
