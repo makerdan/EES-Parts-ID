@@ -660,8 +660,8 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
       return void res.status(400).json({ error: "No items provided" });
     }
 
-    const mode: "add-new-only" | "overwrite-all" | "selected" | "bins-only" =
-      rawMode === "add-new-only" || rawMode === "selected" || rawMode === "overwrite-all" || rawMode === "bins-only"
+    const mode: "add-new-only" | "overwrite-all" | "selected" | "bins-only" | "add-multi-access" =
+      rawMode === "add-new-only" || rawMode === "selected" || rawMode === "overwrite-all" || rawMode === "bins-only" || rawMode === "add-multi-access"
         ? rawMode
         : "overwrite-all";
 
@@ -702,7 +702,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
 
         const mergedBins = mergeBins(existing.binLocations, incomingBins);
 
-        if (mode === "bins-only") {
+        if (mode === "bins-only" || mode === "add-multi-access") {
           // Only update bin locations — never touch description.
           await db
             .update(inventoryTable)
@@ -719,7 +719,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
         }
         updated++;
       } else {
-        // ── New row: bins-only skips; all other modes insert ──
+        // ── New row: bins-only skips; add-multi-access and all other modes insert ──
         if (mode === "bins-only") {
           skipped++;
           continue;
