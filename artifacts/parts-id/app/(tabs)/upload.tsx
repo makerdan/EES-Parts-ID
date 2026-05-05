@@ -134,8 +134,10 @@ type PreviewResponse = {
   unchangedCount: number;
   totalIncoming: number;
   changes: PreviewMatchRow[];
+  binsOnlyUpdated?: number;
+  binsOnlySkipped?: number;
 };
-type UpsertMode = "add-new-only" | "overwrite-all" | "selected";
+type UpsertMode = "add-new-only" | "overwrite-all" | "selected" | "bins-only";
 type UpsertResult = { inserted: number; updated: number; skipped: number; total: number };
 
 type EnrichProgress = {
@@ -472,6 +474,7 @@ export default function UploadScreen() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [pasteInputText, setPasteInputText] = useState("");
+  const [binsOnlyMode, setBinsOnlyMode] = useState(false);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [tab, setTab] = useState<"upload" | "inventory">("upload");
   const [uploadSuccess, setUploadSuccess] = useState<UpsertResult | null>(null);
@@ -1177,6 +1180,7 @@ export default function UploadScreen() {
     setFileType(null);
     setPreviewData(null);
     setPasteInputText("");
+    setBinsOnlyMode(false);
   }, []);
 
   // ── Chunked upload runner ────────────────────────────────────────────────
@@ -1418,9 +1422,9 @@ export default function UploadScreen() {
     setResumePrompt(null);
   }, []);
 
-  // Start step — first calls /inventory/preview-upsert. If existing rows would
-  // change, surfaces the 3-option chooser. Otherwise applies overwrite-all
-  // immediately (which is functionally identical when nothing differs).
+  // Start step — first calls /inventory/preview-upsert. If bins-only mode,
+  // applies directly after showing the count summary. Otherwise surfaces the
+  // 3-option chooser when existing rows would change.
   const handleUploadStart = async () => {
     if (!parsedRows.length) return;
     setUploadError(null);
@@ -1430,7 +1434,10 @@ export default function UploadScreen() {
       const response = await fetch(`${API_BASE}/inventory/preview-upsert`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...adminHeaders },
-        body: JSON.stringify({ items: parsedRows }),
+        body: JSON.stringify({
+          items: parsedRows,
+          ...(binsOnlyMode ? { mode: "bins-only" } : {}),
+        }),
       });
 
       if (!response.ok) {
@@ -1441,11 +1448,28 @@ export default function UploadScreen() {
         } else {
           setUploadError(errBody.error ?? "Could not analyze the file. Please try again.");
         }
+        setUploadPending(false);
         return;
       }
 
       const preview = await response.json() as PreviewResponse;
       setPreviewData(preview);
+
+      if (binsOnlyMode) {
+        // Bins-only: show a confirmation with the counts, then apply.
+        const updated = preview.binsOnlyUpdated ?? (preview.totalIncoming - preview.newCount);
+        const skipped = preview.binsOnlySkipped ?? preview.newCount;
+        setUploadPending(false);
+        Alert.alert(
+          "Update Bins Only",
+          `${updated} item${updated !== 1 ? "s" : ""} will have bin locations updated.\n${skipped} row${skipped !== 1 ? "s" : ""} not found — will be skipped.\n\nDescriptions will not be changed.`,
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Update Bins", onPress: () => void applyUpsert("bins-only") },
+          ],
+        );
+        return;
+      }
 
       if (preview.changedCount === 0) {
         // Nothing to ask about — apply immediately.
@@ -1791,16 +1815,37 @@ export default function UploadScreen() {
                     </Text>
                   ) : null}
 
+                  {/* Bins-only mode toggle */}
+                  <Pressable
+                    onPress={() => setBinsOnlyMode(v => !v)}
+                    style={[
+                      styles.binsOnlyToggle,
+                      {
+                        backgroundColor: binsOnlyMode ? colors.warning + "22" : colors.muted,
+                        borderColor: binsOnlyMode ? colors.warning : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.binsOnlyToggleText, { color: binsOnlyMode ? colors.warning : colors.mutedForeground }]}>
+                      {binsOnlyMode ? "Mode: Update Bins Only" : "Mode: Standard import"}
+                    </Text>
+                    <Text style={[styles.binsOnlyToggleHint, { color: colors.mutedForeground }]}>
+                      {binsOnlyMode
+                        ? "Only bin locations will be updated — descriptions untouched, new rows skipped."
+                        : "Tap to switch to Bins Only mode."}
+                    </Text>
+                  </Pressable>
+
                   <Pressable
                     onPress={handleUploadStart}
                     disabled={uploadPending}
-                    style={[styles.uploadBtn, { backgroundColor: uploadPending ? colors.muted : colors.primary }]}
+                    style={[styles.uploadBtn, { backgroundColor: uploadPending ? colors.muted : (binsOnlyMode ? colors.warning : colors.primary) }]}
                   >
                     {uploadPending ? (
                       <ActivityIndicator color={colors.primaryForeground} />
                     ) : (
                       <Text style={[styles.uploadBtnText, { color: colors.primaryForeground }]}>
-                        ⬆️ Upload {parsedRows.length} Items
+                        {binsOnlyMode ? `Update Bins for ${parsedRows.length} Rows` : `⬆️ Upload ${parsedRows.length} Items`}
                       </Text>
                     )}
                   </Pressable>
@@ -2581,6 +2626,19 @@ export default function UploadScreen() {
             </Pressable>
 
             <Pressable
+              onPress={() => {
+                setChooserVisible(false);
+                setBinsOnlyMode(true);
+                void applyUpsert("bins-only");
+              }}
+              style={[styles.chooserBtnAlt, { borderColor: colors.warning + "88" }]}
+            >
+              <Text style={[styles.chooserBtnAltText, { color: colors.warning }]}>
+                Update Bins Only
+              </Text>
+            </Pressable>
+
+            <Pressable
               onPress={() => setChooserVisible(false)}
               style={styles.chooserCancel}
             >
@@ -2815,6 +2873,9 @@ const styles = StyleSheet.create({
 
   // Chooser modal
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", alignItems: "center", justifyContent: "center", padding: 20 },
+  binsOnlyToggle: { borderRadius: 8, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 12, marginTop: 4 },
+  binsOnlyToggleText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  binsOnlyToggleHint: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
   chooserCard: { width: "100%", maxWidth: 380, borderRadius: 16, padding: 20, borderWidth: 1, gap: 10 },
   chooserTitle: { fontSize: 18, fontFamily: "Inter_700Bold", textAlign: "center" },
   chooserBody: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 19, marginBottom: 6 },

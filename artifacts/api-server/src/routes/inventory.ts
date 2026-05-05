@@ -660,8 +660,8 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
       return void res.status(400).json({ error: "No items provided" });
     }
 
-    const mode: "add-new-only" | "overwrite-all" | "selected" =
-      rawMode === "add-new-only" || rawMode === "selected" || rawMode === "overwrite-all"
+    const mode: "add-new-only" | "overwrite-all" | "selected" | "bins-only" =
+      rawMode === "add-new-only" || rawMode === "selected" || rawMode === "overwrite-all" || rawMode === "bins-only"
         ? rawMode
         : "overwrite-all";
 
@@ -701,20 +701,29 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
         }
 
         const mergedBins = mergeBins(existing.binLocations, incomingBins);
-        // Blank/missing description NEVER wipes the stored description.
-        const nextDescription = incomingDescRaw.length > 0 ? incomingDescRaw : existing.description;
-        await db
-          .update(inventoryTable)
-          .set({
-            description: nextDescription,
-            binLocations: mergedBins,
-            updatedAt: new Date(),
-          })
-          // NB: vendor/catalog text on existing rows is intentionally NOT updated.
-          .where(eq(inventoryTable.id, existing.id));
+
+        if (mode === "bins-only") {
+          // Only update bin locations — never touch description.
+          await db
+            .update(inventoryTable)
+            .set({ binLocations: mergedBins, updatedAt: new Date() })
+            .where(eq(inventoryTable.id, existing.id));
+        } else {
+          // Blank/missing description NEVER wipes the stored description.
+          const nextDescription = incomingDescRaw.length > 0 ? incomingDescRaw : existing.description;
+          await db
+            .update(inventoryTable)
+            .set({ description: nextDescription, binLocations: mergedBins, updatedAt: new Date() })
+            // NB: vendor/catalog text on existing rows is intentionally NOT updated.
+            .where(eq(inventoryTable.id, existing.id));
+        }
         updated++;
       } else {
-        // ── New row: always insert, regardless of mode ──
+        // ── New row: bins-only skips; all other modes insert ──
+        if (mode === "bins-only") {
+          skipped++;
+          continue;
+        }
         await db.insert(inventoryTable).values({
           vendor: item.vendor.trim().toUpperCase(),
           catalog: item.catalog.trim(),
@@ -740,10 +749,12 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
 // `binLocations` and `description`. No DB writes.
 router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
   try {
-    const { items } = req.body as { items?: UpsertItemInput[] };
+    const { items, mode: rawMode } = req.body as { items?: UpsertItemInput[]; mode?: string };
     if (!items?.length) {
       return void res.status(400).json({ error: "No items provided" });
     }
+
+    const binsOnly = rawMode === "bins-only";
 
     // Collapse duplicate logical keys before classification.
     const dedupedItems = dedupeItems(items);
@@ -752,6 +763,9 @@ router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
     let newCount = 0;
     let changedCount = 0;
     let unchangedCount = 0;
+    // bins-only counters
+    let binsOnlyUpdated = 0;
+    let binsOnlySkipped = 0;
     const changes: Array<{
       vendor: string;
       catalog: string;
@@ -771,6 +785,12 @@ router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
 
       if (!existing) {
         newCount++;
+        if (binsOnly) binsOnlySkipped++;
+        continue;
+      }
+
+      if (binsOnly) {
+        binsOnlyUpdated++;
         continue;
       }
 
@@ -807,6 +827,8 @@ router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
       // Distinct (vendor, catalog) rows after de-duplication, per OpenAPI.
       totalIncoming: dedupedItems.length,
       changes,
+      // bins-only mode extras (undefined when not in bins-only mode)
+      ...(binsOnly ? { binsOnlyUpdated, binsOnlySkipped } : {}),
     });
   } catch (err) {
     console.error(err);
