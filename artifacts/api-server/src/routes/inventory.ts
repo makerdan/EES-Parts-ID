@@ -766,6 +766,7 @@ router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
     // bins-only counters
     let binsOnlyUpdated = 0;
     let binsOnlySkipped = 0;
+    const matchedKeys: Array<{ vendor: string; catalog: string }> = [];
     const changes: Array<{
       vendor: string;
       catalog: string;
@@ -791,6 +792,8 @@ router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
 
       if (binsOnly) {
         binsOnlyUpdated++;
+        // Preserve DB-cased vendor/catalog for the client filter key.
+        matchedKeys.push({ vendor: existing.vendor, catalog: existing.catalog });
         continue;
       }
 
@@ -828,7 +831,7 @@ router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
       totalIncoming: dedupedItems.length,
       changes,
       // bins-only mode extras (undefined when not in bins-only mode)
-      ...(binsOnly ? { binsOnlyUpdated, binsOnlySkipped } : {}),
+      ...(binsOnly ? { binsOnlyUpdated, binsOnlySkipped, matchedKeys } : {}),
     });
   } catch (err) {
     console.error(err);
