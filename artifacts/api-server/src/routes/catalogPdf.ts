@@ -35,7 +35,8 @@
 
 import { Router, raw } from "express";
 import multer from "multer";
-import { sql, desc, asc, eq, and } from "drizzle-orm";
+import { sql, desc, asc, eq, and, inArray } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import {
   db,
   inventoryTable,
@@ -122,6 +123,7 @@ interface RunSummary {
   skippedCount: number;
   errorCount: number;
   revertedAt: string | null;
+  undoBlocked: boolean;
 }
 
 // ── Multipart parser (file=catalog PDF, vendor=text field) ─────────────────
@@ -421,6 +423,37 @@ router.get("/catalog-pdf/runs", requireAdminAuth, async (req, res) => {
     const rows = await filtered
       .orderBy(desc(enrichmentRunTable.startedAt))
       .limit(limit);
+    // For reverted runs, determine whether undo is safe. A run is "blocked"
+    // when at least one inventory item it touched has a history row from a
+    // newer run (higher id), meaning un-reverting would silently overwrite
+    // those newer changes. We do this in a single batched query using a
+    // self-join on inventory_enrichment_history.
+    const revertedIds = rows
+      .filter((r) => r.revertedAt !== null)
+      .map((r) => r.id);
+
+    const blockedRunIds = new Set<number>();
+    if (revertedIds.length > 0) {
+      // Parameterized self-join: find all reverted run IDs that share an
+      // inventoryId with a history row from a newer run (higher run_id).
+      // Using drizzle alias so both sides of the join are type-safe.
+      const h2 = alias(enrichmentHistoryTable, "h2");
+      const overlapRows = await db
+        .selectDistinct({ runId: enrichmentHistoryTable.runId })
+        .from(enrichmentHistoryTable)
+        .innerJoin(
+          h2,
+          and(
+            eq(h2.inventoryId, enrichmentHistoryTable.inventoryId),
+            sql`${h2.runId} > ${enrichmentHistoryTable.runId}`,
+          ),
+        )
+        .where(inArray(enrichmentHistoryTable.runId, revertedIds));
+      for (const row of overlapRows) {
+        blockedRunIds.add(row.runId);
+      }
+    }
+
     const runs: RunSummary[] = rows.map((r) => ({
       id: r.id,
       vendor: r.vendor,
@@ -431,6 +464,7 @@ router.get("/catalog-pdf/runs", requireAdminAuth, async (req, res) => {
       skippedCount: r.skippedCount,
       errorCount: r.errorCount,
       revertedAt: r.revertedAt?.toISOString() ?? null,
+      undoBlocked: blockedRunIds.has(r.id),
     }));
     res.json({ runs });
   } catch (err) {
