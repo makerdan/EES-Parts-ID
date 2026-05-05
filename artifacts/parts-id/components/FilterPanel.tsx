@@ -248,7 +248,7 @@ function Field({
 }) {
   return (
     <View style={{ marginBottom: 12 }}>
-      <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>{label}</Text>
+      <Text style={[fieldStyles.label, { color: "rgba(0,0,0,0.9)" }]}>{label}</Text>
       <TextInput
         value={value}
         onChangeText={onChange}
@@ -427,7 +427,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
           style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12, borderWidth: 1, borderRadius: 8, borderColor: 'rgba(0,0,0,0.75)', padding: 10 }]}
           onPress={toggleDimensions}
         >
-          <Text style={[chipAreaStyles.title, { color: "#000000" }]}>Advanced Filters</Text>
+          <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>Advanced Filters</Text>
           <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
             {activeChipCount > 0 && (
               <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
