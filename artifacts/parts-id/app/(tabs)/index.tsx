@@ -1085,7 +1085,7 @@ export default function SearchScreen() {
           Android the platform already resizes the window for us.
         */}
         <KeyboardAvoidingView
-          style={styles.modalOverlay}
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
           {/*
@@ -1105,7 +1105,10 @@ export default function SearchScreen() {
               },
             ]}
           >
-            <Text style={[styles.settingsModalTitle, { color: colors.foreground }]}>Settings</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <View style={{ width: 3, height: 18, borderRadius: 2, backgroundColor: colors.primary }} />
+              <Text style={[styles.settingsModalTitle, { marginBottom: 0, color: colors.foreground }]}>Settings</Text>
+            </View>
 
             <KeyboardAwareScrollViewCompat
               style={styles.settingsModalScroll}
@@ -1286,11 +1289,14 @@ export default function SearchScreen() {
         animationType="fade"
         onRequestClose={() => setSyncWarningSec(null)}
       >
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.logoutModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.logoutModalTitle, { color: colors.foreground }]}>
-              ⏳ Inventory still syncing
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <View style={{ width: 3, height: 18, borderRadius: 2, backgroundColor: colors.primary }} />
+              <Text style={[styles.logoutModalTitle, { marginBottom: 0, color: colors.foreground }]}>
+                Inventory still syncing
+              </Text>
+            </View>
             <Text style={[styles.logoutModalHint, { color: colors.mutedForeground }]}>
               {`Please wait about ${syncWarningSec ?? 0} second${syncWarningSec === 1 ? "" : "s"} for the inventory to finish loading before searching.`}
             </Text>
@@ -1679,7 +1685,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   logoutBtnLabel: { fontSize: 9, fontFamily: "Inter_500Medium", letterSpacing: 0.2 },
-  modalOverlay: { flex: 1, backgroundColor: "#00000055", alignItems: "center", justifyContent: "center", padding: 32 },
+  modalOverlay: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
   logoutModal: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 24 },
   logoutModalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   logoutModalHint: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20, marginBottom: 20 },

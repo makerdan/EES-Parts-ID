@@ -464,6 +464,7 @@ export function KeywordEditor({
       >
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <View style={[styles.accentBar, { backgroundColor: colors.primary }]} />
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <Text style={[styles.title, { color: colors.foreground }]}>Edit Part Details</Text>
@@ -728,6 +729,7 @@ export function KeywordEditor({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  accentBar: { width: 3, height: 20, borderRadius: 2, flexShrink: 0 },
   header: {
     flexDirection: "row",
     alignItems: "center",
