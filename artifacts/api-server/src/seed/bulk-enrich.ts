@@ -30,16 +30,14 @@ async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function enrichWithRetry(item: {
-  id: number;
-  vendor: string;
-  catalog: string;
-  description: string | null;
-}): Promise<string[]> {
+async function enrichWithRetry(
+  item: { id: number; vendor: string; catalog: string; description: string | null },
+  tradeSize?: string,
+): Promise<string[]> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await generateKeywords(item, MODEL);
+      return await generateKeywords(item, MODEL, tradeSize);
     } catch (err) {
       lastErr = err;
       if (attempt < MAX_RETRIES) {
@@ -87,7 +85,15 @@ async function bulkEnrich() {
     // Process wave with limited concurrency
     for (let i = 0; i < batch.length; i += CONCURRENCY) {
       const wave = batch.slice(i, i + CONCURRENCY);
-      const results = await Promise.allSettled(wave.map((item) => enrichWithRetry(item)));
+      const results = await Promise.allSettled(wave.map((item) => {
+        const tradeSizeInches =
+          parseTradeSizeInches(item.catalog) ??
+          parseTradeSizeInches(item.description);
+        const tradeSize = tradeSizeInches !== null
+          ? tradeSizeChipLabel(tradeSizeInches) ?? undefined
+          : undefined;
+        return enrichWithRetry(item, tradeSize);
+      }));
 
       for (let j = 0; j < results.length; j++) {
         const r = results[j]!;
