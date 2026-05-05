@@ -126,6 +126,15 @@ describe("uploadProgress persistence", () => {
     expect(await loadUploadProgress()).toBeNull();
   });
 
+  it("accepts add-multi-access mode (seed round-trips correctly)", async () => {
+    const multiSeed: UploadSeed = { ...seed, mode: "add-multi-access" };
+    await saveUploadSeed(multiSeed);
+    const loaded = await loadUploadProgress();
+    expect(loaded).not.toBeNull();
+    expect(loaded?.mode).toBe("add-multi-access");
+    expect(loaded?.parsedRows).toEqual(seed.parsedRows);
+  });
+
   it("preserves selectedKeys when present (selected mode)", async () => {
     const sel: UploadSeed = {
       ...seed,

@@ -60,7 +60,7 @@ function isValidSeed(v: unknown): v is UploadSeed {
   return (
     Array.isArray(o.parsedRows) &&
     typeof o.startedAt === "number" &&
-    (o.mode === "add-new-only" || o.mode === "overwrite-all" || o.mode === "selected" || o.mode === "bins-only")
+    (o.mode === "add-new-only" || o.mode === "overwrite-all" || o.mode === "selected" || o.mode === "bins-only" || o.mode === "add-multi-access")
   );
 }
 
