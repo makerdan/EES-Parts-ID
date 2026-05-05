@@ -339,7 +339,7 @@ export default function PhotoScreen() {
                       accessibilityLabel="Scan barcode"
                     >
                       <MaterialCommunityIcons name="barcode-scan" size={28} color={colors.foreground} />
-                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Scan</Text>
+                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Barcode</Text>
                     </Pressable>
                   </View>
                 )
