@@ -7,6 +7,7 @@
  * photos that would otherwise blow the OpenAI request budget.
  */
 import React, { useState, useRef, useEffect } from "react";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   ActivityIndicator,
   Image,
@@ -337,7 +338,7 @@ export default function PhotoScreen() {
                       accessibilityRole="button"
                       accessibilityLabel="Scan barcode"
                     >
-                      <Text style={styles.addImageEmoji}>🔍</Text>
+                      <MaterialCommunityIcons name="barcode-scan" size={28} color={colors.foreground} />
                       <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Scan</Text>
                     </Pressable>
                   </View>
