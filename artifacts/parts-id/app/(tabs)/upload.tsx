@@ -143,7 +143,7 @@ type PreviewResponse = {
   binsOnlySkipped?: number;
   matchedKeys?: Array<{ vendor: string; catalog: string }>;
 };
-type UpsertMode = "add-new-only" | "overwrite-all" | "selected" | "bins-only";
+type UpsertMode = "add-new-only" | "overwrite-all" | "selected" | "bins-only" | "add-multi-access";
 type UpsertResult = { inserted: number; updated: number; skipped: number; total: number };
 
 type EnrichProgress = {
@@ -2674,6 +2674,15 @@ export default function UploadScreen() {
             >
               <Text style={[styles.chooserBtnAltText, { color: colors.foreground }]}>
                 Overwrite all changes
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => { setChooserVisible(false); void applyUpsert("add-multi-access"); }}
+              style={[styles.chooserBtnAlt, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.chooserBtnAltText, { color: colors.foreground }]}>
+                Add as multi-access
               </Text>
             </Pressable>
 

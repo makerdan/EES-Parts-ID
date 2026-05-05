@@ -25,7 +25,7 @@ export const SEED_KEY = "@partsid/upload_seed_v1";
 export const CHECKPOINT_KEY = "@partsid/upload_checkpoint_v1";
 
 /** Mirror of the mobile-side upsert mode union. */
-export type UploadMode = "add-new-only" | "overwrite-all" | "selected" | "bins-only";
+export type UploadMode = "add-new-only" | "overwrite-all" | "selected" | "bins-only" | "add-multi-access";
 
 /** Match the row shape consumed by /inventory/upsert-batch. */
 export interface UploadRow {

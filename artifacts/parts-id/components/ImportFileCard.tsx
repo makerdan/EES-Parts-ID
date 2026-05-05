@@ -3,7 +3,7 @@
  *
  * Encapsulates the "Import File" card shown on the Upload tab. Handles:
  *   - File picker (CSV / XLSX / ODS / plain text)
- *   - Inline text area for pasting spreadsheet rows directly
+ *   - Collapsible paste area for copying rows directly from a spreadsheet
  *   - Selected-file chip with a dismiss button
  *   - CSV export: fetches GET /inventory/export (admin-only) and shares the
  *     resulting file via the native share sheet.
@@ -69,6 +69,7 @@ export function ImportFileCard({
 }: Props) {
   const [exportPending, setExportPending] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
 
   const handleExport = async () => {
     setExportPending(true);
@@ -108,46 +109,77 @@ export function ImportFileCard({
       ]}
     >
       <Text style={[styles.cardTitle, { color: colors.foreground }]}>
-        📁 Import File
+        Import File
       </Text>
       <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-        Accepts: CSV, Excel (.xlsx/.xls), ODS, or pasted spreadsheet data{"\n"}
+        CSV · Excel (.xlsx/.xls) · ODS · pasted tab/comma data{"\n"}
         Required columns: vendor, catalog{"\n"}
         Optional: description, bin (or binLocation)
       </Text>
 
-      <Pressable
-        onPress={onPickFile}
-        style={[styles.pickBtn, { borderColor: colors.primary }]}
-      >
-        <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-          📂 Choose CSV or Excel File
-        </Text>
-      </Pressable>
-
-      <TextInput
-        value={pasteInputText}
-        onChangeText={onPasteInputChange}
-        placeholder="Paste spreadsheet rows here…"
-        placeholderTextColor={colors.mutedForeground}
-        multiline
-        numberOfLines={3}
-        style={[
-          styles.pasteInput,
-          { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
-        ]}
-        autoCorrect={false}
-        autoCapitalize="none"
-      />
-      {pasteInputText.trim().length > 0 ? (
+      {/* ── Two import action buttons ───────────────────────────────────── */}
+      <View style={styles.importBtnRow}>
         <Pressable
-          onPress={() => onParsePastedText(pasteInputText)}
-          style={[styles.pasteParseBtn, { backgroundColor: colors.primary }]}
+          onPress={onPickFile}
+          style={[styles.importBtn, { borderColor: colors.primary }]}
         >
-          <Text style={[styles.pasteParseBtnText, { color: colors.primaryForeground }]}>
-            Import Pasted Data
+          <Text style={[styles.importBtnText, { color: colors.primary }]}>
+            Choose File
           </Text>
         </Pressable>
+
+        <Pressable
+          onPress={() => setPasteOpen(prev => !prev)}
+          style={[
+            styles.importBtn,
+            {
+              borderColor: pasteOpen ? colors.primary : colors.border,
+              backgroundColor: pasteOpen ? colors.primary + "18" : "transparent",
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.importBtnText,
+              { color: pasteOpen ? colors.primary : colors.foreground },
+            ]}
+          >
+            Paste Data
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* ── Collapsible paste area ──────────────────────────────────────── */}
+      {pasteOpen ? (
+        <>
+          <TextInput
+            value={pasteInputText}
+            onChangeText={onPasteInputChange}
+            placeholder="Paste spreadsheet rows here…"
+            placeholderTextColor={colors.mutedForeground}
+            multiline
+            numberOfLines={3}
+            style={[
+              styles.pasteInput,
+              { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+            ]}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+          {pasteInputText.trim().length > 0 ? (
+            <Pressable
+              onPress={() => {
+                onParsePastedText(pasteInputText);
+                setPasteOpen(false);
+              }}
+              style={[styles.pasteParseBtn, { backgroundColor: colors.primary }]}
+            >
+              <Text style={[styles.pasteParseBtnText, { color: colors.primaryForeground }]}>
+                Import Pasted Data
+              </Text>
+            </Pressable>
+          ) : null}
+        </>
       ) : null}
 
       {fileName ? (
@@ -181,7 +213,7 @@ export function ImportFileCard({
       <View style={[styles.divider, { borderTopColor: colors.border }]} />
 
       <Text style={[styles.cardTitle, { color: colors.foreground }]}>
-        ⬇️ Export Inventory
+        Export Inventory
       </Text>
       <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
         Downloads the full inventory as a CSV — includes vendor, catalog,
@@ -211,7 +243,7 @@ export function ImportFileCard({
           <ActivityIndicator size="small" color={colors.primary} />
         ) : (
           <Text style={[styles.exportBtnText, { color: colors.primary }]}>
-            📥 Export as CSV
+            Export as CSV
           </Text>
         )}
       </Pressable>
@@ -229,13 +261,18 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 16, fontFamily: "Inter_700Bold" },
   cardHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
-  pickBtn: {
-    borderWidth: 2,
+  importBtnRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  importBtn: {
+    flex: 1,
+    borderWidth: 1.5,
     borderRadius: 8,
-    paddingVertical: 13,
+    paddingVertical: 12,
     alignItems: "center",
   },
-  pickBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  importBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   pasteInput: {
     borderWidth: 1,
     borderRadius: 8,
@@ -245,13 +282,11 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     minHeight: 72,
     textAlignVertical: "top",
-    marginTop: 10,
   },
   pasteParseBtn: {
     borderRadius: 8,
     paddingVertical: 11,
     alignItems: "center",
-    marginTop: 8,
   },
   pasteParseBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   fileChip: {
