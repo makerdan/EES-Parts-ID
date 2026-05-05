@@ -2872,8 +2872,7 @@ const styles = StyleSheet.create({
   goUploadText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   inventoryHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
   inventoryCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  enrichSmallBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8 },
-  enrichSmallText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+
   loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: "center", marginTop: 8 },
   loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   inlineBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
