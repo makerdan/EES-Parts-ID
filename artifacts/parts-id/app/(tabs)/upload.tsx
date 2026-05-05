@@ -41,6 +41,7 @@ import {
   type UploadSeed,
 } from "../../lib/uploadProgress";
 
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { ErrorBanner } from "@/components/ErrorBanner";
@@ -419,7 +420,7 @@ function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
   return (
     <View style={[gateStyles.container, { backgroundColor: colors.background }]}>
       <View style={[gateStyles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[gateStyles.icon]}>🔒</Text>
+        <MaterialCommunityIcons name="lock" size={40} color={colors.mutedForeground} />
         <Text style={[gateStyles.title, { color: colors.foreground }]}>Admin Access Required</Text>
         <Text style={[gateStyles.hint, { color: colors.mutedForeground }]}>
           Inventory import is restricted to administrators. Enter the admin password to continue.
@@ -461,7 +462,6 @@ function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
 const gateStyles = StyleSheet.create({
   container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   card: { width: "100%", maxWidth: 380, borderRadius: 16, padding: 28, borderWidth: 1, alignItems: "center", gap: 14 },
-  icon: { fontSize: 40 },
   title: { fontSize: 20, fontFamily: "Inter_700Bold", textAlign: "center" },
   hint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
   input: { width: "100%", borderRadius: 8, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, fontFamily: "Inter_400Regular" },
@@ -1668,12 +1668,15 @@ export default function UploadScreen() {
           {/* Tapping the app title from any tab jumps back to the Search
               tab's empty welcome state (handled there by tabPress). */}
           <Pressable onPress={() => router.replace("/(tabs)")} hitSlop={8}>
-            <Text style={[styles.headerTitle, { color: colors.foreground }]}>📤 Inventory</Text>
+            <Text style={[styles.headerTitle, { color: colors.foreground }]}>Inventory</Text>
             <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
           </Pressable>
           {isAdmin ? (
             <Pressable onPress={logoutAdmin} style={[styles.lockBtn, { borderColor: colors.border }]}>
-              <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>🔓 Lock</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <MaterialCommunityIcons name="lock-open-outline" size={14} color={colors.mutedForeground} />
+                <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>Lock</Text>
+              </View>
             </Pressable>
           ) : null}
         </View>
@@ -1890,7 +1893,7 @@ export default function UploadScreen() {
                       <ActivityIndicator color={colors.primaryForeground} />
                     ) : (
                       <Text style={[styles.uploadBtnText, { color: colors.primaryForeground }]}>
-                        {binsOnlyMode ? `Update Bins for ${parsedRows.length} Rows` : `⬆️ Upload ${parsedRows.length} Items`}
+                        {binsOnlyMode ? `Update Bins for ${parsedRows.length} Rows` : `Upload ${parsedRows.length} Items`}
                       </Text>
                     )}
                   </Pressable>
@@ -1934,7 +1937,7 @@ export default function UploadScreen() {
                     <View>
               {/* Bulk Enrichment Coverage */}
               <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📊 Enrichment Coverage</Text>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Enrichment Coverage</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   AI generates searchable keywords for each part and saves them to the database permanently.
                 </Text>
@@ -2058,7 +2061,7 @@ export default function UploadScreen() {
                     <ActivityIndicator color={colors.primaryForeground} />
                   ) : (
                     <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                      {bulkJobStatus?.running ? "⏳ Enrichment Running…" : "🚀 Start Bulk Enrichment"}
+                      {bulkJobStatus?.running ? "Enrichment Running…" : "Start Bulk Enrichment"}
                     </Text>
                   )}
                 </Pressable>
@@ -2066,7 +2069,7 @@ export default function UploadScreen() {
 
               {/* Measurement Enrichment */}
               <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📐 Measurement Enrichment</Text>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Measurement Enrichment</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Converts measurement terms (e.g. 1/2" → 0.5in, 12mm) into searchable keywords for every part.
                 </Text>
@@ -2131,7 +2134,7 @@ export default function UploadScreen() {
                     <ActivityIndicator color={colors.primaryForeground} />
                   ) : (
                     <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                      {measureJobStatus?.running ? "⏳ Running…" : "📐 Run Measurement Enrichment"}
+                      {measureJobStatus?.running ? "Running…" : "Run Measurement Enrichment"}
                     </Text>
                   )}
                 </Pressable>
@@ -2139,7 +2142,7 @@ export default function UploadScreen() {
 
               {/* Quick-enrich (SSE streaming for immediate feedback) */}
               <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 Quick Enrich</Text>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Quick Enrich</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Enrich a small batch immediately with live progress. Useful for newly imported items.
                 </Text>
@@ -2190,14 +2193,14 @@ export default function UploadScreen() {
                   ]}
                 >
                   <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                    {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Quick Enrich Pending"}
+                    {enrichProgress && !enrichProgress.done ? "Enriching…" : "Quick Enrich"}
                   </Text>
                 </Pressable>
               </View>
 
               {/* ── Catalog PDF Enrichment ──────────────────────────────────── */}
               <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📕 Catalog PDF</Text>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Catalog PDF</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Pick a supported vendor and upload its catalog PDF to enrich
                   matching inventory rows with descriptions, dimension chips, and
@@ -2287,7 +2290,7 @@ export default function UploadScreen() {
                     <ActivityIndicator color={colors.primary} />
                   ) : (
                     <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                      📕 Choose Catalog PDF
+                      Choose Catalog PDF
                     </Text>
                   )}
                 </Pressable>
@@ -2295,7 +2298,7 @@ export default function UploadScreen() {
                 {catalogPdfFileName ? (
                   <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
                     <Text style={[styles.fileChipText, { color: colors.foreground }]}>
-                      📄 {catalogPdfFileName}
+                      {catalogPdfFileName}
                     </Text>
                   </View>
                 ) : null}
@@ -2442,7 +2445,7 @@ export default function UploadScreen() {
                         style={[styles.enrichBtn, { backgroundColor: colors.primary, marginTop: 8 }]}
                       >
                         <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                          📝 Review {catalogReport.summary.uncertain} uncertain matches
+                          Review {catalogReport.summary.uncertain} uncertain matches
                         </Text>
                       </Pressable>
                     ) : null}
@@ -2469,7 +2472,7 @@ export default function UploadScreen() {
                   </View>
                 ) : (
                   <View style={styles.emptyContainer}>
-                    <Text style={styles.emptyEmoji}>📦</Text>
+                    <MaterialCommunityIcons name="package-variant-closed" size={48} color={colors.mutedForeground} style={{ marginBottom: 12 }} />
                     <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
                     <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
                       Upload a CSV or Excel file to add inventory items.
@@ -2652,7 +2655,7 @@ export default function UploadScreen() {
               style={[styles.chooserBtn, { backgroundColor: colors.primary }]}
             >
               <Text style={[styles.chooserBtnText, { color: colors.primaryForeground }]}>
-                📝 Review case by case
+                Review case by case
               </Text>
             </Pressable>
 
@@ -2661,7 +2664,7 @@ export default function UploadScreen() {
               style={[styles.chooserBtnAlt, { borderColor: colors.border }]}
             >
               <Text style={[styles.chooserBtnAltText, { color: colors.foreground }]}>
-                ➕ Only add new entries
+                Only add new entries
               </Text>
             </Pressable>
 
@@ -2670,7 +2673,7 @@ export default function UploadScreen() {
               style={[styles.chooserBtnAlt, { borderColor: colors.border }]}
             >
               <Text style={[styles.chooserBtnAltText, { color: colors.foreground }]}>
-                ♻️ Overwrite all changes
+                Overwrite all changes
               </Text>
             </Pressable>
 
@@ -2903,7 +2906,6 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
   loadingText: { fontSize: 14, fontFamily: "Inter_400Regular" },
   emptyContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  emptyEmoji: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 20, fontFamily: "Inter_700Bold", marginBottom: 8 },
   emptyHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 20 },
   goUploadBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },

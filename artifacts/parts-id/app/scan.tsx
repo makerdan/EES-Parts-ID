@@ -26,6 +26,7 @@ import {
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
+import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -575,9 +576,12 @@ export default function ScanScreen() {
                         setSearchResults([]);
                       }}
                     >
-                      <Text style={[styles.modeBtnText, { color: colors.foreground }]}>
-                        🔍  Search by catalog or keyword
-                      </Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Feather name="search" size={16} color={colors.foreground} />
+                        <Text style={[styles.modeBtnText, { color: colors.foreground }]}>
+                          Search by catalog or keyword
+                        </Text>
+                      </View>
                     </Pressable>
                     <Pressable
                       style={[styles.modeBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
@@ -587,9 +591,12 @@ export default function ScanScreen() {
                         void runPhotoIdentify();
                       }}
                     >
-                      <Text style={[styles.modeBtnText, { color: colors.foreground }]}>
-                        📷  Identify with Photo ID
-                      </Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <Feather name="camera" size={16} color={colors.foreground} />
+                        <Text style={[styles.modeBtnText, { color: colors.foreground }]}>
+                          Identify with Photo ID
+                        </Text>
+                      </View>
                     </Pressable>
                   </View>
 
