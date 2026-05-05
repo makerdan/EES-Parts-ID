@@ -33,7 +33,6 @@ import {
 } from "@/lib/taxonomy";
 
 const BROWSE_TREE_CACHE_KEY = "parts_id_browse_tree_v1";
-const BROWSE_PATH_KEY = "parts_id_browse_path_v1";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -65,21 +64,12 @@ export default function BrowseTaxonomy({
     let mounted = true;
     (async () => {
       try {
-        const [cachedTreeRaw, cachedPathRaw] = await Promise.all([
-          AsyncStorage.getItem(BROWSE_TREE_CACHE_KEY),
-          AsyncStorage.getItem(BROWSE_PATH_KEY),
-        ]);
+        const cachedTreeRaw = await AsyncStorage.getItem(BROWSE_TREE_CACHE_KEY);
         if (cachedTreeRaw && mounted && !initialTree) {
           try {
             const parsed = JSON.parse(cachedTreeRaw) as CategoryTreeNode[];
             setTree(parsed);
             setUsingCache(true);
-          } catch { /* ignore */ }
-        }
-        if (cachedPathRaw && mounted) {
-          try {
-            const parsed = JSON.parse(cachedPathRaw) as string[];
-            if (Array.isArray(parsed)) setPath(parsed);
           } catch { /* ignore */ }
         }
       } catch { /* ignore */ }
@@ -116,7 +106,6 @@ export default function BrowseTaxonomy({
   const userHasNavigated = useRef(false);
 
   useEffect(() => {
-    AsyncStorage.setItem(BROWSE_PATH_KEY, JSON.stringify(path)).catch(() => undefined);
     if (!userHasNavigated.current) return;
     onSelectNode(nodeAtPath(tree, path));
   }, [path, tree, onSelectNode]);
