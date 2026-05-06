@@ -71,6 +71,13 @@
       "when": 1746777600000,
       "tag": "0009_fts_weighted",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1746864000000,
+      "tag": "0010_materialized_attrs",
+      "breakpoints": true
     }
   ]
 }

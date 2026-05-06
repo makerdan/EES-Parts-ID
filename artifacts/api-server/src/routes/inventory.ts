@@ -46,7 +46,9 @@ import {
 import { normalizeQuery } from "../search/normalize";
 import { logSearchEvent, type QuerySource } from "../search/telemetry";
 import { mergeBins, dedupeBinsCaseInsensitive } from "../utils/binLocations";
-import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel } from "../utils/tradeSize";
+import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel, isConduitOrPipe } from "../utils/tradeSize";
+import { parseCatalog, deriveAttrs } from "../enrichment/parseAttributes";
+import { CURRENT_PROMPT_VERSION } from "../enrichment/invalidation";
 import { classifyHandler } from "./categories";
 import {
   categoryNodeTable,
@@ -518,21 +520,76 @@ router.post("/search", async (req, res) => {
 
     const variantMap = new Map<number, typeof inventoryTable.$inferSelect[]>();
     const resultIds = new Set(chipFiltered.map(r => r.item.id));
+    const excludeArr = Array.from(resultIds);
 
     if (seriesGroups.size > 0) {
-      const allInventory = await db.select().from(inventoryTable);
-      for (const item of allInventory) {
-        if (resultIds.has(item.id)) continue;
-        const series = getSeriesBase(item.vendor, item.catalog, item.description);
-        if (!series) continue;
-        const group = seriesGroups.get(series.key);
-        if (group) {
-          const primaryItem = group.items[0];
-          if (primaryItem) {
-            const variants = variantMap.get(primaryItem.id) ?? [];
-            variants.push(item);
-            variantMap.set(primaryItem.id, variants);
-          }
+      // Targeted per-series query replaces the former full-table scan.
+      // For each series group found in results, we query only rows that share
+      // the same vendor + catalog series prefix.
+      //
+      // Fast path: uses the idx_inventory_catalog_parse_series GIN index on
+      // (catalog_parse->>'series', pole_count) for items already backfilled.
+      // Fallback: catalog ILIKE 'PREFIX%' for items not yet backfilled.
+      for (const [, group] of seriesGroups) {
+        const primaryItem = group.items[0];
+        if (!primaryItem) continue;
+
+        // Parse the primary item's catalog in-memory to get the series prefix
+        // and pole count (both O(1) regex ops — no extra DB round-trip).
+        const parsed = parseCatalog(primaryItem.catalog);
+
+        let siblings: typeof inventoryTable.$inferSelect[];
+
+        if (parsed?.series) {
+          // Preferred: match via materialized catalog_parse column (uses index)
+          // OR fall back to ILIKE prefix scan for rows not yet backfilled.
+          siblings = await db
+            .select()
+            .from(inventoryTable)
+            .where(
+              and(
+                eq(inventoryTable.vendor, primaryItem.vendor),
+                sql`(
+                  (catalog_parse IS NOT NULL AND (catalog_parse->>'series') = ${parsed.series})
+                  OR
+                  (catalog_parse IS NULL AND catalog ILIKE ${parsed.series + "%"})
+                )`,
+                parsed.poles !== null
+                  ? sql`(pole_count = ${parsed.poles} OR pole_count IS NULL)`
+                  : undefined,
+                excludeArr.length > 0
+                  ? sql`id != ALL(${excludeArr})`
+                  : undefined,
+              ),
+            )
+            .orderBy(sql`COALESCE(amperage, 9999) ASC, catalog ASC`)
+            .limit(12);
+        } else {
+          // Fallback for conduit/cable and other catalog patterns that parseCatalog
+          // doesn't recognise yet. Strip leading digits from the catalog to find
+          // the bare type prefix (e.g. "EMT212" → "EMT").
+          const catalogPrefix = primaryItem.catalog.replace(/^\d+/, "").slice(0, 8);
+          if (!catalogPrefix || catalogPrefix.length < 2) continue;
+          siblings = await db
+            .select()
+            .from(inventoryTable)
+            .where(
+              and(
+                eq(inventoryTable.vendor, primaryItem.vendor),
+                sql`catalog ILIKE ${catalogPrefix + "%"}`,
+                excludeArr.length > 0
+                  ? sql`id != ALL(${excludeArr})`
+                  : undefined,
+              ),
+            )
+            .orderBy(sql`catalog ASC`)
+            .limit(12);
+        }
+
+        for (const sibling of siblings) {
+          const variants = variantMap.get(primaryItem.id) ?? [];
+          variants.push(sibling);
+          variantMap.set(primaryItem.id, variants);
         }
       }
     }
@@ -979,6 +1036,10 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
           ...tradeTokens.filter(t => !existing.has(t.toLowerCase())),
         ];
 
+        const attrs = deriveAttrs(item);
+        const tsInFull = isConduitOrPipe(item.catalog, item.vendor, item.description)
+          ? (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description))
+          : null;
         await db
           .update(inventoryTable)
           .set({
@@ -986,6 +1047,15 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
             tradeSize,
             enrichedAt: new Date(),
             updatedAt: new Date(),
+            promptVersion: CURRENT_PROMPT_VERSION,
+            // Materialized parse attrs (idempotent — same result each call)
+            catalogParse: attrs.catalogParse as Record<string, unknown> | null,
+            amperage: attrs.amperage,
+            poleCount: attrs.poleCount,
+            voltage: attrs.voltage,
+            mountType: attrs.mountType,
+            tradeSizeIn: tsInFull !== null && tsInFull <= 12 ? tsInFull.toFixed(3) : null,
+            attrsParsedAt: attrs.attrsParsedAt,
           })
           .where(eq(inventoryTable.id, item.id));
 
@@ -1127,9 +1197,27 @@ async function runBulkEnrich() {
             ...r.value,
             ...tradeTokens.filter(t => !existing.has(t.toLowerCase())),
           ];
+          const attrs = deriveAttrs(item);
+          const tsInFull = isConduitOrPipe(item.catalog, item.vendor, item.description)
+            ? (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description))
+            : null;
           await db
             .update(inventoryTable)
-            .set({ aiKeywords: merged, tradeSize, enrichedAt: new Date(), updatedAt: new Date() })
+            .set({
+              aiKeywords: merged,
+              tradeSize,
+              enrichedAt: new Date(),
+              updatedAt: new Date(),
+              promptVersion: CURRENT_PROMPT_VERSION,
+              // Materialized parse attrs (idempotent — same result each call)
+              catalogParse: attrs.catalogParse as Record<string, unknown> | null,
+              amperage: attrs.amperage,
+              poleCount: attrs.poleCount,
+              voltage: attrs.voltage,
+              mountType: attrs.mountType,
+              tradeSizeIn: tsInFull !== null && tsInFull <= 12 ? tsInFull.toFixed(3) : null,
+              attrsParsedAt: attrs.attrsParsedAt,
+            })
             .where(eq(inventoryTable.id, item.id));
           bulkEnrichJob.processed++;
         } else {
