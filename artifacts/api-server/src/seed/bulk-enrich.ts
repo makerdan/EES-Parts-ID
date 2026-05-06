@@ -19,7 +19,7 @@ import { inventoryTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { generateKeywords } from "../utils/generateKeywords";
 import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel, isConduitOrPipe } from "../utils/tradeSize";
-import { deriveAttrs } from "../enrichment/parseAttributes";
+import { deriveAttrs, parseTradeSize } from "../enrichment/parseAttributes";
 import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from "../enrichment/invalidation";
 
 const BATCH_SIZE   = parseInt(process.env["ENRICH_BATCH_SIZE"]   ?? "10",  10);
@@ -127,7 +127,9 @@ async function bulkEnrich() {
             : null;
           const attrs = deriveAttrs(item);
           const tsInFull = isConduitOrPipe(item.catalog, item.vendor, item.description)
-            ? (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description))
+            ? (parseTradeSizeInches(item.catalog)
+               ?? parseTradeSize(item.description)
+               ?? parseTradeSize(item.catalog))
             : null;
           await db
             .update(inventoryTable)

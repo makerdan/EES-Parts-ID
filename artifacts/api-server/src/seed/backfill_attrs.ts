@@ -19,7 +19,7 @@
 import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
-import { deriveAttrs } from "../enrichment/parseAttributes";
+import { deriveAttrs, parseTradeSize } from "../enrichment/parseAttributes";
 import { CURRENT_PARSER_VERSION } from "../enrichment/invalidation";
 import { parseTradeSizeInches, isConduitOrPipe } from "../utils/tradeSize";
 
@@ -79,12 +79,16 @@ async function backfillAttrs() {
         // happen to look like a fraction suffix (e.g. "200458" → 2004.625).
         // Real trade sizes are ≤ 6" in practice; we cap at 12" to be safe.
         const isConduit = isConduitOrPipe(item.catalog, item.vendor, item.description);
+        // parseTradeSizeInches handles catalog-code encoded sizes (e.g. "EMT212" → 2.5).
+        // parseTradeSize handles richer free-text in descriptions ("1/2 inch", "25mm", etc.).
         const tradeSizeInches = isConduit
-          ? (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description))
+          ? (parseTradeSizeInches(item.catalog)
+             ?? parseTradeSize(item.description)
+             ?? parseTradeSize(item.catalog))
           : null;
         const tradeSizeIn =
           tradeSizeInches !== null && tradeSizeInches <= 12
-            ? tradeSizeInches.toFixed(3) // numeric(6,3) — up to 999.999
+            ? tradeSizeInches.toFixed(3)
             : null;
 
         await db
