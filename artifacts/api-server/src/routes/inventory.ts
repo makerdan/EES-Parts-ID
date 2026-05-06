@@ -47,7 +47,7 @@ import { normalizeQuery } from "../search/normalize";
 import { logSearchEvent, type QuerySource } from "../search/telemetry";
 import { mergeBins, dedupeBinsCaseInsensitive } from "../utils/binLocations";
 import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel, isConduitOrPipe } from "../utils/tradeSize";
-import { parseCatalog, deriveAttrs } from "../enrichment/parseAttributes";
+import { parseCatalog, deriveAttrs, parseTradeSize } from "../enrichment/parseAttributes";
 import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from "../enrichment/invalidation";
 import { classifyHandler } from "./categories";
 import {
@@ -1058,7 +1058,9 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
 
         const attrs = deriveAttrs(item);
         const tsInFull = isConduitOrPipe(item.catalog, item.vendor, item.description)
-          ? (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description))
+          ? (parseTradeSizeInches(item.catalog)
+             ?? parseTradeSize(item.description)
+             ?? parseTradeSize(item.catalog))
           : null;
         await db
           .update(inventoryTable)
@@ -1228,7 +1230,9 @@ async function runBulkEnrich() {
           ];
           const attrs = deriveAttrs(item);
           const tsInFull = isConduitOrPipe(item.catalog, item.vendor, item.description)
-            ? (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description))
+            ? (parseTradeSizeInches(item.catalog)
+               ?? parseTradeSize(item.description)
+               ?? parseTradeSize(item.catalog))
             : null;
           await db
             .update(inventoryTable)
