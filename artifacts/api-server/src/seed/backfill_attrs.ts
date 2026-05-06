@@ -50,6 +50,7 @@ async function backfillAttrs() {
 
   let processed = 0;
   let errors = 0;
+  let parsedAny = 0; // rows where at least one attribute column became non-null
   const startTime = Date.now();
 
   while (true) {
@@ -100,6 +101,16 @@ async function backfillAttrs() {
           .where(eq(inventoryTable.id, item.id));
 
         processed++;
+        if (
+          attrs.catalogParse !== null ||
+          attrs.amperage !== null ||
+          attrs.poleCount !== null ||
+          attrs.voltage !== null ||
+          attrs.mountType !== null ||
+          tradeSizeIn !== null
+        ) {
+          parsedAny++;
+        }
       } catch (err) {
         errors++;
         console.error(`  ✗ id=${item.id} (${item.vendor}/${item.catalog}):`, err);
@@ -122,6 +133,7 @@ async function backfillAttrs() {
   console.log(`\n=== Attribute Backfill Complete ===`);
   console.log(`Processed : ${processed}`);
   console.log(`Errors    : ${errors}  (re-run script to retry failures)`);
+  console.log(`With attrs: ${parsedAny}  (rows where at least one attribute column is non-null)`);
   console.log(`Time      : ${elapsed}s`);
 
   // Log non-null counts as a quick sanity check

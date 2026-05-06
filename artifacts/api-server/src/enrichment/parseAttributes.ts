@@ -78,6 +78,21 @@ const CABLE_RE = /^(RX|NM|MC|SE|SER|UF|THHN|THWN)(\d.*)?$/i;
  */
 const XFMR_RE = /^(V\d+M\d+)(T.*)?$/i;
 
+/**
+ * Numeric device family (Hubbell, Leviton, and similar): 4-digit code
+ * starting with 5 or 6, optionally followed by a variant suffix.
+ *
+ * This mirrors the `5\d{3}|6\d{3}` branch in `getSeriesBase()` so that
+ * parseCatalog covers the same catalog families for materialized lookup.
+ *
+ * Examples:
+ *   5262WHI  → series=5262, variant=WHI
+ *   6150GRY  → series=6150, variant=GRY
+ *   5262     → series=5262, variant=null
+ *   5325I    → series=5325, variant=I
+ */
+const NUMERIC_DEVICE_RE = /^([56]\d{3})([-A-Z].*)?\s*$/i;
+
 // ── Public parsers ──────────────────────────────────────────────────────────
 
 /**
@@ -136,6 +151,18 @@ export function parseCatalog(catalog: string | null | undefined): CatalogParse |
       poles: null,
       amps: null,
       variant: xfmr[2] || null,
+      raw: c,
+      parser_version: 2,
+    };
+  }
+
+  const numDev = NUMERIC_DEVICE_RE.exec(cu);
+  if (numDev) {
+    return {
+      series: numDev[1]!,
+      poles: null,
+      amps: null,
+      variant: numDev[2]?.replace(/^-/, "") || null,
       raw: c,
       parser_version: 2,
     };

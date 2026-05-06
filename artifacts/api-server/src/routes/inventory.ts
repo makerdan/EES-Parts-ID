@@ -576,7 +576,12 @@ router.post("/search", async (req, res) => {
           // Fallback for conduit/cable and other catalog patterns that parseCatalog
           // doesn't recognise yet. Strip leading digits from the catalog to find
           // the bare type prefix (e.g. "EMT212" → "EMT").
-          const catalogPrefix = primaryItem.catalog.replace(/^\d+/, "").slice(0, 8);
+          // For all-numeric catalogs (e.g. "5262") stripping digits yields an
+          // empty string — use the first 4 characters as the prefix instead.
+          const stripped = primaryItem.catalog.replace(/^\d+/, "").slice(0, 8);
+          const catalogPrefix = stripped.length >= 2
+            ? stripped
+            : primaryItem.catalog.slice(0, 4);
           if (!catalogPrefix || catalogPrefix.length < 2) continue;
           siblings = await db
             .select()
