@@ -39,6 +39,7 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { sql } from "drizzle-orm";
+import { productSeriesTable } from "./product_series";
 
 export const inventoryTable = pgTable(
   "inventory",
@@ -73,6 +74,10 @@ export const inventoryTable = pgTable(
     // Trigram search runs against this column instead of raw description/catalog,
     // eliminating per-request synonym table lookups.
     searchTokens: text("search_tokens"),
+    // ── Product series FK (migration 0014) ────────────────────────────────────
+    // Nullable FK to product_series.id. When set, the Other Sizes query uses
+    // this for grouping instead of the catalog-prefix heuristic.
+    seriesId: integer("series_id").references(() => productSeriesTable.id, { onDelete: "set null" }),
   },
   (table) => [
     uniqueIndex("inventory_vendor_catalog_idx").on(table.vendor, table.catalog),
