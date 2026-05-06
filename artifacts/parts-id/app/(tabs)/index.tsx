@@ -357,6 +357,7 @@ export default function SearchScreen() {
   const [syncWarningSec, setSyncWarningSec] = useState<number | null>(null);
   // Tracks when current sync started so we can estimate remaining seconds
   const syncStartedAtRef = useRef<number | null>(null);
+  const syncInFlightRef = useRef(false);
   // Animated value for flashing the sync badge in the header
   const syncPulse = useRef(new Animated.Value(1)).current;
   // Track the running pulse animation so we can stop it before starting a new one
@@ -426,7 +427,7 @@ export default function SearchScreen() {
         try {
           res = await fetch(
             `${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`,
-            { signal: controller.signal },
+            { signal: controller.signal, cache: 'no-store' },
           );
         } finally {
           clearTimeout(timeoutId);
@@ -464,37 +465,44 @@ export default function SearchScreen() {
       await AsyncStorage.multiSet(ops);
     };
 
+    if (syncInFlightRef.current) return;
+
     setSyncError(false);
     setSyncRetry(null);
     setIsSyncing(true);
     syncStartedAtRef.current = Date.now();
+    syncInFlightRef.current = true;
 
     let lastErr: unknown;
-    for (let attempt = 0; attempt <= MAX_AUTO_RETRIES; attempt++) {
-      if (attempt > 0) {
-        // Show "Retrying (n/MAX)…" and wait with exponential backoff.
-        setSyncRetry({ attempt, max: MAX_AUTO_RETRIES });
-        setSyncProgress(null);
-        await new Promise<void>(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+    try {
+      for (let attempt = 0; attempt <= MAX_AUTO_RETRIES; attempt++) {
+        if (attempt > 0) {
+          // Show "Retrying (n/MAX)…" and wait with exponential backoff.
+          setSyncRetry({ attempt, max: MAX_AUTO_RETRIES });
+          setSyncProgress(null);
+          await new Promise<void>(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+        }
+        try {
+          await attemptSync();
+          // Success — clear any retry indicator and exit.
+          setSyncRetry(null);
+          lastErr = undefined;
+          break;
+        } catch (err) {
+          lastErr = err;
+        }
       }
-      try {
-        await attemptSync();
-        // Success — clear any retry indicator and exit.
-        setSyncRetry(null);
-        lastErr = undefined;
-        break;
-      } catch (err) {
-        lastErr = err;
-      }
-    }
 
-    if (lastErr !== undefined) {
-      setSyncError(true);
+      if (lastErr !== undefined) {
+        setSyncError(true);
+      }
+    } finally {
+      setSyncProgress(null);
+      setSyncRetry(null);
+      setIsSyncing(false);
+      syncStartedAtRef.current = null;
+      syncInFlightRef.current = false;
     }
-    setSyncProgress(null);
-    setSyncRetry(null);
-    setIsSyncing(false);
-    syncStartedAtRef.current = null;
   }, [buildFuseIndex]);
 
   // Auto-dismiss the warning popup the moment sync finishes — prevents the modal
@@ -561,7 +569,7 @@ export default function SearchScreen() {
           if (cacheStale) {
             await AsyncStorage.multiRemove([FUSE_CACHE_KEY, QUERY_CACHE_KEY]).catch(() => {});
           }
-          syncAllInventory(serverVersion ?? undefined);
+          if (!syncInFlightRef.current) syncAllInventory(serverVersion ?? undefined);
           return;
         }
 
@@ -571,7 +579,7 @@ export default function SearchScreen() {
         } catch {
           // Corrupt cache — clear it and re-sync
           await AsyncStorage.multiRemove([FUSE_CACHE_KEY, QUERY_CACHE_KEY]).catch(() => {});
-          syncAllInventory(serverVersion ?? undefined);
+          if (!syncInFlightRef.current) syncAllInventory(serverVersion ?? undefined);
           return;
         }
         buildFuseIndex(items);
@@ -660,7 +668,7 @@ export default function SearchScreen() {
               // Server has newer (or unknown) data — purge stale caches and trigger full re-sync.
               // Query-cache write is intentionally skipped: syncAllInventory will seed fresh data.
               await AsyncStorage.multiRemove([FUSE_CACHE_KEY, QUERY_CACHE_KEY]).catch(() => {});
-              syncAllInventory(v.updatedAt);
+              if (!syncInFlightRef.current) syncAllInventory(v.updatedAt);
               return;
             }
 
