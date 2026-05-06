@@ -224,3 +224,142 @@ describe("syncAllInventory — in-flight guard", () => {
     expect(fetchCountAfterSecond).toBeGreaterThan(fetchCountAfterFirst);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 3. Retry exhaustion — setSyncError called after all retries fail
+// ---------------------------------------------------------------------------
+
+describe("syncAllInventory — retry exhaustion", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("calls setSyncError(true) after all retries are exhausted", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: jest.fn(),
+    } as unknown as Response);
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const syncInFlightRef = { current: false };
+    const callbacks = makeCallbacks();
+
+    const syncPromise = syncAllInventory({
+      ...OPTS_BASE,
+      syncInFlightRef,
+      callbacks,
+      storage: makeStorage(),
+    });
+
+    // Advance through all exponential-backoff delays (2s + 4s + 8s = 14s).
+    await jest.runAllTimersAsync();
+    await syncPromise;
+
+    expect(callbacks.setSyncError).toHaveBeenCalledWith(true);
+    // Should NOT have been called with false after the final failure
+    // (it is reset to false at the very start, before the loop).
+    const calls = callbacks.setSyncError.mock.calls.map(([v]: [boolean]) => v);
+    expect(calls[calls.length - 1]).toBe(true);
+  });
+
+  it("resets syncInFlightRef to false even after all retries fail", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: jest.fn(),
+    } as unknown as Response);
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const syncInFlightRef = { current: false };
+    const callbacks = makeCallbacks();
+
+    const syncPromise = syncAllInventory({
+      ...OPTS_BASE,
+      syncInFlightRef,
+      callbacks,
+      storage: makeStorage(),
+    });
+
+    await jest.runAllTimersAsync();
+    await syncPromise;
+
+    expect(syncInFlightRef.current).toBe(false);
+    expect(callbacks.setIsSyncing).toHaveBeenLastCalledWith(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Retry progress — setSyncRetry receives correct attempt/max on each retry
+// ---------------------------------------------------------------------------
+
+describe("syncAllInventory — setSyncRetry values", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("calls setSyncRetry with incrementing attempt numbers on each retry", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: jest.fn(),
+    } as unknown as Response);
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const syncInFlightRef = { current: false };
+    const callbacks = makeCallbacks();
+
+    const syncPromise = syncAllInventory({
+      ...OPTS_BASE,
+      syncInFlightRef,
+      callbacks,
+      storage: makeStorage(),
+    });
+
+    await jest.runAllTimersAsync();
+    await syncPromise;
+
+    // setSyncRetry is called once per retry (attempts 1, 2, 3) then once
+    // with null in the finally block.
+    const retryCalls = callbacks.setSyncRetry.mock.calls as Array<
+      [{ attempt: number; max: number } | null]
+    >;
+    const nonNullCalls = retryCalls.filter(([v]) => v !== null) as Array<
+      [{ attempt: number; max: number }]
+    >;
+
+    // Exactly MAX_AUTO_RETRIES non-null calls (one per retry attempt).
+    expect(nonNullCalls).toHaveLength(3);
+
+    // Each call carries the correct attempt number and the fixed max.
+    expect(nonNullCalls[0]![0]).toEqual({ attempt: 1, max: 3 });
+    expect(nonNullCalls[1]![0]).toEqual({ attempt: 2, max: 3 });
+    expect(nonNullCalls[2]![0]).toEqual({ attempt: 3, max: 3 });
+  });
+
+  it("does not call setSyncRetry with a non-null value when the first attempt succeeds", async () => {
+    const fetchMock = jest.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/inventory?")) {
+        return Promise.resolve(emptyInventoryResponse());
+      }
+      return Promise.resolve(categoriesResponse());
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const syncInFlightRef = { current: false };
+    const callbacks = makeCallbacks();
+
+    const syncPromise = syncAllInventory({
+      ...OPTS_BASE,
+      syncInFlightRef,
+      callbacks,
+      storage: makeStorage(),
+    });
+
+    await jest.runAllTimersAsync();
+    await syncPromise;
+
+    const nonNullRetryCalls = callbacks.setSyncRetry.mock.calls.filter(
+      ([v]: [unknown]) => v !== null,
+    );
+    expect(nonNullRetryCalls).toHaveLength(0);
+  });
+});
