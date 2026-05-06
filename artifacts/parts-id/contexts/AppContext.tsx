@@ -29,11 +29,13 @@ export type AppSettings = {
   textSize: TextSize;
   defaultConfidenceThreshold: number;
   themeMode: ThemeMode;
+  shelfViewEnabled: boolean;
 };
 export const DEFAULT_SETTINGS: AppSettings = {
   textSize: "normal",
   defaultConfidenceThreshold: 50,
   themeMode: "system",
+  shelfViewEnabled: false,
 };
 
 const VALID_TEXT_SIZES: TextSize[] = ["small", "normal", "large"];
@@ -53,6 +55,9 @@ export async function loadSettings(): Promise<AppSettings> {
       themeMode: VALID_THEME_MODES.includes(parsed.themeMode as ThemeMode)
         ? (parsed.themeMode as ThemeMode)
         : DEFAULT_SETTINGS.themeMode,
+      shelfViewEnabled: typeof parsed.shelfViewEnabled === "boolean"
+        ? parsed.shelfViewEnabled
+        : DEFAULT_SETTINGS.shelfViewEnabled,
     };
   } catch { return DEFAULT_SETTINGS; }
 }

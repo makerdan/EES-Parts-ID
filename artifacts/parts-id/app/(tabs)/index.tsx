@@ -22,6 +22,7 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   useWindowDimensions,
@@ -1249,6 +1250,22 @@ export default function SearchScreen() {
                 </View>
               </View>
 
+              {/* Visual shelf view toggle */}
+              <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Visual shelf view</Text>
+                  <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                    Show parts physically arranged on the shelf in Browse by Aisle.
+                  </Text>
+                </View>
+                <Switch
+                  value={settings.shelfViewEnabled}
+                  onValueChange={v => updateSetting("shelfViewEnabled", v)}
+                  trackColor={{ false: colors.muted, true: colors.primary + "99" }}
+                  thumbColor={settings.shelfViewEnabled ? colors.primary : colors.mutedForeground}
+                />
+              </View>
+
               {/* Default confidence threshold row */}
               <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 2 }]}>
                 <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Default min confidence</Text>
@@ -1382,6 +1399,7 @@ export default function SearchScreen() {
           onClose={() => setAisleBrowseOpen(false)}
           fontScale={textFontScale}
           onEditKeywords={setEditItem}
+          shelfViewEnabled={settings.shelfViewEnabled}
         />
       ) : null}
 

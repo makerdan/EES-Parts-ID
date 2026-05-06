@@ -7,7 +7,7 @@
  * Closing the overlay returns them to their prior search/filter state.
  */
 import React, { useMemo, useState } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -17,6 +17,7 @@ import {
   type AisleNode,
   type SectionNode,
   type ShelfNode,
+  type PartOnShelf,
 } from "@/lib/aisleHierarchy";
 
 interface Props {
@@ -33,6 +34,8 @@ interface Props {
   fontScale: number;
   /** Pass-through edit affordance so leaf cards behave the same as in Search. */
   onEditKeywords: (item: InventoryItem) => void;
+  /** When true, the parts level shows a visual shelf diagram instead of a flat list. */
+  shelfViewEnabled?: boolean;
 }
 
 type Level = "aisles" | "sections" | "shelves" | "parts";
@@ -49,6 +52,7 @@ export function BrowseByAisle({
   onClose,
   fontScale,
   onEditKeywords,
+  shelfViewEnabled = false,
 }: Props) {
   const colors = useColors();
   const [crumbs, setCrumbs] = useState<CrumbState>({
@@ -200,36 +204,202 @@ export function BrowseByAisle({
       ) : null}
 
       {level === "parts" && crumbs.shelf ? (
-        <FlatList
-          data={crumbs.shelf.parts}
-          keyExtractor={(p, i) => `${p.item.id}-${p.bin}-${i}`}
-          renderItem={({ item, index }) => {
-            const result: SearchResult = {
-              item: item.item,
-              confidence: 1,
-              matchReason: `On ${crumbs.aisle?.label ?? ""} › ${crumbs.section?.label ?? ""} › ${crumbs.shelf?.label ?? ""}`,
-              seriesLabel: undefined,
-              variants: [],
-            };
-            return (
-              <View style={styles.partRow}>
-                <ResultCard
-                  result={result}
-                  rank={index}
-                  showRank={false}
-                  fontScale={fontScale}
-                  onEditKeywords={onEditKeywords}
-                  highlightBin={item.bin}
-                />
-              </View>
-            );
-          }}
-          contentContainerStyle={styles.listContent}
-        />
+        shelfViewEnabled ? (
+          <ShelfView
+            parts={crumbs.shelf.parts}
+            crumbs={crumbs}
+            colors={colors}
+            fontScale={fontScale}
+            onEditKeywords={onEditKeywords}
+          />
+        ) : (
+          <FlatList
+            data={crumbs.shelf.parts}
+            keyExtractor={(p, i) => `${p.item.id}-${p.bin}-${i}`}
+            renderItem={({ item, index }) => {
+              const result: SearchResult = {
+                item: item.item,
+                confidence: 1,
+                matchReason: `On ${crumbs.aisle?.label ?? ""} › ${crumbs.section?.label ?? ""} › ${crumbs.shelf?.label ?? ""}`,
+                seriesLabel: undefined,
+                variants: [],
+              };
+              return (
+                <View style={styles.partRow}>
+                  <ResultCard
+                    result={result}
+                    rank={index}
+                    showRank={false}
+                    fontScale={fontScale}
+                    onEditKeywords={onEditKeywords}
+                    highlightBin={item.bin}
+                  />
+                </View>
+              );
+            }}
+            contentContainerStyle={styles.listContent}
+          />
+        )
       ) : null}
     </View>
   );
 }
+
+// ── Visual shelf view ─────────────────────────────────────────────────────────
+
+const BIN_SLOT_W = 84;
+const BIN_SLOT_H = 72;
+const GAP_BASE   = 8;   // minimum px gap between slots
+const GAP_PER_POS = 7;  // additional px per position unit of separation
+
+function ShelfView({
+  parts,
+  crumbs,
+  colors,
+  fontScale,
+  onEditKeywords,
+}: {
+  parts: PartOnShelf[];
+  crumbs: CrumbState;
+  colors: ReturnType<typeof useColors>;
+  fontScale: number;
+  onEditKeywords: (item: InventoryItem) => void;
+}) {
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const selectedPart = selectedIdx !== null ? (parts[selectedIdx] ?? null) : null;
+
+  const locationLabel = [
+    crumbs.aisle?.label,
+    crumbs.section?.label,
+    crumbs.shelf?.label,
+  ].filter(Boolean).join(" › ");
+
+  return (
+    <View style={{ flex: 1 }}>
+      {/* ── Shelf diagram ── */}
+      <View style={shelfStyles.diagramWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={shelfStyles.diagramScroll}
+        >
+          <View style={shelfStyles.slotsRow}>
+            {parts.map((p, i) => {
+              const prevPos = i === 0 ? p.position : parts[i - 1]!.position;
+              const gap = i === 0 ? 0 : GAP_BASE + Math.max(0, (p.position - prevPos - 1) * GAP_PER_POS);
+              const isSelected = selectedIdx === i;
+              return (
+                <React.Fragment key={`${p.bin}-${i}`}>
+                  {gap > 0 ? <View style={{ width: gap }} /> : null}
+                  <Pressable
+                    onPress={() => setSelectedIdx(isSelected ? null : i)}
+                    style={[
+                      shelfStyles.slot,
+                      {
+                        backgroundColor: isSelected ? colors.primary : colors.card,
+                        borderColor: isSelected ? colors.primary : colors.border,
+                      },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? "part"}`}
+                  >
+                    <Text style={[shelfStyles.slotPos, { color: isSelected ? colors.primaryForeground + "cc" : colors.mutedForeground }]}>
+                      {`Pos ${String(p.position).padStart(2, "0")}`}
+                    </Text>
+                    <Text
+                      numberOfLines={2}
+                      style={[shelfStyles.slotName, { color: isSelected ? colors.primaryForeground : colors.foreground }]}
+                    >
+                      {p.item.catalog ?? p.item.description ?? "—"}
+                    </Text>
+                    {p.item.vendor ? (
+                      <Text
+                        numberOfLines={1}
+                        style={[shelfStyles.slotVendor, { color: isSelected ? colors.primaryForeground + "aa" : colors.mutedForeground }]}
+                      >
+                        {p.item.vendor}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                </React.Fragment>
+              );
+            })}
+          </View>
+          {/* Physical shelf rail */}
+          <View style={[shelfStyles.rail, { backgroundColor: colors.muted, borderColor: colors.border }]} />
+        </ScrollView>
+        <Text style={[shelfStyles.locationLabel, { color: colors.mutedForeground }]}>
+          {`${locationLabel} · ${parts.length} ${parts.length === 1 ? "part" : "parts"}`}
+        </Text>
+      </View>
+
+      {/* ── Part detail ── */}
+      {selectedPart ? (
+        <FlatList
+          data={[selectedPart]}
+          keyExtractor={p => `${p.bin}-detail`}
+          renderItem={({ item: p }) => {
+            const result: SearchResult = {
+              item: p.item,
+              confidence: 1,
+              matchReason: locationLabel,
+              seriesLabel: undefined,
+              variants: [],
+            };
+            return (
+              <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+                <ResultCard
+                  result={result}
+                  rank={0}
+                  showRank={false}
+                  fontScale={fontScale}
+                  onEditKeywords={onEditKeywords}
+                  highlightBin={p.bin}
+                />
+              </View>
+            );
+          }}
+          contentContainerStyle={{ paddingBottom: 140 }}
+        />
+      ) : (
+        <View style={shelfStyles.hint}>
+          <Feather name="mouse-pointer" size={20} color={colors.mutedForeground} style={{ marginBottom: 8 }} />
+          <Text style={[shelfStyles.hintText, { color: colors.mutedForeground }]}>
+            Tap a bin above to see part details
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const shelfStyles = StyleSheet.create({
+  diagramWrap:   { flexGrow: 0 },
+  diagramScroll: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 0, alignItems: "flex-end" },
+  slotsRow:      { flexDirection: "row", alignItems: "flex-end" },
+  slot: {
+    width: BIN_SLOT_W,
+    minHeight: BIN_SLOT_H,
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: "flex-end",
+  },
+  slotPos:    { fontSize: 9,  fontFamily: "Inter_500Medium", marginBottom: 3 },
+  slotName:   { fontSize: 11, fontFamily: "Inter_600SemiBold", lineHeight: 14 },
+  slotVendor: { fontSize: 9,  fontFamily: "Inter_400Regular", marginTop: 2 },
+  rail: {
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1,
+    marginTop: 4,
+  },
+  locationLabel: { fontSize: 11, fontFamily: "Inter_400Regular", paddingHorizontal: 16, paddingTop: 5, paddingBottom: 2 },
+  hint:     { flex: 1, alignItems: "center", justifyContent: "center" },
+  hintText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 
 function Header({
   colors,
