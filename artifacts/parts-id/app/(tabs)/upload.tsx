@@ -2496,6 +2496,7 @@ export default function UploadScreen() {
                   setUploadError("Admin session expired. Please unlock again.");
                 }}
                 expandTrigger={reviewExpandTrigger}
+                onReviewAction={fetchReviewCount}
               />
                     </View>
                   )}

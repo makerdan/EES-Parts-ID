@@ -43,9 +43,11 @@ interface Props {
   adminHeaders:     Record<string, string>;
   onExpiredSession: () => void;
   expandTrigger?:   number;
+  /** Called after any confirm / reclassify / skip action completes successfully. */
+  onReviewAction?:  () => void;
 }
 
-export default function ClassificationReviewSection({ apiBase, adminHeaders, onExpiredSession, expandTrigger }: Props) {
+export default function ClassificationReviewSection({ apiBase, adminHeaders, onExpiredSession, expandTrigger, onReviewAction }: Props) {
   const colors = useColors();
 
   const [expanded, setExpanded]         = useState(false);
@@ -149,13 +151,14 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
         // Re-fetch from page 1: skipped item moved to end of queue.
         void fetchQueue(1, false);
       }
+      onReviewAction?.();
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) { onExpiredSession(); return; }
       setError(err instanceof ApiError ? err.message : `Network error during ${action}`);
     } finally {
       setActingId(null);
     }
-  }, [adminHeaders, onExpiredSession, fetchQueue]);
+  }, [adminHeaders, onExpiredSession, fetchQueue, onReviewAction]);
 
   const handleConfirm = (id: number) => void postAction(id, "confirm");
   const handleSkip    = (id: number) => void postAction(id, "skip");
@@ -200,6 +203,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
         { headers: adminHeaders },
       );
       removeItem(inventoryId);
+      onReviewAction?.();
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) { onExpiredSession(); return; }
       setError(err instanceof ApiError ? err.message : "Network error during reclassify");
