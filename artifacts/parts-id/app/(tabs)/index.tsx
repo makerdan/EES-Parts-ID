@@ -601,6 +601,9 @@ export default function SearchScreen() {
 
   // Shared offline fallback — used by onError and the slow-connection timeout
   const runOfflineFallback = useCallback(() => {
+    // Clear telemetry ID: offline results are not from the server so any
+    // click would be misattributed. Nulling here ensures no stale ID leaks.
+    searchEventIdRef.current = null;
     const f = filtersRef.current;
     const queryKey = buildQueryKey(f);
     loadQueryCache().then(cache => {
@@ -704,6 +707,7 @@ export default function SearchScreen() {
       },
       onError: () => {
         if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
+        searchEventIdRef.current = null; // error path — no valid result list shown
         if (!searchAbortedRef.current) runOfflineFallback(); // timeout already ran fallback — skip
       },
     },
@@ -760,6 +764,7 @@ export default function SearchScreen() {
     setIsOffline(false);
     setOfflineCacheType(null);
     searchAbortedRef.current = false;
+    searchEventIdRef.current = null; // new search started — clear stale telemetry ID
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     // A new search resets any in-memory drill-down state — chips, "Add
     // keywords" input, and any other refinement future fields — so the bar
@@ -779,6 +784,7 @@ export default function SearchScreen() {
   const handleClear = () => {
     if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
     searchAbortedRef.current = false;
+    searchEventIdRef.current = null; // results cleared — no click can be attributed
     setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settings.defaultConfidenceThreshold });
     searchMutation.reset();
     setOfflineResults(null);
