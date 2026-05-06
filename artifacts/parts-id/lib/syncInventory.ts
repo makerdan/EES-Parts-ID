@@ -85,8 +85,17 @@ export async function syncAllInventory(opts: {
 
     callbacks.buildFuseIndex(allItems);
 
-    const ops: [string, string][] = [[fuseKey, JSON.stringify(allItems)]];
-    if (serverVersion) ops.push([versionKey, serverVersion]);
+    // 1. Persist the version key first in a small isolated write.
+    //    If this succeeds, subsequent app launches won't re-trigger a full
+    //    re-download even if the larger cache write below fails.
+    if (serverVersion) {
+      await storage.multiSet([[versionKey, serverVersion]]);
+    }
+
+    // 2. Build the large cache payload (fuse JSON + category data).
+    //    A failure here is swallowed: the in-memory index is already built
+    //    and the version key is already saved, so no re-sync loop occurs.
+    const cacheOps: [string, string][] = [[fuseKey, JSON.stringify(allItems)]];
 
     try {
       const aRes = await fetch(`${apiBase}/categories/assignments`);
@@ -98,7 +107,7 @@ export async function syncAllInventory(opts: {
           inventoryId: a.inventoryId,
           typeSlug: a.typeSlug,
         }));
-        ops.push([assignmentsKey, JSON.stringify(slim)]);
+        cacheOps.push([assignmentsKey, JSON.stringify(slim)]);
       }
     } catch { }
 
@@ -106,11 +115,17 @@ export async function syncAllInventory(opts: {
       const tRes = await fetch(`${apiBase}/categories/tree`);
       if (tRes.ok) {
         const tData = (await tRes.json()) as { tree: unknown };
-        ops.push([treeKey, JSON.stringify(tData.tree)]);
+        cacheOps.push([treeKey, JSON.stringify(tData.tree)]);
       }
     } catch { }
 
-    await storage.multiSet(ops);
+    try {
+      await storage.multiSet(cacheOps);
+    } catch {
+      // Quota or write error — tolerated. The in-memory Fuse index built above
+      // keeps search working for the current session, and the version key write
+      // above means we won't re-sync on the next launch.
+    }
   };
 
   let lastErr: unknown;
