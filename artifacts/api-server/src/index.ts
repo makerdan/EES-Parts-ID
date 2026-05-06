@@ -8,25 +8,9 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { pool } from "@workspace/db";
 import {
-  refresh as refreshInventoryIndex,
-  start as startInventoryIndex,
-  stop as stopInventoryIndex,
-} from "./lib/inventoryIndex";
-import {
   start as startEnrichmentRunCleanup,
   stop as stopEnrichmentRunCleanup,
 } from "./lib/enrichmentRunCleanup";
-
-// How often to rebuild the in-memory Fuse fuzzy-search index. Defaults
-// to 5 minutes; tunable via env so prod can dial it up or down without
-// a code change.
-const DEFAULT_INVENTORY_INDEX_REFRESH_MS = 5 * 60 * 1000;
-const inventoryIndexRefreshMs = (() => {
-  const raw = process.env["INVENTORY_INDEX_REFRESH_MS"];
-  if (!raw) return DEFAULT_INVENTORY_INDEX_REFRESH_MS;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_INVENTORY_INDEX_REFRESH_MS;
-})();
 
 const rawPort = process.env["PORT"];
 
@@ -61,21 +45,13 @@ const MAX_RETRIES = 5;
 const RETRY_DELAY_MS = 1_000;
 
 function startServer(retries: number): void {
-  const server = app.listen(port, async () => {
+  const server = app.listen(port, () => {
     logger.info({ port }, "Server listening");
-
-    // Warm the in-memory Fuse index, then begin the refresh schedule.
-    // We await the initial refresh so the cache is populated before
-    // the scheduler kicks off; refresh() catches and logs its own
-    // errors so a failed warm-up is non-fatal. start() is also a no-op
-    // if shutdown was requested while we were awaiting.
-    await refreshInventoryIndex();
-    startInventoryIndex(inventoryIndexRefreshMs);
     startEnrichmentRunCleanup();
   });
 
   // Defer the rest of server-startup wiring to a separate handler so
-  // it isn't gated on the async warm-up above.
+  // it isn't gated on the startup above.
   server.on("listening", () => {
 
     // ── Graceful shutdown ──────────────────────────────────────────────────────
@@ -85,7 +61,6 @@ function startServer(retries: number): void {
       logger.info({ signal }, "Shutdown signal — draining connections…");
 
       // Cancel background timers first so they can't fire mid-shutdown.
-      stopInventoryIndex();
       stopEnrichmentRunCleanup();
 
       server.close(async () => {

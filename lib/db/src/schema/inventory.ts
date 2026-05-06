@@ -35,6 +35,7 @@ import {
   uniqueIndex,
   jsonb,
 } from "drizzle-orm/pg-core";
+
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { sql } from "drizzle-orm";
@@ -67,6 +68,11 @@ export const inventoryTable = pgTable(
     mountType: text("mount_type"),
     attrsParsedAt: timestamp("attrs_parsed_at"),
     promptVersion: smallint("prompt_version"),
+    // ── Index-time synonym expansion (migration 0011) ─────────────────────────
+    // Pre-expanded token string built by buildSearchTokens() at enrichment time.
+    // Trigram search runs against this column instead of raw description/catalog,
+    // eliminating per-request synonym table lookups.
+    searchTokens: text("search_tokens"),
   },
   (table) => [
     uniqueIndex("inventory_vendor_catalog_idx").on(table.vendor, table.catalog),

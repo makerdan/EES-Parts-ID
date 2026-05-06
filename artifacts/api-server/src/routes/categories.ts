@@ -1045,6 +1045,7 @@ function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable
     mountType: null,
     attrsParsedAt: null,
     promptVersion: null,
+    searchTokens: null,
   };
 }
 
