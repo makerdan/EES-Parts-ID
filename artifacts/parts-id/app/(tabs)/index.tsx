@@ -341,6 +341,9 @@ export default function SearchScreen() {
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
   const fuseItemsRef = useRef<InventoryItem[]>([]);
+  // Search telemetry — last searchEventId returned by the server; null when
+  // the server is offline, the insert timed out, or the worker is browsing.
+  const searchEventIdRef = useRef<number | null>(null);
   const [cachedCount, setCachedCount] = useState(0);
   const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [syncError, setSyncError] = useState(false);
@@ -628,6 +631,8 @@ export default function SearchScreen() {
         setOfflineResults(null);
         setOfflineCacheType(null);
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
+        // Capture the telemetry event id so result-tap clicks can be correlated.
+        searchEventIdRef.current = (data as unknown as { _telemetry?: { searchEventId?: number | null } })._telemetry?.searchEventId ?? null;
 
         // Check if inventory changed since we last synced; if so, trigger a full re-sync
         // so the Fuse index and query cache reflect the latest enrichment/import data.
@@ -707,6 +712,24 @@ export default function SearchScreen() {
   const handleChange = (key: keyof FilterValues, value: string | number) => {
     setFilters(f => ({ ...f, [key]: value }));
   };
+
+  // Fire a click telemetry event when a result card is first expanded.
+  // The fetch is intentionally unawaited (fire-and-forget); we never block
+  // the expand animation on telemetry success.
+  const logResultClick = useCallback((resultId: number, rank: number) => {
+    const seId = searchEventIdRef.current;
+    if (!seId) return;
+    fetch(`${API_BASE}/search/click`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        searchEventId: seId,
+        resultId,
+        resultRank: rank,
+        action: "view",
+      }),
+    }).catch(() => {}); // swallow — telemetry is non-critical
+  }, []);
 
   const SEARCH_TIMEOUT_MS = 8000;
 
@@ -1620,7 +1643,7 @@ export default function SearchScreen() {
         )}
         renderItem={({ item: result, index }) => (
           <View style={styles.resultItem}>
-            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} fontScale={textFontScale} highlightTokens={highlightTokens} />
+            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} fontScale={textFontScale} highlightTokens={highlightTokens} onFirstExpand={() => logResultClick(result.item.id, index)} />
           </View>
         )}
         contentContainerStyle={styles.listContent}

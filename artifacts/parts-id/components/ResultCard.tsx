@@ -39,6 +39,13 @@ interface ResultCardProps {
   /** When set, the matching bin in the bin list is visually emphasized so
    *  the worker knows which physical bin matches the current Browse path. */
   highlightBin?: string;
+  /**
+   * Optional callback fired when the worker first expands this card (i.e.,
+   * when the card transitions from collapsed → expanded). Used by the parent
+   * search screen to record a "view" click event for search telemetry.
+   * Never called on collapse, only on the first expand gesture.
+   */
+  onFirstExpand?: () => void;
 }
 
 /**
@@ -218,7 +225,7 @@ const varStyles = StyleSheet.create({
   binEmpty: { fontFamily: "Inter_400Regular", fontStyle: "italic", textAlign: "right", flexShrink: 0 },
 });
 
-export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens, highlightBin }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens, highlightBin, onFirstExpand }: ResultCardProps) {
   const colors = useColors();
   // Match style: a soft tint background + bold weight. Uses the theme's
   // primary color so it stays legible in light/dark mode.
@@ -274,6 +281,8 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
     setExpanded(next);
     // Collapsing the card closes the related-sizes panel too.
     if (!next) setVariantsExpanded(false);
+    // Fire the telemetry callback only when the card first opens.
+    if (next) onFirstExpand?.();
   };
 
   return (

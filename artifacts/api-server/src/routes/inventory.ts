@@ -43,6 +43,8 @@ import {
   shouldUpdateScore,
   fuseConfidence,
 } from "../utils/scoreHelpers";
+import { normalizeQuery } from "../search/normalize";
+import { logSearchEvent, type QuerySource } from "../search/telemetry";
 import { mergeBins, dedupeBinsCaseInsensitive } from "../utils/binLocations";
 import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel } from "../utils/tradeSize";
 import { classifyHandler } from "./categories";
@@ -128,6 +130,8 @@ const CHIP_DIMS_SERVER = [
 ] as const;
 
 router.post("/search", async (req, res) => {
+  const startTime = performance.now();
+  const layersHit: string[] = [];
   try {
     const {
       keywords = "",
@@ -155,6 +159,7 @@ router.post("/search", async (req, res) => {
       environment = "",
       voltage = "",
       poleCount = "",
+      querySource = "typed",
     } = req.body as {
       keywords?: string;
       catalog?: string;
@@ -168,6 +173,7 @@ router.post("/search", async (req, res) => {
       sizeChip?: string; rating?: string; wireType?: string; wireGauge?: string;
       conduitType?: string; conduitSize?: string; boxType?: string; boxGangCount?: string;
       mountingType?: string; environment?: string; voltage?: string; poleCount?: string;
+      querySource?: QuerySource;
     };
 
     const activeChipFilters: Array<{ key: string; value: string }> = [
@@ -358,9 +364,13 @@ router.post("/search", async (req, res) => {
     };
 
     // Process PG results
+    let pgHasFts = false;
+    let pgHasTrgm = false;
     for (const row of pgResults) {
       const ftsRank = Number(row.fts_rank) || 0;
       const trgmSim = Number(row.trgm_sim) || 0;
+      if (ftsRank > 0) pgHasFts = true;
+      if (trgmSim > 0) pgHasTrgm = true;
       const pgScore = blendPgScore(ftsRank, trgmSim);
       const item: typeof inventoryTable.$inferSelect = {
         id: row.id,
@@ -379,21 +389,25 @@ router.post("/search", async (req, res) => {
       const { score, reason } = catalogScore(pgScore, row.catalog, catalogInput, rawKeywords, ftsRank);
       updateScore(item, score, reason);
     }
+    if (pgHasFts) layersHit.push("fts");
+    if (pgHasTrgm) layersHit.push("trigram");
 
     // Exact catalog fallback if PG didn't catch it (checks both Catalog # field and raw keywords)
     if (pgResults.length === 0) {
       const lookups = [catalogInput, rawKeywords].filter(Boolean).map(v => v.toUpperCase());
       if (lookups.length > 0) {
+        let exactCatalogHit = false;
         for (const lookupVal of lookups) {
           const exactRows = await db.select().from(inventoryTable)
             .where(sql`upper(${inventoryTable.catalog}) = ${lookupVal}`);
-          for (const item of exactRows) updateScore(item, 1.0, "exact catalog fallback");
+          for (const item of exactRows) { updateScore(item, 1.0, "exact catalog fallback"); exactCatalogHit = true; }
           // Also try ILIKE prefix fallback
           const prefixRows = await db.select().from(inventoryTable)
             .where(sql`upper(${inventoryTable.catalog}) LIKE ${lookupVal + "%"}`)
             .limit(20);
-          for (const item of prefixRows) updateScore(item, 0.93, "catalog prefix fallback");
+          for (const item of prefixRows) { updateScore(item, 0.93, "catalog prefix fallback"); exactCatalogHit = true; }
         }
+        if (exactCatalogHit) layersHit.push("exact_catalog");
       }
     }
 
@@ -405,28 +419,33 @@ router.post("/search", async (req, res) => {
     // and return PG-only results rather than reintroducing that cost.
     const fuse = getInventoryFuseIndex();
     if (scoreMap.size < 5 && fuse) {
+      let fusedAny = false;
       const fuseQuery = corrected.join(" ");
       if (fuseQuery.trim()) {
         for (const r of fuse.search(fuseQuery)) {
           const conf = fuseConfidence(r.score, 0.70);
-          if (conf > 0.2) updateScore(r.item, conf, "fuzzy fallback");
+          if (conf > 0.2) { updateScore(r.item, conf, "fuzzy fallback"); fusedAny = true; }
         }
       }
       for (const term of allTermsArr.slice(0, 8)) {
         if (term.length < 3) continue;
         for (const r of fuse.search(term).slice(0, 15)) {
           const conf = fuseConfidence(r.score, 0.60);
-          if (conf > 0.2) updateScore(r.item, conf, "fuzzy expanded fallback");
+          if (conf > 0.2) { updateScore(r.item, conf, "fuzzy expanded fallback"); fusedAny = true; }
         }
       }
+      if (fusedAny) layersHit.push("fuse_fallback");
     }
 
     // Apply vendor boost/penalty
     const results: ScoredItem[] = [];
+    let vendorBoosted = false;
     for (const entry of scoreMap.values()) {
       const conf = applyVendorBoost(entry.confidence, vendorFilter, entry.item.vendor);
+      if (vendorFilter && entry.item.vendor.toUpperCase() === vendorFilter.toUpperCase()) vendorBoosted = true;
       results.push({ ...entry, confidence: conf });
     }
+    if (vendorBoosted) layersHit.push("vendor_boost");
 
     results.sort((a, b) => b.confidence - a.confidence);
 
@@ -502,11 +521,41 @@ router.post("/search", async (req, res) => {
       variants: (variantMap.get(r.item.id) ?? []).map(v => withVendorFullName(v, vendorFullNameMap)),
     }));
 
+    const latencyMs = Math.round(performance.now() - startTime);
+    const rawQuery = [keywords, catalogInput].filter(Boolean).join(" ");
+    const normalizedQuery = normalizeQuery(rawQuery);
+    const topResultId = finalResults[0]?.item?.id ?? null;
+    const allFilters = {
+      vendor: vendorInput, color, size, material, textNumbers,
+      category, amperage, colorChip, manufacturer, sizeChip, rating,
+      wireType, wireGauge, conduitType, conduitSize, boxType, boxGangCount,
+      mountingType, environment, voltage, poleCount,
+    };
+
+    // Race the telemetry insert against a 50 ms budget — local Postgres is
+    // almost always faster, but we never stall the response if it isn't.
+    const searchEventId = await Promise.race([
+      logSearchEvent({
+        queryRaw: rawQuery,
+        queryNormalized: normalizedQuery,
+        querySource,
+        filtersJson: allFilters,
+        resultsCount: finalResults.length,
+        topResultId,
+        latencyMs,
+        layersHit,
+      }),
+      new Promise<bigint>(resolve => setTimeout(() => resolve(-1n), 50)),
+    ]);
+
     res.json({
       results: finalResults,
       totalMatches: chipFiltered.length,
       belowThreshold: belowCount,
       dimensionCounts,
+      _telemetry: {
+        searchEventId: searchEventId > 0n ? Number(searchEventId) : null,
+      },
     });
   } catch (err) {
     console.error(err);
