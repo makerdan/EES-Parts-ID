@@ -607,3 +607,187 @@ describe("POST /api/admin/classification-review/:id/skip", () => {
       .expect(400);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Review-queue deduplication — re-classifying an already-queued item
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Review queue deduplication — re-classifying an already-queued item", () => {
+  let dedupInvId: number;
+
+  beforeAll(async () => {
+    dedupInvId = await insertInventoryItem(`${CATALOG_PREFIX}DEDUP`);
+  });
+
+  afterAll(async () => {
+    await db
+      .delete(inventoryCategoryTable)
+      .where(eq(inventoryCategoryTable.inventoryId, dedupInvId));
+    await db
+      .delete(inventoryTable)
+      .where(eq(inventoryTable.id, dedupInvId));
+  });
+
+  it("upserting a second low-confidence AI classification leaves exactly one row", async () => {
+    const upsert = (nodeId: number, confidence: string) =>
+      db
+        .insert(inventoryCategoryTable)
+        .values({
+          inventoryId: dedupInvId,
+          categoryNodeId: nodeId,
+          classifiedBy: "ai",
+          confidence,
+        })
+        .onConflictDoUpdate({
+          target: inventoryCategoryTable.inventoryId,
+          set: {
+            categoryNodeId: nodeId,
+            classifiedBy: "ai",
+            confidence,
+            classifiedAt: sql`now()`,
+            reviewedAt: null,
+            reviewedBy: null,
+          },
+        });
+
+    await upsert(typeNodeId, "0.5000");
+    await upsert(altTypeNodeId, "0.4500");
+
+    const rows = await db
+      .select()
+      .from(inventoryCategoryTable)
+      .where(eq(inventoryCategoryTable.inventoryId, dedupInvId));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.categoryNodeId).toBe(altTypeNodeId);
+    expect(parseFloat(rows[0]!.confidence)).toBeCloseTo(0.45);
+  });
+
+  it("the queue total does not grow when re-classifying an already-queued item", async () => {
+    const before = await supertest(app)
+      .get("/api/admin/classification-review")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    const totalBefore: number = before.body.total;
+
+    await db
+      .insert(inventoryCategoryTable)
+      .values({
+        inventoryId: dedupInvId,
+        categoryNodeId: typeNodeId,
+        classifiedBy: "ai",
+        confidence: "0.5500",
+      })
+      .onConflictDoUpdate({
+        target: inventoryCategoryTable.inventoryId,
+        set: {
+          categoryNodeId: typeNodeId,
+          classifiedBy: "ai",
+          confidence: "0.5500",
+          classifiedAt: sql`now()`,
+          reviewedAt: null,
+          reviewedBy: null,
+        },
+      });
+
+    const after = await supertest(app)
+      .get("/api/admin/classification-review")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(after.body.total).toBe(totalBefore);
+  });
+
+  it("upserting a classification resets reviewed_at to NULL (item re-enters queue)", async () => {
+    await db
+      .update(inventoryCategoryTable)
+      .set({ reviewedAt: new Date("2025-06-01T00:00:00Z"), reviewedBy: "admin" })
+      .where(eq(inventoryCategoryTable.inventoryId, dedupInvId));
+
+    await db
+      .insert(inventoryCategoryTable)
+      .values({
+        inventoryId: dedupInvId,
+        categoryNodeId: typeNodeId,
+        classifiedBy: "ai",
+        confidence: "0.6000",
+      })
+      .onConflictDoUpdate({
+        target: inventoryCategoryTable.inventoryId,
+        set: {
+          categoryNodeId: typeNodeId,
+          classifiedBy: "ai",
+          confidence: "0.6000",
+          classifiedAt: sql`now()`,
+          reviewedAt: null,
+          reviewedBy: null,
+        },
+      });
+
+    const [row] = await db
+      .select({ reviewedAt: inventoryCategoryTable.reviewedAt })
+      .from(inventoryCategoryTable)
+      .where(eq(inventoryCategoryTable.inventoryId, dedupInvId))
+      .limit(1);
+
+    expect(row!.reviewedAt).toBeNull();
+  });
+
+  it("re-running /categories/classify on an already-queued item does not increase the queue total", async () => {
+    // Ensure the item starts as an AI low-confidence queue entry.
+    await db
+      .insert(inventoryCategoryTable)
+      .values({
+        inventoryId: dedupInvId,
+        categoryNodeId: typeNodeId,
+        classifiedBy: "ai",
+        confidence: "0.5000",
+      })
+      .onConflictDoUpdate({
+        target: inventoryCategoryTable.inventoryId,
+        set: {
+          categoryNodeId: typeNodeId,
+          classifiedBy: "ai",
+          confidence: "0.5000",
+          classifiedAt: sql`now()`,
+          reviewedAt: null,
+          reviewedBy: null,
+        },
+      });
+
+    const before = await supertest(app)
+      .get("/api/admin/classification-review")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    const totalBefore: number = before.body.total;
+
+    // Call the real classify endpoint with mode="specific-ids" so the
+    // writeAssignment upsert path is exercised end-to-end.
+    // useAi=false avoids calling the mocked OpenAI client.
+    await supertest(app)
+      .post("/api/categories/classify")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ mode: "specific-ids", ids: [dedupInvId], useAi: false })
+      .buffer(true)
+      .parse((res, callback) => {
+        let data = "";
+        res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+        res.on("end", () => callback(null, data));
+      })
+      .expect(200);
+
+    // Exactly one row for this item must still exist.
+    const rows = await db
+      .select()
+      .from(inventoryCategoryTable)
+      .where(eq(inventoryCategoryTable.inventoryId, dedupInvId));
+    expect(rows).toHaveLength(1);
+
+    // Queue total must not have grown.
+    const after = await supertest(app)
+      .get("/api/admin/classification-review")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(after.body.total).toBeLessThanOrEqual(totalBefore);
+  });
+});

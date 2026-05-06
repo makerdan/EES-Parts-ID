@@ -631,20 +631,36 @@ export async function classifyHandler(
         };
       });
 
-    // Flush a single assignment row, replacing any prior assignment for the id.
+    // Flush a single assignment row. Uses an upsert so re-classifying an
+    // already-queued item updates the existing row atomically instead of
+    // deleting + re-inserting (which could create a race-condition window and
+    // would lose the prior row identity). reviewed_at is reset to NULL so the
+    // item re-enters the review queue if a new low-confidence AI result arrives.
     const writeAssignment = async (
       inventoryId: number,
       categoryNodeId: number,
       confidence: number,
       classifiedBy: "rule" | "ai" | "manual",
     ) => {
-      await db.delete(inventoryCategoryTable).where(eq(inventoryCategoryTable.inventoryId, inventoryId));
-      await db.insert(inventoryCategoryTable).values({
-        inventoryId,
-        categoryNodeId,
-        confidence: confidence.toFixed(4),
-        classifiedBy,
-      });
+      await db
+        .insert(inventoryCategoryTable)
+        .values({
+          inventoryId,
+          categoryNodeId,
+          confidence: confidence.toFixed(4),
+          classifiedBy,
+        })
+        .onConflictDoUpdate({
+          target: inventoryCategoryTable.inventoryId,
+          set: {
+            categoryNodeId,
+            confidence: confidence.toFixed(4),
+            classifiedBy,
+            classifiedAt: sql`now()`,
+            reviewedAt: null,
+            reviewedBy: null,
+          },
+        });
     };
 
     let offset = 0;
@@ -845,14 +861,24 @@ router.post("/reclassify", requireAdminAuth, async (req, res) => {
       classifiedBy: "rule" | "ai",
     ) => {
       await db
-        .delete(inventoryCategoryTable)
-        .where(eq(inventoryCategoryTable.inventoryId, inventoryId));
-      await db.insert(inventoryCategoryTable).values({
-        inventoryId,
-        categoryNodeId,
-        confidence: confidence.toFixed(4),
-        classifiedBy,
-      });
+        .insert(inventoryCategoryTable)
+        .values({
+          inventoryId,
+          categoryNodeId,
+          confidence: confidence.toFixed(4),
+          classifiedBy,
+        })
+        .onConflictDoUpdate({
+          target: inventoryCategoryTable.inventoryId,
+          set: {
+            categoryNodeId,
+            confidence: confidence.toFixed(4),
+            classifiedBy,
+            classifiedAt: sql`now()`,
+            reviewedAt: null,
+            reviewedBy: null,
+          },
+        });
     };
 
     let processed = 0;
