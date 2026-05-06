@@ -422,6 +422,14 @@ router.post("/search", async (req, res) => {
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
         updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
+        catalogParse: null,
+        amperage: null,
+        poleCount: null,
+        voltage: null,
+        tradeSizeIn: null,
+        mountType: null,
+        attrsParsedAt: null,
+        promptVersion: null,
       };
 
       const { score, reason } = catalogScore(pgScore, row.catalog, catalogInput, rawKeywords, ftsRank);

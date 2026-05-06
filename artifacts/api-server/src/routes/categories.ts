@@ -1037,6 +1037,14 @@ function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable
     enrichedAt: row["enriched_at"] instanceof Date ? (row["enriched_at"] as Date) : null,
     createdAt: row["created_at"] instanceof Date ? (row["created_at"] as Date) : new Date(0),
     updatedAt: row["updated_at"] instanceof Date ? (row["updated_at"] as Date) : new Date(0),
+    catalogParse: null,
+    amperage: null,
+    poleCount: null,
+    voltage: null,
+    tradeSizeIn: null,
+    mountType: null,
+    attrsParsedAt: null,
+    promptVersion: null,
   };
 }
 

@@ -4,6 +4,7 @@ import {
   parsePoles,
   parseVoltage,
   parseMountType,
+  parseTradeSize,
   deriveAttrs,
 } from "../src/enrichment/parseAttributes";
 
@@ -285,5 +286,101 @@ describe("deriveAttrs", () => {
     const attrs = deriveAttrs({ catalog: null, description: "20A Device" });
     expect(attrs.catalogParse).toBeNull();
     expect(attrs.amperage).toBe(20);
+  });
+});
+
+// ── parseTradeSize ────────────────────────────────────────────────────────────
+
+describe("parseTradeSize – fractions", () => {
+  test("1/2\" → 0.5", () => {
+    expect(parseTradeSize('1/2"')).toBe(0.5);
+  });
+
+  test("3/4 inch → 0.75", () => {
+    expect(parseTradeSize("3/4 inch")).toBe(0.75);
+  });
+
+  test("1/4 in → 0.25", () => {
+    expect(parseTradeSize("1/4 in")).toBe(0.25);
+  });
+
+  test("3/8\" → 0.375", () => {
+    expect(parseTradeSize('3/8"')).toBe(0.375);
+  });
+
+  test("7/8 inches → 0.875", () => {
+    expect(parseTradeSize("7/8 inches")).toBe(0.875);
+  });
+});
+
+describe("parseTradeSize – mixed numbers", () => {
+  test("1 1/2\" → 1.5", () => {
+    expect(parseTradeSize('1 1/2"')).toBe(1.5);
+  });
+
+  test("2-1/2 in → 2.5", () => {
+    expect(parseTradeSize("2-1/2 in")).toBe(2.5);
+  });
+
+  test("1-1/4\" → 1.25", () => {
+    expect(parseTradeSize('1-1/4"')).toBe(1.25);
+  });
+});
+
+describe("parseTradeSize – decimals and whole numbers", () => {
+  test("0.5 in → 0.5", () => {
+    expect(parseTradeSize("0.5 in")).toBe(0.5);
+  });
+
+  test("2.5\" → 2.5", () => {
+    expect(parseTradeSize('2.5"')).toBe(2.5);
+  });
+
+  test("2 inch → 2", () => {
+    expect(parseTradeSize("2 inch")).toBe(2);
+  });
+
+  test("3 in → 3", () => {
+    expect(parseTradeSize("3 in")).toBe(3);
+  });
+});
+
+describe("parseTradeSize – mm conversion", () => {
+  test("25mm → ~0.984 inches", () => {
+    const result = parseTradeSize("25mm");
+    expect(result).not.toBeNull();
+    expect(result!).toBeCloseTo(25 / 25.4, 3);
+  });
+
+  test("50 mm → ~1.969 inches", () => {
+    const result = parseTradeSize("50 mm");
+    expect(result).not.toBeNull();
+    expect(result!).toBeCloseTo(50 / 25.4, 3);
+  });
+});
+
+describe("parseTradeSize – null / out-of-range cases", () => {
+  test("null → null", () => {
+    expect(parseTradeSize(null)).toBeNull();
+  });
+
+  test("empty string → null", () => {
+    expect(parseTradeSize("")).toBeNull();
+  });
+
+  test("plain description with no size → null", () => {
+    expect(parseTradeSize("circuit breaker 20A")).toBeNull();
+  });
+
+  test("value over 12 inches is rejected", () => {
+    expect(parseTradeSize('24"')).toBeNull();
+  });
+
+  test("zero is rejected", () => {
+    expect(parseTradeSize('0"')).toBeNull();
+  });
+
+  test("1000mm (≫ 12\") is rejected", () => {
+    expect(parseTradeSize("1000mm")).toBeNull();
   });
 });
