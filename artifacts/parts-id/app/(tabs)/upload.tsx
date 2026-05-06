@@ -622,6 +622,8 @@ export default function UploadScreen() {
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
   const [enrichSummary, setEnrichSummary] = useState<EnrichSummary | null>(null);
+  const [reviewCount, setReviewCount] = useState<number | null>(null);
+  const [reviewExpandTrigger, setReviewExpandTrigger] = useState(0);
   const [bulkEnrichError, setBulkEnrichError] = useState<string | null>(null);
   const [bulkEnrichPending, setBulkEnrichPending] = useState(false);
   const [bulkStopPending, setBulkStopPending] = useState(false);
@@ -678,6 +680,23 @@ export default function UploadScreen() {
       if (!res.ok) return;
       const data = await res.json() as EnrichSummary;
       setEnrichSummary(data);
+    } catch {}
+  }, [logoutAdmin]);
+
+  const fetchReviewCount = useCallback(async () => {
+    try {
+      const token = adminTokenRef.current;
+      if (!token) return;
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      const res = await fetch(`${API_BASE}/admin/classification-review?page=1&limit=1`, { headers });
+      if (res.status === 401) {
+        logoutAdmin();
+        setUploadError("Admin session expired. Please unlock again.");
+        return;
+      }
+      if (!res.ok) return;
+      const data = await res.json() as { total: number };
+      setReviewCount(data.total);
     } catch {}
   }, [logoutAdmin]);
 
@@ -752,6 +771,7 @@ export default function UploadScreen() {
       return;
     }
     fetchEnrichSummary();
+    fetchReviewCount();
     (async () => {
       try {
         const token = adminTokenRef.current;
@@ -777,7 +797,7 @@ export default function UploadScreen() {
         }
       } catch {}
     })();
-  }, [isAdmin, fetchEnrichSummary, startBulkPoll, stopBulkPoll, startMeasurePoll, stopMeasurePoll, logoutAdmin]);
+  }, [isAdmin, fetchEnrichSummary, fetchReviewCount, startBulkPoll, stopBulkPoll, startMeasurePoll, stopMeasurePoll, logoutAdmin]);
 
   // Clean up polling on unmount
   useEffect(() => () => { stopBulkPoll(); stopMeasurePoll(); }, [stopBulkPoll, stopMeasurePoll]);
@@ -1966,6 +1986,19 @@ export default function UploadScreen() {
                         </Text>
                         <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Coverage</Text>
                       </View>
+                      <Pressable
+                        style={[styles.statChip, { backgroundColor: colors.primary + "18" }]}
+                        onPress={() => {
+                          setEnrichOpen(true);
+                          setReviewExpandTrigger(n => n + 1);
+                        }}
+                        accessibilityLabel="Open review queue"
+                      >
+                        <Text style={[styles.statValue, { color: colors.primary }]}>
+                          {reviewCount != null ? reviewCount.toLocaleString() : "—"}
+                        </Text>
+                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Review Queue</Text>
+                      </Pressable>
                     </View>
 
                     {enrichSummary.total > 0 ? (
@@ -2462,6 +2495,7 @@ export default function UploadScreen() {
                   logoutAdmin();
                   setUploadError("Admin session expired. Please unlock again.");
                 }}
+                expandTrigger={reviewExpandTrigger}
               />
                     </View>
                   )}
