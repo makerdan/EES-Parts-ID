@@ -36,11 +36,13 @@ import type {
   ClassifyInventoryBody,
   DictionaryLookupResponse,
   EnrichInventoryBody,
+  ErrorResponse,
   HealthStatus,
   InventoryItem,
   InventoryListResponse,
   ListCategoryItemsParams,
   ListCategoryPartsByIdParams,
+  ListClassificationReviewParams,
   ListInventoryParams,
   ListUncategorizedItemsParams,
   LookupDictionaryParams,
@@ -50,6 +52,9 @@ import type {
   PhotoConfirmResponse,
   PreviewUpsertBody,
   PreviewUpsertResponse,
+  ReclassifyBody,
+  ReviewActionResponse,
+  ReviewQueueResponse,
   SearchInventoryBody,
   SearchInventoryResponse,
   SetInventoryCategoryBody,
@@ -2602,4 +2607,383 @@ export const useAiReference = <
   TContext
 > => {
   return useMutation(getAiReferenceMutationOptions(options));
+};
+
+/**
+ * Returns AI-classified inventory rows whose confidence is below 70%
+and have not yet been reviewed. Ordered oldest-first (classified_at ASC,
+confidence ASC). Requires Bearer admin token.
+
+ * @summary List low-confidence AI classification items pending admin review
+ */
+export const getListClassificationReviewUrl = (
+  params?: ListClassificationReviewParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/admin/classification-review?${stringifiedParams}`
+    : `/api/admin/classification-review`;
+};
+
+export const listClassificationReview = async (
+  params?: ListClassificationReviewParams,
+  options?: RequestInit,
+): Promise<ReviewQueueResponse> => {
+  return customFetch<ReviewQueueResponse>(
+    getListClassificationReviewUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListClassificationReviewQueryKey = (
+  params?: ListClassificationReviewParams,
+) => {
+  return [
+    `/api/admin/classification-review`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListClassificationReviewQueryOptions = <
+  TData = Awaited<ReturnType<typeof listClassificationReview>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListClassificationReviewParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listClassificationReview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListClassificationReviewQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listClassificationReview>>
+  > = ({ signal }) =>
+    listClassificationReview(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listClassificationReview>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListClassificationReviewQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listClassificationReview>>
+>;
+export type ListClassificationReviewQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List low-confidence AI classification items pending admin review
+ */
+
+export function useListClassificationReview<
+  TData = Awaited<ReturnType<typeof listClassificationReview>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListClassificationReviewParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listClassificationReview>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListClassificationReviewQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Marks the item as reviewed without changing its assigned category.
+Sets `reviewed_at` and `reviewed_by = 'admin'`. Requires Bearer admin token.
+
+ * @summary Confirm the existing AI classification for a queued item
+ */
+export const getConfirmClassificationReviewUrl = (id: number) => {
+  return `/api/admin/classification-review/${id}/confirm`;
+};
+
+export const confirmClassificationReview = async (
+  id: number,
+  options?: RequestInit,
+): Promise<ReviewActionResponse> => {
+  return customFetch<ReviewActionResponse>(
+    getConfirmClassificationReviewUrl(id),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConfirmClassificationReviewMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof confirmClassificationReview>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof confirmClassificationReview>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["confirmClassificationReview"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof confirmClassificationReview>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return confirmClassificationReview(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConfirmClassificationReviewMutationResult = NonNullable<
+  Awaited<ReturnType<typeof confirmClassificationReview>>
+>;
+
+export type ConfirmClassificationReviewMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Confirm the existing AI classification for a queued item
+ */
+export const useConfirmClassificationReview = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof confirmClassificationReview>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof confirmClassificationReview>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getConfirmClassificationReviewMutationOptions(options));
+};
+
+/**
+ * Updates the item's category to the supplied `categoryNodeId` (which must
+be a leaf `type` node), sets `classified_by = 'manual'`, confidence to
+1.0, and marks the review complete. Requires Bearer admin token.
+
+ * @summary Reassign a queued item to a different leaf category node
+ */
+export const getReclassifyReviewItemUrl = (id: number) => {
+  return `/api/admin/classification-review/${id}/reclassify`;
+};
+
+export const reclassifyReviewItem = async (
+  id: number,
+  reclassifyBody: ReclassifyBody,
+  options?: RequestInit,
+): Promise<ReviewActionResponse> => {
+  return customFetch<ReviewActionResponse>(getReclassifyReviewItemUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(reclassifyBody),
+  });
+};
+
+export const getReclassifyReviewItemMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reclassifyReviewItem>>,
+    TError,
+    { id: number; data: BodyType<ReclassifyBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reclassifyReviewItem>>,
+  TError,
+  { id: number; data: BodyType<ReclassifyBody> },
+  TContext
+> => {
+  const mutationKey = ["reclassifyReviewItem"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reclassifyReviewItem>>,
+    { id: number; data: BodyType<ReclassifyBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return reclassifyReviewItem(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReclassifyReviewItemMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reclassifyReviewItem>>
+>;
+export type ReclassifyReviewItemMutationBody = BodyType<ReclassifyBody>;
+export type ReclassifyReviewItemMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Reassign a queued item to a different leaf category node
+ */
+export const useReclassifyReviewItem = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reclassifyReviewItem>>,
+    TError,
+    { id: number; data: BodyType<ReclassifyBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reclassifyReviewItem>>,
+  TError,
+  { id: number; data: BodyType<ReclassifyBody> },
+  TContext
+> => {
+  return useMutation(getReclassifyReviewItemMutationOptions(options));
+};
+
+/**
+ * Bumps `classified_at` to now() so the item sorts after all current
+queue items (oldest-first ordering). The item remains unreviewed.
+Requires Bearer admin token.
+
+ * @summary Defer a queued item to the end of the review queue
+ */
+export const getSkipClassificationReviewUrl = (id: number) => {
+  return `/api/admin/classification-review/${id}/skip`;
+};
+
+export const skipClassificationReview = async (
+  id: number,
+  options?: RequestInit,
+): Promise<ReviewActionResponse> => {
+  return customFetch<ReviewActionResponse>(getSkipClassificationReviewUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getSkipClassificationReviewMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof skipClassificationReview>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof skipClassificationReview>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["skipClassificationReview"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof skipClassificationReview>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return skipClassificationReview(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SkipClassificationReviewMutationResult = NonNullable<
+  Awaited<ReturnType<typeof skipClassificationReview>>
+>;
+
+export type SkipClassificationReviewMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Defer a queued item to the end of the review queue
+ */
+export const useSkipClassificationReview = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof skipClassificationReview>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof skipClassificationReview>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getSkipClassificationReviewMutationOptions(options));
 };

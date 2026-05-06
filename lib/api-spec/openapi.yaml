@@ -20,6 +20,8 @@ tags:
     description: Three-level taxonomy browse and classification
   - name: barcode
     description: Barcode / QR scanning lookup and linking
+  - name: admin
+    description: Admin-only operations (require Bearer admin token)
 paths:
   /healthz:
     get:
@@ -665,6 +667,170 @@ paths:
       responses:
         "308":
           description: Redirect to /reference/ask
+
+  /admin/classification-review:
+    get:
+      operationId: listClassificationReview
+      tags: [admin]
+      summary: List low-confidence AI classification items pending admin review
+      description: |
+        Returns AI-classified inventory rows whose confidence is below 70%
+        and have not yet been reviewed. Ordered oldest-first (classified_at ASC,
+        confidence ASC). Requires Bearer admin token.
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 100
+      security:
+        - bearerAdmin: []
+      responses:
+        "200":
+          description: Paginated review queue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewQueueResponse"
+        "401":
+          description: Missing or invalid admin token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/classification-review/{id}/confirm:
+    post:
+      operationId: confirmClassificationReview
+      tags: [admin]
+      summary: Confirm the existing AI classification for a queued item
+      description: |
+        Marks the item as reviewed without changing its assigned category.
+        Sets `reviewed_at` and `reviewed_by = 'admin'`. Requires Bearer admin token.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: inventory_id of the item to confirm
+          schema:
+            type: integer
+      security:
+        - bearerAdmin: []
+      responses:
+        "200":
+          description: Item confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewActionResponse"
+        "401":
+          description: Missing or invalid admin token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Item not found or already reviewed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/classification-review/{id}/reclassify:
+    post:
+      operationId: reclassifyReviewItem
+      tags: [admin]
+      summary: Reassign a queued item to a different leaf category node
+      description: |
+        Updates the item's category to the supplied `categoryNodeId` (which must
+        be a leaf `type` node), sets `classified_by = 'manual'`, confidence to
+        1.0, and marks the review complete. Requires Bearer admin token.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: inventory_id of the item to reclassify
+          schema:
+            type: integer
+      security:
+        - bearerAdmin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReclassifyBody"
+      responses:
+        "200":
+          description: Item reclassified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewActionResponse"
+        "400":
+          description: Invalid categoryNodeId or not a leaf type node
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid admin token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Item or target node not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/classification-review/{id}/skip:
+    post:
+      operationId: skipClassificationReview
+      tags: [admin]
+      summary: Defer a queued item to the end of the review queue
+      description: |
+        Bumps `classified_at` to now() so the item sorts after all current
+        queue items (oldest-first ordering). The item remains unreviewed.
+        Requires Bearer admin token.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: inventory_id of the item to skip
+          schema:
+            type: integer
+      security:
+        - bearerAdmin: []
+      responses:
+        "200":
+          description: Item deferred
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewActionResponse"
+        "401":
+          description: Missing or invalid admin token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Item not found or already reviewed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
@@ -1478,3 +1644,101 @@ components:
       required:
         - sourceId
         - targetId
+
+    ReviewQueueItem:
+      type: object
+      description: A single inventory item in the AI classification review queue.
+      properties:
+        inventoryId:
+          type: integer
+          description: Primary key of the inventory row.
+        vendor:
+          type: string
+        catalog:
+          type: string
+        description:
+          type: string
+        confidencePct:
+          type: number
+          description: AI confidence expressed as a percentage (0–100).
+        classifiedAt:
+          type: string
+          format: date-time
+          description: When the AI classification was recorded.
+        categoryNodeId:
+          type: integer
+          description: Current leaf category node assigned by AI.
+        categoryPath:
+          type: string
+          description: "Human-readable breadcrumb: Category › Subcategory › Type."
+      required:
+        - inventoryId
+        - vendor
+        - catalog
+        - description
+        - confidencePct
+        - classifiedAt
+        - categoryNodeId
+        - categoryPath
+
+    ReviewQueueResponse:
+      type: object
+      description: Paginated list of items pending classification review.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReviewQueueItem"
+        total:
+          type: integer
+          description: Total number of items currently in the review queue.
+        page:
+          type: integer
+        limit:
+          type: integer
+      required:
+        - items
+        - total
+        - page
+        - limit
+
+    ReclassifyBody:
+      type: object
+      description: Body for reclassifying an item to a different leaf category node.
+      properties:
+        categoryNodeId:
+          type: integer
+          description: ID of the target leaf (type) category node.
+      required:
+        - categoryNodeId
+
+    ReviewActionResponse:
+      type: object
+      description: Confirmation returned by confirm / reclassify / skip actions.
+      properties:
+        ok:
+          type: boolean
+        inventoryId:
+          type: integer
+        categoryNodeId:
+          type: integer
+          description: Present only on reclassify — the newly assigned node ID.
+          nullable: true
+      required:
+        - ok
+        - inventoryId
+
+    ErrorResponse:
+      type: object
+      description: Generic error envelope returned on 4xx/5xx responses.
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+  securitySchemes:
+    bearerAdmin:
+      type: http
+      scheme: bearer
+      description: Admin Bearer token (set via ADMIN_PASSWORD env var on the server).

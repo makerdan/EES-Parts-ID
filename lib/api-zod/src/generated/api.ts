@@ -1135,3 +1135,140 @@ export const BarcodeRecentResponse = zod.object({
 export const AiReferenceBody = zod.object({
   question: zod.string(),
 });
+
+/**
+ * Returns AI-classified inventory rows whose confidence is below 70%
+and have not yet been reviewed. Ordered oldest-first (classified_at ASC,
+confidence ASC). Requires Bearer admin token.
+
+ * @summary List low-confidence AI classification items pending admin review
+ */
+export const listClassificationReviewQueryPageDefault = 1;
+
+export const listClassificationReviewQueryLimitDefault = 50;
+export const listClassificationReviewQueryLimitMax = 100;
+
+export const ListClassificationReviewQueryParams = zod.object({
+  page: zod.coerce
+    .number()
+    .min(1)
+    .default(listClassificationReviewQueryPageDefault),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listClassificationReviewQueryLimitMax)
+    .default(listClassificationReviewQueryLimitDefault),
+});
+
+export const ListClassificationReviewResponse = zod
+  .object({
+    items: zod.array(
+      zod
+        .object({
+          inventoryId: zod
+            .number()
+            .describe("Primary key of the inventory row."),
+          vendor: zod.string(),
+          catalog: zod.string(),
+          description: zod.string(),
+          confidencePct: zod
+            .number()
+            .describe("AI confidence expressed as a percentage (0–100)."),
+          classifiedAt: zod.coerce
+            .date()
+            .describe("When the AI classification was recorded."),
+          categoryNodeId: zod
+            .number()
+            .describe("Current leaf category node assigned by AI."),
+          categoryPath: zod
+            .string()
+            .describe(
+              "Human-readable breadcrumb: Category › Subcategory › Type.",
+            ),
+        })
+        .describe(
+          "A single inventory item in the AI classification review queue.",
+        ),
+    ),
+    total: zod
+      .number()
+      .describe("Total number of items currently in the review queue."),
+    page: zod.number(),
+    limit: zod.number(),
+  })
+  .describe("Paginated list of items pending classification review.");
+
+/**
+ * Marks the item as reviewed without changing its assigned category.
+Sets `reviewed_at` and `reviewed_by = 'admin'`. Requires Bearer admin token.
+
+ * @summary Confirm the existing AI classification for a queued item
+ */
+export const ConfirmClassificationReviewParams = zod.object({
+  id: zod.coerce.number().describe("inventory_id of the item to confirm"),
+});
+
+export const ConfirmClassificationReviewResponse = zod
+  .object({
+    ok: zod.boolean(),
+    inventoryId: zod.number(),
+    categoryNodeId: zod
+      .number()
+      .nullish()
+      .describe("Present only on reclassify — the newly assigned node ID."),
+  })
+  .describe("Confirmation returned by confirm \/ reclassify \/ skip actions.");
+
+/**
+ * Updates the item's category to the supplied `categoryNodeId` (which must
+be a leaf `type` node), sets `classified_by = 'manual'`, confidence to
+1.0, and marks the review complete. Requires Bearer admin token.
+
+ * @summary Reassign a queued item to a different leaf category node
+ */
+export const ReclassifyReviewItemParams = zod.object({
+  id: zod.coerce.number().describe("inventory_id of the item to reclassify"),
+});
+
+export const ReclassifyReviewItemBody = zod
+  .object({
+    categoryNodeId: zod
+      .number()
+      .describe("ID of the target leaf (type) category node."),
+  })
+  .describe(
+    "Body for reclassifying an item to a different leaf category node.",
+  );
+
+export const ReclassifyReviewItemResponse = zod
+  .object({
+    ok: zod.boolean(),
+    inventoryId: zod.number(),
+    categoryNodeId: zod
+      .number()
+      .nullish()
+      .describe("Present only on reclassify — the newly assigned node ID."),
+  })
+  .describe("Confirmation returned by confirm \/ reclassify \/ skip actions.");
+
+/**
+ * Bumps `classified_at` to now() so the item sorts after all current
+queue items (oldest-first ordering). The item remains unreviewed.
+Requires Bearer admin token.
+
+ * @summary Defer a queued item to the end of the review queue
+ */
+export const SkipClassificationReviewParams = zod.object({
+  id: zod.coerce.number().describe("inventory_id of the item to skip"),
+});
+
+export const SkipClassificationReviewResponse = zod
+  .object({
+    ok: zod.boolean(),
+    inventoryId: zod.number(),
+    categoryNodeId: zod
+      .number()
+      .nullish()
+      .describe("Present only on reclassify — the newly assigned node ID."),
+  })
+  .describe("Confirmation returned by confirm \/ reclassify \/ skip actions.");
