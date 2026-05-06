@@ -216,6 +216,7 @@ export function BrowseByAisle({
                 <ResultCard
                   result={result}
                   rank={index}
+                  showRank={false}
                   fontScale={fontScale}
                   onEditKeywords={onEditKeywords}
                   highlightBin={item.bin}
