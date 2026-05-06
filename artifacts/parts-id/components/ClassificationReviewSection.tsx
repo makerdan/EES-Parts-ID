@@ -17,7 +17,18 @@ import {
   View,
 } from "react-native";
 import { useColors } from "@/hooks/useColors";
-import type { ReviewQueueItem, ReviewQueueResponse, ReviewActionResponse } from "@workspace/api-client-react";
+import {
+  listClassificationReview,
+  confirmClassificationReview,
+  reclassifyReviewItem,
+  skipClassificationReview,
+} from "@workspace/api-client-react";
+import type {
+  ReviewQueueItem,
+  ReviewQueueResponse,
+  ReviewActionResponse,
+} from "@workspace/api-client-react";
+import { ApiError } from "@workspace/api-client-react";
 
 const PAGE_SIZE = 50;
 
@@ -59,43 +70,37 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
     else setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `${apiBase}/admin/classification-review?page=${targetPage}&limit=${PAGE_SIZE}`,
+      const data = await listClassificationReview(
+        { page: targetPage, limit: PAGE_SIZE },
         { headers: adminHeaders },
       );
-      if (res.status === 401) { onExpiredSession(); return; }
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
-        setError(body.error ?? "Failed to load review queue");
-        return;
-      }
-      const data = await res.json() as ReviewQueueResponse;
       setPendingCount(data.total);
       setHasMore(data.items.length === PAGE_SIZE && targetPage * PAGE_SIZE < data.total);
       setItems(prev => append ? [...prev, ...data.items] : data.items);
       setPage(targetPage);
-    } catch {
-      setError("Network error loading review queue");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) { onExpiredSession(); return; }
+      setError(err instanceof ApiError ? err.message : "Network error loading review queue");
     } finally {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [apiBase, adminHeaders, onExpiredSession]);
+  }, [adminHeaders, onExpiredSession]);
 
   // Fetch just the count on mount (without expanding) so the badge is visible.
   useEffect(() => {
     if (pendingCount !== null) return;
     (async () => {
       try {
-        const res = await fetch(
-          `${apiBase}/admin/classification-review?page=1&limit=1`,
+        const data = await listClassificationReview(
+          { page: 1, limit: 1 },
           { headers: adminHeaders },
         );
-        if (res.status === 401) { onExpiredSession(); return; }
-        if (!res.ok) return;
-        const data = await res.json() as ReviewQueueResponse;
         setPendingCount(data.total);
-      } catch { /* silent */ }
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) onExpiredSession();
+        // Other errors are silently ignored — badge stays hidden
+      }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -135,29 +140,22 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
   ) => {
     setActingId(inventoryId);
     try {
-      const res = await fetch(
-        `${apiBase}/admin/classification-review/${inventoryId}/${action}`,
-        { method: "POST", headers: adminHeaders },
-      );
-      if (res.status === 401) { onExpiredSession(); return; }
-      if (!res.ok) {
-        const b = await res.json().catch(() => ({})) as { error?: string };
-        setError(b.error ?? `Failed to ${action}`);
-        return;
-      }
-      if (action === "skip") {
-        // Re-fetch current page so the skipped item disappears from view
-        // (it moved to end of queue, not removed).
-        void fetchQueue(1, false);
-      } else {
+      const requestOptions = { headers: adminHeaders };
+      if (action === "confirm") {
+        await confirmClassificationReview(inventoryId, requestOptions);
         removeItem(inventoryId);
+      } else {
+        await skipClassificationReview(inventoryId, requestOptions);
+        // Re-fetch from page 1: skipped item moved to end of queue.
+        void fetchQueue(1, false);
       }
-    } catch {
-      setError(`Network error during ${action}`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) { onExpiredSession(); return; }
+      setError(err instanceof ApiError ? err.message : `Network error during ${action}`);
     } finally {
       setActingId(null);
     }
-  }, [apiBase, adminHeaders, onExpiredSession, fetchQueue]);
+  }, [adminHeaders, onExpiredSession, fetchQueue]);
 
   const handleConfirm = (id: number) => void postAction(id, "confirm");
   const handleSkip    = (id: number) => void postAction(id, "skip");
@@ -196,23 +194,15 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
     setReclassifyTarget(null);
     setActingId(inventoryId);
     try {
-      const res = await fetch(
-        `${apiBase}/admin/classification-review/${inventoryId}/reclassify`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...adminHeaders },
-          body: JSON.stringify({ categoryNodeId }),
-        },
+      await reclassifyReviewItem(
+        inventoryId,
+        { categoryNodeId },
+        { headers: adminHeaders },
       );
-      if (res.status === 401) { onExpiredSession(); return; }
-      if (!res.ok) {
-        const b = await res.json().catch(() => ({})) as { error?: string };
-        setError(b.error ?? "Failed to reclassify");
-        return;
-      }
       removeItem(inventoryId);
-    } catch {
-      setError("Network error during reclassify");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) { onExpiredSession(); return; }
+      setError(err instanceof ApiError ? err.message : "Network error during reclassify");
     } finally {
       setActingId(null);
     }
