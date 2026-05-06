@@ -526,7 +526,7 @@ export default function PhotoScreen() {
                   result={result}
                   rank={index}
                   fontScale={textFontScale}
-                  onFirstExpand={
+                  onConfirm={
                     photoEventId != null
                       ? () => {
                           confirmMutation.mutate(
