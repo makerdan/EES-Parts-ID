@@ -14,3 +14,4 @@ export * from "./messages";
 export * from "./category_node";
 export * from "./inventory_category";
 export * from "./inventory_barcode";
+export * from "./search_telemetry";
