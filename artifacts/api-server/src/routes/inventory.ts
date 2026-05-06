@@ -535,7 +535,7 @@ router.post("/search", async (req, res) => {
       // For each series group found in results, we query only rows that share
       // the same vendor + catalog series prefix.
       //
-      // Fast path: uses the idx_inventory_catalog_parse_series GIN index on
+      // Fast path: uses the idx_inventory_catalog_parse_series expression btree index on
       // (catalog_parse->>'series', pole_count) for items already backfilled.
       // Fallback: catalog ILIKE 'PREFIX%' for items not yet backfilled.
       for (const [, group] of seriesGroups) {
