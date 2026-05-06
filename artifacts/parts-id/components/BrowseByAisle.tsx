@@ -303,7 +303,7 @@ function ShelfView({
                     accessibilityRole="button"
                     accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? "part"}`}
                   >
-                    <Text style={[shelfStyles.slotPos, { color: isSelected ? colors.primaryForeground + "cc" : colors.mutedForeground }]}>
+                    <Text style={[shelfStyles.slotPos, { color: "#000000" }]}>
                       {p.bin.split("-").pop() ?? p.bin}
                     </Text>
                     <Text
@@ -385,7 +385,7 @@ const shelfStyles = StyleSheet.create({
     borderWidth: 1,
     justifyContent: "flex-end",
   },
-  slotPos:    { fontSize: 11, fontFamily: "Inter_500Medium", marginBottom: 3, textAlign: "center", textDecorationLine: "underline" },
+  slotPos:    { fontSize: 15, fontFamily: "Inter_500Medium", marginBottom: 3, textAlign: "center", textDecorationLine: "underline" },
   slotName:   { fontSize: 11, fontFamily: "Inter_600SemiBold", lineHeight: 14 },
   slotVendor: { fontSize: 9,  fontFamily: "Inter_400Regular", marginTop: 2 },
   rail: {
