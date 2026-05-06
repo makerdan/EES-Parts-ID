@@ -18,7 +18,9 @@ import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { generateKeywords } from "../utils/generateKeywords";
-import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel } from "../utils/tradeSize";
+import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel, isConduitOrPipe } from "../utils/tradeSize";
+import { deriveAttrs } from "../enrichment/parseAttributes";
+import { CURRENT_PROMPT_VERSION } from "../enrichment/invalidation";
 
 const BATCH_SIZE   = parseInt(process.env["ENRICH_BATCH_SIZE"]   ?? "10",  10);
 const CONCURRENCY  = parseInt(process.env["ENRICH_CONCURRENCY"]  ?? "5",   10);
@@ -114,6 +116,10 @@ async function bulkEnrich() {
           const tradeSize = tradeSizeInches !== null
             ? tradeSizeChipLabel(tradeSizeInches)
             : null;
+          const attrs = deriveAttrs(item);
+          const tsInFull = isConduitOrPipe(item.catalog, item.vendor, item.description)
+            ? (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description))
+            : null;
           await db
             .update(inventoryTable)
             .set({
@@ -121,6 +127,15 @@ async function bulkEnrich() {
               tradeSize,
               enrichedAt: new Date(),
               updatedAt: new Date(),
+              promptVersion: CURRENT_PROMPT_VERSION,
+              // Materialized parse attrs (idempotent — same result every time)
+              catalogParse: attrs.catalogParse as Record<string, unknown> | null,
+              amperage: attrs.amperage,
+              poleCount: attrs.poleCount,
+              voltage: attrs.voltage,
+              mountType: attrs.mountType,
+              tradeSizeIn: tsInFull !== null && tsInFull <= 12 ? tsInFull.toFixed(3) : null,
+              attrsParsedAt: attrs.attrsParsedAt,
             })
             .where(eq(inventoryTable.id, item.id));
           processed++;
