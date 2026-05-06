@@ -79,6 +79,35 @@ router.get("/coverage", requireAdmin, async (_req, res) => {
   }
 });
 
+// ── GET /series/search ───────────────────────────────────────────────────────
+// Returns series matching an optional ?q= query (name or vendor ILIKE).
+// Must be registered before /:id routes.
+router.get("/search", requireAdmin, async (req, res) => {
+  try {
+    const q = String(req.query["q"] ?? "").trim();
+    const whereClause = q
+      ? or(
+          ilike(productSeriesTable.name, `%${q}%`),
+          ilike(productSeriesTable.vendor, `%${q}%`),
+        )
+      : undefined;
+    const rows = await db
+      .select({
+        id: productSeriesTable.id,
+        name: productSeriesTable.name,
+        vendor: productSeriesTable.vendor,
+      })
+      .from(productSeriesTable)
+      .where(whereClause)
+      .orderBy(productSeriesTable.vendor, productSeriesTable.name)
+      .limit(20);
+    res.json({ series: rows });
+  } catch (err) {
+    console.error("[series/search]", err);
+    res.status(500).json({ error: "Failed to search series" });
+  }
+});
+
 // ── POST /series ─────────────────────────────────────────────────────────────
 router.post("/", requireAdmin, async (req, res) => {
   try {

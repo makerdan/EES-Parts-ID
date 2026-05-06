@@ -1697,6 +1697,51 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// ── PATCH /inventory/:id/series ───────────────────────────────────────────────
+// Admin-only. Assigns or clears the series_id for one inventory item.
+// Body: { seriesId: number | null }
+// Returns: { ok: true, seriesName: string | null }
+router.patch("/:id/series", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    if (!Number.isFinite(id) || id <= 0) {
+      return void res.status(400).json({ error: "id must be a positive integer" });
+    }
+    const body = req.body as { seriesId?: unknown };
+    if (!Object.prototype.hasOwnProperty.call(body, "seriesId")) {
+      return void res.status(400).json({ error: "seriesId is required" });
+    }
+    const raw = body.seriesId;
+    if (raw !== null && (typeof raw !== "number" || !Number.isFinite(raw))) {
+      return void res.status(400).json({ error: "seriesId must be a finite number or null" });
+    }
+    const seriesId = raw as number | null;
+
+    let seriesName: string | null = null;
+    if (seriesId !== null) {
+      const [series] = await db
+        .select({ name: productSeriesTable.name })
+        .from(productSeriesTable)
+        .where(eq(productSeriesTable.id, seriesId))
+        .limit(1);
+      if (!series) return void res.status(404).json({ error: "Series not found" });
+      seriesName = series.name;
+    }
+
+    const [updated] = await db
+      .update(inventoryTable)
+      .set({ seriesId, updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning({ id: inventoryTable.id });
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+
+    res.json({ ok: true, seriesName });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update series assignment" });
+  }
+});
+
 // ── PATCH /inventory/:id ──────────────────────────────────────────────────────
 // Partial update for an inventory item. Only the fields present in the
 // request body are touched.
