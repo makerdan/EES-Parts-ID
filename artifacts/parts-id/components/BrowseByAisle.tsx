@@ -11,6 +11,7 @@ import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-n
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
+import { useApp } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
 import {
   buildAisleHierarchy,
@@ -36,8 +37,6 @@ interface Props {
   onEditKeywords: (item: InventoryItem) => void;
   /** When true, the parts level shows a visual shelf diagram instead of a flat list. */
   shelfViewEnabled?: boolean;
-  /** When true, the shelves level shows all shelves in a section at once instead of a drill list. */
-  warehouseShelfView?: boolean;
 }
 
 type Level = "aisles" | "sections" | "shelves" | "parts";
@@ -55,9 +54,10 @@ export function BrowseByAisle({
   fontScale,
   onEditKeywords,
   shelfViewEnabled = false,
-  warehouseShelfView = false,
 }: Props) {
   const colors = useColors();
+  const { settings } = useApp();
+  const warehouseShelfView = settings.warehouseShelfView;
   const [crumbs, setCrumbs] = useState<CrumbState>({
     aisle: null,
     section: null,

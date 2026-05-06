@@ -1355,7 +1355,6 @@ export default function SearchScreen() {
           fontScale={textFontScale}
           onEditKeywords={setEditItem}
           shelfViewEnabled={settings.shelfViewEnabled}
-          warehouseShelfView={settings.warehouseShelfView}
         />
       ) : null}
 
