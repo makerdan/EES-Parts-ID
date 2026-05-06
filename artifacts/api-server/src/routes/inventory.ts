@@ -289,10 +289,16 @@ router.post("/search", async (req, res) => {
 
     const rawKeywords = keywords.trim();
     const kwLike = rawKeywords ? `%${rawKeywords}%` : null;
+    // Separate ILIKE fallback for the catalog field — needed because catalog
+    // numbers like "477LT2" start with a digit and are stripped from tsQuery
+    // by the /^[a-zA-Z]/ filter, yet trigram similarity against the long
+    // search_tokens string is too low (< 0.3) to fire the % operator.
+    const rawCatalog = catalogInput.trim();
+    const catalogLike = rawCatalog ? `%${rawCatalog}%` : null;
 
     let pgResults: RawRow[] = [];
     try {
-      if (tsQuery.trim() || kwLike) {
+      if (tsQuery.trim() || kwLike || catalogLike || vendorFilter) {
         // Token string used for trigram similarity against the pre-expanded
         // search_tokens column. Concatenating abbreviation-expanded terms with
         // the raw keyword gives the best coverage.
@@ -349,6 +355,8 @@ router.post("/search", async (req, res) => {
                 OR similarity(i.description, ${trgmQuery}) > 0.1
               ))
               ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
+              ${catalogLike ? sql`OR i.catalog ILIKE ${catalogLike}` : sql``}
+              ${trgmQuery ? sql`OR (i.catalog % ${trgmQuery})` : sql``}
               ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
           ) AS __ranked
           ORDER BY (fts_rank * 0.65 + trgm_sim * 0.35) DESC
@@ -409,7 +417,14 @@ router.post("/search", async (req, res) => {
       if (ftsRank > 0) pgHasFts = true;
       if (trgmSim > 0) pgHasTrgm = true;
       const pgScore = blendPgScore(ftsRank, trgmSim);
-      if (pgScore < PG_SCORE_FLOOR) continue; // drop noise — catalog boosts not applied
+      // Catalog-ILIKE hits (e.g. digit-leading part numbers like "477LT2") have a
+      // low trgm_sim against the long search_tokens string but would receive a
+      // large boost from catalogScore() below. Skip the noise floor for those rows
+      // so they aren't silently dropped before the boost is applied.
+      const catalogHit =
+        (rawCatalog && row.catalog.toUpperCase().includes(rawCatalog.toUpperCase())) ||
+        (rawKeywords && row.catalog.toUpperCase().includes(rawKeywords.toUpperCase()));
+      if (pgScore < PG_SCORE_FLOOR && !catalogHit) continue;
       const item: typeof inventoryTable.$inferSelect = {
         id: row.id,
         vendor: row.vendor,
@@ -438,6 +453,31 @@ router.post("/search", async (req, res) => {
     }
     if (pgHasFts) layersHit.push("fts");
     if (pgHasTrgm) layersHit.push("trigram");
+
+    // Catalog ILIKE lookup — always runs when a catalog number or keyword was entered.
+    // The main PG query caps at LIMIT 200 ordered by FTS/trigram score, which
+    // can push an exact catalog match (e.g. "477LT2") off the list when
+    // unrelated FTS hits fill the cap. This secondary lookup injects matching
+    // catalog rows directly into scoreMap so they always appear in results.
+    // Both the dedicated catalog field AND raw keywords are checked — a worker
+    // may type a catalog number into either field.
+    const catalogIlikeLookups = [rawCatalog, rawKeywords].filter(Boolean);
+    if (catalogIlikeLookups.length > 0) {
+      let catalogIlikeHit = false;
+      for (const lookupVal of catalogIlikeLookups) {
+        const catalogIlikeRows = await db
+          .select()
+          .from(inventoryTable)
+          .where(sql`${inventoryTable.catalog} ILIKE ${`%${lookupVal}%`}`)
+          .limit(30);
+        for (const item of catalogIlikeRows) {
+          const { score, reason } = catalogScore(0, item.catalog, lookupVal, rawKeywords, 0);
+          updateScore(item, score, reason);
+          catalogIlikeHit = true;
+        }
+      }
+      if (catalogIlikeHit) layersHit.push("catalog_ilike");
+    }
 
     // Exact catalog fallback if PG didn't catch it (checks both Catalog # field and raw keywords)
     if (pgResults.length === 0) {
