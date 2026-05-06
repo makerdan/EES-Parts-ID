@@ -864,6 +864,14 @@ export default function SearchScreen() {
     });
   }, [buildFuseIndex]);
 
+  const handleSeriesChanged = useCallback((id: number, seriesName: string | null) => {
+    setItemOverrides(prev => {
+      const next = new Map(prev);
+      next.set(id, { ...(next.get(id) ?? {}), seriesName });
+      return next;
+    });
+  }, []);
+
   const rawResults: SearchResult[] =
     mode === "browse"
       ? browseResults ?? []
@@ -1640,6 +1648,7 @@ export default function SearchScreen() {
         onClose={() => setEditItem(null)}
         onKeywordsChanged={handleKeywordsChanged}
         onDescriptionChanged={handleDescriptionChanged}
+        onSeriesChanged={handleSeriesChanged}
       />
     </SafeAreaView>
   );

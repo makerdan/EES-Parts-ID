@@ -29,6 +29,16 @@ import { useColors } from "@/hooks/useColors";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { useApp } from "@/contexts/AppContext";
 
+const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+  : "http://localhost:8080/api";
+
+interface SeriesRow {
+  id: number;
+  name: string;
+  vendor: string;
+}
+
 interface KeywordEditorProps {
   item: InventoryItem | null;
   onClose: () => void;
@@ -39,6 +49,8 @@ interface KeywordEditorProps {
   onDescriptionChanged?: (id: number, description: string) => void;
   /** Called after trade size is saved. */
   onTradeSizeChanged?: (id: number, tradeSize: string | null) => void;
+  /** Called after the series assignment changes so the parent can update the card. */
+  onSeriesChanged?: (id: number, seriesName: string | null) => void;
 }
 
 const DEBOUNCE_MS = 900;
@@ -51,10 +63,11 @@ export function KeywordEditor({
   onKeywordsChanged,
   onDescriptionChanged,
   onTradeSizeChanged,
+  onSeriesChanged,
 }: KeywordEditorProps) {
   const colors = useColors();
   const queryClient = useQueryClient();
-  const { isAdmin } = useApp();
+  const { isAdmin, adminToken } = useApp();
 
   // ── Edited values ──────────────────────────────────────────────────────────
   const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
@@ -65,6 +78,16 @@ export function KeywordEditor({
   const [newKeyword, setNewKeyword] = useState("");
   const [newBin, setNewBin] = useState("");
   const [binError, setBinError] = useState<string | null>(null);
+
+  // ── Series state (admin only) ──────────────────────────────────────────────
+  const [localSeriesName, setLocalSeriesName] = useState<string | null>(item?.seriesName ?? null);
+  const [seriesCollapsed, setSeriesCollapsed] = useState(false);
+  const [seriesSearch, setSeriesSearch] = useState("");
+  const [seriesResults, setSeriesResults] = useState<SeriesRow[]>([]);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  const [seriesError, setSeriesError] = useState<string | null>(null);
+  const [seriesAssigning, setSeriesAssigning] = useState(false);
+  const seriesSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Save status — single badge reflects whichever field is in flight ───────
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
@@ -135,6 +158,10 @@ export function KeywordEditor({
     lastSavedTradeSizeRef.current = ts;
     lastSavedBinsRef.current = bins;
     setSaveStatus("idle");
+    setLocalSeriesName(item?.seriesName ?? null);
+    setSeriesSearch("");
+    setSeriesResults([]);
+    setSeriesError(null);
   }, [item?.id]);
 
   // ── Persist a single field (or both if both have changed) ──────────────────
@@ -286,8 +313,91 @@ export function KeywordEditor({
       if (descDebounceRef.current) clearTimeout(descDebounceRef.current);
       if (tradeSizeDebounceRef.current) clearTimeout(tradeSizeDebounceRef.current);
       if (binDebounceRef.current) clearTimeout(binDebounceRef.current);
+      if (seriesSearchRef.current) clearTimeout(seriesSearchRef.current);
     };
   }, []);
+
+  // ── Series helpers ─────────────────────────────────────────────────────────
+  const handleSeriesSearchChange = useCallback((q: string) => {
+    setSeriesSearch(q);
+    setSeriesError(null);
+    if (seriesSearchRef.current) clearTimeout(seriesSearchRef.current);
+    if (!q.trim()) { setSeriesResults([]); return; }
+    seriesSearchRef.current = setTimeout(async () => {
+      seriesSearchRef.current = null;
+      if (!adminToken) return;
+      setSeriesLoading(true);
+      try {
+        const res = await fetch(
+          `${API_BASE}/series/search?q=${encodeURIComponent(q.trim())}`,
+          { headers: { Authorization: `Bearer ${adminToken}` } },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { series: SeriesRow[] };
+        setSeriesResults(data.series);
+      } catch {
+        setSeriesError("Couldn't load series list.");
+      } finally {
+        setSeriesLoading(false);
+      }
+    }, 400);
+  }, [adminToken]);
+
+  const assignSeries = useCallback(async (seriesId: number | null, seriesName: string | null) => {
+    const current = itemRef.current;
+    if (!current || !adminToken) return;
+    setSeriesAssigning(true);
+    setSeriesError(null);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${current.id}/series`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ seriesId }),
+      });
+      if (!res.ok) {
+        const err = (await res.json()) as { error?: string };
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      setLocalSeriesName(seriesName);
+      setSeriesSearch("");
+      setSeriesResults([]);
+      onSeriesChanged?.(current.id, seriesName);
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+    } catch (e) {
+      setSeriesError(e instanceof Error ? e.message : "Failed to update series.");
+    } finally {
+      setSeriesAssigning(false);
+    }
+  }, [adminToken, queryClient, onSeriesChanged]);
+
+  const createAndAssignSeries = useCallback(async () => {
+    const current = itemRef.current;
+    if (!current || !adminToken || !seriesSearch.trim()) return;
+    setSeriesAssigning(true);
+    setSeriesError(null);
+    try {
+      const createRes = await fetch(`${API_BASE}/series`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ name: seriesSearch.trim(), vendor: current.vendor }),
+      });
+      if (!createRes.ok) {
+        const err = (await createRes.json()) as { error?: string };
+        throw new Error(err.error ?? `HTTP ${createRes.status}`);
+      }
+      const { series } = (await createRes.json()) as { series: { id: number; name: string } };
+      await assignSeries(series.id, series.name);
+    } catch (e) {
+      setSeriesError(e instanceof Error ? e.message : "Failed to create series.");
+      setSeriesAssigning(false);
+    }
+  }, [adminToken, seriesSearch, assignSeries]);
 
   const handleKeywordsChange = (next: string[]) => {
     setKeywords(next);
@@ -637,7 +747,108 @@ export function KeywordEditor({
             </Pressable>
           </View>
 
-          {/* ── Bin Locations (admin only, collapsible) ────────────── */}
+          {/* ── Series Membership (admin only) ────────────────────── */}
+          {isAdmin ? (
+            <>
+              <Pressable
+                onPress={() => setSeriesCollapsed(c => !c)}
+                style={[styles.binCollapseRow, { borderTopColor: colors.border, marginTop: 24 }]}
+              >
+                <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0 }]}>
+                  SERIES MEMBERSHIP
+                </Text>
+                <Text style={[styles.binChevron, { color: colors.mutedForeground }]}>
+                  {seriesCollapsed ? "▶" : "▼"}
+                </Text>
+              </Pressable>
+
+              {!seriesCollapsed ? (
+                <>
+                  {localSeriesName ? (
+                    <View style={[styles.seriesCurrentRow]}>
+                      <View style={[styles.seriesCurrentChip, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}>
+                        <Text style={[styles.seriesCurrentText, { color: colors.primary }]} numberOfLines={1}>
+                          ⊞ {localSeriesName}
+                        </Text>
+                      </View>
+                      <Pressable
+                        onPress={() => { void assignSeries(null, null); }}
+                        disabled={seriesAssigning}
+                        style={[styles.seriesRemoveBtn, { borderColor: colors.destructive + "66" }]}
+                      >
+                        <Text style={[styles.seriesRemoveText, { color: colors.destructive }]}>Remove</Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Text style={[styles.subHint, { color: colors.mutedForeground, marginTop: 8 }]}>
+                      No series assigned. Search or create one below.
+                    </Text>
+                  )}
+
+                  <View style={[styles.addRow, { marginTop: 10 }]}>
+                    <TextInput
+                      value={seriesSearch}
+                      onChangeText={handleSeriesSearchChange}
+                      placeholder="Search series by name…"
+                      placeholderTextColor={colors.mutedForeground}
+                      style={[
+                        styles.addInput,
+                        { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                      ]}
+                      autoCorrect={false}
+                      autoCapitalize="none"
+                    />
+                    {seriesLoading ? (
+                      <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 8, alignSelf: "center" }} />
+                    ) : null}
+                  </View>
+
+                  {seriesResults.length > 0 ? (
+                    <View style={[styles.seriesResultList, { borderColor: colors.border }]}>
+                      {seriesResults.map((sr, idx) => (
+                        <Pressable
+                          key={sr.id}
+                          onPress={() => { void assignSeries(sr.id, sr.name); }}
+                          disabled={seriesAssigning}
+                          style={[
+                            styles.seriesResultRow,
+                            idx < seriesResults.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+                            { backgroundColor: colors.muted },
+                          ]}
+                        >
+                          <Text style={[styles.seriesResultName, { color: colors.foreground }]}>{sr.name}</Text>
+                          <Text style={[styles.seriesResultVendor, { color: colors.mutedForeground }]}>{sr.vendor}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {seriesSearch.trim() && !seriesLoading && seriesResults.every(r => r.name.toLowerCase() !== seriesSearch.trim().toLowerCase()) ? (
+                    <Pressable
+                      onPress={() => { void createAndAssignSeries(); }}
+                      disabled={seriesAssigning}
+                      style={[
+                        styles.seriesCreateBtn,
+                        { borderColor: colors.primary + "55", backgroundColor: colors.accent, opacity: seriesAssigning ? 0.6 : 1 },
+                      ]}
+                    >
+                      {seriesAssigning ? (
+                        <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
+                      ) : null}
+                      <Text style={[styles.seriesCreateText, { color: colors.primary }]}>
+                        + Create "{seriesSearch.trim()}" series
+                      </Text>
+                    </Pressable>
+                  ) : null}
+
+                  {seriesError ? (
+                    <ErrorBanner message={seriesError} />
+                  ) : null}
+                </>
+              ) : null}
+            </>
+          ) : null}
+
           {isAdmin ? (
             <>
               <Pressable
@@ -858,6 +1069,51 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   binChevron: { fontSize: 12 },
+  seriesCurrentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  seriesCurrentChip: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  seriesCurrentText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  seriesRemoveBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  seriesRemoveText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  seriesResultList: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    marginTop: 8,
+    overflow: "hidden",
+  },
+  seriesResultRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  seriesResultName: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  seriesResultVendor: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  seriesCreateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginTop: 8,
+  },
+  seriesCreateText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   footer: {
     padding: 16,
     borderTopWidth: 1,
