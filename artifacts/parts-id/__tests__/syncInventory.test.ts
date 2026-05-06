@@ -269,6 +269,16 @@ describe("syncAllInventory — storage failure tolerance", () => {
     expect(callbacks.setIsSyncing).toHaveBeenLastCalledWith(false);
     // The in-memory index must have been built despite the storage failure.
     expect(callbacks.buildFuseIndex).toHaveBeenCalledTimes(1);
+
+    // First multiSet call must contain ONLY the version key (small isolated write).
+    const firstCallPairs = storage.multiSet.mock.calls[0]![0] as [string, string][];
+    expect(firstCallPairs).toHaveLength(1);
+    expect(firstCallPairs[0]![0]).toBe(OPTS_BASE.versionKey);
+    expect(firstCallPairs[0]![1]).toBe("v42");
+
+    // Second multiSet call must contain the fuse key (large cache write).
+    const secondCallPairs = storage.multiSet.mock.calls[1]![0] as [string, string][];
+    expect(secondCallPairs[0]![0]).toBe(OPTS_BASE.fuseKey);
   });
 
   it("does call setSyncError(true) when the version key write fails (page fetch succeeds)", async () => {
