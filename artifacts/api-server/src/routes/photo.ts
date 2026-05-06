@@ -3,7 +3,7 @@
  *   POST /photo/confirm — worker signals which result matched the photo.
  *
  * No auth required: workers are anonymous; the photoEventId acts as a
- * capability token (large random bigserial makes it unguessable in practice).
+ * photoEventId is a sequential bigserial — not secret, treat as a non-private identifier.
  */
 import { Router } from "express";
 import { db } from "@workspace/db";
