@@ -429,16 +429,20 @@ function SectionShelfView({
 }) {
   const [selected, setSelected] = useState<{ shelfIdx: number; partIdx: number } | null>(null);
 
+  // Render lowest hundreds at top, highest (e.g. 900) at bottom — mirrors
+  // a physical shelf stack viewed straight-on from the front.
+  const shelves = [...section.shelves].reverse();
+
   const selectedPart =
     selected !== null
-      ? (section.shelves[selected.shelfIdx]?.parts[selected.partIdx] ?? null)
+      ? (shelves[selected.shelfIdx]?.parts[selected.partIdx] ?? null)
       : null;
 
   const locationLabel = [crumbs.aisle?.label, section.label].filter(Boolean).join(" › ");
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
-      {section.shelves.map((shelf, shelfIdx) => (
+      {shelves.map((shelf, shelfIdx) => (
         <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
           <Text style={[sectionStyles.shelfLabel, { color: colors.foreground }]}>
             {`${shelf.label} · ${shelf.partCount} ${shelf.partCount === 1 ? "part" : "parts"}`}

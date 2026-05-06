@@ -1072,6 +1072,7 @@ function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable
     attrsParsedAt: null,
     promptVersion: null,
     searchTokens: null,
+    seriesId: null,
   };
 }
 

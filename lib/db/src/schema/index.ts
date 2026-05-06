@@ -17,3 +17,4 @@ export * from "./inventory_barcode";
 export * from "./search_telemetry";
 export * from "./synonym_group";
 export * from "./photo_id_event";
+export * from "./product_series";

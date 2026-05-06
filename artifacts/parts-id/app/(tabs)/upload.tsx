@@ -635,6 +635,44 @@ export default function UploadScreen() {
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
   const [measureServerErrorDismissed, setMeasureServerErrorDismissed] = useState(false);
 
+  // ── Assign Series state ─────────────────────────────────────────────────────
+  type SeriesCoverage = { total: number; assigned: number };
+  type SeriesRow = { id: number; name: string; vendor: string; member_count: number; created_at: string };
+  type SeriesMember = { id: number; vendor: string; catalog: string; description: string };
+  type SeriesSearchResult = { id: number; vendor: string; catalog: string; description: string; seriesId: number | null };
+
+  type AutoAssignProgress =
+    | { status: "started" }
+    | { status: "progress"; step: string; total?: number; done?: number; vendor?: string; series?: string }
+    | { status: "done"; seriesCount: number; assignedCount: number }
+    | { status: "error"; error: string };
+
+  const [seriesCoverage, setSeriesCoverage] = useState<SeriesCoverage | null>(null);
+  const [seriesList, setSeriesList] = useState<SeriesRow[]>([]);
+  const [seriesListError, setSeriesListError] = useState<string | null>(null);
+  const [autoAssignRunning, setAutoAssignRunning] = useState(false);
+  const [autoAssignProgress, setAutoAssignProgress] = useState<AutoAssignProgress | null>(null);
+  const [autoAssignError, setAutoAssignError] = useState<string | null>(null);
+
+  const [seriesModalVisible, setSeriesModalVisible] = useState(false);
+  const [activeSeries, setActiveSeries] = useState<SeriesRow | null>(null);
+  const [seriesMembers, setSeriesMembers] = useState<SeriesMember[]>([]);
+  const [seriesMembersLoading, setSeriesMembersLoading] = useState(false);
+  const [memberRemovePending, setMemberRemovePending] = useState<number | null>(null);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberSearchResults, setMemberSearchResults] = useState<SeriesSearchResult[]>([]);
+  const [memberSearchLoading, setMemberSearchLoading] = useState(false);
+  const [memberAddPending, setMemberAddPending] = useState(false);
+  const [seriesRenaming, setSeriesRenaming] = useState(false);
+  const [seriesRenameText, setSeriesRenameText] = useState("");
+  const [seriesModalError, setSeriesModalError] = useState<string | null>(null);
+
+  const [createSeriesVisible, setCreateSeriesVisible] = useState(false);
+  const [createSeriesName, setCreateSeriesName] = useState("");
+  const [createSeriesVendor, setCreateSeriesVendor] = useState("");
+  const [createSeriesPending, setCreateSeriesPending] = useState(false);
+  const [createSeriesError, setCreateSeriesError] = useState<string | null>(null);
+
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50, unenrichedOnly: true });
   // Stable ref so callbacks (e.g. bulk poll interval) can refetch without
   // re-creating themselves on every render.
@@ -1141,6 +1179,236 @@ export default function UploadScreen() {
       }
     } finally {
       setCatalogPdfPending(false);
+    }
+  };
+
+  // ── Series handlers ─────────────────────────────────────────────────────────
+  const fetchSeriesCoverage = useCallback(async () => {
+    try {
+      const token = adminTokenRef.current;
+      if (!token) return;
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      const res = await fetch(`${API_BASE}/series/coverage`, { headers });
+      if (!res.ok) return;
+      const data = await res.json() as { total: number; assigned: number };
+      setSeriesCoverage(data);
+    } catch {}
+  }, []);
+
+  const fetchSeriesList = useCallback(async () => {
+    try {
+      const token = adminTokenRef.current;
+      if (!token) return;
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      const res = await fetch(`${API_BASE}/series`, { headers });
+      if (!res.ok) { setSeriesListError("Failed to load series"); return; }
+      const data = await res.json() as { series: SeriesRow[] };
+      setSeriesList(data.series);
+      setSeriesListError(null);
+    } catch {
+      setSeriesListError("Failed to load series");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    void fetchSeriesCoverage();
+    void fetchSeriesList();
+  }, [isAdmin, fetchSeriesCoverage, fetchSeriesList]);
+
+  const handleAutoAssign = async () => {
+    setAutoAssignError(null);
+    setAutoAssignProgress({ status: "started" });
+    setAutoAssignRunning(true);
+    try {
+      const token = adminTokenRef.current;
+      const res = await fetch(`${API_BASE}/series/auto-assign`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      });
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setAutoAssignError(err.error ?? "Failed to start auto-assign");
+        setAutoAssignRunning(false);
+        setAutoAssignProgress(null);
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6)) as AutoAssignProgress;
+            setAutoAssignProgress(evt);
+          } catch {}
+        }
+      }
+      await fetchSeriesCoverage();
+      await fetchSeriesList();
+    } catch {
+      setAutoAssignError("Network error during auto-assign");
+    } finally {
+      setAutoAssignRunning(false);
+    }
+  };
+
+  const openSeriesModal = async (series: SeriesRow) => {
+    setActiveSeries(series);
+    setSeriesMembers([]);
+    setSeriesModalError(null);
+    setMemberSearch("");
+    setMemberSearchResults([]);
+    setSeriesRenaming(false);
+    setSeriesRenameText(series.name);
+    setSeriesModalVisible(true);
+    setSeriesMembersLoading(true);
+    try {
+      const token = adminTokenRef.current;
+      const res = await fetch(`${API_BASE}/series/${series.id}/items`, {
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      });
+      if (!res.ok) { setSeriesModalError("Failed to load members"); return; }
+      const data = await res.json() as { items: SeriesMember[] };
+      setSeriesMembers(data.items);
+    } catch {
+      setSeriesModalError("Failed to load members");
+    } finally {
+      setSeriesMembersLoading(false);
+    }
+  };
+
+  const handleRemoveMember = async (inventoryId: number) => {
+    if (!activeSeries) return;
+    setMemberRemovePending(inventoryId);
+    setSeriesModalError(null);
+    try {
+      const token = adminTokenRef.current;
+      const res = await fetch(`${API_BASE}/series/${activeSeries.id}/items/${inventoryId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      });
+      if (!res.ok) { setSeriesModalError("Failed to remove member"); return; }
+      setSeriesMembers(prev => prev.filter(m => m.id !== inventoryId));
+      setActiveSeries(prev => prev ? { ...prev, member_count: prev.member_count - 1 } : prev);
+      await fetchSeriesList();
+      await fetchSeriesCoverage();
+    } catch {
+      setSeriesModalError("Failed to remove member");
+    } finally {
+      setMemberRemovePending(null);
+    }
+  };
+
+  const memberSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleMemberSearch = useCallback((q: string) => {
+    setMemberSearch(q);
+    if (memberSearchTimeoutRef.current) clearTimeout(memberSearchTimeoutRef.current);
+    if (!q.trim()) { setMemberSearchResults([]); return; }
+    setMemberSearchLoading(true);
+    memberSearchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const token = adminTokenRef.current;
+        const seriesId = activeSeries?.id;
+        if (!seriesId) return;
+        const res = await fetch(`${API_BASE}/series/${seriesId}/search?q=${encodeURIComponent(q)}`, {
+          headers: { Authorization: `Bearer ${token ?? ""}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json() as { items: SeriesSearchResult[] };
+        setMemberSearchResults(data.items);
+      } catch {} finally {
+        setMemberSearchLoading(false);
+      }
+    }, 300);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSeries?.id]);
+
+  const handleAddMember = async (inventoryId: number) => {
+    if (!activeSeries) return;
+    setMemberAddPending(true);
+    setSeriesModalError(null);
+    try {
+      const token = adminTokenRef.current;
+      const res = await fetch(`${API_BASE}/series/${activeSeries.id}/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` },
+        body: JSON.stringify({ inventoryIds: [inventoryId] }),
+      });
+      if (!res.ok) { setSeriesModalError("Failed to add member"); return; }
+      setMemberSearchResults(prev => prev.filter(r => r.id !== inventoryId));
+      setSeriesMembers(prev => {
+        const added = memberSearchResults.find(r => r.id === inventoryId);
+        if (!added) return prev;
+        return [...prev, { id: added.id, vendor: added.vendor, catalog: added.catalog, description: added.description }];
+      });
+      setActiveSeries(prev => prev ? { ...prev, member_count: prev.member_count + 1 } : prev);
+      await fetchSeriesList();
+      await fetchSeriesCoverage();
+    } catch {
+      setSeriesModalError("Failed to add member");
+    } finally {
+      setMemberAddPending(false);
+    }
+  };
+
+  const handleRenameSeries = async () => {
+    if (!activeSeries || !seriesRenameText.trim()) return;
+    setSeriesModalError(null);
+    try {
+      const token = adminTokenRef.current;
+      const res = await fetch(`${API_BASE}/series/${activeSeries.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` },
+        body: JSON.stringify({ name: seriesRenameText.trim() }),
+      });
+      if (!res.ok) { setSeriesModalError("Failed to rename series"); return; }
+      const data = await res.json() as { series: { name: string } };
+      setActiveSeries(prev => prev ? { ...prev, name: data.series.name } : prev);
+      setSeriesRenaming(false);
+      await fetchSeriesList();
+    } catch {
+      setSeriesModalError("Failed to rename series");
+    }
+  };
+
+  const handleCreateSeries = async () => {
+    if (!createSeriesName.trim() || !createSeriesVendor.trim()) {
+      setCreateSeriesError("Name and vendor are required");
+      return;
+    }
+    setCreateSeriesPending(true);
+    setCreateSeriesError(null);
+    try {
+      const token = adminTokenRef.current;
+      const res = await fetch(`${API_BASE}/series`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` },
+        body: JSON.stringify({ name: createSeriesName.trim(), vendor: createSeriesVendor.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setCreateSeriesError(err.error ?? "Failed to create series");
+        return;
+      }
+      const data = await res.json() as { series: SeriesRow };
+      setCreateSeriesVisible(false);
+      setCreateSeriesName("");
+      setCreateSeriesVendor("");
+      await fetchSeriesList();
+      await fetchSeriesCoverage();
+      void openSeriesModal({ ...data.series, member_count: 0, created_at: new Date().toISOString() });
+    } catch {
+      setCreateSeriesError("Failed to create series");
+    } finally {
+      setCreateSeriesPending(false);
     }
   };
 
@@ -2498,6 +2766,143 @@ export default function UploadScreen() {
                 expandTrigger={reviewExpandTrigger}
                 onReviewAction={fetchReviewCount}
               />
+
+              {/* ── Assign Series ──────────────────────────────────────────── */}
+              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Assign Series</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Link inventory items into named product series so "Other Sizes" shows related parts reliably — even for irregularly named products.
+                </Text>
+
+                {seriesCoverage ? (
+                  <View style={styles.enrichStats}>
+                    <View style={[styles.statChip, { backgroundColor: colors.success + "11" }]}>
+                      <Text style={[styles.statValue, { color: colors.success }]}>
+                        {seriesCoverage.assigned.toLocaleString()}
+                      </Text>
+                      <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Assigned</Text>
+                    </View>
+                    <View style={[styles.statChip, { backgroundColor: colors.warning + "11" }]}>
+                      <Text style={[styles.statValue, { color: colors.warning }]}>
+                        {(seriesCoverage.total - seriesCoverage.assigned).toLocaleString()}
+                      </Text>
+                      <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Unassigned</Text>
+                    </View>
+                    <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
+                      <Text style={[styles.statValue, { color: colors.foreground }]}>
+                        {seriesCoverage.total > 0
+                          ? `${Math.round((seriesCoverage.assigned / seriesCoverage.total) * 100)}%`
+                          : "—"}
+                      </Text>
+                      <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Coverage</Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {autoAssignProgress && autoAssignProgress.status !== "done" && autoAssignProgress.status !== "error" ? (
+                  <View style={styles.progressContainer}>
+                    <View style={styles.bulkStatusRow}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8 }]}>
+                        {autoAssignProgress.status === "started"
+                          ? "Starting auto-assign…"
+                          : autoAssignProgress.status === "progress" && autoAssignProgress.step === "upsert_series"
+                            ? `Creating series rows… (${autoAssignProgress.total ?? 0} pairs)`
+                            : autoAssignProgress.status === "progress" && autoAssignProgress.step === "assign_items"
+                              ? `Assigning items… ${autoAssignProgress.vendor ?? ""} / ${autoAssignProgress.series ?? ""}`
+                              : "Running…"}
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {autoAssignProgress?.status === "done" ? (
+                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
+                    <Text style={[styles.doneText, { color: colors.success }]}>
+                      ✓ Created {autoAssignProgress.seriesCount} series, assigned {autoAssignProgress.assignedCount} items
+                    </Text>
+                  </View>
+                ) : null}
+
+                {autoAssignError ? (
+                  <ErrorBanner message={autoAssignError} onDismiss={() => setAutoAssignError(null)} />
+                ) : null}
+
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <Pressable
+                    onPress={() => void handleAutoAssign()}
+                    disabled={autoAssignRunning}
+                    style={[styles.enrichBtn, { flex: 2, backgroundColor: autoAssignRunning ? colors.muted : colors.primary }]}
+                  >
+                    {autoAssignRunning ? (
+                      <ActivityIndicator color={colors.primaryForeground} />
+                    ) : (
+                      <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                        Auto-Assign from Catalog Parse
+                      </Text>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      setCreateSeriesError(null);
+                      setCreateSeriesName("");
+                      setCreateSeriesVendor("");
+                      setCreateSeriesVisible(true);
+                    }}
+                    style={[styles.enrichBtn, { flex: 1, backgroundColor: colors.muted }]}
+                  >
+                    <Text style={[styles.enrichBtnText, { color: colors.foreground }]}>+ New</Text>
+                  </Pressable>
+                </View>
+
+                {seriesListError ? (
+                  <Text style={{ color: colors.destructive, fontSize: 12 }}>{seriesListError}</Text>
+                ) : null}
+
+                {seriesList.length > 0 ? (
+                  <View style={{ gap: 6 }}>
+                    <Text style={{ color: colors.mutedForeground, fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5 }}>
+                      {seriesList.length} SERIES
+                    </Text>
+                    {seriesList.map(series => (
+                      <Pressable
+                        key={series.id}
+                        onPress={() => void openSeriesModal(series)}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          backgroundColor: colors.background,
+                        }}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>
+                            {series.name}
+                          </Text>
+                          <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 2, fontFamily: "Inter_400Regular" }}>
+                            {series.vendor}
+                          </Text>
+                        </View>
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text style={{ color: colors.primary, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>
+                            {series.member_count}
+                          </Text>
+                          <Text style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 1 }}>items</Text>
+                        </View>
+                        <Text style={{ color: colors.mutedForeground, marginLeft: 10 }}>›</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : seriesList.length === 0 && !seriesListError ? (
+                  <Text style={{ color: colors.mutedForeground, fontSize: 13, textAlign: "center", paddingVertical: 8 }}>
+                    No series yet. Run Auto-Assign or create one manually.
+                  </Text>
+                ) : null}
+              </View>
                     </View>
                   )}
 
@@ -2548,6 +2953,248 @@ export default function UploadScreen() {
       )}
 
       <ReferenceModal open={showRefModal} onClose={() => setShowRefModal(false)} />
+
+      {/* ── Series Management Modal ─────────────────────────────────────────── */}
+      <Modal
+        visible={seriesModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSeriesModalVisible(false)}
+      >
+        <SafeAreaView style={[styles.reviewSafeArea, { backgroundColor: colors.background }]}>
+          <View style={[styles.reviewHeader, { borderBottomColor: colors.border }]}>
+            {seriesRenaming ? (
+              <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    borderWidth: 1,
+                    borderColor: colors.primary,
+                    borderRadius: 8,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    fontSize: 16,
+                    fontFamily: "Inter_600SemiBold",
+                    color: colors.foreground,
+                    backgroundColor: colors.muted,
+                  }}
+                  value={seriesRenameText}
+                  onChangeText={setSeriesRenameText}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={() => void handleRenameSeries()}
+                />
+                <Pressable
+                  onPress={() => void handleRenameSeries()}
+                  style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: colors.primary }}
+                >
+                  <Text style={{ color: colors.primaryForeground, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>Save</Text>
+                </Pressable>
+                <Pressable onPress={() => setSeriesRenaming(false)}>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 13, paddingHorizontal: 4 }}>Cancel</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={[styles.reviewTitle, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
+                    {activeSeries?.name ?? "Series"}
+                  </Text>
+                  <Pressable
+                    onPress={() => { setSeriesRenameText(activeSeries?.name ?? ""); setSeriesRenaming(true); }}
+                    style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: colors.border }}
+                  >
+                    <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>Rename</Text>
+                  </Pressable>
+                </View>
+                <Text style={[styles.reviewSub, { color: colors.mutedForeground }]}>
+                  {activeSeries?.vendor} · {activeSeries?.member_count ?? seriesMembers.length} members
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {seriesModalError ? (
+            <View style={{ marginHorizontal: 12, marginTop: 8 }}>
+              <ErrorBanner message={seriesModalError} onDismiss={() => setSeriesModalError(null)} />
+            </View>
+          ) : null}
+
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, paddingBottom: 40 }}>
+            {/* Add members via search */}
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ color: colors.mutedForeground, fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, marginBottom: 6 }}>
+                ADD ITEMS
+              </Text>
+              <TextInput
+                style={{
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 9,
+                  fontSize: 14,
+                  fontFamily: "Inter_400Regular",
+                  color: colors.foreground,
+                  backgroundColor: colors.muted,
+                }}
+                placeholder="Search by catalog or description…"
+                placeholderTextColor={colors.mutedForeground}
+                value={memberSearch}
+                onChangeText={handleMemberSearch}
+              />
+              {memberSearchLoading ? (
+                <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 8 }} />
+              ) : null}
+              {memberSearchResults.length > 0 ? (
+                <View style={{ marginTop: 6, gap: 4 }}>
+                  {memberSearchResults.map(r => (
+                    <View key={r.id} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>{r.catalog}</Text>
+                        <Text style={{ color: colors.mutedForeground, fontSize: 11 }} numberOfLines={1}>{r.vendor} · {r.description}</Text>
+                        {r.seriesId != null && r.seriesId !== activeSeries?.id ? (
+                          <Text style={{ color: colors.warning, fontSize: 10 }}>Already in another series</Text>
+                        ) : null}
+                      </View>
+                      <Pressable
+                        onPress={() => void handleAddMember(r.id)}
+                        disabled={memberAddPending}
+                        style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: colors.primary }}
+                      >
+                        <Text style={{ color: colors.primaryForeground, fontFamily: "Inter_600SemiBold", fontSize: 12 }}>Add</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+
+            {/* Current members */}
+            <Text style={{ color: colors.mutedForeground, fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, marginBottom: 6 }}>
+              CURRENT MEMBERS ({seriesMembers.length})
+            </Text>
+            {seriesMembersLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : seriesMembers.length === 0 ? (
+              <Text style={{ color: colors.mutedForeground, fontSize: 13, textAlign: "center", paddingVertical: 16 }}>
+                No members yet. Use search above to add items.
+              </Text>
+            ) : (
+              <View style={{ gap: 4 }}>
+                {seriesMembers.map(m => (
+                  <View key={m.id} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>{m.catalog}</Text>
+                      <Text style={{ color: colors.mutedForeground, fontSize: 11 }} numberOfLines={1}>
+                        {m.vendor}{m.description ? ` · ${m.description}` : ""}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => void handleRemoveMember(m.id)}
+                      disabled={memberRemovePending === m.id}
+                      style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: colors.destructive }}
+                    >
+                      {memberRemovePending === m.id ? (
+                        <ActivityIndicator size="small" color={colors.destructive} />
+                      ) : (
+                        <Text style={{ color: colors.destructive, fontFamily: "Inter_600SemiBold", fontSize: 12 }}>Remove</Text>
+                      )}
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            )}
+          </ScrollView>
+
+          <View style={[styles.reviewFooter, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
+            <Pressable
+              onPress={() => setSeriesModalVisible(false)}
+              style={[styles.reviewCancel, { borderColor: colors.border, flex: 1 }]}
+            >
+              <Text style={[styles.reviewCancelText, { color: colors.foreground }]}>Close</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── Create Series Modal ──────────────────────────────────────────────── */}
+      <Modal
+        visible={createSeriesVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCreateSeriesVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.chooserCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.chooserTitle, { color: colors.foreground }]}>Create Series</Text>
+            <Text style={[styles.cardHint, { color: colors.mutedForeground, textAlign: "center" }]}>
+              Give the series a display name and the vendor it belongs to.
+            </Text>
+
+            <TextInput
+              style={{
+                width: "100%",
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                fontSize: 15,
+                fontFamily: "Inter_400Regular",
+                color: colors.foreground,
+                backgroundColor: colors.muted,
+              }}
+              placeholder="Series name (e.g. Eaton BR Breakers)"
+              placeholderTextColor={colors.mutedForeground}
+              value={createSeriesName}
+              onChangeText={setCreateSeriesName}
+              autoFocus
+              returnKeyType="next"
+            />
+            <TextInput
+              style={{
+                width: "100%",
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                fontSize: 15,
+                fontFamily: "Inter_400Regular",
+                color: colors.foreground,
+                backgroundColor: colors.muted,
+              }}
+              placeholder="Vendor code (e.g. EATON)"
+              placeholderTextColor={colors.mutedForeground}
+              value={createSeriesVendor}
+              onChangeText={setCreateSeriesVendor}
+              autoCapitalize="characters"
+              returnKeyType="done"
+              onSubmitEditing={() => void handleCreateSeries()}
+            />
+
+            {createSeriesError ? (
+              <Text style={{ color: colors.destructive, fontSize: 13, textAlign: "center" }}>{createSeriesError}</Text>
+            ) : null}
+
+            <Pressable
+              onPress={() => void handleCreateSeries()}
+              disabled={createSeriesPending}
+              style={[styles.chooserBtn, { backgroundColor: createSeriesPending ? colors.muted : colors.primary, width: "100%" }]}
+            >
+              {createSeriesPending ? (
+                <ActivityIndicator color={colors.primaryForeground} />
+              ) : (
+                <Text style={[styles.chooserBtnText, { color: colors.primaryForeground }]}>Create &amp; Assign Items</Text>
+              )}
+            </Pressable>
+            <Pressable onPress={() => setCreateSeriesVisible(false)} style={styles.chooserCancel}>
+              <Text style={[styles.chooserCancelText, { color: colors.mutedForeground }]}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Catalog PDF: per-row review of uncertain matches ──────────────── */}
       <Modal

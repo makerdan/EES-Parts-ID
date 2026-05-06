@@ -284,6 +284,7 @@ router.post("/search", async (req, res) => {
       id: number; vendor: string; catalog: string; description: string;
       bin_locations: string[]; ai_keywords: string[]; trade_size: string | null;
       enriched_at: Date | null; created_at: Date; updated_at: Date;
+      series_id: number | null;
       fts_rank: number; trgm_sim: number;
     };
 
@@ -330,6 +331,7 @@ router.post("/search", async (req, res) => {
             SELECT
               i.id, i.vendor, i.catalog, i.description,
               i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
+              i.series_id,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 '{0.1, 0.3, 0.6, 1.0}', i.search_tsv,
                 to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
@@ -446,6 +448,7 @@ router.post("/search", async (req, res) => {
         attrsParsedAt: null,
         promptVersion: null,
         searchTokens: null,
+        seriesId: typeof row.series_id === "number" ? row.series_id : null,
       };
 
       const { score, reason } = catalogScore(pgScore, row.catalog, catalogInput, rawKeywords, ftsRank);
@@ -530,14 +533,24 @@ router.post("/search", async (req, res) => {
       ? results.filter(r => matchesChipFilters(r.item, activeChipFilters))
       : results;
 
-    // Group into series + find variants
+    // Group into series + find variants.
+    // Items with an explicit series_id are grouped by that ID (preferred path).
+    // Items without series_id fall back to the heuristic getSeriesBase() grouping.
     const seriesGroups = new Map<string, { label: string; items: typeof inventoryTable.$inferSelect[] }>();
     for (const r of chipFiltered) {
-      const series = getSeriesBase(r.item.vendor, r.item.catalog, r.item.description);
-      if (series) {
-        const existing = seriesGroups.get(series.key) ?? { label: series.label, items: [] };
+      if (r.item.seriesId != null) {
+        // Explicit series: use a stable key that won't collide with heuristic keys
+        const key = `__series_id_${r.item.seriesId}`;
+        const existing = seriesGroups.get(key) ?? { label: "OTHER SIZES", items: [] };
         existing.items.push(r.item);
-        seriesGroups.set(series.key, existing);
+        seriesGroups.set(key, existing);
+      } else {
+        const series = getSeriesBase(r.item.vendor, r.item.catalog, r.item.description);
+        if (series) {
+          const existing = seriesGroups.get(series.key) ?? { label: series.label, items: [] };
+          existing.items.push(r.item);
+          seriesGroups.set(series.key, existing);
+        }
       }
     }
 
@@ -548,38 +561,21 @@ router.post("/search", async (req, res) => {
     if (seriesGroups.size > 0) {
       // Targeted per-series query replaces the former full-table scan.
       // For each series group found in results, we query only rows that share
-      // the same vendor + catalog series prefix.
-      //
-      // Fast path: uses the idx_inventory_catalog_parse_series expression btree index on
-      // (catalog_parse->>'series', pole_count) for items already backfilled.
-      // Fallback: catalog ILIKE 'PREFIX%' for items not yet backfilled.
-      for (const [, group] of seriesGroups) {
+      // the same series_id (preferred) or catalog-prefix heuristic (fallback).
+      for (const [groupKey, group] of seriesGroups) {
         const primaryItem = group.items[0];
         if (!primaryItem) continue;
 
-        // Parse the primary item's catalog in-memory to get the series prefix
-        // and pole count (both O(1) regex ops — no extra DB round-trip).
-        const parsed = parseCatalog(primaryItem.catalog);
-
         let siblings: typeof inventoryTable.$inferSelect[];
 
-        if (parsed?.series) {
-          // Preferred: match via materialized catalog_parse column (uses index)
-          // OR fall back to ILIKE prefix scan for rows not yet backfilled.
+        if (groupKey.startsWith("__series_id_") && primaryItem.seriesId != null) {
+          // Preferred: explicit series_id — uses the idx_inventory_series_id index
           siblings = await db
             .select()
             .from(inventoryTable)
             .where(
               and(
-                eq(inventoryTable.vendor, primaryItem.vendor),
-                sql`(
-                  (catalog_parse IS NOT NULL AND (catalog_parse->>'series') = ${parsed.series})
-                  OR
-                  (catalog_parse IS NULL AND catalog ILIKE ${parsed.series + "%"})
-                )`,
-                parsed.poles !== null
-                  ? sql`(pole_count = ${parsed.poles} OR pole_count IS NULL)`
-                  : undefined,
+                eq(inventoryTable.seriesId, primaryItem.seriesId),
                 excludeArr.length > 0
                   ? not(inArray(inventoryTable.id, excludeArr))
                   : undefined,
@@ -588,30 +584,64 @@ router.post("/search", async (req, res) => {
             .orderBy(sql`COALESCE(amperage, 9999) ASC, catalog ASC`)
             .limit(12);
         } else {
-          // Fallback for conduit/cable and other catalog patterns that parseCatalog
-          // doesn't recognise yet. Strip leading digits from the catalog to find
-          // the bare type prefix (e.g. "EMT212" → "EMT").
-          // For all-numeric catalogs (e.g. "5262") stripping digits yields an
-          // empty string — use the first 4 characters as the prefix instead.
-          const stripped = primaryItem.catalog.replace(/^\d+/, "").slice(0, 8);
-          const catalogPrefix = stripped.length >= 2
-            ? stripped
-            : primaryItem.catalog.slice(0, 4);
-          if (!catalogPrefix || catalogPrefix.length < 2) continue;
-          siblings = await db
-            .select()
-            .from(inventoryTable)
-            .where(
-              and(
-                eq(inventoryTable.vendor, primaryItem.vendor),
-                sql`catalog ILIKE ${catalogPrefix + "%"}`,
-                excludeArr.length > 0
-                  ? not(inArray(inventoryTable.id, excludeArr))
-                  : undefined,
-              ),
-            )
-            .orderBy(sql`catalog ASC`)
-            .limit(12);
+          // Heuristic fallback for items without an explicit series_id.
+          // Parse the primary item's catalog in-memory to get the series prefix
+          // and pole count (both O(1) regex ops — no extra DB round-trip).
+          const parsed = parseCatalog(primaryItem.catalog);
+
+          if (parsed?.series) {
+            // Fast path: uses the idx_inventory_catalog_parse_series expression btree index on
+            // (catalog_parse->>'series', pole_count) for items already backfilled.
+            // Fallback: catalog ILIKE 'PREFIX%' for items not yet backfilled.
+            siblings = await db
+              .select()
+              .from(inventoryTable)
+              .where(
+                and(
+                  eq(inventoryTable.vendor, primaryItem.vendor),
+                  sql`(
+                    (catalog_parse IS NOT NULL AND (catalog_parse->>'series') = ${parsed.series})
+                    OR
+                    (catalog_parse IS NULL AND catalog ILIKE ${parsed.series + "%"})
+                  )`,
+                  parsed.poles !== null
+                    ? sql`(pole_count = ${parsed.poles} OR pole_count IS NULL)`
+                    : undefined,
+                  sql`(series_id IS NULL)`,
+                  excludeArr.length > 0
+                    ? not(inArray(inventoryTable.id, excludeArr))
+                    : undefined,
+                ),
+              )
+              .orderBy(sql`COALESCE(amperage, 9999) ASC, catalog ASC`)
+              .limit(12);
+          } else {
+            // Fallback for conduit/cable and other catalog patterns that parseCatalog
+            // doesn't recognise yet. Strip leading digits from the catalog to find
+            // the bare type prefix (e.g. "EMT212" → "EMT").
+            // For all-numeric catalogs (e.g. "5262") stripping digits yields an
+            // empty string — use the first 4 characters as the prefix instead.
+            const stripped = primaryItem.catalog.replace(/^\d+/, "").slice(0, 8);
+            const catalogPrefix = stripped.length >= 2
+              ? stripped
+              : primaryItem.catalog.slice(0, 4);
+            if (!catalogPrefix || catalogPrefix.length < 2) continue;
+            siblings = await db
+              .select()
+              .from(inventoryTable)
+              .where(
+                and(
+                  eq(inventoryTable.vendor, primaryItem.vendor),
+                  sql`catalog ILIKE ${catalogPrefix + "%"}`,
+                  sql`(series_id IS NULL)`,
+                  excludeArr.length > 0
+                    ? not(inArray(inventoryTable.id, excludeArr))
+                    : undefined,
+                ),
+              )
+              .orderBy(sql`catalog ASC`)
+              .limit(12);
+          }
         }
 
         for (const sibling of siblings) {
