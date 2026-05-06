@@ -530,9 +530,9 @@ function SectionShelfView({
 }
 
 const sectionStyles = StyleSheet.create({
-  shelfBlock: { marginBottom: 12 },
+  shelfBlock: { marginBottom: 0 },
   shelfLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold", paddingHorizontal: 16, paddingBottom: 4, paddingTop: 8 },
-  shelfPlank: { height: 2, backgroundColor: "#000000" },
+  shelfPlank: { height: 2, backgroundColor: "#000000", marginHorizontal: 0 },
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
