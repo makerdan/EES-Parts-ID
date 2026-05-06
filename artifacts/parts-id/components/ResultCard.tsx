@@ -27,6 +27,9 @@ interface ResultCardProps {
   result: SearchResult;
   onEditKeywords?: (item: InventoryItem) => void;
   rank: number;
+  /** When false, the rank badge (#1, #2, …) is not rendered. Defaults to true.
+   *  Set to false in Browse by Aisle where ordering is by bin position, not relevance. */
+  showRank?: boolean;
   fontScale?: number;
   /**
    * Lower-cased whole-word tokens to visually emphasize inside the card's
@@ -232,7 +235,7 @@ const varStyles = StyleSheet.create({
   binEmpty: { fontFamily: "Inter_400Regular", fontStyle: "italic", textAlign: "right", flexShrink: 0 },
 });
 
-export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens, highlightBin, onFirstExpand, onConfirm }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, rank, showRank = true, fontScale = 1.0, highlightTokens, highlightBin, onFirstExpand, onConfirm }: ResultCardProps) {
   const colors = useColors();
   // Match style: a soft tint background + bold weight. Uses the theme's
   // primary color so it stays legible in light/dark mode.
@@ -308,11 +311,13 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
         {/* Header */}
         <View style={cardStyles.header}>
           <View style={cardStyles.headerLeft}>
-            <View style={[cardStyles.rankBadge, { backgroundColor: rank === 0 ? colors.primary : colors.muted }]}>
-              <Text style={[cardStyles.rankText, { color: rank === 0 ? colors.primaryForeground : colors.mutedForeground }]}>
-                #{rank + 1}
-              </Text>
-            </View>
+            {showRank ? (
+              <View style={[cardStyles.rankBadge, { backgroundColor: rank === 0 ? colors.primary : colors.muted }]}>
+                <Text style={[cardStyles.rankText, { color: rank === 0 ? colors.primaryForeground : colors.mutedForeground }]}>
+                  #{rank + 1}
+                </Text>
+              </View>
+            ) : null}
             <View style={cardStyles.titleGroup}>
               <Text style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]}>
                 <HighlightedText text={item.vendor} tokens={hl} matchStyle={hlStyle} />
