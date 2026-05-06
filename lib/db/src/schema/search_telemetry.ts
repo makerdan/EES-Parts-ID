@@ -7,34 +7,35 @@
  *
  * Design notes:
  *   - No user_id / session_id — workers are anonymous (no auth system).
- *   - result_id references inventory.id (serial integer). The FK is enforced
- *     in the DB (ON DELETE SET NULL); represented as plain integer here so
- *     Drizzle types stay clean without importing inventoryTable.
+ *   - topResultId / resultId reference inventory.id (serial integer).
+ *   - resultId is nullable: the FK is ON DELETE SET NULL so click rows survive
+ *     part deletions and remain analyzable in aggregate.
  *   - layers_hit records which pipeline layers contributed to results:
  *     'fts', 'trigram', 'exact_catalog', 'fuse_fallback', 'vendor_boost'.
- *   - PKs are bigserial in the DB (upgraded via migration 0008). The Drizzle
- *     schema declares them as serial (integer) for TypeScript compatibility —
- *     inserts use raw SQL so the ORM type does not affect runtime correctness.
+ *   - filtersJson mirrors the jsonb DB column (chip filter state at query time).
+ *   - Both PKs are bigserial in DB; Drizzle uses bigserial column type.
  */
 import {
   pgTable,
-  serial,
+  bigserial,
+  bigint,
   text,
   integer,
   timestamp,
   index,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const searchEventTable = pgTable(
   "search_event",
   {
-    id:              serial("id").primaryKey(),
+    id:              bigserial("id", { mode: "bigint" }).primaryKey(),
     ts:              timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
     queryRaw:        text("query_raw").notNull(),
     queryNormalized: text("query_normalized").notNull(),
     querySource:     text("query_source").notNull(),
-    filtersJson:     text("filters_json").notNull().default("{}"),
+    filtersJson:     jsonb("filters_json").notNull().default(sql`'{}'::jsonb`),
     resultsCount:    integer("results_count").notNull(),
     topResultId:     integer("top_result_id"),
     latencyMs:       integer("latency_ms").notNull(),
@@ -49,10 +50,10 @@ export const searchEventTable = pgTable(
 export const searchEventClickTable = pgTable(
   "search_event_click",
   {
-    id:            serial("id").primaryKey(),
-    searchEventId: integer("search_event_id").notNull(),
+    id:            bigserial("id", { mode: "bigint" }).primaryKey(),
+    searchEventId: bigint("search_event_id", { mode: "bigint" }).notNull(),
     ts:            timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
-    resultId:      integer("result_id").notNull(),
+    resultId:      integer("result_id"),   // nullable: ON DELETE SET NULL from inventory FK
     resultRank:    integer("result_rank").notNull(),
     action:        text("action").notNull(),
   },
