@@ -148,6 +148,32 @@ paths:
             text/event-stream: {}
 
   /inventory/{id}:
+    get:
+      operationId: getInventoryItem
+      tags: [inventory]
+      summary: Fetch a single inventory item by ID
+      description: |
+        Returns a single inventory item with all fields, including
+        `seriesName` when the item belongs to a named product series.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     patch:
       operationId: updateInventoryItem
       tags: [inventory]
@@ -880,6 +906,14 @@ components:
             Canonical full name for the vendor (e.g. "Eaton" for `ETN`),
             resolved from the `vendor_map` table by case-insensitive match
             on `vendor_map.code`. `null` when no mapping exists.
+        seriesName:
+          type: string
+          nullable: true
+          description: |
+            Human-readable name of the product series this item belongs to
+            (e.g. "Eaton BR Breakers"), resolved from the `product_series`
+            table when `series_id` is set. `null` when the item has no
+            explicit series assignment.
         createdAt:
           type: string
           format: date-time

@@ -28,6 +28,12 @@ resolved from the `vendor_map` table by case-insensitive match
 on `vendor_map.code`. `null` when no mapping exists.
  */
   vendorFullName?: string | null;
+  /** Human-readable name of the product series this item belongs to
+(e.g. "Eaton BR Breakers"), resolved from the `product_series`
+table when `series_id` is set. `null` when the item has no
+explicit series assignment.
+ */
+  seriesName?: string | null;
   createdAt: string;
   updatedAt: string;
 }

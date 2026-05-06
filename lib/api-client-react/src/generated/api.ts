@@ -596,6 +596,96 @@ export const useEnrichInventory = <
 };
 
 /**
+ * Returns a single inventory item with all fields, including
+`seriesName` when the item belongs to a named product series.
+
+ * @summary Fetch a single inventory item by ID
+ */
+export const getGetInventoryItemUrl = (id: number) => {
+  return `/api/inventory/${id}`;
+};
+
+export const getInventoryItem = async (
+  id: number,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getGetInventoryItemUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetInventoryItemQueryKey = (id: number) => {
+  return [`/api/inventory/${id}`] as const;
+};
+
+export const getGetInventoryItemQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInventoryItem>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInventoryItem>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetInventoryItemQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getInventoryItem>>
+  > = ({ signal }) => getInventoryItem(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInventoryItem>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInventoryItemQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInventoryItem>>
+>;
+export type GetInventoryItemQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Fetch a single inventory item by ID
+ */
+
+export function useGetInventoryItem<
+  TData = Awaited<ReturnType<typeof getInventoryItem>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInventoryItem>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInventoryItemQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * Updates only the fields provided in the request body. A blank
 description string is treated as a real edit (the worker explicitly
 cleared it); only `undefined` / missing means "do not change". At

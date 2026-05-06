@@ -59,6 +59,12 @@ export const ListInventoryResponse = zod.object({
         .describe(
           'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
         ),
+      seriesName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     }),
@@ -161,6 +167,12 @@ export const SearchInventoryResponse = zod.object({
           .describe(
             'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
           ),
+        seriesName: zod
+          .string()
+          .nullish()
+          .describe(
+            'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
+          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -192,6 +204,12 @@ export const SearchInventoryResponse = zod.object({
             .nullish()
             .describe(
               'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+            ),
+          seriesName: zod
+            .string()
+            .nullish()
+            .describe(
+              'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
             ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
@@ -359,6 +377,50 @@ export const EnrichInventoryBody = zod.object({
 });
 
 /**
+ * Returns a single inventory item with all fields, including
+`seriesName` when the item belongs to a named product series.
+
+ * @summary Fetch a single inventory item by ID
+ */
+export const GetInventoryItemParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetInventoryItemResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  description: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Every bin this part is currently stocked in. Empty array means no bin assigned.",
+    ),
+  aiKeywords: zod.array(zod.string()),
+  enrichedAt: zod.coerce.date().nullish(),
+  tradeSize: zod
+    .string()
+    .nullish()
+    .describe(
+      'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+    ),
+  vendorFullName: zod
+    .string()
+    .nullish()
+    .describe(
+      'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+    ),
+  seriesName: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
+    ),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
  * Updates only the fields provided in the request body. A blank
 description string is treated as a real edit (the worker explicitly
 cleared it); only `undefined` / missing means "do not change". At
@@ -414,6 +476,12 @@ export const UpdateInventoryItemResponse = zod.object({
     .nullish()
     .describe(
       'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+    ),
+  seriesName: zod
+    .string()
+    .nullish()
+    .describe(
+      'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
     ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
@@ -502,6 +570,12 @@ export const AiIdentifyPartResponse = zod.object({
           .describe(
             'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
           ),
+        seriesName: zod
+          .string()
+          .nullish()
+          .describe(
+            'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
+          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -533,6 +607,12 @@ export const AiIdentifyPartResponse = zod.object({
             .nullish()
             .describe(
               'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+            ),
+          seriesName: zod
+            .string()
+            .nullish()
+            .describe(
+              'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
             ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
@@ -641,6 +721,12 @@ export const ListUncategorizedItemsResponse = zod.object({
         .describe(
           'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
         ),
+      seriesName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     }),
@@ -715,6 +801,12 @@ export const ListCategoryItemsResponse = zod.object({
         .nullish()
         .describe(
           'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+        ),
+      seriesName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
         ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
@@ -795,6 +887,12 @@ export const ListCategoryPartsByIdResponse = zod.object({
         .nullish()
         .describe(
           'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+        ),
+      seriesName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
         ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
@@ -988,6 +1086,12 @@ export const BarcodeLookupResponse = zod.object({
         .describe(
           'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
         ),
+      seriesName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     })
@@ -1025,6 +1129,12 @@ export const BarcodeLookupResponse = zod.object({
           .nullish()
           .describe(
             'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+          ),
+        seriesName: zod
+          .string()
+          .nullish()
+          .describe(
+            'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
           ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
@@ -1082,6 +1192,12 @@ export const BarcodeLinkResponse = zod.object({
       .describe(
         'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
       ),
+    seriesName: zod
+      .string()
+      .nullish()
+      .describe(
+        'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
+      ),
     createdAt: zod.coerce.date(),
     updatedAt: zod.coerce.date(),
   }),
@@ -1121,6 +1237,12 @@ export const BarcodeRecentResponse = zod.object({
         .nullish()
         .describe(
           'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n',
+        ),
+      seriesName: zod
+        .string()
+        .nullish()
+        .describe(
+          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n',
         ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
