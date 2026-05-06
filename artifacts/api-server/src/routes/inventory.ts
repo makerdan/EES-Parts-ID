@@ -48,7 +48,7 @@ import { logSearchEvent, type QuerySource } from "../search/telemetry";
 import { mergeBins, dedupeBinsCaseInsensitive } from "../utils/binLocations";
 import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel, isConduitOrPipe } from "../utils/tradeSize";
 import { parseCatalog, deriveAttrs } from "../enrichment/parseAttributes";
-import { CURRENT_PROMPT_VERSION } from "../enrichment/invalidation";
+import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from "../enrichment/invalidation";
 import { classifyHandler } from "./categories";
 import {
   categoryNodeTable,
@@ -1007,10 +1007,17 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
         .from(inventoryTable)
         .where(sql`${inventoryTable.id} = ANY(${ids.slice(0, BATCH_SIZE)})`);
     } else {
+      // Mirrors shouldReenrich() in SQL so stale-prompt / stale-parser
+      // items are also picked up by the SSE batch.
       itemsToEnrich = await db
         .select()
         .from(inventoryTable)
-        .where(sql`${inventoryTable.enrichedAt} IS NULL`)
+        .where(sql`(
+          ${inventoryTable.enrichedAt} IS NULL
+          OR ${inventoryTable.updatedAt} > ${inventoryTable.enrichedAt}
+          OR COALESCE(${inventoryTable.promptVersion}, 0) < ${CURRENT_PROMPT_VERSION}
+          OR COALESCE((${inventoryTable.catalogParse}->>'parser_version')::int, 0) < ${CURRENT_PARSER_VERSION}
+        )`)
         .limit(BATCH_SIZE);
     }
 
@@ -1155,10 +1162,19 @@ async function enrichItemWithRetry(
 }
 
 async function runBulkEnrich() {
+  // Mirrors shouldReenrich() in SQL: picks up never-enriched items AND
+  // items stale due to content drift, prompt version, or parser version.
+  const NEEDS_ENRICH = sql`(
+    ${inventoryTable.enrichedAt} IS NULL
+    OR ${inventoryTable.updatedAt} > ${inventoryTable.enrichedAt}
+    OR COALESCE(${inventoryTable.promptVersion}, 0) < ${CURRENT_PROMPT_VERSION}
+    OR COALESCE((${inventoryTable.catalogParse}->>'parser_version')::int, 0) < ${CURRENT_PARSER_VERSION}
+  )`;
+
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(inventoryTable)
-    .where(sql`${inventoryTable.enrichedAt} IS NULL`);
+    .where(NEEDS_ENRICH);
 
   bulkEnrichJob.total = total;
   console.log(`[bulk-enrich] Starting – ${total} unenriched items (model: ${BULK_ENRICH_MODEL})`);
@@ -1177,7 +1193,7 @@ async function runBulkEnrich() {
         description: inventoryTable.description,
       })
       .from(inventoryTable)
-      .where(sql`${inventoryTable.enrichedAt} IS NULL`)
+      .where(NEEDS_ENRICH)
       .limit(BULK_ENRICH_BATCH);
 
     if (batch.length === 0) break;

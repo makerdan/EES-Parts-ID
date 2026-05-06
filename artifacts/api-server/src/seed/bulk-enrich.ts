@@ -20,7 +20,7 @@ import { sql, eq } from "drizzle-orm";
 import { generateKeywords } from "../utils/generateKeywords";
 import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel, isConduitOrPipe } from "../utils/tradeSize";
 import { deriveAttrs } from "../enrichment/parseAttributes";
-import { CURRENT_PROMPT_VERSION } from "../enrichment/invalidation";
+import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from "../enrichment/invalidation";
 
 const BATCH_SIZE   = parseInt(process.env["ENRICH_BATCH_SIZE"]   ?? "10",  10);
 const CONCURRENCY  = parseInt(process.env["ENRICH_CONCURRENCY"]  ?? "5",   10);
@@ -52,10 +52,19 @@ async function enrichWithRetry(
 }
 
 async function bulkEnrich() {
+  // Mirrors the shouldReenrich() logic as a SQL predicate so bulk runs
+  // also pick up items stale due to prompt / parser version changes.
+  const NEEDS_ENRICH_SQL = sql`(
+    ${inventoryTable.enrichedAt} IS NULL
+    OR ${inventoryTable.updatedAt} > ${inventoryTable.enrichedAt}
+    OR COALESCE(${inventoryTable.promptVersion}, 0) < ${CURRENT_PROMPT_VERSION}
+    OR COALESCE((${inventoryTable.catalogParse}->>'parser_version')::int, 0) < ${CURRENT_PARSER_VERSION}
+  )`;
+
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(inventoryTable)
-    .where(sql`${inventoryTable.enrichedAt} IS NULL`);
+    .where(NEEDS_ENRICH_SQL);
 
   console.log(`\nItems needing enrichment: ${total}`);
   console.log(`Model: ${MODEL}  batch=${BATCH_SIZE}  concurrency=${CONCURRENCY}  retries=${MAX_RETRIES}\n`);
@@ -79,7 +88,7 @@ async function bulkEnrich() {
         description: inventoryTable.description,
       })
       .from(inventoryTable)
-      .where(sql`${inventoryTable.enrichedAt} IS NULL`)
+      .where(NEEDS_ENRICH_SQL)
       .limit(BATCH_SIZE);
 
     if (batch.length === 0) break;
