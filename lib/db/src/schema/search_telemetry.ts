@@ -7,13 +7,14 @@
  *
  * Design notes:
  *   - No user_id / session_id — workers are anonymous (no auth system).
- *   - result_id references inventory.id (serial integer, not uuid).
- *   - query_source 'chip' covers searches driven entirely by chip filters
- *     with no free-text keywords.
- *   - filters_json stored as jsonb (in DB); represented as text here for schema
- *     portability — the route serializes with JSON.stringify and casts ::jsonb.
+ *   - result_id references inventory.id (serial integer). The FK is enforced
+ *     in the DB (ON DELETE SET NULL); represented as plain integer here so
+ *     Drizzle types stay clean without importing inventoryTable.
  *   - layers_hit records which pipeline layers contributed to results:
  *     'fts', 'trigram', 'exact_catalog', 'fuse_fallback', 'vendor_boost'.
+ *   - PKs are bigserial in the DB (upgraded via migration 0008). The Drizzle
+ *     schema declares them as serial (integer) for TypeScript compatibility —
+ *     inserts use raw SQL so the ORM type does not affect runtime correctness.
  */
 import {
   pgTable,
