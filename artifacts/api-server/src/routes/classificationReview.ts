@@ -10,7 +10,7 @@
  * The :id parameter is the inventory_id (primary key of inventory_category).
  */
 import { Router } from "express";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   db,
   inventoryCategoryTable,
@@ -121,11 +121,15 @@ router.post("/classification-review/:id/confirm", requireAdminAuth, async (req, 
     const result = await db
       .update(inventoryCategoryTable)
       .set({ reviewedAt: new Date(), reviewedBy: "admin" })
-      .where(eq(inventoryCategoryTable.inventoryId, inventoryId))
+      .where(and(
+        eq(inventoryCategoryTable.inventoryId, inventoryId),
+        eq(inventoryCategoryTable.classifiedBy, "ai"),
+        isNull(inventoryCategoryTable.reviewedAt),
+      ))
       .returning({ inventoryId: inventoryCategoryTable.inventoryId });
 
     if (result.length === 0) {
-      return void res.status(404).json({ error: "Item not found in inventory_category" });
+      return void res.status(404).json({ error: "Item not found in review queue (not AI-classified or already reviewed)" });
     }
     res.json({ ok: true, inventoryId });
   } catch (err) {
@@ -172,11 +176,14 @@ router.post("/classification-review/:id/reclassify", requireAdminAuth, async (re
         reviewedAt:   new Date(),
         reviewedBy:   "admin",
       })
-      .where(eq(inventoryCategoryTable.inventoryId, inventoryId))
+      .where(and(
+        eq(inventoryCategoryTable.inventoryId, inventoryId),
+        isNull(inventoryCategoryTable.reviewedAt),
+      ))
       .returning({ inventoryId: inventoryCategoryTable.inventoryId });
 
     if (result.length === 0) {
-      return void res.status(404).json({ error: "Item not found in inventory_category" });
+      return void res.status(404).json({ error: "Item not found or already reviewed" });
     }
     res.json({ ok: true, inventoryId, categoryNodeId });
   } catch (err) {
