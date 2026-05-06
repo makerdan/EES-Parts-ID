@@ -289,6 +289,54 @@ describe("deriveAttrs", () => {
   });
 });
 
+// ── parseCatalog – numeric device family (5xxx / 6xxx) ───────────────────────
+
+describe("parseCatalog – numeric device family", () => {
+  test("5262WHI → series=5262 variant=WHI", () => {
+    expect(parseCatalog("5262WHI")).toEqual({
+      series: "5262", poles: null, amps: null, variant: "WHI", raw: "5262WHI", parser_version: 2,
+    });
+  });
+
+  test("6150GRY → series=6150 variant=GRY", () => {
+    expect(parseCatalog("6150GRY")).toEqual({
+      series: "6150", poles: null, amps: null, variant: "GRY", raw: "6150GRY", parser_version: 2,
+    });
+  });
+
+  test("5262 (no variant) → series=5262 variant=null", () => {
+    expect(parseCatalog("5262")).toEqual({
+      series: "5262", poles: null, amps: null, variant: null, raw: "5262", parser_version: 2,
+    });
+  });
+
+  test("5325I → series=5325 variant=I", () => {
+    expect(parseCatalog("5325I")).toEqual({
+      series: "5325", poles: null, amps: null, variant: "I", raw: "5325I", parser_version: 2,
+    });
+  });
+
+  test("6200I → series=6200 variant=I", () => {
+    expect(parseCatalog("6200I")).toEqual({
+      series: "6200", poles: null, amps: null, variant: "I", raw: "6200I", parser_version: 2,
+    });
+  });
+
+  test("5262-BLK (dash separator) → series=5262 variant=BLK", () => {
+    expect(parseCatalog("5262-BLK")).toEqual({
+      series: "5262", poles: null, amps: null, variant: "BLK", raw: "5262-BLK", parser_version: 2,
+    });
+  });
+
+  test("unknown 5-digit catalog 52620 → null (does not match 4-digit rule)", () => {
+    expect(parseCatalog("52620")).toBeNull();
+  });
+
+  test("catalog not starting with 5 or 6 is not matched", () => {
+    expect(parseCatalog("4262WHI")).toBeNull();
+  });
+});
+
 // ── parseTradeSize ────────────────────────────────────────────────────────────
 
 describe("parseTradeSize – fractions", () => {
