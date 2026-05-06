@@ -5,18 +5,16 @@
  * without a second round-trip.
  */
 import { Router } from "express";
-import { eq, sql, ilike, or, and, desc } from "drizzle-orm";
+import { eq, sql, ilike, or, and, desc, not, inArray } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   inventoryTable,
   abbreviationMapTable,
   vendorMapTable,
-  synonymMapTable,
   misspellingMapTable,
-  electricalSlangMapTable,
+  synonymGroupTable,
 } from "@workspace/db";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
-import { getIndex as getInventoryFuseIndex } from "../lib/inventoryIndex";
 import { verifyAdminToken } from "./admin";
 import { expandMeasurements } from "../utils/measurementConversion";
 import {
@@ -41,13 +39,13 @@ import {
   catalogScore,
   applyVendorBoost,
   shouldUpdateScore,
-  fuseConfidence,
 } from "../utils/scoreHelpers";
 import { normalizeQuery } from "../search/normalize";
 import { logSearchEvent, type QuerySource } from "../search/telemetry";
 import { mergeBins, dedupeBinsCaseInsensitive } from "../utils/binLocations";
 import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel, isConduitOrPipe } from "../utils/tradeSize";
 import { parseCatalog, deriveAttrs, parseTradeSize } from "../enrichment/parseAttributes";
+import { buildSearchTokens } from "../enrichment/buildSearchTokens";
 import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from "../enrichment/invalidation";
 import { classifyHandler } from "./categories";
 import {
@@ -197,26 +195,18 @@ router.post("/search", async (req, res) => {
       { key: "poleCount",    value: poleCount },
     ].filter(f => f.value.trim() !== "");
 
-    // Load dictionaries in parallel
-    const [misspellings, abbreviations, vendors, synonyms, slang] = await Promise.all([
+    // Load dictionaries in parallel.
+    // Synonyms, slang, and vendor aliases are now handled at enrichment time
+    // via buildSearchTokens() / search_tokens column — no per-request lookup.
+    const [misspellings, abbreviations, vendors] = await Promise.all([
       db.select().from(misspellingMapTable),
       db.select().from(abbreviationMapTable),
       db.select().from(vendorMapTable),
-      db.select().from(synonymMapTable),
-      db.select().from(electricalSlangMapTable),
     ]);
 
     const correctionMap = new Map(misspellings.map(m => [m.misspelling, m.correction]));
     const abbrevMap = new Map(abbreviations.map(a => [a.abbreviation, a.expansions]));
-    const vendorMapData = new Map(vendors.map(v => [v.code, v.names]));
     const vendorFullNameMap = buildVendorFullNameMap(vendors);
-    const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
-    const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
-
-    const reverseVendorMap = new Map<string, string>();
-    for (const v of vendors) {
-      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
-    }
 
     const allSearchText = [keywords, catalogInput, vendorInput, color, size, material, textNumbers]
       .filter(Boolean).join(" ");
@@ -254,15 +244,12 @@ router.post("/search", async (req, res) => {
     const words = normalized.split(/\s+/).filter(w => w.length > 1);
     const corrected = words.map(w => correctMisspelling(w, correctionMap));
 
+    // Abbreviation expansion stays at query time (per task spec).
+    // Synonym/slang/vendor alias expansion is now index-time (search_tokens column).
     const expandedTerms = new Set<string>(corrected);
     for (const word of corrected) {
       const wl = word.toLowerCase();
       abbrevMap.get(wl)?.forEach(e => expandedTerms.add(e));
-      synonymMapLookup.get(wl)?.forEach(e => expandedTerms.add(e));
-      slangMap.get(wl)?.forEach(e => expandedTerms.add(e));
-      const vendorCode = reverseVendorMap.get(wl);
-      if (vendorCode) expandedTerms.add(vendorCode);
-      vendorMapData.get(word.toUpperCase())?.forEach(n => expandedTerms.add(n));
     }
 
     const catalogTerms = catalogInput ? parseCatalogNumber(catalogInput) : [];
@@ -306,11 +293,10 @@ router.post("/search", async (req, res) => {
     let pgResults: RawRow[] = [];
     try {
       if (tsQuery.trim() || kwLike) {
-        // Pass raw keyword string alongside expanded terms for catalog trigram scoring
-        const catalogTrgmTerms = [
-          rawKeywords,
-          ...allTermsArr.slice(0, 3),
-        ].filter(Boolean).join(" ").trim() || allTermsArr.slice(0, 3).join(" ");
+        // Token string used for trigram similarity against the pre-expanded
+        // search_tokens column. Concatenating abbreviation-expanded terms with
+        // the raw keyword gives the best coverage.
+        const trgmQuery = allTermsArr.slice(0, 5).join(" ");
 
         // Dual tsquery: 'simple' matches catalog/vendor lexemes exactly (no stemming),
         // 'english' matches description/ai_keywords lexemes via stemming. OR-ing them
@@ -325,6 +311,11 @@ router.post("/search", async (req, res) => {
         //   C (description) = 0.3  — description hits score third
         //   D (ai_keywords) = 0.1  — ai keyword hits score lowest
         //
+        // Trigram similarity now runs against search_tokens (pre-expanded at
+        // enrichment time) instead of description+catalog. Rows where
+        // search_tokens is NULL (not yet backfilled) fall back to the old
+        // catalog/description similarity so they are still searchable.
+        //
         // Wrap in a subquery so ORDER BY can reference the computed column aliases.
         // PostgreSQL only resolves aliases in ORDER BY when used as direct references
         // (not inside arithmetic expressions like fts_rank * 0.65 + trgm_sim * 0.35).
@@ -337,17 +328,26 @@ router.post("/search", async (req, res) => {
                 '{0.1, 0.3, 0.6, 1.0}', i.search_tsv,
                 to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
               )` : sql`0`} AS fts_rank,
-              greatest(
-                similarity(i.catalog, ${catalogTrgmTerms}),
-                similarity(i.description, ${allTermsArr.slice(0,5).join(" ")})
+              COALESCE(
+                CASE WHEN i.search_tokens IS NOT NULL
+                  THEN similarity(i.search_tokens, ${trgmQuery})
+                  ELSE greatest(
+                    similarity(i.catalog, ${trgmQuery}),
+                    similarity(i.description, ${trgmQuery})
+                  )
+                END,
+                0.0
               ) AS trgm_sim
             FROM inventory i
             WHERE
               ${tsQuery.trim() ? sql`i.search_tsv @@ (
                 to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
               ) OR` : sql``}
-              similarity(i.catalog, ${catalogTrgmTerms}) > 0.1
-              OR similarity(i.description, ${allTermsArr.slice(0,5).join(" ")}) > 0.1
+              (i.search_tokens IS NOT NULL AND i.search_tokens % ${trgmQuery})
+              OR (i.search_tokens IS NULL AND (
+                similarity(i.catalog, ${trgmQuery}) > 0.1
+                OR similarity(i.description, ${trgmQuery}) > 0.1
+              ))
               ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
               ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
           ) AS __ranked
@@ -377,7 +377,7 @@ router.post("/search", async (req, res) => {
         });
       }
     } catch (pgErr) {
-      console.warn("PG search error, falling back to Fuse:", pgErr);
+      console.warn("PG search error:", pgErr);
     }
 
     // Map PG results into scored items
@@ -430,6 +430,7 @@ router.post("/search", async (req, res) => {
         mountType: null,
         attrsParsedAt: null,
         promptVersion: null,
+        searchTokens: null,
       };
 
       const { score, reason } = catalogScore(pgScore, row.catalog, catalogInput, rawKeywords, ftsRank);
@@ -455,32 +456,6 @@ router.post("/search", async (req, res) => {
         }
         if (exactCatalogHit) layersHit.push("exact_catalog");
       }
-    }
-
-    // Fuse.js fallback for small datasets or when PG returns nothing.
-    // Uses the long-lived shared index built+refreshed by
-    // `lib/inventoryIndex`. The whole point of the shared index is to
-    // avoid the SELECT * + Fuse rebuild on every request, so if the
-    // index isn't ready yet (brief startup window) we just skip fuzzy
-    // and return PG-only results rather than reintroducing that cost.
-    const fuse = getInventoryFuseIndex();
-    if (scoreMap.size < 5 && fuse) {
-      let fusedAny = false;
-      const fuseQuery = corrected.join(" ");
-      if (fuseQuery.trim()) {
-        for (const r of fuse.search(fuseQuery)) {
-          const conf = fuseConfidence(r.score, 0.70);
-          if (conf > 0.2) { updateScore(r.item, conf, "fuzzy fallback"); fusedAny = true; }
-        }
-      }
-      for (const term of allTermsArr.slice(0, 8)) {
-        if (term.length < 3) continue;
-        for (const r of fuse.search(term).slice(0, 15)) {
-          const conf = fuseConfidence(r.score, 0.60);
-          if (conf > 0.2) { updateScore(r.item, conf, "fuzzy expanded fallback"); fusedAny = true; }
-        }
-      }
-      if (fusedAny) layersHit.push("fuse_fallback");
     }
 
     // Apply vendor boost/penalty
@@ -566,7 +541,7 @@ router.post("/search", async (req, res) => {
                   ? sql`(pole_count = ${parsed.poles} OR pole_count IS NULL)`
                   : undefined,
                 excludeArr.length > 0
-                  ? sql`id != ALL(${excludeArr})`
+                  ? not(inArray(inventoryTable.id, excludeArr))
                   : undefined,
               ),
             )
@@ -591,7 +566,7 @@ router.post("/search", async (req, res) => {
                 eq(inventoryTable.vendor, primaryItem.vendor),
                 sql`catalog ILIKE ${catalogPrefix + "%"}`,
                 excludeArr.length > 0
-                  ? sql`id != ALL(${excludeArr})`
+                  ? not(inArray(inventoryTable.id, excludeArr))
                   : undefined,
               ),
             )
@@ -1062,6 +1037,18 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
              ?? parseTradeSize(item.description)
              ?? parseTradeSize(item.catalog))
           : null;
+
+        // Build index-time synonym tokens (load synonym_group once per enrichment batch
+        // is not practical here; load per-item is acceptable for the small /enrich endpoint
+        // which handles at most BATCH_SIZE=50 items at a time).
+        const synonymGroups = await db
+          .select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms })
+          .from(synonymGroupTable);
+        const searchTokens = buildSearchTokens(
+          { catalog: item.catalog, description: item.description, vendor: item.vendor, aiKeywords: merged },
+          synonymGroups,
+        );
+
         await db
           .update(inventoryTable)
           .set({
@@ -1078,6 +1065,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
             mountType: attrs.mountType,
             tradeSizeIn: tsInFull !== null && tsInFull <= 12 ? tsInFull.toFixed(3) : null,
             attrsParsedAt: attrs.attrsParsedAt,
+            searchTokens,
           })
           .where(eq(inventoryTable.id, item.id));
 
@@ -1164,6 +1152,11 @@ async function enrichItemWithRetry(
 }
 
 async function runBulkEnrich() {
+  // Load synonym groups once for the whole run — avoids a per-item DB hit.
+  const bulkEnrichSynonymGroups = await db
+    .select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms })
+    .from(synonymGroupTable);
+
   // Mirrors shouldReenrich() in SQL: picks up never-enriched items AND
   // items stale due to content drift, prompt version, or parser version.
   const NEEDS_ENRICH = sql`(
@@ -1234,6 +1227,10 @@ async function runBulkEnrich() {
                ?? parseTradeSize(item.description)
                ?? parseTradeSize(item.catalog))
             : null;
+          const searchTokens = buildSearchTokens(
+            { catalog: item.catalog, description: item.description, vendor: item.vendor, aiKeywords: merged },
+            bulkEnrichSynonymGroups,
+          );
           await db
             .update(inventoryTable)
             .set({
@@ -1250,6 +1247,7 @@ async function runBulkEnrich() {
               mountType: attrs.mountType,
               tradeSizeIn: tsInFull !== null && tsInFull <= 12 ? tsInFull.toFixed(3) : null,
               attrsParsedAt: attrs.attrsParsedAt,
+              searchTokens,
             })
             .where(eq(inventoryTable.id, item.id));
           bulkEnrichJob.processed++;
@@ -1271,6 +1269,67 @@ async function runBulkEnrich() {
     `[bulk-enrich] Done – processed=${bulkEnrichJob.processed} errors=${bulkEnrichJob.errors}`,
   );
 }
+
+// ── POST /inventory/rebuild-search-tokens ─────────────────────────────────────
+// Maintenance endpoint: re-computes search_tokens for all inventory rows.
+// Call after inserting/updating synonym_group rows so that the pre-expanded
+// token column reflects the latest synonym definitions.
+// Protected by admin auth; runs synchronously (returns when done).
+router.post("/rebuild-search-tokens", requireAdminAuth, async (_req, res) => {
+  const startTime = Date.now();
+  try {
+    const synonymGroups = await db
+      .select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms })
+      .from(synonymGroupTable);
+
+    const BATCH_SIZE = 500;
+    let processed = 0;
+    let errors = 0;
+
+    while (true) {
+      const batch = await db
+        .select({
+          id: inventoryTable.id,
+          catalog: inventoryTable.catalog,
+          description: inventoryTable.description,
+          vendor: inventoryTable.vendor,
+          aiKeywords: inventoryTable.aiKeywords,
+        })
+        .from(inventoryTable)
+        .limit(BATCH_SIZE)
+        .offset(processed + errors);
+
+      if (batch.length === 0) break;
+
+      for (const item of batch) {
+        try {
+          const tokens = buildSearchTokens(item, synonymGroups);
+          await db
+            .update(inventoryTable)
+            .set({ searchTokens: tokens })
+            .where(eq(inventoryTable.id, item.id));
+          processed++;
+        } catch (err) {
+          errors++;
+          console.error(`[rebuild-search-tokens] id=${item.id}:`, err);
+        }
+      }
+
+      if (batch.length < BATCH_SIZE) break;
+    }
+
+    res.json({
+      ok: true,
+      processed,
+      errors,
+      durationMs: Date.now() - startTime,
+      synonymGroupCount: synonymGroups.length,
+    });
+  } catch (err) {
+    console.error("[rebuild-search-tokens] Fatal error:", err);
+    res.status(500).json({ error: String(err) });
+  }
+});
 
 // ── GET /inventory/enrich-summary ─────────────────────────────────────────────
 router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
