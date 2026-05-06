@@ -304,7 +304,7 @@ function ShelfView({
                     accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? "part"}`}
                   >
                     <Text style={[shelfStyles.slotPos, { color: isSelected ? colors.primaryForeground + "cc" : colors.mutedForeground }]}>
-                      {p.bin}
+                      {p.bin.split("-").pop() ?? p.bin}
                     </Text>
                     <Text
                       numberOfLines={2}
