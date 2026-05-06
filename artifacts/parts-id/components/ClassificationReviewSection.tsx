@@ -41,9 +41,10 @@ interface Props {
   apiBase:          string;
   adminHeaders:     Record<string, string>;
   onExpiredSession: () => void;
+  expandTrigger?:   number;
 }
 
-export default function ClassificationReviewSection({ apiBase, adminHeaders, onExpiredSession }: Props) {
+export default function ClassificationReviewSection({ apiBase, adminHeaders, onExpiredSession, expandTrigger }: Props) {
   const colors = useColors();
 
   const [expanded, setExpanded]         = useState(false);
@@ -108,6 +109,20 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // When the parent increments expandTrigger (e.g. chip tap), expand and load.
+  // Using a counter means every tap fires the effect even if the section was
+  // manually collapsed between taps.
+  useEffect(() => {
+    if (!expandTrigger) return;
+    if (!expanded) {
+      setExpanded(true);
+      void fetchQueue(1, false);
+    }
+  // fetchQueue is stable (useCallback); expanded is intentionally omitted so
+  // repeated taps when already expanded are a no-op.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandTrigger]);
 
   const handleToggle = () => {
     if (!expanded) {
