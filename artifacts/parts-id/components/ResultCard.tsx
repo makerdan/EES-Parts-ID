@@ -362,7 +362,6 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
                       >
                         {b}
                       </Text>
-                      {isMatch ? <Text style={{ fontFamily: "Inter_400Regular" }}>{" ← here"}</Text> : null}
                     </Text>
                   );
                 })}
