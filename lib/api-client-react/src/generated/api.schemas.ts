@@ -448,6 +448,61 @@ export interface MergeCategoryBody {
   targetId: number;
 }
 
+/**
+ * A single inventory item in the AI classification review queue.
+ */
+export interface ReviewQueueItem {
+  /** Primary key of the inventory row. */
+  inventoryId: number;
+  vendor: string;
+  catalog: string;
+  description: string;
+  /** AI confidence expressed as a percentage (0–100). */
+  confidencePct: number;
+  /** When the AI classification was recorded. */
+  classifiedAt: string;
+  /** Current leaf category node assigned by AI. */
+  categoryNodeId: number;
+  /** Human-readable breadcrumb: Category › Subcategory › Type. */
+  categoryPath: string;
+}
+
+/**
+ * Paginated list of items pending classification review.
+ */
+export interface ReviewQueueResponse {
+  items: ReviewQueueItem[];
+  /** Total number of items currently in the review queue. */
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/**
+ * Body for reclassifying an item to a different leaf category node.
+ */
+export interface ReclassifyBody {
+  /** ID of the target leaf (type) category node. */
+  categoryNodeId: number;
+}
+
+/**
+ * Confirmation returned by confirm / reclassify / skip actions.
+ */
+export interface ReviewActionResponse {
+  ok: boolean;
+  inventoryId: number;
+  /** Present only on reclassify — the newly assigned node ID. */
+  categoryNodeId?: number | null;
+}
+
+/**
+ * Generic error envelope returned on 4xx/5xx responses.
+ */
+export interface ErrorResponse {
+  error: string;
+}
+
 export type ListInventoryParams = {
   page?: number;
   limit?: number;
@@ -525,5 +580,17 @@ export type MergeCategoryNodes200 = {
 };
 
 export type BarcodeRecentParams = {
+  limit?: number;
+};
+
+export type ListClassificationReviewParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
   limit?: number;
 };

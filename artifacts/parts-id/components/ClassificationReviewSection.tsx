@@ -17,19 +17,9 @@ import {
   View,
 } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import type { ReviewQueueItem, ReviewQueueResponse, ReviewActionResponse } from "@workspace/api-client-react";
 
 const PAGE_SIZE = 50;
-
-interface ReviewItem {
-  inventoryId:    number;
-  vendor:         string;
-  catalog:        string;
-  description:    string;
-  confidencePct:  number;
-  classifiedAt:   string;
-  categoryNodeId: number;
-  categoryPath:   string;
-}
 
 interface TypeNode {
   id:   number;
@@ -48,7 +38,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
   const colors = useColors();
 
   const [expanded, setExpanded]         = useState(false);
-  const [items, setItems]               = useState<ReviewItem[]>([]);
+  const [items, setItems]               = useState<ReviewQueueItem[]>([]);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [page, setPage]                 = useState(1);
   const [hasMore, setHasMore]           = useState(false);
@@ -58,7 +48,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
   const [actingId, setActingId]         = useState<number | null>(null);
 
   // Reclassify modal
-  const [reclassifyTarget, setReclassifyTarget] = useState<ReviewItem | null>(null);
+  const [reclassifyTarget, setReclassifyTarget] = useState<ReviewQueueItem | null>(null);
   const [typeNodes, setTypeNodes]               = useState<TypeNode[]>([]);
   const [typeNodesLoading, setTypeNodesLoading] = useState(false);
   const [reclassifySearch, setReclassifySearch] = useState("");
@@ -79,7 +69,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
         setError(body.error ?? "Failed to load review queue");
         return;
       }
-      const data = await res.json() as { items: ReviewItem[]; total: number; page: number; limit: number };
+      const data = await res.json() as ReviewQueueResponse;
       setPendingCount(data.total);
       setHasMore(data.items.length === PAGE_SIZE && targetPage * PAGE_SIZE < data.total);
       setItems(prev => append ? [...prev, ...data.items] : data.items);
@@ -103,7 +93,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
         );
         if (res.status === 401) { onExpiredSession(); return; }
         if (!res.ok) return;
-        const data = await res.json() as { total: number };
+        const data = await res.json() as ReviewQueueResponse;
         setPendingCount(data.total);
       } catch { /* silent */ }
     })();
@@ -134,7 +124,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
   };
 
   // ── Actions ────────────────────────────────────────────────────────────────
-  const removeItem = (inventoryId: number) => {
+  const removeItem = (inventoryId: ReviewQueueItem["inventoryId"]) => {
     setItems(prev => prev.filter(it => it.inventoryId !== inventoryId));
     setPendingCount(prev => (prev != null && prev > 0 ? prev - 1 : prev));
   };
@@ -173,7 +163,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
   const handleSkip    = (id: number) => void postAction(id, "skip");
 
   // ── Reclassify ─────────────────────────────────────────────────────────────
-  const openReclassify = async (item: ReviewItem) => {
+  const openReclassify = async (item: ReviewQueueItem) => {
     setReclassifyTarget(item);
     setReclassifySearch("");
     if (typeNodes.length > 0) return;
