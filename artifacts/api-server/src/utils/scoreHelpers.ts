@@ -5,11 +5,20 @@
 
 /**
  * Blend a PostgreSQL FTS rank and trigram similarity into a single base score.
- * Returns a value in [0, 0.95]; the +0.4 floor ensures any PG hit starts above
- * the Fuse.js fuzzy-fallback range (max ~0.70 * 0.95).
+ *
+ * The raw `ts_rank_cd` output is first normalized with `ftsRaw / (ftsRaw + 1)`
+ * which maps [0, ∞) → [0, 1) so that high-scoring FTS hits don't dominate the
+ * blend. The blend weights are 65% FTS and 35% trigram. No additive floor is
+ * applied — weak matches stay weak so the `confidenceThreshold` drop-floor
+ * (0.05 minimum) can filter them cleanly.
+ *
+ * The weight coefficients used by `ts_rank_cd` in the SQL query are
+ * `'{0.1, 0.3, 0.6, 1.0}'` (D→C→B→A), meaning catalog number hits (weight A)
+ * score up to 10× higher than ai_keyword hits (weight D).
  */
-export function blendPgScore(ftsRank: number, trgmSim: number): number {
-  return Math.min(0.95, ftsRank * 0.6 + trgmSim * 0.4 + 0.4);
+export function blendPgScore(ftsRaw: number, trgmSim: number): number {
+  const ftsNorm = ftsRaw / (ftsRaw + 1); // maps [0, ∞) → [0, 1)
+  return 0.65 * ftsNorm + 0.35 * trgmSim;
 }
 
 /**

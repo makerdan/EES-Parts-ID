@@ -310,21 +310,30 @@ router.post("/search", async (req, res) => {
           ...allTermsArr.slice(0, 3),
         ].filter(Boolean).join(" ").trim() || allTermsArr.slice(0, 3).join(" ");
 
+        // Dual tsquery: 'simple' matches catalog/vendor lexemes exactly (no stemming),
+        // 'english' matches description/ai_keywords lexemes via stemming. OR-ing them
+        // ensures "breaker" finds both catalog "BREAKER" entries and descriptions
+        // containing "breakers". The generated search_tsv column avoids rebuilding
+        // the tsvector on every query — the GIN index (idx_inventory_search_tsv) is
+        // used directly by EXPLAIN ANALYZE on typical queries.
+        //
+        // ts_rank_cd weight array '{0.1, 0.3, 0.6, 1.0}' = {D, C, B, A}:
+        //   A (catalog)     = 1.0  — catalog number hits score highest
+        //   B (vendor)      = 0.6  — vendor code hits score second
+        //   C (description) = 0.3  — description hits score third
+        //   D (ai_keywords) = 0.1  — ai keyword hits score lowest
+        //
         // Wrap in a subquery so ORDER BY can reference the computed column aliases.
         // PostgreSQL only resolves aliases in ORDER BY when used as direct references
-        // (not inside arithmetic expressions like fts_rank * 0.6 + trgm_sim * 0.4).
+        // (not inside arithmetic expressions like fts_rank * 0.65 + trgm_sim * 0.35).
         const pgQueryResult = await db.execute(sql`
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
               i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
-                to_tsvector('english',
-                  coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
-                  coalesce(i.description,'') || ' ' ||
-                  coalesce(array_to_string(i.ai_keywords, ' '), '')
-                ),
-                to_tsquery('english', ${tsQuery})
+                '{0.1, 0.3, 0.6, 1.0}', i.search_tsv,
+                to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
               )` : sql`0`} AS fts_rank,
               greatest(
                 similarity(i.catalog, ${catalogTrgmTerms}),
@@ -332,18 +341,15 @@ router.post("/search", async (req, res) => {
               ) AS trgm_sim
             FROM inventory i
             WHERE
-              ${tsQuery.trim() ? sql`to_tsvector('english',
-                coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
-                coalesce(i.description,'') || ' ' ||
-                coalesce(array_to_string(i.ai_keywords, ' '), '')
-              ) @@ to_tsquery('english', ${tsQuery})
-              OR` : sql``}
+              ${tsQuery.trim() ? sql`i.search_tsv @@ (
+                to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
+              ) OR` : sql``}
               similarity(i.catalog, ${catalogTrgmTerms}) > 0.1
               OR similarity(i.description, ${allTermsArr.slice(0,5).join(" ")}) > 0.1
               ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
               ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
           ) AS __ranked
-          ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
+          ORDER BY (fts_rank * 0.65 + trgm_sim * 0.35) DESC
           LIMIT 200
         `);
         // Drizzle returns { rows: unknown[] } for raw SQL — validate shape at runtime
@@ -388,6 +394,11 @@ router.post("/search", async (req, res) => {
     };
 
     // Process PG results
+    // 0.05 noise floor: drop items whose blended base score is below the floor
+    // before any catalog/vendor boosts are applied. This prevents very weak
+    // trigram-only matches (e.g., short common substrings) from appearing in
+    // results at all. The confidenceThreshold from the client applies on top.
+    const PG_SCORE_FLOOR = 0.05;
     let pgHasFts = false;
     let pgHasTrgm = false;
     for (const row of pgResults) {
@@ -396,6 +407,7 @@ router.post("/search", async (req, res) => {
       if (ftsRank > 0) pgHasFts = true;
       if (trgmSim > 0) pgHasTrgm = true;
       const pgScore = blendPgScore(ftsRank, trgmSim);
+      if (pgScore < PG_SCORE_FLOOR) continue; // drop noise — catalog boosts not applied
       const item: typeof inventoryTable.$inferSelect = {
         id: row.id,
         vendor: row.vendor,

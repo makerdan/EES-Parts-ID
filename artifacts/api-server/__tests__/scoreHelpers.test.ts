@@ -7,30 +7,67 @@ import {
 } from "../src/utils/scoreHelpers";
 
 // ── blendPgScore ──────────────────────────────────────────────────────────────
+//
+// Stage 2 (Task #186) changed the formula from:
+//   Math.min(0.95, ftsRank * 0.6 + trgmSim * 0.4 + 0.4)   ← additive 0.4 floor
+// to:
+//   ftsNorm = ftsRaw / (ftsRaw + 1)                         ← normalize to [0, 1)
+//   0.65 * ftsNorm + 0.35 * trgmSim                         ← no additive floor
+//
+// Rationale: the old 0.4 floor inflated every PG hit to at least 0.40 regardless
+// of actual match quality, making ranking scores meaningless. The new formula
+// lets weak matches score near zero so the 0.05 noise floor in the search route
+// can drop them cleanly, and strong catalog matches (weight A) still dominate.
 
 describe("blendPgScore", () => {
-  it("applies the 0.4 floor so even zero fts/trgm scores start above Fuse range", () => {
-    const score = blendPgScore(0, 0);
-    expect(score).toBeCloseTo(0.4);
+  it("returns 0 for zero fts and zero trgm (no additive floor)", () => {
+    // old: 0.4 floor → 0.40; new: no floor → 0
+    expect(blendPgScore(0, 0)).toBe(0);
   });
 
-  it("weights ftsRank at 60% and trgmSim at 40%", () => {
-    // ftsRank=0.5, trgmSim=0 → 0.5*0.6 + 0*0.4 + 0.4 = 0.7
-    expect(blendPgScore(0.5, 0)).toBeCloseTo(0.7);
-    // ftsRank=0, trgmSim=0.5 → 0*0.6 + 0.5*0.4 + 0.4 = 0.6
-    expect(blendPgScore(0, 0.5)).toBeCloseTo(0.6);
+  it("normalizes ftsRaw with ftsRaw/(ftsRaw+1) before blending", () => {
+    // ftsRaw=1: ftsNorm = 1/2 = 0.5; blend = 0.65*0.5 + 0.35*0 = 0.325
+    expect(blendPgScore(1, 0)).toBeCloseTo(0.325);
+    // ftsRaw=0.5: ftsNorm = 0.5/1.5 ≈ 0.333; blend = 0.65*0.333 ≈ 0.217
+    expect(blendPgScore(0.5, 0)).toBeCloseTo(0.217, 2);
   });
 
-  it("caps the result at 0.95", () => {
-    // With high ranks, raw value exceeds 0.95
-    expect(blendPgScore(1.0, 1.0)).toBe(0.95);
-    expect(blendPgScore(10, 10)).toBe(0.95);
+  it("weights trgmSim at 35%", () => {
+    // ftsRaw=0, trgmSim=1: blend = 0.65*0 + 0.35*1 = 0.35
+    expect(blendPgScore(0, 1)).toBeCloseTo(0.35);
+    // ftsRaw=0, trgmSim=0.5: blend = 0.35*0.5 = 0.175
+    expect(blendPgScore(0, 0.5)).toBeCloseTo(0.175);
   });
 
-  it("returns a value between 0 and 0.95 for typical inputs", () => {
-    const score = blendPgScore(0.3, 0.6);
-    expect(score).toBeGreaterThanOrEqual(0);
-    expect(score).toBeLessThanOrEqual(0.95);
+  it("approaches but never reaches 1.0 as ftsRaw → ∞", () => {
+    // ftsNorm approaches 1; blend approaches 0.65+0.35=1.0 but never reaches it for ftsNorm<1
+    const score = blendPgScore(1000, 1);
+    expect(score).toBeGreaterThan(0.99);
+    expect(score).toBeLessThan(1.0);
+  });
+
+  it("returns a value in [0, 1) for typical inputs", () => {
+    const inputs: [number, number][] = [[0.3, 0.6], [0.8, 0.2], [0.1, 0.9], [2, 0.7]];
+    for (const [fts, trgm] of inputs) {
+      const s = blendPgScore(fts, trgm);
+      expect(s).toBeGreaterThanOrEqual(0);
+      expect(s).toBeLessThan(1.0);
+    }
+  });
+
+  it("gives higher score to a strong fts match than a weak trgm-only match", () => {
+    // Strong fts, no trgm
+    const strongFts = blendPgScore(2, 0);     // ftsNorm=2/3≈0.667; blend≈0.433
+    // No fts, moderate trgm
+    const weakTrgm = blendPgScore(0, 0.3);    // 0.35*0.3 = 0.105
+    expect(strongFts).toBeGreaterThan(weakTrgm);
+  });
+
+  it("high catalog-weight fts (ts_rank_cd A=1.0) scores significantly above low ai_keyword hit", () => {
+    // ts_rank_cd for a catalog (A) hit returns ~1.0; for ai_keyword (D) hit ~0.1
+    const catalogHit = blendPgScore(1.0, 0);  // ftsNorm=0.5; blend=0.325
+    const aiKeywordHit = blendPgScore(0.1, 0); // ftsNorm≈0.091; blend≈0.059
+    expect(catalogHit).toBeGreaterThan(aiKeywordHit * 2);
   });
 });
 

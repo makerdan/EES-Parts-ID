@@ -6,6 +6,13 @@
  * `lib/aisleHierarchy.ts` for the parser that tolerates both).
  * `aiKeywords` is the AI-enriched keyword list used by the trigram
  * search to match worker queries against electrical jargon.
+ *
+ * The table also has a generated column `search_tsv tsvector STORED` added by
+ * migration 0009_fts_weighted.sql. It is not declared here because Drizzle's
+ * pg-core does not yet support GENERATED ALWAYS AS tsvector columns, but it is
+ * used directly in raw SQL via `i.search_tsv` in the inventory search route.
+ * Weight classes: A=catalog (simple), B=vendor (simple), C=description (english),
+ * D=ai_keywords (english). GIN index: idx_inventory_search_tsv.
  */
 import {
   pgTable,
