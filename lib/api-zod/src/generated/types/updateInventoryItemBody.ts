@@ -18,4 +18,6 @@ export interface UpdateInventoryItemBody {
   description?: string;
   /** Replacement AI keywords array. */
   keywords?: string[];
+  /** Trade size to assign (e.g. `1/2"`, `3/4"`). Null clears the value. Omit to leave unchanged. */
+  tradeSize?: string | null;
 }

@@ -47,6 +47,12 @@ export const ListInventoryResponse = zod.object({
         ),
       aiKeywords: zod.array(zod.string()),
       enrichedAt: zod.coerce.date().nullish(),
+      tradeSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+        ),
       vendorFullName: zod
         .string()
         .nullish()
@@ -143,6 +149,12 @@ export const SearchInventoryResponse = zod.object({
           ),
         aiKeywords: zod.array(zod.string()),
         enrichedAt: zod.coerce.date().nullish(),
+        tradeSize: zod
+          .string()
+          .nullish()
+          .describe(
+            'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+          ),
         vendorFullName: zod
           .string()
           .nullish()
@@ -169,6 +181,12 @@ export const SearchInventoryResponse = zod.object({
             ),
           aiKeywords: zod.array(zod.string()),
           enrichedAt: zod.coerce.date().nullish(),
+          tradeSize: zod
+            .string()
+            .nullish()
+            .describe(
+              'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+            ),
           vendorFullName: zod
             .string()
             .nullish()
@@ -362,6 +380,12 @@ export const UpdateInventoryItemBody = zod
       .array(zod.string())
       .optional()
       .describe("Replacement AI keywords array."),
+    tradeSize: zod
+      .string()
+      .nullish()
+      .describe(
+        'Trade size to assign (e.g. `1\/2\"`, `3\/4\"`). Null clears the value. Omit to leave unchanged.',
+      ),
   })
   .describe(
     'Partial update for an inventory item. Only the fields explicitly\nprovided are touched. Sending `description: \"\"` is a real edit\n(clears the description); omit the field entirely to leave it\nuntouched. At least one field must be supplied.\n',
@@ -379,6 +403,12 @@ export const UpdateInventoryItemResponse = zod.object({
     ),
   aiKeywords: zod.array(zod.string()),
   enrichedAt: zod.coerce.date().nullish(),
+  tradeSize: zod
+    .string()
+    .nullish()
+    .describe(
+      'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+    ),
   vendorFullName: zod
     .string()
     .nullish()
@@ -460,6 +490,12 @@ export const AiIdentifyPartResponse = zod.object({
           ),
         aiKeywords: zod.array(zod.string()),
         enrichedAt: zod.coerce.date().nullish(),
+        tradeSize: zod
+          .string()
+          .nullish()
+          .describe(
+            'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+          ),
         vendorFullName: zod
           .string()
           .nullish()
@@ -486,6 +522,12 @@ export const AiIdentifyPartResponse = zod.object({
             ),
           aiKeywords: zod.array(zod.string()),
           enrichedAt: zod.coerce.date().nullish(),
+          tradeSize: zod
+            .string()
+            .nullish()
+            .describe(
+              'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+            ),
           vendorFullName: zod
             .string()
             .nullish()
@@ -498,6 +540,26 @@ export const AiIdentifyPartResponse = zod.object({
       ),
     }),
   ),
+  match_type: zod
+    .enum(["catalog_exact", "attribute_match", "descriptive"])
+    .describe("Which routing path produced the results"),
+  _telemetry: zod.object({
+    photoEventId: zod.number().nullable(),
+  }),
+});
+
+/**
+ * @summary Record which result the worker confirmed matched the photo
+ */
+export const ConfirmPhotoIdBody = zod.object({
+  photoEventId: zod.number(),
+  resultId: zod.number(),
+});
+
+export const ConfirmPhotoIdResponse = zod.object({
+  ok: zod.boolean(),
+  photoEventId: zod.number(),
+  confirmedResultId: zod.number(),
 });
 
 /**
@@ -567,6 +629,12 @@ export const ListUncategorizedItemsResponse = zod.object({
         ),
       aiKeywords: zod.array(zod.string()),
       enrichedAt: zod.coerce.date().nullish(),
+      tradeSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+        ),
       vendorFullName: zod
         .string()
         .nullish()
@@ -636,6 +704,12 @@ export const ListCategoryItemsResponse = zod.object({
         ),
       aiKeywords: zod.array(zod.string()),
       enrichedAt: zod.coerce.date().nullish(),
+      tradeSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+        ),
       vendorFullName: zod
         .string()
         .nullish()
@@ -710,6 +784,12 @@ export const ListCategoryPartsByIdResponse = zod.object({
         ),
       aiKeywords: zod.array(zod.string()),
       enrichedAt: zod.coerce.date().nullish(),
+      tradeSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+        ),
       vendorFullName: zod
         .string()
         .nullish()
@@ -896,6 +976,12 @@ export const BarcodeLookupResponse = zod.object({
         ),
       aiKeywords: zod.array(zod.string()),
       enrichedAt: zod.coerce.date().nullish(),
+      tradeSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+        ),
       vendorFullName: zod
         .string()
         .nullish()
@@ -928,6 +1014,12 @@ export const BarcodeLookupResponse = zod.object({
           ),
         aiKeywords: zod.array(zod.string()),
         enrichedAt: zod.coerce.date().nullish(),
+        tradeSize: zod
+          .string()
+          .nullish()
+          .describe(
+            'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+          ),
         vendorFullName: zod
           .string()
           .nullish()
@@ -978,6 +1070,12 @@ export const BarcodeLinkResponse = zod.object({
       ),
     aiKeywords: zod.array(zod.string()),
     enrichedAt: zod.coerce.date().nullish(),
+    tradeSize: zod
+      .string()
+      .nullish()
+      .describe(
+        'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+      ),
     vendorFullName: zod
       .string()
       .nullish()
@@ -1012,6 +1110,12 @@ export const BarcodeRecentResponse = zod.object({
         ),
       aiKeywords: zod.array(zod.string()),
       enrichedAt: zod.coerce.date().nullish(),
+      tradeSize: zod
+        .string()
+        .nullish()
+        .describe(
+          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n',
+        ),
       vendorFullName: zod
         .string()
         .nullish()
