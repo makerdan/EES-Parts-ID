@@ -46,6 +46,13 @@ interface ResultCardProps {
    * Never called on collapse, only on the first expand gesture.
    */
   onFirstExpand?: () => void;
+  /**
+   * Optional callback for explicit user confirmation that this card is the
+   * correct part. When provided, a "That's it" button is rendered inside
+   * the expanded view. Intended for Photo ID — fires POST /photo/confirm
+   * once per deliberate tap, not on expand.
+   */
+  onConfirm?: () => void;
 }
 
 /**
@@ -225,7 +232,7 @@ const varStyles = StyleSheet.create({
   binEmpty: { fontFamily: "Inter_400Regular", fontStyle: "italic", textAlign: "right", flexShrink: 0 },
 });
 
-export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens, highlightBin, onFirstExpand }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, highlightTokens, highlightBin, onFirstExpand, onConfirm }: ResultCardProps) {
   const colors = useColors();
   // Match style: a soft tint background + bold weight. Uses the theme's
   // primary color so it stays legible in light/dark mode.
@@ -482,6 +489,16 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0, high
                   </Text>
                 </Pressable>
               ) : null}
+              {onConfirm ? (
+                <Pressable
+                  onPress={onConfirm}
+                  style={[cardStyles.confirmBtn, { backgroundColor: "#10b981" }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Confirm this is the correct part"
+                >
+                  <Text style={cardStyles.confirmBtnText}>✓ That's it</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             {/* Vendor full name — only shown when we have a vendor_map entry
@@ -671,6 +688,14 @@ const cardStyles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   editBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  confirmBtn: {
+    marginTop: 10,
+    borderRadius: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignSelf: "flex-start",
+  },
+  confirmBtnText: { fontSize: 14, fontFamily: "Inter_700Bold", color: "#ffffff" },
   vendorFullName: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
   detailOverlay: {
