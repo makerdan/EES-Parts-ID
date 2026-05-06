@@ -26,10 +26,13 @@ router.post("/click", async (req, res) => {
     action?: unknown;
   };
 
+  // Require safe integers for all numeric fields so BigInt() and DB inserts
+  // never receive floats or out-of-range values from malformed requests.
   if (
-    typeof searchEventId !== "number" ||
-    typeof resultId !== "number" ||
-    typeof resultRank !== "number" ||
+    typeof searchEventId !== "number" || !Number.isInteger(searchEventId) || searchEventId <= 0 ||
+    typeof resultId !== "number" || !Number.isInteger(resultId) || resultId <= 0 ||
+    // resultRank is 0-based (0 = first result shown) — matches mobile index
+    typeof resultRank !== "number" || !Number.isInteger(resultRank) || resultRank < 0 ||
     typeof action !== "string" ||
     !VALID_ACTIONS.has(action as ClickAction)
   ) {
