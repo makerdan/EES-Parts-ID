@@ -92,6 +92,13 @@
       "when": 1746988800000,
       "tag": "0012_photo_id_event",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1747075200000,
+      "tag": "0013_classification_review",
+      "breakpoints": true
     }
   ]
 }

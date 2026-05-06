@@ -16,6 +16,7 @@ import categoriesRouter from "./categories";
 import barcodeRouter from "./barcode";
 import searchRouter from "./search";
 import photoRouter from "./photo";
+import classificationReviewRouter from "./classificationReview";
 
 const router: IRouter = Router();
 
@@ -31,5 +32,6 @@ router.use("/categories", categoriesRouter);
 router.use("/barcode", barcodeRouter);
 router.use("/search", searchRouter);
 router.use("/photo", photoRouter);
+router.use("/admin", classificationReviewRouter);
 
 export default router;

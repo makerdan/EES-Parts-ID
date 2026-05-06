@@ -49,6 +49,7 @@ import { useApp } from "@/contexts/AppContext";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 import { ImportFileCard } from "@/components/ImportFileCard";
+import ClassificationReviewSection from "@/components/ClassificationReviewSection";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -2452,6 +2453,16 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
               </View>
+
+              {/* Classification Review Queue */}
+              <ClassificationReviewSection
+                apiBase={API_BASE}
+                adminHeaders={adminHeaders}
+                onExpiredSession={() => {
+                  logoutAdmin();
+                  setUploadError("Admin session expired. Please unlock again.");
+                }}
+              />
                     </View>
                   )}
 
