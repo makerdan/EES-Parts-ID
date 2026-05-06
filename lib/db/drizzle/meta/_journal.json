@@ -64,6 +64,13 @@
       "when": 1746691200000,
       "tag": "0008_search_telemetry",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1746777600000,
+      "tag": "0009_fts_weighted",
+      "breakpoints": true
     }
   ]
 }
