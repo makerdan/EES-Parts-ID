@@ -226,7 +226,8 @@ router.post("/search", async (req, res) => {
 
     if (!allSearchText.trim()) {
       // Log a telemetry event even for empty queries so coverage is complete.
-      void logSearchEvent({
+      // Awaited (non-throwing) so we can return the real searchEventId.
+      const emptyEventId = await logSearchEvent({
         queryRaw: allSearchText,
         queryNormalized: queryNormalizedForTelemetry,
         querySource,
@@ -236,7 +237,12 @@ router.post("/search", async (req, res) => {
         latencyMs: Math.round(performance.now() - startTime),
         layersHit: [],
       });
-      return void res.json({ results: [], totalMatches: 0, belowThreshold: 0, _telemetry: { searchEventId: null } });
+      return void res.json({
+        results: [],
+        totalMatches: 0,
+        belowThreshold: 0,
+        _telemetry: { searchEventId: emptyEventId > 0n ? Number(emptyEventId) : null },
+      });
     }
 
     // ── Step 2: Domain normalization (measurement units, abbreviations) ──────
