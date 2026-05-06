@@ -325,6 +325,27 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
               <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(28) }]}>
                 <HighlightedText text={item.catalog} tokens={hl} matchStyle={hlStyle} />
               </Text>
+              {item.seriesName ? (
+                <Pressable
+                  onPress={() => { if (hasVariants) setVariantsExpanded(v => !v); }}
+                  hitSlop={4}
+                  disabled={!hasVariants}
+                  accessibilityRole={hasVariants ? "button" : "text"}
+                  accessibilityLabel={`Part of series: ${item.seriesName}${hasVariants ? ". Tap to see other sizes." : ""}`}
+                  style={({ pressed }) => [
+                    cardStyles.seriesBadge,
+                    {
+                      backgroundColor: colors.primary + "1A",
+                      borderColor: colors.primary + "66",
+                      opacity: pressed ? 0.7 : 1,
+                    },
+                  ]}
+                >
+                  <Text style={[cardStyles.seriesBadgeText, { color: colors.primary, fontSize: fs(11) }]}>
+                    {hasVariants ? "⊞ " : ""}Part of {item.seriesName}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           </View>
           <View style={[cardStyles.headerRight, { alignItems: "flex-end" }]}>
@@ -701,6 +722,20 @@ const cardStyles = StyleSheet.create({
   },
   confirmBtnText: { fontSize: 14, fontFamily: "Inter_700Bold", color: "#ffffff" },
   vendorFullName: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
+  seriesBadge: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 4,
+  },
+  seriesBadgeText: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+  },
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
   detailOverlay: {
     flex: 1,

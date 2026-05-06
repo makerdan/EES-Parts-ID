@@ -13,6 +13,7 @@ import {
   vendorMapTable,
   misspellingMapTable,
   synonymGroupTable,
+  productSeriesTable,
 } from "@workspace/db";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
 import { verifyAdminToken } from "./admin";
@@ -663,13 +664,36 @@ router.post("/search", async (req, res) => {
       return extractSizeValue(a.item) - extractSizeValue(b.item);
     });
 
+    // Resolve series names for any items (or their variants) that have a series_id.
+    // A single batch query avoids N+1 lookups.
+    const allSeriesIds = new Set<number>();
+    for (const r of aboveThreshold) {
+      if (r.item.seriesId != null) allSeriesIds.add(r.item.seriesId);
+      for (const v of variantMap.get(r.item.id) ?? []) {
+        if (v.seriesId != null) allSeriesIds.add(v.seriesId);
+      }
+    }
+    const seriesNameMap = new Map<number, string>();
+    if (allSeriesIds.size > 0) {
+      const seriesRows = await db
+        .select({ id: productSeriesTable.id, name: productSeriesTable.name })
+        .from(productSeriesTable)
+        .where(inArray(productSeriesTable.id, Array.from(allSeriesIds)));
+      for (const row of seriesRows) seriesNameMap.set(row.id, row.name);
+    }
+
+    const attachSeriesName = <T extends { seriesId: number | null }>(item: T): T & { seriesName: string | null } => ({
+      ...item,
+      seriesName: item.seriesId != null ? (seriesNameMap.get(item.seriesId) ?? null) : null,
+    });
+
     const finalResults = aboveThreshold.map(r => ({
-      item: withVendorFullName(r.item, vendorFullNameMap),
+      item: attachSeriesName(withVendorFullName(r.item, vendorFullNameMap)),
       confidence: r.confidence,
       matchReason: r.reason,
       seriesBase: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.key ?? null,
       seriesLabel: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.label ?? null,
-      variants: (variantMap.get(r.item.id) ?? []).map(v => withVendorFullName(v, vendorFullNameMap)),
+      variants: (variantMap.get(r.item.id) ?? []).map(v => attachSeriesName(withVendorFullName(v, vendorFullNameMap))),
     }));
 
     const latencyMs = Math.round(performance.now() - startTime);
@@ -1626,6 +1650,50 @@ router.get("/export", requireAdminAuth, async (_req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Export failed" });
+  }
+});
+
+// ── GET /inventory/:id ────────────────────────────────────────────────────────
+// Fetch a single inventory item by ID, including series_name when the item
+// belongs to a named product series.
+router.get("/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params["id"] ?? "0");
+    if (!Number.isFinite(id) || id <= 0) {
+      return void res.status(400).json({ error: "id must be a positive integer" });
+    }
+
+    const [item] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .limit(1);
+
+    if (!item) return void res.status(404).json({ error: "Item not found" });
+
+    // Resolve vendor full name and series name in parallel
+    const [vendorFullName, seriesRow] = await Promise.all([
+      lookupVendorFullName(item.vendor),
+      item.seriesId != null
+        ? db
+            .select({ name: productSeriesTable.name })
+            .from(productSeriesTable)
+            .where(eq(productSeriesTable.id, item.seriesId))
+            .limit(1)
+            .then(rows => rows[0] ?? null)
+        : Promise.resolve(null),
+    ]);
+
+    const vendorMap = new Map(vendorFullName ? [[item.vendor.toUpperCase(), vendorFullName]] : []);
+    res.json({
+      ...withVendorFullName(item, vendorMap),
+      binLocations: item.binLocations ?? [],
+      aiKeywords: item.aiKeywords ?? [],
+      seriesName: seriesRow?.name ?? null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch inventory item" });
   }
 });
 
