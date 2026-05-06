@@ -26,17 +26,22 @@ import { z } from "zod/v4";
  * History: prior schema used PK (inventory_id, category_node_id); migration
  * 0004 swapped to PK (inventory_id) after de-duplicating any pre-existing
  * rows.
+ *
+ * Migration 0013 added reviewed_at and reviewed_by for the admin review queue.
  */
 export const inventoryCategoryTable = pgTable(
   "inventory_category",
   {
-    inventoryId: integer("inventory_id").notNull(),
+    inventoryId:    integer("inventory_id").notNull(),
     categoryNodeId: integer("category_node_id").notNull(),
-    confidence: numeric("confidence", { precision: 5, scale: 4 })
+    confidence:     numeric("confidence", { precision: 5, scale: 4 })
       .notNull()
       .default("1.0000"),
-    classifiedBy: text("classified_by").notNull().default("rule"), // "rule" | "ai" | "manual"
-    classifiedAt: timestamp("classified_at").defaultNow().notNull(),
+    classifiedBy:   text("classified_by").notNull().default("rule"), // "rule" | "ai" | "manual"
+    classifiedAt:   timestamp("classified_at").defaultNow().notNull(),
+    // ── Review queue columns (migration 0013) ───────────────────────────────
+    reviewedAt:     timestamp("reviewed_at", { withTimezone: true }),
+    reviewedBy:     text("reviewed_by"),
   },
   (table) => [
     primaryKey({ columns: [table.inventoryId] }),
