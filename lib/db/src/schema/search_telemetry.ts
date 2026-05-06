@@ -10,7 +10,10 @@
  *   - result_id references inventory.id (serial integer, not uuid).
  *   - query_source 'chip' covers searches driven entirely by chip filters
  *     with no free-text keywords.
- *   - filters_json stored as text (serialized JSON) for portability.
+ *   - filters_json stored as jsonb (in DB); represented as text here for schema
+ *     portability — the route serializes with JSON.stringify and casts ::jsonb.
+ *   - layers_hit records which pipeline layers contributed to results:
+ *     'fts', 'trigram', 'exact_catalog', 'fuse_fallback', 'vendor_boost'.
  */
 import {
   pgTable,
@@ -20,12 +23,13 @@ import {
   timestamp,
   index,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const searchEventTable = pgTable(
   "search_event",
   {
     id:              serial("id").primaryKey(),
-    ts:              timestamp("ts").notNull().defaultNow(),
+    ts:              timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
     queryRaw:        text("query_raw").notNull(),
     queryNormalized: text("query_normalized").notNull(),
     querySource:     text("query_source").notNull(),
@@ -33,6 +37,7 @@ export const searchEventTable = pgTable(
     resultsCount:    integer("results_count").notNull(),
     topResultId:     integer("top_result_id"),
     latencyMs:       integer("latency_ms").notNull(),
+    layersHit:       text("layers_hit").array().notNull().default(sql`'{}'::text[]`),
   },
   (table) => [
     index("idx_search_event_ts").on(table.ts),
@@ -45,7 +50,7 @@ export const searchEventClickTable = pgTable(
   {
     id:            serial("id").primaryKey(),
     searchEventId: integer("search_event_id").notNull(),
-    ts:            timestamp("ts").notNull().defaultNow(),
+    ts:            timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
     resultId:      integer("result_id").notNull(),
     resultRank:    integer("result_rank").notNull(),
     action:        text("action").notNull(),

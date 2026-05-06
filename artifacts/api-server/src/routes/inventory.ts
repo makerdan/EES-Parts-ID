@@ -223,7 +223,14 @@ router.post("/search", async (req, res) => {
       return void res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
     }
 
-    // Normalize, correct misspellings, expand terms
+    // ── Step 1: Unicode normalization (telemetry + pre-processing) ───────────
+    // normalizeQuery runs first — trim, collapse whitespace, lowercase, strip
+    // diacritics via NFKD — so the value stored in search_event.query_normalized
+    // reflects the query exactly as the pipeline saw it, before measurement
+    // expansion or dictionary lookups change the token set.
+    const queryNormalizedForTelemetry = normalizeQuery(allSearchText);
+
+    // ── Step 2: Domain normalization (measurement units, abbreviations) ──────
     const normalized = normalizeMeasurement(allSearchText);
     const words = normalized.split(/\s+/).filter(w => w.length > 1);
     const corrected = words.map(w => correctMisspelling(w, correctionMap));
@@ -523,7 +530,6 @@ router.post("/search", async (req, res) => {
 
     const latencyMs = Math.round(performance.now() - startTime);
     const rawQuery = [keywords, catalogInput].filter(Boolean).join(" ");
-    const normalizedQuery = normalizeQuery(rawQuery);
     const topResultId = finalResults[0]?.item?.id ?? null;
     const allFilters = {
       vendor: vendorInput, color, size, material, textNumbers,
@@ -532,21 +538,19 @@ router.post("/search", async (req, res) => {
       mountingType, environment, voltage, poleCount,
     };
 
-    // Race the telemetry insert against a 50 ms budget — local Postgres is
-    // almost always faster, but we never stall the response if it isn't.
-    const searchEventId = await Promise.race([
-      logSearchEvent({
-        queryRaw: rawQuery,
-        queryNormalized: normalizedQuery,
-        querySource,
-        filtersJson: allFilters,
-        resultsCount: finalResults.length,
-        topResultId,
-        latencyMs,
-        layersHit,
-      }),
-      new Promise<bigint>(resolve => setTimeout(() => resolve(-1n), 50)),
-    ]);
+    // logSearchEvent is non-blocking by design (catches internally and returns
+    // -1n on error) — awaiting it directly is safe and avoids the unreliability
+    // of a Promise.race timeout (local Postgres inserts are < 5 ms).
+    const searchEventId = await logSearchEvent({
+      queryRaw: rawQuery,
+      queryNormalized: queryNormalizedForTelemetry,
+      querySource,
+      filtersJson: allFilters,
+      resultsCount: finalResults.length,
+      topResultId,
+      latencyMs,
+      layersHit,
+    });
 
     res.json({
       results: finalResults,
