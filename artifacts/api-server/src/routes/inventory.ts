@@ -240,7 +240,9 @@ router.post("/search", async (req, res) => {
     }
 
     // ── Step 2: Domain normalization (measurement units, abbreviations) ──────
-    const normalized = normalizeMeasurement(allSearchText);
+    // normalizeQuery output feeds into normalizeMeasurement, making Unicode
+    // normalization the literal first step in the processing pipeline.
+    const normalized = normalizeMeasurement(queryNormalizedForTelemetry);
     const words = normalized.split(/\s+/).filter(w => w.length > 1);
     const corrected = words.map(w => correctMisspelling(w, correctionMap));
 

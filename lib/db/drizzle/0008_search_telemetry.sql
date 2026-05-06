@@ -4,16 +4,17 @@
 -- normalized query, which pipeline layers fired, result count, and latency so
 -- later ranking changes can be evaluated against real warehouse queries.
 --
--- search_event_click: one row per result-card expansion. Correlates a specific
--- result with the originating search event so click-through rates can be used
--- to tune FTS weights (Stage 2, Task #186).
+-- search_event_click: one row per result-card tap (card expansion = result tap
+-- in this UX — cards expand in-place, there is no separate detail navigation).
+-- Correlates a result with the originating search event for CTR analysis.
 --
 -- Notes:
 --   - No user_id / session_id — workers are anonymous.
---   - result_id references inventory.id (serial integer, not uuid).
---   - filters_json stores the full chip filter state as JSONB.
---   - layers_hit is a text[] recording which search layers contributed results
---     ('fts', 'trigram', 'exact_catalog', 'fuse_fallback', 'vendor_boost').
+--   - result_id is nullable: FK uses ON DELETE SET NULL so click rows survive
+--     part deletions and remain analyzable in aggregate.
+--   - filters_json captures the full chip filter state at query time as JSONB.
+--   - layers_hit is a text[] recording which search layers contributed results:
+--     'fts', 'trigram', 'exact_catalog', 'fuse_fallback', 'vendor_boost'.
 
 CREATE TABLE IF NOT EXISTS "search_event" (
   "id"               bigserial PRIMARY KEY,
@@ -37,7 +38,7 @@ CREATE TABLE IF NOT EXISTS "search_event_click" (
   "id"              bigserial PRIMARY KEY,
   "search_event_id" bigint NOT NULL REFERENCES "search_event"("id") ON DELETE CASCADE,
   "ts"              timestamptz NOT NULL DEFAULT now(),
-  "result_id"       integer NOT NULL REFERENCES "inventory"("id") ON DELETE SET NULL,
+  "result_id"       integer NULL REFERENCES "inventory"("id") ON DELETE SET NULL,
   "result_rank"     integer NOT NULL,
   "action"          text NOT NULL
 );
