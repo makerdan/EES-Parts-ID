@@ -6,8 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./_aiIdentifyResponseTelemetry";
 export * from "./aiIdentifyBody";
 export * from "./aiIdentifyResponse";
+export * from "./aiIdentifyResponseMatchType";
 export * from "./aiReferenceBody";
 export * from "./assignCategoryBody";
 export * from "./assignCategoryResponse";
@@ -41,6 +43,8 @@ export * from "./listUncategorizedItemsParams";
 export * from "./lookupDictionaryParams";
 export * from "./mergeCategoryBody";
 export * from "./mergeCategoryNodes200";
+export * from "./photoConfirmBody";
+export * from "./photoConfirmResponse";
 export * from "./previewMatchRow";
 export * from "./previewUpsertBody";
 export * from "./previewUpsertResponse";

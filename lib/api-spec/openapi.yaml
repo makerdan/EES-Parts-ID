@@ -236,6 +236,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AiIdentifyResponse"
+        "422":
+          description: Vision response could not be parsed into the expected contract
+
+  /photo/confirm:
+    post:
+      operationId: confirmPhotoId
+      tags: [ai]
+      summary: Record which result the worker confirmed matched the photo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoConfirmBody"
+      responses:
+        "200":
+          description: Confirmation recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoConfirmResponse"
+        "404":
+          description: Photo ID event not found
 
   /reference/ask:
     post:
@@ -1120,6 +1143,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchResult"
+        match_type:
+          type: string
+          enum: [catalog_exact, attribute_match, descriptive]
+          description: Which routing path produced the results
+        _telemetry:
+          type: object
+          properties:
+            photoEventId:
+              type: integer
+              nullable: true
+          required:
+            - photoEventId
       required:
         - searchTerms
         - synonyms
@@ -1127,6 +1162,33 @@ components:
         - manufacturerVerified
         - summary
         - results
+        - match_type
+        - _telemetry
+
+    PhotoConfirmBody:
+      type: object
+      properties:
+        photoEventId:
+          type: integer
+        resultId:
+          type: integer
+      required:
+        - photoEventId
+        - resultId
+
+    PhotoConfirmResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        photoEventId:
+          type: integer
+        confirmedResultId:
+          type: integer
+      required:
+        - ok
+        - photoEventId
+        - confirmedResultId
 
     AiReferenceBody:
       type: object

@@ -46,6 +46,8 @@ import type {
   LookupDictionaryParams,
   MergeCategoryBody,
   MergeCategoryNodes200,
+  PhotoConfirmBody,
+  PhotoConfirmResponse,
   PreviewUpsertBody,
   PreviewUpsertResponse,
   SearchInventoryBody,
@@ -889,7 +891,7 @@ export const aiIdentifyPart = async (
 };
 
 export const getAiIdentifyPartMutationOptions = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<void>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -930,13 +932,13 @@ export type AiIdentifyPartMutationResult = NonNullable<
   Awaited<ReturnType<typeof aiIdentifyPart>>
 >;
 export type AiIdentifyPartMutationBody = BodyType<AiIdentifyBody>;
-export type AiIdentifyPartMutationError = ErrorType<unknown>;
+export type AiIdentifyPartMutationError = ErrorType<void>;
 
 /**
  * @summary Identify electrical part from images using AI vision
  */
 export const useAiIdentifyPart = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<void>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -953,6 +955,92 @@ export const useAiIdentifyPart = <
   TContext
 > => {
   return useMutation(getAiIdentifyPartMutationOptions(options));
+};
+
+/**
+ * @summary Record which result the worker confirmed matched the photo
+ */
+export const getConfirmPhotoIdUrl = () => {
+  return `/api/photo/confirm`;
+};
+
+export const confirmPhotoId = async (
+  photoConfirmBody: PhotoConfirmBody,
+  options?: RequestInit,
+): Promise<PhotoConfirmResponse> => {
+  return customFetch<PhotoConfirmResponse>(getConfirmPhotoIdUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(photoConfirmBody),
+  });
+};
+
+export const getConfirmPhotoIdMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof confirmPhotoId>>,
+    TError,
+    { data: BodyType<PhotoConfirmBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof confirmPhotoId>>,
+  TError,
+  { data: BodyType<PhotoConfirmBody> },
+  TContext
+> => {
+  const mutationKey = ["confirmPhotoId"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof confirmPhotoId>>,
+    { data: BodyType<PhotoConfirmBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return confirmPhotoId(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConfirmPhotoIdMutationResult = NonNullable<
+  Awaited<ReturnType<typeof confirmPhotoId>>
+>;
+export type ConfirmPhotoIdMutationBody = BodyType<PhotoConfirmBody>;
+export type ConfirmPhotoIdMutationError = ErrorType<void>;
+
+/**
+ * @summary Record which result the worker confirmed matched the photo
+ */
+export const useConfirmPhotoId = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof confirmPhotoId>>,
+    TError,
+    { data: BodyType<PhotoConfirmBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof confirmPhotoId>>,
+  TError,
+  { data: BodyType<PhotoConfirmBody> },
+  TContext
+> => {
+  return useMutation(getConfirmPhotoIdMutationOptions(options));
 };
 
 /**

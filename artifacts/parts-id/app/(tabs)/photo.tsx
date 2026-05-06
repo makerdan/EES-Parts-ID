@@ -23,7 +23,7 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { resizeImage } from "@/utils/resizeImage";
-import { useSearchInventory, useAiIdentifyPart } from "@workspace/api-client-react";
+import { useSearchInventory, useAiIdentifyPart, useConfirmPhotoId } from "@workspace/api-client-react";
 import type { SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
@@ -50,8 +50,11 @@ export default function PhotoScreen() {
   type ProgressPhase = "uploading" | "analysing" | "searching" | null;
   const [progressPhase, setProgressPhase] = useState<ProgressPhase>(null);
 
+  const [photoEventId, setPhotoEventId] = useState<number | null>(null);
+
   const identifyMutation = useAiIdentifyPart();
   const searchMutation = useSearchInventory();
+  const confirmMutation = useConfirmPhotoId();
   // Incremented on every identify call so stale async responses from a previous
   // request are discarded (race condition guard).
   const requestIdRef = useRef(0);
@@ -215,29 +218,38 @@ export default function PhotoScreen() {
       setAiSummary(identifyResult.summary);
       setAiTerms(identifyResult.searchTerms);
 
-      // Now search with identified terms
-      const allTerms = [
-        ...identifyResult.searchTerms,
-        ...identifyResult.synonyms.slice(0, 3),
-      ].join(" ");
+      // Store telemetry event ID so result confirmations can be recorded.
+      setPhotoEventId(identifyResult._telemetry?.photoEventId ?? null);
 
-      if (allTerms.trim()) {
-        // Phase 3 — AI done, now querying inventory.
-        setProgressPhase("searching");
+      // If the server already resolved results (catalog_exact or attribute_match),
+      // use them directly — no second search needed.
+      if (identifyResult.results && identifyResult.results.length > 0) {
+        setResults(identifyResult.results as SearchResult[]);
+      } else {
+        // Descriptive path: client drives the keyword search as before.
+        const allTerms = [
+          ...identifyResult.searchTerms,
+          ...identifyResult.synonyms.slice(0, 3),
+        ].join(" ");
 
-        const searchResult = await searchMutation.mutateAsync({
-          data: {
-            keywords: allTerms,
-            vendor: (identifyResult.detectedVendor ?? vendor.trim()) || undefined,
-            color: color.trim() || undefined,
-            size: size.trim() || undefined,
-            textNumbers: textNumbers.trim() || undefined,
-            confidenceThreshold: 40,
-          },
-        });
+        if (allTerms.trim()) {
+          // Phase 3 — AI done, now querying inventory.
+          setProgressPhase("searching");
 
-        if (requestIdRef.current !== thisRequestId) return;
-        setResults(searchResult.results);
+          const searchResult = await searchMutation.mutateAsync({
+            data: {
+              keywords: allTerms,
+              vendor: (identifyResult.detectedVendor ?? vendor.trim()) || undefined,
+              color: color.trim() || undefined,
+              size: size.trim() || undefined,
+              textNumbers: textNumbers.trim() || undefined,
+              confidenceThreshold: 40,
+            },
+          });
+
+          if (requestIdRef.current !== thisRequestId) return;
+          setResults(searchResult.results);
+        }
       }
     } catch (err) {
       // Check stale-request FIRST — don't touch shared timer/phase if superseded.
@@ -509,7 +521,21 @@ export default function PhotoScreen() {
                 {results.length} Matching Parts
               </Text>
               {results.map((result, index) => (
-                <ResultCard key={result.item.id} result={result} rank={index} fontScale={textFontScale} />
+                <ResultCard
+                  key={result.item.id}
+                  result={result}
+                  rank={index}
+                  fontScale={textFontScale}
+                  onFirstExpand={
+                    photoEventId != null
+                      ? () => {
+                          confirmMutation.mutate(
+                            { data: { photoEventId: photoEventId, resultId: result.item.id } },
+                          );
+                        }
+                      : undefined
+                  }
+                />
               ))}
             </View>
           ) : null}

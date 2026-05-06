@@ -15,6 +15,11 @@ export interface InventoryItem {
   binLocations: string[];
   aiKeywords: string[];
   enrichedAt?: Date | null;
+  /** User-set trade size that groups this part with others of the same
+product type but different physical sizes (e.g. `1/2"`, `3/4"`,
+`1"`). `null` when not assigned.
+ */
+  tradeSize?: string | null;
   /** Canonical full name for the vendor (e.g. "Eaton" for `ETN`),
 resolved from the `vendor_map` table by case-insensitive match
 on `vendor_map.code`. `null` when no mapping exists.

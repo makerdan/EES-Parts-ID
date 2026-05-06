@@ -17,12 +17,12 @@ export interface InventoryItem {
   /** Every bin this part is currently stocked in. Empty array means no bin assigned. */
   binLocations: string[];
   aiKeywords: string[];
+  enrichedAt?: string | null;
   /** User-set trade size that groups this part with others of the same
-product type but different physical sizes (e.g. `1/2"`, `3/4"`, `1"`).
-`null` when not assigned.
+product type but different physical sizes (e.g. `1/2"`, `3/4"`,
+`1"`). `null` when not assigned.
  */
   tradeSize?: string | null;
-  enrichedAt?: string | null;
   /** Canonical full name for the vendor (e.g. "Eaton" for `ETN`),
 resolved from the `vendor_map` table by case-insensitive match
 on `vendor_map.code`. `null` when no mapping exists.
@@ -218,8 +218,6 @@ export interface UpdateInventoryItemBody {
   keywords?: string[];
   /** Trade size to assign (e.g. `1/2"`, `3/4"`). Null clears the value. Omit to leave unchanged. */
   tradeSize?: string | null;
-  /** Replacement bin locations array. Omit to leave unchanged. */
-  binLocations?: string[];
 }
 
 export interface SuggestDescriptionResponse {
@@ -246,6 +244,22 @@ export interface AiIdentifyBody {
   textNumbers?: string;
 }
 
+/**
+ * Which routing path produced the results
+ */
+export type AiIdentifyResponseMatchType =
+  (typeof AiIdentifyResponseMatchType)[keyof typeof AiIdentifyResponseMatchType];
+
+export const AiIdentifyResponseMatchType = {
+  catalog_exact: "catalog_exact",
+  attribute_match: "attribute_match",
+  descriptive: "descriptive",
+} as const;
+
+export type _AiIdentifyResponseTelemetry = {
+  photoEventId: number | null;
+};
+
 export interface AiIdentifyResponse {
   searchTerms: string[];
   synonyms: string[];
@@ -254,6 +268,20 @@ export interface AiIdentifyResponse {
   detectedVendor?: string | null;
   summary: string;
   results: SearchResult[];
+  /** Which routing path produced the results */
+  match_type: AiIdentifyResponseMatchType;
+  _telemetry: _AiIdentifyResponseTelemetry;
+}
+
+export interface PhotoConfirmBody {
+  photoEventId: number;
+  resultId: number;
+}
+
+export interface PhotoConfirmResponse {
+  ok: boolean;
+  photoEventId: number;
+  confirmedResultId: number;
 }
 
 export interface AiReferenceBody {

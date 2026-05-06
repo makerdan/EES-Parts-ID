@@ -2,7 +2,8 @@
  * Integration tests for POST /api/ai/identify.
  *
  * The OpenAI client is mocked so no live API key is required.
- * The database is NOT exercised by these tests.
+ * The database IS used for catalog lookup and telemetry, but test data
+ * won't match any real rows so results will always be empty arrays.
  */
 
 // ── Mock OpenAI integration BEFORE app is imported ───────────────────────────
@@ -38,6 +39,22 @@ import { closePool } from "./helpers/testDb";
 // Minimal valid base64 string (1×1 white pixel JPEG)
 const TINY_BASE64_JPEG =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAABgUEB//EAB4QAAEEAgMAAAAAAAAAAAAAAAEAAgMREiExQf/EABUBAQEAAAAAAAAAAAAAAAAAAAID/8QAFxEBAQEBAAAAAAAAAAAAAAAAAQACEf/aAAwDAQACEQMRAD8AoN1tq+bNT5e1C7RERFk//9k=";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Returns a valid Vision contract JSON string for the given overrides. */
+function visionContent(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    catalog_guess:      null,
+    vendor_guess:       null,
+    type_guess:         null,
+    attributes:         null,
+    descriptive_tokens: [] as string[],
+    confidence:         null,
+    notes:              null,
+    ...overrides,
+  });
+}
 
 beforeAll(() => {
   process.env.ADMIN_PASSWORD = "jest-ai-test-secret";
@@ -80,13 +97,14 @@ describe("POST /api/ai/identify", () => {
       choices: [
         {
           message: {
-            content: JSON.stringify({
-              searchTerms: ["circuit breaker", "BR120"],
-              synonyms: ["breaker"],
-              relatedTerms: ["panel", "load center"],
-              manufacturerVerified: true,
-              detectedVendor: "Eaton",
-              summary: "Single pole 20A residential circuit breaker.",
+            content: visionContent({
+              catalog_guess:      "BR120",
+              vendor_guess:       "Eaton",
+              type_guess:         "circuit breaker",
+              attributes:         { amperage: 20, poles: 1, voltage: null, trade_size_in: null, color: null },
+              descriptive_tokens: ["circuit breaker", "BR120"],
+              confidence:         0.92,
+              notes:              "Single pole 20A residential circuit breaker.",
             }),
           },
         },
@@ -105,6 +123,7 @@ describe("POST /api/ai/identify", () => {
     expect(res.body).toHaveProperty("detectedVendor");
     expect(res.body).toHaveProperty("summary");
     expect(res.body).toHaveProperty("results");
+    expect(res.body).toHaveProperty("match_type");
 
     expect(Array.isArray(res.body.searchTerms)).toBe(true);
     expect(res.body.searchTerms).toContain("circuit breaker");
@@ -113,7 +132,7 @@ describe("POST /api/ai/identify", () => {
     expect(Array.isArray(res.body.results)).toBe(true);
   });
 
-  it("returns 200 with defaults when the AI response contains malformed JSON", async () => {
+  it("returns 422 when the AI response contains no extractable JSON", async () => {
     mockCreate.mockResolvedValueOnce({
       choices: [{ message: { content: "This part looks like a breaker. No JSON here." } }],
     });
@@ -121,13 +140,10 @@ describe("POST /api/ai/identify", () => {
     const res = await supertest(app)
       .post("/api/ai/identify")
       .send({ images: [TINY_BASE64_JPEG] })
-      .expect(200);
+      .expect(422);
 
-    // normalizeAnalysis provides safe defaults when JSON extraction fails
-    expect(Array.isArray(res.body.searchTerms)).toBe(true);
-    expect(typeof res.body.manufacturerVerified).toBe("boolean");
-    expect(res.body.manufacturerVerified).toBe(false);
-    expect(res.body.detectedVendor).toBeNull();
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/could not identify/i);
   });
 
   it("returns 200 with empty defaults when the AI response is an empty object", async () => {
@@ -145,7 +161,8 @@ describe("POST /api/ai/identify", () => {
     expect(res.body.relatedTerms).toEqual([]);
     expect(res.body.manufacturerVerified).toBe(false);
     expect(res.body.detectedVendor).toBeNull();
-    expect(res.body.summary).toBe("");
+    // summary defaults to "Part identified" when no fields are populated
+    expect(typeof res.body.summary).toBe("string");
   });
 
   it("passes optional context fields to the AI prompt (smoke test)", async () => {
@@ -153,13 +170,11 @@ describe("POST /api/ai/identify", () => {
       choices: [
         {
           message: {
-            content: JSON.stringify({
-              searchTerms: ["switch"],
-              synonyms: [],
-              relatedTerms: [],
-              manufacturerVerified: false,
-              detectedVendor: null,
-              summary: "A switch.",
+            content: visionContent({
+              vendor_guess:       null,
+              type_guess:         "toggle switch",
+              descriptive_tokens: ["switch", "toggle"],
+              confidence:         0.75,
             }),
           },
         },
