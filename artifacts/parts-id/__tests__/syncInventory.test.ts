@@ -226,7 +226,93 @@ describe("syncAllInventory — in-flight guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Retry exhaustion — setSyncError called after all retries fail
+// 3. Storage failure tolerance — cache write error does not surface as sync error
+// ---------------------------------------------------------------------------
+
+describe("syncAllInventory — storage failure tolerance", () => {
+  it("does not call setSyncError(true) when the large cache write fails but page fetches succeed", async () => {
+    const fetchMock = jest.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/inventory?")) {
+        return Promise.resolve(emptyInventoryResponse());
+      }
+      return Promise.resolve(categoriesResponse());
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    // First call = version key write (small, must succeed).
+    // Second call = large cache write (throws quota error).
+    let storageCallCount = 0;
+    const storage = {
+      multiSet: jest.fn().mockImplementation(() => {
+        storageCallCount++;
+        if (storageCallCount === 1) return Promise.resolve(undefined);
+        return Promise.reject(new Error("QuotaExceededError: The quota has been exceeded."));
+      }),
+    };
+
+    const syncInFlightRef = { current: false };
+    const callbacks = makeCallbacks();
+
+    await syncAllInventory({
+      ...OPTS_BASE,
+      serverVersion: "v42",
+      syncInFlightRef,
+      callbacks,
+      storage,
+    });
+
+    // Sync must NOT show an error banner — the page fetches all succeeded.
+    expect(callbacks.setSyncError).not.toHaveBeenCalledWith(true);
+    // In-flight ref must be cleared so future syncs can run.
+    expect(syncInFlightRef.current).toBe(false);
+    // setIsSyncing(false) must have been called (spinner clears).
+    expect(callbacks.setIsSyncing).toHaveBeenLastCalledWith(false);
+    // The in-memory index must have been built despite the storage failure.
+    expect(callbacks.buildFuseIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it("does call setSyncError(true) when the version key write fails (page fetch succeeds)", async () => {
+    jest.useFakeTimers();
+    try {
+      const fetchMock = jest.fn().mockImplementation((url: string) => {
+        if (typeof url === "string" && url.includes("/inventory?")) {
+          return Promise.resolve(emptyInventoryResponse());
+        }
+        return Promise.resolve(categoriesResponse());
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      // Version-key write fails — this propagates out of attemptSync and triggers retries.
+      const storage = {
+        multiSet: jest.fn().mockRejectedValue(new Error("QuotaExceededError")),
+      };
+
+      const syncInFlightRef = { current: false };
+      const callbacks = makeCallbacks();
+
+      const syncPromise = syncAllInventory({
+        ...OPTS_BASE,
+        serverVersion: "v42",
+        syncInFlightRef,
+        callbacks,
+        storage,
+      });
+
+      // Advance through all exponential-backoff delays (2s + 4s + 8s = 14s).
+      await jest.runAllTimersAsync();
+      await syncPromise;
+
+      // Version write failure IS a real error — all retries exhaust and banner appears.
+      expect(callbacks.setSyncError).toHaveBeenCalledWith(true);
+      expect(syncInFlightRef.current).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Retry exhaustion — setSyncError called after all retries fail
 // ---------------------------------------------------------------------------
 
 describe("syncAllInventory — retry exhaustion", () => {
