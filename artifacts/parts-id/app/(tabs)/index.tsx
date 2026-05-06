@@ -1205,6 +1205,22 @@ export default function SearchScreen() {
                 />
               </View>
 
+              {/* Warehouse shelf view toggle */}
+              <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Warehouse shelf view</Text>
+                  <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                    Shows all shelves in a section at once.
+                  </Text>
+                </View>
+                <Switch
+                  value={settings.warehouseShelfView}
+                  onValueChange={v => updateSetting("warehouseShelfView", v)}
+                  trackColor={{ false: colors.muted, true: colors.primary + "99" }}
+                  thumbColor={settings.warehouseShelfView ? colors.primary : colors.mutedForeground}
+                />
+              </View>
+
               {/* Default confidence threshold row */}
               <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 2 }]}>
                 <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Default min confidence</Text>
@@ -1339,6 +1355,7 @@ export default function SearchScreen() {
           fontScale={textFontScale}
           onEditKeywords={setEditItem}
           shelfViewEnabled={settings.shelfViewEnabled}
+          warehouseShelfView={settings.warehouseShelfView}
         />
       ) : null}
 
