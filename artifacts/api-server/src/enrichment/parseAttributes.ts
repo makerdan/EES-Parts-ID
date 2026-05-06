@@ -197,6 +197,71 @@ export function parseVoltage(text: string | null | undefined): number | null {
   return VALID.has(n) ? n : null;
 }
 
+// ── Fraction / decimal table for free-text trade-size parsing ───────────────
+
+const FRAC_MAP: Array<[RegExp, number]> = [
+  [/\b7\/8\b/, 7 / 8],
+  [/\b3\/4\b/, 3 / 4],
+  [/\b5\/8\b/, 5 / 8],
+  [/\b1\/2\b/, 1 / 2],
+  [/\b3\/8\b/, 3 / 8],
+  [/\b1\/4\b/, 1 / 4],
+  [/\b1\/8\b/, 1 / 8],
+];
+
+/**
+ * Parse a trade size from a free-text string, returning the value in inches.
+ *
+ * Handles:
+ *   - Fractions:        "1/2"", "3/4 inch"
+ *   - Mixed numbers:    "1 1/2"", "2-1/2 in", "1-1/4""
+ *   - Decimals:         "0.5 in", "2.5""
+ *   - Whole numbers:    "2 inch", "3 in"
+ *   - mm suffix:        "25mm", "50 mm" (converted via ÷ 25.4)
+ *
+ * Returns null when no recognizable trade-size pattern is found or the
+ * resulting value is outside the plausible conduit range (0 < x ≤ 12).
+ */
+export function parseTradeSize(text: string | null | undefined): number | null {
+  if (!text) return null;
+  const t = text.trim();
+  if (!t) return null;
+
+  // ── mm suffix ────────────────────────────────────────────────────────────
+  const mmMatch = t.match(/\b(\d+(?:\.\d+)?)\s*mm\b/i);
+  if (mmMatch) {
+    const val = parseFloat(mmMatch[1]!) / 25.4;
+    return val > 0 && val <= 12 ? Math.round(val * 1000) / 1000 : null;
+  }
+
+  // ── Mixed number: "1 1/2", "2-1/2", "1-1/4" ─────────────────────────────
+  const mixedMatch = t.match(/\b(\d+)[\s-](\d+)\/(\d+)\b/);
+  if (mixedMatch) {
+    const whole = parseInt(mixedMatch[1]!, 10);
+    const num = parseInt(mixedMatch[2]!, 10);
+    const den = parseInt(mixedMatch[3]!, 10);
+    if (den !== 0) {
+      const val = whole + num / den;
+      return val > 0 && val <= 12 ? val : null;
+    }
+  }
+
+  // ── Simple fraction: "1/2", "3/4" ────────────────────────────────────────
+  for (const [re, val] of FRAC_MAP) {
+    if (re.test(t)) return val;
+  }
+
+  // ── Decimal or whole number with inch suffix ─────────────────────────────
+  // Note: \b only follows word tokens (in/inch/inches), not the " mark itself.
+  const decMatch = t.match(/\b(\d+(?:\.\d+)?)\s*(?:"|(?:in\.?|inch(?:es)?)\b)/i);
+  if (decMatch) {
+    const val = parseFloat(decMatch[1]!);
+    return val > 0 && val <= 12 ? val : null;
+  }
+
+  return null;
+}
+
 /**
  * Extract mounting type from any free-text string.
  *

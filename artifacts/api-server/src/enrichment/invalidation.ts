@@ -30,11 +30,14 @@ export const CURRENT_PARSER_VERSION = 2;
  *      (updatedAt > enrichedAt) — description change, catalog rename, etc.
  *   3. The stored prompt version is older than CURRENT_PROMPT_VERSION,
  *      meaning the AI was given a different (worse) prompt last time.
+ *   4. The stored parser version is older than CURRENT_PARSER_VERSION,
+ *      meaning the parse logic has improved and attributes need refreshing.
  */
 export function shouldReenrich(item: {
   enrichedAt: Date | null | undefined;
   updatedAt: Date | null | undefined;
   promptVersion: number | null | undefined;
+  catalogParse?: { parser_version?: number } | null | undefined;
 }): boolean {
   if (!item.enrichedAt) return true;
 
@@ -47,6 +50,10 @@ export function shouldReenrich(item: {
   }
 
   if ((item.promptVersion ?? 0) < CURRENT_PROMPT_VERSION) return true;
+
+  const storedParserVersion =
+    (item.catalogParse as { parser_version?: number } | null)?.parser_version ?? 0;
+  if (storedParserVersion < CURRENT_PARSER_VERSION) return true;
 
   return false;
 }
