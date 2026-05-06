@@ -15,12 +15,13 @@
  */
 
 import { db, pool } from "@workspace/db";
-import { inventoryTable } from "@workspace/db";
+import { inventoryTable, synonymGroupTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { generateKeywords } from "../utils/generateKeywords";
 import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel, isConduitOrPipe } from "../utils/tradeSize";
 import { deriveAttrs, parseTradeSize } from "../enrichment/parseAttributes";
 import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from "../enrichment/invalidation";
+import { buildSearchTokens, SynonymGroupRow } from "../enrichment/buildSearchTokens";
 
 const BATCH_SIZE   = parseInt(process.env["ENRICH_BATCH_SIZE"]   ?? "10",  10);
 const CONCURRENCY  = parseInt(process.env["ENRICH_CONCURRENCY"]  ?? "5",   10);
@@ -52,6 +53,14 @@ async function enrichWithRetry(
 }
 
 async function bulkEnrich() {
+  // Load synonym groups once — avoids a per-item DB round-trip and keeps
+  // search_tokens consistent with the /enrich and rebuild endpoints.
+  const synonymGroups: SynonymGroupRow[] = await db
+    .select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms })
+    .from(synonymGroupTable);
+
+  console.log(`Loaded ${synonymGroups.length} synonym groups for token expansion.`);
+
   // Mirrors the shouldReenrich() logic as a SQL predicate so bulk runs
   // also pick up items stale due to prompt / parser version changes.
   const NEEDS_ENRICH_SQL = sql`(
@@ -131,6 +140,15 @@ async function bulkEnrich() {
                ?? parseTradeSize(item.description)
                ?? parseTradeSize(item.catalog))
             : null;
+          const searchTokens = buildSearchTokens(
+            {
+              catalog: item.catalog,
+              description: item.description ?? "",
+              vendor: item.vendor,
+              aiKeywords: merged,
+            },
+            synonymGroups,
+          );
           await db
             .update(inventoryTable)
             .set({
@@ -139,6 +157,7 @@ async function bulkEnrich() {
               enrichedAt: new Date(),
               updatedAt: new Date(),
               promptVersion: CURRENT_PROMPT_VERSION,
+              searchTokens,
               // Materialized parse attrs (idempotent — same result every time)
               catalogParse: attrs.catalogParse as Record<string, unknown> | null,
               amperage: attrs.amperage,
