@@ -52,6 +52,7 @@ import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/conte
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
 import { parseTradeSizeInches, isConduitOrPipe } from "@/lib/tradeSize";
+import { syncAllInventory as syncAllInventoryCore } from "@/lib/syncInventory";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v3";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v2";
@@ -405,104 +406,34 @@ export default function SearchScreen() {
     });
   }, []);
 
-  // Fetch all inventory items in pages and build the Fuse cache
+  // Fetch all inventory items in pages and build the Fuse cache.
+  // Core logic lives in lib/syncInventory.ts so it can be unit-tested in
+  // isolation; this wrapper wires up the component state callbacks and the
+  // UI-only syncStartedAtRef timing used for the warning popup.
   const syncAllInventory = useCallback(async (serverVersion?: string) => {
-    const PAGE_SIZE = 1000;
-    const PAGE_TIMEOUT_MS = 30_000;
-    // Automatically retry up to MAX_AUTO_RETRIES times before giving up and
-    // showing the manual-retry banner. Backoff doubles each attempt: 2 s, 4 s,
-    // 8 s. The banner shows "Retrying (1/3)…" so workers know something is
-    // happening without needing to act.
-    const MAX_AUTO_RETRIES = 3;
-
-    // Inner function: one full sync attempt (all pages + secondary caches).
-    const attemptSync = async () => {
-      let page = 1;
-      let total = 0;
-      const allItems: InventoryItem[] = [];
-      do {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS);
-        let res: Response;
-        try {
-          res = await fetch(
-            `${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`,
-            { signal: controller.signal, cache: 'no-store' },
-          );
-        } finally {
-          clearTimeout(timeoutId);
-        }
-        if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
-        const data: { items: InventoryItem[]; total: number } = await res.json();
-        if (data.items.length === 0) break;
-        total = data.total;
-        allItems.push(...data.items);
-        setSyncProgress({ loaded: allItems.length, total });
-        page++;
-      } while (allItems.length < total);
-
-      buildFuseIndex(allItems);
-      const ops: [string, string][] = [[FUSE_CACHE_KEY, JSON.stringify(allItems)]];
-      if (serverVersion) ops.push([INVENTORY_VERSION_KEY, serverVersion]);
-      try {
-        const aRes = await fetch(`${API_BASE}/categories/assignments`);
-        if (aRes.ok) {
-          const aData = (await aRes.json()) as { assignments: AssignmentRecord[] };
-          const slim = aData.assignments.map(a => ({
-            inventoryId: a.inventoryId,
-            typeSlug: a.typeSlug,
-          }));
-          ops.push([ASSIGNMENTS_CACHE_KEY, JSON.stringify(slim)]);
-        }
-      } catch { /* keep prior cache */ }
-      try {
-        const tRes = await fetch(`${API_BASE}/categories/tree`);
-        if (tRes.ok) {
-          const tData = (await tRes.json()) as { tree: unknown };
-          ops.push([BROWSE_TREE_CACHE_KEY, JSON.stringify(tData.tree)]);
-        }
-      } catch { /* keep prior cache */ }
-      await AsyncStorage.multiSet(ops);
-    };
-
+    // Guard here mirrors the core guard so we only touch syncStartedAtRef
+    // when a new sync is actually going to start. Without this, a concurrent
+    // call would reset the timestamp that the warning-popup ETA relies on.
     if (syncInFlightRef.current) return;
-
-    setSyncError(false);
-    setSyncRetry(null);
-    setIsSyncing(true);
     syncStartedAtRef.current = Date.now();
-    syncInFlightRef.current = true;
-
-    let lastErr: unknown;
-    try {
-      for (let attempt = 0; attempt <= MAX_AUTO_RETRIES; attempt++) {
-        if (attempt > 0) {
-          // Show "Retrying (n/MAX)…" and wait with exponential backoff.
-          setSyncRetry({ attempt, max: MAX_AUTO_RETRIES });
-          setSyncProgress(null);
-          await new Promise<void>(r => setTimeout(r, Math.pow(2, attempt) * 1000));
-        }
-        try {
-          await attemptSync();
-          // Success — clear any retry indicator and exit.
-          setSyncRetry(null);
-          lastErr = undefined;
-          break;
-        } catch (err) {
-          lastErr = err;
-        }
-      }
-
-      if (lastErr !== undefined) {
-        setSyncError(true);
-      }
-    } finally {
-      setSyncProgress(null);
-      setSyncRetry(null);
-      setIsSyncing(false);
-      syncStartedAtRef.current = null;
-      syncInFlightRef.current = false;
-    }
+    await syncAllInventoryCore({
+      apiBase: API_BASE,
+      syncInFlightRef,
+      callbacks: {
+        setIsSyncing,
+        setSyncProgress,
+        setSyncError,
+        setSyncRetry,
+        buildFuseIndex,
+      },
+      storage: AsyncStorage,
+      fuseKey: FUSE_CACHE_KEY,
+      versionKey: INVENTORY_VERSION_KEY,
+      assignmentsKey: ASSIGNMENTS_CACHE_KEY,
+      treeKey: BROWSE_TREE_CACHE_KEY,
+      serverVersion,
+    });
+    syncStartedAtRef.current = null;
   }, [buildFuseIndex]);
 
   // Auto-dismiss the warning popup the moment sync finishes — prevents the modal
