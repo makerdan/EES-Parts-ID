@@ -1285,6 +1285,7 @@ router.post("/rebuild-search-tokens", requireAdminAuth, async (_req, res) => {
     const BATCH_SIZE = 500;
     let processed = 0;
     let errors = 0;
+    let lastId = 0;
 
     while (true) {
       const batch = await db
@@ -1296,8 +1297,9 @@ router.post("/rebuild-search-tokens", requireAdminAuth, async (_req, res) => {
           aiKeywords: inventoryTable.aiKeywords,
         })
         .from(inventoryTable)
-        .limit(BATCH_SIZE)
-        .offset(processed + errors);
+        .where(sql`${inventoryTable.id} > ${lastId}`)
+        .orderBy(inventoryTable.id)
+        .limit(BATCH_SIZE);
 
       if (batch.length === 0) break;
 
@@ -1315,6 +1317,7 @@ router.post("/rebuild-search-tokens", requireAdminAuth, async (_req, res) => {
         }
       }
 
+      lastId = batch[batch.length - 1]!.id;
       if (batch.length < BATCH_SIZE) break;
     }
 
