@@ -16,7 +16,7 @@
 --     ('fts', 'trigram', 'exact_catalog', 'fuse_fallback', 'vendor_boost').
 
 CREATE TABLE IF NOT EXISTS "search_event" (
-  "id"               serial PRIMARY KEY,
+  "id"               bigserial PRIMARY KEY,
   "ts"               timestamptz NOT NULL DEFAULT now(),
   "query_raw"        text NOT NULL,
   "query_normalized" text NOT NULL,
@@ -34,10 +34,10 @@ CREATE INDEX IF NOT EXISTS "idx_search_event_query" ON "search_event" ("query_no
 --> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS "search_event_click" (
-  "id"              serial PRIMARY KEY,
-  "search_event_id" integer NOT NULL REFERENCES "search_event"("id") ON DELETE CASCADE,
+  "id"              bigserial PRIMARY KEY,
+  "search_event_id" bigint NOT NULL REFERENCES "search_event"("id") ON DELETE CASCADE,
   "ts"              timestamptz NOT NULL DEFAULT now(),
-  "result_id"       integer NOT NULL,
+  "result_id"       integer NOT NULL REFERENCES "inventory"("id") ON DELETE SET NULL,
   "result_rank"     integer NOT NULL,
   "action"          text NOT NULL
 );

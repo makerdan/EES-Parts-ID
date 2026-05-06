@@ -219,16 +219,25 @@ router.post("/search", async (req, res) => {
     const allSearchText = [keywords, catalogInput, vendorInput, color, size, material, textNumbers]
       .filter(Boolean).join(" ");
 
-    if (!allSearchText.trim()) {
-      return void res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
-    }
-
     // ── Step 1: Unicode normalization (telemetry + pre-processing) ───────────
-    // normalizeQuery runs first — trim, collapse whitespace, lowercase, strip
-    // diacritics via NFKD — so the value stored in search_event.query_normalized
-    // reflects the query exactly as the pipeline saw it, before measurement
-    // expansion or dictionary lookups change the token set.
+    // normalizeQuery runs first — before any expansion — so query_normalized
+    // in search_event captures the input exactly as the pipeline first saw it.
     const queryNormalizedForTelemetry = normalizeQuery(allSearchText);
+
+    if (!allSearchText.trim()) {
+      // Log a telemetry event even for empty queries so coverage is complete.
+      void logSearchEvent({
+        queryRaw: allSearchText,
+        queryNormalized: queryNormalizedForTelemetry,
+        querySource,
+        filtersJson: {},
+        resultsCount: 0,
+        topResultId: null,
+        latencyMs: Math.round(performance.now() - startTime),
+        layersHit: [],
+      });
+      return void res.json({ results: [], totalMatches: 0, belowThreshold: 0, _telemetry: { searchEventId: null } });
+    }
 
     // ── Step 2: Domain normalization (measurement units, abbreviations) ──────
     const normalized = normalizeMeasurement(allSearchText);
