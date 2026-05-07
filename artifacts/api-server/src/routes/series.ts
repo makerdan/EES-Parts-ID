@@ -266,17 +266,28 @@ router.post("/:id/items", requireAdmin, async (req, res) => {
 // Reads all distinct (vendor, catalog_parse->>'series') pairs, upserts a
 // product_series row for each, and bulk-sets series_id on matching inventory
 // rows. Streams progress via SSE. Idempotent — safe to re-run.
+//
+// A simple in-memory lock prevents two concurrent runs from racing each other.
+// A second POST while one is already in progress receives HTTP 409.
+let autoAssignRunning = false;
+
 router.post("/auto-assign", requireAdmin, async (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
+  if (autoAssignRunning) {
+    res.status(409).json({ error: "auto-assign already running" });
+    return;
+  }
+  autoAssignRunning = true;
 
   const sendEvent = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
   try {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
     sendEvent({ status: "started" });
 
     // 1. Gather all distinct (vendor, series) pairs from catalog_parse
@@ -337,6 +348,7 @@ router.post("/auto-assign", requireAdmin, async (req, res) => {
     console.error("[series/auto-assign]", err);
     sendEvent({ status: "error", error: err instanceof Error ? err.message : "Unknown error" });
   } finally {
+    autoAssignRunning = false;
     res.end();
   }
 });
