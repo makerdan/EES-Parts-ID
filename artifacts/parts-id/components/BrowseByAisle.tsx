@@ -261,7 +261,7 @@ export function BrowseByAisle({
 // ── Visual shelf view ─────────────────────────────────────────────────────────
 
 const BIN_SLOT_W = 84;
-const BIN_SLOT_H = 72;
+const BIN_SLOT_H = 88;
 const GAP_BASE   = 8;   // minimum px gap between slots
 const GAP_PER_POS = 7;  // additional px per position unit of separation
 
@@ -393,7 +393,6 @@ const shelfStyles = StyleSheet.create({
   slot: {
     width: BIN_SLOT_W,
     height: BIN_SLOT_H,
-    overflow: "hidden",
     padding: 8,
     borderRadius: 8,
     borderWidth: 1,
