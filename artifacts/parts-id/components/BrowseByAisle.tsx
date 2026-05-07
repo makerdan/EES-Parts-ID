@@ -261,7 +261,7 @@ export function BrowseByAisle({
 // ── Visual shelf view ─────────────────────────────────────────────────────────
 
 const BIN_SLOT_W = 84;
-const BIN_SLOT_H = 68;
+const BIN_SLOT_H = 76;
 const GAP_BASE   = 8;   // minimum px gap between slots
 const GAP_PER_POS = 7;  // additional px per position unit of separation
 
@@ -393,7 +393,8 @@ const shelfStyles = StyleSheet.create({
   slot: {
     width: BIN_SLOT_W,
     height: BIN_SLOT_H,
-    padding: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
     borderRadius: 8,
     borderWidth: 1,
     justifyContent: "flex-end",
@@ -444,7 +445,6 @@ function SectionShelfView({
     <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
       {shelves.map((shelf, shelfIdx) => (
         <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
-          <View style={sectionStyles.shelfPlank} />
           <Text style={[sectionStyles.shelfLabel, { color: colors.foreground }]}>
             {`${shelf.label} · ${shelf.partCount} ${shelf.partCount === 1 ? "part" : "parts"}`}
           </Text>
