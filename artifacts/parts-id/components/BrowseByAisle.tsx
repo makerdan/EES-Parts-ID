@@ -574,14 +574,9 @@ function Header({
         </Text>
       </Pressable>
       <View style={styles.crumbWrap}>
-        <Pressable onPress={onHome} hitSlop={6}>
-          <Text style={[styles.crumbHome, { color: colors.primary }]} numberOfLines={1}>
-            Browse by Aisle
-          </Text>
-        </Pressable>
         {parts.length > 0 ? (
           <Text style={[styles.crumbPath, { color: colors.mutedForeground }]} numberOfLines={1}>
-            {" "}› {parts.join(" › ")}
+            {parts.join(" › ")}
           </Text>
         ) : null}
       </View>
