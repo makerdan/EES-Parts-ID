@@ -445,6 +445,7 @@ function SectionShelfView({
     <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
       {shelves.map((shelf, shelfIdx) => (
         <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
+          {shelfIdx > 0 ? <View style={sectionStyles.shelfPlank} /> : null}
           <Text style={[sectionStyles.shelfLabel, { color: colors.foreground }]}>
             {`${shelf.label} · ${shelf.partCount} ${shelf.partCount === 1 ? "part" : "parts"}`}
           </Text>
