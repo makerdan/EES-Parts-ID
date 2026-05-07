@@ -361,10 +361,12 @@ export function KeywordEditor({
         const err = (await res.json()) as { error?: string };
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
-      setLocalSeriesName(seriesName);
+      const data = (await res.json()) as { ok: boolean; seriesName: string | null };
+      const resolvedName = data.seriesName;
+      setLocalSeriesName(resolvedName);
       setSeriesSearch("");
       setSeriesResults([]);
-      onSeriesChanged?.(current.id, seriesName);
+      onSeriesChanged?.(current.id, resolvedName);
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
     } catch (e) {
       setSeriesError(e instanceof Error ? e.message : "Failed to update series.");
