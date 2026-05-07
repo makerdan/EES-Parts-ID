@@ -411,3 +411,32 @@ describe("POST /api/series/auto-assign — idempotency", () => {
     expect(afterMap).toEqual(beforeMap);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Concurrency lock: a second POST while one is running returns 409
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/series/auto-assign — concurrency lock", () => {
+  it("returns 409 with 'already running' message when triggered concurrently", async () => {
+    const firstRequest = supertest(app)
+      .post("/api/series/auto-assign")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .set("Accept", "text/event-stream")
+      .buffer(true)
+      .parse((res, callback) => {
+        let data = "";
+        res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+        res.on("end", () => callback(null, data));
+      });
+
+    const secondRequest = supertest(app)
+      .post("/api/series/auto-assign")
+      .set("Authorization", `Bearer ${adminToken}`);
+
+    const [first, second] = await Promise.all([firstRequest, secondRequest]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(409);
+    expect((second.body as { error?: string }).error).toMatch(/already running/i);
+  });
+});
