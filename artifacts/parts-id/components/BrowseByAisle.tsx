@@ -392,7 +392,8 @@ const shelfStyles = StyleSheet.create({
   slotsRow:      { flexDirection: "row", alignItems: "flex-end" },
   slot: {
     width: BIN_SLOT_W,
-    minHeight: BIN_SLOT_H,
+    height: BIN_SLOT_H,
+    overflow: "hidden",
     padding: 8,
     borderRadius: 8,
     borderWidth: 1,
