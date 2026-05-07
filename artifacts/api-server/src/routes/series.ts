@@ -13,9 +13,18 @@
  */
 import { Router } from "express";
 import { eq, sql, and, not, inArray, ilike, or, isNull } from "drizzle-orm";
-import { db } from "@workspace/db";
+import { db, pool } from "@workspace/db";
 import { inventoryTable, productSeriesTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
+
+/** Minimal interface for the pg PoolClient used by the advisory lock. */
+interface PgPoolClient {
+  query<R extends Record<string, unknown> = Record<string, unknown>>(
+    queryText: string,
+    values?: unknown[],
+  ): Promise<{ rows: R[] }>;
+  release(destroy?: boolean): void;
+}
 
 const router = Router();
 
@@ -267,22 +276,38 @@ router.post("/:id/items", requireAdmin, async (req, res) => {
 // product_series row for each, and bulk-sets series_id on matching inventory
 // rows. Streams progress via SSE. Idempotent — safe to re-run.
 //
-// A simple in-memory lock prevents two concurrent runs from racing each other.
-// A second POST while one is already in progress receives HTTP 409.
-let autoAssignRunning = false;
+// Concurrency: a PostgreSQL session-level advisory lock prevents two concurrent
+// runs from racing each other — across processes and after server restarts.
+// A second POST while one is in progress receives HTTP 409.
+// The lock is automatically released by PostgreSQL if the server crashes
+// (session-scoped: the OS closes the TCP connection → PG drops the session).
+const ADVISORY_LOCK_KEY = 20250001; // stable arbitrary key for auto-assign job
 
-router.post("/auto-assign", requireAdmin, async (req, res) => {
-  if (autoAssignRunning) {
-    res.status(409).json({ error: "auto-assign already running" });
-    return;
-  }
-  autoAssignRunning = true;
-
+router.post("/auto-assign", requireAdmin, async (_req, res) => {
   const sendEvent = (data: object) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
+  // Acquire a dedicated connection to hold the advisory lock for the job's
+  // lifetime. The lock is session-scoped on this connection.
+  let lockClient: PgPoolClient | null = null;
+
   try {
+    lockClient = await pool.connect();
+
+    const { rows: lockRows } = await lockClient.query<{ pg_try_advisory_lock: boolean }>(
+      "SELECT pg_try_advisory_lock($1::bigint)",
+      [ADVISORY_LOCK_KEY],
+    );
+    const lockAcquired = lockRows[0]?.pg_try_advisory_lock ?? false;
+
+    if (!lockAcquired) {
+      lockClient.release();
+      lockClient = null;
+      res.status(409).json({ error: "auto-assign already running" });
+      return;
+    }
+
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -348,7 +373,15 @@ router.post("/auto-assign", requireAdmin, async (req, res) => {
     console.error("[series/auto-assign]", err);
     sendEvent({ status: "error", error: err instanceof Error ? err.message : "Unknown error" });
   } finally {
-    autoAssignRunning = false;
+    if (lockClient) {
+      try {
+        await lockClient.query("SELECT pg_advisory_unlock($1::bigint)", [ADVISORY_LOCK_KEY]);
+      } catch {
+        // Unlock errors are non-fatal; the lock will auto-release when the
+        // connection is eventually destroyed by the pool's idle timeout.
+      }
+      lockClient.release();
+    }
     res.end();
   }
 });
