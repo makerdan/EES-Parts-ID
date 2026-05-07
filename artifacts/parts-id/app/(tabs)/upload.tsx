@@ -653,6 +653,7 @@ export default function UploadScreen() {
   const [autoAssignRunning, setAutoAssignRunning] = useState(false);
   const [autoAssignProgress, setAutoAssignProgress] = useState<AutoAssignProgress | null>(null);
   const [autoAssignError, setAutoAssignError] = useState<string | null>(null);
+  const [autoAssignConflict, setAutoAssignConflict] = useState(false);
 
   const [seriesModalVisible, setSeriesModalVisible] = useState(false);
   const [activeSeries, setActiveSeries] = useState<SeriesRow | null>(null);
@@ -1219,6 +1220,7 @@ export default function UploadScreen() {
 
   const handleAutoAssign = async () => {
     setAutoAssignError(null);
+    setAutoAssignConflict(false);
     setAutoAssignProgress({ status: "started" });
     setAutoAssignRunning(true);
     try {
@@ -1227,6 +1229,12 @@ export default function UploadScreen() {
         method: "POST",
         headers: { Authorization: `Bearer ${token ?? ""}` },
       });
+      if (res.status === 409) {
+        setAutoAssignConflict(true);
+        setAutoAssignRunning(false);
+        setAutoAssignProgress(null);
+        return;
+      }
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({})) as { error?: string };
         setAutoAssignError(err.error ?? "Failed to start auto-assign");
@@ -2824,6 +2832,31 @@ export default function UploadScreen() {
                   </View>
                 ) : null}
 
+                {autoAssignConflict ? (
+                  <View
+                    style={[
+                      styles.infoBanner,
+                      { backgroundColor: colors.warning + "18", borderLeftColor: colors.warning },
+                    ]}
+                    accessibilityRole="alert"
+                    accessibilityLiveRegion="polite"
+                  >
+                    <Text style={[styles.infoBannerIcon, { color: colors.warning }]}>⏳</Text>
+                    <Text style={[styles.infoBannerText, { color: colors.warning }]} numberOfLines={3}>
+                      Auto-assign is already running. Wait for it to finish before starting again.
+                    </Text>
+                    <Pressable
+                      onPress={() => setAutoAssignConflict(false)}
+                      hitSlop={10}
+                      accessibilityRole="button"
+                      accessibilityLabel="Dismiss notice"
+                      style={styles.infoBannerDismiss}
+                    >
+                      <Text style={[styles.infoBannerDismissText, { color: colors.warning }]}>✕</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+
                 {autoAssignError ? (
                   <ErrorBanner message={autoAssignError} onDismiss={() => setAutoAssignError(null)} />
                 ) : null}
@@ -3605,6 +3638,11 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   enrichBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   enrichBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  infoBanner: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderLeftWidth: 3, borderRadius: 6, paddingVertical: 10, paddingLeft: 12, paddingRight: 8, marginVertical: 8 },
+  infoBannerIcon: { fontSize: 13, marginTop: 1, flexShrink: 0 },
+  infoBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 19, flexShrink: 1, flex: 1 },
+  infoBannerDismiss: { flexShrink: 0, paddingHorizontal: 4, paddingVertical: 2, marginTop: 1 },
+  infoBannerDismissText: { fontSize: 13, fontFamily: "Inter_700Bold", opacity: 0.7 },
   loadingContainer: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
   loadingText: { fontSize: 14, fontFamily: "Inter_400Regular" },
   emptyContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
