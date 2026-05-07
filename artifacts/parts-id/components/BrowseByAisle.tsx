@@ -261,7 +261,7 @@ export function BrowseByAisle({
 // ── Visual shelf view ─────────────────────────────────────────────────────────
 
 const BIN_SLOT_W = 84;
-const BIN_SLOT_H = 88;
+const BIN_SLOT_H = 68;
 const GAP_BASE   = 8;   // minimum px gap between slots
 const GAP_PER_POS = 7;  // additional px per position unit of separation
 
@@ -320,7 +320,7 @@ function ShelfView({
                       {p.bin.split("-").pop() ?? p.bin}
                     </Text>
                     <Text
-                      numberOfLines={2}
+                      numberOfLines={1}
                       style={[shelfStyles.slotName, { color: isSelected ? colors.primaryForeground : colors.foreground }]}
                     >
                       {p.item.catalog ?? p.item.description ?? "—"}
@@ -477,7 +477,7 @@ function SectionShelfView({
                         {p.bin.split("-").pop() ?? p.bin}
                       </Text>
                       <Text
-                        numberOfLines={2}
+                        numberOfLines={1}
                         style={[shelfStyles.slotName, { color: isSelected ? colors.primaryForeground : colors.foreground }]}
                       >
                         {p.item.catalog ?? p.item.description ?? "—"}
