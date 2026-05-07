@@ -36,8 +36,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   textSize: "normal",
   defaultConfidenceThreshold: 50,
   themeMode: "system",
-  shelfViewEnabled: false,
-  warehouseShelfView: false,
+  shelfViewEnabled: true,
+  warehouseShelfView: true,
 };
 
 const VALID_TEXT_SIZES: TextSize[] = ["small", "normal", "large"];
