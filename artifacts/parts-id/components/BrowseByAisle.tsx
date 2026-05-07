@@ -6,7 +6,7 @@
  * arrays, so workers can keep walking the warehouse with no signal.
  * Closing the overlay returns them to their prior search/filter state.
  */
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
@@ -76,6 +76,21 @@ export function BrowseByAisle({
     : crumbs.aisle
     ? "sections"
     : "aisles";
+
+  // ── Scroll-position restoration for the sections list ─────────────────────
+  const sectionsFlatListRef = useRef<FlatList>(null);
+  const sectionsScrollOffsetRef = useRef(0);
+  useEffect(() => {
+    if (level === "sections" && sectionsScrollOffsetRef.current > 0) {
+      const id = setTimeout(() => {
+        sectionsFlatListRef.current?.scrollToOffset({
+          offset: sectionsScrollOffsetRef.current,
+          animated: false,
+        });
+      }, 0);
+      return () => clearTimeout(id);
+    }
+  }, [level]);
 
   const goBack = () => {
     setCrumbs(c => {
@@ -176,6 +191,7 @@ export function BrowseByAisle({
 
       {level === "sections" && crumbs.aisle ? (
         <FlatList
+          ref={sectionsFlatListRef}
           data={crumbs.aisle.sections}
           keyExtractor={s => s.section}
           renderItem={({ item }) => (
@@ -186,6 +202,8 @@ export function BrowseByAisle({
               onPress={() => setCrumbs(c => ({ ...c, section: item, shelf: null }))}
             />
           )}
+          onScroll={e => { sectionsScrollOffsetRef.current = e.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={16}
           contentContainerStyle={styles.listContent}
         />
       ) : null}
