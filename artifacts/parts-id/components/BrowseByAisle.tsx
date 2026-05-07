@@ -498,6 +498,9 @@ function SectionShelfView({
             </View>
             <View style={[shelfStyles.rail, { backgroundColor: colors.muted, borderColor: colors.border }]} />
           </ScrollView>
+          {shelfIdx === shelves.length - 1 && shelf.partCount > 3 ? (
+            <View style={sectionStyles.shelfPlank} />
+          ) : null}
         </View>
       ))}
 
