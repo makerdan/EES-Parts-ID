@@ -575,7 +575,7 @@ function Header({
       </Pressable>
       <View style={styles.crumbWrap}>
         {parts.length > 0 ? (
-          <Text style={[styles.crumbPath, { color: colors.mutedForeground }]} numberOfLines={1}>
+          <Text style={[styles.crumbPath, { color: "#000000" }]} numberOfLines={1}>
             {parts.join(" › ")}
           </Text>
         ) : null}
@@ -650,9 +650,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "nowrap",
     alignItems: "center",
+    justifyContent: "center",
   },
   crumbHome: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  crumbPath: { fontSize: 12, fontFamily: "Inter_400Regular", flexShrink: 1 },
+  crumbPath: { fontSize: 12, fontFamily: "Inter_700Bold", flexShrink: 1, textAlign: "center" },
   drillRow: {
     flexDirection: "row",
     alignItems: "center",
