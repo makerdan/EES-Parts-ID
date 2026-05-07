@@ -463,14 +463,21 @@ export function KeywordEditor({
 
   // ── AI suggestion ──────────────────────────────────────────────────────────
   const handleSuggest = async () => {
+    console.log("[suggest-description] handleSuggest called");
     const current = itemRef.current;
-    if (!current) return;
+    if (!current) {
+      console.warn("[suggest-description] itemRef.current is null — aborting");
+      return;
+    }
+    console.log("[suggest-description] calling mutateAsync with id:", current.id, typeof current.id);
     setSuggestError(null);
     setSuggestion(null);
     try {
       const res = await suggestMutation.mutateAsync({ id: current.id });
+      console.log("[suggest-description] success, res:", res);
       setSuggestion(res.description);
-    } catch {
+    } catch (err) {
+      console.error("[suggest-description] failed:", err);
       setSuggestError("Couldn't generate a suggestion. Please try again.");
     }
   };
