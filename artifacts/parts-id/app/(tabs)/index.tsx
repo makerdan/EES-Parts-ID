@@ -228,6 +228,7 @@ export default function SearchScreen() {
   const [mode, setMode] = useState<Mode>("search");
   const [browseResults, setBrowseResults] = useState<SearchResult[] | null>(null);
   const [browseSelectedNode, setBrowseSelectedNode] = useState<CategoryTreeNode | null>(null);
+  const [browsePop, setBrowsePop] = useState(0);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
   // Restore last-used mode from AsyncStorage
@@ -1465,7 +1466,7 @@ export default function SearchScreen() {
         ) : null}
         {mode === "browse" ? (
           <View>
-            <BrowseTaxonomy onSelectNode={handleBrowseNodeChange} />
+            <BrowseTaxonomy onSelectNode={handleBrowseNodeChange} popTrigger={browsePop} />
             {browseLoading ? (
               <Text style={[styles.refinementHint, { color: colors.mutedForeground }]}>
                 Loading items in {browseSelectedNode?.name ?? "category"}…
@@ -1498,7 +1499,7 @@ export default function SearchScreen() {
             {/* Results header */}
             {hasResults && mode === "browse" ? (
               <Pressable
-                onPress={() => handleBrowseNodeChange(null)}
+                onPress={() => setBrowsePop(p => p + 1)}
                 hitSlop={8}
                 style={styles.browseBackBtn}
               >
