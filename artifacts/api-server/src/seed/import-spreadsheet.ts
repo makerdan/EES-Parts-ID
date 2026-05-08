@@ -32,6 +32,7 @@ import { inventoryTable } from '@workspace/db';
 import { sql } from 'drizzle-orm';
 import { aggregateRowsByPart } from '../utils/binLocations';
 import { deriveTradeSizeTokens } from '../utils/tradeSize';
+import { refreshSearchTokensForIds } from '../enrichment/refreshSearchTokens';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -109,6 +110,11 @@ async function importSpreadsheet() {
   let inserted = 0;
   let updated = 0;
   let errors = 0;
+  // Collect every id we touch so we can refresh search_tokens (and merge
+  // derived trade-size keyword tokens) once the import finishes — without
+  // this step the index would silently lag the spreadsheet for up to the
+  // next enrichment / rebuild-tokens pass.
+  const touchedIds: number[] = [];
 
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
     const batch = items.slice(i, i + BATCH_SIZE);
@@ -155,6 +161,7 @@ async function importSpreadsheet() {
       for (const row of result) {
         if (row.isNew) inserted++;
         else updated++;
+        touchedIds.push(row.id);
       }
     } catch (err) {
       console.error(`Batch ${i}–${i + batch.length} failed:`, err);
@@ -172,6 +179,12 @@ async function importSpreadsheet() {
   console.log(`Updated:  ${updated}`);
   console.log(`Errors:   ${errors}`);
   console.log(`Total:    ${inserted + updated + errors}`);
+
+  if (touchedIds.length > 0) {
+    console.log(`\nRefreshing search_tokens for ${touchedIds.length} rows…`);
+    await refreshSearchTokensForIds(touchedIds);
+    console.log('search_tokens refresh complete.');
+  }
 
   await pool.end();
 }
