@@ -1445,7 +1445,7 @@ export default function SearchScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.filterCard}>
           <FilterPanel
             values={filters}
             onChange={handleChange}
@@ -1754,15 +1754,7 @@ const styles = StyleSheet.create({
   searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   filterCard: {
     marginHorizontal: 12,
-    // Extra bottom margin opens up breathing room between the (collapsed)
-    // Advanced Filters bar and the results list directly below it.
-    marginBottom: 12,
-    // Slimmer outer padding makes the card itself thinner; combined with
-    // the slimmer FilterPanel container padding, the collapsed bar takes
-    // noticeably less vertical space.
-    padding: 8,
-    borderRadius: 12,
-    borderWidth: 1,
+    marginBottom: 6,
   },
   aisleEntryBtn: {
     flexDirection: "row",
