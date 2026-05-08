@@ -78,7 +78,7 @@ export function buildSearchTokens(
     abbreviationMaps?: AbbreviationMapRow[];
     slangMaps?: SlangMapRow[];
     misspellingMaps?: MisspellingMapRow[];
-  },
+  }
 ): string {
   // ── Step 1: Build base text and word set ──────────────────────────────────
   // Join all source fields into a single lowercased string for phrase matching,

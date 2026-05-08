@@ -1714,10 +1714,27 @@ router.post('/rebuild-search-tokens', requireAdminAuth, async (_req, res) => {
     const currentVersion = versionRow?.version ?? 0;
 
     const [synonymGroups, abbreviationMaps, slangMaps, misspellingMaps] = await Promise.all([
-      db.select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms }).from(synonymGroupTable),
-      db.select({ abbreviation: abbreviationMapTable.abbreviation, expansions: abbreviationMapTable.expansions }).from(abbreviationMapTable),
-      db.select({ slangTerm: electricalSlangMapTable.slangTerm, standardTerms: electricalSlangMapTable.standardTerms }).from(electricalSlangMapTable),
-      db.select({ misspelling: misspellingMapTable.misspelling, correction: misspellingMapTable.correction }).from(misspellingMapTable),
+      db
+        .select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms })
+        .from(synonymGroupTable),
+      db
+        .select({
+          abbreviation: abbreviationMapTable.abbreviation,
+          expansions: abbreviationMapTable.expansions,
+        })
+        .from(abbreviationMapTable),
+      db
+        .select({
+          slangTerm: electricalSlangMapTable.slangTerm,
+          standardTerms: electricalSlangMapTable.standardTerms,
+        })
+        .from(electricalSlangMapTable),
+      db
+        .select({
+          misspelling: misspellingMapTable.misspelling,
+          correction: misspellingMapTable.correction,
+        })
+        .from(misspellingMapTable),
     ]);
 
     const BATCH_SIZE = 500;
@@ -1743,7 +1760,11 @@ router.post('/rebuild-search-tokens', requireAdminAuth, async (_req, res) => {
 
       for (const item of batch) {
         try {
-          const tokens = buildSearchTokens(item, synonymGroups, { abbreviationMaps, slangMaps, misspellingMaps });
+          const tokens = buildSearchTokens(item, synonymGroups, {
+            abbreviationMaps,
+            slangMaps,
+            misspellingMaps,
+          });
           await db
             .update(inventoryTable)
             .set({ searchTokens: tokens, tokensDictVersion: currentVersion })
@@ -1779,13 +1800,17 @@ router.post('/rebuild-search-tokens', requireAdminAuth, async (_req, res) => {
 // Uses all four dictionary tables (synonym_group, abbreviation_map,
 // electrical_slang_map, misspelling_map) so the expansion is complete.
 // Each SSE event is JSON: { processed, updated, total, dictVersion, done?, error? }
-router.post("/rebuild-tokens", requireAdminAuth, async (_req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
+router.post('/rebuild-tokens', requireAdminAuth, async (_req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
 
   const send = (data: object) => {
-    try { res.write(`data: ${JSON.stringify(data)}\n\n`); } catch { /* client disconnected */ }
+    try {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    } catch {
+      /* client disconnected */
+    }
   };
 
   try {
@@ -1798,7 +1823,7 @@ router.post("/rebuild-tokens", requireAdminAuth, async (_req, res) => {
     const currentVersion = versionRow?.version ?? 0;
 
     if (currentVersion === 0) {
-      console.log("[rebuild-tokens] dict_version=0 — nothing to rebuild");
+      console.log('[rebuild-tokens] dict_version=0 — nothing to rebuild');
       send({ done: true, processed: 0, updated: 0, total: 0, dictVersion: 0 });
       res.end();
       return;
@@ -1822,10 +1847,27 @@ router.post("/rebuild-tokens", requireAdminAuth, async (_req, res) => {
 
     // 3. Load all dictionary tables once — they fit in RAM
     const [synonymGroups, abbreviationMaps, slangMaps, misspellingMaps] = await Promise.all([
-      db.select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms }).from(synonymGroupTable),
-      db.select({ abbreviation: abbreviationMapTable.abbreviation, expansions: abbreviationMapTable.expansions }).from(abbreviationMapTable),
-      db.select({ slangTerm: electricalSlangMapTable.slangTerm, standardTerms: electricalSlangMapTable.standardTerms }).from(electricalSlangMapTable),
-      db.select({ misspelling: misspellingMapTable.misspelling, correction: misspellingMapTable.correction }).from(misspellingMapTable),
+      db
+        .select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms })
+        .from(synonymGroupTable),
+      db
+        .select({
+          abbreviation: abbreviationMapTable.abbreviation,
+          expansions: abbreviationMapTable.expansions,
+        })
+        .from(abbreviationMapTable),
+      db
+        .select({
+          slangTerm: electricalSlangMapTable.slangTerm,
+          standardTerms: electricalSlangMapTable.standardTerms,
+        })
+        .from(electricalSlangMapTable),
+      db
+        .select({
+          misspelling: misspellingMapTable.misspelling,
+          correction: misspellingMapTable.correction,
+        })
+        .from(misspellingMapTable),
     ]);
 
     // 4. Cursor-paginated batch loop — only stale rows
@@ -1837,18 +1879,18 @@ router.post("/rebuild-tokens", requireAdminAuth, async (_req, res) => {
     while (true) {
       const batch = await db
         .select({
-          id:          inventoryTable.id,
-          catalog:     inventoryTable.catalog,
+          id: inventoryTable.id,
+          catalog: inventoryTable.catalog,
           description: inventoryTable.description,
-          vendor:      inventoryTable.vendor,
-          aiKeywords:  inventoryTable.aiKeywords,
+          vendor: inventoryTable.vendor,
+          aiKeywords: inventoryTable.aiKeywords,
         })
         .from(inventoryTable)
         .where(
           and(
             sql`${inventoryTable.id} > ${lastId}`,
-            sql`${inventoryTable.tokensDictVersion} < ${currentVersion}`,
-          ),
+            sql`${inventoryTable.tokensDictVersion} < ${currentVersion}`
+          )
         )
         .orderBy(inventoryTable.id)
         .limit(REBUILD_TOKENS_BATCH);
@@ -1857,7 +1899,11 @@ router.post("/rebuild-tokens", requireAdminAuth, async (_req, res) => {
 
       for (const item of batch) {
         try {
-          const tokens = buildSearchTokens(item, synonymGroups, { abbreviationMaps, slangMaps, misspellingMaps });
+          const tokens = buildSearchTokens(item, synonymGroups, {
+            abbreviationMaps,
+            slangMaps,
+            misspellingMaps,
+          });
           await db
             .update(inventoryTable)
             .set({ searchTokens: tokens, tokensDictVersion: currentVersion })
@@ -1875,12 +1921,19 @@ router.post("/rebuild-tokens", requireAdminAuth, async (_req, res) => {
       await new Promise((r) => setTimeout(r, 50));
     }
 
-    console.log(`[rebuild-tokens] Done – processed=${processed} updated=${updated} dictV=${currentVersion}`);
+    console.log(
+      `[rebuild-tokens] Done – processed=${processed} updated=${updated} dictV=${currentVersion}`
+    );
     send({ done: true, processed, updated, total, dictVersion: currentVersion });
     res.end();
   } catch (err) {
-    console.error("[rebuild-tokens] Fatal error:", err);
-    try { res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`); res.end(); } catch { /* already closed */ }
+    console.error('[rebuild-tokens] Fatal error:', err);
+    try {
+      res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+      res.end();
+    } catch {
+      /* already closed */
+    }
   }
 });
 

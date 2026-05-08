@@ -10,12 +10,12 @@
  * selects only rows where `tokens_dict_version < current version`, avoiding
  * a full table scan when only a handful of dictionary entries changed.
  */
-import { pgTable, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, integer, timestamp } from 'drizzle-orm/pg-core';
 
-export const dictionaryVersionTable = pgTable("dictionary_version", {
-  id: integer("id").primaryKey().default(1),
-  version: integer("version").notNull().default(0),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+export const dictionaryVersionTable = pgTable('dictionary_version', {
+  id: integer('id').primaryKey().default(1),
+  version: integer('version').notNull().default(0),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
 export type DictionaryVersion = typeof dictionaryVersionTable.$inferSelect;

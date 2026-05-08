@@ -754,7 +754,9 @@ export default function UploadScreen() {
   const [measureServerErrorDismissed, setMeasureServerErrorDismissed] = useState(false);
 
   // Dictionary token rebuild state (SSE streaming — no persistent background job)
-  const [rebuildTokensProgress, setRebuildTokensProgress] = useState<RebuildTokensProgress | null>(null);
+  const [rebuildTokensProgress, setRebuildTokensProgress] = useState<RebuildTokensProgress | null>(
+    null
+  );
   const [rebuildTokensRunning, setRebuildTokensRunning] = useState(false);
   const [rebuildTokensError, setRebuildTokensError] = useState<string | null>(null);
 
@@ -852,7 +854,6 @@ export default function UploadScreen() {
     }
   }, []);
 
-
   const fetchEnrichSummary = useCallback(async () => {
     try {
       const token = adminTokenRef.current;
@@ -949,7 +950,6 @@ export default function UploadScreen() {
     void pollMeasureStatus();
     measurePollRef.current = setInterval(pollMeasureStatus, 2000);
   }, [stopMeasurePoll, pollMeasureStatus]);
-
 
   // On admin login, load coverage summary and check if jobs are already running.
   // On admin logout (isAdmin → false), stop any active polling immediately.
@@ -1126,26 +1126,26 @@ export default function UploadScreen() {
     setRebuildTokensRunning(true);
     try {
       const res = await fetch(`${API_BASE}/inventory/rebuild-tokens`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...adminHeaders },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders },
       });
       if (!res.ok || !res.body) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setRebuildTokensError(err.error ?? "Failed to start token rebuild");
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setRebuildTokensError(err.error ?? 'Failed to start token rebuild');
         return;
       }
       // Read the SSE stream — same pattern as /enrich and /series/auto-assign
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let buf = "";
+      let buf = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
         for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
+          if (!line.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(line.slice(6)) as RebuildTokensProgress;
             if (evt.error) {
@@ -1153,11 +1153,13 @@ export default function UploadScreen() {
               return;
             }
             setRebuildTokensProgress(evt);
-          } catch { /* malformed event — skip */ }
+          } catch {
+            /* malformed event — skip */
+          }
         }
       }
     } catch {
-      setRebuildTokensError("Failed to start token rebuild. Check your connection and try again.");
+      setRebuildTokensError('Failed to start token rebuild. Check your connection and try again.');
     } finally {
       setRebuildTokensRunning(false);
     }
@@ -2645,298 +2647,450 @@ export default function UploadScreen() {
                   </Pressable>
                   {enrichOpen && (
                     <View>
-              {/* Bulk Enrichment Coverage */}
-              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Enrichment Coverage</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  AI generates searchable keywords for each part and saves them to the database permanently.
-                </Text>
-
-                {enrichSummary ? (
-                  <>
-                    <View style={styles.enrichStats}>
-                      <View style={[styles.statChip, { backgroundColor: colors.success + "11" }]}>
-                        <Text style={[styles.statValue, { color: colors.success }]}>
-                          {enrichSummary.enriched.toLocaleString()}
-                        </Text>
-                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Enriched</Text>
-                      </View>
-                      <View style={[styles.statChip, { backgroundColor: colors.warning + "11" }]}>
-                        <Text style={[styles.statValue, { color: colors.warning }]}>
-                          {enrichSummary.unenriched.toLocaleString()}
-                        </Text>
-                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Pending</Text>
-                      </View>
-                      <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
-                        <Text style={[styles.statValue, { color: colors.foreground }]}>
-                          {enrichSummary.total > 0
-                            ? `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`
-                            : "—"}
-                        </Text>
-                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Coverage</Text>
-                      </View>
-                      <Pressable
-                        style={[styles.statChip, { backgroundColor: colors.primary + "18" }]}
-                        onPress={() => {
-                          setEnrichOpen(true);
-                          setReviewExpandTrigger(n => n + 1);
-                        }}
-                        accessibilityLabel="Open review queue"
-                      >
-                        <Text style={[styles.statValue, { color: colors.primary }]}>
-                          {reviewCount != null ? reviewCount.toLocaleString() : "—"}
-                        </Text>
-                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Review Queue</Text>
-                      </Pressable>
-                    </View>
-
-                    {enrichSummary.total > 0 ? (
-                      <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
-                        <View
-                          style={[
-                            styles.progressFill,
-                            {
-                              backgroundColor: colors.success,
-                              width: `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`,
-                            },
-                          ]}
-                        />
-                      </View>
-                    ) : null}
-                  </>
-                ) : (
-                  <ActivityIndicator size="small" color={colors.primary} />
-                )}
-
-                {bulkJobStatus?.running ? (
-                  <View style={styles.progressContainer}>
-                    <View style={[styles.bulkStatusRow]}>
-                      <ActivityIndicator size="small" color={colors.primary} />
-                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8, flex: 1 }]}>
-                        {bulkJobStatus.stopRequested ? "Stopping after current batch…" : "Background enrichment running…"}
-                      </Text>
-                      <Pressable
-                        onPress={handleStopBulkEnrich}
-                        disabled={bulkStopPending || bulkJobStatus.stopRequested}
+                      {/* Bulk Enrichment Coverage */}
+                      <View
                         style={[
-                          styles.stopBtn,
-                          { borderColor: (bulkStopPending || bulkJobStatus.stopRequested) ? colors.border : colors.destructive },
+                          styles.enrichCard,
+                          { backgroundColor: colors.card, borderColor: colors.border },
                         ]}
                       >
-                        {bulkStopPending ? (
-                          <ActivityIndicator size="small" color={colors.destructive} />
+                        <Text style={[styles.cardTitle, { color: colors.foreground }]}>
+                          Enrichment Coverage
+                        </Text>
+                        <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                          AI generates searchable keywords for each part and saves them to the
+                          database permanently.
+                        </Text>
+
+                        {enrichSummary ? (
+                          <>
+                            <View style={styles.enrichStats}>
+                              <View
+                                style={[
+                                  styles.statChip,
+                                  { backgroundColor: colors.success + '11' },
+                                ]}
+                              >
+                                <Text style={[styles.statValue, { color: colors.success }]}>
+                                  {enrichSummary.enriched.toLocaleString()}
+                                </Text>
+                                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+                                  Enriched
+                                </Text>
+                              </View>
+                              <View
+                                style={[
+                                  styles.statChip,
+                                  { backgroundColor: colors.warning + '11' },
+                                ]}
+                              >
+                                <Text style={[styles.statValue, { color: colors.warning }]}>
+                                  {enrichSummary.unenriched.toLocaleString()}
+                                </Text>
+                                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+                                  Pending
+                                </Text>
+                              </View>
+                              <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
+                                <Text style={[styles.statValue, { color: colors.foreground }]}>
+                                  {enrichSummary.total > 0
+                                    ? `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`
+                                    : '—'}
+                                </Text>
+                                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+                                  Coverage
+                                </Text>
+                              </View>
+                              <Pressable
+                                style={[
+                                  styles.statChip,
+                                  { backgroundColor: colors.primary + '18' },
+                                ]}
+                                onPress={() => {
+                                  setEnrichOpen(true);
+                                  setReviewExpandTrigger((n) => n + 1);
+                                }}
+                                accessibilityLabel="Open review queue"
+                              >
+                                <Text style={[styles.statValue, { color: colors.primary }]}>
+                                  {reviewCount != null ? reviewCount.toLocaleString() : '—'}
+                                </Text>
+                                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+                                  Review Queue
+                                </Text>
+                              </Pressable>
+                            </View>
+
+                            {enrichSummary.total > 0 ? (
+                              <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                                <View
+                                  style={[
+                                    styles.progressFill,
+                                    {
+                                      backgroundColor: colors.success,
+                                      width: `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`,
+                                    },
+                                  ]}
+                                />
+                              </View>
+                            ) : null}
+                          </>
                         ) : (
-                          <Text style={[styles.stopBtnText, { color: (bulkJobStatus.stopRequested) ? colors.mutedForeground : colors.destructive }]}>
-                            {bulkJobStatus.stopRequested ? "Stopping…" : "Stop"}
-                          </Text>
+                          <ActivityIndicator size="small" color={colors.primary} />
                         )}
-                      </Pressable>
-                    </View>
-                    {bulkJobStatus.total != null && bulkJobStatus.total > 0 ? (
-                      <>
-                        <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+
+                        {bulkJobStatus?.running ? (
+                          <View style={styles.progressContainer}>
+                            <View style={[styles.bulkStatusRow]}>
+                              <ActivityIndicator size="small" color={colors.primary} />
+                              <Text
+                                style={[
+                                  styles.progressText,
+                                  { color: colors.foreground, marginLeft: 8, flex: 1 },
+                                ]}
+                              >
+                                {bulkJobStatus.stopRequested
+                                  ? 'Stopping after current batch…'
+                                  : 'Background enrichment running…'}
+                              </Text>
+                              <Pressable
+                                onPress={handleStopBulkEnrich}
+                                disabled={bulkStopPending || bulkJobStatus.stopRequested}
+                                style={[
+                                  styles.stopBtn,
+                                  {
+                                    borderColor:
+                                      bulkStopPending || bulkJobStatus.stopRequested
+                                        ? colors.border
+                                        : colors.destructive,
+                                  },
+                                ]}
+                              >
+                                {bulkStopPending ? (
+                                  <ActivityIndicator size="small" color={colors.destructive} />
+                                ) : (
+                                  <Text
+                                    style={[
+                                      styles.stopBtnText,
+                                      {
+                                        color: bulkJobStatus.stopRequested
+                                          ? colors.mutedForeground
+                                          : colors.destructive,
+                                      },
+                                    ]}
+                                  >
+                                    {bulkJobStatus.stopRequested ? 'Stopping…' : 'Stop'}
+                                  </Text>
+                                )}
+                              </Pressable>
+                            </View>
+                            {bulkJobStatus.total != null && bulkJobStatus.total > 0 ? (
+                              <>
+                                <View
+                                  style={[styles.progressBar, { backgroundColor: colors.muted }]}
+                                >
+                                  <View
+                                    style={[
+                                      styles.progressFill,
+                                      {
+                                        backgroundColor: colors.primary,
+                                        width: `${Math.round((bulkJobStatus.processed / bulkJobStatus.total) * 100)}%`,
+                                      },
+                                    ]}
+                                  />
+                                </View>
+                                <Text
+                                  style={[
+                                    styles.progressText,
+                                    { color: colors.mutedForeground, fontSize: 12 },
+                                  ]}
+                                >
+                                  {bulkJobStatus.processed.toLocaleString()} /{' '}
+                                  {bulkJobStatus.total.toLocaleString()} processed
+                                  {bulkJobStatus.errors > 0
+                                    ? ` · ${bulkJobStatus.errors} errors`
+                                    : ''}
+                                </Text>
+                              </>
+                            ) : null}
+                          </View>
+                        ) : null}
+
+                        {bulkJobStatus && !bulkJobStatus.running && bulkJobStatus.finishedAt ? (
                           <View
-                            style={[
-                              styles.progressFill,
-                              {
-                                backgroundColor: colors.primary,
-                                width: `${Math.round((bulkJobStatus.processed / bulkJobStatus.total) * 100)}%`,
-                              },
-                            ]}
+                            style={[styles.doneCard, { backgroundColor: colors.success + '11' }]}
+                          >
+                            <Text style={[styles.doneText, { color: colors.success }]}>
+                              ✓ Last run: {bulkJobStatus.processed.toLocaleString()} processed
+                              {bulkJobStatus.errors > 0 ? `, ${bulkJobStatus.errors} errors` : ''}
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        {bulkEnrichError ||
+                        (bulkJobStatus?.lastError && !bulkServerErrorDismissed) ? (
+                          <ErrorBanner
+                            message={
+                              bulkEnrichError ?? bulkJobStatus?.lastError ?? 'Enrichment error'
+                            }
+                            onDismiss={
+                              bulkEnrichError
+                                ? () => setBulkEnrichError(null)
+                                : () => setBulkServerErrorDismissed(true)
+                            }
                           />
-                        </View>
-                        <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                          {bulkJobStatus.processed.toLocaleString()} / {bulkJobStatus.total.toLocaleString()} processed
-                          {bulkJobStatus.errors > 0 ? ` · ${bulkJobStatus.errors} errors` : ""}
+                        ) : null}
+
+                        <Pressable
+                          onPress={handleStartBulkEnrich}
+                          disabled={bulkJobStatus?.running || bulkEnrichPending}
+                          style={[
+                            styles.enrichBtn,
+                            {
+                              backgroundColor:
+                                bulkJobStatus?.running || bulkEnrichPending
+                                  ? colors.muted
+                                  : colors.primary,
+                            },
+                          ]}
+                        >
+                          {bulkEnrichPending ? (
+                            <ActivityIndicator color={colors.primaryForeground} />
+                          ) : (
+                            <Text
+                              style={[styles.enrichBtnText, { color: colors.primaryForeground }]}
+                            >
+                              {bulkJobStatus?.running
+                                ? 'Enrichment Running…'
+                                : 'Start Bulk Enrichment'}
+                            </Text>
+                          )}
+                        </Pressable>
+                      </View>
+
+                      {/* Measurement Enrichment */}
+                      <View
+                        style={[
+                          styles.enrichCard,
+                          { backgroundColor: colors.card, borderColor: colors.border },
+                        ]}
+                      >
+                        <Text style={[styles.cardTitle, { color: colors.foreground }]}>
+                          Measurement Enrichment
                         </Text>
-                      </>
-                    ) : null}
-                  </View>
-                ) : null}
+                        <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                          Converts measurement terms (e.g. 1/2" → 0.5in, 12mm) into searchable
+                          keywords for every part.
+                        </Text>
 
-                {bulkJobStatus && !bulkJobStatus.running && bulkJobStatus.finishedAt ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.success }]}>
-                      ✓ Last run: {bulkJobStatus.processed.toLocaleString()} processed
-                      {bulkJobStatus.errors > 0 ? `, ${bulkJobStatus.errors} errors` : ""}
-                    </Text>
-                  </View>
-                ) : null}
+                        {measureJobStatus?.running ? (
+                          <View style={styles.progressContainer}>
+                            <View style={styles.bulkStatusRow}>
+                              <ActivityIndicator size="small" color={colors.primary} />
+                              <Text
+                                style={[
+                                  styles.progressText,
+                                  { color: colors.foreground, marginLeft: 8 },
+                                ]}
+                              >
+                                Measurement enrichment running…
+                              </Text>
+                            </View>
+                            {measureJobStatus.total != null && measureJobStatus.total > 0 ? (
+                              <>
+                                <View
+                                  style={[styles.progressBar, { backgroundColor: colors.muted }]}
+                                >
+                                  <View
+                                    style={[
+                                      styles.progressFill,
+                                      {
+                                        backgroundColor: colors.primary,
+                                        width: `${Math.round((measureJobStatus.processed / measureJobStatus.total) * 100)}%`,
+                                      },
+                                    ]}
+                                  />
+                                </View>
+                                <Text
+                                  style={[
+                                    styles.progressText,
+                                    { color: colors.mutedForeground, fontSize: 12 },
+                                  ]}
+                                >
+                                  {measureJobStatus.processed.toLocaleString()} /{' '}
+                                  {measureJobStatus.total.toLocaleString()} processed
+                                  {measureJobStatus.updated > 0
+                                    ? ` · ${measureJobStatus.updated} updated`
+                                    : ''}
+                                </Text>
+                              </>
+                            ) : null}
+                          </View>
+                        ) : null}
 
-                {(bulkEnrichError || (bulkJobStatus?.lastError && !bulkServerErrorDismissed)) ? (
-                  <ErrorBanner
-                    message={bulkEnrichError ?? bulkJobStatus?.lastError ?? "Enrichment error"}
-                    onDismiss={bulkEnrichError
-                      ? () => setBulkEnrichError(null)
-                      : () => setBulkServerErrorDismissed(true)}
-                  />
-                ) : null}
-
-                <Pressable
-                  onPress={handleStartBulkEnrich}
-                  disabled={bulkJobStatus?.running || bulkEnrichPending}
-                  style={[
-                    styles.enrichBtn,
-                    { backgroundColor: (bulkJobStatus?.running || bulkEnrichPending) ? colors.muted : colors.primary },
-                  ]}
-                >
-                  {bulkEnrichPending ? (
-                    <ActivityIndicator color={colors.primaryForeground} />
-                  ) : (
-                    <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                      {bulkJobStatus?.running ? "Enrichment Running…" : "Start Bulk Enrichment"}
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
-
-              {/* Measurement Enrichment */}
-              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Measurement Enrichment</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Converts measurement terms (e.g. 1/2" → 0.5in, 12mm) into searchable keywords for every part.
-                </Text>
-
-                {measureJobStatus?.running ? (
-                  <View style={styles.progressContainer}>
-                    <View style={styles.bulkStatusRow}>
-                      <ActivityIndicator size="small" color={colors.primary} />
-                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8 }]}>
-                        Measurement enrichment running…
-                      </Text>
-                    </View>
-                    {measureJobStatus.total != null && measureJobStatus.total > 0 ? (
-                      <>
-                        <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                        {measureJobStatus &&
+                        !measureJobStatus.running &&
+                        measureJobStatus.finishedAt ? (
                           <View
-                            style={[
-                              styles.progressFill,
-                              {
-                                backgroundColor: colors.primary,
-                                width: `${Math.round((measureJobStatus.processed / measureJobStatus.total) * 100)}%`,
-                              },
-                            ]}
+                            style={[styles.doneCard, { backgroundColor: colors.success + '11' }]}
+                          >
+                            <Text style={[styles.doneText, { color: colors.success }]}>
+                              ✓ Last run: {measureJobStatus.processed.toLocaleString()} processed
+                              {measureJobStatus.updated > 0
+                                ? `, ${measureJobStatus.updated} updated`
+                                : ''}
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        {measureEnrichError ||
+                        (measureJobStatus?.lastError && !measureServerErrorDismissed) ? (
+                          <ErrorBanner
+                            message={
+                              measureEnrichError ??
+                              measureJobStatus?.lastError ??
+                              'Enrichment error'
+                            }
+                            onDismiss={
+                              measureEnrichError
+                                ? () => setMeasureEnrichError(null)
+                                : () => setMeasureServerErrorDismissed(true)
+                            }
                           />
-                        </View>
-                        <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                          {measureJobStatus.processed.toLocaleString()} / {measureJobStatus.total.toLocaleString()} processed
-                          {measureJobStatus.updated > 0 ? ` · ${measureJobStatus.updated} updated` : ""}
+                        ) : null}
+
+                        <Pressable
+                          onPress={handleStartMeasureEnrich}
+                          disabled={measureJobStatus?.running || measureEnrichPending}
+                          style={[
+                            styles.enrichBtn,
+                            {
+                              backgroundColor:
+                                measureJobStatus?.running || measureEnrichPending
+                                  ? colors.muted
+                                  : colors.primary,
+                            },
+                          ]}
+                        >
+                          {measureEnrichPending ? (
+                            <ActivityIndicator color={colors.primaryForeground} />
+                          ) : (
+                            <Text
+                              style={[styles.enrichBtnText, { color: colors.primaryForeground }]}
+                            >
+                              {measureJobStatus?.running
+                                ? 'Running…'
+                                : 'Run Measurement Enrichment'}
+                            </Text>
+                          )}
+                        </Pressable>
+                      </View>
+
+                      {/* Dictionary Token Rebuild */}
+                      <View
+                        style={[
+                          styles.enrichCard,
+                          { backgroundColor: colors.card, borderColor: colors.border },
+                        ]}
+                      >
+                        <Text style={[styles.cardTitle, { color: colors.foreground }]}>
+                          Dictionary Token Rebuild
                         </Text>
-                      </>
-                    ) : null}
-                  </View>
-                ) : null}
+                        <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                          Re-builds search tokens for parts whose tokens are behind the current
+                          dictionary version (synonyms, abbreviations, slang, misspellings). Only
+                          stale rows are processed.
+                          {rebuildTokensProgress?.dictVersion != null
+                            ? ` Dictionary v${rebuildTokensProgress.dictVersion}.`
+                            : ''}
+                        </Text>
 
-                {measureJobStatus && !measureJobStatus.running && measureJobStatus.finishedAt ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.success }]}>
-                      ✓ Last run: {measureJobStatus.processed.toLocaleString()} processed
-                      {measureJobStatus.updated > 0 ? `, ${measureJobStatus.updated} updated` : ""}
-                    </Text>
-                  </View>
-                ) : null}
+                        {rebuildTokensRunning ? (
+                          <View style={styles.progressContainer}>
+                            <View style={styles.bulkStatusRow}>
+                              <ActivityIndicator size="small" color={colors.primary} />
+                              <Text
+                                style={[
+                                  styles.progressText,
+                                  { color: colors.foreground, marginLeft: 8 },
+                                ]}
+                              >
+                                Token rebuild running…
+                              </Text>
+                            </View>
+                            {rebuildTokensProgress?.total != null &&
+                            rebuildTokensProgress.total > 0 ? (
+                              <>
+                                <View
+                                  style={[styles.progressBar, { backgroundColor: colors.muted }]}
+                                >
+                                  <View
+                                    style={[
+                                      styles.progressFill,
+                                      {
+                                        backgroundColor: colors.primary,
+                                        width: `${Math.round((rebuildTokensProgress.processed / rebuildTokensProgress.total) * 100)}%`,
+                                      },
+                                    ]}
+                                  />
+                                </View>
+                                <Text
+                                  style={[
+                                    styles.progressText,
+                                    { color: colors.mutedForeground, fontSize: 12 },
+                                  ]}
+                                >
+                                  {rebuildTokensProgress.processed.toLocaleString()} /{' '}
+                                  {rebuildTokensProgress.total.toLocaleString()} processed
+                                  {rebuildTokensProgress.updated > 0
+                                    ? ` · ${rebuildTokensProgress.updated} updated`
+                                    : ''}
+                                </Text>
+                              </>
+                            ) : null}
+                          </View>
+                        ) : null}
 
-                {(measureEnrichError || (measureJobStatus?.lastError && !measureServerErrorDismissed)) ? (
-                  <ErrorBanner
-                    message={measureEnrichError ?? measureJobStatus?.lastError ?? "Enrichment error"}
-                    onDismiss={measureEnrichError
-                      ? () => setMeasureEnrichError(null)
-                      : () => setMeasureServerErrorDismissed(true)}
-                  />
-                ) : null}
-
-                <Pressable
-                  onPress={handleStartMeasureEnrich}
-                  disabled={measureJobStatus?.running || measureEnrichPending}
-                  style={[
-                    styles.enrichBtn,
-                    { backgroundColor: (measureJobStatus?.running || measureEnrichPending) ? colors.muted : colors.primary },
-                  ]}
-                >
-                  {measureEnrichPending ? (
-                    <ActivityIndicator color={colors.primaryForeground} />
-                  ) : (
-                    <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                      {measureJobStatus?.running ? "Running…" : "Run Measurement Enrichment"}
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
-
-              {/* Dictionary Token Rebuild */}
-              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Dictionary Token Rebuild</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Re-builds search tokens for parts whose tokens are behind the current dictionary version (synonyms, abbreviations, slang, misspellings). Only stale rows are processed.
-                  {rebuildTokensProgress?.dictVersion != null
-                    ? ` Dictionary v${rebuildTokensProgress.dictVersion}.`
-                    : ""}
-                </Text>
-
-                {rebuildTokensRunning ? (
-                  <View style={styles.progressContainer}>
-                    <View style={styles.bulkStatusRow}>
-                      <ActivityIndicator size="small" color={colors.primary} />
-                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8 }]}>
-                        Token rebuild running…
-                      </Text>
-                    </View>
-                    {rebuildTokensProgress?.total != null && rebuildTokensProgress.total > 0 ? (
-                      <>
-                        <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                        {rebuildTokensProgress?.done && !rebuildTokensRunning ? (
                           <View
-                            style={[
-                              styles.progressFill,
-                              {
-                                backgroundColor: colors.primary,
-                                width: `${Math.round((rebuildTokensProgress.processed / rebuildTokensProgress.total) * 100)}%`,
-                              },
-                            ]}
+                            style={[styles.doneCard, { backgroundColor: colors.success + '11' }]}
+                          >
+                            <Text style={[styles.doneText, { color: colors.success }]}>
+                              {rebuildTokensProgress.total === 0
+                                ? '✓ Dictionary is current — no rows needed rebuilding'
+                                : `✓ Done: ${rebuildTokensProgress.updated.toLocaleString()} updated of ${rebuildTokensProgress.processed.toLocaleString()} checked`}
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        {rebuildTokensError ? (
+                          <ErrorBanner
+                            message={rebuildTokensError}
+                            onDismiss={() => setRebuildTokensError(null)}
                           />
-                        </View>
-                        <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                          {rebuildTokensProgress.processed.toLocaleString()} / {rebuildTokensProgress.total.toLocaleString()} processed
-                          {rebuildTokensProgress.updated > 0 ? ` · ${rebuildTokensProgress.updated} updated` : ""}
-                        </Text>
-                      </>
-                    ) : null}
-                  </View>
-                ) : null}
+                        ) : null}
 
-                {rebuildTokensProgress?.done && !rebuildTokensRunning ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.success }]}>
-                      {rebuildTokensProgress.total === 0
-                        ? "✓ Dictionary is current — no rows needed rebuilding"
-                        : `✓ Done: ${rebuildTokensProgress.updated.toLocaleString()} updated of ${rebuildTokensProgress.processed.toLocaleString()} checked`}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {rebuildTokensError ? (
-                  <ErrorBanner
-                    message={rebuildTokensError}
-                    onDismiss={() => setRebuildTokensError(null)}
-                  />
-                ) : null}
-
-                <Pressable
-                  onPress={handleStartRebuildTokens}
-                  disabled={rebuildTokensRunning}
-                  style={[
-                    styles.enrichBtn,
-                    { backgroundColor: rebuildTokensRunning ? colors.muted : colors.primary },
-                  ]}
-                >
-                  {rebuildTokensRunning ? (
-                    <ActivityIndicator color={colors.primaryForeground} />
-                  ) : (
-                    <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                      Rebuild Stale Tokens
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
+                        <Pressable
+                          onPress={handleStartRebuildTokens}
+                          disabled={rebuildTokensRunning}
+                          style={[
+                            styles.enrichBtn,
+                            {
+                              backgroundColor: rebuildTokensRunning ? colors.muted : colors.primary,
+                            },
+                          ]}
+                        >
+                          {rebuildTokensRunning ? (
+                            <ActivityIndicator color={colors.primaryForeground} />
+                          ) : (
+                            <Text
+                              style={[styles.enrichBtnText, { color: colors.primaryForeground }]}
+                            >
+                              Rebuild Stale Tokens
+                            </Text>
+                          )}
+                        </Pressable>
+                      </View>
 
                       {/* Quick-enrich (SSE streaming for immediate feedback) */}
                       <View
