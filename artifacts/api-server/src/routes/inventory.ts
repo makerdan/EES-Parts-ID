@@ -398,25 +398,29 @@ router.post("/search", async (req, res) => {
               UNION ALL
 
               -- Fallback arm: un-enriched rows (search_tokens IS NULL) matched only by
-              -- fuzzy catalog/description similarity. Bounded to 50 rows so the
-              -- unindexed sequential scan on this arm cannot dominate query time even
-              -- when a large fraction of the table has not yet been backfilled.
-              SELECT
-                i.id, i.vendor, i.catalog, i.description,
-                i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
-                i.series_id,
-                0::float AS fts_rank,
-                greatest(
-                  similarity(i.catalog, ${trgmQuery}),
-                  similarity(i.description, ${trgmQuery})
-                ) AS trgm_sim
-              FROM inventory i
-              WHERE i.search_tokens IS NULL
-                AND (
-                  similarity(i.catalog, ${trgmQuery}) > 0.1
-                  OR similarity(i.description, ${trgmQuery}) > 0.1
-                )
-              LIMIT 50
+              -- fuzzy catalog/description similarity. Parenthesized so LIMIT 50 scopes
+              -- exclusively to this arm and not to the combined union result — without
+              -- parens PostgreSQL applies the LIMIT to the entire set-operation output.
+              -- This caps the unindexed sequential scan so un-enriched rows cannot
+              -- dominate query time even if a large fraction of the table is un-backfilled.
+              (
+                SELECT
+                  i.id, i.vendor, i.catalog, i.description,
+                  i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
+                  i.series_id,
+                  0::float AS fts_rank,
+                  greatest(
+                    similarity(i.catalog, ${trgmQuery}),
+                    similarity(i.description, ${trgmQuery})
+                  ) AS trgm_sim
+                FROM inventory i
+                WHERE i.search_tokens IS NULL
+                  AND (
+                    similarity(i.catalog, ${trgmQuery}) > 0.1
+                    OR similarity(i.description, ${trgmQuery}) > 0.1
+                  )
+                LIMIT 50
+              )
               ` : sql``}
             ) AS __ranked
             ORDER BY (fts_rank * 0.65 + trgm_sim * 0.35) DESC
