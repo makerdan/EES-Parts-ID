@@ -387,6 +387,11 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
     TEXT_FIELD_KEYS.forEach(k => onChange(k, ""));
   }, [onChange]);
 
+  const resetAllFilters = useCallback(() => {
+    CHIP_DIMS.forEach(d => onChange(d.key, ""));
+    TEXT_FIELD_KEYS.forEach(k => onChange(k, ""));
+  }, [onChange]);
+
   // ── Modal open/close state ────────────────────────────────────────────────
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -467,31 +472,43 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
 
   return (
     <View>
-      {/* ── Advanced Filters trigger button ── */}
-      <Pressable
-        style={[chipAreaStyles.triggerBtn, { borderColor: 'rgba(0,0,0,0.75)', backgroundColor: colors.card }]}
-        onPress={() => setFiltersOpen(true)}
-        accessibilityRole="button"
-        accessibilityLabel="Open advanced filters"
-      >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Feather name="sliders" size={14} color={colors.foreground} />
-          <Text style={[chipAreaStyles.triggerTitle, { color: colors.foreground }]}>Advanced Filters</Text>
-        </View>
-        <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
-          {activeChipCount > 0 && (
-            <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
-              <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
-                {activeChipCount} active
-              </Text>
-            </View>
-          )}
-          {dimensionCounts && (
-            <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>live counts</Text>
-          )}
-          <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-        </View>
-      </Pressable>
+      {/* ── Advanced Filters trigger row (button + optional clear link) ── */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Pressable
+          style={[chipAreaStyles.triggerBtn, { flex: 1, borderColor: 'rgba(0,0,0,0.75)', backgroundColor: colors.card }]}
+          onPress={() => setFiltersOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Open advanced filters"
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Feather name="sliders" size={14} color={colors.foreground} />
+            <Text style={[chipAreaStyles.triggerTitle, { color: colors.foreground }]}>Advanced Filters</Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+            {activeChipCount > 0 && (
+              <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
+                <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
+                  {activeChipCount} active
+                </Text>
+              </View>
+            )}
+            {dimensionCounts && (
+              <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>live counts</Text>
+            )}
+            <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+          </View>
+        </Pressable>
+        {activeChipCount > 0 && (
+          <Pressable
+            onPress={resetAllFilters}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Clear all active filters"
+          >
+            <Text style={[chipAreaStyles.clearFiltersBtn, { color: colors.primary }]}>Clear filters</Text>
+          </Pressable>
+        )}
+      </View>
 
       {/* ── Advanced Filters modal overlay ── */}
       {/*
@@ -746,6 +763,10 @@ const chipAreaStyles = StyleSheet.create({
   },
   resetBtn: {
     fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+  },
+  clearFiltersBtn: {
+    fontSize: 13,
     fontFamily: "Inter_600SemiBold",
   },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
