@@ -1,51 +1,109 @@
 -- 0016_chip_filter_composite_indexes.sql
 -- Telemetry-driven composite partial indexes for chip filter columns
 --
--- Analysis method
--- ───────────────
--- Ran against search_event.filters_json (157 events in dev, 133 with non-empty
--- filters_json). All 133 events stored the full filter object with every key
--- set to "" (empty string) — no real chip filter combinations have been applied
--- in this dev environment yet. Index selection therefore falls back to:
+-- ── Step 1: Telemetry analysis ────────────────────────────────────────────────
+-- Analysis query run against search_event.filters_json:
 --
---   1. Cardinality analysis on the inventory filter columns:
---        amperage       82 distinct values, 1 281 non-null  (HIGH selectivity)
---        trade_size_in 164 distinct values, 1 467 non-null  (HIGHEST selectivity)
---        voltage         9 distinct values,   724 non-null  (low — excluded standalone)
---        pole_count      4 distinct values,   462 non-null  (low — excluded standalone)
---        mount_type      5 distinct values,   106 non-null  (low — excluded standalone)
+--   SELECT
+--     COALESCE(
+--       (SELECT string_agg(k, ',' ORDER BY k)
+--        FROM jsonb_object_keys(se.filters_json) AS k
+--        WHERE (se.filters_json ->> k) IS NOT NULL
+--          AND (se.filters_json ->> k) <> ''),
+--       '<all empty>'
+--     ) AS combo,
+--     COUNT(*) AS freq
+--   FROM search_event se
+--   WHERE se.filters_json IS NOT NULL
+--     AND se.filters_json <> '{}'::jsonb
+--   GROUP BY 1
+--   ORDER BY freq DESC
+--   LIMIT 10;
 --
---   2. Column co-occurrence counts (rows where both columns are non-null):
---        amperage + pole_count              386 rows (5.2 % of table)
---        amperage + voltage                 516 rows (7.0 % of table)
---        amperage + pole_count + voltage    269 rows (3.6 % of table)
---        trade_size_in + mount_type          23 rows (0.3 % of table)
+-- Result (157 total events, 133 with non-empty filters_json):
 --
---   3. Domain knowledge: workers look up circuit breakers by amp + pole count,
---      panel equipment by amp + voltage, and conduit fittings by trade size.
+--   combo         | freq
+--   <all empty>   | 133
 --
--- Explicitly excluded (low-cardinality-only combinations)
--- ────────────────────────────────────────────────────────
--- pole_count-only     — 4 distinct values; planner skips B-tree below ~5 %
---                        selectivity threshold
--- voltage-only        — 9 distinct values; similar cardinality argument
--- mount_type-only     — 5 distinct values, only 106 non-null rows; index cost
---                        exceeds benefit vs. heap scan
--- pole_count + voltage — both low-cardinality; combined selectivity still
---                        insufficient to beat a seq-scan on 462 / 724 non-null
---                        rows without a high-selectivity anchor column
+-- Finding: every event stores the complete filter state with all 16 keys set
+-- to "" — the client serialises the whole form object at query time regardless
+-- of which chips are active.  No combination with at least one non-empty value
+-- exists in the current dev dataset.
 --
--- Per-column scalar indexes (idx_inventory_amperage, idx_inventory_trade_size_in)
--- were created in migration 0010_materialized_attrs.sql and are retained for
--- single-column queries. The composite indexes below target multi-column
--- combinations that appear together in chip-filtered searches.
+-- ── Step 2: Fallback to cardinality + co-occurrence analysis ─────────────────
+-- Because the telemetry yields no non-empty combinations, index selection is
+-- derived from two secondary signals:
+--
+-- 2a. Column cardinality (distinct values / non-null rows / total 7 403):
+--       amperage       82 distinct   1 281 non-null   HIGH selectivity
+--       trade_size_in 164 distinct   1 467 non-null   HIGHEST selectivity
+--       voltage         9 distinct     724 non-null   low
+--       pole_count      4 distinct     462 non-null   very low
+--       mount_type      5 distinct     106 non-null   very low
+--
+-- 2b. Column co-occurrence (rows where both columns are non-null):
+--       amperage + pole_count              386 rows  (5.2 %)
+--       amperage + voltage                 516 rows  (7.0 %)
+--       amperage + pole_count + voltage    269 rows  (3.6 %)
+--       trade_size_in + mount_type          23 rows  (0.3 %)
+--
+-- 2c. Domain knowledge: workers look up circuit breakers by amp + pole count
+--     and by amp + voltage rating — these are the two most natural combinations
+--     for the part types most common in the warehouse.
+--
+-- ── Step 3: Index candidate selection ────────────────────────────────────────
+-- Include: combinations containing at least one high-selectivity anchor column
+--          (amperage or trade_size_in) with meaningful co-occurrence volume.
+--
+-- Explicitly excluded (low-cardinality-only combinations):
+--   pole_count-only      — 4 distinct values; planner ignores B-tree indexes
+--                          below ~5 % selectivity
+--   voltage-only         — 9 distinct values; same cardinality argument
+--   mount_type-only      — 5 distinct values, only 106 non-null rows
+--   pole_count + voltage — both low-cardinality; combined selectivity still
+--                          insufficient without a high-selectivity anchor
+--   trade_size_in + mount_type — only 23 qualifying rows (0.3 %); insufficient
+--                          co-occurrence volume to justify without telemetry demand
+--                          evidence; excluded per task criteria ("meaningful usage
+--                          volume" threshold not met)
+--
+-- Selected: 3 composite partial indexes (all contain amperage as the selective
+-- leading column):
+--   1. (amperage, pole_count)
+--   2. (amperage, voltage)
+--   3. (amperage, pole_count, voltage)
+--
+-- ── Step 4: EXPLAIN (ANALYZE, BUFFERS) verification ─────────────────────────
+-- Run after applying this migration. All queries show a single Index Scan on
+-- the new composite index — no BitmapAnd, no heap filter for the second column.
+--
+-- Query: SELECT id FROM inventory WHERE amperage = 20 AND pole_count = 2
+--   Index Scan using idx_inventory_amp_pole on inventory
+--     (cost=0.15..7.93 rows=6 width=4) (actual time=0.022..0.070 rows=20)
+--     Index Cond: ((amperage = 20) AND (pole_count = 2))
+--   Execution Time: 0.099 ms
+--   (Previously: BitmapAnd of idx_inventory_amperage + idx_inventory_catalog_parse_series)
+--
+-- Query: SELECT id FROM inventory WHERE amperage = 20 AND voltage = 120
+--   Index Scan using idx_inventory_amp_volt on inventory
+--     (cost=0.15..15.71 rows=13 width=4) (actual time=0.011..0.147 rows=56)
+--     Index Cond: ((amperage = 20) AND (voltage = 120))
+--   Execution Time: 0.180 ms
+--   (Previously: idx_inventory_amperage scan + heap filter for voltage,
+--    no voltage-specific index existed)
+--
+-- Query: SELECT id FROM inventory WHERE amperage = 20 AND pole_count = 2 AND voltage = 120
+--   Index Scan using idx_inventory_amp_pole_volt on inventory
+--     (cost=0.15..2.37 rows=1 width=4) (actual time=0.024..0.068 rows=13)
+--     Index Cond: ((amperage = 20) AND (pole_count = 2) AND (voltage = 120))
+--   Execution Time: 0.111 ms
+--   (Previously: BitmapAnd of idx_inventory_amperage + idx_inventory_catalog_parse_series,
+--    plus post-join heap filter for voltage)
 
 -- Index 1: amperage + pole_count
 -- ─────────────────────────────
--- Targets "20A 2-pole breaker" style searches — the most natural breaker lookup
--- pattern (amp rating + pole count). Replaces the BitmapAnd between
--- idx_inventory_amperage and the catalog_parse_series index's pole_count
--- component with a single composite scan.
+-- "20A 2-pole breaker" style searches — the most natural breaker lookup
+-- pattern combining amp rating and pole count.
 -- Co-occurrence frequency (dev inventory): 386 rows.
 CREATE INDEX IF NOT EXISTS idx_inventory_amp_pole
   ON inventory (amperage, pole_count)
@@ -53,10 +111,9 @@ CREATE INDEX IF NOT EXISTS idx_inventory_amp_pole
 
 -- Index 2: amperage + voltage
 -- ──────────────────────────
--- Targets "20A 240V breaker" / "20A 120V GFCI" style searches — panel and
--- breaker lookups that combine an amperage rating with a voltage rating.
--- Baseline EXPLAIN showed: idx_inventory_amperage scan + heap filter for
--- voltage (no voltage index). This composite eliminates the heap filter.
+-- "20A 240V breaker" / "20A 120V GFCI" style searches.
+-- No prior voltage-specific index existed; the planner had to perform a heap
+-- filter on all amperage-matching rows to satisfy the voltage predicate.
 -- Co-occurrence frequency (dev inventory): 516 rows.
 CREATE INDEX IF NOT EXISTS idx_inventory_amp_volt
   ON inventory (amperage, voltage)
@@ -64,24 +121,12 @@ CREATE INDEX IF NOT EXISTS idx_inventory_amp_volt
 
 -- Index 3: amperage + pole_count + voltage
 -- ─────────────────────────────────────────
--- Targets fully-specified breaker lookups ("20A 2-pole 240V breaker").
--- When all three chip filters are active simultaneously, this index returns
--- the candidate set with a single scan instead of a BitmapAnd chain.
--- The planner will prefer this over indexes 1 and 2 when all three predicates
--- are present, and fall back to 1 or 2 for partial combinations.
+-- Fully-specified breaker lookups ("20A 2-pole 240V breaker").
+-- When all three chip filters are active, this index returns the candidate
+-- set with a single scan. The planner will prefer indexes 1 or 2 for
+-- partial two-column combinations and fall back to this only when all three
+-- predicates are present.
 -- Co-occurrence frequency (dev inventory): 269 rows.
 CREATE INDEX IF NOT EXISTS idx_inventory_amp_pole_volt
   ON inventory (amperage, pole_count, voltage)
   WHERE amperage IS NOT NULL AND pole_count IS NOT NULL AND voltage IS NOT NULL;
-
--- Index 4: trade_size_in + mount_type
--- ─────────────────────────────────────
--- Targets conduit fitting lookups that combine trade size with mounting style
--- (e.g. "1/2\" bolt-on connector"). trade_size_in is the most selective
--- single column (164 distinct values); adding mount_type (5 values) creates
--- a composite that precisely targets fitting / box-connector rows.
--- Co-occurrence frequency (dev inventory): 23 rows — the tiny partial index
--- is essentially free to maintain and sub-millisecond to scan.
-CREATE INDEX IF NOT EXISTS idx_inventory_tsi_mount
-  ON inventory (trade_size_in, mount_type)
-  WHERE trade_size_in IS NOT NULL AND mount_type IS NOT NULL;
