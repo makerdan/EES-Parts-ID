@@ -50,6 +50,7 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 import { ImportFileCard } from "@/components/ImportFileCard";
 import ClassificationReviewSection from "@/components/ClassificationReviewSection";
+import { RecordsBrowser } from "@/components/RecordsBrowser";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -503,7 +504,7 @@ export default function UploadScreen() {
   const [pasteInputText, setPasteInputText] = useState("");
   const [binsOnlyMode, setBinsOnlyMode] = useState(false);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
-  const [tab, setTab] = useState<"upload" | "inventory">("upload");
+  const [tab, setTab] = useState<"upload" | "inventory" | "records">("upload");
   const [uploadSuccess, setUploadSuccess] = useState<UpsertResult | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadPending, setUploadPending] = useState(false);
@@ -2085,7 +2086,7 @@ export default function UploadScreen() {
 
           {/* Tab bar */}
           <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-            {(["upload", "inventory"] as const).map(t => (
+            {(["upload", "inventory", "records"] as const).map(t => (
               <Pressable
                 key={t}
                 onPress={() => setTab(t)}
@@ -2095,7 +2096,7 @@ export default function UploadScreen() {
                 ]}
               >
                 <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
-                  {t === "upload" ? "Upload File" : `New Inventory (${inventoryTotal})`}
+                  {t === "upload" ? "Upload File" : t === "inventory" ? `New Inventory (${inventoryTotal})` : "Records"}
                 </Text>
               </Pressable>
             ))}
@@ -2198,6 +2199,8 @@ export default function UploadScreen() {
               ) : null}
 
             </ScrollView>
+          ) : tab === "records" ? (
+            <RecordsBrowser adminHeaders={adminHeaders} />
           ) : (
             <FlatList
               data={inventory}
