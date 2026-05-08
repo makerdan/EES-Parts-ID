@@ -1,14 +1,14 @@
 /**
  * RecordEditModal
  *
- * Bottom-sheet modal that lets an admin edit any editable field on an
- * inventory record:
+ * Bottom-sheet modal that lets an admin edit any field on an inventory record:
+ *   • vendor code (trimmed, uppercased on send)
+ *   • catalog number
  *   • description (free text)
  *   • binLocations (comma-separated string → string[])
  *   • aiKeywords (tag list — add/remove chips)
  *   • tradeSize (free text, nullable)
  *
- * Vendor and catalog are shown read-only for context.
  * Saves via PATCH /api/inventory/{id}.  On success the caller receives the
  * updated item so it can do an optimistic in-place list update.
  */
@@ -40,6 +40,8 @@ interface Props {
 export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props) {
   const colors = useColors();
 
+  const [vendor, setVendor] = useState("");
+  const [catalog, setCatalog] = useState("");
   const [description, setDescription] = useState("");
   const [binText, setBinText] = useState("");
   const [keywords, setKeywords] = useState<string[]>([]);
@@ -51,6 +53,8 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
 
   useEffect(() => {
     if (!item) return;
+    setVendor(item.vendor ?? "");
+    setCatalog(item.catalog ?? "");
     setDescription(item.description ?? "");
     setBinText((item.binLocations ?? []).join(", "));
     setKeywords([...(item.aiKeywords ?? [])]);
@@ -72,6 +76,9 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
 
   const handleSave = async () => {
     if (!item) return;
+    if (!vendor.trim()) { setToast({ msg: "Vendor code cannot be blank.", ok: false }); return; }
+    if (!catalog.trim()) { setToast({ msg: "Catalog number cannot be blank.", ok: false }); return; }
+
     setSaving(true);
     setToast(null);
     try {
@@ -81,6 +88,8 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
         .filter(Boolean);
 
       const body: Record<string, unknown> = {
+        vendor: vendor.trim(),
+        catalog: catalog.trim(),
         description,
         keywords,
         binLocations,
@@ -135,11 +144,10 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
           <View style={[s.header, { borderBottomColor: colors.border }]}>
             <View style={{ flex: 1 }}>
               <Text style={[s.headerTitle, { color: colors.foreground }]} numberOfLines={1}>
-                {item.catalog}
+                Edit Record
               </Text>
               <Text style={[s.headerSub, { color: colors.mutedForeground }]} numberOfLines={1}>
-                {item.vendorFullName ?? item.vendor}
-                {item.vendorFullName && item.vendorFullName !== item.vendor ? ` (${item.vendor})` : ""}
+                ID #{item.id}
               </Text>
             </View>
             <Pressable
@@ -159,6 +167,30 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
                 <Text style={[s.toastText, { color: toast.ok ? colors.success : "#ef4444" }]}>{toast.msg}</Text>
               </View>
             ) : null}
+
+            {/* Vendor */}
+            <Text style={[s.label, { color: colors.mutedForeground }]}>VENDOR CODE</Text>
+            <TextInput
+              value={vendor}
+              onChangeText={setVendor}
+              placeholder="e.g. ETN, SQD, HBL"
+              placeholderTextColor={colors.mutedForeground}
+              style={[s.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
+
+            {/* Catalog */}
+            <Text style={[s.label, { color: colors.mutedForeground }]}>CATALOG NUMBER</Text>
+            <TextInput
+              value={catalog}
+              onChangeText={setCatalog}
+              placeholder="e.g. BR120"
+              placeholderTextColor={colors.mutedForeground}
+              style={[s.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
 
             {/* Description */}
             <Text style={[s.label, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
@@ -270,7 +302,7 @@ const s = StyleSheet.create({
     justifyContent: "flex-end",
   },
   sheet: {
-    maxHeight: "90%",
+    maxHeight: "92%",
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     borderTopWidth: 1,

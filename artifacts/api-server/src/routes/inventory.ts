@@ -1762,12 +1762,14 @@ router.patch("/:id/series", requireAdminAuth, async (req, res) => {
 // ── PATCH /inventory/:id ──────────────────────────────────────────────────────
 // Partial update for an inventory item. Only the fields present in the
 // request body are touched.
-//   • description: string         → set to that string (blank string is a real
+//   • vendor:       string        → update vendor code (trimmed, uppercased)
+//   • catalog:      string        → update catalog number (trimmed)
+//   • description:  string        → set to that string (blank string is a real
 //                                   edit — the worker explicitly cleared it)
 //   • description: undefined/missing → leave description unchanged
 //   • keywords:    string[]       → replace ai_keywords
 //   • keywords:    undefined/missing → leave ai_keywords unchanged
-// At least one of the two must be supplied.
+// At least one field must be supplied.
 router.patch("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params["id"] ?? "0");
@@ -1775,21 +1777,44 @@ router.patch("/:id", async (req, res) => {
       return void res.status(400).json({ error: "id must be a positive integer" });
     }
 
-    const body = (req.body ?? {}) as { description?: unknown; keywords?: unknown; tradeSize?: unknown; binLocations?: unknown };
+    const body = (req.body ?? {}) as {
+      vendor?: unknown;
+      catalog?: unknown;
+      description?: unknown;
+      keywords?: unknown;
+      tradeSize?: unknown;
+      binLocations?: unknown;
+    };
+    const hasVendor = Object.prototype.hasOwnProperty.call(body, "vendor");
+    const hasCatalog = Object.prototype.hasOwnProperty.call(body, "catalog");
     const hasDescription = Object.prototype.hasOwnProperty.call(body, "description");
     const hasKeywords = Object.prototype.hasOwnProperty.call(body, "keywords");
     const hasTradeSize = Object.prototype.hasOwnProperty.call(body, "tradeSize");
     const hasBinLocations = Object.prototype.hasOwnProperty.call(body, "binLocations");
 
-    if (!hasDescription && !hasKeywords && !hasTradeSize && !hasBinLocations) {
+    if (!hasVendor && !hasCatalog && !hasDescription && !hasKeywords && !hasTradeSize && !hasBinLocations) {
       return void res.status(400).json({
-        error: "Provide at least one of `description`, `keywords`, `tradeSize`, or `binLocations` to update.",
+        error: "Provide at least one of `vendor`, `catalog`, `description`, `keywords`, `tradeSize`, or `binLocations` to update.",
       });
     }
 
     const updates: Partial<typeof inventoryTable.$inferInsert> = {
       updatedAt: new Date(),
     };
+
+    if (hasVendor) {
+      if (typeof body.vendor !== "string" || !body.vendor.trim()) {
+        return void res.status(400).json({ error: "vendor must be a non-empty string" });
+      }
+      updates.vendor = body.vendor.trim().toUpperCase();
+    }
+
+    if (hasCatalog) {
+      if (typeof body.catalog !== "string" || !body.catalog.trim()) {
+        return void res.status(400).json({ error: "catalog must be a non-empty string" });
+      }
+      updates.catalog = body.catalog.trim();
+    }
 
     if (hasDescription) {
       if (typeof body.description !== "string") {
