@@ -187,10 +187,105 @@ export function tokenMatch(text: string, filterValue: string): boolean {
   });
 }
 
+/**
+ * Map a `mountingType` chip option (e.g. "Surface", "DIN Rail") to the
+ * canonical lowercase value emitted by `parseMountType()` and stored in
+ * the `mount_type` column. Returns null when the chip option doesn't
+ * have a structured-column counterpart (e.g. "Panel Mount", "Pendant",
+ * "Track") — those still go through the text-match fallback.
+ */
+function chipMountTypeToColumn(chipValue: string): string | null {
+  const v = chipValue.trim().toLowerCase();
+  if (v === 'surface') return 'surface';
+  if (v === 'flush') return 'flush';
+  if (v === 'din rail' || v === 'din-rail') return 'din-rail';
+  if (v === 'bolt-on') return 'bolt-on';
+  if (v === 'plug-in') return 'plug-in';
+  return null;
+}
+
+/**
+ * Item shape used by chip filtering. Includes the structured columns
+ * materialized by the v2/v3 parser so chip predicates can short-circuit
+ * past the slower free-text path when scalar data is available.
+ */
+export interface ChipFilterItem {
+  vendor: string;
+  catalog: string;
+  description: string;
+  aiKeywords: string[] | null;
+  amperage?: number | null;
+  poleCount?: number | null;
+  voltage?: number | null;
+  mountType?: string | null;
+}
+
+/**
+ * Try to evaluate a single chip filter against the item's structured
+ * columns. Returns:
+ *   - true  → column is populated AND matches the chip value
+ *   - false → column is populated AND does NOT match (definitive miss)
+ *   - null  → no structured-column path applies for this chip key, or
+ *             the column is NULL (caller should fall back to text match)
+ *
+ * Filters wired to scalar columns (with their respective indexes from
+ * migration 0010 + composite indexes from migration 0016):
+ *   amperage     → inventory.amperage      (idx_inventory_amperage)
+ *   poleCount    → inventory.pole_count    (idx_inventory_pole_count)
+ *   voltage      → inventory.voltage       (idx_inventory_voltage)
+ *   mountingType → inventory.mount_type    (idx_inventory_mount_type)
+ *
+ * The fallback is critical: ~95% of rows still have catalog_parse=NULL,
+ * but their amperage/voltage are often populated from description-based
+ * regex (parseAmperage/parseVoltage in parseAttributes.ts). When a column
+ * is genuinely NULL we return null so the caller can text-match instead
+ * of silently dropping the row.
+ */
+export function matchesChipColumn(
+  item: ChipFilterItem,
+  key: string,
+  value: string
+): boolean | null {
+  if (key === 'amperage') {
+    if (item.amperage == null) return null;
+    const n = parseInt(value.replace(/[^0-9]/g, ''), 10);
+    if (!Number.isFinite(n)) return null;
+    return item.amperage === n;
+  }
+  if (key === 'poleCount') {
+    if (item.poleCount == null) return null;
+    const m = value.match(/(\d+)/);
+    if (!m) return null;
+    return item.poleCount === parseInt(m[1]!, 10);
+  }
+  if (key === 'voltage') {
+    if (item.voltage == null) return null;
+    const n = parseInt(value.replace(/[^0-9]/g, ''), 10);
+    if (!Number.isFinite(n)) return null;
+    return item.voltage === n;
+  }
+  if (key === 'mountingType') {
+    const mapped = chipMountTypeToColumn(value);
+    if (mapped == null) return null; // chip option has no column counterpart
+    if (item.mountType == null) return null;
+    return item.mountType.toLowerCase() === mapped;
+  }
+  return null;
+}
+
 export function matchesChipFilters(
-  item: { vendor: string; catalog: string; description: string; aiKeywords: string[] | null },
+  item: ChipFilterItem,
   chipFilters: Array<{ key: string; value: string }>
 ): boolean {
   const text = itemFullText(item);
-  return chipFilters.every((f) => tokenMatch(text, f.value));
+  return chipFilters.every((f) => {
+    // Try the structured-column path first for amperage/poleCount/voltage/
+    // mountingType. A definitive true/false short-circuits the text match;
+    // a null result (no column data) falls back to the original token match
+    // against vendor/catalog/description/aiKeywords — preserving today's
+    // behavior for the ~95% of rows whose catalog_parse is still NULL.
+    const colResult = matchesChipColumn(item, f.key, f.value);
+    if (colResult !== null) return colResult;
+    return tokenMatch(text, f.value);
+  });
 }

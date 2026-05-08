@@ -6,8 +6,13 @@
  * unit-test in isolation and are called both from the backfill script and
  * from the real-time enrichment pipeline.
  *
- * Parser version is 2. Bump CURRENT_PARSER_VERSION in invalidation.ts
+ * Parser version is 3. Bump CURRENT_PARSER_VERSION in invalidation.ts
  * whenever these patterns change in a meaningful way.
+ *
+ * v3 adds: expanded breaker series (BAB, GHB, CLCAF, BRN, GFCB, GFTCB,
+ *          BJ, BJH, CHF), fuse pattern (Bussmann FNQ/LPCC/FRNR/LPJ/GMA/etc),
+ *          extended numeric device range (4–5 digit Hubbell/Pass codes),
+ *          generic alpha-numeric device fallback, and 125V/500V voltages.
  */
 
 /** Structured parse of a catalog number. */
@@ -25,8 +30,8 @@ export interface CatalogParse {
   variant: string | null;
   /** The original catalog string passed to parseCatalog(). */
   raw: string;
-  /** Parser version — always 2 for the current implementation. */
-  parser_version: 2;
+  /** Parser version — always 3 for the current implementation. */
+  parser_version: 3;
 }
 
 // ── Internal regex constants ────────────────────────────────────────────────
@@ -41,8 +46,17 @@ export interface CatalogParse {
  *   HOM230   → series=HOM,  poles=2, amps=30,  variant=null
  *   THQL120  → series=THQL, poles=1, amps=20,  variant=null
  *   QO1100PC → series=QO,   poles=1, amps=100, variant=PC
+ *   BAB2045  → series=BAB,  poles=2, amps=45,  variant=null
+ *   BAB3090H → series=BAB,  poles=3, amps=90,  variant=H
+ *   GHB3100  → series=GHB,  poles=3, amps=100, variant=null
+ *   CLCAF120 → series=CLCAF,poles=1, amps=20,  variant=null
+ *   BRN115GF → series=BRN,  poles=1, amps=15,  variant=GF
+ *
+ * Note: BD/BRD/BQ duplex/quad breakers use a different (1-50A/2P 1-50A/2P)
+ *       layout that doesn't fit this pattern and are intentionally excluded.
  */
-const BREAKER_RE = /^(BR|QO|CH|HOM|THQL|MP|SWD|FH|HH|Q1)(1|2|3|4)(\d{2,3})(.*)?$/i;
+const BREAKER_RE =
+  /^(BR|BRN|BAB|BJ|BJH|GHB|GHQ|CLCAF|GFCB|GFTCB|CHF|QO|CH|HOM|THQL|MP|SWD|FH|HH|Q1)(1|2|3|4)(\d{2,3})(.*)?$/i;
 
 /**
  * Receptacle / device family: SERIES + AMPS(2-3 digits) + VARIANT(color etc.)
@@ -78,19 +92,57 @@ const CABLE_RE = /^(RX|NM|MC|SE|SER|UF|THHN|THWN)(\d.*)?$/i;
 const XFMR_RE = /^(V\d+M\d+)(T.*)?$/i;
 
 /**
- * Numeric device family (Hubbell, Leviton, and similar): 4-digit code
- * starting with 5 or 6, optionally followed by a variant suffix.
+ * Numeric device family (Hubbell, Leviton, Pass & Seymour, and similar):
+ * 4-digit codes starting with 5 or 6, OR 5-digit codes starting with 5 or 6
+ * (covers Hubbell weatherproof box codes like 53320, 51730, 56060), optionally
+ * followed by a variant suffix.
  *
  * This mirrors the `5\d{3}|6\d{3}` branch in `getSeriesBase()` so that
  * parseCatalog covers the same catalog families for materialized lookup.
  *
  * Examples:
- *   5262WHI  → series=5262, variant=WHI
- *   6150GRY  → series=6150, variant=GRY
- *   5262     → series=5262, variant=null
- *   5325I    → series=5325, variant=I
+ *   5262WHI  → series=5262,  variant=WHI
+ *   6150GRY  → series=6150,  variant=GRY
+ *   5262     → series=5262,  variant=null
+ *   5325I    → series=5325,  variant=I
+ *   53320    → series=53320, variant=null  (Hubbell WP box)
+ *   51730    → series=51730, variant=null
  */
-const NUMERIC_DEVICE_RE = /^([56]\d{3})([-A-Z].*)?\s*$/i;
+const NUMERIC_DEVICE_RE = /^([56]\d{3,4})([-A-Z].*)?\s*$/i;
+
+/**
+ * Bussmann fuse family: SERIES + AMPS(1-3 digits) + optional class/variant.
+ *
+ * Examples:
+ *   FNQ15    → series=FNQ,  amps=15,  variant=null
+ *   LPCC15   → series=LPCC, amps=15,  variant=null
+ *   FRNR250  → series=FRNR, amps=250, variant=null
+ *   LPJ35SP  → series=LPJ,  amps=35,  variant=SP
+ *   FNM4     → series=FNM,  amps=4,   variant=null
+ *   GMA4R    → series=GMA,  amps=4,   variant=R
+ */
+const FUSE_RE =
+  /^(FNQ|FNM|FNW|LPCC|LPJ|LPN|LPS|FRNR|FRSR|GMA|AGC|AGU|MDA|MDL|KTK|KLDR|JKS|FWP|FWX|KAS|KAR)(\d{1,3})([A-Z][A-Z0-9-]{0,8})?\s*$/i;
+
+/**
+ * Generic alpha-prefix device fallback: 1-5 letters + 3-5 digits + optional
+ * trailing letter/digit variant. Catches Pass & Seymour, Bryant, Lutron, and
+ * other vendor catalogs that don't match a more specific family pattern.
+ *
+ * Amps and poles are NOT extracted because the digit segment is ambiguous
+ * (could be a model number, color code, or wattage). This pattern only
+ * populates `series`, which is still useful for grouping and series-based
+ * "other variants" lookups.
+ *
+ * Examples:
+ *   1226I       → series=1226,    variant=I    (Pass & Seymour switch)
+ *   885BK       → series=885,     variant=BK   (Pass duplex receptacle)
+ *   PD6ANSWH    → series=PD,      variant=...  (Lutron Caseta dimmer)
+ *   MRF2S6ELV120WH (matched but limited) — series=MRF; rest is variant.
+ *
+ * Excludes catalogs that already matched stricter patterns above.
+ */
+const ALPHA_DEVICE_RE = /^([A-Z]{0,5})(\d{3,5})([A-Z][A-Z0-9-]{0,12})?\s*$/i;
 
 // ── Public parsers ──────────────────────────────────────────────────────────
 
@@ -115,7 +167,7 @@ export function parseCatalog(catalog: string | null | undefined): CatalogParse |
       amps: parseInt(breaker[3]!, 10),
       variant: breaker[4] || null,
       raw: c,
-      parser_version: 2,
+      parser_version: 3,
     };
   }
 
@@ -127,7 +179,7 @@ export function parseCatalog(catalog: string | null | undefined): CatalogParse |
       amps: parseInt(device[2]!, 10),
       variant: device[3] || null,
       raw: c,
-      parser_version: 2,
+      parser_version: 3,
     };
   }
 
@@ -139,7 +191,7 @@ export function parseCatalog(catalog: string | null | undefined): CatalogParse |
       amps: null,
       variant: cable[2] || null,
       raw: c,
-      parser_version: 2,
+      parser_version: 3,
     };
   }
 
@@ -151,7 +203,7 @@ export function parseCatalog(catalog: string | null | undefined): CatalogParse |
       amps: null,
       variant: xfmr[2] || null,
       raw: c,
-      parser_version: 2,
+      parser_version: 3,
     };
   }
 
@@ -163,7 +215,42 @@ export function parseCatalog(catalog: string | null | undefined): CatalogParse |
       amps: null,
       variant: numDev[2]?.replace(/^-/, '') || null,
       raw: c,
-      parser_version: 2,
+      parser_version: 3,
+    };
+  }
+
+  const fuse = FUSE_RE.exec(cu);
+  if (fuse) {
+    const amps = parseInt(fuse[2]!, 10);
+    return {
+      series: fuse[1]!,
+      poles: null,
+      amps: amps >= 1 && amps <= 6000 ? amps : null,
+      variant: fuse[3] || null,
+      raw: c,
+      parser_version: 3,
+    };
+  }
+
+  // Generic alpha-numeric fallback. Lower priority than every pattern above.
+  // Only matches when the catalog has both a letter prefix (or is purely
+  // numeric ≥ 3 digits) and a digit segment — preventing false positives on
+  // pure-letter catalogs while still catching Pass/Bryant/Lutron-style codes.
+  const alpha = ALPHA_DEVICE_RE.exec(cu);
+  if (alpha) {
+    const prefix = alpha[1] || '';
+    const digits = alpha[2]!;
+    // Skip purely-numeric matches < 4 digits (too generic — catches PO numbers,
+    // box counts, etc.). 4-5 digit numerics are handled by NUMERIC_DEVICE_RE
+    // above when starting with 5 or 6; allow others here.
+    if (!prefix && digits.length < 4) return null;
+    return {
+      series: prefix ? `${prefix}${digits}` : digits,
+      poles: null,
+      amps: null,
+      variant: alpha[3] || null,
+      raw: c,
+      parser_version: 3,
     };
   }
 
@@ -217,7 +304,9 @@ export function parseVoltage(text: string | null | undefined): number | null {
   const m = text.toUpperCase().match(/\b(\d{2,3})\s*(?:\/\d+)?\s*V(?:AC|DC)?\b/);
   if (!m) return null;
   const n = parseInt(m[1]!, 10);
-  const VALID = new Set([12, 24, 48, 120, 127, 208, 220, 240, 277, 347, 380, 480, 600]);
+  const VALID = new Set([
+    12, 24, 48, 120, 125, 127, 208, 220, 240, 250, 277, 347, 380, 480, 500, 600,
+  ]);
   return VALID.has(n) ? n : null;
 }
 
