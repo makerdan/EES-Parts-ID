@@ -685,7 +685,7 @@ const styles = StyleSheet.create({
   },
   drillLabel: { fontSize: 15, fontFamily: Platform.select({ ios: "Courier New", android: "monospace", default: "monospace" }), fontWeight: "600" },
   drillHint: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
-  drillCount: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  drillCount: { fontSize: 13, fontFamily: Platform.select({ ios: "Courier New", android: "monospace", default: "monospace" }) },
   partRow: { paddingHorizontal: 12 },
   listContent: { paddingBottom: 140 },
   emptyCard: {
