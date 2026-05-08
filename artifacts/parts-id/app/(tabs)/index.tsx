@@ -1496,6 +1496,16 @@ export default function SearchScreen() {
         ListHeaderComponent={(
           <View>
             {/* Results header */}
+            {hasResults && mode === "browse" ? (
+              <Pressable
+                onPress={() => handleBrowseNodeChange(null)}
+                hitSlop={8}
+                style={styles.browseBackBtn}
+              >
+                <Feather name="chevron-left" size={18} color={colors.foreground} />
+                <Text style={[styles.browseBackLabel, { color: colors.foreground }]}>Back</Text>
+              </Pressable>
+            ) : null}
             {hasResults ? (
               <View>
                 <View style={styles.resultsHeader}>
@@ -1624,7 +1634,7 @@ export default function SearchScreen() {
         )}
         renderItem={({ item: result, index }) => (
           <View style={styles.resultItem}>
-            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} fontScale={textFontScale} highlightTokens={highlightTokens} onFirstExpand={() => logResultClick(result.item.id, index)} />
+            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} showRank={mode !== "browse"} fontScale={textFontScale} highlightTokens={highlightTokens} onFirstExpand={() => logResultClick(result.item.id, index)} />
           </View>
         )}
         contentContainerStyle={styles.listContent}
@@ -1825,6 +1835,8 @@ const styles = StyleSheet.create({
   secondaryBtn: { ...secondaryBtnBase },
   newSearchBtn: { paddingHorizontal: 12, paddingVertical: 6 },
   newSearchText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  browseBackBtn: { flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 4 },
+  browseBackLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   loadingContainer: { alignItems: "center", padding: 40, gap: 12 },
   loadingText: { fontSize: 14, fontFamily: "Inter_400Regular" },
   errorCard: { margin: 16, padding: 16, borderRadius: 8, borderWidth: 1 },
