@@ -179,15 +179,13 @@ type MeasureJobStatus = {
   lastError: string | null;
 };
 
-type RebuildTokensJobStatus = {
-  running: boolean;
-  startedAt: string | null;
+type RebuildTokensProgress = {
   processed: number;
   updated: number;
   total: number | null;
   dictVersion: number | null;
-  finishedAt: string | null;
-  lastError: string | null;
+  done?: boolean;
+  error?: string;
 };
 
 type EnrichSummary = {
@@ -647,11 +645,10 @@ export default function UploadScreen() {
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
   const [measureServerErrorDismissed, setMeasureServerErrorDismissed] = useState(false);
 
-  // Dictionary token rebuild state
-  const [rebuildTokensJobStatus, setRebuildTokensJobStatus] = useState<RebuildTokensJobStatus | null>(null);
+  // Dictionary token rebuild state (SSE streaming — no persistent background job)
+  const [rebuildTokensProgress, setRebuildTokensProgress] = useState<RebuildTokensProgress | null>(null);
+  const [rebuildTokensRunning, setRebuildTokensRunning] = useState(false);
   const [rebuildTokensError, setRebuildTokensError] = useState<string | null>(null);
-  const [rebuildTokensPending, setRebuildTokensPending] = useState(false);
-  const [rebuildTokensServerErrorDismissed, setRebuildTokensServerErrorDismissed] = useState(false);
 
   // ── Assign Series state ─────────────────────────────────────────────────────
   type SeriesCoverage = { total: number; assigned: number };
@@ -709,7 +706,6 @@ export default function UploadScreen() {
 
   const bulkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const measurePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const rebuildTokensPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopBulkPoll = useCallback(() => {
     if (bulkPollRef.current !== null) {
@@ -725,12 +721,6 @@ export default function UploadScreen() {
     }
   }, []);
 
-  const stopRebuildTokensPoll = useCallback(() => {
-    if (rebuildTokensPollRef.current !== null) {
-      clearInterval(rebuildTokensPollRef.current);
-      rebuildTokensPollRef.current = null;
-    }
-  }, []);
 
   const fetchEnrichSummary = useCallback(async () => {
     try {
@@ -827,29 +817,6 @@ export default function UploadScreen() {
     measurePollRef.current = setInterval(pollMeasureStatus, 2000);
   }, [stopMeasurePoll, pollMeasureStatus]);
 
-  const pollRebuildTokensStatus = useCallback(async () => {
-    try {
-      const token = adminTokenRef.current;
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await fetch(`${API_BASE}/inventory/rebuild-tokens/status`, { headers });
-      if (res.status === 401) {
-        stopRebuildTokensPoll();
-        logoutAdmin();
-        setUploadError("Admin session expired. Please unlock again.");
-        return;
-      }
-      if (!res.ok) return;
-      const data = await res.json() as RebuildTokensJobStatus;
-      setRebuildTokensJobStatus(data);
-      if (!data.running) stopRebuildTokensPoll();
-    } catch {}
-  }, [stopRebuildTokensPoll, logoutAdmin]);
-
-  const startRebuildTokensPoll = useCallback(() => {
-    stopRebuildTokensPoll();
-    void pollRebuildTokensStatus();
-    rebuildTokensPollRef.current = setInterval(pollRebuildTokensStatus, 2000);
-  }, [stopRebuildTokensPoll, pollRebuildTokensStatus]);
 
   // On admin login, load coverage summary and check if jobs are already running.
   // On admin logout (isAdmin → false), stop any active polling immediately.
@@ -857,7 +824,6 @@ export default function UploadScreen() {
     if (!isAdmin) {
       stopBulkPoll();
       stopMeasurePoll();
-      stopRebuildTokensPoll();
       return;
     }
     setUploadError(null);
@@ -868,12 +834,11 @@ export default function UploadScreen() {
       try {
         const token = adminTokenRef.current;
         const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-        const [bulkRes, measureRes, rebuildRes] = await Promise.all([
+        const [bulkRes, measureRes] = await Promise.all([
           fetch(`${API_BASE}/inventory/bulk-enrich/status`, { headers }),
           fetch(`${API_BASE}/inventory/enrich-measurements/status`, { headers }),
-          fetch(`${API_BASE}/inventory/rebuild-tokens/status`, { headers }),
         ]);
-        if (bulkRes.status === 401 || measureRes.status === 401 || rebuildRes.status === 401) {
+        if (bulkRes.status === 401 || measureRes.status === 401) {
           logoutAdmin();
           setUploadError("Admin session expired. Please unlock again.");
           return;
@@ -888,22 +853,16 @@ export default function UploadScreen() {
           setMeasureJobStatus(data);
           if (data.running) startMeasurePoll();
         }
-        if (rebuildRes.ok) {
-          const data = await rebuildRes.json() as RebuildTokensJobStatus;
-          setRebuildTokensJobStatus(data);
-          if (data.running) startRebuildTokensPoll();
-        }
       } catch {}
     })();
-  }, [isAdmin, fetchEnrichSummary, fetchReviewCount, startBulkPoll, stopBulkPoll, startMeasurePoll, stopMeasurePoll, startRebuildTokensPoll, stopRebuildTokensPoll, logoutAdmin]);
+  }, [isAdmin, fetchEnrichSummary, fetchReviewCount, startBulkPoll, stopBulkPoll, startMeasurePoll, stopMeasurePoll, logoutAdmin]);
 
   // Clean up polling on unmount
-  useEffect(() => () => { stopBulkPoll(); stopMeasurePoll(); stopRebuildTokensPoll(); }, [stopBulkPoll, stopMeasurePoll, stopRebuildTokensPoll]);
+  useEffect(() => () => { stopBulkPoll(); stopMeasurePoll(); }, [stopBulkPoll, stopMeasurePoll]);
 
   // Reset server-error dismissed flags whenever a new lastError value arrives
   useEffect(() => { setBulkServerErrorDismissed(false); }, [bulkJobStatus?.lastError]);
   useEffect(() => { setMeasureServerErrorDismissed(false); }, [measureJobStatus?.lastError]);
-  useEffect(() => { setRebuildTokensServerErrorDismissed(false); }, [rebuildTokensJobStatus?.lastError]);
 
   // Fetch the supported catalog vendors so the picker shows real options.
   // Falls back to a Bridgeport-only list if the call fails (older server).
@@ -1005,30 +964,44 @@ export default function UploadScreen() {
 
   const handleStartRebuildTokens = async () => {
     setRebuildTokensError(null);
-    setRebuildTokensPending(true);
+    setRebuildTokensProgress(null);
+    setRebuildTokensRunning(true);
     try {
       const res = await fetch(`${API_BASE}/inventory/rebuild-tokens`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...adminHeaders },
       });
-      if (res.status === 409) {
-        const data = await res.json() as { job: RebuildTokensJobStatus };
-        setRebuildTokensJobStatus(data.job);
-        startRebuildTokensPoll();
-        return;
-      }
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({})) as { error?: string };
         setRebuildTokensError(err.error ?? "Failed to start token rebuild");
         return;
       }
-      const data = await res.json() as { job: RebuildTokensJobStatus };
-      setRebuildTokensJobStatus(data.job);
-      startRebuildTokensPoll();
+      // Read the SSE stream — same pattern as /enrich and /series/auto-assign
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6)) as RebuildTokensProgress;
+            if (evt.error) {
+              setRebuildTokensError(evt.error);
+              return;
+            }
+            setRebuildTokensProgress(evt);
+          } catch { /* malformed event — skip */ }
+        }
+      }
     } catch {
       setRebuildTokensError("Failed to start token rebuild. Check your connection and try again.");
     } finally {
-      setRebuildTokensPending(false);
+      setRebuildTokensRunning(false);
     }
   };
 
@@ -2546,12 +2519,12 @@ export default function UploadScreen() {
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>Dictionary Token Rebuild</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Re-builds search tokens for parts whose tokens are behind the current dictionary version (synonyms, abbreviations, slang, misspellings). Only stale rows are processed.
-                  {rebuildTokensJobStatus?.dictVersion != null
-                    ? ` Dictionary v${rebuildTokensJobStatus.dictVersion}.`
+                  {rebuildTokensProgress?.dictVersion != null
+                    ? ` Dictionary v${rebuildTokensProgress.dictVersion}.`
                     : ""}
                 </Text>
 
-                {rebuildTokensJobStatus?.running ? (
+                {rebuildTokensRunning ? (
                   <View style={styles.progressContainer}>
                     <View style={styles.bulkStatusRow}>
                       <ActivityIndicator size="small" color={colors.primary} />
@@ -2559,7 +2532,7 @@ export default function UploadScreen() {
                         Token rebuild running…
                       </Text>
                     </View>
-                    {rebuildTokensJobStatus.total != null && rebuildTokensJobStatus.total > 0 ? (
+                    {rebuildTokensProgress?.total != null && rebuildTokensProgress.total > 0 ? (
                       <>
                         <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
                           <View
@@ -2567,52 +2540,50 @@ export default function UploadScreen() {
                               styles.progressFill,
                               {
                                 backgroundColor: colors.primary,
-                                width: `${Math.round((rebuildTokensJobStatus.processed / rebuildTokensJobStatus.total) * 100)}%`,
+                                width: `${Math.round((rebuildTokensProgress.processed / rebuildTokensProgress.total) * 100)}%`,
                               },
                             ]}
                           />
                         </View>
                         <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                          {rebuildTokensJobStatus.processed.toLocaleString()} / {rebuildTokensJobStatus.total.toLocaleString()} processed
-                          {rebuildTokensJobStatus.updated > 0 ? ` · ${rebuildTokensJobStatus.updated} updated` : ""}
+                          {rebuildTokensProgress.processed.toLocaleString()} / {rebuildTokensProgress.total.toLocaleString()} processed
+                          {rebuildTokensProgress.updated > 0 ? ` · ${rebuildTokensProgress.updated} updated` : ""}
                         </Text>
                       </>
                     ) : null}
                   </View>
                 ) : null}
 
-                {rebuildTokensJobStatus && !rebuildTokensJobStatus.running && rebuildTokensJobStatus.finishedAt ? (
+                {rebuildTokensProgress?.done && !rebuildTokensRunning ? (
                   <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
                     <Text style={[styles.doneText, { color: colors.success }]}>
-                      {rebuildTokensJobStatus.total === 0
+                      {rebuildTokensProgress.total === 0
                         ? "✓ Dictionary is current — no rows needed rebuilding"
-                        : `✓ Last run: ${rebuildTokensJobStatus.updated.toLocaleString()} updated of ${rebuildTokensJobStatus.processed.toLocaleString()} checked`}
+                        : `✓ Done: ${rebuildTokensProgress.updated.toLocaleString()} updated of ${rebuildTokensProgress.processed.toLocaleString()} checked`}
                     </Text>
                   </View>
                 ) : null}
 
-                {(rebuildTokensError || (rebuildTokensJobStatus?.lastError && !rebuildTokensServerErrorDismissed)) ? (
+                {rebuildTokensError ? (
                   <ErrorBanner
-                    message={rebuildTokensError ?? rebuildTokensJobStatus?.lastError ?? "Rebuild error"}
-                    onDismiss={rebuildTokensError
-                      ? () => setRebuildTokensError(null)
-                      : () => setRebuildTokensServerErrorDismissed(true)}
+                    message={rebuildTokensError}
+                    onDismiss={() => setRebuildTokensError(null)}
                   />
                 ) : null}
 
                 <Pressable
                   onPress={handleStartRebuildTokens}
-                  disabled={rebuildTokensJobStatus?.running || rebuildTokensPending}
+                  disabled={rebuildTokensRunning}
                   style={[
                     styles.enrichBtn,
-                    { backgroundColor: (rebuildTokensJobStatus?.running || rebuildTokensPending) ? colors.muted : colors.primary },
+                    { backgroundColor: rebuildTokensRunning ? colors.muted : colors.primary },
                   ]}
                 >
-                  {rebuildTokensPending ? (
+                  {rebuildTokensRunning ? (
                     <ActivityIndicator color={colors.primaryForeground} />
                   ) : (
                     <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                      {rebuildTokensJobStatus?.running ? "Rebuilding…" : "Rebuild Stale Tokens"}
+                      Rebuild Stale Tokens
                     </Text>
                   )}
                 </Pressable>
