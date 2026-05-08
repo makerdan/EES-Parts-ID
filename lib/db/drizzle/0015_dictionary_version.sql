@@ -17,8 +17,10 @@ CREATE TABLE IF NOT EXISTS dictionary_version (
   CONSTRAINT dictionary_version_single_row CHECK (id = 1)
 );
 
--- Seed the single row (idempotent)
-INSERT INTO dictionary_version (id, version) VALUES (1, 0) ON CONFLICT DO NOTHING;
+-- Seed the single row (idempotent).
+-- Start at version=1 so all existing inventory rows (tokens_dict_version=0)
+-- are immediately stale and eligible for a first rebuild-tokens run.
+INSERT INTO dictionary_version (id, version) VALUES (1, 1) ON CONFLICT DO NOTHING;
 
 -- Trigger function: increment the counter and refresh the timestamp.
 -- Written as an AFTER ... FOR EACH STATEMENT trigger so bulk inserts
@@ -62,7 +64,8 @@ CREATE TRIGGER trg_dict_ver_misspelling_map
 -- DEFAULT 0 backfills existing rows in one pass; NOT NULL is safe here because
 -- the default is specified in the same statement (PostgreSQL evaluates DEFAULT
 -- before checking NOT NULL for existing rows during ALTER TABLE).
--- Existing rows will have version=0 which matches the initial dict_version=0,
--- so they appear current until the first dictionary change increments the counter.
+-- Existing rows backfill with tokens_dict_version=0. Since dictionary_version
+-- seeds at version=1, all existing rows are immediately considered stale and
+-- will be processed on the first rebuild-tokens run.
 ALTER TABLE inventory
   ADD COLUMN IF NOT EXISTS tokens_dict_version integer NOT NULL DEFAULT 0;
