@@ -1554,25 +1554,6 @@ export default function SearchScreen() {
                     </Pressable>
                   </View>
                 ) : null}
-                {/* Actionable "more matches below threshold" banner */}
-                {!isOffline && belowThreshold > 0 && (
-                  <Pressable
-                    onPress={() => {
-                      const lower = Math.max(0, filters.confidenceThreshold - 20);
-                      handleChange("confidenceThreshold", lower);
-                      setTimeout(handleSearch, 50);
-                    }}
-                    style={[styles.belowThresholdBanner, {
-                      backgroundColor: colors.warning + "18",
-                      borderColor: colors.warning + "55",
-                    }]}
-                  >
-                    <Text style={[styles.belowThresholdBannerText, { color: colors.warning }]}>
-                      {belowThreshold} more match{belowThreshold !== 1 ? "es" : ""} available at{" "}
-                      {Math.max(0, filters.confidenceThreshold - 20)}% — tap to lower threshold
-                    </Text>
-                  </Pressable>
-                )}
               </View>
             ) : null}
 
@@ -1638,6 +1619,24 @@ export default function SearchScreen() {
             <ResultCard result={result} onEditKeywords={setEditItem} rank={index} showRank={mode !== "browse"} fontScale={textFontScale} highlightTokens={highlightTokens} onFirstExpand={() => logResultClick(result.item.id, index)} />
           </View>
         )}
+        ListFooterComponent={!isOffline && belowThreshold > 0 && hasResults && results.length > 0 ? (
+          <Pressable
+            onPress={() => {
+              const lower = Math.max(0, filters.confidenceThreshold - 20);
+              handleChange("confidenceThreshold", lower);
+              setTimeout(handleSearch, 50);
+            }}
+            style={[styles.belowThresholdBanner, {
+              backgroundColor: colors.warning + "18",
+              borderColor: colors.warning + "55",
+            }]}
+          >
+            <Text style={[styles.belowThresholdBannerText, { color: colors.warning }]}>
+              {belowThreshold} more match{belowThreshold !== 1 ? "es" : ""} available — tap to lower confidence threshold to{" "}
+              {Math.max(0, filters.confidenceThreshold - 20)}%
+            </Text>
+          </Pressable>
+        ) : null}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
