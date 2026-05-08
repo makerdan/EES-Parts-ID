@@ -77,7 +77,7 @@ export type ChipDim = {
 export const CHIP_DIMS: ChipDim[] = [
   {
     key: "category",
-    label: "Category",
+    label: "Keywords:",
     options: ["Receptacle","Switch","Breaker","Wire","Conduit","Fitting","Box","Panel","Transformer","Fuse","Lighting","Motor","Connector","Dimmer","Sensor","Enclosure"],
   },
   {
