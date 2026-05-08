@@ -7,7 +7,7 @@
  * Closing the overlay returns them to their prior search/filter state.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { BackHandler, FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -102,6 +102,26 @@ export function BrowseByAisle({
   };
 
   const goHome = () => setCrumbs({ aisle: null, section: null, shelf: null });
+
+  // ── Android hardware back gesture ─────────────────────────────────────────
+  // When the overlay is open, intercept the hardware back press:
+  //   • At root (aisles) → close the overlay entirely (call onClose)
+  //   • Deeper levels    → pop one level up (call goBack)
+  // Return true in both cases to prevent the event from bubbling to the tab
+  // navigator. The effect re-registers whenever the drill level changes so
+  // the handler always has the correct behaviour for the current depth.
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const handler = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (level === "aisles") {
+        onClose();
+      } else {
+        goBack();
+      }
+      return true;
+    });
+    return () => handler.remove();
+  }, [level, goBack, onClose]);
 
   // Empty-state: the local cache is empty (offline first-run case).
   if (inventory.length === 0) {

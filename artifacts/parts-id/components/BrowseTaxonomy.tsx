@@ -15,7 +15,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  FlatList,
+  BackHandler,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -151,6 +152,22 @@ export default function BrowseTaxonomy({
     setPath(prev => prev.slice(0, depth));
   }, []);
 
+  // ── Android hardware back gesture ────────────────────────────────────────
+  // When drilled into a category level, the back press pops one level up.
+  // At the root (path.length === 0) we return false so the event bubbles to
+  // the parent handler (BrowseByAisle's BackHandler, or the tab navigator).
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const handler = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (path.length > 0) {
+        popTo(path.length - 1);
+        return true;
+      }
+      return false;
+    });
+    return () => handler.remove();
+  }, [path.length, popTo]);
+
   // ── Render ──────────────────────────────────────────────────────────────
   if (loading && tree.length === 0) {
     return (
@@ -216,40 +233,40 @@ export default function BrowseTaxonomy({
         </Text>
       ) : null}
 
-      {/* Children list */}
-      <FlatList
-        data={children}
-        keyExtractor={n => n.slug}
-        scrollEnabled={false}
-        ItemSeparatorComponent={() => (
-          <View style={[styles.sep, { backgroundColor: colors.border }]} />
-        )}
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() =>
-              item.children.length > 0 ? drillInto(item.slug) : setPath(prev => [...prev, item.slug])
-            }
-            style={({ pressed }) => [
-              styles.row,
-              { backgroundColor: pressed ? colors.muted : "transparent" },
-            ]}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.rowName, { color: colors.foreground }]}>{item.name}</Text>
-              <Text style={[styles.rowMeta, { color: colors.mutedForeground }]}>
-                {item.itemCount} item{item.itemCount === 1 ? "" : "s"}
-                {item.children.length > 0 ? ` · ${item.children.length} sub-categories` : ""}
-              </Text>
-            </View>
-            <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
-          </Pressable>
-        )}
-        ListEmptyComponent={() => (
+      {/* Children list — plain mapped View; FlatList with scrollEnabled={false}
+          disables virtualization anyway and adds unnecessary overhead here
+          since this list lives inside a parent ScrollView. */}
+      <View>
+        {children.length === 0 ? (
           <Text style={[styles.muted, { color: colors.mutedForeground, padding: 12 }]}>
             No items in this category yet.
           </Text>
-        )}
-      />
+        ) : children.map((item, idx) => (
+          <React.Fragment key={item.slug}>
+            {idx > 0 ? (
+              <View style={[styles.sep, { backgroundColor: colors.border }]} />
+            ) : null}
+            <Pressable
+              onPress={() =>
+                item.children.length > 0 ? drillInto(item.slug) : setPath(prev => [...prev, item.slug])
+              }
+              style={({ pressed }) => [
+                styles.row,
+                { backgroundColor: pressed ? colors.muted : "transparent" },
+              ]}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.rowName, { color: colors.foreground }]}>{item.name}</Text>
+                <Text style={[styles.rowMeta, { color: colors.mutedForeground }]}>
+                  {item.itemCount} item{item.itemCount === 1 ? "" : "s"}
+                  {item.children.length > 0 ? ` · ${item.children.length} sub-categories` : ""}
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+            </Pressable>
+          </React.Fragment>
+        ))}
+      </View>
     </View>
   );
 }
