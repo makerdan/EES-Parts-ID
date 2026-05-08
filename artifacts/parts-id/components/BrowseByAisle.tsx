@@ -131,10 +131,10 @@ export function BrowseByAisle({
         <View
           style={[styles.emptyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
         >
-          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+          <Text allowFontScaling={false} style={[styles.emptyTitle, { color: colors.foreground }]}>
             {cacheReady ? 'No inventory loaded' : 'Inventory not synced yet'}
           </Text>
-          <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+          <Text allowFontScaling={false} style={[styles.emptyHint, { color: colors.mutedForeground }]}>
             {cacheReady
               ? 'There are no parts to browse.'
               : 'Browse by Aisle works offline once the inventory has been synced once. Connect to the network and wait for the sync badge in the header to finish.'}
@@ -347,10 +347,10 @@ function ShelfView({
                     accessibilityRole="button"
                     accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
                   >
-                    <Text style={[shelfStyles.slotPos, { color: '#000000' }]}>
+                    <Text allowFontScaling={false} style={[shelfStyles.slotPos, { color: '#000000' }]}>
                       {p.bin.split('-').pop() ?? p.bin}
                     </Text>
-                    <Text
+                    <Text allowFontScaling={false}
                       numberOfLines={1}
                       style={[
                         shelfStyles.slotName,
@@ -360,7 +360,7 @@ function ShelfView({
                       {p.item.catalog ?? p.item.description ?? '—'}
                     </Text>
                     {p.item.vendor ? (
-                      <Text
+                      <Text allowFontScaling={false}
                         numberOfLines={1}
                         style={[
                           shelfStyles.slotVendor,
@@ -387,7 +387,7 @@ function ShelfView({
             ]}
           />
         </ScrollView>
-        <Text style={[shelfStyles.locationLabel, { color: colors.mutedForeground }]}>
+        <Text allowFontScaling={false} style={[shelfStyles.locationLabel, { color: colors.mutedForeground }]}>
           {`${locationLabel} · ${parts.length} ${parts.length === 1 ? 'part' : 'parts'}`}
         </Text>
       </View>
@@ -428,7 +428,7 @@ function ShelfView({
             color={colors.mutedForeground}
             style={{ marginBottom: 8 }}
           />
-          <Text style={[shelfStyles.hintText, { color: colors.mutedForeground }]}>
+          <Text allowFontScaling={false} style={[shelfStyles.hintText, { color: colors.mutedForeground }]}>
             Tap a bin above to see part details
           </Text>
         </View>
@@ -512,7 +512,7 @@ function SectionShelfView({
       {shelves.map((shelf, shelfIdx) => (
         <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
           {shelfIdx > 0 ? <View style={sectionStyles.shelfPlank} /> : null}
-          <Text style={[sectionStyles.shelfLabel, { color: colors.foreground }]}>
+          <Text allowFontScaling={false} style={[sectionStyles.shelfLabel, { color: colors.foreground }]}>
             {`${shelf.label} · ${shelf.partCount} ${shelf.partCount === 1 ? 'part' : 'parts'}`}
           </Text>
           <ScrollView
@@ -543,10 +543,10 @@ function SectionShelfView({
                       accessibilityRole="button"
                       accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
                     >
-                      <Text style={[shelfStyles.slotPos, { color: '#000000' }]}>
+                      <Text allowFontScaling={false} style={[shelfStyles.slotPos, { color: '#000000' }]}>
                         {p.bin.split('-').pop() ?? p.bin}
                       </Text>
-                      <Text
+                      <Text allowFontScaling={false}
                         numberOfLines={1}
                         style={[
                           shelfStyles.slotName,
@@ -556,7 +556,7 @@ function SectionShelfView({
                         {p.item.catalog ?? p.item.description ?? '—'}
                       </Text>
                       {p.item.vendor ? (
-                        <Text
+                        <Text allowFontScaling={false}
                           numberOfLines={1}
                           style={[
                             shelfStyles.slotVendor,
@@ -613,7 +613,7 @@ function SectionShelfView({
             color={colors.mutedForeground}
             style={{ marginBottom: 8 }}
           />
-          <Text style={[shelfStyles.hintText, { color: colors.mutedForeground }]}>
+          <Text allowFontScaling={false} style={[shelfStyles.hintText, { color: colors.mutedForeground }]}>
             Tap a bin above to see part details
           </Text>
         </View>
@@ -664,13 +664,13 @@ function Header({
         accessibilityLabel={isRoot ? 'Close Browse by Aisle' : 'Go back one level'}
       >
         <Feather name={isRoot ? 'x' : 'chevron-left'} size={18} color={colors.foreground} />
-        <Text style={[styles.headerBtnText, { color: colors.foreground }]}>
+        <Text allowFontScaling={false} style={[styles.headerBtnText, { color: colors.foreground }]}>
           {isRoot ? 'Close' : 'Back'}
         </Text>
       </Pressable>
       <View style={styles.crumbWrap}>
         {parts.length > 0 ? (
-          <Text style={[styles.crumbPath, { color: '#000000' }]} numberOfLines={1}>
+          <Text allowFontScaling={false} style={[styles.crumbPath, { color: '#000000' }]} numberOfLines={1}>
             {parts.join(' › ')}
           </Text>
         ) : null}
@@ -706,12 +706,12 @@ function DrillRow({
       accessibilityLabel={`${label}, ${count} ${count === 1 ? 'part' : 'parts'}`}
     >
       <View style={{ flex: 1 }}>
-        <Text style={[styles.drillLabel, { color: colors.foreground }]}>{label}</Text>
+        <Text allowFontScaling={false} style={[styles.drillLabel, { color: colors.foreground }]}>{label}</Text>
         {hint ? (
-          <Text style={[styles.drillHint, { color: colors.mutedForeground }]}>{hint}</Text>
+          <Text allowFontScaling={false} style={[styles.drillHint, { color: colors.mutedForeground }]}>{hint}</Text>
         ) : null}
       </View>
-      <Text style={[styles.drillCount, { color: colors.mutedForeground }]}>
+      <Text allowFontScaling={false} style={[styles.drillCount, { color: colors.mutedForeground }]}>
         {count} {count === 1 ? 'part' : 'parts'}
       </Text>
       <Feather

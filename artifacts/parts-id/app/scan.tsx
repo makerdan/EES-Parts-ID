@@ -105,7 +105,7 @@ export default function ScanScreen() {
           },
         ]}
       >
-        <Text style={[styles.cancelBtnText, { color: onCamera ? '#fff' : colors.foreground }]}>
+        <Text allowFontScaling={false} style={[styles.cancelBtnText, { color: onCamera ? '#fff' : colors.foreground }]}>
           ✕
         </Text>
       </Pressable>
@@ -307,10 +307,10 @@ export default function ScanScreen() {
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
         {renderCancelButton('onSurface')}
         <View style={styles.explainerCard}>
-          <Text style={[styles.explainerTitle, { color: colors.foreground }]}>
+          <Text allowFontScaling={false} style={[styles.explainerTitle, { color: colors.foreground }]}>
             Scan barcodes to find parts faster
           </Text>
-          <Text style={[styles.explainerBody, { color: colors.mutedForeground }]}>
+          <Text allowFontScaling={false} style={[styles.explainerBody, { color: colors.mutedForeground }]}>
             We use the camera only while you're on this tab to read EAN, UPC, Code 128, Code 39,
             Data Matrix, and QR codes printed on parts and bins. Photos are never stored.
           </Text>
@@ -321,12 +321,12 @@ export default function ScanScreen() {
               await requestPermission();
             }}
           >
-            <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
+            <Text allowFontScaling={false} style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
               Continue
             </Text>
           </Pressable>
           <Pressable onPress={() => setManualEntry(true)} style={styles.secondaryBtn}>
-            <Text style={{ color: colors.primary, fontFamily: 'Inter_500Medium' }}>
+            <Text allowFontScaling={false} style={{ color: colors.primary, fontFamily: 'Inter_500Medium' }}>
               Type barcode instead
             </Text>
           </Pressable>
@@ -340,22 +340,22 @@ export default function ScanScreen() {
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
         {renderCancelButton('onSurface')}
         <View style={styles.explainerCard}>
-          <Text style={[styles.explainerTitle, { color: colors.foreground }]}>
+          <Text allowFontScaling={false} style={[styles.explainerTitle, { color: colors.foreground }]}>
             Camera access is off
           </Text>
-          <Text style={[styles.explainerBody, { color: colors.mutedForeground }]}>
+          <Text allowFontScaling={false} style={[styles.explainerBody, { color: colors.mutedForeground }]}>
             Open Settings to grant camera access, or type the barcode by hand.
           </Text>
           <Pressable
             style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
             onPress={() => Linking.openSettings()}
           >
-            <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
+            <Text allowFontScaling={false} style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
               Open Settings
             </Text>
           </Pressable>
           <Pressable onPress={() => setManualEntry(true)} style={styles.secondaryBtn}>
-            <Text style={{ color: colors.primary, fontFamily: 'Inter_500Medium' }}>
+            <Text allowFontScaling={false} style={{ color: colors.primary, fontFamily: 'Inter_500Medium' }}>
               Type barcode instead
             </Text>
           </Pressable>
@@ -386,7 +386,7 @@ export default function ScanScreen() {
           {/* Reticle overlay */}
           <View pointerEvents="none" style={styles.reticleWrap}>
             <View style={[styles.reticle, { borderColor: colors.primary }]} />
-            <Text style={[styles.reticleHint, { color: '#fff' }]}>
+            <Text allowFontScaling={false} style={[styles.reticleHint, { color: '#fff' }]}>
               {lookupMutation.isPending ? 'Looking up…' : 'Center barcode in the box'}
             </Text>
           </View>
@@ -400,7 +400,7 @@ export default function ScanScreen() {
               accessibilityRole="button"
               accessibilityLabel={torchOn ? 'Turn torch off' : 'Turn torch on'}
             >
-              <Text style={[styles.controlText, { color: '#fff' }]}>
+              <Text allowFontScaling={false} style={[styles.controlText, { color: '#fff' }]}>
                 {torchOn ? 'Light ON' : 'Light OFF'}
               </Text>
             </Pressable>
@@ -410,13 +410,13 @@ export default function ScanScreen() {
               accessibilityRole="button"
               accessibilityLabel="Type barcode"
             >
-              <Text style={[styles.controlText, { color: '#fff' }]}>Type barcode</Text>
+              <Text allowFontScaling={false} style={[styles.controlText, { color: '#fff' }]}>Type barcode</Text>
             </Pressable>
           </View>
         </View>
       ) : (
         <View style={[styles.webPlaceholder, { borderColor: colors.border }]}>
-          <Text style={[styles.explainerBody, { color: colors.mutedForeground }]}>
+          <Text allowFontScaling={false} style={[styles.explainerBody, { color: colors.mutedForeground }]}>
             {isWeb
               ? "Camera scanning isn't available in the web build. Type the barcode below to look it up."
               : 'Camera is off. Type the barcode below, or open Settings to enable camera access.'}
@@ -426,7 +426,7 @@ export default function ScanScreen() {
               style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
               onPress={() => Linking.openSettings()}
             >
-              <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
+              <Text allowFontScaling={false} style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
                 Open Settings
               </Text>
             </Pressable>
@@ -458,7 +458,7 @@ export default function ScanScreen() {
             ]}
             disabled={!manualValue.trim()}
           >
-            <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>Lookup</Text>
+            <Text allowFontScaling={false} style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>Lookup</Text>
           </Pressable>
         </View>
       ) : null}
@@ -496,14 +496,14 @@ export default function ScanScreen() {
             <View style={[styles.modalHeader, { borderColor: colors.border }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
                 <View style={[styles.headerAccent, { backgroundColor: colors.primary }]} />
-                <Text style={[styles.modalTitle, { color: colors.foreground }]}>Scanned Part</Text>
+                <Text allowFontScaling={false} style={[styles.modalTitle, { color: colors.foreground }]}>Scanned Part</Text>
               </View>
               <Pressable
                 onPress={resetScanner}
                 hitSlop={10}
                 style={[styles.closeBtn, { borderColor: colors.border }]}
               >
-                <Text style={{ color: colors.foreground, fontFamily: 'Inter_600SemiBold' }}>
+                <Text allowFontScaling={false} style={{ color: colors.foreground, fontFamily: 'Inter_600SemiBold' }}>
                   ✕ Close
                 </Text>
               </Pressable>
@@ -548,7 +548,7 @@ export default function ScanScreen() {
             <View style={[styles.modalHeader, { borderColor: colors.border }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
                 <View style={[styles.headerAccent, { backgroundColor: colors.primary }]} />
-                <Text style={[styles.modalTitle, { color: colors.foreground }]}>
+                <Text allowFontScaling={false} style={[styles.modalTitle, { color: colors.foreground }]}>
                   {pickerMode === 'menu'
                     ? "Don't recognize this barcode yet"
                     : pickerMode === 'search'
@@ -561,21 +561,21 @@ export default function ScanScreen() {
                 hitSlop={10}
                 style={[styles.closeBtn, { borderColor: colors.border }]}
               >
-                <Text style={{ color: colors.foreground, fontFamily: 'Inter_600SemiBold' }}>
+                <Text allowFontScaling={false} style={{ color: colors.foreground, fontFamily: 'Inter_600SemiBold' }}>
                   ✕ Cancel
                 </Text>
               </Pressable>
             </View>
             <ScrollView contentContainerStyle={{ padding: 14 }}>
               {pendingBarcode ? (
-                <Text style={[styles.barcodeLabel, { color: colors.mutedForeground }]}>
+                <Text allowFontScaling={false} style={[styles.barcodeLabel, { color: colors.mutedForeground }]}>
                   Barcode: {pendingBarcode}
                 </Text>
               ) : null}
 
               {pickerMode === 'menu' ? (
                 <>
-                  <Text style={[styles.helpText, { color: colors.foreground }]}>
+                  <Text allowFontScaling={false} style={[styles.helpText, { color: colors.foreground }]}>
                     Pick the part this barcode belongs to. Next scan of the same barcode will jump
                     straight to that part.
                   </Text>
@@ -592,7 +592,7 @@ export default function ScanScreen() {
                     >
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <Feather name="search" size={16} color={colors.foreground} />
-                        <Text style={[styles.modeBtnText, { color: colors.foreground }]}>
+                        <Text allowFontScaling={false} style={[styles.modeBtnText, { color: colors.foreground }]}>
                           Search by catalog or keyword
                         </Text>
                       </View>
@@ -610,14 +610,14 @@ export default function ScanScreen() {
                     >
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <Feather name="camera" size={16} color={colors.foreground} />
-                        <Text style={[styles.modeBtnText, { color: colors.foreground }]}>
+                        <Text allowFontScaling={false} style={[styles.modeBtnText, { color: colors.foreground }]}>
                           Identify with Photo ID
                         </Text>
                       </View>
                     </Pressable>
                   </View>
 
-                  <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+                  <Text allowFontScaling={false} style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
                     OR PICK FROM RECENTLY VIEWED
                   </Text>
                   <RecentList
@@ -650,7 +650,7 @@ export default function ScanScreen() {
                         { backgroundColor: colors.primary, marginTop: 0, paddingHorizontal: 16 },
                       ]}
                     >
-                      <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
+                      <Text allowFontScaling={false} style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
                         Search
                       </Text>
                     </Pressable>
@@ -690,7 +690,7 @@ export default function ScanScreen() {
                       },
                     ]}
                   >
-                    <Text style={{ color: colors.primary, fontFamily: 'Inter_600SemiBold' }}>
+                    <Text allowFontScaling={false} style={{ color: colors.primary, fontFamily: 'Inter_600SemiBold' }}>
                       Take another photo
                     </Text>
                   </Pressable>
@@ -702,7 +702,7 @@ export default function ScanScreen() {
                   onPress={() => setPickerMode('menu')}
                   style={[styles.secondaryBtn, { marginTop: 12 }]}
                 >
-                  <Text style={{ color: colors.primary, fontFamily: 'Inter_500Medium' }}>
+                  <Text allowFontScaling={false} style={{ color: colors.primary, fontFamily: 'Inter_500Medium' }}>
                     ← Back
                   </Text>
                 </Pressable>
@@ -729,7 +729,7 @@ function RecentList({
   const colors = useColors();
   if (items.length === 0) {
     return (
-      <Text
+      <Text allowFontScaling={false}
         style={{ color: colors.mutedForeground, marginTop: 12, fontFamily: 'Inter_400Regular' }}
       >
         No items to show yet.
@@ -752,14 +752,14 @@ function RecentList({
             },
           ]}
         >
-          <Text style={[styles.recentVendor, { color: colors.mutedForeground }]}>
+          <Text allowFontScaling={false} style={[styles.recentVendor, { color: colors.mutedForeground }]}>
             {item.vendor}
           </Text>
-          <Text style={[styles.recentCatalog, { color: colors.foreground }]} numberOfLines={1}>
+          <Text allowFontScaling={false} style={[styles.recentCatalog, { color: colors.foreground }]} numberOfLines={1}>
             {item.catalog}
           </Text>
           {item.description ? (
-            <Text style={[styles.recentDesc, { color: colors.mutedForeground }]} numberOfLines={2}>
+            <Text allowFontScaling={false} style={[styles.recentDesc, { color: colors.mutedForeground }]} numberOfLines={2}>
               {item.description}
             </Text>
           ) : null}
