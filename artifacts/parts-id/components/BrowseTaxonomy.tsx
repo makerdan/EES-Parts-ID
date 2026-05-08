@@ -45,12 +45,19 @@ interface BrowseTaxonomyProps {
   initialTree?: CategoryTreeNode[];
   /** Increment this to pop the current path up one level (e.g. Back from results). */
   popTrigger?: number;
+  /**
+   * Called when Android hardware back is pressed at the taxonomy root.
+   * Parent should switch back to Search mode. When omitted, the back press
+   * bubbles to the navigator (current default behaviour).
+   */
+  onExitBrowse?: () => void;
 }
 
 export default function BrowseTaxonomy({
   onSelectNode,
   initialTree,
   popTrigger = 0,
+  onExitBrowse,
 }: BrowseTaxonomyProps): React.JSX.Element {
   const colors = useColors();
   const [tree, setTree] = useState<CategoryTreeNode[]>(initialTree ?? []);
@@ -158,8 +165,10 @@ export default function BrowseTaxonomy({
 
   // ── Android hardware back gesture ────────────────────────────────────────
   // When drilled into a category level, the back press pops one level up.
-  // At the root (path.length === 0) we return false so the event bubbles to
-  // the parent handler (BrowseByAisle's BackHandler, or the tab navigator).
+  // At the root (path.length === 0): if the parent supplied `onExitBrowse`
+  // we invoke it (and consume the event) so the user lands back in Search
+  // mode instead of exiting the tab. Without that callback we return false
+  // and let the event bubble to the navigator (legacy default).
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const handler = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -167,10 +176,14 @@ export default function BrowseTaxonomy({
         popTo(path.length - 1);
         return true;
       }
+      if (onExitBrowse) {
+        onExitBrowse();
+        return true;
+      }
       return false;
     });
     return () => handler.remove();
-  }, [path.length, popTo]);
+  }, [path.length, popTo, onExitBrowse]);
 
   // ── Render ──────────────────────────────────────────────────────────────
   if (loading && tree.length === 0) {

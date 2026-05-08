@@ -6,7 +6,7 @@
  * arrays, so workers can keep walking the warehouse with no signal.
  * Closing the overlay returns them to their prior search/filter state.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
   FlatList,
@@ -101,16 +101,18 @@ export function BrowseByAisle({
     }
   }, [level]);
 
-  const goBack = () => {
+  // Memoized so the BackHandler effect below only re-registers when the
+  // drill `level` actually changes (not on every parent re-render).
+  const goBack = useCallback(() => {
     setCrumbs((c) => {
       if (c.shelf) return { ...c, shelf: null };
       if (c.section) return { ...c, section: null };
       if (c.aisle) return { ...c, aisle: null };
       return c;
     });
-  };
+  }, []);
 
-  const goHome = () => setCrumbs({ aisle: null, section: null, shelf: null });
+  const goHome = useCallback(() => setCrumbs({ aisle: null, section: null, shelf: null }), []);
 
   // ── Android hardware back gesture ─────────────────────────────────────────
   // When the overlay is open, intercept the hardware back press:
