@@ -575,6 +575,34 @@ router.post('/catalog-pdf/runs/:id/unrevert', requireAdminAuth, async (req, res)
         .where(eq(enrichmentHistoryTable.runId, runId))
         .orderBy(asc(enrichmentHistoryTable.id));
 
+      // Server-side guard: refuse to unrevert if any item touched by this
+      // run has since been written by a NEWER enrichment run. This mirrors
+      // the `undoBlocked` flag on GET /runs and protects against direct
+      // API calls or races that bypass the disabled UI button.
+      if (history.length > 0) {
+        const inventoryIds = history.map((h) => h.inventoryId);
+        const newer = await tx
+          .selectDistinct({ runId: enrichmentHistoryTable.runId })
+          .from(enrichmentHistoryTable)
+          .where(
+            and(
+              inArray(enrichmentHistoryTable.inventoryId, inventoryIds),
+              sql`${enrichmentHistoryTable.runId} > ${runId}`
+            )
+          )
+          .limit(1);
+        if (newer.length > 0) {
+          return {
+            status: 409 as const,
+            body: {
+              error:
+                'A newer enrichment run has modified one or more of these items — undo is disabled.',
+              code: 'newer_run_blocks_undo' as const,
+            },
+          };
+        }
+      }
+
       let restored = 0;
       for (const h of history) {
         await tx
