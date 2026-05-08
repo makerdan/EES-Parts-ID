@@ -151,6 +151,17 @@ export default function BrowseTaxonomy({
 
   return (
     <View style={[styles.container, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      {/* Back button — shown whenever drilled into a level */}
+      {path.length > 0 ? (
+        <Pressable
+          onPress={() => popTo(path.length - 1)}
+          hitSlop={8}
+          style={styles.backBtn}
+        >
+          <Feather name="chevron-left" size={18} color={colors.foreground} />
+          <Text style={[styles.backLabel, { color: colors.foreground }]}>Back</Text>
+        </Pressable>
+      ) : null}
       {/* Breadcrumbs */}
       <ScrollView
         horizontal
@@ -231,6 +242,13 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     marginBottom: 8,
   },
+  backBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    marginBottom: 8,
+  },
+  backLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   crumbs: {
     flexDirection: "row",
     alignItems: "center",
