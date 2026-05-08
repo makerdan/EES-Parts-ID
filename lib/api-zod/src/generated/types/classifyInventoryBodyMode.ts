@@ -16,7 +16,7 @@ export type ClassifyInventoryBodyMode =
   (typeof ClassifyInventoryBodyMode)[keyof typeof ClassifyInventoryBodyMode];
 
 export const ClassifyInventoryBodyMode = {
-  all: "all",
-  unclassified: "unclassified",
-  "specific-ids": "specific-ids",
+  all: 'all',
+  unclassified: 'unclassified',
+  'specific-ids': 'specific-ids',
 } as const;

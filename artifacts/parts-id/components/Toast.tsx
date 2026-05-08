@@ -9,44 +9,44 @@
  *   error    — destructive red
  *   info     — muted, low-emphasis
  */
-import React from "react";
-import { StyleSheet, Text, View } from "react-native";
-import { useColors } from "@/hooks/useColors";
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import { useColors } from '@/hooks/useColors';
 
-export type ToastType = "success" | "warning" | "error" | "info";
+export type ToastType = 'success' | 'warning' | 'error' | 'info';
 
 interface ToastProps {
   message: string;
   type?: ToastType;
 }
 
-export function Toast({ message, type = "success" }: ToastProps) {
+export function Toast({ message, type = 'success' }: ToastProps) {
   const colors = useColors();
 
   const config = {
     success: {
-      bg: colors.primary + "18",
+      bg: colors.primary + '18',
       border: colors.primary,
       text: colors.foreground,
-      icon: "⚡",
+      icon: '⚡',
     },
     warning: {
-      bg: colors.warning + "22",
+      bg: colors.warning + '22',
       border: colors.warning,
       text: colors.foreground,
-      icon: "⚠",
+      icon: '⚠',
     },
     error: {
-      bg: colors.destructive + "1a",
+      bg: colors.destructive + '1a',
       border: colors.destructive,
       text: colors.destructive,
-      icon: "✕",
+      icon: '✕',
     },
     info: {
       bg: colors.muted,
       border: colors.border,
       text: colors.mutedForeground,
-      icon: "ℹ",
+      icon: 'ℹ',
     },
   }[type];
 
@@ -73,11 +73,11 @@ export function Toast({ message, type = "success" }: ToastProps) {
 
 const styles = StyleSheet.create({
   wrap: {
-    position: "absolute",
+    position: 'absolute',
     bottom: 100,
-    alignSelf: "center",
-    flexDirection: "row",
-    alignItems: "center",
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
@@ -92,12 +92,12 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 15,
-    fontFamily: "Inter_700Bold",
+    fontFamily: 'Inter_700Bold',
     flexShrink: 0,
   },
   text: {
     fontSize: 14,
-    fontFamily: "Inter_500Medium",
+    fontFamily: 'Inter_500Medium',
     flexShrink: 1,
     lineHeight: 20,
   },

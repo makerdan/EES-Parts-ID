@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { CategoryAssignmentsResponseAssignmentsItem } from "./categoryAssignmentsResponseAssignmentsItem";
+import type { CategoryAssignmentsResponseAssignmentsItem } from './categoryAssignmentsResponseAssignmentsItem';
 
 export interface CategoryAssignmentsResponse {
   assignments: CategoryAssignmentsResponseAssignmentsItem[];

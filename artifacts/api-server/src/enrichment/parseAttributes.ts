@@ -42,8 +42,7 @@ export interface CatalogParse {
  *   THQL120  → series=THQL, poles=1, amps=20,  variant=null
  *   QO1100PC → series=QO,   poles=1, amps=100, variant=PC
  */
-const BREAKER_RE =
-  /^(BR|QO|CH|HOM|THQL|MP|SWD|FH|HH|Q1)(1|2|3|4)(\d{2,3})(.*)?$/i;
+const BREAKER_RE = /^(BR|QO|CH|HOM|THQL|MP|SWD|FH|HH|Q1)(1|2|3|4)(\d{2,3})(.*)?$/i;
 
 /**
  * Receptacle / device family: SERIES + AMPS(2-3 digits) + VARIANT(color etc.)
@@ -162,7 +161,7 @@ export function parseCatalog(catalog: string | null | undefined): CatalogParse |
       series: numDev[1]!,
       poles: null,
       amps: null,
-      variant: numDev[2]?.replace(/^-/, "") || null,
+      variant: numDev[2]?.replace(/^-/, '') || null,
       raw: c,
       parser_version: 2,
     };
@@ -180,9 +179,7 @@ export function parseCatalog(catalog: string | null | undefined): CatalogParse |
  */
 export function parseAmperage(text: string | null | undefined): number | null {
   if (!text) return null;
-  const m = text
-    .toUpperCase()
-    .match(/\b(\d{1,4})\s*[-]?\s*(?:A\b|AMPS?\b|AMPERES?\b)/);
+  const m = text.toUpperCase().match(/\b(\d{1,4})\s*[-]?\s*(?:A\b|AMPS?\b|AMPERES?\b)/);
   if (!m) return null;
   const n = parseInt(m[1]!, 10);
   return n >= 1 && n <= 6000 ? n : null;
@@ -298,11 +295,11 @@ export function parseTradeSize(text: string | null | undefined): number | null {
 export function parseMountType(text: string | null | undefined): string | null {
   if (!text) return null;
   const t = text.toUpperCase();
-  if (/\bBOLT[-\s]ON\b/.test(t)) return "bolt-on";
-  if (/\bPLUG[-\s]?IN\b|\bPLUGIN\b/.test(t)) return "plug-in";
-  if (/\bDIN[-\s]?RAIL\b/.test(t)) return "din-rail";
-  if (/\bSURFACE[-\s]?MOUNT\b|\bSURFACE\b/.test(t)) return "surface";
-  if (/\bFLUSH[-\s]?MOUNT\b|\bFLUSH\b/.test(t)) return "flush";
+  if (/\bBOLT[-\s]ON\b/.test(t)) return 'bolt-on';
+  if (/\bPLUG[-\s]?IN\b|\bPLUGIN\b/.test(t)) return 'plug-in';
+  if (/\bDIN[-\s]?RAIL\b/.test(t)) return 'din-rail';
+  if (/\bSURFACE[-\s]?MOUNT\b|\bSURFACE\b/.test(t)) return 'surface';
+  if (/\bFLUSH[-\s]?MOUNT\b|\bFLUSH\b/.test(t)) return 'flush';
   return null;
 }
 
@@ -325,17 +322,12 @@ export function deriveAttrs(item: {
   attrsParsedAt: Date;
 } {
   const catalogParse = parseCatalog(item.catalog);
-  const fullText = [item.catalog, item.description].filter(Boolean).join(" ");
+  const fullText = [item.catalog, item.description].filter(Boolean).join(' ');
 
   const amperage =
-    catalogParse?.amps ??
-    parseAmperage(item.description) ??
-    parseAmperage(item.catalog);
+    catalogParse?.amps ?? parseAmperage(item.description) ?? parseAmperage(item.catalog);
 
-  const poleCount =
-    catalogParse?.poles ??
-    parsePoles(item.description) ??
-    parsePoles(item.catalog);
+  const poleCount = catalogParse?.poles ?? parsePoles(item.description) ?? parsePoles(item.catalog);
 
   const voltage = parseVoltage(item.description) ?? parseVoltage(item.catalog);
 

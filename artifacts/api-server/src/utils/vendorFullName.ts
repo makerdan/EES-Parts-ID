@@ -13,8 +13,8 @@
  * vendor_map `code`.
  */
 
-import { db, vendorMapTable } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { db, vendorMapTable } from '@workspace/db';
+import { sql } from 'drizzle-orm';
 
 export interface VendorMapRow {
   code: string;
@@ -75,7 +75,7 @@ export async function lookupVendorFullName(vendor: string): Promise<string | nul
  */
 export function withVendorFullName<T extends { vendor: string }>(
   item: T,
-  vendorFullNameMap: Map<string, string>,
+  vendorFullNameMap: Map<string, string>
 ): T & { vendorFullName: string | null } {
   return {
     ...item,

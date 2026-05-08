@@ -8,36 +8,36 @@
 // holding $PORT, not just a leftover Metro/Expo. That is intentional for the
 // Replit dev workflow where $PORT is dedicated to this artifact, but be aware
 // of it if you ever invoke this script in a shared environment.
-const fs = require("fs");
+const fs = require('fs');
 
-const port = Number.parseInt(process.env.PORT ?? "", 10);
+const port = Number.parseInt(process.env.PORT ?? '', 10);
 if (!Number.isFinite(port) || port <= 0 || port > 65535) {
   console.error(
-    "[free-port] PORT env var is missing or not a valid port; refusing to start so expo can't fall back to an unintended port",
+    "[free-port] PORT env var is missing or not a valid port; refusing to start so expo can't fall back to an unintended port"
   );
   process.exit(1);
 }
 
-const portHex = port.toString(16).toUpperCase().padStart(4, "0");
+const portHex = port.toString(16).toUpperCase().padStart(4, '0');
 
 function listenInodesForPort() {
   const inodes = new Set();
-  for (const procPath of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+  for (const procPath of ['/proc/net/tcp', '/proc/net/tcp6']) {
     let content;
     try {
-      content = fs.readFileSync(procPath, "utf8");
+      content = fs.readFileSync(procPath, 'utf8');
     } catch {
       continue;
     }
-    const lines = content.split("\n").slice(1);
+    const lines = content.split('\n').slice(1);
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
       if (parts.length < 10) continue;
       const localAddress = parts[1];
       const state = parts[3];
       const inode = parts[9];
-      if (state !== "0A") continue;
-      const addrParts = localAddress.split(":");
+      if (state !== '0A') continue;
+      const addrParts = localAddress.split(':');
       const addrPort = addrParts[addrParts.length - 1];
       if (!addrPort) continue;
       if (addrPort.toUpperCase() === portHex) {
@@ -53,7 +53,7 @@ function pidsHoldingInodes(inodes) {
   if (inodes.size === 0) return pids;
   let entries;
   try {
-    entries = fs.readdirSync("/proc");
+    entries = fs.readdirSync('/proc');
   } catch {
     return pids;
   }
@@ -108,20 +108,18 @@ function failHard(message) {
     return;
   }
 
-  const targets = [...pidsHoldingInodes(initialInodes)].filter(
-    (pid) => pid !== process.pid,
-  );
+  const targets = [...pidsHoldingInodes(initialInodes)].filter((pid) => pid !== process.pid);
 
   if (targets.length === 0) {
     failHard(
-      `port ${port} is already in use but no owning PID was found; refusing to start so expo doesn't silently hop to a different port`,
+      `port ${port} is already in use but no owning PID was found; refusing to start so expo doesn't silently hop to a different port`
     );
   }
 
   console.error(
-    `[free-port] port ${port} is held by PID(s): ${targets.join(", ")}; sending SIGTERM`,
+    `[free-port] port ${port} is held by PID(s): ${targets.join(', ')}; sending SIGTERM`
   );
-  for (const pid of targets) tryKill(pid, "SIGTERM");
+  for (const pid of targets) tryKill(pid, 'SIGTERM');
 
   let released = false;
   for (let i = 0; i < 15; i++) {
@@ -133,10 +131,8 @@ function failHard(message) {
   }
 
   if (!released) {
-    console.error(
-      `[free-port] port ${port} still held after SIGTERM; sending SIGKILL`,
-    );
-    for (const pid of targets) tryKill(pid, "SIGKILL");
+    console.error(`[free-port] port ${port} still held after SIGTERM; sending SIGKILL`);
+    for (const pid of targets) tryKill(pid, 'SIGKILL');
     for (let i = 0; i < 10; i++) {
       await sleep(200);
       if (listenInodesForPort().size === 0) {
@@ -148,7 +144,7 @@ function failHard(message) {
 
   if (!released) {
     failHard(
-      `port ${port} is still held after SIGKILL; refusing to start so expo doesn't silently hop to a different port`,
+      `port ${port} is still held after SIGKILL; refusing to start so expo doesn't silently hop to a different port`
     );
   }
 

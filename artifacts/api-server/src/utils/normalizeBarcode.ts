@@ -17,10 +17,10 @@
  * Returns the empty string for inputs that contain only whitespace.
  */
 export function normalizeBarcode(raw: string): string {
-  if (typeof raw !== "string") return "";
+  if (typeof raw !== 'string') return '';
   // Strip zero-width chars and trim surrounding whitespace.
-  const stripped = raw.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
-  if (stripped.length === 0) return "";
+  const stripped = raw.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  if (stripped.length === 0) return '';
   // Upper-case so we can store one canonical form. Codes are typically
   // alphanumeric; vendor codes that include lower-case letters in the
   // catalog field are matched against the catalog table separately.

@@ -6,7 +6,7 @@
  * optimistically so the row reflects the change before the request
  * settles.
  */
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -18,20 +18,17 @@ import {
   Text,
   TextInput,
   View,
-} from "react-native";
-import type { InventoryItem } from "@workspace/api-client-react";
-import {
-  useUpdateInventoryItem,
-  useSuggestItemDescription,
-} from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useColors } from "@/hooks/useColors";
-import { ErrorBanner } from "@/components/ErrorBanner";
-import { useApp } from "@/contexts/AppContext";
+} from 'react-native';
+import type { InventoryItem } from '@workspace/api-client-react';
+import { useUpdateInventoryItem, useSuggestItemDescription } from '@workspace/api-client-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useColors } from '@/hooks/useColors';
+import { ErrorBanner } from '@/components/ErrorBanner';
+import { useApp } from '@/contexts/AppContext';
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
+  : 'http://localhost:8080/api';
 
 interface SeriesRow {
   id: number;
@@ -55,7 +52,7 @@ interface KeywordEditorProps {
 
 const DEBOUNCE_MS = 900;
 
-type SaveStatus = "idle" | "saving" | "saved" | "error";
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 export function KeywordEditor({
   item,
@@ -71,18 +68,18 @@ export function KeywordEditor({
 
   // ── Edited values ──────────────────────────────────────────────────────────
   const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
-  const [description, setDescription] = useState<string>(item?.description ?? "");
-  const [tradeSize, setTradeSize] = useState<string>(item?.tradeSize ?? "");
+  const [description, setDescription] = useState<string>(item?.description ?? '');
+  const [tradeSize, setTradeSize] = useState<string>(item?.tradeSize ?? '');
   const [binLocations, setBinLocations] = useState<string[]>(item?.binLocations ?? []);
   const [binsCollapsed, setBinsCollapsed] = useState(false);
-  const [newKeyword, setNewKeyword] = useState("");
-  const [newBin, setNewBin] = useState("");
+  const [newKeyword, setNewKeyword] = useState('');
+  const [newBin, setNewBin] = useState('');
   const [binError, setBinError] = useState<string | null>(null);
 
   // ── Series state (admin only) ──────────────────────────────────────────────
   const [localSeriesName, setLocalSeriesName] = useState<string | null>(item?.seriesName ?? null);
   const [seriesCollapsed, setSeriesCollapsed] = useState(false);
-  const [seriesSearch, setSeriesSearch] = useState("");
+  const [seriesSearch, setSeriesSearch] = useState('');
   const [seriesResults, setSeriesResults] = useState<SeriesRow[]>([]);
   const [seriesLoading, setSeriesLoading] = useState(false);
   const [seriesError, setSeriesError] = useState<string | null>(null);
@@ -90,7 +87,7 @@ export function KeywordEditor({
   const seriesSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Save status — single badge reflects whichever field is in flight ───────
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
 
   // ── AI suggestion state ────────────────────────────────────────────────────
   const [suggestion, setSuggestion] = useState<string | null>(null);
@@ -114,8 +111,8 @@ export function KeywordEditor({
 
   // Last successfully persisted values
   const lastSavedKeywordsRef = useRef<string[]>(item?.aiKeywords ?? []);
-  const lastSavedDescriptionRef = useRef<string>(item?.description ?? "");
-  const lastSavedTradeSizeRef = useRef<string>(item?.tradeSize ?? "");
+  const lastSavedDescriptionRef = useRef<string>(item?.description ?? '');
+  const lastSavedTradeSizeRef = useRef<string>(item?.tradeSize ?? '');
   const lastSavedBinsRef = useRef<string[]>(item?.binLocations ?? []);
 
   // Tracks whether a mutateAsync call is currently in flight
@@ -133,13 +130,15 @@ export function KeywordEditor({
 
   // Keep item in a ref so callbacks always see the latest value
   const itemRef = useRef(item);
-  useEffect(() => { itemRef.current = item; }, [item]);
+  useEffect(() => {
+    itemRef.current = item;
+  }, [item]);
 
   // Sync values when item changes (e.g. different item opened)
   useEffect(() => {
     const kws = item?.aiKeywords ?? [];
-    const desc = item?.description ?? "";
-    const ts = item?.tradeSize ?? "";
+    const desc = item?.description ?? '';
+    const ts = item?.tradeSize ?? '';
     const bins = item?.binLocations ?? [];
     setKeywords(kws);
     setDescription(desc);
@@ -147,7 +146,7 @@ export function KeywordEditor({
     setBinLocations(bins);
     setSuggestion(null);
     setSuggestError(null);
-    setNewBin("");
+    setNewBin('');
     setBinError(null);
     latestKeywordsRef.current = kws;
     latestDescriptionRef.current = desc;
@@ -157,9 +156,9 @@ export function KeywordEditor({
     lastSavedDescriptionRef.current = desc;
     lastSavedTradeSizeRef.current = ts;
     lastSavedBinsRef.current = bins;
-    setSaveStatus("idle");
+    setSaveStatus('idle');
     setLocalSeriesName(item?.seriesName ?? null);
-    setSeriesSearch("");
+    setSeriesSearch('');
     setSeriesResults([]);
     setSeriesError(null);
   }, [item?.id]);
@@ -169,11 +168,22 @@ export function KeywordEditor({
   const persist = useCallback(
     async (
       id: number,
-      payload: { keywords?: string[]; description?: string; tradeSize?: string | null; binLocations?: string[] },
+      payload: {
+        keywords?: string[];
+        description?: string;
+        tradeSize?: string | null;
+        binLocations?: string[];
+      }
     ) => {
-      if (payload.keywords === undefined && payload.description === undefined && payload.tradeSize === undefined && payload.binLocations === undefined) return;
+      if (
+        payload.keywords === undefined &&
+        payload.description === undefined &&
+        payload.tradeSize === undefined &&
+        payload.binLocations === undefined
+      )
+        return;
       isSavingRef.current = true;
-      setSaveStatus("saving");
+      setSaveStatus('saving');
       try {
         await updateMutation.mutateAsync({ id, data: payload });
         if (payload.keywords !== undefined) {
@@ -186,24 +196,29 @@ export function KeywordEditor({
         }
         if (payload.tradeSize !== undefined) {
           const ts = payload.tradeSize ?? null;
-          lastSavedTradeSizeRef.current = ts ?? "";
+          lastSavedTradeSizeRef.current = ts ?? '';
           onTradeSizeChanged?.(id, ts);
         }
         if (payload.binLocations !== undefined) {
           lastSavedBinsRef.current = payload.binLocations;
         }
-        await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-        setSaveStatus("saved");
-        setTimeout(() => setSaveStatus("idle"), 1800);
+        await queryClient.invalidateQueries({ queryKey: ['searchInventory'] });
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 1800);
       } catch {
-        setSaveStatus("error");
+        setSaveStatus('error');
       } finally {
         isSavingRef.current = false;
         // Fire any post-close flush that was queued while this save was in flight
         const pending = postFlushRef.current;
         if (pending) {
           postFlushRef.current = null;
-          const next: { keywords?: string[]; description?: string; tradeSize?: string | null; binLocations?: string[] } = {};
+          const next: {
+            keywords?: string[];
+            description?: string;
+            tradeSize?: string | null;
+            binLocations?: string[];
+          } = {};
           if (pending.keywords !== undefined) next.keywords = pending.keywords;
           if (pending.description !== undefined) next.description = pending.description;
           if (pending.tradeSize !== undefined) next.tradeSize = pending.tradeSize;
@@ -221,21 +236,21 @@ export function KeywordEditor({
               }
               if (next.tradeSize !== undefined) {
                 const ts = next.tradeSize ?? null;
-                lastSavedTradeSizeRef.current = ts ?? "";
+                lastSavedTradeSizeRef.current = ts ?? '';
                 onTradeSizeChanged?.(pending.id, ts);
               }
               if (next.binLocations !== undefined) {
                 lastSavedBinsRef.current = next.binLocations;
               }
-              queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+              queryClient.invalidateQueries({ queryKey: ['searchInventory'] });
             })
             .catch((err) => {
-              console.warn("KeywordEditor: post-close flush failed:", err);
+              console.warn('KeywordEditor: post-close flush failed:', err);
             });
         }
       }
     },
-    [updateMutation, queryClient, onKeywordsChanged, onDescriptionChanged, onTradeSizeChanged],
+    [updateMutation, queryClient, onKeywordsChanged, onDescriptionChanged, onTradeSizeChanged]
   );
 
   // Debounced save for keywords
@@ -245,14 +260,14 @@ export function KeywordEditor({
       if (!current) return;
       latestKeywordsRef.current = kws;
       if (kwDebounceRef.current) clearTimeout(kwDebounceRef.current);
-      setSaveStatus("idle");
+      setSaveStatus('idle');
       kwDebounceRef.current = setTimeout(async () => {
         kwDebounceRef.current = null;
         if (isSavingRef.current) return; // skip if already saving
         await persist(current.id, { keywords: kws });
       }, DEBOUNCE_MS);
     },
-    [persist],
+    [persist]
   );
 
   // Debounced save for description
@@ -262,14 +277,14 @@ export function KeywordEditor({
       if (!current) return;
       latestDescriptionRef.current = desc;
       if (descDebounceRef.current) clearTimeout(descDebounceRef.current);
-      setSaveStatus("idle");
+      setSaveStatus('idle');
       descDebounceRef.current = setTimeout(async () => {
         descDebounceRef.current = null;
         if (isSavingRef.current) return;
         await persist(current.id, { description: desc });
       }, DEBOUNCE_MS);
     },
-    [persist],
+    [persist]
   );
 
   // Debounced save for trade size
@@ -279,14 +294,14 @@ export function KeywordEditor({
       if (!current) return;
       latestTradeSizeRef.current = ts;
       if (tradeSizeDebounceRef.current) clearTimeout(tradeSizeDebounceRef.current);
-      setSaveStatus("idle");
+      setSaveStatus('idle');
       tradeSizeDebounceRef.current = setTimeout(async () => {
         tradeSizeDebounceRef.current = null;
         if (isSavingRef.current) return;
-        await persist(current.id, { tradeSize: ts.trim() === "" ? null : ts.trim() });
+        await persist(current.id, { tradeSize: ts.trim() === '' ? null : ts.trim() });
       }, DEBOUNCE_MS);
     },
-    [persist],
+    [persist]
   );
 
   // Debounced save for bin locations
@@ -296,14 +311,14 @@ export function KeywordEditor({
       if (!current) return;
       latestBinsRef.current = bins;
       if (binDebounceRef.current) clearTimeout(binDebounceRef.current);
-      setSaveStatus("idle");
+      setSaveStatus('idle');
       binDebounceRef.current = setTimeout(async () => {
         binDebounceRef.current = null;
         if (isSavingRef.current) return;
         await persist(current.id, { binLocations: bins });
       }, DEBOUNCE_MS);
     },
-    [persist],
+    [persist]
   );
 
   // Cleanup timers on unmount
@@ -318,62 +333,70 @@ export function KeywordEditor({
   }, []);
 
   // ── Series helpers ─────────────────────────────────────────────────────────
-  const handleSeriesSearchChange = useCallback((q: string) => {
-    setSeriesSearch(q);
-    setSeriesError(null);
-    if (seriesSearchRef.current) clearTimeout(seriesSearchRef.current);
-    if (!q.trim()) { setSeriesResults([]); return; }
-    seriesSearchRef.current = setTimeout(async () => {
-      seriesSearchRef.current = null;
-      if (!adminToken) return;
-      setSeriesLoading(true);
-      try {
-        const res = await fetch(
-          `${API_BASE}/series/search?q=${encodeURIComponent(q.trim())}`,
-          { headers: { Authorization: `Bearer ${adminToken}` } },
-        );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as { series: SeriesRow[] };
-        setSeriesResults(data.series);
-      } catch {
-        setSeriesError("Couldn't load series list.");
-      } finally {
-        setSeriesLoading(false);
+  const handleSeriesSearchChange = useCallback(
+    (q: string) => {
+      setSeriesSearch(q);
+      setSeriesError(null);
+      if (seriesSearchRef.current) clearTimeout(seriesSearchRef.current);
+      if (!q.trim()) {
+        setSeriesResults([]);
+        return;
       }
-    }, 400);
-  }, [adminToken]);
+      seriesSearchRef.current = setTimeout(async () => {
+        seriesSearchRef.current = null;
+        if (!adminToken) return;
+        setSeriesLoading(true);
+        try {
+          const res = await fetch(`${API_BASE}/series/search?q=${encodeURIComponent(q.trim())}`, {
+            headers: { Authorization: `Bearer ${adminToken}` },
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = (await res.json()) as { series: SeriesRow[] };
+          setSeriesResults(data.series);
+        } catch {
+          setSeriesError("Couldn't load series list.");
+        } finally {
+          setSeriesLoading(false);
+        }
+      }, 400);
+    },
+    [adminToken]
+  );
 
-  const assignSeries = useCallback(async (seriesId: number | null, seriesName: string | null) => {
-    const current = itemRef.current;
-    if (!current || !adminToken) return;
-    setSeriesAssigning(true);
-    setSeriesError(null);
-    try {
-      const res = await fetch(`${API_BASE}/inventory/${current.id}/series`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${adminToken}`,
-        },
-        body: JSON.stringify({ seriesId }),
-      });
-      if (!res.ok) {
-        const err = (await res.json()) as { error?: string };
-        throw new Error(err.error ?? `HTTP ${res.status}`);
+  const assignSeries = useCallback(
+    async (seriesId: number | null, seriesName: string | null) => {
+      const current = itemRef.current;
+      if (!current || !adminToken) return;
+      setSeriesAssigning(true);
+      setSeriesError(null);
+      try {
+        const res = await fetch(`${API_BASE}/inventory/${current.id}/series`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify({ seriesId }),
+        });
+        if (!res.ok) {
+          const err = (await res.json()) as { error?: string };
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        const data = (await res.json()) as { ok: boolean; seriesName: string | null };
+        const resolvedName = data.seriesName;
+        setLocalSeriesName(resolvedName);
+        setSeriesSearch('');
+        setSeriesResults([]);
+        onSeriesChanged?.(current.id, resolvedName);
+        await queryClient.invalidateQueries({ queryKey: ['searchInventory'] });
+      } catch (e) {
+        setSeriesError(e instanceof Error ? e.message : 'Failed to update series.');
+      } finally {
+        setSeriesAssigning(false);
       }
-      const data = (await res.json()) as { ok: boolean; seriesName: string | null };
-      const resolvedName = data.seriesName;
-      setLocalSeriesName(resolvedName);
-      setSeriesSearch("");
-      setSeriesResults([]);
-      onSeriesChanged?.(current.id, resolvedName);
-      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-    } catch (e) {
-      setSeriesError(e instanceof Error ? e.message : "Failed to update series.");
-    } finally {
-      setSeriesAssigning(false);
-    }
-  }, [adminToken, queryClient, onSeriesChanged]);
+    },
+    [adminToken, queryClient, onSeriesChanged]
+  );
 
   const createAndAssignSeries = useCallback(async () => {
     const current = itemRef.current;
@@ -382,9 +405,9 @@ export function KeywordEditor({
     setSeriesError(null);
     try {
       const createRes = await fetch(`${API_BASE}/series`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           Authorization: `Bearer ${adminToken}`,
         },
         body: JSON.stringify({ name: seriesSearch.trim(), vendor: current.vendor }),
@@ -396,7 +419,7 @@ export function KeywordEditor({
       const { series } = (await createRes.json()) as { series: { id: number; name: string } };
       await assignSeries(series.id, series.name);
     } catch (e) {
-      setSeriesError(e instanceof Error ? e.message : "Failed to create series.");
+      setSeriesError(e instanceof Error ? e.message : 'Failed to create series.');
       setSeriesAssigning(false);
     }
   }, [adminToken, seriesSearch, assignSeries]);
@@ -427,32 +450,32 @@ export function KeywordEditor({
     const trimmed = newBin.trim().toUpperCase();
     if (!trimmed) return;
     if (!BIN_PATTERN.test(trimmed)) {
-      setBinError("Format must be ##-##-### (e.g. 01-02-003)");
+      setBinError('Format must be ##-##-### (e.g. 01-02-003)');
       return;
     }
-    if (binLocations.map(b => b.toUpperCase()).includes(trimmed)) {
-      setNewBin("");
+    if (binLocations.map((b) => b.toUpperCase()).includes(trimmed)) {
+      setNewBin('');
       setBinError(null);
       return;
     }
     setBinError(null);
-    setNewBin("");
+    setNewBin('');
     handleBinsChange([...binLocations, trimmed]);
   };
 
   const removeBin = (bin: string) => {
-    handleBinsChange(binLocations.filter(b => b !== bin));
+    handleBinsChange(binLocations.filter((b) => b !== bin));
   };
 
   const addKeyword = () => {
     const trimmed = newKeyword.trim().toLowerCase();
     if (!trimmed || keywords.includes(trimmed)) {
-      setNewKeyword("");
+      setNewKeyword('');
       kwInputRef.current?.focus();
       return;
     }
     const next = [...keywords, trimmed];
-    setNewKeyword("");
+    setNewKeyword('');
     handleKeywordsChange(next);
     kwInputRef.current?.focus();
   };
@@ -463,21 +486,25 @@ export function KeywordEditor({
 
   // ── AI suggestion ──────────────────────────────────────────────────────────
   const handleSuggest = async () => {
-    console.log("[suggest-description] handleSuggest called");
+    console.log('[suggest-description] handleSuggest called');
     const current = itemRef.current;
     if (!current) {
-      console.warn("[suggest-description] itemRef.current is null — aborting");
+      console.warn('[suggest-description] itemRef.current is null — aborting');
       return;
     }
-    console.log("[suggest-description] calling mutateAsync with id:", current.id, typeof current.id);
+    console.log(
+      '[suggest-description] calling mutateAsync with id:',
+      current.id,
+      typeof current.id
+    );
     setSuggestError(null);
     setSuggestion(null);
     try {
       const res = await suggestMutation.mutateAsync({ id: current.id });
-      console.log("[suggest-description] success, res:", res);
+      console.log('[suggest-description] success, res:', res);
       setSuggestion(res.description);
     } catch (err) {
-      console.error("[suggest-description] failed:", err);
+      console.error('[suggest-description] failed:', err);
       setSuggestError("Couldn't generate a suggestion. Please try again.");
     }
   };
@@ -498,10 +525,22 @@ export function KeywordEditor({
   const handleClose = () => {
     const current = itemRef.current;
     // Cancel any pending debounce timers
-    if (kwDebounceRef.current) { clearTimeout(kwDebounceRef.current); kwDebounceRef.current = null; }
-    if (descDebounceRef.current) { clearTimeout(descDebounceRef.current); descDebounceRef.current = null; }
-    if (tradeSizeDebounceRef.current) { clearTimeout(tradeSizeDebounceRef.current); tradeSizeDebounceRef.current = null; }
-    if (binDebounceRef.current) { clearTimeout(binDebounceRef.current); binDebounceRef.current = null; }
+    if (kwDebounceRef.current) {
+      clearTimeout(kwDebounceRef.current);
+      kwDebounceRef.current = null;
+    }
+    if (descDebounceRef.current) {
+      clearTimeout(descDebounceRef.current);
+      descDebounceRef.current = null;
+    }
+    if (tradeSizeDebounceRef.current) {
+      clearTimeout(tradeSizeDebounceRef.current);
+      tradeSizeDebounceRef.current = null;
+    }
+    if (binDebounceRef.current) {
+      clearTimeout(binDebounceRef.current);
+      binDebounceRef.current = null;
+    }
 
     if (current) {
       const latestKws = latestKeywordsRef.current;
@@ -514,10 +553,15 @@ export function KeywordEditor({
       const binsDirty = JSON.stringify(latestBins) !== JSON.stringify(lastSavedBinsRef.current);
 
       if (kwsDirty || descDirty || tsDirty || binsDirty) {
-        const payload: { keywords?: string[]; description?: string; tradeSize?: string | null; binLocations?: string[] } = {};
+        const payload: {
+          keywords?: string[];
+          description?: string;
+          tradeSize?: string | null;
+          binLocations?: string[];
+        } = {};
         if (kwsDirty) payload.keywords = [...latestKws];
         if (descDirty) payload.description = latestDesc;
-        if (tsDirty) payload.tradeSize = latestTs.trim() === "" ? null : latestTs.trim();
+        if (tsDirty) payload.tradeSize = latestTs.trim() === '' ? null : latestTs.trim();
         if (binsDirty) payload.binLocations = [...latestBins];
 
         if (!isSavingRef.current) {
@@ -525,16 +569,38 @@ export function KeywordEditor({
           updateMutation
             .mutateAsync({ id: current.id, data: payload })
             .then(() => {
-              if (payload.keywords !== undefined) { lastSavedKeywordsRef.current = payload.keywords; onKeywordsChanged?.(current.id, payload.keywords); }
-              if (payload.description !== undefined) { lastSavedDescriptionRef.current = payload.description; onDescriptionChanged?.(current.id, payload.description); }
-              if (payload.tradeSize !== undefined) { const ts = payload.tradeSize ?? null; lastSavedTradeSizeRef.current = ts ?? ""; onTradeSizeChanged?.(current.id, ts); }
-              if (payload.binLocations !== undefined) { lastSavedBinsRef.current = payload.binLocations; }
-              queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+              if (payload.keywords !== undefined) {
+                lastSavedKeywordsRef.current = payload.keywords;
+                onKeywordsChanged?.(current.id, payload.keywords);
+              }
+              if (payload.description !== undefined) {
+                lastSavedDescriptionRef.current = payload.description;
+                onDescriptionChanged?.(current.id, payload.description);
+              }
+              if (payload.tradeSize !== undefined) {
+                const ts = payload.tradeSize ?? null;
+                lastSavedTradeSizeRef.current = ts ?? '';
+                onTradeSizeChanged?.(current.id, ts);
+              }
+              if (payload.binLocations !== undefined) {
+                lastSavedBinsRef.current = payload.binLocations;
+              }
+              queryClient.invalidateQueries({ queryKey: ['searchInventory'] });
             })
-            .catch((err) => { console.warn("KeywordEditor: background save on close failed:", err); })
-            .finally(() => { isSavingRef.current = false; });
+            .catch((err) => {
+              console.warn('KeywordEditor: background save on close failed:', err);
+            })
+            .finally(() => {
+              isSavingRef.current = false;
+            });
         } else {
-          const queued: { id: number; keywords?: string[]; description?: string; tradeSize?: string | null; binLocations?: string[] } = { id: current.id };
+          const queued: {
+            id: number;
+            keywords?: string[];
+            description?: string;
+            tradeSize?: string | null;
+            binLocations?: string[];
+          } = { id: current.id };
           if (payload.keywords !== undefined) queued.keywords = payload.keywords;
           if (payload.description !== undefined) queued.description = payload.description;
           if (payload.tradeSize !== undefined) queued.tradeSize = payload.tradeSize;
@@ -551,46 +617,45 @@ export function KeywordEditor({
   if (!item) return null;
 
   const statusColor =
-    saveStatus === "saving"
+    saveStatus === 'saving'
       ? colors.warning
-      : saveStatus === "saved"
-      ? colors.success
-      : saveStatus === "error"
-      ? "#ef4444"
-      : "transparent";
+      : saveStatus === 'saved'
+        ? colors.success
+        : saveStatus === 'error'
+          ? '#ef4444'
+          : 'transparent';
 
   const statusLabel =
-    saveStatus === "saving"
-      ? "Saving…"
-      : saveStatus === "saved"
-      ? "✓ Saved"
-      : saveStatus === "error"
-      ? "Save failed"
-      : "";
+    saveStatus === 'saving'
+      ? 'Saving…'
+      : saveStatus === 'saved'
+        ? '✓ Saved'
+        : saveStatus === 'error'
+          ? 'Save failed'
+          : '';
 
   const isSuggesting = suggestMutation.isPending;
 
   return (
-    <Modal
-      visible
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={handleClose}
-    >
+    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={[styles.container, { backgroundColor: colors.background }]}
       >
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <View style={[styles.accentBar, { backgroundColor: colors.primary }]} />
           <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Text style={[styles.title, { color: colors.foreground }]}>Edit Part Details</Text>
-              {saveStatus !== "idle" && (
-                <View style={[styles.statusBadge, { backgroundColor: statusColor + "22" }]}>
-                  {saveStatus === "saving" ? (
-                    <ActivityIndicator size="small" color={statusColor} style={{ marginRight: 4 }} />
+              {saveStatus !== 'idle' && (
+                <View style={[styles.statusBadge, { backgroundColor: statusColor + '22' }]}>
+                  {saveStatus === 'saving' ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={statusColor}
+                      style={{ marginRight: 4 }}
+                    />
                   ) : null}
                   <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
                 </View>
@@ -600,7 +665,10 @@ export function KeywordEditor({
               {item.vendor} · {item.catalog}
             </Text>
           </View>
-          <Pressable onPress={handleClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]}>
+          <Pressable
+            onPress={handleClose}
+            style={[styles.closeBtn, { backgroundColor: colors.muted }]}
+          >
             <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
           </Pressable>
         </View>
@@ -611,9 +679,7 @@ export function KeywordEditor({
           </Text>
 
           {/* ── Description ───────────────────────────────────────────── */}
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
-            DESCRIPTION
-          </Text>
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
           <TextInput
             value={description}
             onChangeText={handleDescriptionChange}
@@ -622,7 +688,11 @@ export function KeywordEditor({
             multiline
             style={[
               styles.descInput,
-              { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+              {
+                backgroundColor: colors.muted,
+                borderColor: colors.border,
+                color: colors.foreground,
+              },
             ]}
             autoCorrect
             autoCapitalize="sentences"
@@ -634,7 +704,7 @@ export function KeywordEditor({
             style={[
               styles.suggestBtn,
               {
-                borderColor: colors.primary + "55",
+                borderColor: colors.primary + '55',
                 backgroundColor: isSuggesting ? colors.muted : colors.accent,
                 opacity: isSuggesting ? 0.7 : 1,
               },
@@ -644,16 +714,19 @@ export function KeywordEditor({
               <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
             ) : null}
             <Text style={[styles.suggestBtnText, { color: colors.primary }]}>
-              {isSuggesting ? "Generating…" : "✨ Suggest improved description"}
+              {isSuggesting ? 'Generating…' : '✨ Suggest improved description'}
             </Text>
           </Pressable>
 
-          {suggestError ? (
-            <ErrorBanner message={suggestError} />
-          ) : null}
+          {suggestError ? <ErrorBanner message={suggestError} /> : null}
 
           {suggestion ? (
-            <View style={[styles.suggestionBlock, { borderColor: colors.primary + "55", backgroundColor: colors.accent }]}>
+            <View
+              style={[
+                styles.suggestionBlock,
+                { borderColor: colors.primary + '55', backgroundColor: colors.accent },
+              ]}
+            >
               <Text style={[styles.suggestionLabel, { color: colors.mutedForeground }]}>
                 AI SUGGESTION
               </Text>
@@ -695,7 +768,11 @@ export function KeywordEditor({
             placeholderTextColor={colors.mutedForeground}
             style={[
               styles.tradeSizeInput,
-              { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+              {
+                backgroundColor: colors.muted,
+                borderColor: colors.border,
+                color: colors.foreground,
+              },
             ]}
             autoCorrect={false}
             autoCapitalize="none"
@@ -714,7 +791,10 @@ export function KeywordEditor({
               <Pressable
                 key={kw}
                 onPress={() => removeKeyword(kw)}
-                style={[styles.kwChip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
+                style={[
+                  styles.kwChip,
+                  { backgroundColor: colors.accent, borderColor: colors.primary + '44' },
+                ]}
               >
                 <Text style={[styles.kwText, { color: colors.foreground }]}>{kw}</Text>
                 <Text style={[styles.kwRemove, { color: colors.mutedForeground }]}>✕</Text>
@@ -741,7 +821,12 @@ export function KeywordEditor({
               placeholderTextColor={colors.mutedForeground}
               style={[
                 styles.addInput,
-                { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                {
+                  flex: 1,
+                  backgroundColor: colors.muted,
+                  borderColor: colors.border,
+                  color: colors.foreground,
+                },
               ]}
               onSubmitEditing={addKeyword}
               returnKeyType="done"
@@ -760,14 +845,16 @@ export function KeywordEditor({
           {isAdmin ? (
             <>
               <Pressable
-                onPress={() => setSeriesCollapsed(c => !c)}
+                onPress={() => setSeriesCollapsed((c) => !c)}
                 style={[styles.binCollapseRow, { borderTopColor: colors.border, marginTop: 24 }]}
               >
-                <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0 }]}>
+                <Text
+                  style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0 }]}
+                >
                   SERIES MEMBERSHIP
                 </Text>
                 <Text style={[styles.binChevron, { color: colors.mutedForeground }]}>
-                  {seriesCollapsed ? "▶" : "▼"}
+                  {seriesCollapsed ? '▶' : '▼'}
                 </Text>
               </Pressable>
 
@@ -775,17 +862,32 @@ export function KeywordEditor({
                 <>
                   {localSeriesName ? (
                     <View style={[styles.seriesCurrentRow]}>
-                      <View style={[styles.seriesCurrentChip, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}>
-                        <Text style={[styles.seriesCurrentText, { color: colors.primary }]} numberOfLines={1}>
+                      <View
+                        style={[
+                          styles.seriesCurrentChip,
+                          {
+                            backgroundColor: colors.primary + '18',
+                            borderColor: colors.primary + '55',
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[styles.seriesCurrentText, { color: colors.primary }]}
+                          numberOfLines={1}
+                        >
                           ⊞ {localSeriesName}
                         </Text>
                       </View>
                       <Pressable
-                        onPress={() => { void assignSeries(null, null); }}
+                        onPress={() => {
+                          void assignSeries(null, null);
+                        }}
                         disabled={seriesAssigning}
-                        style={[styles.seriesRemoveBtn, { borderColor: colors.destructive + "66" }]}
+                        style={[styles.seriesRemoveBtn, { borderColor: colors.destructive + '66' }]}
                       >
-                        <Text style={[styles.seriesRemoveText, { color: colors.destructive }]}>Remove</Text>
+                        <Text style={[styles.seriesRemoveText, { color: colors.destructive }]}>
+                          Remove
+                        </Text>
                       </Pressable>
                     </View>
                   ) : (
@@ -802,13 +904,22 @@ export function KeywordEditor({
                       placeholderTextColor={colors.mutedForeground}
                       style={[
                         styles.addInput,
-                        { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                        {
+                          flex: 1,
+                          backgroundColor: colors.muted,
+                          borderColor: colors.border,
+                          color: colors.foreground,
+                        },
                       ]}
                       autoCorrect={false}
                       autoCapitalize="none"
                     />
                     {seriesLoading ? (
-                      <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 8, alignSelf: "center" }} />
+                      <ActivityIndicator
+                        size="small"
+                        color={colors.primary}
+                        style={{ marginLeft: 8, alignSelf: 'center' }}
+                      />
                     ) : null}
                   </View>
 
@@ -817,32 +928,57 @@ export function KeywordEditor({
                       {seriesResults.map((sr, idx) => (
                         <Pressable
                           key={sr.id}
-                          onPress={() => { void assignSeries(sr.id, sr.name); }}
+                          onPress={() => {
+                            void assignSeries(sr.id, sr.name);
+                          }}
                           disabled={seriesAssigning}
                           style={[
                             styles.seriesResultRow,
-                            idx < seriesResults.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+                            idx < seriesResults.length - 1 && {
+                              borderBottomWidth: StyleSheet.hairlineWidth,
+                              borderBottomColor: colors.border,
+                            },
                             { backgroundColor: colors.muted },
                           ]}
                         >
-                          <Text style={[styles.seriesResultName, { color: colors.foreground }]}>{sr.name}</Text>
-                          <Text style={[styles.seriesResultVendor, { color: colors.mutedForeground }]}>{sr.vendor}</Text>
+                          <Text style={[styles.seriesResultName, { color: colors.foreground }]}>
+                            {sr.name}
+                          </Text>
+                          <Text
+                            style={[styles.seriesResultVendor, { color: colors.mutedForeground }]}
+                          >
+                            {sr.vendor}
+                          </Text>
                         </Pressable>
                       ))}
                     </View>
                   ) : null}
 
-                  {seriesSearch.trim() && !seriesLoading && seriesResults.every(r => r.name.toLowerCase() !== seriesSearch.trim().toLowerCase()) ? (
+                  {seriesSearch.trim() &&
+                  !seriesLoading &&
+                  seriesResults.every(
+                    (r) => r.name.toLowerCase() !== seriesSearch.trim().toLowerCase()
+                  ) ? (
                     <Pressable
-                      onPress={() => { void createAndAssignSeries(); }}
+                      onPress={() => {
+                        void createAndAssignSeries();
+                      }}
                       disabled={seriesAssigning}
                       style={[
                         styles.seriesCreateBtn,
-                        { borderColor: colors.primary + "55", backgroundColor: colors.accent, opacity: seriesAssigning ? 0.6 : 1 },
+                        {
+                          borderColor: colors.primary + '55',
+                          backgroundColor: colors.accent,
+                          opacity: seriesAssigning ? 0.6 : 1,
+                        },
                       ]}
                     >
                       {seriesAssigning ? (
-                        <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
+                        <ActivityIndicator
+                          size="small"
+                          color={colors.primary}
+                          style={{ marginRight: 6 }}
+                        />
                       ) : null}
                       <Text style={[styles.seriesCreateText, { color: colors.primary }]}>
                         + Create "{seriesSearch.trim()}" series
@@ -850,9 +986,7 @@ export function KeywordEditor({
                     </Pressable>
                   ) : null}
 
-                  {seriesError ? (
-                    <ErrorBanner message={seriesError} />
-                  ) : null}
+                  {seriesError ? <ErrorBanner message={seriesError} /> : null}
                 </>
               ) : null}
             </>
@@ -861,14 +995,16 @@ export function KeywordEditor({
           {isAdmin ? (
             <>
               <Pressable
-                onPress={() => setBinsCollapsed(c => !c)}
+                onPress={() => setBinsCollapsed((c) => !c)}
                 style={[styles.binCollapseRow, { borderTopColor: colors.border, marginTop: 24 }]}
               >
-                <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0 }]}>
+                <Text
+                  style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 0 }]}
+                >
                   BIN LOCATIONS ({binLocations.length})
                 </Text>
                 <Text style={[styles.binChevron, { color: colors.mutedForeground }]}>
-                  {binsCollapsed ? "▶" : "▼"}
+                  {binsCollapsed ? '▶' : '▼'}
                 </Text>
               </Pressable>
 
@@ -882,9 +1018,19 @@ export function KeywordEditor({
                       <Pressable
                         key={bin}
                         onPress={() => removeBin(bin)}
-                        style={[styles.kwChip, { backgroundColor: colors.accent, borderColor: colors.warning + "55" }]}
+                        style={[
+                          styles.kwChip,
+                          { backgroundColor: colors.accent, borderColor: colors.warning + '55' },
+                        ]}
                       >
-                        <Text style={[styles.kwText, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>{bin}</Text>
+                        <Text
+                          style={[
+                            styles.kwText,
+                            { color: colors.foreground, fontFamily: 'Inter_600SemiBold' },
+                          ]}
+                        >
+                          {bin}
+                        </Text>
                         <Text style={[styles.kwRemove, { color: colors.mutedForeground }]}>✕</Text>
                       </Pressable>
                     ))}
@@ -894,13 +1040,18 @@ export function KeywordEditor({
                       No bins assigned.
                     </Text>
                   ) : null}
-                  <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 16 }]}>
+                  <Text
+                    style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 16 }]}
+                  >
                     ADD BIN
                   </Text>
                   <View style={styles.addRow}>
                     <TextInput
                       value={newBin}
-                      onChangeText={(t) => { setNewBin(t); if (binError) setBinError(null); }}
+                      onChangeText={(t) => {
+                        setNewBin(t);
+                        if (binError) setBinError(null);
+                      }}
                       placeholder="e.g. 01-02-003"
                       placeholderTextColor={colors.mutedForeground}
                       style={[
@@ -921,7 +1072,9 @@ export function KeywordEditor({
                       onPress={addBin}
                       style={[styles.addBtn, { backgroundColor: colors.primary }]}
                     >
-                      <Text style={[styles.addBtnText, { color: colors.primaryForeground }]}>+ Add</Text>
+                      <Text style={[styles.addBtnText, { color: colors.primaryForeground }]}>
+                        + Add
+                      </Text>
                     </Pressable>
                   </View>
                   {binError ? (
@@ -951,33 +1104,51 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   accentBar: { width: 3, height: 20, borderRadius: 2, flexShrink: 0 },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     paddingTop: 20,
     borderBottomWidth: 1,
     gap: 8,
   },
-  title: { fontSize: 18, fontFamily: "Inter_700Bold" },
-  sub: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
-  closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  title: { fontSize: 18, fontFamily: 'Inter_700Bold' },
+  sub: { fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
     gap: 3,
   },
-  statusText: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  hint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 16, lineHeight: 18 },
-  subHint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 8, lineHeight: 18 },
+  statusText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
+  hint: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    fontStyle: 'italic',
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  subHint: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    fontStyle: 'italic',
+    marginBottom: 8,
+    lineHeight: 18,
+  },
   sectionLabel: {
     fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
+    fontFamily: 'Inter_600SemiBold',
     letterSpacing: 1,
-    textTransform: "uppercase",
+    textTransform: 'uppercase',
     marginBottom: 10,
   },
   descInput: {
@@ -986,25 +1157,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    fontFamily: "Inter_400Regular",
+    fontFamily: 'Inter_400Regular',
     lineHeight: 20,
     minHeight: 90,
-    textAlignVertical: "top",
+    textAlignVertical: 'top',
   },
   suggestBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 14,
     marginTop: 10,
   },
-  suggestBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  suggestBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
   suggestError: {
     fontSize: 12,
-    fontFamily: "Inter_400Regular",
+    fontFamily: 'Inter_400Regular',
     marginTop: 8,
     lineHeight: 18,
   },
@@ -1016,43 +1187,48 @@ const styles = StyleSheet.create({
   },
   suggestionLabel: {
     fontSize: 10,
-    fontFamily: "Inter_600SemiBold",
+    fontFamily: 'Inter_600SemiBold',
     letterSpacing: 1,
-    textTransform: "uppercase",
+    textTransform: 'uppercase',
     marginBottom: 6,
   },
-  suggestionText: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19, marginBottom: 10 },
-  suggestionActions: { flexDirection: "row", gap: 8 },
+  suggestionText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 19,
+    marginBottom: 10,
+  },
+  suggestionActions: { flexDirection: 'row', gap: 8 },
   suggestionUse: { borderRadius: 6, paddingHorizontal: 14, paddingVertical: 8 },
-  suggestionUseText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  suggestionUseText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
   suggestionDismiss: {
     borderRadius: 6,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderWidth: 1,
   },
-  suggestionDismissText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  kwRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  suggestionDismissText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  kwRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   kwChip: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
     borderWidth: 1,
     gap: 6,
   },
-  kwText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  kwText: { fontSize: 13, fontFamily: 'Inter_400Regular' },
   kwRemove: { fontSize: 11 },
-  emptyHint: { fontSize: 13, fontFamily: "Inter_400Regular", fontStyle: "italic" },
-  addRow: { flexDirection: "row", gap: 8 },
+  emptyHint: { fontSize: 13, fontFamily: 'Inter_400Regular', fontStyle: 'italic' },
+  addRow: { flexDirection: 'row', gap: 8 },
   tradeSizeInput: {
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    fontFamily: "Inter_400Regular",
+    fontFamily: 'Inter_400Regular',
   },
   addInput: {
     borderWidth: 1,
@@ -1060,27 +1236,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
-    fontFamily: "Inter_400Regular",
+    fontFamily: 'Inter_400Regular',
   },
   addBtn: {
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 8,
-    justifyContent: "center",
+    justifyContent: 'center',
   },
-  addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  binError: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 6, lineHeight: 18 },
+  addBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  binError: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 6, lineHeight: 18 },
   binCollapseRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingTop: 16,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   binChevron: { fontSize: 12 },
   seriesCurrentRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 10,
     marginTop: 10,
     marginBottom: 4,
@@ -1092,37 +1268,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
   },
-  seriesCurrentText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  seriesCurrentText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
   seriesRemoveBtn: {
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
-  seriesRemoveText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  seriesRemoveText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
   seriesResultList: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 8,
     marginTop: 8,
-    overflow: "hidden",
+    overflow: 'hidden',
   },
   seriesResultRow: {
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
-  seriesResultName: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  seriesResultVendor: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  seriesResultName: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  seriesResultVendor: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
   seriesCreateBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 14,
     marginTop: 8,
   },
-  seriesCreateText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  seriesCreateText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
   footer: {
     padding: 16,
     borderTopWidth: 1,
@@ -1130,7 +1306,7 @@ const styles = StyleSheet.create({
   doneBtn: {
     borderRadius: 8,
     paddingVertical: 14,
-    alignItems: "center",
+    alignItems: 'center',
   },
-  doneBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  doneBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold' },
 });

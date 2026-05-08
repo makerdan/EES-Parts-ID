@@ -12,17 +12,17 @@
  *   pnpm --filter @workspace/api-server exec tsx src/seed/synonym_group.ts
  */
 
-import { db, pool } from "@workspace/db";
+import { db, pool } from '@workspace/db';
 import {
   synonymGroupTable,
   synonymMapTable,
   electricalSlangMapTable,
   vendorMapTable,
-} from "@workspace/db";
-import { sql } from "drizzle-orm";
+} from '@workspace/db';
+import { sql } from 'drizzle-orm';
 
 async function seedSynonymGroups() {
-  console.log("Loading source tables…");
+  console.log('Loading source tables…');
 
   const [synonymRows, slangRows, vendorRows] = await Promise.all([
     db.select().from(synonymMapTable),
@@ -32,8 +32,8 @@ async function seedSynonymGroups() {
 
   console.log(
     `  synonym_map: ${synonymRows.length}  ` +
-    `electrical_slang_map: ${slangRows.length}  ` +
-    `vendor_map: ${vendorRows.length}`,
+      `electrical_slang_map: ${slangRows.length}  ` +
+      `vendor_map: ${vendorRows.length}`
   );
 
   // ── Build upsert rows ───────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ async function seedSynonymGroups() {
   for (const r of synonymRows) {
     rows.push({
       canonical: r.term.toLowerCase(),
-      synonyms: r.synonyms.map(s => s.toLowerCase()),
+      synonyms: r.synonyms.map((s) => s.toLowerCase()),
       categoryHint: r.category || null,
       notes: null,
     });
@@ -60,11 +60,11 @@ async function seedSynonymGroups() {
   for (const r of slangRows) {
     const canonical = r.slangTerm.toLowerCase();
     // Don't duplicate if already added from synonym_map
-    const alreadyAdded = rows.some(x => x.canonical === canonical);
+    const alreadyAdded = rows.some((x) => x.canonical === canonical);
     if (!alreadyAdded) {
       rows.push({
         canonical,
-        synonyms: r.standardTerms.map(s => s.toLowerCase()),
+        synonyms: r.standardTerms.map((s) => s.toLowerCase()),
         categoryHint: r.category || null,
         notes: r.notes || null,
       });
@@ -75,12 +75,12 @@ async function seedSynonymGroups() {
   //   canonical = lowercased code, synonyms = all names lowercased
   for (const r of vendorRows) {
     const canonical = r.code.toLowerCase();
-    const alreadyAdded = rows.some(x => x.canonical === canonical);
+    const alreadyAdded = rows.some((x) => x.canonical === canonical);
     if (!alreadyAdded) {
       rows.push({
         canonical,
-        synonyms: r.names.map(n => n.toLowerCase()),
-        categoryHint: "vendor",
+        synonyms: r.names.map((n) => n.toLowerCase()),
+        categoryHint: 'vendor',
         notes: null,
       });
     }
@@ -125,7 +125,7 @@ async function seedSynonymGroups() {
 
 seedSynonymGroups()
   .catch((err) => {
-    console.error("synonym_group seed failed:", err);
+    console.error('synonym_group seed failed:', err);
     process.exit(1);
   })
   .finally(() => pool.end());

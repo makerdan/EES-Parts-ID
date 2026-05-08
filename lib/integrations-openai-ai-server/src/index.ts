@@ -4,6 +4,6 @@
  * "@workspace/integrations-openai-ai-server"` without knowing about
  * the proxy details.
  */
-export { openai } from "./client";
-export { generateImageBuffer, editImages } from "./image";
-export { batchProcess, batchProcessWithSSE, isRateLimitError, type BatchOptions } from "./batch";
+export { openai } from './client';
+export { generateImageBuffer, editImages } from './image';
+export { batchProcess, batchProcessWithSSE, isRateLimitError, type BatchOptions } from './batch';

@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { ClassifyInventoryBodyMode } from "./classifyInventoryBodyMode";
+import type { ClassifyInventoryBodyMode } from './classifyInventoryBodyMode';
 
 export interface ClassifyInventoryBody {
   /** "all" re-classifies every inventory row (overwrites manual overrides).

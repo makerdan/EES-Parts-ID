@@ -13,7 +13,7 @@
  *   - Tap a row to open RecordEditModal for inline editing
  *   - Optimistic list update after a successful PATCH
  */
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -23,14 +23,14 @@ import {
   Text,
   TextInput,
   View,
-} from "react-native";
-import { useColors } from "@/hooks/useColors";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { RecordEditModal } from "./RecordEditModal";
+} from 'react-native';
+import { useColors } from '@/hooks/useColors';
+import type { InventoryItem } from '@workspace/api-client-react';
+import { RecordEditModal } from './RecordEditModal';
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
+  : '';
 
 const PAGE_SIZE = 50;
 
@@ -52,7 +52,7 @@ export function RecordsBrowser({ adminHeaders }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [allLoaded, setAllLoaded] = useState(false);
 
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState('');
 
   const [editItem, setEditItem] = useState<ListItem | null>(null);
 
@@ -66,90 +66,88 @@ export function RecordsBrowser({ adminHeaders }: Props) {
   // Guard so onEndReached can't double-fire while a load-more is in flight.
   const loadMoreRef = useRef(false);
 
-  const fetchPage = useCallback(async (opts: {
-    pageNum: number;
-    q: string;
-    append: boolean;
-    isRefresh?: boolean;
-  }) => {
-    const { pageNum, q, append, isRefresh } = opts;
+  const fetchPage = useCallback(
+    async (opts: { pageNum: number; q: string; append: boolean; isRefresh?: boolean }) => {
+      const { pageNum, q, append, isRefresh } = opts;
 
-    // For non-append fetches (new search / refresh / initial load):
-    // cancel any prior in-flight request so a slow earlier response can't
-    // overwrite the result of a more recent search.
-    let mySeq = seqRef.current;
-    if (!append) {
-      abortRef.current?.abort();
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      mySeq = ++seqRef.current;
-    } else {
-      if (loadMoreRef.current) return;
-      loadMoreRef.current = true;
-    }
-
-    if (isRefresh) setRefreshing(true);
-    else if (append) setLoadingMore(true);
-    else setLoading(true);
-    setError(null);
-
-    try {
-      const params = new URLSearchParams({
-        page: String(pageNum),
-        limit: String(PAGE_SIZE),
-      });
-      if (q.trim()) params.set("q", q.trim());
-
-      const signal = !append ? abortRef.current?.signal : undefined;
-
-      const res = await fetch(`${API_BASE}/inventory?${params.toString()}`, {
-        headers: adminHeaders,
-        signal,
-      });
-
-      // If a newer non-append fetch has started, discard this stale response.
-      if (!append && seqRef.current !== mySeq) return;
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({})) as { error?: string };
-        setError(data.error ?? "Failed to load records.");
-        return;
-      }
-
-      const data = await res.json() as {
-        items: ListItem[];
-        total: number;
-        page: number;
-        limit: number;
-      };
-
-      // Final stale-check after awaiting the JSON parse
-      if (!append && seqRef.current !== mySeq) return;
-
-      setTotal(data.total);
-      setPage(pageNum);
-      if (append) {
-        setItems(prev => [...prev, ...data.items]);
+      // For non-append fetches (new search / refresh / initial load):
+      // cancel any prior in-flight request so a slow earlier response can't
+      // overwrite the result of a more recent search.
+      let mySeq = seqRef.current;
+      if (!append) {
+        abortRef.current?.abort();
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+        mySeq = ++seqRef.current;
       } else {
-        setItems(data.items);
+        if (loadMoreRef.current) return;
+        loadMoreRef.current = true;
       }
-      setAllLoaded(data.items.length < PAGE_SIZE || pageNum * PAGE_SIZE >= data.total);
-    } catch (err) {
-      // Ignore aborted-fetch errors — they are intentional cancellations.
-      if (err instanceof Error && err.name === "AbortError") return;
-      setError(err instanceof Error ? err.message : "Network error — please try again.");
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-      setRefreshing(false);
-      loadMoreRef.current = false;
-    }
-  }, [adminHeaders]);
+
+      if (isRefresh) setRefreshing(true);
+      else if (append) setLoadingMore(true);
+      else setLoading(true);
+      setError(null);
+
+      try {
+        const params = new URLSearchParams({
+          page: String(pageNum),
+          limit: String(PAGE_SIZE),
+        });
+        if (q.trim()) params.set('q', q.trim());
+
+        const signal = !append ? abortRef.current?.signal : undefined;
+
+        const res = await fetch(`${API_BASE}/inventory?${params.toString()}`, {
+          headers: adminHeaders,
+          signal,
+        });
+
+        // If a newer non-append fetch has started, discard this stale response.
+        if (!append && seqRef.current !== mySeq) return;
+
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          setError(data.error ?? 'Failed to load records.');
+          return;
+        }
+
+        const data = (await res.json()) as {
+          items: ListItem[];
+          total: number;
+          page: number;
+          limit: number;
+        };
+
+        // Final stale-check after awaiting the JSON parse
+        if (!append && seqRef.current !== mySeq) return;
+
+        setTotal(data.total);
+        setPage(pageNum);
+        if (append) {
+          setItems((prev) => [...prev, ...data.items]);
+        } else {
+          setItems(data.items);
+        }
+        setAllLoaded(data.items.length < PAGE_SIZE || pageNum * PAGE_SIZE >= data.total);
+      } catch (err) {
+        // Ignore aborted-fetch errors — they are intentional cancellations.
+        if (err instanceof Error && err.name === 'AbortError') return;
+        setError(err instanceof Error ? err.message : 'Network error — please try again.');
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+        setRefreshing(false);
+        loadMoreRef.current = false;
+      }
+    },
+    [adminHeaders]
+  );
 
   useEffect(() => {
-    void fetchPage({ pageNum: 1, q: "", append: false });
-  // Run once on mount; fetchPage is stable via useCallback
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    void fetchPage({ pageNum: 1, q: '', append: false });
+    // Run once on mount; fetchPage is stable via useCallback
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSearchChange = (text: string) => {
@@ -173,14 +171,15 @@ export function RecordsBrowser({ adminHeaders }: Props) {
   };
 
   const handleSaved = useCallback((updated: InventoryItem) => {
-    setItems(prev => prev.map(it => it.id === updated.id ? { ...it, ...updated } : it));
-    setEditItem(prev => prev && prev.id === updated.id ? { ...prev, ...updated } : prev);
+    setItems((prev) => prev.map((it) => (it.id === updated.id ? { ...it, ...updated } : it)));
+    setEditItem((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
   }, []);
 
   const renderItem = ({ item }: { item: ListItem }) => {
-    const vendorLine = item.vendorFullName && item.vendorFullName !== item.vendor
-      ? `${item.vendor} · ${item.vendorFullName}`
-      : item.vendor;
+    const vendorLine =
+      item.vendorFullName && item.vendorFullName !== item.vendor
+        ? `${item.vendor} · ${item.vendorFullName}`
+        : item.vendor;
 
     return (
       <Pressable
@@ -210,7 +209,7 @@ export function RecordsBrowser({ adminHeaders }: Props) {
             ) : null}
             {item.binLocations && item.binLocations.length > 0 ? (
               <Text style={[s.bins, { color: colors.primary }]} numberOfLines={1}>
-                {item.binLocations.join(", ")}
+                {item.binLocations.join(', ')}
               </Text>
             ) : null}
           </View>
@@ -238,7 +237,7 @@ export function RecordsBrowser({ adminHeaders }: Props) {
         />
         {search.length > 0 ? (
           <Pressable
-            onPress={() => handleSearchChange("")}
+            onPress={() => handleSearchChange('')}
             hitSlop={8}
             accessibilityRole="button"
             accessibilityLabel="Clear search"
@@ -259,12 +258,12 @@ export function RecordsBrowser({ adminHeaders }: Props) {
 
       {/* Error */}
       {error ? (
-        <View style={[s.errorBanner, { backgroundColor: "#ef444422", borderColor: "#ef4444" }]}>
-          <Text style={{ color: "#ef4444", fontSize: 13, fontFamily: "Inter_500Medium", flex: 1 }}>
+        <View style={[s.errorBanner, { backgroundColor: '#ef444422', borderColor: '#ef4444' }]}>
+          <Text style={{ color: '#ef4444', fontSize: 13, fontFamily: 'Inter_500Medium', flex: 1 }}>
             {error}
           </Text>
           <Pressable onPress={() => setError(null)} style={{ paddingLeft: 8 }}>
-            <Text style={{ color: "#ef4444", fontSize: 16 }}>✕</Text>
+            <Text style={{ color: '#ef4444', fontSize: 16 }}>✕</Text>
           </Pressable>
         </View>
       ) : null}
@@ -278,7 +277,7 @@ export function RecordsBrowser({ adminHeaders }: Props) {
       ) : (
         <FlatList
           data={items}
-          keyExtractor={item => String(item.id)}
+          keyExtractor={(item) => String(item.id)}
           renderItem={renderItem}
           onEndReached={handleEndReached}
           onEndReachedThreshold={0.3}
@@ -294,7 +293,7 @@ export function RecordsBrowser({ adminHeaders }: Props) {
             !loading ? (
               <View style={s.center}>
                 <Text style={[s.emptyText, { color: colors.mutedForeground }]}>
-                  {search.trim() ? `No records match "${search}"` : "No inventory records found."}
+                  {search.trim() ? `No records match "${search}"` : 'No inventory records found.'}
                 </Text>
               </View>
             ) : null
@@ -329,8 +328,8 @@ export function RecordsBrowser({ adminHeaders }: Props) {
 const s = StyleSheet.create({
   container: { flex: 1 },
   searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     margin: 12,
     marginBottom: 0,
     borderRadius: 10,
@@ -341,7 +340,7 @@ const s = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 14,
-    fontFamily: "Inter_400Regular",
+    fontFamily: 'Inter_400Regular',
     padding: 0,
   },
   countRow: {
@@ -349,10 +348,10 @@ const s = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 4,
   },
-  countText: { fontSize: 11, fontFamily: "Inter_500Medium" },
+  countText: { fontSize: 11, fontFamily: 'Inter_500Medium' },
   errorBanner: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     margin: 12,
     padding: 10,
     borderRadius: 8,
@@ -360,30 +359,40 @@ const s = StyleSheet.create({
   },
   center: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 48,
     gap: 10,
   },
-  loadingText: { fontSize: 14, fontFamily: "Inter_400Regular" },
-  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", paddingHorizontal: 24 },
+  loadingText: { fontSize: 14, fontFamily: 'Inter_400Regular' },
+  emptyText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
+    paddingHorizontal: 24,
+  },
   row: {
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  rowMain: { flexDirection: "row", alignItems: "center", gap: 8 },
+  rowMain: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowLeft: { flex: 1, gap: 2 },
-  catalog: { fontSize: 14, fontFamily: "Inter_700Bold" },
-  vendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.4 },
-  desc: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17, marginTop: 1 },
-  bins: { fontSize: 11, fontFamily: "Inter_600SemiBold", marginTop: 2 },
-  chevron: { fontSize: 18, fontFamily: "Inter_400Regular" },
-  footerLoader: { paddingVertical: 16, alignItems: "center" },
+  catalog: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  vendor: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  desc: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17, marginTop: 1 },
+  bins: { fontSize: 11, fontFamily: 'Inter_600SemiBold', marginTop: 2 },
+  chevron: { fontSize: 18, fontFamily: 'Inter_400Regular' },
+  footerLoader: { paddingVertical: 16, alignItems: 'center' },
   endText: {
     fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    textAlign: "center",
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
     paddingVertical: 16,
   },
 });

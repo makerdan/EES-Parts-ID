@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { Feather } from "@expo/vector-icons";
-import type { SearchResult } from "@workspace/api-client-react";
-import { useColors } from "@/hooks/useColors";
-import { CHIP_DIMS, type ChipDim } from "@/components/FilterPanel";
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import type { SearchResult } from '@workspace/api-client-react';
+import { useColors } from '@/hooks/useColors';
+import { CHIP_DIMS, type ChipDim } from '@/components/FilterPanel';
 import {
   applyRefinement,
   EXTRA_KEYWORDS_KEY,
@@ -11,7 +11,7 @@ import {
   itemFullText,
   tokenMatch,
   type RefinementState,
-} from "@/lib/refinement";
+} from '@/lib/refinement';
 
 // Re-export so callers can keep importing the helpers + state type from this module.
 export { applyRefinement, itemFullText, tokenMatch, extractHighlightTokens };
@@ -32,26 +32,30 @@ export function ResultRefinementBar({ results, refinement, onChange }: Props) {
 
   // Local state for the "Add keywords" input — keeps typing snappy and lets us
   // debounce the heavier upstream filter pass.
-  const [extraInput, setExtraInput] = useState<string>(refinement.extraKeywords ?? "");
+  const [extraInput, setExtraInput] = useState<string>(refinement.extraKeywords ?? '');
 
   // Latest props in refs so the debounce closure always sees current values
   // without re-creating the timer on every parent render.
   const refinementRef = useRef(refinement);
-  useEffect(() => { refinementRef.current = refinement; }, [refinement]);
+  useEffect(() => {
+    refinementRef.current = refinement;
+  }, [refinement]);
   const onChangeRef = useRef(onChange);
-  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   // Sync local input when refinement.extraKeywords is reset/changed externally
   // (e.g. parent calls setRefinement({}) on new search or "Clear refinement").
   useEffect(() => {
-    const upstream = refinement.extraKeywords ?? "";
-    setExtraInput(prev => (prev === upstream ? prev : upstream));
+    const upstream = refinement.extraKeywords ?? '';
+    setExtraInput((prev) => (prev === upstream ? prev : upstream));
   }, [refinement.extraKeywords]);
 
   // Debounce typed input → upstream refinement state.
   useEffect(() => {
     const trimmed = extraInput.trim();
-    const current = (refinementRef.current.extraKeywords ?? "").trim();
+    const current = (refinementRef.current.extraKeywords ?? '').trim();
     if (trimmed === current) return;
     const id = setTimeout(() => {
       const next: RefinementState = { ...refinementRef.current };
@@ -66,22 +70,20 @@ export function ResultRefinementBar({ results, refinement, onChange }: Props) {
   // (chips + extra keywords). Mirrors the server's dimensionCounts pattern so
   // users see how many results would remain if they tapped a given chip.
   const dimsWithCounts = useMemo(() => {
-    const out: Array<{ dim: ChipDim; counts: Record<string, number>; visibleOptions: string[] }> = [];
+    const out: { dim: ChipDim; counts: Record<string, number>; visibleOptions: string[] }[] = [];
     for (const dim of CHIP_DIMS) {
       const otherRefinement: RefinementState = { ...refinement };
       delete otherRefinement[dim.key];
       const subset = applyRefinement(results, otherRefinement);
       const counts: Record<string, number> = {};
       for (const opt of dim.options) {
-        const matched = subset.reduce(
-          (acc, r) => {
-            const text = dim.key === "category"
-              ? (r.item.aiKeywords ?? []).join(" ").toLowerCase()
+        const matched = subset.reduce((acc, r) => {
+          const text =
+            dim.key === 'category'
+              ? (r.item.aiKeywords ?? []).join(' ').toLowerCase()
               : itemFullText(r.item);
-            return tokenMatch(text, opt) ? acc + 1 : acc;
-          },
-          0,
-        );
+          return tokenMatch(text, opt) ? acc + 1 : acc;
+        }, 0);
         if (matched > 0) counts[opt] = matched;
       }
       const selected = refinement[dim.key];
@@ -89,9 +91,8 @@ export function ResultRefinementBar({ results, refinement, onChange }: Props) {
       // Always keep the currently-selected option visible even if its count
       // collapsed to zero under the new refinement (gives the user a way to
       // un-tap it without resetting everything).
-      const visibleOptions = selected && !optKeys.includes(selected)
-        ? [...optKeys, selected]
-        : optKeys;
+      const visibleOptions =
+        selected && !optKeys.includes(selected) ? [...optKeys, selected] : optKeys;
       // Show the dim only when there's meaningful variation OR when one of
       // its options is currently selected.
       if (visibleOptions.length > 1 || selected) {
@@ -130,7 +131,7 @@ export function ResultRefinementBar({ results, refinement, onChange }: Props) {
         />
         {extraInput ? (
           <Pressable
-            onPress={() => setExtraInput("")}
+            onPress={() => setExtraInput('')}
             hitSlop={8}
             accessibilityRole="button"
             accessibilityLabel="Clear added keywords"
@@ -148,8 +149,10 @@ export function ResultRefinementBar({ results, refinement, onChange }: Props) {
                 {dimIdx > 0 ? (
                   <View style={[styles.divider, { backgroundColor: colors.border }]} />
                 ) : null}
-                <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>{dim.label}</Text>
-                {visibleOptions.map(opt => {
+                <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>
+                  {dim.label}
+                </Text>
+                {visibleOptions.map((opt) => {
                   const active = refinement[dim.key] === opt;
                   const count = counts[opt] ?? 0;
                   return (
@@ -172,7 +175,7 @@ export function ResultRefinementBar({ results, refinement, onChange }: Props) {
                         },
                       ]}
                       accessibilityRole="button"
-                      accessibilityLabel={`Refine by ${dim.label} ${opt}, ${count} ${count === 1 ? "match" : "matches"}`}
+                      accessibilityLabel={`Refine by ${dim.label} ${opt}, ${count} ${count === 1 ? 'match' : 'matches'}`}
                       accessibilityState={{ selected: active }}
                     >
                       <Text
@@ -208,13 +211,13 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 10,
-    fontFamily: "Inter_600SemiBold",
+    fontFamily: 'Inter_600SemiBold',
     letterSpacing: 0.8,
     marginBottom: 6,
   },
   kwRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 8,
@@ -228,25 +231,25 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 4,
     fontSize: 13,
-    fontFamily: "Inter_400Regular",
+    fontFamily: 'Inter_400Regular',
   },
   row: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 4,
     paddingVertical: 2,
   },
   dimGroup: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 4,
   },
   dimLabel: {
     fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
+    fontFamily: 'Inter_600SemiBold',
     marginRight: 2,
     marginLeft: 2,
-    textTransform: "uppercase",
+    textTransform: 'uppercase',
     letterSpacing: 0.4,
   },
   divider: {
@@ -263,6 +266,6 @@ const styles = StyleSheet.create({
   },
   chipText: {
     fontSize: 12,
-    fontFamily: "Inter_500Medium",
+    fontFamily: 'Inter_500Medium',
   },
 });

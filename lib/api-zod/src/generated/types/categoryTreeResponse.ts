@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { CategoryNode } from "./categoryNode";
+import type { CategoryNode } from './categoryNode';
 
 export interface CategoryTreeResponse {
   tree: CategoryNode[];

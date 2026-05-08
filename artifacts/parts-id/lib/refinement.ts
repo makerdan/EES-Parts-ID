@@ -8,7 +8,7 @@
  * Kept in its own file (no React Native imports) so it can be unit-tested
  * in a pure node-environment Jest run.
  */
-import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
+import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 
 /**
  * Refinement state shape. Chip-dimension keys (e.g. `manufacturer`,
@@ -29,12 +29,12 @@ export type RefinementState = {
 };
 
 /** Reserved key in RefinementState that holds free-text refinement input. */
-export const EXTRA_KEYWORDS_KEY = "extraKeywords" as const;
+export const EXTRA_KEYWORDS_KEY = 'extraKeywords' as const;
 
 export function itemFullText(
-  item: Pick<InventoryItem, "vendor" | "catalog" | "description" | "aiKeywords">,
+  item: Pick<InventoryItem, 'vendor' | 'catalog' | 'description' | 'aiKeywords'>
 ): string {
-  return `${item.vendor} ${item.catalog} ${item.description} ${(item.aiKeywords ?? []).join(" ")}`.toLowerCase();
+  return `${item.vendor} ${item.catalog} ${item.description} ${(item.aiKeywords ?? []).join(' ')}`.toLowerCase();
 }
 
 /**
@@ -47,9 +47,9 @@ export function itemFullText(
 export function tokenMatch(text: string, value: string): boolean {
   const tokens = value.toLowerCase().trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true;
-  return tokens.every(tok => {
-    const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?<![\\w/-])${escaped}(?![\\w/-])`, "i").test(text);
+  return tokens.every((tok) => {
+    const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![\\w/-])${escaped}(?![\\w/-])`, 'i').test(text);
   });
 }
 
@@ -67,7 +67,7 @@ export function tokenMatch(text: string, value: string): boolean {
 export function extractHighlightTokens(refinement: RefinementState): string[] {
   const all: string[] = [];
   for (const [k, v] of Object.entries(refinement)) {
-    if (typeof v !== "string" || !v.trim()) continue;
+    if (typeof v !== 'string' || !v.trim()) continue;
     void k;
     for (const tok of v.toLowerCase().trim().split(/\s+/)) {
       if (tok) all.push(tok);
@@ -86,16 +86,16 @@ export function extractHighlightTokens(refinement: RefinementState): string[] {
  */
 export function splitHighlightSegments(
   text: string,
-  tokens: string[],
-): Array<{ text: string; match: boolean }> {
-  if (!text) return [{ text: "", match: false }];
-  const cleaned = tokens.filter(t => t && t.trim());
+  tokens: string[]
+): { text: string; match: boolean }[] {
+  if (!text) return [{ text: '', match: false }];
+  const cleaned = tokens.filter((t) => t && t.trim());
   if (cleaned.length === 0) return [{ text, match: false }];
   const escaped = cleaned
-    .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .sort((a, b) => b.length - a.length); // longer first so "20a" wins over "20"
-  const re = new RegExp(`(?<![\\w/-])(${escaped.join("|")})(?![\\w/-])`, "gi");
-  const out: Array<{ text: string; match: boolean }> = [];
+  const re = new RegExp(`(?<![\\w/-])(${escaped.join('|')})(?![\\w/-])`, 'gi');
+  const out: { text: string; match: boolean }[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
@@ -115,18 +115,19 @@ export function splitHighlightSegments(
  * against `itemFullText`, so behavior is consistent with how a chip would
  * have narrowed the original server response.
  */
-export function applyRefinement(results: SearchResult[], refinement: RefinementState): SearchResult[] {
+export function applyRefinement(
+  results: SearchResult[],
+  refinement: RefinementState
+): SearchResult[] {
   const { [EXTRA_KEYWORDS_KEY]: rawExtra, ...chipRefinement } = refinement;
-  const activeChips = Object.entries(chipRefinement).filter(([, v]) => !!v) as Array<[string, string]>;
+  const activeChips = Object.entries(chipRefinement).filter(([, v]) => !!v) as [string, string][];
   const extra = rawExtra?.trim() ? rawExtra.trim() : null;
   if (activeChips.length === 0 && !extra) return results;
-  return results.filter(r => {
+  return results.filter((r) => {
     const text = itemFullText(r.item);
     if (extra && !tokenMatch(text, extra)) return false;
     return activeChips.every(([k, v]) => {
-      const chipText = k === "category"
-        ? (r.item.aiKeywords ?? []).join(" ").toLowerCase()
-        : text;
+      const chipText = k === 'category' ? (r.item.aiKeywords ?? []).join(' ').toLowerCase() : text;
       return tokenMatch(chipText, v);
     });
   });

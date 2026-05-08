@@ -10,7 +10,7 @@
  *      immediately without issuing any additional fetches.
  */
 
-import { syncAllInventory } from "../lib/syncInventory";
+import { syncAllInventory } from '../lib/syncInventory';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,11 +31,11 @@ function makeStorage() {
 }
 
 const OPTS_BASE = {
-  apiBase: "http://localhost:8080/api",
-  fuseKey: "fuse_key",
-  versionKey: "version_key",
-  assignmentsKey: "assignments_key",
-  treeKey: "tree_key",
+  apiBase: 'http://localhost:8080/api',
+  fuseKey: 'fuse_key',
+  versionKey: 'version_key',
+  assignmentsKey: 'assignments_key',
+  treeKey: 'tree_key',
 } as const;
 
 function inventoryResponse(items: unknown[] = [], total = 0) {
@@ -71,10 +71,10 @@ afterEach(() => {
 // 1. cache: 'no-store' on inventory page fetches
 // ---------------------------------------------------------------------------
 
-describe("syncAllInventory — cache: no-store", () => {
+describe('syncAllInventory — cache: no-store', () => {
   it("passes cache: 'no-store' on the first inventory page fetch", async () => {
     const fetchMock = jest.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/inventory?")) {
+      if (typeof url === 'string' && url.includes('/inventory?')) {
         return Promise.resolve(emptyInventoryResponse());
       }
       return Promise.resolve(categoriesResponse());
@@ -89,21 +89,21 @@ describe("syncAllInventory — cache: no-store", () => {
       storage: makeStorage(),
     });
 
-    const inventoryCalls = fetchMock.mock.calls.filter(([url]) =>
-      typeof url === "string" && (url as string).includes("/inventory?"),
+    const inventoryCalls = fetchMock.mock.calls.filter(
+      ([url]) => typeof url === 'string' && (url as string).includes('/inventory?')
     );
 
     expect(inventoryCalls.length).toBeGreaterThanOrEqual(1);
 
     for (const [, init] of inventoryCalls) {
-      expect((init as RequestInit).cache).toBe("no-store");
+      expect((init as RequestInit).cache).toBe('no-store');
     }
   });
 
   it("passes cache: 'no-store' on every inventory page fetch when multiple pages are needed", async () => {
     let callCount = 0;
     const fetchMock = jest.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/inventory?")) {
+      if (typeof url === 'string' && url.includes('/inventory?')) {
         callCount++;
         if (callCount === 1) {
           return Promise.resolve(inventoryResponse([{ id: 1 }], 2));
@@ -122,14 +122,14 @@ describe("syncAllInventory — cache: no-store", () => {
       storage: makeStorage(),
     });
 
-    const inventoryCalls = fetchMock.mock.calls.filter(([url]) =>
-      typeof url === "string" && (url as string).includes("/inventory?"),
+    const inventoryCalls = fetchMock.mock.calls.filter(
+      ([url]) => typeof url === 'string' && (url as string).includes('/inventory?')
     );
 
     expect(inventoryCalls.length).toBe(2);
 
     for (const [, init] of inventoryCalls) {
-      expect((init as RequestInit).cache).toBe("no-store");
+      expect((init as RequestInit).cache).toBe('no-store');
     }
   });
 });
@@ -138,22 +138,20 @@ describe("syncAllInventory — cache: no-store", () => {
 // 2. In-flight guard — second call returns early
 // ---------------------------------------------------------------------------
 
-describe("syncAllInventory — in-flight guard", () => {
-  it("returns early without fetching when a sync is already in progress", async () => {
+describe('syncAllInventory — in-flight guard', () => {
+  it('returns early without fetching when a sync is already in progress', async () => {
     let resolveFirstSync!: () => void;
-    const firstSyncSettled = new Promise<void>(resolve => {
+    const firstSyncSettled = new Promise<void>((resolve) => {
       resolveFirstSync = resolve;
     });
 
     let fetchCallCount = 0;
     const fetchMock = jest.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/inventory?")) {
+      if (typeof url === 'string' && url.includes('/inventory?')) {
         fetchCallCount++;
         // Block until we release from outside the test, simulating a slow network.
-        return new Promise<Response>(resolve => {
-          firstSyncSettled.then(() =>
-            resolve(emptyInventoryResponse()),
-          );
+        return new Promise<Response>((resolve) => {
+          firstSyncSettled.then(() => resolve(emptyInventoryResponse()));
         });
       }
       return Promise.resolve(categoriesResponse());
@@ -172,7 +170,7 @@ describe("syncAllInventory — in-flight guard", () => {
     });
 
     // Give the first call time to start and set syncInFlightRef.current = true.
-    await new Promise<void>(r => setTimeout(r, 0));
+    await new Promise<void>((r) => setTimeout(r, 0));
 
     expect(syncInFlightRef.current).toBe(true);
 
@@ -195,9 +193,9 @@ describe("syncAllInventory — in-flight guard", () => {
     expect(fetchCallCount).toBe(1);
   });
 
-  it("allows a new sync to start after the previous one completes", async () => {
+  it('allows a new sync to start after the previous one completes', async () => {
     const fetchMock = jest.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/inventory?")) {
+      if (typeof url === 'string' && url.includes('/inventory?')) {
         return Promise.resolve(emptyInventoryResponse());
       }
       return Promise.resolve(categoriesResponse());
@@ -211,14 +209,14 @@ describe("syncAllInventory — in-flight guard", () => {
     await syncAllInventory({ ...OPTS_BASE, syncInFlightRef, callbacks, storage });
     expect(syncInFlightRef.current).toBe(false);
 
-    const fetchCountAfterFirst = fetchMock.mock.calls.filter(([url]) =>
-      typeof url === "string" && (url as string).includes("/inventory?"),
+    const fetchCountAfterFirst = fetchMock.mock.calls.filter(
+      ([url]) => typeof url === 'string' && (url as string).includes('/inventory?')
     ).length;
 
     await syncAllInventory({ ...OPTS_BASE, syncInFlightRef, callbacks, storage });
 
-    const fetchCountAfterSecond = fetchMock.mock.calls.filter(([url]) =>
-      typeof url === "string" && (url as string).includes("/inventory?"),
+    const fetchCountAfterSecond = fetchMock.mock.calls.filter(
+      ([url]) => typeof url === 'string' && (url as string).includes('/inventory?')
     ).length;
 
     expect(fetchCountAfterSecond).toBeGreaterThan(fetchCountAfterFirst);
@@ -229,10 +227,10 @@ describe("syncAllInventory — in-flight guard", () => {
 // 3. Storage failure tolerance — cache write error does not surface as sync error
 // ---------------------------------------------------------------------------
 
-describe("syncAllInventory — storage failure tolerance", () => {
-  it("does not call setSyncError(true) when the large cache write fails but page fetches succeed", async () => {
+describe('syncAllInventory — storage failure tolerance', () => {
+  it('does not call setSyncError(true) when the large cache write fails but page fetches succeed', async () => {
     const fetchMock = jest.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/inventory?")) {
+      if (typeof url === 'string' && url.includes('/inventory?')) {
         return Promise.resolve(emptyInventoryResponse());
       }
       return Promise.resolve(categoriesResponse());
@@ -246,7 +244,7 @@ describe("syncAllInventory — storage failure tolerance", () => {
       multiSet: jest.fn().mockImplementation(() => {
         storageCallCount++;
         if (storageCallCount === 1) return Promise.resolve(undefined);
-        return Promise.reject(new Error("QuotaExceededError: The quota has been exceeded."));
+        return Promise.reject(new Error('QuotaExceededError: The quota has been exceeded.'));
       }),
     };
 
@@ -255,7 +253,7 @@ describe("syncAllInventory — storage failure tolerance", () => {
 
     await syncAllInventory({
       ...OPTS_BASE,
-      serverVersion: "v42",
+      serverVersion: 'v42',
       syncInFlightRef,
       callbacks,
       storage,
@@ -274,18 +272,18 @@ describe("syncAllInventory — storage failure tolerance", () => {
     const firstCallPairs = storage.multiSet.mock.calls[0]![0] as [string, string][];
     expect(firstCallPairs).toHaveLength(1);
     expect(firstCallPairs[0]![0]).toBe(OPTS_BASE.versionKey);
-    expect(firstCallPairs[0]![1]).toBe("v42");
+    expect(firstCallPairs[0]![1]).toBe('v42');
 
     // Second multiSet call must contain the fuse key (large cache write).
     const secondCallPairs = storage.multiSet.mock.calls[1]![0] as [string, string][];
     expect(secondCallPairs[0]![0]).toBe(OPTS_BASE.fuseKey);
   });
 
-  it("does call setSyncError(true) when the version key write fails (page fetch succeeds)", async () => {
+  it('does call setSyncError(true) when the version key write fails (page fetch succeeds)', async () => {
     jest.useFakeTimers();
     try {
       const fetchMock = jest.fn().mockImplementation((url: string) => {
-        if (typeof url === "string" && url.includes("/inventory?")) {
+        if (typeof url === 'string' && url.includes('/inventory?')) {
           return Promise.resolve(emptyInventoryResponse());
         }
         return Promise.resolve(categoriesResponse());
@@ -294,7 +292,7 @@ describe("syncAllInventory — storage failure tolerance", () => {
 
       // Version-key write fails — this propagates out of attemptSync and triggers retries.
       const storage = {
-        multiSet: jest.fn().mockRejectedValue(new Error("QuotaExceededError")),
+        multiSet: jest.fn().mockRejectedValue(new Error('QuotaExceededError')),
       };
 
       const syncInFlightRef = { current: false };
@@ -302,7 +300,7 @@ describe("syncAllInventory — storage failure tolerance", () => {
 
       const syncPromise = syncAllInventory({
         ...OPTS_BASE,
-        serverVersion: "v42",
+        serverVersion: 'v42',
         syncInFlightRef,
         callbacks,
         storage,
@@ -325,11 +323,11 @@ describe("syncAllInventory — storage failure tolerance", () => {
 // 4. Retry exhaustion — setSyncError called after all retries fail
 // ---------------------------------------------------------------------------
 
-describe("syncAllInventory — retry exhaustion", () => {
+describe('syncAllInventory — retry exhaustion', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
-  it("calls setSyncError(true) after all retries are exhausted", async () => {
+  it('calls setSyncError(true) after all retries are exhausted', async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: false,
       status: 503,
@@ -358,7 +356,7 @@ describe("syncAllInventory — retry exhaustion", () => {
     expect(calls[calls.length - 1]).toBe(true);
   });
 
-  it("resets syncInFlightRef to false even after all retries fail", async () => {
+  it('resets syncInFlightRef to false even after all retries fail', async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: false,
       status: 503,
@@ -388,11 +386,11 @@ describe("syncAllInventory — retry exhaustion", () => {
 // 4. Retry progress — setSyncRetry receives correct attempt/max on each retry
 // ---------------------------------------------------------------------------
 
-describe("syncAllInventory — setSyncRetry values", () => {
+describe('syncAllInventory — setSyncRetry values', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
-  it("calls setSyncRetry with incrementing attempt numbers on each retry", async () => {
+  it('calls setSyncRetry with incrementing attempt numbers on each retry', async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: false,
       status: 503,
@@ -415,12 +413,12 @@ describe("syncAllInventory — setSyncRetry values", () => {
 
     // setSyncRetry is called once per retry (attempts 1, 2, 3) then once
     // with null in the finally block.
-    const retryCalls = callbacks.setSyncRetry.mock.calls as Array<
-      [{ attempt: number; max: number } | null]
-    >;
-    const nonNullCalls = retryCalls.filter(([v]) => v !== null) as Array<
-      [{ attempt: number; max: number }]
-    >;
+    const retryCalls = callbacks.setSyncRetry.mock.calls as [
+      { attempt: number; max: number } | null,
+    ][];
+    const nonNullCalls = retryCalls.filter(([v]) => v !== null) as [
+      { attempt: number; max: number },
+    ][];
 
     // Exactly MAX_AUTO_RETRIES non-null calls (one per retry attempt).
     expect(nonNullCalls).toHaveLength(3);
@@ -431,9 +429,9 @@ describe("syncAllInventory — setSyncRetry values", () => {
     expect(nonNullCalls[2]![0]).toEqual({ attempt: 3, max: 3 });
   });
 
-  it("does not call setSyncRetry with a non-null value when the first attempt succeeds", async () => {
+  it('does not call setSyncRetry with a non-null value when the first attempt succeeds', async () => {
     const fetchMock = jest.fn().mockImplementation((url: string) => {
-      if (typeof url === "string" && url.includes("/inventory?")) {
+      if (typeof url === 'string' && url.includes('/inventory?')) {
         return Promise.resolve(emptyInventoryResponse());
       }
       return Promise.resolve(categoriesResponse());
@@ -454,7 +452,7 @@ describe("syncAllInventory — setSyncRetry values", () => {
     await syncPromise;
 
     const nonNullRetryCalls = callbacks.setSyncRetry.mock.calls.filter(
-      ([v]: [unknown]) => v !== null,
+      ([v]: [unknown]) => v !== null
     );
     expect(nonNullRetryCalls).toHaveLength(0);
   });

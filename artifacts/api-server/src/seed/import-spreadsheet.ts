@@ -23,19 +23,22 @@
  *   Final DB count:    7397
  */
 
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import * as XLSX from "xlsx";
-import { db, pool } from "@workspace/db";
-import { inventoryTable } from "@workspace/db";
-import { sql } from "drizzle-orm";
-import { aggregateRowsByPart } from "../utils/binLocations";
-import { deriveTradeSizeTokens } from "../utils/tradeSize";
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as XLSX from 'xlsx';
+import { db, pool } from '@workspace/db';
+import { inventoryTable } from '@workspace/db';
+import { sql } from 'drizzle-orm';
+import { aggregateRowsByPart } from '../utils/binLocations';
+import { deriveTradeSizeTokens } from '../utils/tradeSize';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const XLSX_PATH = resolve(__dirname, "../../../../attached_assets/Master_INC_Report_(04.29.2026)_-_For_PartsID_Database_1777605533561.xlsx");
+const XLSX_PATH = resolve(
+  __dirname,
+  '../../../../attached_assets/Master_INC_Report_(04.29.2026)_-_For_PartsID_Database_1777605533561.xlsx'
+);
 const BATCH_SIZE = 250;
 
 interface SpreadsheetRow {
@@ -47,49 +50,53 @@ interface SpreadsheetRow {
 }
 
 async function importSpreadsheet() {
-  console.log("Reading spreadsheet:", XLSX_PATH);
+  console.log('Reading spreadsheet:', XLSX_PATH);
   const buffer = readFileSync(XLSX_PATH);
-  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
 
   const sheetName = workbook.SheetNames[0];
   console.log(`Using sheet: ${sheetName}`);
 
   const sheet = workbook.Sheets[sheetName!]!;
   const rawRows: SpreadsheetRow[] = XLSX.utils.sheet_to_json(sheet, {
-    defval: "",
+    defval: '',
     raw: false,
   });
 
   console.log(`Total rows read: ${rawRows.length}`);
 
   if (rawRows.length === 0) {
-    console.error("No rows found in spreadsheet");
+    console.error('No rows found in spreadsheet');
     process.exit(1);
   }
 
   // Inspect column names
   const firstRow = rawRows[0]!;
-  console.log("Columns found:", Object.keys(firstRow));
+  console.log('Columns found:', Object.keys(firstRow));
 
   // Normalize column names (lowercase, strip spaces)
   function normalizeKey(row: SpreadsheetRow, ...candidates: string[]): string {
     for (const key of Object.keys(row)) {
-      const normalized = key.toLowerCase().replace(/\s+/g, "");
-      if (candidates.some(c => normalized === c || normalized.includes(c))) {
-        return row[key] as string ?? "";
+      const normalized = key.toLowerCase().replace(/\s+/g, '');
+      if (candidates.some((c) => normalized === c || normalized.includes(c))) {
+        return (row[key] as string) ?? '';
       }
     }
-    return "";
+    return '';
   }
 
   // Map raw rows → flat shape, preserving the bin cell un-split so the
   // aggregator can split-and-merge once across the whole sheet.
   const flatRows = rawRows
     .map((row) => ({
-      vendor: (normalizeKey(row, "vendor") || "").toString().trim(),
-      catalog: (normalizeKey(row, "catalog", "catalognumber", "part", "partnumber", "item") || "").toString().trim(),
-      description: (normalizeKey(row, "description", "desc") || "").toString().trim(),
-      binCell: (normalizeKey(row, "binlocation", "bin", "location", "binloc") || "").toString().trim(),
+      vendor: (normalizeKey(row, 'vendor') || '').toString().trim(),
+      catalog: (normalizeKey(row, 'catalog', 'catalognumber', 'part', 'partnumber', 'item') || '')
+        .toString()
+        .trim(),
+      description: (normalizeKey(row, 'description', 'desc') || '').toString().trim(),
+      binCell: (normalizeKey(row, 'binlocation', 'bin', 'location', 'binloc') || '')
+        .toString()
+        .trim(),
     }))
     .filter((r) => r.vendor && r.catalog);
 
@@ -160,7 +167,7 @@ async function importSpreadsheet() {
     }
   }
 
-  console.log("\n=== Import Complete ===");
+  console.log('\n=== Import Complete ===');
   console.log(`Inserted: ${inserted}`);
   console.log(`Updated:  ${updated}`);
   console.log(`Errors:   ${errors}`);
@@ -170,6 +177,6 @@ async function importSpreadsheet() {
 }
 
 importSpreadsheet().catch((err) => {
-  console.error("Import failed:", err);
+  console.error('Import failed:', err);
   process.exit(1);
 });

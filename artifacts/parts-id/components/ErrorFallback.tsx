@@ -7,21 +7,13 @@
  * traces are hidden behind a collapsible "Details" section so the screen
  * stays clean on the floor while still giving developers the info they need.
  */
-import { Feather } from "@expo/vector-icons";
-import { reloadAppAsync } from "expo";
-import React, { useState } from "react";
-import {
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Feather } from '@expo/vector-icons';
+import { reloadAppAsync } from 'expo';
+import React, { useState } from 'react';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useColors } from "@/hooks/useColors";
+import { useColors } from '@/hooks/useColors';
 
 export type ErrorFallbackProps = {
   error: Error;
@@ -39,7 +31,7 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
     try {
       await reloadAppAsync();
     } catch (restartError) {
-      console.error("Failed to restart app:", restartError);
+      console.error('Failed to restart app:', restartError);
       resetError();
     }
   };
@@ -53,9 +45,9 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
   };
 
   const monoFont = Platform.select({
-    ios: "Menlo",
-    android: "monospace",
-    default: "monospace",
+    ios: 'Menlo',
+    android: 'monospace',
+    default: 'monospace',
   });
 
   return (
@@ -89,9 +81,7 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
         {/* Amber accent bar — Parts ID brand mark */}
         <View style={[styles.accentBar, { backgroundColor: colors.primary }]} />
 
-        <Text style={[styles.title, { color: colors.foreground }]}>
-          App stopped unexpectedly
-        </Text>
+        <Text style={[styles.title, { color: colors.foreground }]}>App stopped unexpectedly</Text>
 
         <Text style={[styles.message, { color: colors.mutedForeground }]}>
           Restart the app to continue. Your data is safe.
@@ -108,9 +98,7 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
             },
           ]}
         >
-          <Text style={[styles.buttonText, { color: colors.primaryForeground }]}>
-            Restart App
-          </Text>
+          <Text style={[styles.buttonText, { color: colors.primaryForeground }]}>Restart App</Text>
         </Pressable>
 
         {/* Collapsible error summary — always available (not gated by __DEV__)
@@ -118,12 +106,12 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
             a support technician without needing dev tools. Stack trace is
             still kept behind the DEV modal to avoid noise in production. */}
         <Pressable
-          onPress={() => setDetailsOpen(v => !v)}
+          onPress={() => setDetailsOpen((v) => !v)}
           style={styles.detailsToggle}
           hitSlop={8}
         >
           <Text style={[styles.detailsToggleText, { color: colors.mutedForeground }]}>
-            {detailsOpen ? "▲ Hide details" : "▼ Details"}
+            {detailsOpen ? '▲ Hide details' : '▼ Details'}
           </Text>
         </Pressable>
 
@@ -131,7 +119,10 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
           <View
             style={[
               styles.errorSummary,
-              { backgroundColor: colors.destructive + "0d", borderColor: colors.destructive + "33" },
+              {
+                backgroundColor: colors.destructive + '0d',
+                borderColor: colors.destructive + '33',
+              },
             ]}
           >
             <Text
@@ -139,7 +130,7 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
               selectable
               numberOfLines={__DEV__ ? undefined : 4}
             >
-              {error.message || "Unknown error"}
+              {error.message || 'Unknown error'}
             </Text>
           </View>
         ) : null}
@@ -154,19 +145,9 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
           onRequestClose={() => setIsModalVisible(false)}
         >
           <View style={styles.modalOverlay}>
-            <View
-              style={[
-                styles.modalContainer,
-                { backgroundColor: colors.background },
-              ]}
-            >
-              <View
-                style={[
-                  styles.modalHeader,
-                  { borderBottomColor: colors.border },
-                ]}
-              >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+              <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <View style={[styles.modalAccent, { backgroundColor: colors.primary }]} />
                   <Text style={[styles.modalTitle, { color: colors.foreground }]}>
                     Error Details
@@ -176,10 +157,7 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
                   onPress={() => setIsModalVisible(false)}
                   accessibilityLabel="Close error details"
                   accessibilityRole="button"
-                  style={({ pressed }) => [
-                    styles.closeButton,
-                    { opacity: pressed ? 0.6 : 1 },
-                  ]}
+                  style={({ pressed }) => [styles.closeButton, { opacity: pressed ? 0.6 : 1 }]}
                 >
                   <Feather name="x" size={24} color={colors.foreground} />
                 </Pressable>
@@ -224,17 +202,17 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    width: "100%",
-    height: "100%",
-    alignItems: "center",
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
     padding: 24,
   },
   content: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 16,
-    width: "100%",
+    width: '100%',
     maxWidth: 480,
   },
   accentBar: {
@@ -245,26 +223,26 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontFamily: "Inter_700Bold",
-    textAlign: "center",
+    fontFamily: 'Inter_700Bold',
+    textAlign: 'center',
     lineHeight: 32,
   },
   message: {
     fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    textAlign: "center",
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
     lineHeight: 22,
   },
   devBtn: {
-    position: "absolute",
+    position: 'absolute',
     right: 16,
     width: 44,
     height: 44,
     borderRadius: 8,
     borderWidth: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     zIndex: 10,
   },
   button: {
@@ -272,15 +250,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 32,
     minWidth: 200,
-    alignItems: "center",
-    shadowColor: "#000",
+    alignItems: 'center',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
     shadowRadius: 4,
     elevation: 3,
   },
   buttonText: {
-    fontFamily: "Inter_700Bold",
+    fontFamily: 'Inter_700Bold',
     fontSize: 16,
   },
   detailsToggle: {
@@ -289,34 +267,34 @@ const styles = StyleSheet.create({
   },
   detailsToggleText: {
     fontSize: 12,
-    fontFamily: "Inter_500Medium",
+    fontFamily: 'Inter_500Medium',
   },
   errorSummary: {
-    width: "100%",
+    width: '100%',
     borderWidth: 1,
     borderRadius: 8,
     padding: 12,
   },
   errorSummaryText: {
     fontSize: 12,
-    fontFamily: "Inter_500Medium",
+    fontFamily: 'Inter_500Medium',
     lineHeight: 18,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "flex-end",
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
   },
   modalContainer: {
-    width: "100%",
-    height: "90%",
+    width: '100%',
+    height: '90%',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
   },
   modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 12,
@@ -329,26 +307,26 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontSize: 18,
-    fontFamily: "Inter_700Bold",
+    fontFamily: 'Inter_700Bold',
   },
   closeButton: {
     width: 44,
     height: 44,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   modalScrollView: { flex: 1 },
   modalScrollContent: { padding: 16 },
   errorContainer: {
-    width: "100%",
+    width: '100%',
     borderRadius: 8,
     borderWidth: 1,
-    overflow: "hidden",
+    overflow: 'hidden',
     padding: 16,
   },
   errorText: {
     fontSize: 12,
     lineHeight: 18,
-    width: "100%",
+    width: '100%',
   },
 });

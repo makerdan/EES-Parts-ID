@@ -1,4 +1,4 @@
-export { registerAudioRoutes } from "./routes";
+export { registerAudioRoutes } from './routes';
 export {
   openai,
   detectAudioFormat,
@@ -11,4 +11,4 @@ export {
   textToSpeechStream,
   speechToText,
   speechToTextStream,
-} from "./client";
+} from './client';

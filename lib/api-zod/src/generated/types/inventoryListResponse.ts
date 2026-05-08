@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { InventoryItem } from "./inventoryItem";
+import type { InventoryItem } from './inventoryItem';
 
 export interface InventoryListResponse {
   items: InventoryItem[];

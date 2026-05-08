@@ -83,20 +83,15 @@ export function buildSearchTokens(
   // ── Step 1: Build base text and word set ──────────────────────────────────
   // Join all source fields into a single lowercased string for phrase matching,
   // and split into a set of individual words for fast single-word lookups.
-  const baseText = [
-    row.catalog,
-    row.description,
-    row.vendor,
-    ...row.aiKeywords,
-  ]
-    .join(" ")
+  const baseText = [row.catalog, row.description, row.vendor, ...row.aiKeywords]
+    .join(' ')
     .toLowerCase();
 
   const baseWords = new Set(
     baseText
       .split(/[\s\-\/,]+/)
-      .map(w => w.trim())
-      .filter(w => w.length >= 2),
+      .map((w) => w.trim())
+      .filter((w) => w.length >= 2)
   );
 
   // ── Step 2: Expand synonym groups ─────────────────────────────────────────
@@ -105,11 +100,11 @@ export function buildSearchTokens(
   for (const group of synonymGroups) {
     const allTerms = [group.canonical, ...group.synonyms];
 
-    const hasMatch = allTerms.some(term => {
+    const hasMatch = allTerms.some((term) => {
       const tl = term.toLowerCase().trim();
       if (!tl) return false;
       // Multi-word phrase: check the full base text for the substring
-      if (tl.includes(" ")) return baseText.includes(tl);
+      if (tl.includes(' ')) return baseText.includes(tl);
       // Single word: direct set lookup
       return baseWords.has(tl);
     });
@@ -125,15 +120,15 @@ export function buildSearchTokens(
   // ── Step 3: Expand abbreviations (bidirectional) ──────────────────────────
   // abbreviation_map: abbreviation ↔ expansions[]
   // If the part text contains the abbreviation OR any expansion, inject all.
-  for (const entry of (opts?.abbreviationMaps ?? [])) {
+  for (const entry of opts?.abbreviationMaps ?? []) {
     const abbrevLower = entry.abbreviation.toLowerCase().trim();
-    const hasAbbrev = abbrevLower.includes(" ")
+    const hasAbbrev = abbrevLower.includes(' ')
       ? baseText.includes(abbrevLower)
       : baseWords.has(abbrevLower);
 
-    const hasExpansion = entry.expansions.some(e => {
+    const hasExpansion = entry.expansions.some((e) => {
       const el = e.toLowerCase().trim();
-      return el.includes(" ") ? baseText.includes(el) : baseWords.has(el);
+      return el.includes(' ') ? baseText.includes(el) : baseWords.has(el);
     });
 
     if (hasAbbrev || hasExpansion) {
@@ -148,15 +143,15 @@ export function buildSearchTokens(
   // ── Step 4: Expand electrical slang (bidirectional) ──────────────────────
   // electrical_slang_map: slangTerm ↔ standardTerms[]
   // If the part text contains the slang OR any standard term, inject all.
-  for (const entry of (opts?.slangMaps ?? [])) {
+  for (const entry of opts?.slangMaps ?? []) {
     const slangLower = entry.slangTerm.toLowerCase().trim();
-    const hasSlang = slangLower.includes(" ")
+    const hasSlang = slangLower.includes(' ')
       ? baseText.includes(slangLower)
       : baseWords.has(slangLower);
 
-    const hasStandard = entry.standardTerms.some(t => {
+    const hasStandard = entry.standardTerms.some((t) => {
       const tl = t.toLowerCase().trim();
-      return tl.includes(" ") ? baseText.includes(tl) : baseWords.has(tl);
+      return tl.includes(' ') ? baseText.includes(tl) : baseWords.has(tl);
     });
 
     if (hasSlang || hasStandard) {
@@ -172,14 +167,14 @@ export function buildSearchTokens(
   // misspelling_map: misspelling → correction
   // If the part's text contains the *correct* spelling, add the misspelling
   // to tokens so that searches bypassing query-side correction still succeed.
-  for (const entry of (opts?.misspellingMaps ?? [])) {
+  for (const entry of opts?.misspellingMaps ?? []) {
     const corrLower = entry.correction.toLowerCase().trim();
     const misspLower = entry.misspelling.toLowerCase().trim();
-    const hasCorrection = corrLower.includes(" ")
+    const hasCorrection = corrLower.includes(' ')
       ? baseText.includes(corrLower)
       : baseWords.has(corrLower);
     if (hasCorrection && misspLower) tokens.add(misspLower);
   }
 
-  return Array.from(tokens).join(" ");
+  return Array.from(tokens).join(' ');
 }

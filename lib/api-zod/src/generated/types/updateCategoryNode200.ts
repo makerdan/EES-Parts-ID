@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { UpdateCategoryNode200Node } from "./updateCategoryNode200Node";
+import type { UpdateCategoryNode200Node } from './updateCategoryNode200Node';
 
 export type UpdateCategoryNode200 = {
   node?: UpdateCategoryNode200Node;

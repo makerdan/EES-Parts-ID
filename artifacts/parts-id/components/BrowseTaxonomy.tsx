@@ -12,7 +12,7 @@
  *    screen decides whether to drill or to load items.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -22,25 +22,21 @@ import {
   StyleSheet,
   Text,
   View,
-} from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Feather } from "@expo/vector-icons";
-import { useColors } from "@/hooks/useColors";
-import { ErrorBanner } from "@/components/ErrorBanner";
-import {
-  nodeAtPath,
-  visibleChildren,
-  type CategoryTreeNode,
-} from "@/lib/taxonomy";
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Feather } from '@expo/vector-icons';
+import { useColors } from '@/hooks/useColors';
+import { ErrorBanner } from '@/components/ErrorBanner';
+import { nodeAtPath, visibleChildren, type CategoryTreeNode } from '@/lib/taxonomy';
 
-const BROWSE_TREE_CACHE_KEY = "parts_id_browse_tree_v1";
+const BROWSE_TREE_CACHE_KEY = 'parts_id_browse_tree_v1';
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
+  : 'http://localhost:8080/api';
 
-export type { CategoryTreeNode } from "@/lib/taxonomy";
-export { nodeAtPath, visibleChildren } from "@/lib/taxonomy";
+export type { CategoryTreeNode } from '@/lib/taxonomy';
+export { nodeAtPath, visibleChildren } from '@/lib/taxonomy';
 
 interface BrowseTaxonomyProps {
   /** Called whenever the active drill path changes (e.g. user taps a leaf type). */
@@ -74,9 +70,13 @@ export default function BrowseTaxonomy({
             const parsed = JSON.parse(cachedTreeRaw) as CategoryTreeNode[];
             setTree(parsed);
             setUsingCache(true);
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
 
       if (initialTree) return;
 
@@ -89,7 +89,9 @@ export default function BrowseTaxonomy({
         setTree(data.tree);
         setUsingCache(false);
         setError(null);
-        AsyncStorage.setItem(BROWSE_TREE_CACHE_KEY, JSON.stringify(data.tree)).catch(() => undefined);
+        AsyncStorage.setItem(BROWSE_TREE_CACHE_KEY, JSON.stringify(data.tree)).catch(
+          () => undefined
+        );
       } catch (err) {
         if (!mounted) return;
         // Keep cached tree if we have one — only surface the error otherwise.
@@ -98,7 +100,9 @@ export default function BrowseTaxonomy({
         if (mounted) setLoading(false);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [initialTree]);
 
   // ── Persist drill path ───────────────────────────────────────────────────
@@ -121,7 +125,7 @@ export default function BrowseTaxonomy({
     if (popTrigger === prevPopTrigger.current) return;
     prevPopTrigger.current = popTrigger;
     userHasNavigated.current = true;
-    setPath(prev => prev.slice(0, -1));
+    setPath((prev) => prev.slice(0, -1));
   }, [popTrigger]);
 
   useEffect(() => {
@@ -135,7 +139,7 @@ export default function BrowseTaxonomy({
     const out: { slug: string; name: string }[] = [];
     let level = tree;
     for (const slug of path) {
-      const found = level.find(n => n.slug === slug);
+      const found = level.find((n) => n.slug === slug);
       if (!found) break;
       out.push({ slug: found.slug, name: found.name });
       level = found.children;
@@ -145,11 +149,11 @@ export default function BrowseTaxonomy({
 
   const drillInto = useCallback((slug: string) => {
     userHasNavigated.current = true;
-    setPath(prev => [...prev, slug]);
+    setPath((prev) => [...prev, slug]);
   }, []);
   const popTo = useCallback((depth: number) => {
     userHasNavigated.current = true;
-    setPath(prev => prev.slice(0, depth));
+    setPath((prev) => prev.slice(0, depth));
   }, []);
 
   // ── Android hardware back gesture ────────────────────────────────────────
@@ -171,15 +175,21 @@ export default function BrowseTaxonomy({
   // ── Render ──────────────────────────────────────────────────────────────
   if (loading && tree.length === 0) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <View
+        style={[styles.container, { backgroundColor: colors.card, borderColor: colors.border }]}
+      >
         <ActivityIndicator color={colors.primary} />
-        <Text style={[styles.muted, { color: colors.mutedForeground, marginTop: 8 }]}>Loading categories…</Text>
+        <Text style={[styles.muted, { color: colors.mutedForeground, marginTop: 8 }]}>
+          Loading categories…
+        </Text>
       </View>
     );
   }
   if (tree.length === 0 && error) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <View
+        style={[styles.container, { backgroundColor: colors.card, borderColor: colors.border }]}
+      >
         <ErrorBanner message="Categories unavailable — connect to the network and try again." />
       </View>
     );
@@ -189,11 +199,7 @@ export default function BrowseTaxonomy({
     <View style={[styles.container, { backgroundColor: colors.card, borderColor: colors.border }]}>
       {/* Back button — shown whenever drilled into a level */}
       {path.length > 0 ? (
-        <Pressable
-          onPress={() => popTo(path.length - 1)}
-          hitSlop={8}
-          style={styles.backBtn}
-        >
+        <Pressable onPress={() => popTo(path.length - 1)} hitSlop={8} style={styles.backBtn}>
           <Feather name="chevron-left" size={18} color={colors.foreground} />
           <Text style={[styles.backLabel, { color: colors.foreground }]}>Back</Text>
         </Pressable>
@@ -206,7 +212,12 @@ export default function BrowseTaxonomy({
         contentContainerStyle={styles.crumbs}
       >
         <Pressable onPress={() => popTo(0)} hitSlop={8}>
-          <Text style={[styles.crumb, { color: path.length === 0 ? colors.foreground : colors.primary }]}>
+          <Text
+            style={[
+              styles.crumb,
+              { color: path.length === 0 ? colors.foreground : colors.primary },
+            ]}
+          >
             All Categories
           </Text>
         </Pressable>
@@ -241,31 +252,35 @@ export default function BrowseTaxonomy({
           <Text style={[styles.muted, { color: colors.mutedForeground, padding: 12 }]}>
             No items in this category yet.
           </Text>
-        ) : children.map((item, idx) => (
-          <React.Fragment key={item.slug}>
-            {idx > 0 ? (
-              <View style={[styles.sep, { backgroundColor: colors.border }]} />
-            ) : null}
-            <Pressable
-              onPress={() =>
-                item.children.length > 0 ? drillInto(item.slug) : setPath(prev => [...prev, item.slug])
-              }
-              style={({ pressed }) => [
-                styles.row,
-                { backgroundColor: pressed ? colors.muted : "transparent" },
-              ]}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.rowName, { color: colors.foreground }]}>{item.name}</Text>
-                <Text style={[styles.rowMeta, { color: colors.mutedForeground }]}>
-                  {item.itemCount} item{item.itemCount === 1 ? "" : "s"}
-                  {item.children.length > 0 ? ` · ${item.children.length} sub-categories` : ""}
-                </Text>
-              </View>
-              <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
-            </Pressable>
-          </React.Fragment>
-        ))}
+        ) : (
+          children.map((item, idx) => (
+            <React.Fragment key={item.slug}>
+              {idx > 0 ? (
+                <View style={[styles.sep, { backgroundColor: colors.border }]} />
+              ) : null}
+              <Pressable
+                onPress={() =>
+                  item.children.length > 0
+                    ? drillInto(item.slug)
+                    : setPath((prev) => [...prev, item.slug])
+                }
+                style={({ pressed }) => [
+                  styles.row,
+                  { backgroundColor: pressed ? colors.muted : 'transparent' },
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.rowName, { color: colors.foreground }]}>{item.name}</Text>
+                  <Text style={[styles.rowMeta, { color: colors.mutedForeground }]}>
+                    {item.itemCount} item{item.itemCount === 1 ? '' : 's'}
+                    {item.children.length > 0 ? ` · ${item.children.length} sub-categories` : ''}
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+              </Pressable>
+            </React.Fragment>
+          ))
+        )}
       </View>
     </View>
   );
@@ -280,29 +295,29 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   backBtn: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 2,
     marginBottom: 8,
   },
-  backLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  backLabel: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
   crumbs: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingBottom: 8,
     gap: 4,
   },
-  crumbRow: { flexDirection: "row", alignItems: "center" },
-  crumb: { fontSize: 13, fontWeight: "600" },
+  crumbRow: { flexDirection: 'row', alignItems: 'center' },
+  crumb: { fontSize: 13, fontWeight: '600' },
   crumbSep: { marginHorizontal: 6, fontSize: 13 },
   row: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 6,
   },
-  rowName: { fontSize: 15, fontWeight: "600" },
+  rowName: { fontSize: 15, fontWeight: '600' },
   rowMeta: { fontSize: 12, marginTop: 2 },
   sep: { height: StyleSheet.hairlineWidth },
-  muted: { fontSize: 12, textAlign: "center" },
+  muted: { fontSize: 12, textAlign: 'center' },
 });

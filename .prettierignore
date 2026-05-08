@@ -1,0 +1,7 @@
+node_modules
+dist
+build
+.expo
+coverage
+pnpm-lock.yaml
+lib/api-client-react/src/generated

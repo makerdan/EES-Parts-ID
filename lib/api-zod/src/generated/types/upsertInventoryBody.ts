@@ -5,9 +5,9 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { SelectedKey } from "./selectedKey";
-import type { UpsertInventoryBodyMode } from "./upsertInventoryBodyMode";
-import type { UpsertInventoryItem } from "./upsertInventoryItem";
+import type { SelectedKey } from './selectedKey';
+import type { UpsertInventoryBodyMode } from './upsertInventoryBodyMode';
+import type { UpsertInventoryItem } from './upsertInventoryItem';
 
 export interface UpsertInventoryBody {
   items: UpsertInventoryItem[];

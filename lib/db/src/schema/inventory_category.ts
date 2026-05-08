@@ -4,17 +4,9 @@
  * `ai` / `manual`) and a confidence score so admins can audit the
  * hybrid classifier's decisions.
  */
-import {
-  pgTable,
-  integer,
-  timestamp,
-  text,
-  numeric,
-  primaryKey,
-  index,
-} from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod/v4";
+import { pgTable, integer, timestamp, text, numeric, primaryKey, index } from 'drizzle-orm/pg-core';
+import { createInsertSchema } from 'drizzle-zod';
+import { z } from 'zod/v4';
 
 /**
  * Assignment of an inventory item to a single leaf category_node ("type"
@@ -30,23 +22,21 @@ import { z } from "zod/v4";
  * Migration 0013 added reviewed_at and reviewed_by for the admin review queue.
  */
 export const inventoryCategoryTable = pgTable(
-  "inventory_category",
+  'inventory_category',
   {
-    inventoryId:    integer("inventory_id").notNull(),
-    categoryNodeId: integer("category_node_id").notNull(),
-    confidence:     numeric("confidence", { precision: 5, scale: 4 })
-      .notNull()
-      .default("1.0000"),
-    classifiedBy:   text("classified_by").notNull().default("rule"), // "rule" | "ai" | "manual"
-    classifiedAt:   timestamp("classified_at").defaultNow().notNull(),
+    inventoryId: integer('inventory_id').notNull(),
+    categoryNodeId: integer('category_node_id').notNull(),
+    confidence: numeric('confidence', { precision: 5, scale: 4 }).notNull().default('1.0000'),
+    classifiedBy: text('classified_by').notNull().default('rule'), // "rule" | "ai" | "manual"
+    classifiedAt: timestamp('classified_at').defaultNow().notNull(),
     // ── Review queue columns (migration 0013) ───────────────────────────────
-    reviewedAt:     timestamp("reviewed_at", { withTimezone: true }),
-    reviewedBy:     text("reviewed_by"),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    reviewedBy: text('reviewed_by'),
   },
   (table) => [
     primaryKey({ columns: [table.inventoryId] }),
-    index("inventory_category_node_idx").on(table.categoryNodeId),
-  ],
+    index('inventory_category_node_idx').on(table.categoryNodeId),
+  ]
 );
 
 export const insertInventoryCategorySchema = createInsertSchema(inventoryCategoryTable).omit({

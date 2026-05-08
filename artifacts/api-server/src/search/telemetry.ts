@@ -6,11 +6,11 @@
  * callers as a thrown exception, and must never add to the response latency
  * of a search request.
  */
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { db } from '@workspace/db';
+import { sql } from 'drizzle-orm';
 
-export type QuerySource = "typed" | "barcode" | "photo" | "voice" | "chip";
-export type ClickAction = "view" | "add_to_list" | "scan_confirm" | "dismiss";
+export type QuerySource = 'typed' | 'barcode' | 'photo' | 'voice' | 'chip';
+export type ClickAction = 'view' | 'add_to_list' | 'scan_confirm' | 'dismiss';
 
 export interface LogSearchEventParams {
   queryRaw: string;
@@ -27,9 +27,7 @@ export interface LogSearchEventParams {
  * Insert a row into `search_event` and return the new row id.
  * Returns -1n on failure (telemetry is non-critical).
  */
-export async function logSearchEvent(
-  params: LogSearchEventParams,
-): Promise<bigint> {
+export async function logSearchEvent(params: LogSearchEventParams): Promise<bigint> {
   try {
     const result = await db.execute(sql`
       INSERT INTO search_event
@@ -43,7 +41,7 @@ export async function logSearchEvent(
          ${params.resultsCount},
          ${params.topResultId},
          ${params.latencyMs},
-         ${sql.raw(`ARRAY[${params.layersHit.map(l => `'${l.replace(/'/g, "''")}'`).join(", ")}]::text[]`)})
+         ${sql.raw(`ARRAY[${params.layersHit.map((l) => `'${l.replace(/'/g, "''")}'`).join(', ')}]::text[]`)})
       RETURNING id
     `);
     const rows = (result as unknown as { rows: Array<{ id: unknown }> }).rows;
@@ -51,7 +49,7 @@ export async function logSearchEvent(
     if (rawId === undefined || rawId === null) return -1n;
     return BigInt(rawId as string | number);
   } catch (err) {
-    console.error("[telemetry] logSearchEvent failed:", err);
+    console.error('[telemetry] logSearchEvent failed:', err);
     return -1n;
   }
 }
@@ -64,10 +62,10 @@ export async function logSearchClick(
   searchEventId: bigint,
   resultId: number,
   resultRank: number,
-  action: ClickAction,
+  action: ClickAction
 ): Promise<void> {
   if (searchEventId <= 0n) return;
-  const VALID_ACTIONS: ClickAction[] = ["view", "add_to_list", "scan_confirm", "dismiss"];
+  const VALID_ACTIONS: ClickAction[] = ['view', 'add_to_list', 'scan_confirm', 'dismiss'];
   if (!VALID_ACTIONS.includes(action)) return;
   try {
     await db.execute(sql`
@@ -77,6 +75,6 @@ export async function logSearchClick(
         (${searchEventId}, ${resultId}, ${resultRank}, ${action})
     `);
   } catch (err) {
-    console.error("[telemetry] logSearchClick failed:", err);
+    console.error('[telemetry] logSearchClick failed:', err);
   }
 }

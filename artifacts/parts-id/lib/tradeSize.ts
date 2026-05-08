@@ -19,13 +19,13 @@
  */
 
 const FRACTION_CODES: Record<string, number> = {
-  "18": 1 / 8,
-  "14": 1 / 4,
-  "38": 3 / 8,
-  "12": 1 / 2,
-  "58": 5 / 8,
-  "34": 3 / 4,
-  "78": 7 / 8,
+  '18': 1 / 8,
+  '14': 1 / 4,
+  '38': 3 / 8,
+  '12': 1 / 2,
+  '58': 5 / 8,
+  '34': 3 / 4,
+  '78': 7 / 8,
 };
 
 /**
@@ -69,9 +69,24 @@ export function parseTradeSizeInches(text: string | null | undefined): number | 
 // the size sort to these items prevents accidental reordering of unrelated
 // SKUs whose catalog happens to end in digits.
 const CONDUIT_TOKENS = [
-  "IMC", "EMT", "RMC", "GRC", "RGS", "PVC", "ENT", "FMC", "LFMC", "LFNC",
-  "RNC", "CONDUIT", "PIPE", "NIPPLE", "COUPLING", "ELBOW", "STRAP",
-  "CONNECTOR",
+  'IMC',
+  'EMT',
+  'RMC',
+  'GRC',
+  'RGS',
+  'PVC',
+  'ENT',
+  'FMC',
+  'LFMC',
+  'LFNC',
+  'RNC',
+  'CONDUIT',
+  'PIPE',
+  'NIPPLE',
+  'COUPLING',
+  'ELBOW',
+  'STRAP',
+  'CONNECTOR',
 ];
 
 /**
@@ -80,9 +95,9 @@ const CONDUIT_TOKENS = [
  * `parseTradeSizeInches` so non-conduit catalog codes that happen to end
  * in digits aren't accidentally reordered.
  */
-export function isConduitOrPipe(...texts: Array<string | null | undefined>): boolean {
-  const blob = texts.filter(Boolean).join(" ").toUpperCase();
-  return CONDUIT_TOKENS.some(t => blob.includes(t));
+export function isConduitOrPipe(...texts: (string | null | undefined)[]): boolean {
+  const blob = texts.filter(Boolean).join(' ').toUpperCase();
+  return CONDUIT_TOKENS.some((t) => blob.includes(t));
 }
 
 // Inverse lookup of FRACTION_CODES so we can render a numeric inches value
@@ -90,7 +105,7 @@ export function isConduitOrPipe(...texts: Array<string | null | undefined>): boo
 // from the same map as the parser so the two stay in lockstep if codes
 // are ever added or changed. Each "12"/"34"/etc. code is split into its
 // numerator/denominator for display ("12" → "1/2", "34" → "3/4").
-const INCHES_TO_FRACTION: Array<[number, string]> = Object.entries(FRACTION_CODES)
+const INCHES_TO_FRACTION: [number, string][] = Object.entries(FRACTION_CODES)
   .map(([code, value]) => {
     const num = code.slice(0, code.length - 1);
     const den = code.slice(code.length - 1);
@@ -111,11 +126,11 @@ const INCHES_TO_FRACTION: Array<[number, string]> = Object.entries(FRACTION_CODE
  * helper total).
  */
 export function formatInchesAsFraction(inches: number | null | undefined): string {
-  if (inches == null || !Number.isFinite(inches) || inches <= 0) return "";
+  if (inches == null || !Number.isFinite(inches) || inches <= 0) return '';
   const whole = Math.floor(inches);
   const frac = inches - whole;
   const EPS = 1e-6;
-  let fracStr = "";
+  let fracStr = '';
   if (frac > EPS) {
     const hit = INCHES_TO_FRACTION.find(([v]) => Math.abs(v - frac) < EPS);
     if (hit) {
@@ -144,12 +159,12 @@ export function formatInchesAsFraction(inches: number | null | undefined): strin
  */
 export function catalogSuffix(
   variantCatalog: string | null | undefined,
-  parentCatalog: string | null | undefined,
+  parentCatalog: string | null | undefined
 ): string {
-  if (!variantCatalog) return "";
+  if (!variantCatalog) return '';
   const v = variantCatalog.trim();
-  if (!v) return "";
-  const p = (parentCatalog ?? "").trim();
+  if (!v) return '';
+  const p = (parentCatalog ?? '').trim();
   // Find longest shared leading alpha-only prefix (case-insensitive).
   let i = 0;
   const max = Math.min(v.length, p.length);

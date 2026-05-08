@@ -1,6 +1,6 @@
-const React = require("react");
+const React = require('react');
 function Icon(props) {
-  return React.createElement("span", { "data-icon": props.name, "aria-hidden": "true" });
+  return React.createElement('span', { 'data-icon': props.name, 'aria-hidden': 'true' });
 }
 module.exports = {
   Feather: Icon,

@@ -11,7 +11,7 @@
  *   • selected mode requires selectedKeys and skips everything else
  */
 
-jest.mock("@workspace/integrations-openai-ai-server", () => ({
+jest.mock('@workspace/integrations-openai-ai-server', () => ({
   openai: {
     chat: { completions: { create: jest.fn() } },
     audio: { transcriptions: { create: jest.fn() } },
@@ -23,28 +23,25 @@ jest.mock("@workspace/integrations-openai-ai-server", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
-jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
+jest.mock('@workspace/integrations-openai-ai-server/batch', () => ({
   batchProcess: jest.fn(),
   batchProcessWithSSE: jest.fn(),
   isRateLimitError: jest.fn(() => false),
 }));
 
-import supertest from "supertest";
-import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
-import {
-  closePool,
-  seedFixtures,
-} from "./helpers/testDb";
+import supertest from 'supertest';
+import app from '../src/app';
+import { signAdminToken } from '../src/routes/admin';
+import { closePool, seedFixtures } from './helpers/testDb';
 
-const ADMIN_SECRET = "jest-preview-test-secret";
+const ADMIN_SECRET = 'jest-preview-test-secret';
 let adminToken: string;
 
 // Catalog numbers used by this suite — all share the JEST-ITG-PRV- prefix
 // so we can clean up ONLY our own rows. (Using the broader cleanupFixtures()
 // helper from testDb would race with parallel test files that share the
 // JEST-ITG- prefix.)
-const PRV_PREFIX = "JEST-ITG-PRV-";
+const PRV_PREFIX = 'JEST-ITG-PRV-';
 const CAT_EXISTING_BIN = `${PRV_PREFIX}BIN-001`;
 const CAT_EXISTING_DESC = `${PRV_PREFIX}DESC-002`;
 const CAT_EXISTING_BLANK_DESC = `${PRV_PREFIX}BLANK-003`;
@@ -52,11 +49,9 @@ const CAT_NEW_ONE = `${PRV_PREFIX}NEW-100`;
 const CAT_NEW_TWO = `${PRV_PREFIX}NEW-101`;
 
 async function cleanupPreviewRows() {
-  const { db, inventoryTable } = await import("@workspace/db");
-  const { sql } = await import("drizzle-orm");
-  await db
-    .delete(inventoryTable)
-    .where(sql`${inventoryTable.catalog} ILIKE ${PRV_PREFIX + "%"}`);
+  const { db, inventoryTable } = await import('@workspace/db');
+  const { sql } = await import('drizzle-orm');
+  await db.delete(inventoryTable).where(sql`${inventoryTable.catalog} ILIKE ${PRV_PREFIX + '%'}`);
 }
 
 beforeAll(async () => {
@@ -73,22 +68,22 @@ beforeEach(async () => {
   await cleanupPreviewRows();
   await seedFixtures([
     {
-      vendor: "EATON",
+      vendor: 'EATON',
       catalog: CAT_EXISTING_BIN,
-      description: "Existing description for bin test",
-      binLocations: ["A-01"],
+      description: 'Existing description for bin test',
+      binLocations: ['A-01'],
     },
     {
-      vendor: "HUBBELL",
+      vendor: 'HUBBELL',
       catalog: CAT_EXISTING_DESC,
-      description: "Original description",
-      binLocations: ["B-02"],
+      description: 'Original description',
+      binLocations: ['B-02'],
     },
     {
-      vendor: "LEVITON",
+      vendor: 'LEVITON',
       catalog: CAT_EXISTING_BLANK_DESC,
-      description: "Pre-existing description that must survive",
-      binLocations: ["C-03"],
+      description: 'Pre-existing description that must survive',
+      binLocations: ['C-03'],
     },
   ]);
 });
@@ -99,28 +94,38 @@ const auth = () => ({ Authorization: `Bearer ${adminToken}` });
 // /preview-upsert
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("POST /api/inventory/preview-upsert", () => {
-  it("requires admin auth", async () => {
+describe('POST /api/inventory/preview-upsert', () => {
+  it('requires admin auth', async () => {
     await supertest(app)
-      .post("/api/inventory/preview-upsert")
-      .send({ items: [{ vendor: "X", catalog: CAT_NEW_ONE, description: "n" }] })
+      .post('/api/inventory/preview-upsert')
+      .send({ items: [{ vendor: 'X', catalog: CAT_NEW_ONE, description: 'n' }] })
       .expect(401);
   });
 
-  it("classifies new / changed-bin / changed-desc / unchanged", async () => {
+  it('classifies new / changed-bin / changed-desc / unchanged', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/preview-upsert")
+      .post('/api/inventory/preview-upsert')
       .set(auth())
       .send({
         items: [
           // New row → newCount += 1
-          { vendor: "ACME", catalog: CAT_NEW_ONE, description: "Brand new" },
+          { vendor: 'ACME', catalog: CAT_NEW_ONE, description: 'Brand new' },
           // Same vendor/catalog as fixture, new bin → binChanged
-          { vendor: "EATON", catalog: CAT_EXISTING_BIN, description: "Existing description for bin test", binLocations: ["A-99"] },
+          {
+            vendor: 'EATON',
+            catalog: CAT_EXISTING_BIN,
+            description: 'Existing description for bin test',
+            binLocations: ['A-99'],
+          },
           // Same vendor/catalog as fixture, new desc → descChanged
-          { vendor: "HUBBELL", catalog: CAT_EXISTING_DESC, description: "Brand new description" },
+          { vendor: 'HUBBELL', catalog: CAT_EXISTING_DESC, description: 'Brand new description' },
           // Same vendor/catalog as fixture, blank desc + same bin → unchanged
-          { vendor: "LEVITON", catalog: CAT_EXISTING_BLANK_DESC, description: "", binLocations: ["C-03"] },
+          {
+            vendor: 'LEVITON',
+            catalog: CAT_EXISTING_BLANK_DESC,
+            description: '',
+            binLocations: ['C-03'],
+          },
         ],
       })
       .expect(200);
@@ -130,7 +135,8 @@ describe("POST /api/inventory/preview-upsert", () => {
     expect(res.body.changedCount).toBe(2);
     expect(res.body.unchangedCount).toBe(1);
 
-    const changes: Array<{ catalog: string; binChanged: boolean; descChanged: boolean }> = res.body.changes;
+    const changes: Array<{ catalog: string; binChanged: boolean; descChanged: boolean }> =
+      res.body.changes;
     expect(changes).toHaveLength(2);
 
     const binRow = changes.find((c) => c.catalog === CAT_EXISTING_BIN)!;
@@ -142,14 +148,19 @@ describe("POST /api/inventory/preview-upsert", () => {
     expect(descRow.binChanged).toBe(false);
   });
 
-  it("matches keys case-insensitively", async () => {
+  it('matches keys case-insensitively', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/preview-upsert")
+      .post('/api/inventory/preview-upsert')
       .set(auth())
       .send({
         items: [
           // Lowercase catalog + lowercase vendor → must still match the seeded EATON / CAT_EXISTING_BIN
-          { vendor: "eaton", catalog: CAT_EXISTING_BIN.toLowerCase(), description: "Existing description for bin test", binLocations: ["A-99"] },
+          {
+            vendor: 'eaton',
+            catalog: CAT_EXISTING_BIN.toLowerCase(),
+            description: 'Existing description for bin test',
+            binLocations: ['A-99'],
+          },
         ],
       })
       .expect(200);
@@ -158,16 +169,26 @@ describe("POST /api/inventory/preview-upsert", () => {
     expect(res.body.changedCount).toBe(1);
   });
 
-  it("dedupes case-variant duplicate keys in preview (totalIncoming reflects logical rows)", async () => {
+  it('dedupes case-variant duplicate keys in preview (totalIncoming reflects logical rows)', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/preview-upsert")
+      .post('/api/inventory/preview-upsert')
       .set(auth())
       .send({
         items: [
           // Three rows that all collapse to the same logical key as CAT_EXISTING_BIN
-          { vendor: "EATON", catalog: CAT_EXISTING_BIN, description: "", binLocations: ["A-77"] },
-          { vendor: "eaton", catalog: CAT_EXISTING_BIN.toLowerCase(), description: "", binLocations: ["A-99"] },
-          { vendor: "Eaton", catalog: CAT_EXISTING_BIN, description: "Updated desc", binLocations: [] },
+          { vendor: 'EATON', catalog: CAT_EXISTING_BIN, description: '', binLocations: ['A-77'] },
+          {
+            vendor: 'eaton',
+            catalog: CAT_EXISTING_BIN.toLowerCase(),
+            description: '',
+            binLocations: ['A-99'],
+          },
+          {
+            vendor: 'Eaton',
+            catalog: CAT_EXISTING_BIN,
+            description: 'Updated desc',
+            binLocations: [],
+          },
         ],
       })
       .expect(200);
@@ -176,13 +197,13 @@ describe("POST /api/inventory/preview-upsert", () => {
     expect(res.body.changedCount).toBe(1);
     expect(res.body.changes).toHaveLength(1);
     const row = res.body.changes[0];
-    expect(row.proposedBinLocations.sort()).toEqual(["A-01", "A-77", "A-99"].sort());
-    expect(row.proposedDescription).toBe("Updated desc");
+    expect(row.proposedBinLocations.sort()).toEqual(['A-01', 'A-77', 'A-99'].sort());
+    expect(row.proposedDescription).toBe('Updated desc');
   });
 
-  it("returns 400 on empty items", async () => {
+  it('returns 400 on empty items', async () => {
     await supertest(app)
-      .post("/api/inventory/preview-upsert")
+      .post('/api/inventory/preview-upsert')
       .set(auth())
       .send({ items: [] })
       .expect(400);
@@ -193,17 +214,22 @@ describe("POST /api/inventory/preview-upsert", () => {
 // /upsert-batch — mode behavior
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("POST /api/inventory/upsert-batch (mode-aware)", () => {
-  it("add-new-only: inserts new rows but never modifies existing rows", async () => {
+describe('POST /api/inventory/upsert-batch (mode-aware)', () => {
+  it('add-new-only: inserts new rows but never modifies existing rows', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/upsert-batch")
+      .post('/api/inventory/upsert-batch')
       .set(auth())
       .send({
-        mode: "add-new-only",
+        mode: 'add-new-only',
         items: [
-          { vendor: "ACME", catalog: CAT_NEW_ONE, description: "Fresh", binLocations: ["Z-01"] },
+          { vendor: 'ACME', catalog: CAT_NEW_ONE, description: 'Fresh', binLocations: ['Z-01'] },
           // This one would change the existing bin — must be skipped
-          { vendor: "EATON", catalog: CAT_EXISTING_BIN, description: "Should not overwrite", binLocations: ["A-99"] },
+          {
+            vendor: 'EATON',
+            catalog: CAT_EXISTING_BIN,
+            description: 'Should not overwrite',
+            binLocations: ['A-99'],
+          },
         ],
       })
       .expect(200);
@@ -214,21 +240,29 @@ describe("POST /api/inventory/upsert-batch (mode-aware)", () => {
     expect(res.body.total).toBe(2);
 
     // Verify the existing row was untouched.
-    const { db, inventoryTable } = await import("@workspace/db");
-    const { eq } = await import("drizzle-orm");
-    const [existing] = await db.select().from(inventoryTable).where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
-    expect(existing.description).toBe("Existing description for bin test");
-    expect(existing.binLocations).toEqual(["A-01"]);
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
+    const [existing] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
+    expect(existing.description).toBe('Existing description for bin test');
+    expect(existing.binLocations).toEqual(['A-01']);
   });
 
-  it("overwrite-all: merges bins additively and replaces non-empty description", async () => {
+  it('overwrite-all: merges bins additively and replaces non-empty description', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/upsert-batch")
+      .post('/api/inventory/upsert-batch')
       .set(auth())
       .send({
-        mode: "overwrite-all",
+        mode: 'overwrite-all',
         items: [
-          { vendor: "EATON", catalog: CAT_EXISTING_BIN, description: "New description", binLocations: ["A-99"] },
+          {
+            vendor: 'EATON',
+            catalog: CAT_EXISTING_BIN,
+            description: 'New description',
+            binLocations: ['A-99'],
+          },
         ],
       })
       .expect(200);
@@ -237,69 +271,92 @@ describe("POST /api/inventory/upsert-batch (mode-aware)", () => {
     expect(res.body.updated).toBe(1);
     expect(res.body.skipped).toBe(0);
 
-    const { db, inventoryTable } = await import("@workspace/db");
-    const { eq } = await import("drizzle-orm");
-    const [row] = await db.select().from(inventoryTable).where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
-    expect(row.description).toBe("New description");
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
+    const [row] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
+    expect(row.description).toBe('New description');
     // Additive merge: original A-01 must still be present.
-    expect(row.binLocations.sort()).toEqual(["A-01", "A-99"].sort());
+    expect(row.binLocations.sort()).toEqual(['A-01', 'A-99'].sort());
   });
 
-  it("overwrite-all: blank/missing description never overwrites stored description", async () => {
+  it('overwrite-all: blank/missing description never overwrites stored description', async () => {
     await supertest(app)
-      .post("/api/inventory/upsert-batch")
+      .post('/api/inventory/upsert-batch')
       .set(auth())
       .send({
-        mode: "overwrite-all",
+        mode: 'overwrite-all',
         items: [
-          { vendor: "LEVITON", catalog: CAT_EXISTING_BLANK_DESC, description: "", binLocations: ["C-99"] },
+          {
+            vendor: 'LEVITON',
+            catalog: CAT_EXISTING_BLANK_DESC,
+            description: '',
+            binLocations: ['C-99'],
+          },
         ],
       })
       .expect(200);
 
-    const { db, inventoryTable } = await import("@workspace/db");
-    const { eq } = await import("drizzle-orm");
-    const [row] = await db.select().from(inventoryTable).where(eq(inventoryTable.catalog, CAT_EXISTING_BLANK_DESC));
-    expect(row.description).toBe("Pre-existing description that must survive");
-    expect(row.binLocations.sort()).toEqual(["C-03", "C-99"].sort());
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
+    const [row] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, CAT_EXISTING_BLANK_DESC));
+    expect(row.description).toBe('Pre-existing description that must survive');
+    expect(row.binLocations.sort()).toEqual(['C-03', 'C-99'].sort());
   });
 
-  it("overwrite-all: vendor and catalog text on existing rows are never modified", async () => {
+  it('overwrite-all: vendor and catalog text on existing rows are never modified', async () => {
     await supertest(app)
-      .post("/api/inventory/upsert-batch")
+      .post('/api/inventory/upsert-batch')
       .set(auth())
       .send({
-        mode: "overwrite-all",
+        mode: 'overwrite-all',
         items: [
           // Lowercase vendor + lowercase catalog should still match the existing row
           // and must NOT change the stored vendor or catalog casing.
-          { vendor: "eaton", catalog: CAT_EXISTING_BIN.toLowerCase(), description: "Doesn't matter" },
+          {
+            vendor: 'eaton',
+            catalog: CAT_EXISTING_BIN.toLowerCase(),
+            description: "Doesn't matter",
+          },
         ],
       })
       .expect(200);
 
-    const { db, inventoryTable } = await import("@workspace/db");
-    const { eq } = await import("drizzle-orm");
-    const [row] = await db.select().from(inventoryTable).where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
+    const [row] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
     expect(row).toBeDefined();
-    expect(row.vendor).toBe("EATON");
+    expect(row.vendor).toBe('EATON');
     expect(row.catalog).toBe(CAT_EXISTING_BIN);
   });
 
-  it("selected: applies updates only for selectedKeys; skips other matches; still inserts new rows", async () => {
+  it('selected: applies updates only for selectedKeys; skips other matches; still inserts new rows', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/upsert-batch")
+      .post('/api/inventory/upsert-batch')
       .set(auth())
       .send({
-        mode: "selected",
-        selectedKeys: [{ vendor: "EATON", catalog: CAT_EXISTING_BIN }],
+        mode: 'selected',
+        selectedKeys: [{ vendor: 'EATON', catalog: CAT_EXISTING_BIN }],
         items: [
           // selected → applied
-          { vendor: "EATON", catalog: CAT_EXISTING_BIN, description: "Selected updates", binLocations: ["A-99"] },
+          {
+            vendor: 'EATON',
+            catalog: CAT_EXISTING_BIN,
+            description: 'Selected updates',
+            binLocations: ['A-99'],
+          },
           // existing match but NOT selected → skipped
-          { vendor: "HUBBELL", catalog: CAT_EXISTING_DESC, description: "This must be ignored" },
+          { vendor: 'HUBBELL', catalog: CAT_EXISTING_DESC, description: 'This must be ignored' },
           // brand new row — always inserted regardless of selectedKeys
-          { vendor: "ACME", catalog: CAT_NEW_TWO, description: "Brand new row" },
+          { vendor: 'ACME', catalog: CAT_NEW_TWO, description: 'Brand new row' },
         ],
       })
       .expect(200);
@@ -309,32 +366,46 @@ describe("POST /api/inventory/upsert-batch (mode-aware)", () => {
     expect(res.body.skipped).toBe(1);
     expect(res.body.total).toBe(3);
 
-    const { db, inventoryTable } = await import("@workspace/db");
-    const { eq } = await import("drizzle-orm");
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
 
-    const [selectedRow] = await db.select().from(inventoryTable).where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
-    expect(selectedRow.description).toBe("Selected updates");
-    expect(selectedRow.binLocations.sort()).toEqual(["A-01", "A-99"].sort());
+    const [selectedRow] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
+    expect(selectedRow.description).toBe('Selected updates');
+    expect(selectedRow.binLocations.sort()).toEqual(['A-01', 'A-99'].sort());
 
-    const [skippedRow] = await db.select().from(inventoryTable).where(eq(inventoryTable.catalog, CAT_EXISTING_DESC));
-    expect(skippedRow.description).toBe("Original description");
+    const [skippedRow] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, CAT_EXISTING_DESC));
+    expect(skippedRow.description).toBe('Original description');
 
-    const [newRow] = await db.select().from(inventoryTable).where(eq(inventoryTable.catalog, CAT_NEW_TWO));
+    const [newRow] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, CAT_NEW_TWO));
     expect(newRow).toBeDefined();
   });
 
-  it("dedupes duplicate logical keys server-side (case-variant catalog) before applying", async () => {
+  it('dedupes duplicate logical keys server-side (case-variant catalog) before applying', async () => {
     // Two rows with the same (vendor, catalog) modulo case — server must
     // collapse them into one operation, merging bins and using the last
     // non-empty description.
     const res = await supertest(app)
-      .post("/api/inventory/upsert-batch")
+      .post('/api/inventory/upsert-batch')
       .set(auth())
       .send({
-        mode: "overwrite-all",
+        mode: 'overwrite-all',
         items: [
-          { vendor: "EATON", catalog: CAT_EXISTING_BIN, description: "", binLocations: ["A-99"] },
-          { vendor: "eaton", catalog: CAT_EXISTING_BIN.toLowerCase(), description: "Final desc", binLocations: ["A-77"] },
+          { vendor: 'EATON', catalog: CAT_EXISTING_BIN, description: '', binLocations: ['A-99'] },
+          {
+            vendor: 'eaton',
+            catalog: CAT_EXISTING_BIN.toLowerCase(),
+            description: 'Final desc',
+            binLocations: ['A-77'],
+          },
         ],
       })
       .expect(200);
@@ -344,20 +415,23 @@ describe("POST /api/inventory/upsert-batch (mode-aware)", () => {
     expect(res.body.skipped).toBe(0);
     expect(res.body.total).toBe(1); // deduped count
 
-    const { db, inventoryTable } = await import("@workspace/db");
-    const { eq } = await import("drizzle-orm");
-    const [row] = await db.select().from(inventoryTable).where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
-    expect(row.description).toBe("Final desc");
-    expect(row.binLocations.sort()).toEqual(["A-01", "A-77", "A-99"].sort());
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
+    const [row] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, CAT_EXISTING_BIN));
+    expect(row.description).toBe('Final desc');
+    expect(row.binLocations.sort()).toEqual(['A-01', 'A-77', 'A-99'].sort());
   });
 
-  it("selected: returns 400 when selectedKeys is missing", async () => {
+  it('selected: returns 400 when selectedKeys is missing', async () => {
     await supertest(app)
-      .post("/api/inventory/upsert-batch")
+      .post('/api/inventory/upsert-batch')
       .set(auth())
       .send({
-        mode: "selected",
-        items: [{ vendor: "ACME", catalog: CAT_NEW_ONE, description: "x" }],
+        mode: 'selected',
+        items: [{ vendor: 'ACME', catalog: CAT_NEW_ONE, description: 'x' }],
       })
       .expect(400);
   });

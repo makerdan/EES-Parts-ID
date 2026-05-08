@@ -12,8 +12,8 @@
  *   unmatched      everything else
  */
 
-import type { Inventory } from "@workspace/db";
-import type { CatalogEntry } from "./catalogPdfParser";
+import type { Inventory } from '@workspace/db';
+import type { CatalogEntry } from './catalogPdfParser';
 
 /**
  * Trailing variant suffixes treated as interchangeable for high-confidence
@@ -23,24 +23,57 @@ import type { CatalogEntry } from "./catalogPdfParser";
  * 1 letter) and surfaces them in the review modal.
  */
 const VARIANT_SUFFIXES = [
-  "DC2", "DCI2", "DC", "DCI", "DCG", "DCX", "DCR", "DCX2",
-  "MB", "MBI", "MS", "MSRT", "MSRTI",
-  "SRT", "SRTI", "SRTI2", "RT", "RT2", "RTI", "RTI2",
-  "LT", "LT2", "LTI", "LTI2", "SLT", "SLTI",
-  "I", "SI", "SP", "SPMB",
-  "G", "GI",
-  "I2", "X", "XS", "UI", "XM", "UIX",
+  'DC2',
+  'DCI2',
+  'DC',
+  'DCI',
+  'DCG',
+  'DCX',
+  'DCR',
+  'DCX2',
+  'MB',
+  'MBI',
+  'MS',
+  'MSRT',
+  'MSRTI',
+  'SRT',
+  'SRTI',
+  'SRTI2',
+  'RT',
+  'RT2',
+  'RTI',
+  'RTI2',
+  'LT',
+  'LT2',
+  'LTI',
+  'LTI2',
+  'SLT',
+  'SLTI',
+  'I',
+  'SI',
+  'SP',
+  'SPMB',
+  'G',
+  'GI',
+  'I2',
+  'X',
+  'XS',
+  'UI',
+  'XM',
+  'UIX',
 ];
 
 export function normalizeCatalog(s: string): string {
-  return s
-    .toUpperCase()
-    .replace(/^#/, "")
-    .replace(/\s+/g, "")
-    // Treat various dash characters as the same.
-    .replace(/[\u2010-\u2015\u2212]/g, "-")
-    // Strip a single trailing footnote marker.
-    .replace(/\*$/, "");
+  return (
+    s
+      .toUpperCase()
+      .replace(/^#/, '')
+      .replace(/\s+/g, '')
+      // Treat various dash characters as the same.
+      .replace(/[\u2010-\u2015\u2212]/g, '-')
+      // Strip a single trailing footnote marker.
+      .replace(/\*$/, '')
+  );
 }
 
 /** Strip a known trailing variant suffix; return the bare stem. */
@@ -73,18 +106,14 @@ export function levenshtein(a: string, b: string): number {
     curr[0] = i;
     for (let j = 1; j <= b.length; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(
-        curr[j - 1]! + 1,
-        prev[j]! + 1,
-        prev[j - 1]! + cost,
-      );
+      curr[j] = Math.min(curr[j - 1]! + 1, prev[j]! + 1, prev[j - 1]! + cost);
     }
     for (let j = 0; j <= b.length; j++) prev[j] = curr[j]!;
   }
   return prev[b.length]!;
 }
 
-export type MatchTier = "exact" | "highConfidence" | "uncertain" | "unmatched";
+export type MatchTier = 'exact' | 'highConfidence' | 'uncertain' | 'unmatched';
 
 export interface MatchCandidate {
   inventoryId: number;
@@ -110,7 +139,7 @@ export interface MatchResult {
  */
 export function classifyEntries(
   entries: readonly CatalogEntry[],
-  inventory: readonly Inventory[],
+  inventory: readonly Inventory[]
 ): MatchResult[] {
   // Pre-index the inventory by normalized catalog and by stem.
   const byNormalized = new Map<string, Inventory[]>();
@@ -137,8 +166,8 @@ export function classifyEntries(
     if (exactRows.length === 1) {
       results.push({
         entry,
-        tier: "exact",
-        candidates: [toCandidate(exactRows[0]!, 0, "exact catalog match")],
+        tier: 'exact',
+        candidates: [toCandidate(exactRows[0]!, 0, 'exact catalog match')],
       });
       continue;
     }
@@ -147,8 +176,8 @@ export function classifyEntries(
       // casing, etc.). Treat as exact and return all.
       results.push({
         entry,
-        tier: "exact",
-        candidates: exactRows.map(r => toCandidate(r, 0, "exact catalog match")),
+        tier: 'exact',
+        candidates: exactRows.map((r) => toCandidate(r, 0, 'exact catalog match')),
       });
       continue;
     }
@@ -159,8 +188,8 @@ export function classifyEntries(
       const r = stemRows[0]!;
       results.push({
         entry,
-        tier: "highConfidence",
-        candidates: [toCandidate(r, 1, "variant suffix differs")],
+        tier: 'highConfidence',
+        candidates: [toCandidate(r, 1, 'variant suffix differs')],
       });
       continue;
     }
@@ -176,18 +205,20 @@ export function classifyEntries(
     }
     // De-dupe stem rows into the fuzzy list (preserving the closer distance).
     for (const row of stemRows) {
-      if (!fuzzy.some(c => c.inventoryId === row.id)) {
-        fuzzy.push(toCandidate(row, levenshtein(norm, normalizeCatalog(row.catalog)), "shared stem"));
+      if (!fuzzy.some((c) => c.inventoryId === row.id)) {
+        fuzzy.push(
+          toCandidate(row, levenshtein(norm, normalizeCatalog(row.catalog)), 'shared stem')
+        );
       }
     }
     if (fuzzy.length > 0) {
       fuzzy.sort((a, b) => a.distance - b.distance);
-      results.push({ entry, tier: "uncertain", candidates: fuzzy.slice(0, 5) });
+      results.push({ entry, tier: 'uncertain', candidates: fuzzy.slice(0, 5) });
       continue;
     }
 
     // 4. Unmatched.
-    results.push({ entry, tier: "unmatched", candidates: [] });
+    results.push({ entry, tier: 'unmatched', candidates: [] });
   }
   return results;
 }
@@ -212,11 +243,17 @@ export interface MatchSummary {
 }
 
 export function summarize(results: readonly MatchResult[]): MatchSummary {
-  const s: MatchSummary = { exact: 0, highConfidence: 0, uncertain: 0, unmatched: 0, total: results.length };
+  const s: MatchSummary = {
+    exact: 0,
+    highConfidence: 0,
+    uncertain: 0,
+    unmatched: 0,
+    total: results.length,
+  };
   for (const r of results) {
-    if (r.tier === "exact") s.exact++;
-    else if (r.tier === "highConfidence") s.highConfidence++;
-    else if (r.tier === "uncertain") s.uncertain++;
+    if (r.tier === 'exact') s.exact++;
+    else if (r.tier === 'highConfidence') s.highConfidence++;
+    else if (r.tier === 'uncertain') s.uncertain++;
     else s.unmatched++;
   }
   return s;

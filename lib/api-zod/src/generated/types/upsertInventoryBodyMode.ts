@@ -17,7 +17,7 @@ export type UpsertInventoryBodyMode =
   (typeof UpsertInventoryBodyMode)[keyof typeof UpsertInventoryBodyMode];
 
 export const UpsertInventoryBodyMode = {
-  "add-new-only": "add-new-only",
-  "overwrite-all": "overwrite-all",
-  selected: "selected",
+  'add-new-only': 'add-new-only',
+  'overwrite-all': 'overwrite-all',
+  selected: 'selected',
 } as const;

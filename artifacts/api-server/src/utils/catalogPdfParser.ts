@@ -31,11 +31,11 @@
  * also shared.
  */
 
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { execFileSync } from "node:child_process";
-import crypto from "node:crypto";
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 
 export interface CatalogEntry {
   catalogNumber: string;
@@ -77,13 +77,13 @@ interface VendorProfileBase {
 }
 
 export interface IndexVendorProfile extends VendorProfileBase {
-  strategy: "index";
+  strategy: 'index';
   /** Pages (1-indexed) that contain the "INDEX BY CATALOG NUMBER" listing. */
   indexPages: { firstPage: number; lastPage: number };
 }
 
 export interface VendorSectionProfile extends VendorProfileBase {
-  strategy: "vendor-section";
+  strategy: 'vendor-section';
   /**
    * "Vendor Code: <CODE>" marker to scan for on body pages of a distributor
    * catalog (e.g. "ARL" for Arlington Industries inside the EES catalog).
@@ -98,150 +98,170 @@ export type VendorProfile = IndexVendorProfile | VendorSectionProfile;
 // Page ranges below come from the table of contents on pages 6-7 of
 // `attached_assets/Bridgeport_Fittings_2026_Catalog_Part1_*.pdf`.
 export const BRIDGEPORT_PROFILE: IndexVendorProfile = {
-  vendor: "BRIDGEPORT",
-  displayName: "Bridgeport",
-  strategy: "index",
-  sourceCatalog: "Bridgeport Fittings 2026 Catalog",
+  vendor: 'BRIDGEPORT',
+  displayName: 'Bridgeport',
+  strategy: 'index',
+  sourceCatalog: 'Bridgeport Fittings 2026 Catalog',
   indexPages: { firstPage: 8, lastPage: 19 },
   pageRanges: [
     {
-      startPage: 30, endPage: 41,
-      dimensions: { category: "Fitting" },
-      keywords: ["solar", "fitting"],
-      label: "Solar Fitting",
+      startPage: 30,
+      endPage: 41,
+      dimensions: { category: 'Fitting' },
+      keywords: ['solar', 'fitting'],
+      label: 'Solar Fitting',
     },
     {
-      startPage: 40, endPage: 55,
-      dimensions: { category: "Fitting", conduitType: "RMC" },
-      keywords: ["rigid", "imc", "conduit body"],
-      label: "RMC/IMC Conduit Body",
+      startPage: 40,
+      endPage: 55,
+      dimensions: { category: 'Fitting', conduitType: 'RMC' },
+      keywords: ['rigid', 'imc', 'conduit body'],
+      label: 'RMC/IMC Conduit Body',
     },
     {
-      startPage: 56, endPage: 63,
-      dimensions: { category: "Fitting", conduitType: "EMT" },
-      keywords: ["emt", "conduit body"],
-      label: "EMT Conduit Body",
+      startPage: 56,
+      endPage: 63,
+      dimensions: { category: 'Fitting', conduitType: 'EMT' },
+      keywords: ['emt', 'conduit body'],
+      label: 'EMT Conduit Body',
     },
     {
-      startPage: 64, endPage: 105,
-      dimensions: { category: "Fitting", conduitType: "RMC" },
-      keywords: ["rigid", "imc", "fitting"],
-      label: "RMC/IMC Fitting",
+      startPage: 64,
+      endPage: 105,
+      dimensions: { category: 'Fitting', conduitType: 'RMC' },
+      keywords: ['rigid', 'imc', 'fitting'],
+      label: 'RMC/IMC Fitting',
     },
     {
-      startPage: 106, endPage: 137,
-      dimensions: { category: "Fitting", conduitType: "EMT" },
-      keywords: ["emt", "fitting"],
-      label: "EMT Fitting",
+      startPage: 106,
+      endPage: 137,
+      dimensions: { category: 'Fitting', conduitType: 'EMT' },
+      keywords: ['emt', 'fitting'],
+      label: 'EMT Fitting',
     },
     {
-      startPage: 138, endPage: 143,
-      dimensions: { category: "Fitting", conduitType: "EMT" },
-      keywords: ["emt", "fitting", "color coded"],
-      label: "Color Coded EMT Fitting",
+      startPage: 138,
+      endPage: 143,
+      dimensions: { category: 'Fitting', conduitType: 'EMT' },
+      keywords: ['emt', 'fitting', 'color coded'],
+      label: 'Color Coded EMT Fitting',
     },
     {
-      startPage: 144, endPage: 155,
-      dimensions: { category: "Fitting", conduitType: "LFMC" },
-      keywords: ["liquid tight", "fitting"],
-      label: "Liquid Tight Fitting",
+      startPage: 144,
+      endPage: 155,
+      dimensions: { category: 'Fitting', conduitType: 'LFMC' },
+      keywords: ['liquid tight', 'fitting'],
+      label: 'Liquid Tight Fitting',
     },
     {
-      startPage: 156, endPage: 171,
-      dimensions: { category: "Fitting", environment: "Wet" },
-      keywords: ["raintight", "fitting"],
-      label: "Raintight Fitting",
+      startPage: 156,
+      endPage: 171,
+      dimensions: { category: 'Fitting', environment: 'Wet' },
+      keywords: ['raintight', 'fitting'],
+      label: 'Raintight Fitting',
     },
     {
-      startPage: 172, endPage: 183,
-      dimensions: { category: "Fitting" },
-      keywords: ["bushing"],
-      label: "Bushing",
+      startPage: 172,
+      endPage: 183,
+      dimensions: { category: 'Fitting' },
+      keywords: ['bushing'],
+      label: 'Bushing',
     },
     {
-      startPage: 184, endPage: 199,
-      dimensions: { category: "Fitting" },
-      keywords: ["snap-in", "fitting"],
-      label: "Snap-In Fitting",
+      startPage: 184,
+      endPage: 199,
+      dimensions: { category: 'Fitting' },
+      keywords: ['snap-in', 'fitting'],
+      label: 'Snap-In Fitting',
     },
     {
-      startPage: 200, endPage: 225,
-      dimensions: { category: "Fitting", conduitType: "FMC" },
-      keywords: ["fmc", "flexible metal", "fitting"],
-      label: "FMC Fitting",
+      startPage: 200,
+      endPage: 225,
+      dimensions: { category: 'Fitting', conduitType: 'FMC' },
+      keywords: ['fmc', 'flexible metal', 'fitting'],
+      label: 'FMC Fitting',
     },
     {
-      startPage: 226, endPage: 259,
-      dimensions: { category: "Connector", wireType: "MC" },
-      keywords: ["armored", "metal clad", "ac", "mc", "fitting"],
-      label: "Armored / MC Cable Fitting",
+      startPage: 226,
+      endPage: 259,
+      dimensions: { category: 'Connector', wireType: 'MC' },
+      keywords: ['armored', 'metal clad', 'ac', 'mc', 'fitting'],
+      label: 'Armored / MC Cable Fitting',
     },
     {
-      startPage: 260, endPage: 269,
-      dimensions: { category: "Fitting" },
-      keywords: ["transition", "fitting"],
-      label: "Transition Fitting",
+      startPage: 260,
+      endPage: 269,
+      dimensions: { category: 'Fitting' },
+      keywords: ['transition', 'fitting'],
+      label: 'Transition Fitting',
     },
     {
-      startPage: 270, endPage: 281,
-      dimensions: { category: "Connector" },
-      keywords: ["nm", "nonmetallic", "portable cord", "fitting"],
-      label: "Nonmetallic Cable / Cord Fitting",
+      startPage: 270,
+      endPage: 281,
+      dimensions: { category: 'Connector' },
+      keywords: ['nm', 'nonmetallic', 'portable cord', 'fitting'],
+      label: 'Nonmetallic Cable / Cord Fitting',
     },
     {
-      startPage: 282, endPage: 319,
-      dimensions: { category: "Connector" },
-      keywords: ["cord grip", "cable gland"],
-      label: "Cord Grip / Cable Gland",
+      startPage: 282,
+      endPage: 319,
+      dimensions: { category: 'Connector' },
+      keywords: ['cord grip', 'cable gland'],
+      label: 'Cord Grip / Cable Gland',
     },
     {
-      startPage: 320, endPage: 323,
-      dimensions: { category: "Fitting" },
-      keywords: ["drain", "vent"],
-      label: "Drain Fitting / Vent",
+      startPage: 320,
+      endPage: 323,
+      dimensions: { category: 'Fitting' },
+      keywords: ['drain', 'vent'],
+      label: 'Drain Fitting / Vent',
     },
     {
-      startPage: 324, endPage: 337,
-      dimensions: { category: "Connector" },
-      keywords: ["grounding", "ground"],
-      label: "Grounding Product",
+      startPage: 324,
+      endPage: 337,
+      dimensions: { category: 'Connector' },
+      keywords: ['grounding', 'ground'],
+      label: 'Grounding Product',
     },
     {
-      startPage: 338, endPage: 353,
-      dimensions: { category: "Fitting", mountingType: "Surface" },
-      keywords: ["strap", "clamp", "hanger"],
-      label: "Strap / Clamp / Hanger",
+      startPage: 338,
+      endPage: 353,
+      dimensions: { category: 'Fitting', mountingType: 'Surface' },
+      keywords: ['strap', 'clamp', 'hanger'],
+      label: 'Strap / Clamp / Hanger',
     },
     {
-      startPage: 354, endPage: 367,
-      dimensions: { category: "Fitting" },
-      keywords: ["service entrance"],
-      label: "Service Entrance Fitting",
+      startPage: 354,
+      endPage: 367,
+      dimensions: { category: 'Fitting' },
+      keywords: ['service entrance'],
+      label: 'Service Entrance Fitting',
     },
     {
-      startPage: 368, endPage: 386,
+      startPage: 368,
+      endPage: 386,
       dimensions: {},
-      keywords: ["voice", "data", "fire alarm", "specialty"],
-      label: "Voice / Data / Fire Alarm Fitting",
+      keywords: ['voice', 'data', 'fire alarm', 'specialty'],
+      label: 'Voice / Data / Fire Alarm Fitting',
     },
   ],
   // Color codes from the Color Coded EMT Fittings section (pages 138-143).
   // Bridgeport uses single-letter color codes after `-S`, e.g. `231-SR`.
   suffixRules: [
-    { suffix: "-SBLK", dimensions: { colorChip: "Black" }, keywords: ["black"] },
-    { suffix: "-SBLU", dimensions: { colorChip: "Blue" }, keywords: ["blue"] },
-    { suffix: "-SG",   dimensions: { colorChip: "Gray" }, keywords: ["gray"] },
-    { suffix: "-SR",   dimensions: { colorChip: "Red" }, keywords: ["red"] },
-    { suffix: "-SW",   dimensions: { colorChip: "White" }, keywords: ["white"] },
-    { suffix: "-SY",   dimensions: { colorChip: "Yellow" }, keywords: ["yellow"] },
-    { suffix: "-SO",   dimensions: { colorChip: "Orange" }, keywords: ["orange"] },
-    { suffix: "-I",    dimensions: {}, keywords: ["insulated"] },
-    { suffix: "-DCI2", dimensions: {}, keywords: ["die cast", "insulated"] },
-    { suffix: "-DC2",  dimensions: {}, keywords: ["die cast"] },
-    { suffix: "-DC",   dimensions: {}, keywords: ["die cast"] },
-    { suffix: "-MB",   dimensions: {}, keywords: ["malleable"] },
-    { suffix: "-RT",   dimensions: { environment: "Wet" }, keywords: ["raintight"] },
-    { suffix: "-LT",   dimensions: { conduitType: "LFMC" }, keywords: ["liquid tight"] },
+    { suffix: '-SBLK', dimensions: { colorChip: 'Black' }, keywords: ['black'] },
+    { suffix: '-SBLU', dimensions: { colorChip: 'Blue' }, keywords: ['blue'] },
+    { suffix: '-SG', dimensions: { colorChip: 'Gray' }, keywords: ['gray'] },
+    { suffix: '-SR', dimensions: { colorChip: 'Red' }, keywords: ['red'] },
+    { suffix: '-SW', dimensions: { colorChip: 'White' }, keywords: ['white'] },
+    { suffix: '-SY', dimensions: { colorChip: 'Yellow' }, keywords: ['yellow'] },
+    { suffix: '-SO', dimensions: { colorChip: 'Orange' }, keywords: ['orange'] },
+    { suffix: '-I', dimensions: {}, keywords: ['insulated'] },
+    { suffix: '-DCI2', dimensions: {}, keywords: ['die cast', 'insulated'] },
+    { suffix: '-DC2', dimensions: {}, keywords: ['die cast'] },
+    { suffix: '-DC', dimensions: {}, keywords: ['die cast'] },
+    { suffix: '-MB', dimensions: {}, keywords: ['malleable'] },
+    { suffix: '-RT', dimensions: { environment: 'Wet' }, keywords: ['raintight'] },
+    { suffix: '-LT', dimensions: { conduitType: 'LFMC' }, keywords: ['liquid tight'] },
   ],
 };
 
@@ -256,104 +276,110 @@ export const BRIDGEPORT_PROFILE: IndexVendorProfile = {
 // Conduit/Fittings/Boxes, I = Harsh Locations) to the most common item
 // category in that section. Body-text snippets handle the per-row detail.
 
-const EES_SOURCE = "Elliott Electric Supply Product Catalog (06.2025)";
+const EES_SOURCE = 'Elliott Electric Supply Product Catalog (06.2025)';
 
 export const ARLINGTON_PROFILE: VendorSectionProfile = {
-  vendor: "ARLINGTON",
-  displayName: "Arlington Industries",
-  strategy: "vendor-section",
+  vendor: 'ARLINGTON',
+  displayName: 'Arlington Industries',
+  strategy: 'vendor-section',
   sourceCatalog: EES_SOURCE,
-  sourceVendorCode: "ARL",
+  sourceVendorCode: 'ARL',
   pageRanges: [
     {
-      startPage: 95, endPage: 108,
-      dimensions: { category: "Connector" },
-      keywords: ["nm", "nonmetallic", "cable", "connector"],
-      label: "NM Cable Connector",
+      startPage: 95,
+      endPage: 108,
+      dimensions: { category: 'Connector' },
+      keywords: ['nm', 'nonmetallic', 'cable', 'connector'],
+      label: 'NM Cable Connector',
     },
     {
-      startPage: 109, endPage: 165,
-      dimensions: { category: "Fitting" },
-      keywords: ["fitting", "box"],
-      label: "Conduit / Box Fitting",
+      startPage: 109,
+      endPage: 165,
+      dimensions: { category: 'Fitting' },
+      keywords: ['fitting', 'box'],
+      label: 'Conduit / Box Fitting',
     },
   ],
   suffixRules: [
-    { suffix: "AST", dimensions: {}, keywords: ["snap-in"] },
-    { suffix: "DC2", dimensions: {}, keywords: ["die cast"] },
+    { suffix: 'AST', dimensions: {}, keywords: ['snap-in'] },
+    { suffix: 'DC2', dimensions: {}, keywords: ['die cast'] },
   ],
 };
 
 export const CROUSE_HINDS_PROFILE: VendorSectionProfile = {
-  vendor: "CROUSE-HINDS",
-  displayName: "Eaton Crouse-Hinds Series",
-  strategy: "vendor-section",
+  vendor: 'CROUSE-HINDS',
+  displayName: 'Eaton Crouse-Hinds Series',
+  strategy: 'vendor-section',
   sourceCatalog: EES_SOURCE,
-  sourceVendorCode: "CRS",
+  sourceVendorCode: 'CRS',
   pageRanges: [
     {
-      startPage: 95, endPage: 108,
-      dimensions: { category: "Connector" },
-      keywords: ["cable", "connector"],
-      label: "Cable Connector",
+      startPage: 95,
+      endPage: 108,
+      dimensions: { category: 'Connector' },
+      keywords: ['cable', 'connector'],
+      label: 'Cable Connector',
     },
     {
-      startPage: 109, endPage: 165,
-      dimensions: { category: "Fitting", conduitType: "RMC" },
-      keywords: ["rigid", "fitting", "condulet"],
-      label: "Conduit Body / Fitting",
+      startPage: 109,
+      endPage: 165,
+      dimensions: { category: 'Fitting', conduitType: 'RMC' },
+      keywords: ['rigid', 'fitting', 'condulet'],
+      label: 'Conduit Body / Fitting',
     },
     {
-      startPage: 180, endPage: 215,
-      dimensions: { category: "Fitting", environment: "Hazardous" },
-      keywords: ["explosion proof", "hazardous", "harsh location"],
-      label: "Hazardous Location Fitting",
+      startPage: 180,
+      endPage: 215,
+      dimensions: { category: 'Fitting', environment: 'Hazardous' },
+      keywords: ['explosion proof', 'hazardous', 'harsh location'],
+      label: 'Hazardous Location Fitting',
     },
   ],
   suffixRules: [
-    { suffix: "DC", dimensions: {}, keywords: ["die cast"] },
-    { suffix: "SA", dimensions: {}, keywords: ["aluminum"] },
+    { suffix: 'DC', dimensions: {}, keywords: ['die cast'] },
+    { suffix: 'SA', dimensions: {}, keywords: ['aluminum'] },
   ],
 };
 
 export const CANTEX_PROFILE: VendorSectionProfile = {
-  vendor: "CANTEX",
-  displayName: "Cantex, Inc.",
-  strategy: "vendor-section",
+  vendor: 'CANTEX',
+  displayName: 'Cantex, Inc.',
+  strategy: 'vendor-section',
   sourceCatalog: EES_SOURCE,
-  sourceVendorCode: "PVF",
+  sourceVendorCode: 'PVF',
   pageRanges: [
     {
-      startPage: 109, endPage: 165,
-      dimensions: { category: "Fitting", conduitType: "PVC" },
-      keywords: ["pvc", "fitting"],
-      label: "PVC Fitting",
+      startPage: 109,
+      endPage: 165,
+      dimensions: { category: 'Fitting', conduitType: 'PVC' },
+      keywords: ['pvc', 'fitting'],
+      label: 'PVC Fitting',
     },
   ],
   suffixRules: [
-    { suffix: "ELL90", dimensions: {}, keywords: ["elbow", "90 degree"] },
-    { suffix: "ELL45", dimensions: {}, keywords: ["elbow", "45 degree"] },
+    { suffix: 'ELL90', dimensions: {}, keywords: ['elbow', '90 degree'] },
+    { suffix: 'ELL45', dimensions: {}, keywords: ['elbow', '45 degree'] },
   ],
 };
 
 const VENDOR_PROFILES: Record<string, VendorProfile> = {
   BRIDGEPORT: BRIDGEPORT_PROFILE,
   ARLINGTON: ARLINGTON_PROFILE,
-  "CROUSE-HINDS": CROUSE_HINDS_PROFILE,
+  'CROUSE-HINDS': CROUSE_HINDS_PROFILE,
   CANTEX: CANTEX_PROFILE,
 };
 
 // Aliases: alternate spellings the picker / API may receive.
 const VENDOR_ALIASES: Record<string, string> = {
-  "BRIDGEPORT FITTINGS": "BRIDGEPORT",
-  ARLINGTON_INDUSTRIES: "ARLINGTON",
-  "ARLINGTON INDUSTRIES": "ARLINGTON",
-  "CROUSE HINDS": "CROUSE-HINDS",
-  "EATON CROUSE-HINDS": "CROUSE-HINDS",
-  "EATON CROUSE HINDS": "CROUSE-HINDS",
-  CRS: "CROUSE-HINDS",
-  "CANTEX INC": "CANTEX",
-  "CANTEX, INC.": "CANTEX",
+  'BRIDGEPORT FITTINGS': 'BRIDGEPORT',
+  ARLINGTON_INDUSTRIES: 'ARLINGTON',
+  'ARLINGTON INDUSTRIES': 'ARLINGTON',
+  'CROUSE HINDS': 'CROUSE-HINDS',
+  'EATON CROUSE-HINDS': 'CROUSE-HINDS',
+  'EATON CROUSE HINDS': 'CROUSE-HINDS',
+  CRS: 'CROUSE-HINDS',
+  'CANTEX INC': 'CANTEX',
+  'CANTEX, INC.': 'CANTEX',
 };
 
 export function getVendorProfile(vendor: string): VendorProfile | null {
@@ -371,7 +397,7 @@ export interface VendorOption {
 /** Vendor list for the upload picker. Stable order: alphabetical by display name. */
 export function listVendorProfiles(): VendorOption[] {
   return Object.values(VENDOR_PROFILES)
-    .map(p => ({ vendor: p.vendor, displayName: p.displayName, sourceCatalog: p.sourceCatalog }))
+    .map((p) => ({ vendor: p.vendor, displayName: p.displayName, sourceCatalog: p.sourceCatalog }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
@@ -381,19 +407,19 @@ export function listVendorProfiles(): VendorOption[] {
 // tempfile so we can also page-slice with -f / -l on a second invocation if
 // needed without re-passing 30+ MB through stdin.
 function writeTempPdf(buf: Buffer): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-pdf-"));
-  const file = path.join(dir, `${crypto.randomBytes(4).toString("hex")}.pdf`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'catalog-pdf-'));
+  const file = path.join(dir, `${crypto.randomBytes(4).toString('hex')}.pdf`);
   fs.writeFileSync(file, buf);
   return file;
 }
 
 function pdftotextLayout(pdfPath: string, firstPage?: number, lastPage?: number): string {
-  const args = ["-layout"];
-  if (firstPage) args.push("-f", String(firstPage));
-  if (lastPage) args.push("-l", String(lastPage));
-  args.push(pdfPath, "-");
-  return execFileSync("pdftotext", args, {
-    encoding: "utf-8",
+  const args = ['-layout'];
+  if (firstPage) args.push('-f', String(firstPage));
+  if (lastPage) args.push('-l', String(lastPage));
+  args.push(pdfPath, '-');
+  return execFileSync('pdftotext', args, {
+    encoding: 'utf-8',
     timeout: 90_000,
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -421,14 +447,14 @@ function parseIndexCell(cell: string): { catalogNumber: string; pageNumbers: num
   if (!m) return null;
   const rawCatalog = m[1]!;
   if (!CATALOG_TOKEN_RE.test(rawCatalog)) return null;
-  const catalogNumber = rawCatalog.replace(/^#/, "").replace(/\*$/, "");
+  const catalogNumber = rawCatalog.replace(/^#/, '').replace(/\*$/, '');
   // Skip pure-number "catalog numbers" of length 1 (almost certainly a stray
   // page number that landed in the catalog column).
   if (/^\d$/.test(catalogNumber)) return null;
   const pageNumbers = m[2]!
     .split(/[,\s]+/)
-    .map(s => parseInt(s, 10))
-    .filter(n => Number.isFinite(n) && n > 0 && n < 10_000);
+    .map((s) => parseInt(s, 10))
+    .filter((n) => Number.isFinite(n) && n > 0 && n < 10_000);
   if (pageNumbers.length === 0) return null;
   return { catalogNumber, pageNumbers };
 }
@@ -483,14 +509,66 @@ const VENDOR_CODE_MARKER_RE = /Vendor Code:\s*([A-Z]+)/g;
 const SECTION_TOKEN_RE = /^[A-Z0-9][A-Z0-9.\-/]{2,24}$/;
 
 const VENDOR_SECTION_STOP_WORDS = new Set<string>([
-  "CATALOG", "NUMBER", "SIZE", "PRICE", "DESCRIPTION", "EACH", "TYPE",
-  "RIGID", "EMT", "PVC", "GALVANIZED", "BONDED", "COPPER", "GROUND", "RODS",
-  "ALUMINUM", "STEEL", "DIE", "CAST", "SCREW", "UL", "LISTED", "INCLUDED",
-  "NEOPRENE", "CARTON", "BUNDLE", "QTY", "QUANTITY", "PCS", "VENDOR", "CODE",
-  "CTN", "HEAVY", "DUTY", "INSULATOR", "CLAMP", "CLAMPS", "BAG", "PIPE",
-  "PLATE", "GROUNDING", "BONDING", "ROOF", "FLASHING", "KITS", "SWITCH",
-  "DIMMER", "PER", "SECTION", "DIECAST", "MIDGET", "MEDIUM", "TOTAL",
-  "CONDUIT", "FITTING", "FITTINGS", "BOX", "BOXES", "ITEM", "MODEL",
+  'CATALOG',
+  'NUMBER',
+  'SIZE',
+  'PRICE',
+  'DESCRIPTION',
+  'EACH',
+  'TYPE',
+  'RIGID',
+  'EMT',
+  'PVC',
+  'GALVANIZED',
+  'BONDED',
+  'COPPER',
+  'GROUND',
+  'RODS',
+  'ALUMINUM',
+  'STEEL',
+  'DIE',
+  'CAST',
+  'SCREW',
+  'UL',
+  'LISTED',
+  'INCLUDED',
+  'NEOPRENE',
+  'CARTON',
+  'BUNDLE',
+  'QTY',
+  'QUANTITY',
+  'PCS',
+  'VENDOR',
+  'CODE',
+  'CTN',
+  'HEAVY',
+  'DUTY',
+  'INSULATOR',
+  'CLAMP',
+  'CLAMPS',
+  'BAG',
+  'PIPE',
+  'PLATE',
+  'GROUNDING',
+  'BONDING',
+  'ROOF',
+  'FLASHING',
+  'KITS',
+  'SWITCH',
+  'DIMMER',
+  'PER',
+  'SECTION',
+  'DIECAST',
+  'MIDGET',
+  'MEDIUM',
+  'TOTAL',
+  'CONDUIT',
+  'FITTING',
+  'FITTINGS',
+  'BOX',
+  'BOXES',
+  'ITEM',
+  'MODEL',
 ]);
 
 function isVendorSectionToken(t: string): boolean {
@@ -504,12 +582,16 @@ function isVendorSectionToken(t: string): boolean {
   return true;
 }
 
-interface VendorMarker { lineIndex: number; col: number; code: string; }
+interface VendorMarker {
+  lineIndex: number;
+  col: number;
+  code: string;
+}
 
 function findVendorMarkers(lines: readonly string[]): VendorMarker[] {
   const out: VendorMarker[] = [];
   for (let li = 0; li < lines.length; li++) {
-    const re = new RegExp(VENDOR_CODE_MARKER_RE.source, "g");
+    const re = new RegExp(VENDOR_CODE_MARKER_RE.source, 'g');
     let m: RegExpExecArray | null;
     while ((m = re.exec(lines[li]!)) !== null) {
       out.push({ lineIndex: li, col: m.index, code: m[1]! });
@@ -521,9 +603,9 @@ function findVendorMarkers(lines: readonly string[]): VendorMarker[] {
 export function parseVendorSectionPage(
   pageText: string,
   targetCode: string,
-  pageNumber: number,
+  pageNumber: number
 ): Array<{ catalogNumber: string; pageNumber: number }> {
-  const lines = pageText.split("\n");
+  const lines = pageText.split('\n');
   const markers = findVendorMarkers(lines);
   if (markers.length === 0) return [];
 
@@ -573,7 +655,7 @@ export function parseVendorSectionPage(
 
 function parseVendorSectionDoc(
   pageTexts: readonly string[],
-  targetCode: string,
+  targetCode: string
 ): Map<string, number[]> {
   const out = new Map<string, number[]>();
   const marker = `Vendor Code: ${targetCode}`;
@@ -639,19 +721,22 @@ function dedupeKeywords(kws: readonly string[]): string[] {
  * mentions the catalog and trims it to ~120 chars. Returns "" when no hit.
  */
 function snippetFromPage(pageText: string | undefined, catalogNumber: string): string {
-  if (!pageText) return "";
+  if (!pageText) return '';
   const upper = catalogNumber.toUpperCase();
-  const lines = pageText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const lines = pageText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
   for (const line of lines) {
     if (line.toUpperCase().includes(upper)) {
       // Prefer a sibling descriptive line; the catalog-only line is usually
       // a table cell with no description. If the line is the catalog plus a
       // few words, use it directly.
-      const cleaned = line.replace(/\s+/g, " ").trim();
+      const cleaned = line.replace(/\s+/g, ' ').trim();
       if (cleaned.length > catalogNumber.length + 3 && cleaned.length <= 200) return cleaned;
     }
   }
-  return "";
+  return '';
 }
 
 // ── Top-level driver ────────────────────────────────────────────────────────
@@ -663,19 +748,23 @@ export interface ParsePdfOptions {
 export async function parseCatalogPdf(
   buf: Buffer,
   profile: VendorProfile,
-  options: ParsePdfOptions = {},
+  options: ParsePdfOptions = {}
 ): Promise<CatalogEntry[]> {
   const tmp = writeTempPdf(buf);
   try {
     // Whole-doc text once: vendor-section needs every page; index strategy
     // also benefits because it reuses pageTexts for snippet extraction.
     const allText = pdftotextLayout(tmp);
-    const pageTexts = allText.split("\f");
+    const pageTexts = allText.split('\f');
 
     // 1. Build catalog # → primary pages map per strategy.
     let indexMap: Map<string, number[]>;
-    if (profile.strategy === "index") {
-      const indexText = pdftotextLayout(tmp, profile.indexPages.firstPage, profile.indexPages.lastPage);
+    if (profile.strategy === 'index') {
+      const indexText = pdftotextLayout(
+        tmp,
+        profile.indexPages.firstPage,
+        profile.indexPages.lastPage
+      );
       indexMap = parseIndexText(indexText);
     } else {
       indexMap = parseVendorSectionDoc(pageTexts, profile.sourceVendorCode);
@@ -697,12 +786,12 @@ export async function parseCatalogPdf(
       const keywords = dedupeKeywords([
         profile.displayName.toLowerCase(),
         ...(rangeRule?.keywords ?? []),
-        ...suffixRules.flatMap(s => s.keywords),
-        ...Object.values(dimensions).map(v => v.toLowerCase()),
+        ...suffixRules.flatMap((s) => s.keywords),
+        ...Object.values(dimensions).map((v) => v.toLowerCase()),
       ]);
 
-      const snippet = useSnippets ? snippetFromPage(pageTexts[primaryPage - 1], catalogNumber) : "";
-      const label = rangeRule?.label ?? "Catalog item";
+      const snippet = useSnippets ? snippetFromPage(pageTexts[primaryPage - 1], catalogNumber) : '';
+      const label = rangeRule?.label ?? 'Catalog item';
       const description = snippet || `${label} ${catalogNumber}`;
 
       entries.push({
@@ -715,7 +804,15 @@ export async function parseCatalogPdf(
     }
     return entries;
   } finally {
-    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
-    try { fs.rmdirSync(path.dirname(tmp)); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+    try {
+      fs.rmdirSync(path.dirname(tmp));
+    } catch {
+      /* ignore */
+    }
   }
 }

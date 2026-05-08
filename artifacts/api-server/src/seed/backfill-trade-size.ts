@@ -10,10 +10,10 @@
  *   DATABASE_URL="$DATABASE_URL" \
  *   pnpm --filter @workspace/api-server exec tsx src/seed/backfill-trade-size.ts
  */
-import { db, pool } from "@workspace/db";
-import { inventoryTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
-import { deriveTradeSizeTokens } from "../utils/tradeSize";
+import { db, pool } from '@workspace/db';
+import { inventoryTable } from '@workspace/db';
+import { eq } from 'drizzle-orm';
+import { deriveTradeSizeTokens } from '../utils/tradeSize';
 
 async function backfill() {
   const rows = await db
@@ -42,8 +42,8 @@ async function backfill() {
       skipped++;
       continue;
     }
-    const existing = new Set((row.aiKeywords ?? []).map(k => k.toLowerCase()));
-    const additions = tokens.filter(t => !existing.has(t.toLowerCase()));
+    const existing = new Set((row.aiKeywords ?? []).map((k) => k.toLowerCase()));
+    const additions = tokens.filter((t) => !existing.has(t.toLowerCase()));
     if (additions.length === 0) {
       unchanged++;
       continue;
@@ -65,7 +65,7 @@ async function backfill() {
   await pool.end();
 }
 
-backfill().catch(err => {
-  console.error("Trade-size backfill failed:", err);
+backfill().catch((err) => {
+  console.error('Trade-size backfill failed:', err);
   process.exit(1);
 });

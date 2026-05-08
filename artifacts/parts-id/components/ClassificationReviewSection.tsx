@@ -5,7 +5,7 @@
  * and lets admins Confirm (keep), Reclassify (pick a new type), or Skip
  * (defer to end of queue) each item. Paginated 50 per page via "Load more".
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -15,79 +15,91 @@ import {
   Text,
   TextInput,
   View,
-} from "react-native";
-import { useColors } from "@/hooks/useColors";
+} from 'react-native';
+import { useColors } from '@/hooks/useColors';
 import {
   listClassificationReview,
   confirmClassificationReview,
   reclassifyReviewItem,
   skipClassificationReview,
-} from "@workspace/api-client-react";
+  ApiError,
+} from '@workspace/api-client-react';
 import type {
   ReviewQueueItem,
   ReviewQueueResponse,
   ReviewActionResponse,
-} from "@workspace/api-client-react";
-import { ApiError } from "@workspace/api-client-react";
+} from '@workspace/api-client-react';
 
 const PAGE_SIZE = 50;
 
 interface TypeNode {
-  id:   number;
+  id: number;
   name: string;
   path: string;
 }
 
 interface Props {
-  apiBase:          string;
-  adminHeaders:     Record<string, string>;
+  apiBase: string;
+  adminHeaders: Record<string, string>;
   onExpiredSession: () => void;
-  expandTrigger?:   number;
+  expandTrigger?: number;
   /** Called after any confirm / reclassify / skip action completes successfully. */
-  onReviewAction?:  () => void;
+  onReviewAction?: () => void;
 }
 
-export default function ClassificationReviewSection({ apiBase, adminHeaders, onExpiredSession, expandTrigger, onReviewAction }: Props) {
+export default function ClassificationReviewSection({
+  apiBase,
+  adminHeaders,
+  onExpiredSession,
+  expandTrigger,
+  onReviewAction,
+}: Props) {
   const colors = useColors();
 
-  const [expanded, setExpanded]         = useState(false);
-  const [items, setItems]               = useState<ReviewQueueItem[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [items, setItems] = useState<ReviewQueueItem[]>([]);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
-  const [page, setPage]                 = useState(1);
-  const [hasMore, setHasMore]           = useState(false);
-  const [loading, setLoading]           = useState(false);
-  const [loadingMore, setLoadingMore]   = useState(false);
-  const [error, setError]               = useState<string | null>(null);
-  const [actingId, setActingId]         = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [actingId, setActingId] = useState<number | null>(null);
 
   // Reclassify modal
   const [reclassifyTarget, setReclassifyTarget] = useState<ReviewQueueItem | null>(null);
-  const [typeNodes, setTypeNodes]               = useState<TypeNode[]>([]);
+  const [typeNodes, setTypeNodes] = useState<TypeNode[]>([]);
   const [typeNodesLoading, setTypeNodesLoading] = useState(false);
-  const [reclassifySearch, setReclassifySearch] = useState("");
+  const [reclassifySearch, setReclassifySearch] = useState('');
 
   // ── Fetch review queue ─────────────────────────────────────────────────────
-  const fetchQueue = useCallback(async (targetPage: number, append: boolean) => {
-    if (append) setLoadingMore(true);
-    else setLoading(true);
-    setError(null);
-    try {
-      const data = await listClassificationReview(
-        { page: targetPage, limit: PAGE_SIZE },
-        { headers: adminHeaders },
-      );
-      setPendingCount(data.total);
-      setHasMore(data.items.length === PAGE_SIZE && targetPage * PAGE_SIZE < data.total);
-      setItems(prev => append ? [...prev, ...data.items] : data.items);
-      setPage(targetPage);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) { onExpiredSession(); return; }
-      setError(err instanceof ApiError ? err.message : "Network error loading review queue");
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }, [adminHeaders, onExpiredSession]);
+  const fetchQueue = useCallback(
+    async (targetPage: number, append: boolean) => {
+      if (append) setLoadingMore(true);
+      else setLoading(true);
+      setError(null);
+      try {
+        const data = await listClassificationReview(
+          { page: targetPage, limit: PAGE_SIZE },
+          { headers: adminHeaders }
+        );
+        setPendingCount(data.total);
+        setHasMore(data.items.length === PAGE_SIZE && targetPage * PAGE_SIZE < data.total);
+        setItems((prev) => (append ? [...prev, ...data.items] : data.items));
+        setPage(targetPage);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          onExpiredSession();
+          return;
+        }
+        setError(err instanceof ApiError ? err.message : 'Network error loading review queue');
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [adminHeaders, onExpiredSession]
+  );
 
   // Fetch just the count on mount (without expanding) so the badge is visible.
   useEffect(() => {
@@ -96,7 +108,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
       try {
         const data = await listClassificationReview(
           { page: 1, limit: 1 },
-          { headers: adminHeaders },
+          { headers: adminHeaders }
         );
         setPendingCount(data.total);
       } catch (err) {
@@ -104,7 +116,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
         // Other errors are silently ignored — badge stays hidden
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // When the parent increments expandTrigger (e.g. chip tap), expand and load.
@@ -116,9 +128,9 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
       setExpanded(true);
       void fetchQueue(1, false);
     }
-  // fetchQueue is stable (useCallback); expanded is intentionally omitted so
-  // repeated taps when already expanded are a no-op.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // fetchQueue is stable (useCallback); expanded is intentionally omitted so
+    // repeated taps when already expanded are a no-op.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandTrigger]);
 
   const handleToggle = () => {
@@ -131,64 +143,75 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
   };
 
   // ── Actions ────────────────────────────────────────────────────────────────
-  const removeItem = (inventoryId: ReviewQueueItem["inventoryId"]) => {
-    setItems(prev => prev.filter(it => it.inventoryId !== inventoryId));
-    setPendingCount(prev => (prev != null && prev > 0 ? prev - 1 : prev));
+  const removeItem = (inventoryId: ReviewQueueItem['inventoryId']) => {
+    setItems((prev) => prev.filter((it) => it.inventoryId !== inventoryId));
+    setPendingCount((prev) => (prev != null && prev > 0 ? prev - 1 : prev));
   };
 
-  const postAction = useCallback(async (
-    inventoryId: number,
-    action: "confirm" | "skip",
-  ) => {
-    setActingId(inventoryId);
-    try {
-      const requestOptions = { headers: adminHeaders };
-      if (action === "confirm") {
-        await confirmClassificationReview(inventoryId, requestOptions);
-        removeItem(inventoryId);
-      } else {
-        await skipClassificationReview(inventoryId, requestOptions);
-        // Re-fetch from page 1: skipped item moved to end of queue.
-        void fetchQueue(1, false);
+  const postAction = useCallback(
+    async (inventoryId: number, action: 'confirm' | 'skip') => {
+      setActingId(inventoryId);
+      try {
+        const requestOptions = { headers: adminHeaders };
+        if (action === 'confirm') {
+          await confirmClassificationReview(inventoryId, requestOptions);
+          removeItem(inventoryId);
+        } else {
+          await skipClassificationReview(inventoryId, requestOptions);
+          // Re-fetch from page 1: skipped item moved to end of queue.
+          void fetchQueue(1, false);
+        }
+        onReviewAction?.();
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          onExpiredSession();
+          return;
+        }
+        setError(err instanceof ApiError ? err.message : `Network error during ${action}`);
+      } finally {
+        setActingId(null);
       }
-      onReviewAction?.();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) { onExpiredSession(); return; }
-      setError(err instanceof ApiError ? err.message : `Network error during ${action}`);
-    } finally {
-      setActingId(null);
-    }
-  }, [adminHeaders, onExpiredSession, fetchQueue, onReviewAction]);
+    },
+    [adminHeaders, onExpiredSession, fetchQueue, onReviewAction]
+  );
 
-  const handleConfirm = (id: number) => void postAction(id, "confirm");
-  const handleSkip    = (id: number) => void postAction(id, "skip");
+  const handleConfirm = (id: number) => void postAction(id, 'confirm');
+  const handleSkip = (id: number) => void postAction(id, 'skip');
 
   // ── Reclassify ─────────────────────────────────────────────────────────────
   const openReclassify = async (item: ReviewQueueItem) => {
     setReclassifyTarget(item);
-    setReclassifySearch("");
+    setReclassifySearch('');
     if (typeNodes.length > 0) return;
     setTypeNodesLoading(true);
     try {
       const res = await fetch(`${apiBase}/categories/tree`);
       if (!res.ok) return;
-      const data = await res.json() as {
-        tree: Array<{
-          id: number; name: string;
-          children: Array<{ id: number; name: string; children: Array<{ id: number; name: string }> }>;
-        }>;
+      const data = (await res.json()) as {
+        tree: {
+          id: number;
+          name: string;
+          children: { id: number; name: string; children: { id: number; name: string }[] }[];
+        }[];
       };
       const flat: TypeNode[] = [];
       for (const cat of data.tree) {
         for (const sub of cat.children ?? []) {
           for (const type of sub.children ?? []) {
-            flat.push({ id: type.id, name: type.name, path: `${cat.name} › ${sub.name} › ${type.name}` });
+            flat.push({
+              id: type.id,
+              name: type.name,
+              path: `${cat.name} › ${sub.name} › ${type.name}`,
+            });
           }
         }
       }
       setTypeNodes(flat.sort((a, b) => a.path.localeCompare(b.path)));
-    } catch { /* silent */ }
-    finally { setTypeNodesLoading(false); }
+    } catch {
+      /* silent */
+    } finally {
+      setTypeNodesLoading(false);
+    }
   };
 
   const handleReclassify = async (categoryNodeId: number) => {
@@ -197,16 +220,15 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
     setReclassifyTarget(null);
     setActingId(inventoryId);
     try {
-      await reclassifyReviewItem(
-        inventoryId,
-        { categoryNodeId },
-        { headers: adminHeaders },
-      );
+      await reclassifyReviewItem(inventoryId, { categoryNodeId }, { headers: adminHeaders });
       removeItem(inventoryId);
       onReviewAction?.();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) { onExpiredSession(); return; }
-      setError(err instanceof ApiError ? err.message : "Network error during reclassify");
+      if (err instanceof ApiError && err.status === 401) {
+        onExpiredSession();
+        return;
+      }
+      setError(err instanceof ApiError ? err.message : 'Network error during reclassify');
     } finally {
       setActingId(null);
     }
@@ -214,7 +236,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const filteredTypes = reclassifySearch.trim()
-    ? typeNodes.filter(n => n.path.toLowerCase().includes(reclassifySearch.toLowerCase()))
+    ? typeNodes.filter((n) => n.path.toLowerCase().includes(reclassifySearch.toLowerCase()))
     : typeNodes;
 
   return (
@@ -223,33 +245,44 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
       <Pressable
         onPress={handleToggle}
         accessibilityRole="button"
-        accessibilityLabel={expanded ? "Collapse classification review" : "Expand classification review"}
+        accessibilityLabel={
+          expanded ? 'Collapse classification review' : 'Expand classification review'
+        }
         style={s.headerRow}
       >
         <View style={s.headerLeft}>
           <Text style={[s.title, { color: colors.foreground }]}>Classification Review</Text>
           {pendingCount != null ? (
-            <View style={[s.badge, { backgroundColor: pendingCount > 0 ? "#ef4444" : "#10b981" }]}>
+            <View style={[s.badge, { backgroundColor: pendingCount > 0 ? '#ef4444' : '#10b981' }]}>
               <Text style={s.badgeText}>{pendingCount}</Text>
             </View>
           ) : (
-            <ActivityIndicator size="small" color={colors.mutedForeground} style={{ marginLeft: 4 }} />
+            <ActivityIndicator
+              size="small"
+              color={colors.mutedForeground}
+              style={{ marginLeft: 4 }}
+            />
           )}
         </View>
-        <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>{expanded ? "▾" : "▸"}</Text>
+        <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>{expanded ? '▾' : '▸'}</Text>
       </Pressable>
 
       {expanded ? (
         <>
           <Text style={[s.hint, { color: colors.mutedForeground }]}>
-            AI classifications below 70% confidence. Confirm to accept, Reclassify to reassign, or Skip to defer.
+            AI classifications below 70% confidence. Confirm to accept, Reclassify to reassign, or
+            Skip to defer.
           </Text>
 
           {error ? (
-            <View style={[s.errorBanner, { backgroundColor: "#ef444422", borderColor: "#ef4444" }]}>
-              <Text style={{ color: "#ef4444", fontSize: 13, fontFamily: "Inter_500Medium", flex: 1 }}>{error}</Text>
+            <View style={[s.errorBanner, { backgroundColor: '#ef444422', borderColor: '#ef4444' }]}>
+              <Text
+                style={{ color: '#ef4444', fontSize: 13, fontFamily: 'Inter_500Medium', flex: 1 }}
+              >
+                {error}
+              </Text>
               <Pressable onPress={() => setError(null)} style={{ paddingLeft: 8 }}>
-                <Text style={{ color: "#ef4444", fontSize: 16 }}>✕</Text>
+                <Text style={{ color: '#ef4444', fontSize: 16 }}>✕</Text>
               </Pressable>
             </View>
           ) : null}
@@ -262,18 +295,21 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
             <View style={[s.emptyBox, { backgroundColor: colors.muted }]}>
               <Text style={[s.emptyText, { color: colors.mutedForeground }]}>
                 {pendingCount === 0
-                  ? "Queue is empty — all AI classifications reviewed."
-                  : "No items loaded."}
+                  ? 'Queue is empty — all AI classifications reviewed.'
+                  : 'No items loaded.'}
               </Text>
             </View>
           ) : (
-            items.map(item => {
-              const isActing  = actingId === item.inventoryId;
-              const confColor = item.confidencePct >= 60 ? "#f59e0b" : "#ef4444";
+            items.map((item) => {
+              const isActing = actingId === item.inventoryId;
+              const confColor = item.confidencePct >= 60 ? '#f59e0b' : '#ef4444';
               return (
                 <View
                   key={item.inventoryId}
-                  style={[s.row, { backgroundColor: colors.background, borderColor: colors.border }]}
+                  style={[
+                    s.row,
+                    { backgroundColor: colors.background, borderColor: colors.border },
+                  ]}
                 >
                   <View style={s.rowTop}>
                     <View style={{ flex: 1 }}>
@@ -284,7 +320,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
                         {item.vendor}
                       </Text>
                     </View>
-                    <View style={[s.confBadge, { backgroundColor: confColor + "22" }]}>
+                    <View style={[s.confBadge, { backgroundColor: confColor + '22' }]}>
                       <Text style={[s.confText, { color: confColor }]}>
                         {item.confidencePct.toFixed(0)}%
                       </Text>
@@ -299,7 +335,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
 
                   <View style={[s.pathRow, { backgroundColor: colors.muted }]}>
                     <Text style={[s.pathText, { color: colors.mutedForeground }]} numberOfLines={1}>
-                      {item.categoryPath || "Uncategorized"}
+                      {item.categoryPath || 'Uncategorized'}
                     </Text>
                   </View>
 
@@ -310,7 +346,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
                       <>
                         <Pressable
                           onPress={() => handleConfirm(item.inventoryId)}
-                          style={[s.actionBtn, { backgroundColor: "#10b981" }]}
+                          style={[s.actionBtn, { backgroundColor: '#10b981' }]}
                           accessibilityRole="button"
                           accessibilityLabel="Confirm classification"
                         >
@@ -330,7 +366,9 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
                           accessibilityRole="button"
                           accessibilityLabel="Skip — defer to end of queue"
                         >
-                          <Text style={[s.actionBtnOutlineText, { color: colors.mutedForeground }]}>Skip</Text>
+                          <Text style={[s.actionBtnOutlineText, { color: colors.mutedForeground }]}>
+                            Skip
+                          </Text>
                         </Pressable>
                       </>
                     )}
@@ -364,7 +402,9 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
         onRequestClose={() => setReclassifyTarget(null)}
       >
         <View style={s.modalOverlay}>
-          <View style={[s.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View
+            style={[s.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}
+          >
             <View style={[s.modalHeader, { borderBottomColor: colors.border }]}>
               <Text style={[s.modalTitle, { color: colors.foreground }]}>Choose Category</Text>
               <Pressable
@@ -378,12 +418,17 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
             </View>
 
             {reclassifyTarget ? (
-              <Text style={[s.reclassifySubtitle, { color: colors.mutedForeground }]} numberOfLines={1}>
+              <Text
+                style={[s.reclassifySubtitle, { color: colors.mutedForeground }]}
+                numberOfLines={1}
+              >
                 {reclassifyTarget.catalog} · {reclassifyTarget.vendor}
               </Text>
             ) : null}
 
-            <View style={[s.searchBox, { borderColor: colors.border, backgroundColor: colors.muted }]}>
+            <View
+              style={[s.searchBox, { borderColor: colors.border, backgroundColor: colors.muted }]}
+            >
               <Text style={{ color: colors.mutedForeground, marginRight: 6 }}>🔍</Text>
               <TextInput
                 value={reclassifySearch}
@@ -402,7 +447,7 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
               </View>
             ) : (
               <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
-                {filteredTypes.map(node => (
+                {filteredTypes.map((node) => (
                   <Pressable
                     key={node.id}
                     onPress={() => void handleReclassify(node.id)}
@@ -410,20 +455,28 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
                       s.typeRow,
                       {
                         borderBottomColor: colors.border,
-                        backgroundColor: pressed ? colors.muted : "transparent",
+                        backgroundColor: pressed ? colors.muted : 'transparent',
                       },
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel={`Assign to ${node.path}`}
                   >
                     <Text style={[s.typeRowText, { color: colors.foreground }]}>{node.name}</Text>
-                    <Text style={[s.typeRowPath, { color: colors.mutedForeground }]} numberOfLines={1}>
+                    <Text
+                      style={[s.typeRowPath, { color: colors.mutedForeground }]}
+                      numberOfLines={1}
+                    >
                       {node.path}
                     </Text>
                   </Pressable>
                 ))}
                 {filteredTypes.length === 0 && !typeNodesLoading ? (
-                  <Text style={[s.emptyText, { color: colors.mutedForeground, textAlign: "center", marginTop: 24 }]}>
+                  <Text
+                    style={[
+                      s.emptyText,
+                      { color: colors.mutedForeground, textAlign: 'center', marginTop: 24 },
+                    ]}
+                  >
                     No categories match "{reclassifySearch}"
                   </Text>
                 ) : null}
@@ -437,56 +490,115 @@ export default function ClassificationReviewSection({ apiBase, adminHeaders, onE
 }
 
 const s = StyleSheet.create({
-  card:        { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 14 },
-  headerRow:   { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  headerLeft:  { flexDirection: "row", alignItems: "center", gap: 8 },
-  title:       { fontSize: 16, fontFamily: "Inter_700Bold" },
-  badge:       { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, minWidth: 24, alignItems: "center" },
-  badgeText:   { fontSize: 12, fontFamily: "Inter_700Bold", color: "#fff" },
-  hint:        { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
-  errorBanner: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    padding: 10, borderRadius: 8, borderWidth: 1,
+  card: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 14 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  title: { fontSize: 16, fontFamily: 'Inter_700Bold' },
+  badge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    minWidth: 24,
+    alignItems: 'center',
   },
-  center:      { alignItems: "center", justifyContent: "center", paddingVertical: 24 },
-  emptyBox:    { borderRadius: 8, padding: 16, alignItems: "center" },
-  emptyText:   { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  badgeText: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#fff' },
+  hint: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 19 },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  center: { alignItems: 'center', justifyContent: 'center', paddingVertical: 24 },
+  emptyBox: { borderRadius: 8, padding: 16, alignItems: 'center' },
+  emptyText: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 19 },
 
-  row:         { borderRadius: 8, borderWidth: 1, padding: 12, gap: 8 },
-  rowTop:      { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-  catalog:     { fontSize: 14, fontFamily: "Inter_700Bold" },
-  vendor:      { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 },
-  confBadge:   { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, alignSelf: "flex-start" },
-  confText:    { fontSize: 12, fontFamily: "Inter_700Bold" },
-  desc:        { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
-  pathRow:     { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
-  pathText:    { fontSize: 11, fontFamily: "Inter_500Medium" },
+  row: { borderRadius: 8, borderWidth: 1, padding: 12, gap: 8 },
+  rowTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  catalog: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  vendor: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 2,
+  },
+  confBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, alignSelf: 'flex-start' },
+  confText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
+  desc: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 },
+  pathRow: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  pathText: { fontSize: 11, fontFamily: 'Inter_500Medium' },
 
-  actionRow:            { flexDirection: "row", gap: 6, marginTop: 4 },
-  actionBtn:            { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, alignItems: "center" },
-  actionBtnText:        { fontSize: 12, fontFamily: "Inter_700Bold", color: "#fff" },
-  actionBtnOutline:     { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, borderWidth: 1, alignItems: "center" },
-  actionBtnOutlineText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  actionRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
+  actionBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, alignItems: 'center' },
+  actionBtnText: { fontSize: 12, fontFamily: 'Inter_700Bold', color: '#fff' },
+  actionBtnOutline: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  actionBtnOutlineText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
 
-  loadMoreBtn:  { borderWidth: 1, borderRadius: 8, paddingVertical: 11, alignItems: "center", marginTop: 4 },
-  loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  loadMoreBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 11,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  loadMoreText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
 
   // Reclassify modal
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  modalSheet:   {
-    maxHeight: "88%",
-    borderTopLeftRadius: 16, borderTopRightRadius: 16,
-    borderTopWidth: 1, borderLeftWidth: 1, borderRightWidth: 1,
-    overflow: "hidden",
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalSheet: {
+    maxHeight: '88%',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    overflow: 'hidden',
   },
-  modalHeader:        { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1 },
-  modalTitle:         { fontSize: 16, fontFamily: "Inter_700Bold" },
-  modalClose:         { width: 32, height: 32, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  modalCloseText:     { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  reclassifySubtitle: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4, fontSize: 12, fontFamily: "Inter_400Regular" },
-  searchBox:    { flexDirection: "row", alignItems: "center", margin: 12, borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 8 },
-  searchInput:  { flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", padding: 0 },
-  typeRow:      { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
-  typeRowText:  { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  typeRowPath:  { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+  },
+  modalTitle: { fontSize: 16, fontFamily: 'Inter_700Bold' },
+  modalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  reclassifySubtitle: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    margin: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  searchInput: { flex: 1, fontSize: 14, fontFamily: 'Inter_400Regular', padding: 0 },
+  typeRow: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
+  typeRowText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  typeRowPath: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
 });

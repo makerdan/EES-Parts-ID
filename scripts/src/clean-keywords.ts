@@ -14,7 +14,7 @@
  *   pnpm --filter @workspace/scripts run clean-keywords
  */
 
-import pg from "pg";
+import pg from 'pg';
 
 const { Pool } = pg;
 
@@ -24,12 +24,24 @@ const { Pool } = pg;
  * generation time. If you add a value here, add it there too (and vice-versa).
  */
 const JUNK_VALUES = [
-  "n/a", "na", "n.a.", "n.a", "null", "none", "nil",
-  "undefined", "unknown", "-", "--", "---", "true", "false",
+  'n/a',
+  'na',
+  'n.a.',
+  'n.a',
+  'null',
+  'none',
+  'nil',
+  'undefined',
+  'unknown',
+  '-',
+  '--',
+  '---',
+  'true',
+  'false',
 ];
 
 // Build a SQL-safe literal list for the IN (...) clause
-const junkLiteral = JUNK_VALUES.map((v) => `'${v}'`).join(", ");
+const junkLiteral = JUNK_VALUES.map((v) => `'${v}'`).join(', ');
 
 // Condition that marks a single unnested keyword as junk
 const IS_JUNK = `(
@@ -43,7 +55,7 @@ async function main() {
 
   try {
     // ── Step 1: Remove junk keywords ────────────────────────────────────────
-    console.log("Step 1: Cleaning junk keywords from ai_keywords arrays…");
+    console.log('Step 1: Cleaning junk keywords from ai_keywords arrays…');
 
     const cleanResult = await pool.query(`
       UPDATE inventory
@@ -65,7 +77,7 @@ async function main() {
     console.log(`  → ${cleanResult.rowCount ?? 0} row(s) updated.`);
 
     // ── Step 2: Re-queue under-enriched parts ────────────────────────────────
-    console.log("Step 2: Clearing enriched_at on parts with fewer than 3 keywords…");
+    console.log('Step 2: Clearing enriched_at on parts with fewer than 3 keywords…');
 
     const requeueResult = await pool.query(`
       UPDATE inventory
@@ -78,7 +90,7 @@ async function main() {
     console.log(`  → ${requeueResult.rowCount ?? 0} part(s) re-queued for enrichment.`);
 
     // ── Step 3: Verification ─────────────────────────────────────────────────
-    console.log("Step 3: Verifying — checking for any remaining junk values…");
+    console.log('Step 3: Verifying — checking for any remaining junk values…');
 
     const checkResult = await pool.query<{ junk_count: string }>(`
       SELECT count(*) AS junk_count
@@ -86,21 +98,21 @@ async function main() {
       WHERE ${IS_JUNK}
     `);
 
-    const remaining = parseInt(checkResult.rows[0]?.junk_count ?? "0", 10);
+    const remaining = parseInt(checkResult.rows[0]?.junk_count ?? '0', 10);
     if (remaining === 0) {
-      console.log("  ✓ No junk values remain in any ai_keywords array.");
+      console.log('  ✓ No junk values remain in any ai_keywords array.');
     } else {
       console.error(`  ✗ ${remaining} junk value(s) still found — recheck the filter logic.`);
       process.exit(1);
     }
 
-    console.log("\nDone.");
+    console.log('\nDone.');
   } finally {
     await pool.end();
   }
 }
 
 main().catch((err) => {
-  console.error("Script failed:", err);
+  console.error('Script failed:', err);
   process.exit(1);
 });

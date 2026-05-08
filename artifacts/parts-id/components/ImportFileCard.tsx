@@ -15,7 +15,7 @@
  *     a "; "-separated string in the binLocations column, which the importer
  *     can re-parse on the next round-trip.
  */
-import React, { useState } from "react";
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -24,13 +24,13 @@ import {
   Text,
   TextInput,
   View,
-} from "react-native";
-import { useColors } from "@/hooks/useColors";
-import { secondaryBtnBase } from "@/styles/shared";
+} from 'react-native';
+import { useColors } from '@/hooks/useColors';
+import { secondaryBtnBase } from '@/styles/shared';
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
+  : '';
 
 export type ParsedRow = {
   vendor: string;
@@ -42,7 +42,7 @@ export type ParsedRow = {
 type Props = {
   parsedRows: ParsedRow[];
   fileName: string | null;
-  fileType: "csv" | "xlsx" | null;
+  fileType: 'csv' | 'xlsx' | null;
   uploadPending: boolean;
   chunkProgress: { processed: number; total: number } | null;
   adminHeaders: Record<string, string>;
@@ -80,61 +80,47 @@ export function ImportFileCard({
       });
 
       if (res.status === 401) {
-        setExportError("Admin session expired. Please unlock again.");
+        setExportError('Admin session expired. Please unlock again.');
         return;
       }
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
-        setExportError(body.error ?? "Export failed — please try again.");
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setExportError(body.error ?? 'Export failed — please try again.');
         return;
       }
 
       const csv = await res.text();
 
-      await Share.share({ message: csv, title: "inventory.csv" });
+      await Share.share({ message: csv, title: 'inventory.csv' });
     } catch (err) {
-      setExportError(
-        err instanceof Error ? err.message : "Export failed — please try again.",
-      );
+      setExportError(err instanceof Error ? err.message : 'Export failed — please try again.');
     } finally {
       setExportPending(false);
     }
   };
 
   return (
-    <View
-      style={[
-        styles.card,
-        { backgroundColor: colors.card, borderColor: colors.border },
-      ]}
-    >
-      <Text style={[styles.cardTitle, { color: colors.foreground }]}>
-        Import File
-      </Text>
+    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={[styles.cardTitle, { color: colors.foreground }]}>Import File</Text>
       <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-        CSV · Excel (.xlsx/.xls) · ODS · pasted tab/comma data{"\n"}
-        Required columns: vendor, catalog{"\n"}
+        CSV · Excel (.xlsx/.xls) · ODS · pasted tab/comma data{'\n'}
+        Required columns: vendor, catalog{'\n'}
         Optional: description, bin (or binLocation)
       </Text>
 
       {/* ── Two import action buttons ───────────────────────────────────── */}
       <View style={styles.importBtnRow}>
-        <Pressable
-          onPress={onPickFile}
-          style={[styles.importBtn, { borderColor: colors.primary }]}
-        >
-          <Text style={[styles.importBtnText, { color: colors.primary }]}>
-            Choose File
-          </Text>
+        <Pressable onPress={onPickFile} style={[styles.importBtn, { borderColor: colors.primary }]}>
+          <Text style={[styles.importBtnText, { color: colors.primary }]}>Choose File</Text>
         </Pressable>
 
         <Pressable
-          onPress={() => setPasteOpen(prev => !prev)}
+          onPress={() => setPasteOpen((prev) => !prev)}
           style={[
             styles.importBtn,
             {
               borderColor: pasteOpen ? colors.primary : colors.border,
-              backgroundColor: pasteOpen ? colors.primary + "18" : "transparent",
+              backgroundColor: pasteOpen ? colors.primary + '18' : 'transparent',
             },
           ]}
         >
@@ -161,7 +147,11 @@ export function ImportFileCard({
             numberOfLines={3}
             style={[
               styles.pasteInput,
-              { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+              {
+                backgroundColor: colors.muted,
+                borderColor: colors.border,
+                color: colors.foreground,
+              },
             ]}
             autoCorrect={false}
             autoCapitalize="none"
@@ -184,11 +174,8 @@ export function ImportFileCard({
 
       {fileName ? (
         <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
-          <Text
-            style={[styles.fileChipText, { color: colors.foreground }]}
-            numberOfLines={1}
-          >
-            {fileType === "xlsx" ? "📊" : "📄"} {fileName}
+          <Text style={[styles.fileChipText, { color: colors.foreground }]} numberOfLines={1}>
+            {fileType === 'xlsx' ? '📊' : '📄'} {fileName}
           </Text>
           {!uploadPending && !chunkProgress ? (
             <Pressable
@@ -197,14 +184,7 @@ export function ImportFileCard({
               style={styles.fileChipDismiss}
               accessibilityLabel="Clear selected file"
             >
-              <Text
-                style={[
-                  styles.fileChipDismissText,
-                  { color: colors.mutedForeground },
-                ]}
-              >
-                ×
-              </Text>
+              <Text style={[styles.fileChipDismissText, { color: colors.mutedForeground }]}>×</Text>
             </Pressable>
           ) : null}
         </View>
@@ -212,23 +192,20 @@ export function ImportFileCard({
 
       <View style={[styles.divider, { borderTopColor: colors.border }]} />
 
-      <Text style={[styles.cardTitle, { color: colors.foreground }]}>
-        Export Inventory
-      </Text>
+      <Text style={[styles.cardTitle, { color: colors.foreground }]}>Export Inventory</Text>
       <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-        Downloads the full inventory as a CSV — includes vendor, catalog,
-        description, and all bin locations. Re-importing the file merges bin
-        assignments back without removing existing data.
+        Downloads the full inventory as a CSV — includes vendor, catalog, description, and all bin
+        locations. Re-importing the file merges bin assignments back without removing existing data.
       </Text>
 
       {exportError ? (
-        <Text style={[styles.exportError, { color: colors.destructive }]}>
-          {exportError}
-        </Text>
+        <Text style={[styles.exportError, { color: colors.destructive }]}>{exportError}</Text>
       ) : null}
 
       <Pressable
-        onPress={() => { void handleExport(); }}
+        onPress={() => {
+          void handleExport();
+        }}
         disabled={exportPending}
         style={[
           secondaryBtnBase,
@@ -242,9 +219,7 @@ export function ImportFileCard({
         {exportPending ? (
           <ActivityIndicator size="small" color={colors.primary} />
         ) : (
-          <Text style={[styles.exportBtnText, { color: colors.primary }]}>
-            Export as CSV
-          </Text>
+          <Text style={[styles.exportBtnText, { color: colors.primary }]}>Export as CSV</Text>
         )}
       </Pressable>
     </View>
@@ -259,10 +234,10 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     gap: 10,
   },
-  cardTitle: { fontSize: 16, fontFamily: "Inter_700Bold" },
-  cardHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  cardTitle: { fontSize: 16, fontFamily: 'Inter_700Bold' },
+  cardHint: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 19 },
   importBtnRow: {
-    flexDirection: "row",
+    flexDirection: 'row',
     gap: 10,
   },
   importBtn: {
@@ -270,47 +245,47 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderRadius: 8,
     paddingVertical: 12,
-    alignItems: "center",
+    alignItems: 'center',
   },
-  importBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  importBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
   pasteInput: {
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 13,
-    fontFamily: "Inter_400Regular",
+    fontFamily: 'Inter_400Regular',
     minHeight: 72,
-    textAlignVertical: "top",
+    textAlignVertical: 'top',
   },
   pasteParseBtn: {
     borderRadius: 8,
     paddingVertical: 11,
-    alignItems: "center",
+    alignItems: 'center',
   },
-  pasteParseBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  pasteParseBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
   fileChip: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 6,
-    alignSelf: "flex-start",
+    alignSelf: 'flex-start',
   },
-  fileChipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  fileChipText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   fileChipDismiss: { marginLeft: 8, padding: 2 },
   fileChipDismissText: {
     fontSize: 18,
     lineHeight: 20,
-    fontFamily: "Inter_500Medium",
+    fontFamily: 'Inter_500Medium',
   },
   divider: { borderTopWidth: StyleSheet.hairlineWidth, marginVertical: 4 },
   exportBtn: {
     paddingVertical: 11,
-    alignItems: "center",
+    alignItems: 'center',
     borderRadius: 8,
     borderWidth: 1.5,
   },
-  exportBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  exportError: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  exportBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  exportError: { fontSize: 13, fontFamily: 'Inter_500Medium' },
 });

@@ -6,9 +6,9 @@
  * screen feels alive rather than blank. Reuses theme colors so it looks
  * correct in both light and dark mode.
  */
-import React, { useEffect, useRef } from "react";
-import { Animated, type DimensionValue, StyleSheet, View } from "react-native";
-import { useColors } from "@/hooks/useColors";
+import React, { useEffect, useRef } from 'react';
+import { Animated, type DimensionValue, StyleSheet, View } from 'react-native';
+import { useColors } from '@/hooks/useColors';
 
 function ShimmerBar({
   width,
@@ -47,7 +47,7 @@ export function SkeletonResultCard({ colors }: { colors: ReturnType<typeof useCo
       Animated.sequence([
         Animated.timing(shimmer, { toValue: 1, duration: 700, useNativeDriver: true }),
         Animated.timing(shimmer, { toValue: 0, duration: 700, useNativeDriver: true }),
-      ]),
+      ])
     );
     anim.start();
     return () => anim.stop();
@@ -102,13 +102,13 @@ const skelStyles = StyleSheet.create({
     gap: 10,
   },
   header: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
   },
   headerLeft: {
-    flexDirection: "row",
-    alignItems: "flex-start",
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     gap: 10,
     flex: 1,
   },

@@ -5,8 +5,8 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { CategoryItemsResponseNode } from "./categoryItemsResponseNode";
-import type { InventoryItem } from "./inventoryItem";
+import type { CategoryItemsResponseNode } from './categoryItemsResponseNode';
+import type { InventoryItem } from './inventoryItem';
 
 export interface CategoryItemsResponse {
   items: InventoryItem[];

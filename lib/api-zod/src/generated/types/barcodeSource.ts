@@ -16,7 +16,7 @@
 export type BarcodeSource = (typeof BarcodeSource)[keyof typeof BarcodeSource];
 
 export const BarcodeSource = {
-  "catalog-auto": "catalog-auto",
-  "upc-linked": "upc-linked",
-  manual: "manual",
+  'catalog-auto': 'catalog-auto',
+  'upc-linked': 'upc-linked',
+  manual: 'manual',
 } as const;

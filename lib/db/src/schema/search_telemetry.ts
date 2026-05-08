@@ -24,43 +24,48 @@ import {
   timestamp,
   index,
   jsonb,
-} from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+} from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 export const searchEventTable = pgTable(
-  "search_event",
+  'search_event',
   {
-    id:              bigserial("id", { mode: "bigint" }).primaryKey(),
-    ts:              timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
-    queryRaw:        text("query_raw").notNull(),
-    queryNormalized: text("query_normalized").notNull(),
-    querySource:     text("query_source").notNull(),
-    filtersJson:     jsonb("filters_json").notNull().default(sql`'{}'::jsonb`),
-    resultsCount:    integer("results_count").notNull(),
-    topResultId:     integer("top_result_id"),
-    latencyMs:       integer("latency_ms").notNull(),
-    layersHit:       text("layers_hit").array().notNull().default(sql`'{}'::text[]`),
+    id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+    ts: timestamp('ts', { withTimezone: true }).notNull().defaultNow(),
+    queryRaw: text('query_raw').notNull(),
+    queryNormalized: text('query_normalized').notNull(),
+    querySource: text('query_source').notNull(),
+    filtersJson: jsonb('filters_json')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    resultsCount: integer('results_count').notNull(),
+    topResultId: integer('top_result_id'),
+    latencyMs: integer('latency_ms').notNull(),
+    layersHit: text('layers_hit')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
   },
   (table) => [
-    index("idx_search_event_ts").on(table.ts),
-    index("idx_search_event_query").on(table.queryNormalized),
-  ],
+    index('idx_search_event_ts').on(table.ts),
+    index('idx_search_event_query').on(table.queryNormalized),
+  ]
 );
 
 export const searchEventClickTable = pgTable(
-  "search_event_click",
+  'search_event_click',
   {
-    id:            bigserial("id", { mode: "bigint" }).primaryKey(),
-    searchEventId: bigint("search_event_id", { mode: "bigint" }).notNull(),
-    ts:            timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
-    resultId:      integer("result_id"),   // nullable: ON DELETE SET NULL from inventory FK
-    resultRank:    integer("result_rank").notNull(),
-    action:        text("action").notNull(),
+    id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+    searchEventId: bigint('search_event_id', { mode: 'bigint' }).notNull(),
+    ts: timestamp('ts', { withTimezone: true }).notNull().defaultNow(),
+    resultId: integer('result_id'), // nullable: ON DELETE SET NULL from inventory FK
+    resultRank: integer('result_rank').notNull(),
+    action: text('action').notNull(),
   },
   (table) => [
-    index("idx_search_event_click_event").on(table.searchEventId),
-    index("idx_search_event_click_result").on(table.resultId, table.ts),
-  ],
+    index('idx_search_event_click_event').on(table.searchEventId),
+    index('idx_search_event_click_result').on(table.resultId, table.ts),
+  ]
 );
 
 export type SearchEvent = typeof searchEventTable.$inferSelect;

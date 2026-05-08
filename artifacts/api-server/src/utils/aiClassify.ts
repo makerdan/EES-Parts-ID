@@ -16,7 +16,7 @@
  *    keeps making progress instead of hanging.
  */
 
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { openai } from '@workspace/integrations-openai-ai-server';
 
 export interface AiClassifyItem {
   id: number;
@@ -39,7 +39,7 @@ export interface AiClassifyAssignment {
   confidence: number;
 }
 
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_MODEL = 'gpt-4o-mini';
 const SYSTEM_PROMPT = `You are an expert electrical-supply warehouse cataloger.
 You will be given a list of inventory items and a list of valid taxonomy leaf
 slugs. For each item, pick the SINGLE best slug from the list — never invent
@@ -54,31 +54,32 @@ Do not include any item you can't confidently classify.`;
 export async function aiClassifyBatch(
   items: AiClassifyItem[],
   allowed: AiClassifyAllowed[],
-  model: string = DEFAULT_MODEL,
+  model: string = DEFAULT_MODEL
 ): Promise<AiClassifyAssignment[]> {
   if (items.length === 0 || allowed.length === 0) return [];
 
   const allowedList = allowed
-    .map(a => `- ${a.slug} (${a.grandparentName} › ${a.parentName} › ${a.name})`)
-    .join("\n");
+    .map((a) => `- ${a.slug} (${a.grandparentName} › ${a.parentName} › ${a.name})`)
+    .join('\n');
 
   const itemsList = items
-    .map(it => {
-      const kw = it.aiKeywords.length > 0 ? ` | keywords: ${it.aiKeywords.slice(0, 8).join(", ")}` : "";
+    .map((it) => {
+      const kw =
+        it.aiKeywords.length > 0 ? ` | keywords: ${it.aiKeywords.slice(0, 8).join(', ')}` : '';
       return `id=${it.id} | ${it.vendor} ${it.catalog} — ${it.description}${kw}`;
     })
-    .join("\n");
+    .join('\n');
 
   try {
     const response = await openai.chat.completions.create(
       {
         model,
         max_completion_tokens: 1024,
-        response_format: { type: "json_object" },
+        response_format: { type: 'json_object' },
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: 'system', content: SYSTEM_PROMPT },
           {
-            role: "user",
+            role: 'user',
             content:
               `Allowed slugs (Category › Subcategory › Type):\n${allowedList}\n\n` +
               `Items to classify:\n${itemsList}\n\n` +
@@ -86,25 +87,25 @@ export async function aiClassifyBatch(
           },
         ],
       },
-      { timeout: 30_000 },
+      { timeout: 30_000 }
     );
 
-    const text = response.choices[0]?.message?.content ?? "{}";
+    const text = response.choices[0]?.message?.content ?? '{}';
     const parsed = JSON.parse(text) as { assignments?: Array<{ id?: unknown; slug?: unknown }> };
     if (!Array.isArray(parsed.assignments)) return [];
 
-    const allowedSlugs = new Set(allowed.map(a => a.slug));
+    const allowedSlugs = new Set(allowed.map((a) => a.slug));
     const out: AiClassifyAssignment[] = [];
     for (const a of parsed.assignments) {
       const id = Number(a.id);
-      const slug = String(a.slug ?? "");
+      const slug = String(a.slug ?? '');
       if (!Number.isFinite(id) || id <= 0) continue;
       if (!allowedSlugs.has(slug)) continue;
       out.push({ id, slug, confidence: 0.7 });
     }
     return out;
   } catch (err) {
-    console.warn("[aiClassifyBatch] failed:", err);
+    console.warn('[aiClassifyBatch] failed:', err);
     return [];
   }
 }

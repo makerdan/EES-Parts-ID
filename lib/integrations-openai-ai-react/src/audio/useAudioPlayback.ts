@@ -3,10 +3,10 @@
  * Supports real-time PCM16 audio streaming from SSE responses.
  * Includes sequence buffer for reordering out-of-order chunks.
  */
-import { useRef, useCallback, useState } from "react";
-import { decodePCM16ToFloat32 } from "./audio-utils";
+import { useRef, useCallback, useState } from 'react';
+import { decodePCM16ToFloat32 } from './audio-utils';
 
-export type PlaybackState = "idle" | "playing" | "ended";
+export type PlaybackState = 'idle' | 'playing' | 'ended';
 
 /**
  * Reorders audio chunks that may arrive out of sequence.
@@ -46,7 +46,7 @@ class SequenceBuffer {
 }
 
 export function useAudioPlayback(workletPath: string) {
-  const [state, setState] = useState<PlaybackState>("idle");
+  const [state, setState] = useState<PlaybackState>('idle');
   const ctxRef = useRef<AudioContext | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const readyRef = useRef(false);
@@ -55,16 +55,16 @@ export function useAudioPlayback(workletPath: string) {
   const init = useCallback(async () => {
     if (readyRef.current) return;
     if (!workletPath) {
-      throw new Error("workletPath is required for audio playback");
+      throw new Error('workletPath is required for audio playback');
     }
 
     const ctx = new AudioContext({ sampleRate: 24000 });
     await ctx.audioWorklet.addModule(workletPath);
-    const worklet = new AudioWorkletNode(ctx, "audio-playback-processor");
+    const worklet = new AudioWorkletNode(ctx, 'audio-playback-processor');
     worklet.connect(ctx.destination);
 
     worklet.port.onmessage = (e) => {
-      if (e.data.type === "ended") setState("idle");
+      if (e.data.type === 'ended') setState('idle');
     };
 
     ctxRef.current = ctx;
@@ -76,8 +76,8 @@ export function useAudioPlayback(workletPath: string) {
   const pushAudio = useCallback((base64Audio: string) => {
     if (!workletRef.current) return;
     const samples = decodePCM16ToFloat32(base64Audio);
-    workletRef.current.port.postMessage({ type: "audio", samples });
-    setState("playing");
+    workletRef.current.port.postMessage({ type: 'audio', samples });
+    setState('playing');
   }, []);
 
   /** Push audio with sequence number - reorders before playback */
@@ -87,21 +87,21 @@ export function useAudioPlayback(workletPath: string) {
     const readyChunks = seqBufferRef.current.push(seq, base64Audio);
     for (const chunk of readyChunks) {
       const samples = decodePCM16ToFloat32(chunk);
-      workletRef.current.port.postMessage({ type: "audio", samples });
+      workletRef.current.port.postMessage({ type: 'audio', samples });
     }
     if (readyChunks.length > 0) {
-      setState("playing");
+      setState('playing');
     }
   }, []);
 
   const signalComplete = useCallback(() => {
-    workletRef.current?.port.postMessage({ type: "streamComplete" });
+    workletRef.current?.port.postMessage({ type: 'streamComplete' });
   }, []);
 
   const clear = useCallback(() => {
-    workletRef.current?.port.postMessage({ type: "clear" });
+    workletRef.current?.port.postMessage({ type: 'clear' });
     seqBufferRef.current.reset();
-    setState("idle");
+    setState('idle');
   }, []);
 
   return { state, init, pushAudio, pushSequencedAudio, signalComplete, clear };

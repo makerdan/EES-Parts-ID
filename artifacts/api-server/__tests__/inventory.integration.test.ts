@@ -9,7 +9,7 @@
 // ── Mock the OpenAI integration BEFORE app is imported ───────────────────────
 // Both the main export and the batch sub-path are hoisted here so that modules
 // that throw at initialisation (client.ts checks env vars) never execute.
-jest.mock("@workspace/integrations-openai-ai-server", () => ({
+jest.mock('@workspace/integrations-openai-ai-server', () => ({
   openai: {
     chat: { completions: { create: jest.fn() } },
     audio: { transcriptions: { create: jest.fn() } },
@@ -21,25 +21,20 @@ jest.mock("@workspace/integrations-openai-ai-server", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
-jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
+jest.mock('@workspace/integrations-openai-ai-server/batch', () => ({
   batchProcess: jest.fn(),
   batchProcessWithSSE: jest.fn(),
   isRateLimitError: jest.fn(() => false),
 }));
 
 // ── Imports ───────────────────────────────────────────────────────────────────
-import supertest from "supertest";
-import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
-import {
-  seedFixtures,
-  cleanupFixtures,
-  closePool,
-  STANDARD_FIXTURES,
-} from "./helpers/testDb";
+import supertest from 'supertest';
+import app from '../src/app';
+import { signAdminToken } from '../src/routes/admin';
+import { seedFixtures, cleanupFixtures, closePool, STANDARD_FIXTURES } from './helpers/testDb';
 
 // ── Test configuration ────────────────────────────────────────────────────────
-const ADMIN_SECRET = "jest-integration-test-secret";
+const ADMIN_SECRET = 'jest-integration-test-secret';
 let adminToken: string;
 
 beforeAll(async () => {
@@ -58,50 +53,50 @@ afterAll(async () => {
 // POST /api/inventory/search
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("POST /api/inventory/search", () => {
-  it("returns 200 with matching results for a seeded catalog number", async () => {
+describe('POST /api/inventory/search', () => {
+  it('returns 200 with matching results for a seeded catalog number', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-BR120" })
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-BR120' })
       .expect(200);
 
-    expect(res.body).toHaveProperty("results");
+    expect(res.body).toHaveProperty('results');
     expect(Array.isArray(res.body.results)).toBe(true);
     expect(res.body.results.length).toBeGreaterThan(0);
 
     const match = res.body.results.find(
-      (r: { item: { catalog: string } }) => r.item.catalog === "JEST-ITG-BR120",
+      (r: { item: { catalog: string } }) => r.item.catalog === 'JEST-ITG-BR120'
     );
     expect(match).toBeDefined();
-    expect(match.item.vendor).toBe("EATON");
+    expect(match.item.vendor).toBe('EATON');
   });
 
-  it("returns 200 with an empty results array for a keyword that matches nothing", async () => {
+  it('returns 200 with an empty results array for a keyword that matches nothing', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/search")
-      .send({ keywords: "ZZZNOMATCH-XYZ-99999-UNIQUE" })
+      .post('/api/inventory/search')
+      .send({ keywords: 'ZZZNOMATCH-XYZ-99999-UNIQUE' })
       .expect(200);
 
-    expect(res.body).toHaveProperty("results");
+    expect(res.body).toHaveProperty('results');
     expect(res.body.results).toEqual([]);
   });
 
-  it("returns 200 with totalMatches and belowThreshold fields in the response", async () => {
+  it('returns 200 with totalMatches and belowThreshold fields in the response', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-BR120" })
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-BR120' })
       .expect(200);
 
-    expect(res.body).toHaveProperty("totalMatches");
-    expect(res.body).toHaveProperty("belowThreshold");
-    expect(typeof res.body.totalMatches).toBe("number");
-    expect(typeof res.body.belowThreshold).toBe("number");
+    expect(res.body).toHaveProperty('totalMatches');
+    expect(res.body).toHaveProperty('belowThreshold');
+    expect(typeof res.body.totalMatches).toBe('number');
+    expect(typeof res.body.belowThreshold).toBe('number');
   });
 
-  it("returns 200 with empty results when confidenceThreshold is set to 100", async () => {
+  it('returns 200 with empty results when confidenceThreshold is set to 100', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG-BR120", confidenceThreshold: 100 })
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-BR120', confidenceThreshold: 100 })
       .expect(200);
 
     // Even exact matches score ≤ 1.0 (= 100%), so threshold = 100 filters them out
@@ -109,24 +104,21 @@ describe("POST /api/inventory/search", () => {
     expect(Array.isArray(res.body.results)).toBe(true);
   });
 
-  it("returns 200 with empty results array when no search text is provided", async () => {
-    const res = await supertest(app)
-      .post("/api/inventory/search")
-      .send({})
-      .expect(200);
+  it('returns 200 with empty results array when no search text is provided', async () => {
+    const res = await supertest(app).post('/api/inventory/search').send({}).expect(200);
 
-    expect(res.body).toHaveProperty("results");
+    expect(res.body).toHaveProperty('results');
     expect(res.body.results).toEqual([]);
   });
 
-  it("returns the dimensionCounts object in the response", async () => {
+  it('returns the dimensionCounts object in the response', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/search")
-      .send({ keywords: "JEST-ITG" })
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG' })
       .expect(200);
 
-    expect(res.body).toHaveProperty("dimensionCounts");
-    expect(typeof res.body.dimensionCounts).toBe("object");
+    expect(res.body).toHaveProperty('dimensionCounts');
+    expect(typeof res.body.dimensionCounts).toBe('object');
   });
 });
 
@@ -134,14 +126,14 @@ describe("POST /api/inventory/search", () => {
 // GIN trigram index planner test
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("GIN trigram index planner", () => {
-  const EXPLAIN_CATALOG = "JEST-ITG-EXPLAIN-GIN-001";
+describe('GIN trigram index planner', () => {
+  const EXPLAIN_CATALOG = 'JEST-ITG-EXPLAIN-GIN-001';
 
   beforeAll(async () => {
     // Seed a row with search_tokens explicitly set so the partial GIN index
     // (WHERE search_tokens IS NOT NULL) has at least one entry to work with.
-    const { db } = await import("@workspace/db");
-    const { sql: rawSql } = await import("drizzle-orm");
+    const { db } = await import('@workspace/db');
+    const { sql: rawSql } = await import('drizzle-orm');
     await db.execute(rawSql`
       INSERT INTO inventory (vendor, catalog, description, search_tokens)
       VALUES (
@@ -156,14 +148,14 @@ describe("GIN trigram index planner", () => {
   }, 15_000);
 
   afterAll(async () => {
-    const { db } = await import("@workspace/db");
-    const { sql: rawSql } = await import("drizzle-orm");
+    const { db } = await import('@workspace/db');
+    const { sql: rawSql } = await import('drizzle-orm');
     await db.execute(rawSql`DELETE FROM inventory WHERE catalog = ${EXPLAIN_CATALOG}`);
   }, 15_000);
 
-  it("uses idx_inventory_search_tokens_trgm (GIN bitmap scan) for the search_tokens arm", async () => {
-    const { db } = await import("@workspace/db");
-    const { sql: rawSql } = await import("drizzle-orm");
+  it('uses idx_inventory_search_tokens_trgm (GIN bitmap scan) for the search_tokens arm', async () => {
+    const { db } = await import('@workspace/db');
+    const { sql: rawSql } = await import('drizzle-orm');
 
     // Run EXPLAIN on the isolated search_tokens arm — the same condition used
     // in the primary UNION ALL arm of the inventory search route.
@@ -183,19 +175,19 @@ describe("GIN trigram index planner", () => {
 
     const planLines = (result as { rows: unknown[] }).rows
       .map((r) => String(Object.values(r as object)[0]))
-      .join("\n");
+      .join('\n');
 
     // The planner must choose a Bitmap Index Scan on the GIN trigram index,
     // not a sequential scan. A Seq Scan here means the planner is ignoring the
     // index — the most common cause is a missing / invalid index or a table
     // too small for the planner to bother with the index overhead.
-    expect(planLines).toContain("idx_inventory_search_tokens_trgm");
-    expect(planLines).not.toContain("Seq Scan");
+    expect(planLines).toContain('idx_inventory_search_tokens_trgm');
+    expect(planLines).not.toContain('Seq Scan');
   });
 
-  it("similarity_threshold SET LOCAL via set_config persists within the transaction", async () => {
-    const { db } = await import("@workspace/db");
-    const { sql: rawSql } = await import("drizzle-orm");
+  it('similarity_threshold SET LOCAL via set_config persists within the transaction', async () => {
+    const { db } = await import('@workspace/db');
+    const { sql: rawSql } = await import('drizzle-orm');
 
     const result = await db.transaction(async (tx) => {
       // set_config with is_local=true is equivalent to SET LOCAL
@@ -210,14 +202,14 @@ describe("GIN trigram index planner", () => {
 
     const planLines = (result as { rows: unknown[] }).rows
       .map((r) => String(Object.values(r as object)[0]))
-      .join("\n");
+      .join('\n');
 
-    expect(planLines).toContain("idx_inventory_search_tokens_trgm");
+    expect(planLines).toContain('idx_inventory_search_tokens_trgm');
   });
 
-  it("UNION ALL fallback LIMIT 50 is scoped to the fallback arm only (not the combined union result)", async () => {
-    const { db } = await import("@workspace/db");
-    const { sql: rawSql } = await import("drizzle-orm");
+  it('UNION ALL fallback LIMIT 50 is scoped to the fallback arm only (not the combined union result)', async () => {
+    const { db } = await import('@workspace/db');
+    const { sql: rawSql } = await import('drizzle-orm');
 
     // This mirrors the exact SQL shape used in the inventory search route.
     // The fallback SELECT is wrapped in parens so LIMIT 50 applies only to
@@ -251,17 +243,17 @@ describe("GIN trigram index planner", () => {
 
     const planLines = (result as { rows: unknown[] }).rows
       .map((r) => String(Object.values(r as object)[0]))
-      .join("\n");
+      .join('\n');
 
     // GIN index must be used for the primary arm
-    expect(planLines).toContain("idx_inventory_search_tokens_trgm");
+    expect(planLines).toContain('idx_inventory_search_tokens_trgm');
 
     // The plan must have an Append node (from UNION ALL) with a nested Limit
     // child (the fallback arm's LIMIT 50). The outer sort+limit (LIMIT 200)
     // sits above the Append, so both "Append" and "Limit" appear in the plan.
     // The key invariant: the GIN arm is not itself wrapped in the fallback limit.
-    expect(planLines).toContain("Append");
-    expect(planLines).toContain("Bitmap Index Scan on idx_inventory_search_tokens_trgm");
+    expect(planLines).toContain('Append');
+    expect(planLines).toContain('Bitmap Index Scan on idx_inventory_search_tokens_trgm');
   });
 });
 
@@ -269,60 +261,60 @@ describe("GIN trigram index planner", () => {
 // POST /api/inventory/upsert-batch
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("POST /api/inventory/upsert-batch", () => {
-  const NEW_CATALOG = "JEST-ITG-UPSERT-001";
+describe('POST /api/inventory/upsert-batch', () => {
+  const NEW_CATALOG = 'JEST-ITG-UPSERT-001';
 
   afterEach(async () => {
     // Clean up any items created by upsert-batch tests
-    const { db, inventoryTable } = await import("@workspace/db");
-    const { eq } = await import("drizzle-orm");
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
     await db.delete(inventoryTable).where(eq(inventoryTable.catalog, NEW_CATALOG));
   });
 
-  it("returns 401 when no Authorization header is provided", async () => {
+  it('returns 401 when no Authorization header is provided', async () => {
     await supertest(app)
-      .post("/api/inventory/upsert-batch")
-      .send({ items: [{ vendor: "TEST", catalog: NEW_CATALOG, description: "test" }] })
+      .post('/api/inventory/upsert-batch')
+      .send({ items: [{ vendor: 'TEST', catalog: NEW_CATALOG, description: 'test' }] })
       .expect(401);
   });
 
-  it("returns 401 when an invalid token is provided", async () => {
+  it('returns 401 when an invalid token is provided', async () => {
     await supertest(app)
-      .post("/api/inventory/upsert-batch")
-      .set("Authorization", "Bearer invalid-token-xyz")
-      .send({ items: [{ vendor: "TEST", catalog: NEW_CATALOG, description: "test" }] })
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', 'Bearer invalid-token-xyz')
+      .send({ items: [{ vendor: 'TEST', catalog: NEW_CATALOG, description: 'test' }] })
       .expect(401);
   });
 
-  it("returns 400 when items array is empty", async () => {
+  it('returns 400 when items array is empty', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/upsert-batch")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ items: [] })
       .expect(400);
 
-    expect(res.body).toHaveProperty("error");
+    expect(res.body).toHaveProperty('error');
   });
 
-  it("returns 400 when items field is missing entirely", async () => {
+  it('returns 400 when items field is missing entirely', async () => {
     await supertest(app)
-      .post("/api/inventory/upsert-batch")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({})
       .expect(400);
   });
 
-  it("inserts a new item and returns inserted=1, updated=0", async () => {
+  it('inserts a new item and returns inserted=1, updated=0', async () => {
     const res = await supertest(app)
-      .post("/api/inventory/upsert-batch")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
         items: [
           {
-            vendor: "JEST-VENDOR",
+            vendor: 'JEST-VENDOR',
             catalog: NEW_CATALOG,
-            description: "Jest integration test item",
-            binLocations: ["TEST-BIN"],
+            description: 'Jest integration test item',
+            binLocations: ['TEST-BIN'],
           },
         ],
       })
@@ -333,17 +325,17 @@ describe("POST /api/inventory/upsert-batch", () => {
     expect(res.body.total).toBe(1);
   });
 
-  it("updates an existing item and returns inserted=0, updated=1", async () => {
+  it('updates an existing item and returns inserted=0, updated=1', async () => {
     // First insert
     await supertest(app)
-      .post("/api/inventory/upsert-batch")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
         items: [
           {
-            vendor: "JEST-VENDOR",
+            vendor: 'JEST-VENDOR',
             catalog: NEW_CATALOG,
-            description: "Original description",
+            description: 'Original description',
           },
         ],
       })
@@ -351,14 +343,14 @@ describe("POST /api/inventory/upsert-batch", () => {
 
     // Now update
     const res = await supertest(app)
-      .post("/api/inventory/upsert-batch")
-      .set("Authorization", `Bearer ${adminToken}`)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
         items: [
           {
-            vendor: "JEST-VENDOR",
+            vendor: 'JEST-VENDOR',
             catalog: NEW_CATALOG,
-            description: "Updated description",
+            description: 'Updated description',
           },
         ],
       })

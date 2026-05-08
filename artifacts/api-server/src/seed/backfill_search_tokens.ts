@@ -22,14 +22,14 @@
  *   FORCE                – set to "1" to recompute all rows (default: 0)
  */
 
-import { db, pool } from "@workspace/db";
-import { inventoryTable, synonymGroupTable } from "@workspace/db";
-import { sql, eq } from "drizzle-orm";
-import { buildSearchTokens } from "../enrichment/buildSearchTokens";
+import { db, pool } from '@workspace/db';
+import { inventoryTable, synonymGroupTable } from '@workspace/db';
+import { sql, eq } from 'drizzle-orm';
+import { buildSearchTokens } from '../enrichment/buildSearchTokens';
 
-const BATCH_SIZE = parseInt(process.env["BACKFILL_BATCH_SIZE"] ?? "500", 10);
-const DELAY_MS = parseInt(process.env["BACKFILL_DELAY_MS"] ?? "0", 10);
-const FORCE = process.env["FORCE"] === "1";
+const BATCH_SIZE = parseInt(process.env['BACKFILL_BATCH_SIZE'] ?? '500', 10);
+const DELAY_MS = parseInt(process.env['BACKFILL_DELAY_MS'] ?? '0', 10);
+const FORCE = process.env['FORCE'] === '1';
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,7 +37,7 @@ async function sleep(ms: number) {
 
 async function backfillSearchTokens() {
   // Load synonym groups once — they fit in RAM and change infrequently.
-  console.log("Loading synonym_group table…");
+  console.log('Loading synonym_group table…');
   const synonymGroups = await db
     .select({
       canonical: synonymGroupTable.canonical,
@@ -46,9 +46,7 @@ async function backfillSearchTokens() {
     .from(synonymGroupTable);
   console.log(`  ${synonymGroups.length} synonym groups loaded.`);
 
-  const needsBackfill = FORCE
-    ? sql`TRUE`
-    : sql`${inventoryTable.searchTokens} IS NULL`;
+  const needsBackfill = FORCE ? sql`TRUE` : sql`${inventoryTable.searchTokens} IS NULL`;
 
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
@@ -57,12 +55,12 @@ async function backfillSearchTokens() {
 
   console.log(
     `\nRows needing search_tokens backfill: ${total}` +
-    (FORCE ? " (FORCE mode — recomputing all)" : ""),
+      (FORCE ? ' (FORCE mode — recomputing all)' : '')
   );
   console.log(`Batch size: ${BATCH_SIZE}\n`);
 
   if (total === 0) {
-    console.log("Nothing to do – all rows already have search_tokens.");
+    console.log('Nothing to do – all rows already have search_tokens.');
     await pool.end();
     return;
   }
@@ -103,9 +101,7 @@ async function backfillSearchTokens() {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const done = processed + errors;
     const rate = done > 0 ? Math.round((done / (Date.now() - startTime)) * 1000) : 0;
-    console.log(
-      `  [${elapsed}s] ${done}/${total}  ✓${processed} ✗${errors}  ~${rate}/s`,
-    );
+    console.log(`  [${elapsed}s] ${done}/${total}  ✓${processed} ✗${errors}  ~${rate}/s`);
 
     if (batch.length < BATCH_SIZE) break;
 
@@ -128,13 +124,13 @@ async function backfillSearchTokens() {
   `);
   const c = ((coverageResult as { rows: unknown[] }).rows[0] ?? {}) as Record<string, number>;
   console.log(`\nCoverage:`);
-  console.log(`  has search_tokens : ${c["has_tokens"]}/${c["total"]}`);
-  console.log(`  missing           : ${c["missing_tokens"]}`);
+  console.log(`  has search_tokens : ${c['has_tokens']}/${c['total']}`);
+  console.log(`  missing           : ${c['missing_tokens']}`);
 
   await pool.end();
 }
 
 backfillSearchTokens().catch((err) => {
-  console.error("search_tokens backfill failed:", err);
+  console.error('search_tokens backfill failed:', err);
   process.exit(1);
 });

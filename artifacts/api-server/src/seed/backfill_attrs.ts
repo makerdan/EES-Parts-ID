@@ -16,15 +16,15 @@
  *   • Re-running after a partial failure will pick up from where it left off.
  */
 
-import { db, pool } from "@workspace/db";
-import { inventoryTable } from "@workspace/db";
-import { sql, eq } from "drizzle-orm";
-import { deriveAttrs, parseTradeSize } from "../enrichment/parseAttributes";
-import { CURRENT_PARSER_VERSION } from "../enrichment/invalidation";
-import { parseTradeSizeInches, isConduitOrPipe } from "../utils/tradeSize";
+import { db, pool } from '@workspace/db';
+import { inventoryTable } from '@workspace/db';
+import { sql, eq } from 'drizzle-orm';
+import { deriveAttrs, parseTradeSize } from '../enrichment/parseAttributes';
+import { CURRENT_PARSER_VERSION } from '../enrichment/invalidation';
+import { parseTradeSizeInches, isConduitOrPipe } from '../utils/tradeSize';
 
-const BATCH_SIZE = parseInt(process.env["BACKFILL_BATCH_SIZE"] ?? "500", 10);
-const DELAY_MS = parseInt(process.env["BACKFILL_DELAY_MS"] ?? "0", 10);
+const BATCH_SIZE = parseInt(process.env['BACKFILL_BATCH_SIZE'] ?? '500', 10);
+const DELAY_MS = parseInt(process.env['BACKFILL_DELAY_MS'] ?? '0', 10);
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,14 +36,14 @@ async function backfillAttrs() {
     .from(inventoryTable)
     .where(
       sql`${inventoryTable.attrsParsedAt} IS NULL
-          OR (${inventoryTable.catalogParse}->>'parser_version')::int < ${CURRENT_PARSER_VERSION}`,
+          OR (${inventoryTable.catalogParse}->>'parser_version')::int < ${CURRENT_PARSER_VERSION}`
     );
 
   console.log(`\nItems needing attribute backfill: ${total}`);
   console.log(`Batch size: ${BATCH_SIZE}\n`);
 
   if (total === 0) {
-    console.log("Nothing to do – all items already at parser_version >= 2.");
+    console.log('Nothing to do – all items already at parser_version >= 2.');
     await pool.end();
     return;
   }
@@ -64,7 +64,7 @@ async function backfillAttrs() {
       .from(inventoryTable)
       .where(
         sql`${inventoryTable.attrsParsedAt} IS NULL
-            OR (${inventoryTable.catalogParse}->>'parser_version')::int < ${CURRENT_PARSER_VERSION}`,
+            OR (${inventoryTable.catalogParse}->>'parser_version')::int < ${CURRENT_PARSER_VERSION}`
       )
       .limit(BATCH_SIZE);
 
@@ -82,14 +82,12 @@ async function backfillAttrs() {
         // parseTradeSizeInches handles catalog-code encoded sizes (e.g. "EMT212" → 2.5).
         // parseTradeSize handles richer free-text in descriptions ("1/2 inch", "25mm", etc.).
         const tradeSizeInches = isConduit
-          ? (parseTradeSizeInches(item.catalog)
-             ?? parseTradeSize(item.description)
-             ?? parseTradeSize(item.catalog))
+          ? (parseTradeSizeInches(item.catalog) ??
+            parseTradeSize(item.description) ??
+            parseTradeSize(item.catalog))
           : null;
         const tradeSizeIn =
-          tradeSizeInches !== null && tradeSizeInches <= 12
-            ? tradeSizeInches.toFixed(3)
-            : null;
+          tradeSizeInches !== null && tradeSizeInches <= 12 ? tradeSizeInches.toFixed(3) : null;
 
         await db
           .update(inventoryTable)
@@ -124,9 +122,7 @@ async function backfillAttrs() {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const done = processed + errors;
     const rate = done > 0 ? Math.round((done / (Date.now() - startTime)) * 1000) : 0;
-    console.log(
-      `  [${elapsed}s] ${done}/${total}  ✓${processed} ✗${errors}  ~${rate}/s`,
-    );
+    console.log(`  [${elapsed}s] ${done}/${total}  ✓${processed} ✗${errors}  ~${rate}/s`);
 
     if (batch.length < BATCH_SIZE) break; // last partial batch
 
@@ -152,17 +148,17 @@ async function backfillAttrs() {
     FROM inventory
   `);
   const c = ((coverageResult as { rows: unknown[] }).rows[0] ?? {}) as Record<string, number>;
-  console.log(`\nColumn coverage (${c["total"]} total rows):`);
-  console.log(`  catalog_parse  : ${c["has_catalog_parse"]}`);
-  console.log(`  amperage       : ${c["has_amperage"]}`);
-  console.log(`  pole_count     : ${c["has_pole_count"]}`);
-  console.log(`  voltage        : ${c["has_voltage"]}`);
-  console.log(`  trade_size_in  : ${c["has_trade_size_in"]}`);
+  console.log(`\nColumn coverage (${c['total']} total rows):`);
+  console.log(`  catalog_parse  : ${c['has_catalog_parse']}`);
+  console.log(`  amperage       : ${c['has_amperage']}`);
+  console.log(`  pole_count     : ${c['has_pole_count']}`);
+  console.log(`  voltage        : ${c['has_voltage']}`);
+  console.log(`  trade_size_in  : ${c['has_trade_size_in']}`);
 
   await pool.end();
 }
 
 backfillAttrs().catch((err) => {
-  console.error("Attribute backfill failed:", err);
+  console.error('Attribute backfill failed:', err);
   process.exit(1);
 });

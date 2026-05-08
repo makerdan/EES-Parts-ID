@@ -7,8 +7,8 @@
  * give the model the most signal. We resize before upload because warehouse
  * phones routinely produce 12MP photos that would otherwise blow the request budget.
  */
-import React, { useState, useRef, useEffect } from "react";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import React, { useState, useRef, useEffect } from 'react';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   ActivityIndicator,
   Image,
@@ -19,35 +19,39 @@ import {
   Text,
   TextInput,
   View,
-} from "react-native";
-import * as ImagePicker from "expo-image-picker";
-import { router } from "expo-router";
-import { resizeImage } from "@/utils/resizeImage";
-import { useSearchInventory, useAiIdentifyPart, useConfirmPhotoId } from "@workspace/api-client-react";
-import type { SearchResult } from "@workspace/api-client-react";
-import { useColors } from "@/hooks/useColors";
-import { useApp } from "@/contexts/AppContext";
-import { ResultCard } from "@/components/ResultCard";
-import { ReferenceModal } from "@/components/ReferenceModal";
-import { secondaryBtnBase } from "@/styles/shared";
+} from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { router } from 'expo-router';
+import { resizeImage } from '@/utils/resizeImage';
+import {
+  useSearchInventory,
+  useAiIdentifyPart,
+  useConfirmPhotoId,
+} from '@workspace/api-client-react';
+import type { SearchResult } from '@workspace/api-client-react';
+import { useColors } from '@/hooks/useColors';
+import { useApp } from '@/contexts/AppContext';
+import { ResultCard } from '@/components/ResultCard';
+import { ReferenceModal } from '@/components/ReferenceModal';
+import { secondaryBtnBase } from '@/styles/shared';
 
 export default function PhotoScreen() {
   const colors = useColors();
   const { textFontScale } = useApp();
   const [showRefModal, setShowRefModal] = useState(false);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
-  const [keywords, setKeywords] = useState("");
-  const [vendor, setVendor] = useState("");
-  const [color, setColor] = useState("");
-  const [size, setSize] = useState("");
-  const [textNumbers, setTextNumbers] = useState("");
+  const [keywords, setKeywords] = useState('');
+  const [vendor, setVendor] = useState('');
+  const [color, setColor] = useState('');
+  const [size, setSize] = useState('');
+  const [textNumbers, setTextNumbers] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
-  const [aiSummary, setAiSummary] = useState("");
+  const [aiSummary, setAiSummary] = useState('');
   const [aiTerms, setAiTerms] = useState<string[]>([]);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   // Tracks which phase of the multi-step AI identification flow we are in.
-  type ProgressPhase = "uploading" | "analysing" | "searching" | null;
+  type ProgressPhase = 'uploading' | 'analysing' | 'searching' | null;
   const [progressPhase, setProgressPhase] = useState<ProgressPhase>(null);
 
   const [photoEventId, setPhotoEventId] = useState<number | null>(null);
@@ -62,26 +66,29 @@ export default function PhotoScreen() {
   const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Clean up the phase-advance timer if the component unmounts mid-call.
-  useEffect(() => () => {
-    if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
+    },
+    []
+  );
 
-  const pickImage = async (source: "camera" | "library") => {
+  const pickImage = async (source: 'camera' | 'library') => {
     if (images.length >= 2) {
-      setInlineError("Max 2 photos — remove one first.");
+      setInlineError('Max 2 photos — remove one first.');
       return;
     }
     setInlineError(null);
 
     let result;
-    if (source === "camera") {
+    if (source === 'camera') {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== "granted") {
-        setInlineError("Camera access denied — please enable it in your device Settings.");
+      if (status !== 'granted') {
+        setInlineError('Camera access denied — please enable it in your device Settings.');
         return;
       }
       result = await ImagePicker.launchCameraAsync({
-        mediaTypes: "images",
+        mediaTypes: 'images',
         quality: 0.7,
         allowsEditing: true,
         aspect: [4, 3],
@@ -89,7 +96,7 @@ export default function PhotoScreen() {
     } else {
       const remainingSlots = 2 - images.length;
       result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: "images",
+        mediaTypes: 'images',
         quality: 0.7,
         allowsMultipleSelection: true,
         selectionLimit: remainingSlots,
@@ -101,7 +108,7 @@ export default function PhotoScreen() {
       const allowedAssets = result.assets.slice(0, 2 - currentCount);
       const overflowMessage =
         allowedAssets.length < result.assets.length
-          ? "Max 2 photos — only the first was added."
+          ? 'Max 2 photos — only the first was added.'
           : null;
 
       setIsProcessing(true);
@@ -109,13 +116,13 @@ export default function PhotoScreen() {
         // Process each photo independently so one bad file (corrupt, stale URI,
         // unsupported format, etc.) doesn't discard the rest of the batch.
         const settled = await Promise.allSettled(
-          allowedAssets.map((asset) => resizeImage(asset.uri, asset.width ?? 0)),
+          allowedAssets.map((asset) => resizeImage(asset.uri, asset.width ?? 0))
         );
 
         const successfulImages: { uri: string; base64: string }[] = [];
         const failedNames: string[] = [];
         settled.forEach((outcome, index) => {
-          if (outcome.status === "fulfilled") {
+          if (outcome.status === 'fulfilled') {
             successfulImages.push({
               uri: outcome.value.uri,
               base64: outcome.value.base64,
@@ -130,7 +137,7 @@ export default function PhotoScreen() {
             failedNames.push(
               fileName && fileName.length > 0
                 ? fileName
-                : `Photo ${index + 1} of ${allowedAssets.length}`,
+                : `Photo ${index + 1} of ${allowedAssets.length}`
             );
           }
         });
@@ -142,23 +149,19 @@ export default function PhotoScreen() {
         const errorParts: string[] = [];
         if (overflowMessage) errorParts.push(overflowMessage);
         if (failedNames.length > 0) {
-          const list = failedNames.join(", ");
+          const list = failedNames.join(', ');
           const someSucceeded = successfulImages.length > 0;
           if (failedNames.length === 1) {
-            errorParts.push(
-              `Couldn't process ${list} — please try a different photo.`,
-            );
+            errorParts.push(`Couldn't process ${list} — please try a different photo.`);
           } else if (someSucceeded) {
-            errorParts.push(
-              `Couldn't process these photos: ${list}. The other photos were added.`,
-            );
+            errorParts.push(`Couldn't process these photos: ${list}. The other photos were added.`);
           } else {
             errorParts.push(
-              `Couldn't process any of the selected photos: ${list}. Please try different photos.`,
+              `Couldn't process any of the selected photos: ${list}. Please try different photos.`
             );
           }
         }
-        setInlineError(errorParts.length > 0 ? errorParts.join(" ") : null);
+        setInlineError(errorParts.length > 0 ? errorParts.join(' ') : null);
       } finally {
         setIsProcessing(false);
       }
@@ -171,7 +174,7 @@ export default function PhotoScreen() {
 
   const handleIdentify = async () => {
     if (!images.length) {
-      setInlineError("Add at least one photo before identifying.");
+      setInlineError('Add at least one photo before identifying.');
       return;
     }
 
@@ -183,17 +186,17 @@ export default function PhotoScreen() {
     identifyMutation.reset();
     searchMutation.reset();
     setResults([]);
-    setAiSummary("");
+    setAiSummary('');
     setAiTerms([]);
 
     // Phase 1 — show "Uploading" immediately; advance to "Analysing" after 2 s,
     // which is roughly when photo data has been sent and the AI is processing.
     // Clear any lingering timer from a previous (now-superseded) request first.
     if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
-    setProgressPhase("uploading");
+    setProgressPhase('uploading');
     progressTimerRef.current = setTimeout(() => {
       // Guard: only advance if this request is still the active one.
-      if (requestIdRef.current === thisRequestId) setProgressPhase("analysing");
+      if (requestIdRef.current === thisRequestId) setProgressPhase('analysing');
     }, 2000);
 
     try {
@@ -213,7 +216,10 @@ export default function PhotoScreen() {
       if (requestIdRef.current !== thisRequestId) return;
 
       // Safe to clear: this is the active request's timer.
-      if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
+      if (progressTimerRef.current) {
+        clearTimeout(progressTimerRef.current);
+        progressTimerRef.current = null;
+      }
 
       setAiSummary(identifyResult.summary);
       setAiTerms(identifyResult.searchTerms);
@@ -230,11 +236,11 @@ export default function PhotoScreen() {
         const allTerms = [
           ...identifyResult.searchTerms,
           ...identifyResult.synonyms.slice(0, 3),
-        ].join(" ");
+        ].join(' ');
 
         if (allTerms.trim()) {
           // Phase 3 — AI done, now querying inventory.
-          setProgressPhase("searching");
+          setProgressPhase('searching');
 
           const searchResult = await searchMutation.mutateAsync({
             data: {
@@ -254,22 +260,25 @@ export default function PhotoScreen() {
     } catch (err) {
       // Check stale-request FIRST — don't touch shared timer/phase if superseded.
       if (requestIdRef.current !== thisRequestId) return;
-      if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
+      if (progressTimerRef.current) {
+        clearTimeout(progressTimerRef.current);
+        progressTimerRef.current = null;
+      }
       // Surface a meaningful message based on HTTP status (ApiError.status) when available
       const status =
-        err instanceof Error && "status" in err
-          ? (err as { status: number }).status
-          : null;
-      if (err instanceof Error && err.name === "AbortError") {
-        setInlineError("Request timed out — please try again on a faster connection.");
+        err instanceof Error && 'status' in err ? (err as { status: number }).status : null;
+      if (err instanceof Error && err.name === 'AbortError') {
+        setInlineError('Request timed out — please try again on a faster connection.');
       } else if (status === 413) {
-        setInlineError("Photo too large — try a smaller or lower-resolution image.");
+        setInlineError('Photo too large — try a smaller or lower-resolution image.');
       } else if (status === 429) {
-        setInlineError("Too many requests — please wait a moment and try again.");
+        setInlineError('Too many requests — please wait a moment and try again.');
       } else if (status != null && status >= 500) {
-        setInlineError("Server error — the AI service is temporarily unavailable. Try again shortly.");
+        setInlineError(
+          'Server error — the AI service is temporarily unavailable. Try again shortly.'
+        );
       } else {
-        setInlineError("Identification failed — could not analyze the part. Please try again.");
+        setInlineError('Identification failed — could not analyze the part. Please try again.');
       }
     } finally {
       // Only reset our own progress phase; never overwrite a newer request's state.
@@ -281,9 +290,13 @@ export default function PhotoScreen() {
 
   // Human-readable label for the current progress phase.
   const progressLabel =
-    progressPhase === "uploading" ? "Uploading photos…" :
-    progressPhase === "analysing" ? "Analysing with AI…" :
-    progressPhase === "searching" ? "Searching inventory…" : null;
+    progressPhase === 'uploading'
+      ? 'Uploading photos…'
+      : progressPhase === 'analysing'
+        ? 'Analysing with AI…'
+        : progressPhase === 'searching'
+          ? 'Searching inventory…'
+          : null;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
@@ -292,7 +305,7 @@ export default function PhotoScreen() {
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           {/* Tapping the app title from any tab jumps back to the Search
               tab's empty welcome state (handled there by tabPress). */}
-          <Pressable onPress={() => router.replace("/(tabs)")} hitSlop={8}>
+          <Pressable onPress={() => router.replace('/(tabs)')} hitSlop={8}>
             <Text style={[styles.headerTitle, { color: colors.foreground }]}>Photo ID</Text>
             <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
               Identify parts from photos
@@ -322,41 +335,71 @@ export default function PhotoScreen() {
 
               {images.length < 2 ? (
                 isProcessing ? (
-                  <View style={[styles.processingRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                  <View
+                    style={[
+                      styles.processingRow,
+                      { borderColor: colors.border, backgroundColor: colors.card },
+                    ]}
+                  >
                     <ActivityIndicator size="small" color={colors.primary} />
-                    <Text style={[styles.processingLabel, { color: colors.mutedForeground }]}>Processing…</Text>
+                    <Text style={[styles.processingLabel, { color: colors.mutedForeground }]}>
+                      Processing…
+                    </Text>
                   </View>
                 ) : (
                   <View style={styles.addImageButtons}>
                     <Pressable
-                      onPress={() => pickImage("camera")}
+                      onPress={() => pickImage('camera')}
                       disabled={isProcessing}
-                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
+                      style={[
+                        styles.addImageBtn,
+                        { backgroundColor: colors.card, borderColor: colors.foreground },
+                      ]}
                       accessibilityRole="button"
                       accessibilityLabel="Take photo with camera"
                     >
                       <MaterialCommunityIcons name="camera" size={28} color={colors.foreground} />
-                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Camera</Text>
+                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>
+                        Camera
+                      </Text>
                     </Pressable>
                     <Pressable
-                      onPress={() => pickImage("library")}
+                      onPress={() => pickImage('library')}
                       disabled={isProcessing}
-                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
+                      style={[
+                        styles.addImageBtn,
+                        { backgroundColor: colors.card, borderColor: colors.foreground },
+                      ]}
                       accessibilityRole="button"
                       accessibilityLabel="Pick from photo library"
                     >
-                      <MaterialCommunityIcons name="image-multiple" size={28} color={colors.foreground} />
-                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
+                      <MaterialCommunityIcons
+                        name="image-multiple"
+                        size={28}
+                        color={colors.foreground}
+                      />
+                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>
+                        Photo Library
+                      </Text>
                     </Pressable>
                     <Pressable
-                      onPress={() => router.push("/scan")}
+                      onPress={() => router.push('/scan')}
                       disabled={isProcessing}
-                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
+                      style={[
+                        styles.addImageBtn,
+                        { backgroundColor: colors.card, borderColor: colors.foreground },
+                      ]}
                       accessibilityRole="button"
                       accessibilityLabel="Scan barcode"
                     >
-                      <MaterialCommunityIcons name="barcode-scan" size={28} color={colors.foreground} />
-                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Barcode</Text>
+                      <MaterialCommunityIcons
+                        name="barcode-scan"
+                        size={28}
+                        color={colors.foreground}
+                      />
+                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>
+                        Barcode
+                      </Text>
                     </Pressable>
                   </View>
                 )
@@ -375,31 +418,53 @@ export default function PhotoScreen() {
           </View>
 
           {/* Optional context */}
-          <View style={[styles.contextCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View
+            style={[
+              styles.contextCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
             <Text style={[styles.contextTitle, { color: colors.foreground }]}>
               Optional Context
             </Text>
             {[
-              { label: "Visible Text / Numbers", value: textNumbers, key: "textNumbers", ph: "e.g. BR120, 20A, 125V..." },
-              { label: "Keywords", value: keywords, key: "keywords", ph: "e.g. breaker, outlet..." },
-              { label: "Vendor", value: vendor, key: "vendor", ph: "e.g. Eaton, Square D..." },
-              { label: "Color", value: color, key: "color", ph: "e.g. white, gray..." },
-              { label: "Size", value: size, key: "size", ph: "e.g. 20A, 3/4 inch..." },
+              {
+                label: 'Visible Text / Numbers',
+                value: textNumbers,
+                key: 'textNumbers',
+                ph: 'e.g. BR120, 20A, 125V...',
+              },
+              {
+                label: 'Keywords',
+                value: keywords,
+                key: 'keywords',
+                ph: 'e.g. breaker, outlet...',
+              },
+              { label: 'Vendor', value: vendor, key: 'vendor', ph: 'e.g. Eaton, Square D...' },
+              { label: 'Color', value: color, key: 'color', ph: 'e.g. white, gray...' },
+              { label: 'Size', value: size, key: 'size', ph: 'e.g. 20A, 3/4 inch...' },
             ].map(({ label, value, key, ph }) => (
               <View key={key} style={{ marginBottom: 10 }}>
                 <Text style={[styles.fieldLabel, { color: colors.foreground }]}>{label}:</Text>
                 <TextInput
                   value={value}
                   onChangeText={(v) => {
-                    if (key === "textNumbers") setTextNumbers(v);
-                    else if (key === "keywords") setKeywords(v);
-                    else if (key === "vendor") setVendor(v);
-                    else if (key === "color") setColor(v);
-                    else if (key === "size") setSize(v);
+                    if (key === 'textNumbers') setTextNumbers(v);
+                    else if (key === 'keywords') setKeywords(v);
+                    else if (key === 'vendor') setVendor(v);
+                    else if (key === 'color') setColor(v);
+                    else if (key === 'size') setSize(v);
                   }}
                   placeholder={ph}
                   placeholderTextColor={colors.mutedForeground}
-                  style={[styles.fieldInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                  style={[
+                    styles.fieldInput,
+                    {
+                      backgroundColor: colors.muted,
+                      borderColor: colors.border,
+                      color: colors.foreground,
+                    },
+                  ]}
                   autoCorrect={false}
                   autoCapitalize="none"
                   returnKeyType="done"
@@ -418,16 +483,28 @@ export default function PhotoScreen() {
             ]}
           >
             {isLoading ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <ActivityIndicator color={colors.primaryForeground} />
                 <Text style={[styles.identifyBtnText, { color: colors.primaryForeground }]}>
-                  {progressLabel ?? "Working…"}
+                  {progressLabel ?? 'Working…'}
                 </Text>
               </View>
             ) : (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <MaterialCommunityIcons name="magnify" size={20} color={images.length === 0 ? colors.mutedForeground : colors.primaryForeground} />
-                <Text style={[styles.identifyBtnText, { color: images.length === 0 ? colors.mutedForeground : colors.primaryForeground }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <MaterialCommunityIcons
+                  name="magnify"
+                  size={20}
+                  color={images.length === 0 ? colors.mutedForeground : colors.primaryForeground}
+                />
+                <Text
+                  style={[
+                    styles.identifyBtnText,
+                    {
+                      color:
+                        images.length === 0 ? colors.mutedForeground : colors.primaryForeground,
+                    },
+                  ]}
+                >
                   Identify Part
                 </Text>
               </View>
@@ -437,7 +514,7 @@ export default function PhotoScreen() {
           {/* Step indicator — visible only while a request is in progress */}
           {isLoading && progressPhase ? (
             <View style={styles.stepRow}>
-              {(["uploading", "analysing", "searching"] as const).map((phase, idx) => {
+              {(['uploading', 'analysing', 'searching'] as const).map((phase, idx) => {
                 const phaseOrder = { uploading: 0, analysing: 1, searching: 2 };
                 const currentIdx = phaseOrder[progressPhase];
                 const isDone = phaseOrder[phase] < currentIdx;
@@ -445,35 +522,56 @@ export default function PhotoScreen() {
                 return (
                   <React.Fragment key={phase}>
                     <View style={styles.stepItem}>
-                      <View style={[
-                        styles.stepDot,
-                        {
-                          backgroundColor: isDone
-                            ? colors.primary
-                            : isActive
-                            ? colors.primary
-                            : colors.border,
-                          opacity: isDone ? 0.5 : 1,
-                        },
-                      ]}>
+                      <View
+                        style={[
+                          styles.stepDot,
+                          {
+                            backgroundColor: isDone
+                              ? colors.primary
+                              : isActive
+                                ? colors.primary
+                                : colors.border,
+                            opacity: isDone ? 0.5 : 1,
+                          },
+                        ]}
+                      >
                         {isDone ? (
                           <Text style={styles.stepDotCheck}>✓</Text>
                         ) : isActive ? (
-                          <ActivityIndicator size="small" color={colors.primaryForeground} style={{ transform: [{ scale: 0.55 }] }} />
+                          <ActivityIndicator
+                            size="small"
+                            color={colors.primaryForeground}
+                            style={{ transform: [{ scale: 0.55 }] }}
+                          />
                         ) : null}
                       </View>
-                      <Text style={[
-                        styles.stepLabel,
-                        {
-                          color: isActive ? colors.foreground : colors.mutedForeground,
-                          fontFamily: isActive ? "Inter_600SemiBold" : "Inter_400Regular",
-                        },
-                      ]}>
-                        {phase === "uploading" ? "Upload" : phase === "analysing" ? "Analyse" : "Search"}
+                      <Text
+                        style={[
+                          styles.stepLabel,
+                          {
+                            color: isActive ? colors.foreground : colors.mutedForeground,
+                            fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                          },
+                        ]}
+                      >
+                        {phase === 'uploading'
+                          ? 'Upload'
+                          : phase === 'analysing'
+                            ? 'Analyse'
+                            : 'Search'}
                       </Text>
                     </View>
                     {idx < 2 ? (
-                      <View style={[styles.stepConnector, { backgroundColor: phaseOrder[phase] < currentIdx ? colors.primary : colors.border, opacity: phaseOrder[phase] < currentIdx ? 0.5 : 0.3 }]} />
+                      <View
+                        style={[
+                          styles.stepConnector,
+                          {
+                            backgroundColor:
+                              phaseOrder[phase] < currentIdx ? colors.primary : colors.border,
+                            opacity: phaseOrder[phase] < currentIdx ? 0.5 : 0.3,
+                          },
+                        ]}
+                      />
                     ) : null}
                   </React.Fragment>
                 );
@@ -483,10 +581,24 @@ export default function PhotoScreen() {
 
           {/* Inline error banner */}
           {inlineError ? (
-            <View style={[styles.inlineBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
-                <MaterialCommunityIcons name="alert-circle-outline" size={14} color={colors.destructive} />
-                <Text style={[styles.inlineBannerText, { color: colors.destructive, flex: 1 }]}>{inlineError}</Text>
+            <View
+              style={[
+                styles.inlineBanner,
+                {
+                  backgroundColor: colors.destructive + '15',
+                  borderColor: colors.destructive + '55',
+                },
+              ]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                <MaterialCommunityIcons
+                  name="alert-circle-outline"
+                  size={14}
+                  color={colors.destructive}
+                />
+                <Text style={[styles.inlineBannerText, { color: colors.destructive, flex: 1 }]}>
+                  {inlineError}
+                </Text>
               </View>
               <Pressable onPress={() => setInlineError(null)} style={styles.inlineBannerClose}>
                 <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
@@ -496,15 +608,27 @@ export default function PhotoScreen() {
 
           {/* AI summary */}
           {aiSummary ? (
-            <View style={[styles.summaryCard, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}>
-              <Text style={[styles.summaryTitle, { color: colors.accentForeground }]}>AI Identification</Text>
+            <View
+              style={[
+                styles.summaryCard,
+                { backgroundColor: colors.accent, borderColor: colors.primary + '44' },
+              ]}
+            >
+              <Text style={[styles.summaryTitle, { color: colors.accentForeground }]}>
+                AI Identification
+              </Text>
               <Text style={[styles.summaryText, { color: colors.foreground }]}>{aiSummary}</Text>
               {aiTerms.length > 0 ? (
                 <View style={{ marginTop: 10 }}>
-                  <Text style={[styles.termLabel, { color: colors.accentForeground }]}>SEARCH TERMS USED</Text>
+                  <Text style={[styles.termLabel, { color: colors.accentForeground }]}>
+                    SEARCH TERMS USED
+                  </Text>
                   <View style={styles.termRow}>
                     {aiTerms.map((term, i) => (
-                      <View key={i} style={[styles.termChip, { backgroundColor: colors.primary + "22" }]}>
+                      <View
+                        key={i}
+                        style={[styles.termChip, { backgroundColor: colors.primary + '22' }]}
+                      >
                         <Text style={[styles.termText, { color: colors.primary }]}>{term}</Text>
                       </View>
                     ))}
@@ -529,9 +653,9 @@ export default function PhotoScreen() {
                   onConfirm={
                     photoEventId != null
                       ? () => {
-                          confirmMutation.mutate(
-                            { data: { photoEventId: photoEventId, resultId: result.item.id } },
-                          );
+                          confirmMutation.mutate({
+                            data: { photoEventId: photoEventId, resultId: result.item.id },
+                          });
                         }
                       : undefined
                   }
@@ -542,16 +666,30 @@ export default function PhotoScreen() {
 
           {/* No results */}
           {searchMutation.isSuccess && results.length === 0 && aiSummary ? (
-            <View style={[styles.noResultsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View
+              style={[
+                styles.noResultsCard,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
               <Text style={[styles.noResultsText, { color: colors.mutedForeground }]}>
-                No inventory matches found for this part. Try adding it to inventory via the Upload tab.
+                No inventory matches found for this part. Try adding it to inventory via the Upload
+                tab.
               </Text>
             </View>
           ) : null}
 
           {/* Error */}
           {identifyMutation.isError ? (
-            <View style={[styles.errorCard, { backgroundColor: colors.destructive + "11", borderColor: colors.destructive + "44" }]}>
+            <View
+              style={[
+                styles.errorCard,
+                {
+                  backgroundColor: colors.destructive + '11',
+                  borderColor: colors.destructive + '44',
+                },
+              ]}
+            >
               <Text style={[styles.errorText, { color: colors.destructive }]}>
                 AI identification failed. Check your connection.
               </Text>
@@ -560,13 +698,18 @@ export default function PhotoScreen() {
 
           {/* Welcome state */}
           {!identifyMutation.isSuccess && !identifyMutation.isPending && images.length === 0 ? (
-            <View style={[styles.welcomeCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View
+              style={[
+                styles.welcomeCard,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
               <Text style={[styles.welcomeTitle, { color: colors.foreground }]}>How it works</Text>
               {[
-                "📷 Take or select up to 2 photos of the part",
-                "📝 Add any visible text, numbers, or labels",
-                "🤖 AI identifies the part type and specifications",
-                "📦 Matching items from inventory are shown",
+                '📷 Take or select up to 2 photos of the part',
+                '📝 Add any visible text, numbers, or labels',
+                '🤖 AI identifies the part type and specifications',
+                '📦 Matching items from inventory are shown',
               ].map((step, i) => (
                 <Text key={i} style={[styles.welcomeStep, { color: colors.mutedForeground }]}>
                   {step}
@@ -584,76 +727,117 @@ export default function PhotoScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   header: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
-  headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
-  headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  headerTitle: { fontSize: 20, fontFamily: 'Inter_700Bold' },
+  headerSub: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
   content: { padding: 16, gap: 14 },
   imageSection: { gap: 8 },
-  imageRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, justifyContent: "center" },
-  imageWrapper: { position: "relative" },
+  imageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' },
+  imageWrapper: { position: 'relative' },
   thumbnail: { width: 130, height: 130, borderRadius: 10, borderWidth: 2 },
   removeBtn: {
-    position: "absolute",
+    position: 'absolute',
     top: -6,
     right: -6,
     width: 22,
     height: 22,
     borderRadius: 11,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  removeBtnText: { color: "#fff", fontSize: 10, fontFamily: "Inter_700Bold" },
+  removeBtnText: { color: '#fff', fontSize: 10, fontFamily: 'Inter_700Bold' },
   processingRow: {
-    width: 270, height: 130, borderRadius: 10, borderWidth: 1,
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+    width: 270,
+    height: 130,
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
   },
-  processingLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  addImageButtons: { flexDirection: "row", gap: 10, justifyContent: "center" },
+  processingLabel: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  addImageButtons: { flexDirection: 'row', gap: 10, justifyContent: 'center' },
   addImageBtn: {
     width: 100,
     height: 100,
     borderRadius: 10,
     borderWidth: 2,
-    borderStyle: "dashed",
-    alignItems: "center",
-    justifyContent: "center",
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
   },
-  addImageLabel: { fontSize: 12, fontFamily: "Inter_500Medium", textAlign: "center" },
-  imageHint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic" },
-  photoCounter: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  addImageLabel: { fontSize: 12, fontFamily: 'Inter_500Medium', textAlign: 'center' },
+  imageHint: { fontSize: 12, fontFamily: 'Inter_400Regular', fontStyle: 'italic' },
+  photoCounter: { fontSize: 12, fontFamily: 'Inter_500Medium' },
   contextCard: { borderRadius: 12, padding: 14, borderWidth: 1 },
-  contextTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 12 },
-  fieldLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 5 },
-  fieldInput: { ...secondaryBtnBase, paddingHorizontal: 12, paddingVertical: 9, fontSize: 14, fontFamily: "Inter_400Regular" },
-  identifyBtn: { borderRadius: 10, paddingVertical: 15, alignItems: "center" },
-  identifyBtnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
+  contextTitle: { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 12 },
+  fieldLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 5,
+  },
+  fieldInput: {
+    ...secondaryBtnBase,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+  },
+  identifyBtn: { borderRadius: 10, paddingVertical: 15, alignItems: 'center' },
+  identifyBtnText: { fontSize: 16, fontFamily: 'Inter_700Bold' },
   summaryCard: { borderRadius: 10, padding: 14, borderWidth: 1 },
-  summaryTitle: { fontSize: 12, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 8 },
-  summaryText: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },
-  termLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 6 },
-  termRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  summaryTitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  summaryText: { fontSize: 14, fontFamily: 'Inter_400Regular', lineHeight: 20 },
+  termLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  termRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   termChip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
-  termText: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  resultsTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginBottom: 10 },
+  termText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
+  resultsTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', marginBottom: 10 },
   noResultsCard: { borderRadius: 10, padding: 16, borderWidth: 1 },
-  noResultsText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
-  inlineBanner: { ...secondaryBtnBase, padding: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
+  noResultsText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  inlineBanner: {
+    ...secondaryBtnBase,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  inlineBannerText: { fontSize: 13, fontFamily: 'Inter_500Medium', flex: 1, lineHeight: 18 },
   inlineBannerClose: { paddingLeft: 10 },
   errorCard: { ...secondaryBtnBase, padding: 14 },
-  errorText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  errorText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
   welcomeCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 8 },
-  welcomeTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginBottom: 4 },
-  welcomeStep: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 20 },
+  welcomeTitle: { fontSize: 15, fontFamily: 'Inter_600SemiBold', marginBottom: 4 },
+  welcomeStep: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 20 },
   // Progress step indicator
   stepRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 4,
   },
   stepItem: {
-    alignItems: "center",
+    alignItems: 'center',
     gap: 5,
     minWidth: 64,
   },
@@ -661,13 +845,13 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   stepDotCheck: {
-    color: "#fff",
+    color: '#fff',
     fontSize: 13,
-    fontFamily: "Inter_700Bold",
+    fontFamily: 'Inter_700Bold',
   },
   stepLabel: {
     fontSize: 11,

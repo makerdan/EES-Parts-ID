@@ -12,17 +12,17 @@ import {
   Inter_600SemiBold,
   Inter_700Bold,
   useFonts,
-} from "@expo-google-fonts/inter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack, useRouter, useSegments } from "expo-router";
-import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
-import { setBaseUrl } from "@workspace/api-client-react";
+} from '@expo-google-fonts/inter';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import React, { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { setBaseUrl } from '@workspace/api-client-react';
 
-import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { AppProvider, useApp } from "@/contexts/AppContext";
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { AppProvider, useApp } from '@/contexts/AppContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -55,24 +55,24 @@ function AuthGate() {
 
   useEffect(() => {
     if (isLoading) return;
-    const inTabsGroup = segments[0] === "(tabs)";
+    const inTabsGroup = segments[0] === '(tabs)';
     // Top-level authenticated routes that live outside the (tabs)
     // group but should NOT bounce the user back to the tab bar
     // (e.g. the Scan camera screen, promoted out of the tab bar in
     // Task #133 so router.push("/scan") works on iOS NativeTabs).
-    const isAuthedTopLevel = segments[0] === "scan";
+    const isAuthedTopLevel = segments[0] === 'scan';
     const inAuthedArea = inTabsGroup || isAuthedTopLevel;
     if (!isAuthenticated && inAuthedArea) {
-      router.replace("/login");
+      router.replace('/login');
       return;
     }
     if (isAuthenticated && !inAuthedArea) {
-      router.replace("/(tabs)");
+      router.replace('/(tabs)');
       return;
     }
     if (isAuthenticated && inTabsGroup && !didLandRef.current) {
       didLandRef.current = true;
-      router.replace("/(tabs)");
+      router.replace('/(tabs)');
     }
   }, [isAuthenticated, isLoading, segments, router]);
 
