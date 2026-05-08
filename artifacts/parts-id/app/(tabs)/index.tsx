@@ -1337,7 +1337,7 @@ export default function SearchScreen() {
       {!aisleBrowseOpen && !hasResults ? (
         <Pressable
           onPress={() => setAisleBrowseOpen(true)}
-          style={[styles.aisleEntryBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+          style={[styles.aisleEntryBtn, { backgroundColor: colors.card, borderColor: "#000" }]}
           accessibilityRole="button"
           accessibilityLabel="Browse parts by aisle, section, and shelf"
         >
