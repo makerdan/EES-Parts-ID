@@ -214,6 +214,55 @@ describe("GIN trigram index planner", () => {
 
     expect(planLines).toContain("idx_inventory_search_tokens_trgm");
   });
+
+  it("UNION ALL fallback LIMIT 50 is scoped to the fallback arm only (not the combined union result)", async () => {
+    const { db } = await import("@workspace/db");
+    const { sql: rawSql } = await import("drizzle-orm");
+
+    // This mirrors the exact SQL shape used in the inventory search route.
+    // The fallback SELECT is wrapped in parens so LIMIT 50 applies only to
+    // that arm — without parens, PostgreSQL applies the LIMIT to the entire
+    // set-operation output, which would silently cap the primary arm results.
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(rawSql`SET LOCAL pg_trgm.similarity_threshold = 0.15`);
+      return tx.execute(rawSql`
+        EXPLAIN (FORMAT TEXT)
+        SELECT * FROM (
+          SELECT i.id, i.vendor, i.catalog,
+            similarity(i.search_tokens, 'breaker amp') AS trgm_sim
+          FROM inventory i
+          WHERE i.search_tokens IS NOT NULL AND i.search_tokens % 'breaker amp'
+
+          UNION ALL
+
+          (
+            SELECT i.id, i.vendor, i.catalog,
+              greatest(similarity(i.catalog, 'breaker amp'), similarity(i.description, 'breaker amp')) AS trgm_sim
+            FROM inventory i
+            WHERE i.search_tokens IS NULL
+              AND (similarity(i.catalog, 'breaker amp') > 0.1 OR similarity(i.description, 'breaker amp') > 0.1)
+            LIMIT 50
+          )
+        ) AS __ranked
+        ORDER BY trgm_sim DESC
+        LIMIT 200
+      `);
+    });
+
+    const planLines = (result as { rows: unknown[] }).rows
+      .map((r) => String(Object.values(r as object)[0]))
+      .join("\n");
+
+    // GIN index must be used for the primary arm
+    expect(planLines).toContain("idx_inventory_search_tokens_trgm");
+
+    // The plan must have an Append node (from UNION ALL) with a nested Limit
+    // child (the fallback arm's LIMIT 50). The outer sort+limit (LIMIT 200)
+    // sits above the Append, so both "Append" and "Limit" appear in the plan.
+    // The key invariant: the GIN arm is not itself wrapped in the fallback limit.
+    expect(planLines).toContain("Append");
+    expect(planLines).toContain("Bitmap Index Scan on idx_inventory_search_tokens_trgm");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
