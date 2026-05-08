@@ -9,7 +9,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
-  Dimensions,
   KeyboardAvoidingView,
   LayoutChangeEvent,
   Modal,
@@ -20,6 +19,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -391,15 +391,19 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   // ── Swipe-to-dismiss: animated sheet Y position ───────────────────────────
-  // Starts off-screen (positive = below viewport). Animated to 0 on open,
-  // animated back off-screen before setFiltersOpen(false) on close.
-  const SCREEN_H = Dimensions.get("window").height;
+  // `useWindowDimensions` re-renders on rotation so SCREEN_H stays current.
+  // We also mirror it into a ref so the PanResponder (created once) always
+  // reads the latest height without a stale closure.
+  const { height: SCREEN_H } = useWindowDimensions();
+  const screenHRef = useRef(SCREEN_H);
+  screenHRef.current = SCREEN_H;
+
   const sheetY = useRef(new Animated.Value(SCREEN_H)).current;
 
   // Animate sheet in whenever the modal opens.
   useEffect(() => {
     if (filtersOpen) {
-      sheetY.setValue(SCREEN_H);
+      sheetY.setValue(screenHRef.current);
       Animated.spring(sheetY, {
         toValue: 0,
         tension: 60,
@@ -407,20 +411,28 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
         useNativeDriver: true,
       }).start();
     }
-  }, [filtersOpen, sheetY, SCREEN_H]);
+  }, [filtersOpen, sheetY]);
 
   // Animate sheet out, then close the modal.
+  // `sheetY` is a stable ref value; `screenHRef` is updated on every render,
+  // so no stale-height risk even after an orientation change.
   const dismissModal = useCallback(() => {
     Animated.timing(sheetY, {
-      toValue: SCREEN_H,
+      toValue: screenHRef.current,
       duration: 260,
       useNativeDriver: true,
     }).start(() => setFiltersOpen(false));
-  }, [sheetY, SCREEN_H]);
+  }, [sheetY]);
+
+  // Keep a ref to `dismissModal` so the PanResponder (created once via useRef)
+  // always invokes the current version of the callback.
+  const dismissModalRef = useRef(dismissModal);
+  useEffect(() => { dismissModalRef.current = dismissModal; }, [dismissModal]);
 
   // ── Drag-handle PanResponder (attached only to the pill strip) ────────────
-  // Using onStartShouldSetPanResponder on a dedicated small strip means the
-  // ScrollView and ConfidenceSlider PanResponder are never interrupted.
+  // Attached to a dedicated strip — keeps ScrollView scroll and the
+  // ConfidenceSlider PanResponder completely uninterrupted.
+  // All mutable values accessed through refs to avoid stale closures.
   const dragPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -431,7 +443,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
       },
       onPanResponderRelease: (_, gs) => {
         if (gs.dy > 80 || gs.vy > 0.5) {
-          dismissModal();
+          dismissModalRef.current();
         } else {
           // Not enough — spring back to resting position.
           Animated.spring(sheetY, {
