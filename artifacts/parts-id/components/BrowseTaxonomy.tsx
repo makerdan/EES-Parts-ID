@@ -161,8 +161,8 @@ export default function BrowseTaxonomy({
   // At the root (path.length === 0) we return false so the event bubbles to
   // the parent handler (BrowseByAisle's BackHandler, or the tab navigator).
   useEffect(() => {
-    if (Platform.OS !== "android") return;
-    const handler = BackHandler.addEventListener("hardwareBackPress", () => {
+    if (Platform.OS !== 'android') return;
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
       if (path.length > 0) {
         popTo(path.length - 1);
         return true;
@@ -255,9 +255,7 @@ export default function BrowseTaxonomy({
         ) : (
           children.map((item, idx) => (
             <React.Fragment key={item.slug}>
-              {idx > 0 ? (
-                <View style={[styles.sep, { backgroundColor: colors.border }]} />
-              ) : null}
+              {idx > 0 ? <View style={[styles.sep, { backgroundColor: colors.border }]} /> : null}
               <Pressable
                 onPress={() =>
                   item.children.length > 0
