@@ -6,12 +6,11 @@
  * and by `ResultRefinementBar` (for client-side dim counts) so the two
  * stay in lockstep. Adding a new chip is a one-place change here.
  */
-import React, { useCallback, useEffect, useRef } from "react";
-import { usePersistedCollapse } from "@/hooks/usePersistedCollapse";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Animated,
-  LayoutAnimation,
+  KeyboardAvoidingView,
   LayoutChangeEvent,
+  Modal,
   PanResponder,
   Platform,
   Pressable,
@@ -19,15 +18,11 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  UIManager,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
-
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 export interface FilterValues {
   // ── 7 text / numeric search fields ───────────────────────────────────────
@@ -373,6 +368,7 @@ export function ConfidenceSlider({
 
 export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelProps) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
 
   const TEXT_FIELD_KEYS = ["catalog", "vendor", "color", "size", "material", "textNumbers"] as const;
 
@@ -389,64 +385,88 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
     TEXT_FIELD_KEYS.forEach(k => onChange(k, ""));
   }, [onChange]);
 
-  // ── Advanced Filters collapse state ──────────────────────────────────────
-  const [dimCollapsed, , setDimCollapsed, dimCollapsedLoaded] =
-    usePersistedCollapse("@partsid/dim_collapsed", true);
-  const dimChevronAnim = useRef(new Animated.Value(0)).current;
-
-  // Silently sync the chevron to the value loaded from AsyncStorage (no animation)
-  useEffect(() => {
-    if (dimCollapsedLoaded) {
-      dimChevronAnim.setValue(dimCollapsed ? 0 : 1);
-    }
-  // Only fire once when the persisted value first becomes available
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dimCollapsedLoaded]);
-
-  const toggleDimensions = useCallback(() => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    const toCollapsed = !dimCollapsed;
-    setDimCollapsed(toCollapsed);
-    Animated.timing(dimChevronAnim, {
-      toValue: toCollapsed ? 0 : 1,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-  }, [dimCollapsed, setDimCollapsed, dimChevronAnim]);
-
-  const dimChevronRotate = dimChevronAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "180deg"],
-  });
+  // ── Modal open/close state ────────────────────────────────────────────────
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   return (
     <View>
-      {/* ── Advanced Filters collapsible card ── */}
-      <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <Pressable
-          style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12, borderWidth: 1, borderRadius: 8, borderColor: 'rgba(0,0,0,0.75)', padding: 10 }]}
-          onPress={toggleDimensions}
-        >
-          <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>Advanced Filters</Text>
-          <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
-            {activeChipCount > 0 && (
-              <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
-                <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
-                  {activeChipCount} active
-                </Text>
-              </View>
-            )}
-            {dimensionCounts && (
-              <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>live counts</Text>
-            )}
-            <Animated.View style={{ transform: [{ rotate: dimChevronRotate }] }}>
-              <Feather name="chevron-down" size={16} color={colors.mutedForeground} />
-            </Animated.View>
-          </View>
-        </Pressable>
+      {/* ── Advanced Filters trigger button ── */}
+      <Pressable
+        style={[chipAreaStyles.triggerBtn, { borderColor: 'rgba(0,0,0,0.75)', backgroundColor: colors.card }]}
+        onPress={() => setFiltersOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Open advanced filters"
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Feather name="sliders" size={14} color={colors.foreground} />
+          <Text style={[chipAreaStyles.triggerTitle, { color: colors.foreground }]}>Advanced Filters</Text>
+        </View>
+        <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+          {activeChipCount > 0 && (
+            <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
+              <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
+                {activeChipCount} active
+              </Text>
+            </View>
+          )}
+          {dimensionCounts && (
+            <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>live counts</Text>
+          )}
+          <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+        </View>
+      </Pressable>
 
-        {!dimCollapsed && (
-          <>
+      {/* ── Advanced Filters modal overlay ── */}
+      <Modal
+        visible={filtersOpen}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setFiltersOpen(false)}
+        statusBarTranslucent
+      >
+        <KeyboardAvoidingView
+          style={[modalStyles.container, { backgroundColor: colors.background }]}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          {/* Modal header */}
+          <View
+            style={[
+              modalStyles.header,
+              {
+                borderBottomColor: colors.border,
+                paddingTop: insets.top + 12,
+                backgroundColor: colors.card,
+              },
+            ]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Feather name="sliders" size={16} color={colors.foreground} />
+              <Text style={[modalStyles.headerTitle, { color: colors.foreground }]}>Advanced Filters</Text>
+              {activeChipCount > 0 && (
+                <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
+                  <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
+                    {activeChipCount} active
+                  </Text>
+                </View>
+              )}
+            </View>
+            <Pressable
+              onPress={() => setFiltersOpen(false)}
+              style={[modalStyles.doneBtn, { backgroundColor: colors.primary }]}
+              accessibilityRole="button"
+              accessibilityLabel="Close advanced filters"
+            >
+              <Text style={[modalStyles.doneBtnText, { color: colors.primaryForeground }]}>Done</Text>
+            </Pressable>
+          </View>
+
+          {/* Scrollable filter content */}
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={[modalStyles.content, { paddingBottom: insets.bottom + 24 }]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
             {/* ── Text fields header + clear button ── */}
             <View style={chipAreaStyles.dimHeader}>
               <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
@@ -558,10 +578,9 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               onChange={v => onChange("confidenceThreshold", v)}
               colors={colors}
             />
-          </>
-        )}
-      </View>
-
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -588,26 +607,23 @@ const chipStyles = StyleSheet.create({
 });
 
 const chipAreaStyles = StyleSheet.create({
-  container: {
-    borderWidth: 1,
-    borderRadius: 10,
-    // Slimmer padding so the collapsed "Advanced Filters" bar is thinner
-    // (no double-padded inner+outer card around just the header row).
-    padding: 6,
-    marginBottom: 12,
-  },
-  header: {
+  triggerBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 0,
   },
-  title: { fontSize: 13, fontFamily: "Inter_700Bold" },
+  triggerTitle: { fontSize: 13, fontFamily: "Inter_700Bold" },
   dimHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 8,
+    marginTop: 4,
   },
   dimHeaderLabel: {
     fontSize: 10,
@@ -621,6 +637,37 @@ const chipAreaStyles = StyleSheet.create({
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   liveLabel: { fontSize: 10, fontFamily: "Inter_400Regular", fontStyle: "italic" },
+});
+
+const modalStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+  },
+  doneBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  doneBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+  },
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
 });
 
 const sliderStyles = StyleSheet.create({
@@ -666,4 +713,3 @@ const fieldStyles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
   },
 });
-
