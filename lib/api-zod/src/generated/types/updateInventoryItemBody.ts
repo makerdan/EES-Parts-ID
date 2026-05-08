@@ -14,10 +14,16 @@ untouched. At least one field must be supplied.
 
  */
 export interface UpdateInventoryItemBody {
+  /** Replacement vendor code (trimmed and uppercased). Must be non-empty. */
+  vendor?: string;
+  /** Replacement catalog number (trimmed). Must be non-empty. */
+  catalog?: string;
   /** New description text. Empty string clears the description. */
   description?: string;
   /** Replacement AI keywords array. */
   keywords?: string[];
   /** Trade size to assign (e.g. `1/2"`, `3/4"`). Null clears the value. Omit to leave unchanged. */
   tradeSize?: string | null;
+  /** Replacement bin locations array. Duplicates are deduplicated case-insensitively. */
+  binLocations?: string[];
 }

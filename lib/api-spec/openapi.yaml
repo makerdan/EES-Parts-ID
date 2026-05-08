@@ -59,6 +59,11 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: q
+          in: query
+          description: Case-insensitive substring search across vendor, catalog, and description. When provided, only matching rows are returned and `total` reflects the filtered count.
+          schema:
+            type: string
       responses:
         "200":
           description: Paginated inventory
@@ -1242,6 +1247,12 @@ components:
         (clears the description); omit the field entirely to leave it
         untouched. At least one field must be supplied.
       properties:
+        vendor:
+          type: string
+          description: Replacement vendor code (trimmed and uppercased). Must be non-empty.
+        catalog:
+          type: string
+          description: Replacement catalog number (trimmed). Must be non-empty.
         description:
           type: string
           description: New description text. Empty string clears the description.
@@ -1254,6 +1265,11 @@ components:
           type: string
           nullable: true
           description: Trade size to assign (e.g. `1/2"`, `3/4"`). Null clears the value. Omit to leave unchanged.
+        binLocations:
+          type: array
+          items:
+            type: string
+          description: Replacement bin locations array. Duplicates are deduplicated case-insensitively.
       required: []
 
     SuggestDescriptionResponse:

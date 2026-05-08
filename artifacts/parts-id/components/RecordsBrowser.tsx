@@ -8,6 +8,8 @@
  *   - Debounced search bar (400 ms) that re-fetches with ?q=… on GET /inventory
  *   - Pull-to-refresh (RefreshControl)
  *   - Scroll-triggered load-more via onEndReached (threshold 0.3)
+ *   - AbortController cancels stale in-flight requests when a new search fires
+ *   - Sequence counter guards against out-of-order response writes
  *   - Tap a row to open RecordEditModal for inline editing
  *   - Optimistic list update after a successful PATCH
  */
@@ -55,8 +57,14 @@ export function RecordsBrowser({ adminHeaders }: Props) {
   const [editItem, setEditItem] = useState<ListItem | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Guard so onEndReached can't double-trigger while a fetch is in flight
-  const fetchingRef = useRef(false);
+  // AbortController for the active page-1 (non-append) fetch; cancelled when
+  // a new search fires before the previous response arrives.
+  const abortRef = useRef<AbortController | null>(null);
+  // Monotonically increasing sequence number — every non-append fetch gets a
+  // new id; when the response arrives we discard it if a newer fetch has started.
+  const seqRef = useRef(0);
+  // Guard so onEndReached can't double-fire while a load-more is in flight.
+  const loadMoreRef = useRef(false);
 
   const fetchPage = useCallback(async (opts: {
     pageNum: number;
@@ -65,8 +73,20 @@ export function RecordsBrowser({ adminHeaders }: Props) {
     isRefresh?: boolean;
   }) => {
     const { pageNum, q, append, isRefresh } = opts;
-    if (fetchingRef.current && append) return;
-    fetchingRef.current = true;
+
+    // For non-append fetches (new search / refresh / initial load):
+    // cancel any prior in-flight request so a slow earlier response can't
+    // overwrite the result of a more recent search.
+    let mySeq = seqRef.current;
+    if (!append) {
+      abortRef.current?.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      mySeq = ++seqRef.current;
+    } else {
+      if (loadMoreRef.current) return;
+      loadMoreRef.current = true;
+    }
 
     if (isRefresh) setRefreshing(true);
     else if (append) setLoadingMore(true);
@@ -80,9 +100,15 @@ export function RecordsBrowser({ adminHeaders }: Props) {
       });
       if (q.trim()) params.set("q", q.trim());
 
+      const signal = !append ? abortRef.current?.signal : undefined;
+
       const res = await fetch(`${API_BASE}/inventory?${params.toString()}`, {
         headers: adminHeaders,
+        signal,
       });
+
+      // If a newer non-append fetch has started, discard this stale response.
+      if (!append && seqRef.current !== mySeq) return;
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
@@ -97,18 +123,26 @@ export function RecordsBrowser({ adminHeaders }: Props) {
         limit: number;
       };
 
-      const newItems = append ? (prev: ListItem[]) => [...prev, ...data.items] : () => data.items;
+      // Final stale-check after awaiting the JSON parse
+      if (!append && seqRef.current !== mySeq) return;
+
       setTotal(data.total);
       setPage(pageNum);
-      setItems(newItems);
+      if (append) {
+        setItems(prev => [...prev, ...data.items]);
+      } else {
+        setItems(data.items);
+      }
       setAllLoaded(data.items.length < PAGE_SIZE || pageNum * PAGE_SIZE >= data.total);
     } catch (err) {
+      // Ignore aborted-fetch errors — they are intentional cancellations.
+      if (err instanceof Error && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Network error — please try again.");
     } finally {
       setLoading(false);
       setLoadingMore(false);
       setRefreshing(false);
-      fetchingRef.current = false;
+      loadMoreRef.current = false;
     }
   }, [adminHeaders]);
 
@@ -134,7 +168,7 @@ export function RecordsBrowser({ adminHeaders }: Props) {
   };
 
   const handleEndReached = () => {
-    if (loadingMore || loading || allLoaded) return;
+    if (loadMoreRef.current || loading || allLoaded) return;
     void fetchPage({ pageNum: page + 1, q: search, append: true });
   };
 
