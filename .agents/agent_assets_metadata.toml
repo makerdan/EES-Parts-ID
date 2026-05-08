@@ -1,8 +1,13 @@
 uploads = []
-outputs = []
 
 [[generated]]
 id = "qVrYr6eChY4qdWEnTdp5g"
 uri = "file://artifacts/parts-id/assets/images/icon.png"
 type = "image"
 title = "parts-id-icon"
+
+[[outputs]]
+id = "O63Opr3zqzYEHnrcZTaEA"
+uri = "file://inventory_export.csv"
+type = "table"
+title = "Inventory Export (7,403 rows)"
