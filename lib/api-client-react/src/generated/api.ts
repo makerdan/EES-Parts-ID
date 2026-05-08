@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from '@tanstack/react-query';
 import type {
   MutationFunction,
   QueryFunction,
@@ -14,7 +14,7 @@ import type {
   UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
-} from "@tanstack/react-query";
+} from '@tanstack/react-query';
 
 import type {
   AiIdentifyBody,
@@ -37,6 +37,7 @@ import type {
   DictionaryLookupResponse,
   EnrichInventoryBody,
   ErrorResponse,
+  GetPhotoStatsParams,
   HealthStatus,
   InventoryItem,
   InventoryListResponse,
@@ -50,6 +51,7 @@ import type {
   MergeCategoryNodes200,
   PhotoConfirmBody,
   PhotoConfirmResponse,
+  PhotoStatsResponse,
   PreviewUpsertBody,
   PreviewUpsertResponse,
   ReclassifyBody,
@@ -64,10 +66,10 @@ import type {
   UpdateInventoryItemBody,
   UpsertInventoryBody,
   UpsertInventoryResponse,
-} from "./api.schemas";
+} from './api.schemas';
 
-import { customFetch } from "../custom-fetch";
-import type { ErrorType, BodyType } from "../custom-fetch";
+import { customFetch } from '../custom-fetch';
+import type { ErrorType, BodyType } from '../custom-fetch';
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -83,12 +85,10 @@ export const getHealthCheckUrl = () => {
   return `/api/healthz`;
 };
 
-export const healthCheck = async (
-  options?: RequestInit,
-): Promise<HealthStatus> => {
+export const healthCheck = async (options?: RequestInit): Promise<HealthStatus> => {
   return customFetch<HealthStatus>(getHealthCheckUrl(), {
     ...options,
-    method: "GET",
+    method: 'GET',
   });
 };
 
@@ -100,20 +100,15 @@ export const getHealthCheckQueryOptions = <
   TData = Awaited<ReturnType<typeof healthCheck>>,
   TError = ErrorType<unknown>,
 >(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof healthCheck>>,
-    TError,
-    TData
-  >;
+  query?: UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
 }) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey = queryOptions?.queryKey ?? getHealthCheckQueryKey();
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof healthCheck>>> = ({
-    signal,
-  }) => healthCheck({ signal, ...requestOptions });
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof healthCheck>>> = ({ signal }) =>
+    healthCheck({ signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof healthCheck>>,
@@ -122,9 +117,7 @@ export const getHealthCheckQueryOptions = <
   > & { queryKey: QueryKey };
 };
 
-export type HealthCheckQueryResult = NonNullable<
-  Awaited<ReturnType<typeof healthCheck>>
->;
+export type HealthCheckQueryResult = NonNullable<Awaited<ReturnType<typeof healthCheck>>>;
 export type HealthCheckQueryError = ErrorType<unknown>;
 
 /**
@@ -135,18 +128,12 @@ export function useHealthCheck<
   TData = Awaited<ReturnType<typeof healthCheck>>,
   TError = ErrorType<unknown>,
 >(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof healthCheck>>,
-    TError,
-    TData
-  >;
+  query?: UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getHealthCheckQueryOptions(options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -159,24 +146,22 @@ export const getListInventoryUrl = (params?: ListInventoryParams) => {
 
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
     }
   });
 
   const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0
-    ? `/api/inventory?${stringifiedParams}`
-    : `/api/inventory`;
+  return stringifiedParams.length > 0 ? `/api/inventory?${stringifiedParams}` : `/api/inventory`;
 };
 
 export const listInventory = async (
   params?: ListInventoryParams,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<InventoryListResponse> => {
   return customFetch<InventoryListResponse>(getListInventoryUrl(params), {
     ...options,
-    method: "GET",
+    method: 'GET',
   });
 };
 
@@ -190,21 +175,16 @@ export const getListInventoryQueryOptions = <
 >(
   params?: ListInventoryParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listInventory>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listInventory>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey = queryOptions?.queryKey ?? getListInventoryQueryKey(params);
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof listInventory>>> = ({
-    signal,
-  }) => listInventory(params, { signal, ...requestOptions });
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listInventory>>> = ({ signal }) =>
+    listInventory(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof listInventory>>,
@@ -213,9 +193,7 @@ export const getListInventoryQueryOptions = <
   > & { queryKey: QueryKey };
 };
 
-export type ListInventoryQueryResult = NonNullable<
-  Awaited<ReturnType<typeof listInventory>>
->;
+export type ListInventoryQueryResult = NonNullable<Awaited<ReturnType<typeof listInventory>>>;
 export type ListInventoryQueryError = ErrorType<unknown>;
 
 /**
@@ -228,19 +206,13 @@ export function useListInventory<
 >(
   params?: ListInventoryParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listInventory>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listInventory>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListInventoryQueryOptions(params, options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -254,12 +226,12 @@ export const getSearchInventoryUrl = () => {
 
 export const searchInventory = async (
   searchInventoryBody: SearchInventoryBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<SearchInventoryResponse> => {
   return customFetch<SearchInventoryResponse>(getSearchInventoryUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(searchInventoryBody),
   });
 };
@@ -281,11 +253,9 @@ export const getSearchInventoryMutationOptions = <
   { data: BodyType<SearchInventoryBody> },
   TContext
 > => {
-  const mutationKey = ["searchInventory"];
+  const mutationKey = ['searchInventory'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -311,10 +281,7 @@ export type SearchInventoryMutationError = ErrorType<unknown>;
 /**
  * @summary Search inventory with multi-strategy cascade
  */
-export const useSearchInventory = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useSearchInventory = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof searchInventory>>,
     TError,
@@ -340,12 +307,12 @@ export const getUpsertInventoryBatchUrl = () => {
 
 export const upsertInventoryBatch = async (
   upsertInventoryBody: UpsertInventoryBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<UpsertInventoryResponse> => {
   return customFetch<UpsertInventoryResponse>(getUpsertInventoryBatchUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(upsertInventoryBody),
   });
 };
@@ -367,11 +334,9 @@ export const getUpsertInventoryBatchMutationOptions = <
   { data: BodyType<UpsertInventoryBody> },
   TContext
 > => {
-  const mutationKey = ["upsertInventoryBatch"];
+  const mutationKey = ['upsertInventoryBatch'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -397,10 +362,7 @@ export type UpsertInventoryBatchMutationError = ErrorType<unknown>;
 /**
  * @summary Add or update inventory items (upsert by vendor+catalog)
  */
-export const useUpsertInventoryBatch = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useUpsertInventoryBatch = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof upsertInventoryBatch>>,
     TError,
@@ -432,12 +394,12 @@ export const getPreviewUpsertInventoryUrl = () => {
 
 export const previewUpsertInventory = async (
   previewUpsertBody: PreviewUpsertBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<PreviewUpsertResponse> => {
   return customFetch<PreviewUpsertResponse>(getPreviewUpsertInventoryUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(previewUpsertBody),
   });
 };
@@ -459,11 +421,9 @@ export const getPreviewUpsertInventoryMutationOptions = <
   { data: BodyType<PreviewUpsertBody> },
   TContext
 > => {
-  const mutationKey = ["previewUpsertInventory"];
+  const mutationKey = ['previewUpsertInventory'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -518,12 +478,12 @@ export const getEnrichInventoryUrl = () => {
 
 export const enrichInventory = async (
   enrichInventoryBody: EnrichInventoryBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<unknown> => {
   return customFetch<unknown>(getEnrichInventoryUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(enrichInventoryBody),
   });
 };
@@ -545,11 +505,9 @@ export const getEnrichInventoryMutationOptions = <
   { data: BodyType<EnrichInventoryBody> },
   TContext
 > => {
-  const mutationKey = ["enrichInventory"];
+  const mutationKey = ['enrichInventory'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -575,10 +533,7 @@ export type EnrichInventoryMutationError = ErrorType<unknown>;
 /**
  * @summary AI enrich inventory items with keywords (SSE streaming)
  */
-export const useEnrichInventory = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useEnrichInventory = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof enrichInventory>>,
     TError,
@@ -607,11 +562,11 @@ export const getGetInventoryItemUrl = (id: number) => {
 
 export const getInventoryItem = async (
   id: number,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<InventoryItem> => {
   return customFetch<InventoryItem>(getGetInventoryItemUrl(id), {
     ...options,
-    method: "GET",
+    method: 'GET',
   });
 };
 
@@ -625,37 +580,25 @@ export const getGetInventoryItemQueryOptions = <
 >(
   id: number,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getInventoryItem>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getInventoryItem>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey = queryOptions?.queryKey ?? getGetInventoryItemQueryKey(id);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getInventoryItem>>
-  > = ({ signal }) => getInventoryItem(id, { signal, ...requestOptions });
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getInventoryItem>>> = ({ signal }) =>
+    getInventoryItem(id, { signal, ...requestOptions });
 
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!id,
-    ...queryOptions,
-  } as UseQueryOptions<
+  return { queryKey, queryFn, enabled: !!id, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof getInventoryItem>>,
     TError,
     TData
   > & { queryKey: QueryKey };
 };
 
-export type GetInventoryItemQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getInventoryItem>>
->;
+export type GetInventoryItemQueryResult = NonNullable<Awaited<ReturnType<typeof getInventoryItem>>>;
 export type GetInventoryItemQueryError = ErrorType<ErrorResponse>;
 
 /**
@@ -668,19 +611,13 @@ export function useGetInventoryItem<
 >(
   id: number,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof getInventoryItem>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getInventoryItem>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetInventoryItemQueryOptions(id, options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -700,12 +637,12 @@ export const getUpdateInventoryItemUrl = (id: number) => {
 export const updateInventoryItem = async (
   id: number,
   updateInventoryItemBody: UpdateInventoryItemBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<InventoryItem> => {
   return customFetch<InventoryItem>(getUpdateInventoryItemUrl(id), {
     ...options,
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(updateInventoryItemBody),
   });
 };
@@ -727,11 +664,9 @@ export const getUpdateInventoryItemMutationOptions = <
   { id: number; data: BodyType<UpdateInventoryItemBody> },
   TContext
 > => {
-  const mutationKey = ["updateInventoryItem"];
+  const mutationKey = ['updateInventoryItem'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -757,10 +692,7 @@ export type UpdateInventoryItemMutationError = ErrorType<unknown>;
 /**
  * @summary Update an inventory item's description and/or AI keywords
  */
-export const useUpdateInventoryItem = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useUpdateInventoryItem = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof updateInventoryItem>>,
     TError,
@@ -791,15 +723,12 @@ export const getSuggestItemDescriptionUrl = (id: number) => {
 
 export const suggestItemDescription = async (
   id: number,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<SuggestDescriptionResponse> => {
-  return customFetch<SuggestDescriptionResponse>(
-    getSuggestItemDescriptionUrl(id),
-    {
-      ...options,
-      method: "POST",
-    },
-  );
+  return customFetch<SuggestDescriptionResponse>(getSuggestItemDescriptionUrl(id), {
+    ...options,
+    method: 'POST',
+  });
 };
 
 export const getSuggestItemDescriptionMutationOptions = <
@@ -819,11 +748,9 @@ export const getSuggestItemDescriptionMutationOptions = <
   { id: number },
   TContext
 > => {
-  const mutationKey = ["suggestItemDescription"];
+  const mutationKey = ['suggestItemDescription'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -877,7 +804,7 @@ export const getLookupDictionaryUrl = (params: LookupDictionaryParams) => {
 
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
     }
   });
 
@@ -890,17 +817,15 @@ export const getLookupDictionaryUrl = (params: LookupDictionaryParams) => {
 
 export const lookupDictionary = async (
   params: LookupDictionaryParams,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<DictionaryLookupResponse> => {
   return customFetch<DictionaryLookupResponse>(getLookupDictionaryUrl(params), {
     ...options,
-    method: "GET",
+    method: 'GET',
   });
 };
 
-export const getLookupDictionaryQueryKey = (
-  params?: LookupDictionaryParams,
-) => {
+export const getLookupDictionaryQueryKey = (params?: LookupDictionaryParams) => {
   return [`/api/dictionaries/lookup`, ...(params ? [params] : [])] as const;
 };
 
@@ -910,22 +835,16 @@ export const getLookupDictionaryQueryOptions = <
 >(
   params: LookupDictionaryParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof lookupDictionary>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof lookupDictionary>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getLookupDictionaryQueryKey(params);
+  const queryKey = queryOptions?.queryKey ?? getLookupDictionaryQueryKey(params);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof lookupDictionary>>
-  > = ({ signal }) => lookupDictionary(params, { signal, ...requestOptions });
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof lookupDictionary>>> = ({ signal }) =>
+    lookupDictionary(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof lookupDictionary>>,
@@ -934,9 +853,7 @@ export const getLookupDictionaryQueryOptions = <
   > & { queryKey: QueryKey };
 };
 
-export type LookupDictionaryQueryResult = NonNullable<
-  Awaited<ReturnType<typeof lookupDictionary>>
->;
+export type LookupDictionaryQueryResult = NonNullable<Awaited<ReturnType<typeof lookupDictionary>>>;
 export type LookupDictionaryQueryError = ErrorType<unknown>;
 
 /**
@@ -949,19 +866,13 @@ export function useLookupDictionary<
 >(
   params: LookupDictionaryParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof lookupDictionary>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof lookupDictionary>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getLookupDictionaryQueryOptions(params, options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -975,12 +886,12 @@ export const getAiIdentifyPartUrl = () => {
 
 export const aiIdentifyPart = async (
   aiIdentifyBody: AiIdentifyBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<AiIdentifyResponse> => {
   return customFetch<AiIdentifyResponse>(getAiIdentifyPartUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(aiIdentifyBody),
   });
 };
@@ -1002,11 +913,9 @@ export const getAiIdentifyPartMutationOptions = <
   { data: BodyType<AiIdentifyBody> },
   TContext
 > => {
-  const mutationKey = ["aiIdentifyPart"];
+  const mutationKey = ['aiIdentifyPart'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -1023,19 +932,14 @@ export const getAiIdentifyPartMutationOptions = <
   return { mutationFn, ...mutationOptions };
 };
 
-export type AiIdentifyPartMutationResult = NonNullable<
-  Awaited<ReturnType<typeof aiIdentifyPart>>
->;
+export type AiIdentifyPartMutationResult = NonNullable<Awaited<ReturnType<typeof aiIdentifyPart>>>;
 export type AiIdentifyPartMutationBody = BodyType<AiIdentifyBody>;
 export type AiIdentifyPartMutationError = ErrorType<void>;
 
 /**
  * @summary Identify electrical part from images using AI vision
  */
-export const useAiIdentifyPart = <
-  TError = ErrorType<void>,
-  TContext = unknown,
->(options?: {
+export const useAiIdentifyPart = <TError = ErrorType<void>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof aiIdentifyPart>>,
     TError,
@@ -1061,12 +965,12 @@ export const getConfirmPhotoIdUrl = () => {
 
 export const confirmPhotoId = async (
   photoConfirmBody: PhotoConfirmBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<PhotoConfirmResponse> => {
   return customFetch<PhotoConfirmResponse>(getConfirmPhotoIdUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(photoConfirmBody),
   });
 };
@@ -1088,11 +992,9 @@ export const getConfirmPhotoIdMutationOptions = <
   { data: BodyType<PhotoConfirmBody> },
   TContext
 > => {
-  const mutationKey = ["confirmPhotoId"];
+  const mutationKey = ['confirmPhotoId'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -1109,19 +1011,14 @@ export const getConfirmPhotoIdMutationOptions = <
   return { mutationFn, ...mutationOptions };
 };
 
-export type ConfirmPhotoIdMutationResult = NonNullable<
-  Awaited<ReturnType<typeof confirmPhotoId>>
->;
+export type ConfirmPhotoIdMutationResult = NonNullable<Awaited<ReturnType<typeof confirmPhotoId>>>;
 export type ConfirmPhotoIdMutationBody = BodyType<PhotoConfirmBody>;
 export type ConfirmPhotoIdMutationError = ErrorType<void>;
 
 /**
  * @summary Record which result the worker confirmed matched the photo
  */
-export const useConfirmPhotoId = <
-  TError = ErrorType<void>,
-  TContext = unknown,
->(options?: {
+export const useConfirmPhotoId = <TError = ErrorType<void>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof confirmPhotoId>>,
     TError,
@@ -1139,6 +1036,91 @@ export const useConfirmPhotoId = <
 };
 
 /**
+ * Server-side aggregation of `photo_id_event` rows: total scans, parse
+success rate, match-type distribution, confirmation rate, latency
+(avg + p95), and the top confirmed parts. Admin Bearer required.
+
+ * @summary Aggregated Photo ID telemetry over a configurable window
+ */
+export const getGetPhotoStatsUrl = (params?: GetPhotoStatsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/photo/stats?${stringifiedParams}`
+    : `/api/photo/stats`;
+};
+
+export const getPhotoStats = async (
+  params?: GetPhotoStatsParams,
+  options?: RequestInit
+): Promise<PhotoStatsResponse> => {
+  return customFetch<PhotoStatsResponse>(getGetPhotoStatsUrl(params), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export const getGetPhotoStatsQueryKey = (params?: GetPhotoStatsParams) => {
+  return [`/api/photo/stats`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetPhotoStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPhotoStats>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetPhotoStatsParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getPhotoStats>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  }
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetPhotoStatsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPhotoStats>>> = ({ signal }) =>
+    getPhotoStats(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPhotoStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPhotoStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getPhotoStats>>>;
+export type GetPhotoStatsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Aggregated Photo ID telemetry over a configurable window
+ */
+
+export function useGetPhotoStats<
+  TData = Awaited<ReturnType<typeof getPhotoStats>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetPhotoStatsParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getPhotoStats>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  }
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPhotoStatsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Ask a question about electrical terms (SSE streaming)
  */
 export const getAskReferenceUrl = () => {
@@ -1147,12 +1129,12 @@ export const getAskReferenceUrl = () => {
 
 export const askReference = async (
   aiReferenceBody: AiReferenceBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<unknown> => {
   return customFetch<unknown>(getAskReferenceUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(aiReferenceBody),
   });
 };
@@ -1174,11 +1156,9 @@ export const getAskReferenceMutationOptions = <
   { data: BodyType<AiReferenceBody> },
   TContext
 > => {
-  const mutationKey = ["askReference"];
+  const mutationKey = ['askReference'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -1195,19 +1175,14 @@ export const getAskReferenceMutationOptions = <
   return { mutationFn, ...mutationOptions };
 };
 
-export type AskReferenceMutationResult = NonNullable<
-  Awaited<ReturnType<typeof askReference>>
->;
+export type AskReferenceMutationResult = NonNullable<Awaited<ReturnType<typeof askReference>>>;
 export type AskReferenceMutationBody = BodyType<AiReferenceBody>;
 export type AskReferenceMutationError = ErrorType<unknown>;
 
 /**
  * @summary Ask a question about electrical terms (SSE streaming)
  */
-export const useAskReference = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useAskReference = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof askReference>>,
     TError,
@@ -1231,12 +1206,10 @@ export const getGetCategoryTreeUrl = () => {
   return `/api/categories/tree`;
 };
 
-export const getCategoryTree = async (
-  options?: RequestInit,
-): Promise<CategoryTreeResponse> => {
+export const getCategoryTree = async (options?: RequestInit): Promise<CategoryTreeResponse> => {
   return customFetch<CategoryTreeResponse>(getGetCategoryTreeUrl(), {
     ...options,
-    method: "GET",
+    method: 'GET',
   });
 };
 
@@ -1248,20 +1221,15 @@ export const getGetCategoryTreeQueryOptions = <
   TData = Awaited<ReturnType<typeof getCategoryTree>>,
   TError = ErrorType<unknown>,
 >(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getCategoryTree>>,
-    TError,
-    TData
-  >;
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getCategoryTree>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
 }) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey = queryOptions?.queryKey ?? getGetCategoryTreeQueryKey();
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getCategoryTree>>> = ({
-    signal,
-  }) => getCategoryTree({ signal, ...requestOptions });
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getCategoryTree>>> = ({ signal }) =>
+    getCategoryTree({ signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof getCategoryTree>>,
@@ -1270,9 +1238,7 @@ export const getGetCategoryTreeQueryOptions = <
   > & { queryKey: QueryKey };
 };
 
-export type GetCategoryTreeQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getCategoryTree>>
->;
+export type GetCategoryTreeQueryResult = NonNullable<Awaited<ReturnType<typeof getCategoryTree>>>;
 export type GetCategoryTreeQueryError = ErrorType<unknown>;
 
 /**
@@ -1283,18 +1249,12 @@ export function useGetCategoryTree<
   TData = Awaited<ReturnType<typeof getCategoryTree>>,
   TError = ErrorType<unknown>,
 >(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getCategoryTree>>,
-    TError,
-    TData
-  >;
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getCategoryTree>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetCategoryTreeQueryOptions(options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -1307,11 +1267,11 @@ export const getGetCategoryCoverageUrl = () => {
 };
 
 export const getCategoryCoverage = async (
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<CategoryCoverageResponse> => {
   return customFetch<CategoryCoverageResponse>(getGetCategoryCoverageUrl(), {
     ...options,
-    method: "GET",
+    method: 'GET',
   });
 };
 
@@ -1323,20 +1283,15 @@ export const getGetCategoryCoverageQueryOptions = <
   TData = Awaited<ReturnType<typeof getCategoryCoverage>>,
   TError = ErrorType<unknown>,
 >(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getCategoryCoverage>>,
-    TError,
-    TData
-  >;
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getCategoryCoverage>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
 }) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey = queryOptions?.queryKey ?? getGetCategoryCoverageQueryKey();
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getCategoryCoverage>>
-  > = ({ signal }) => getCategoryCoverage({ signal, ...requestOptions });
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getCategoryCoverage>>> = ({ signal }) =>
+    getCategoryCoverage({ signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof getCategoryCoverage>>,
@@ -1358,18 +1313,12 @@ export function useGetCategoryCoverage<
   TData = Awaited<ReturnType<typeof getCategoryCoverage>>,
   TError = ErrorType<unknown>,
 >(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getCategoryCoverage>>,
-    TError,
-    TData
-  >;
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getCategoryCoverage>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetCategoryCoverageQueryOptions(options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -1377,14 +1326,12 @@ export function useGetCategoryCoverage<
 /**
  * @summary List inventory items not yet placed in any category
  */
-export const getListUncategorizedItemsUrl = (
-  params?: ListUncategorizedItemsParams,
-) => {
+export const getListUncategorizedItemsUrl = (params?: ListUncategorizedItemsParams) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
     }
   });
 
@@ -1397,24 +1344,16 @@ export const getListUncategorizedItemsUrl = (
 
 export const listUncategorizedItems = async (
   params?: ListUncategorizedItemsParams,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<InventoryListResponse> => {
-  return customFetch<InventoryListResponse>(
-    getListUncategorizedItemsUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
+  return customFetch<InventoryListResponse>(getListUncategorizedItemsUrl(params), {
+    ...options,
+    method: 'GET',
+  });
 };
 
-export const getListUncategorizedItemsQueryKey = (
-  params?: ListUncategorizedItemsParams,
-) => {
-  return [
-    `/api/categories/uncategorized`,
-    ...(params ? [params] : []),
-  ] as const;
+export const getListUncategorizedItemsQueryKey = (params?: ListUncategorizedItemsParams) => {
+  return [`/api/categories/uncategorized`, ...(params ? [params] : [])] as const;
 };
 
 export const getListUncategorizedItemsQueryOptions = <
@@ -1423,22 +1362,15 @@ export const getListUncategorizedItemsQueryOptions = <
 >(
   params?: ListUncategorizedItemsParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listUncategorizedItems>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listUncategorizedItems>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getListUncategorizedItemsQueryKey(params);
+  const queryKey = queryOptions?.queryKey ?? getListUncategorizedItemsQueryKey(params);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof listUncategorizedItems>>
-  > = ({ signal }) =>
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listUncategorizedItems>>> = ({ signal }) =>
     listUncategorizedItems(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
@@ -1463,19 +1395,13 @@ export function useListUncategorizedItems<
 >(
   params?: ListUncategorizedItemsParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listUncategorizedItems>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listUncategorizedItems>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListUncategorizedItemsQueryOptions(params, options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -1488,15 +1414,12 @@ filter dimensions as POST /inventory/search and an optional
 
  * @summary List inventory items under a category, subcategory, or type
  */
-export const getListCategoryItemsUrl = (
-  slug: string,
-  params?: ListCategoryItemsParams,
-) => {
+export const getListCategoryItemsUrl = (slug: string, params?: ListCategoryItemsParams) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
     }
   });
 
@@ -1510,25 +1433,16 @@ export const getListCategoryItemsUrl = (
 export const listCategoryItems = async (
   slug: string,
   params?: ListCategoryItemsParams,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<CategoryItemsResponse> => {
-  return customFetch<CategoryItemsResponse>(
-    getListCategoryItemsUrl(slug, params),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
+  return customFetch<CategoryItemsResponse>(getListCategoryItemsUrl(slug, params), {
+    ...options,
+    method: 'GET',
+  });
 };
 
-export const getListCategoryItemsQueryKey = (
-  slug: string,
-  params?: ListCategoryItemsParams,
-) => {
-  return [
-    `/api/categories/${slug}/items`,
-    ...(params ? [params] : []),
-  ] as const;
+export const getListCategoryItemsQueryKey = (slug: string, params?: ListCategoryItemsParams) => {
+  return [`/api/categories/${slug}/items`, ...(params ? [params] : [])] as const;
 };
 
 export const getListCategoryItemsQueryOptions = <
@@ -1538,30 +1452,18 @@ export const getListCategoryItemsQueryOptions = <
   slug: string,
   params?: ListCategoryItemsParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listCategoryItems>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listCategoryItems>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getListCategoryItemsQueryKey(slug, params);
+  const queryKey = queryOptions?.queryKey ?? getListCategoryItemsQueryKey(slug, params);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof listCategoryItems>>
-  > = ({ signal }) =>
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listCategoryItems>>> = ({ signal }) =>
     listCategoryItems(slug, params, { signal, ...requestOptions });
 
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!slug,
-    ...queryOptions,
-  } as UseQueryOptions<
+  return { queryKey, queryFn, enabled: !!slug, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof listCategoryItems>>,
     TError,
     TData
@@ -1584,19 +1486,13 @@ export function useListCategoryItems<
   slug: string,
   params?: ListCategoryItemsParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listCategoryItems>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listCategoryItems>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListCategoryItemsQueryOptions(slug, params, options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -1611,13 +1507,13 @@ losing filter parity.
  */
 export const getListCategoryPartsByIdUrl = (
   nodeId: number,
-  params?: ListCategoryPartsByIdParams,
+  params?: ListCategoryPartsByIdParams
 ) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
     }
   });
 
@@ -1631,25 +1527,19 @@ export const getListCategoryPartsByIdUrl = (
 export const listCategoryPartsById = async (
   nodeId: number,
   params?: ListCategoryPartsByIdParams,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<CategoryItemsResponse> => {
-  return customFetch<CategoryItemsResponse>(
-    getListCategoryPartsByIdUrl(nodeId, params),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
+  return customFetch<CategoryItemsResponse>(getListCategoryPartsByIdUrl(nodeId, params), {
+    ...options,
+    method: 'GET',
+  });
 };
 
 export const getListCategoryPartsByIdQueryKey = (
   nodeId: number,
-  params?: ListCategoryPartsByIdParams,
+  params?: ListCategoryPartsByIdParams
 ) => {
-  return [
-    `/api/categories/${nodeId}/parts`,
-    ...(params ? [params] : []),
-  ] as const;
+  return [`/api/categories/${nodeId}/parts`, ...(params ? [params] : [])] as const;
 };
 
 export const getListCategoryPartsByIdQueryOptions = <
@@ -1659,30 +1549,18 @@ export const getListCategoryPartsByIdQueryOptions = <
   nodeId: number,
   params?: ListCategoryPartsByIdParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listCategoryPartsById>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listCategoryPartsById>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getListCategoryPartsByIdQueryKey(nodeId, params);
+  const queryKey = queryOptions?.queryKey ?? getListCategoryPartsByIdQueryKey(nodeId, params);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof listCategoryPartsById>>
-  > = ({ signal }) =>
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listCategoryPartsById>>> = ({ signal }) =>
     listCategoryPartsById(nodeId, params, { signal, ...requestOptions });
 
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!nodeId,
-    ...queryOptions,
-  } as UseQueryOptions<
+  return { queryKey, queryFn, enabled: !!nodeId, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof listCategoryPartsById>>,
     TError,
     TData
@@ -1705,23 +1583,13 @@ export function useListCategoryPartsById<
   nodeId: number,
   params?: ListCategoryPartsByIdParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listCategoryPartsById>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listCategoryPartsById>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getListCategoryPartsByIdQueryOptions(
-    nodeId,
-    params,
-    options,
-  );
+  const queryOptions = getListCategoryPartsByIdQueryOptions(nodeId, params, options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -1734,15 +1602,12 @@ export const getListCategoryAssignmentsUrl = () => {
 };
 
 export const listCategoryAssignments = async (
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<CategoryAssignmentsResponse> => {
-  return customFetch<CategoryAssignmentsResponse>(
-    getListCategoryAssignmentsUrl(),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
+  return customFetch<CategoryAssignmentsResponse>(getListCategoryAssignmentsUrl(), {
+    ...options,
+    method: 'GET',
+  });
 };
 
 export const getListCategoryAssignmentsQueryKey = () => {
@@ -1753,21 +1618,16 @@ export const getListCategoryAssignmentsQueryOptions = <
   TData = Awaited<ReturnType<typeof listCategoryAssignments>>,
   TError = ErrorType<unknown>,
 >(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof listCategoryAssignments>>,
-    TError,
-    TData
-  >;
+  query?: UseQueryOptions<Awaited<ReturnType<typeof listCategoryAssignments>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
 }) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getListCategoryAssignmentsQueryKey();
+  const queryKey = queryOptions?.queryKey ?? getListCategoryAssignmentsQueryKey();
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof listCategoryAssignments>>
-  > = ({ signal }) => listCategoryAssignments({ signal, ...requestOptions });
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listCategoryAssignments>>> = ({
+    signal,
+  }) => listCategoryAssignments({ signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof listCategoryAssignments>>,
@@ -1789,18 +1649,12 @@ export function useListCategoryAssignments<
   TData = Awaited<ReturnType<typeof listCategoryAssignments>>,
   TError = ErrorType<unknown>,
 >(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof listCategoryAssignments>>,
-    TError,
-    TData
-  >;
+  query?: UseQueryOptions<Awaited<ReturnType<typeof listCategoryAssignments>>, TError, TData>;
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListCategoryAssignmentsQueryOptions(options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -1814,12 +1668,12 @@ export const getClassifyInventoryUrl = () => {
 
 export const classifyInventory = async (
   classifyInventoryBody: ClassifyInventoryBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<unknown> => {
   return customFetch<unknown>(getClassifyInventoryUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(classifyInventoryBody),
   });
 };
@@ -1841,11 +1695,9 @@ export const getClassifyInventoryMutationOptions = <
   { data: BodyType<ClassifyInventoryBody> },
   TContext
 > => {
-  const mutationKey = ["classifyInventory"];
+  const mutationKey = ['classifyInventory'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -1871,10 +1723,7 @@ export type ClassifyInventoryMutationError = ErrorType<unknown>;
 /**
  * @summary Run the classifier across inventory (SSE streaming)
  */
-export const useClassifyInventory = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useClassifyInventory = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof classifyInventory>>,
     TError,
@@ -1900,12 +1749,12 @@ export const getClassifyInventoryAliasUrl = () => {
 
 export const classifyInventoryAlias = async (
   classifyInventoryBody: ClassifyInventoryBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<unknown> => {
   return customFetch<unknown>(getClassifyInventoryAliasUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(classifyInventoryBody),
   });
 };
@@ -1927,11 +1776,9 @@ export const getClassifyInventoryAliasMutationOptions = <
   { data: BodyType<ClassifyInventoryBody> },
   TContext
 > => {
-  const mutationKey = ["classifyInventoryAlias"];
+  const mutationKey = ['classifyInventoryAlias'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -1951,8 +1798,7 @@ export const getClassifyInventoryAliasMutationOptions = <
 export type ClassifyInventoryAliasMutationResult = NonNullable<
   Awaited<ReturnType<typeof classifyInventoryAlias>>
 >;
-export type ClassifyInventoryAliasMutationBody =
-  BodyType<ClassifyInventoryBody>;
+export type ClassifyInventoryAliasMutationBody = BodyType<ClassifyInventoryBody>;
 export type ClassifyInventoryAliasMutationError = ErrorType<unknown>;
 
 /**
@@ -1988,12 +1834,12 @@ export const getSetInventoryCategoryUrl = (id: number) => {
 export const setInventoryCategory = async (
   id: number,
   setInventoryCategoryBody: SetInventoryCategoryBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<AssignCategoryResponse> => {
   return customFetch<AssignCategoryResponse>(getSetInventoryCategoryUrl(id), {
     ...options,
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(setInventoryCategoryBody),
   });
 };
@@ -2015,11 +1861,9 @@ export const getSetInventoryCategoryMutationOptions = <
   { id: number; data: BodyType<SetInventoryCategoryBody> },
   TContext
 > => {
-  const mutationKey = ["setInventoryCategory"];
+  const mutationKey = ['setInventoryCategory'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -2039,17 +1883,13 @@ export const getSetInventoryCategoryMutationOptions = <
 export type SetInventoryCategoryMutationResult = NonNullable<
   Awaited<ReturnType<typeof setInventoryCategory>>
 >;
-export type SetInventoryCategoryMutationBody =
-  BodyType<SetInventoryCategoryBody>;
+export type SetInventoryCategoryMutationBody = BodyType<SetInventoryCategoryBody>;
 export type SetInventoryCategoryMutationError = ErrorType<unknown>;
 
 /**
  * @summary Manually set a part's category node (admin)
  */
-export const useSetInventoryCategory = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useSetInventoryCategory = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof setInventoryCategory>>,
     TError,
@@ -2076,12 +1916,12 @@ export const getUpdateCategoryNodeUrl = (nodeId: number) => {
 export const updateCategoryNode = async (
   nodeId: number,
   updateCategoryNodeBody: UpdateCategoryNodeBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<UpdateCategoryNode200> => {
   return customFetch<UpdateCategoryNode200>(getUpdateCategoryNodeUrl(nodeId), {
     ...options,
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(updateCategoryNodeBody),
   });
 };
@@ -2103,11 +1943,9 @@ export const getUpdateCategoryNodeMutationOptions = <
   { nodeId: number; data: BodyType<UpdateCategoryNodeBody> },
   TContext
 > => {
-  const mutationKey = ["updateCategoryNode"];
+  const mutationKey = ['updateCategoryNode'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -2133,10 +1971,7 @@ export type UpdateCategoryNodeMutationError = ErrorType<unknown>;
 /**
  * @summary Rename, re-parent, or reorder a category node (admin)
  */
-export const useUpdateCategoryNode = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useUpdateCategoryNode = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof updateCategoryNode>>,
     TError,
@@ -2162,12 +1997,12 @@ export const getMergeCategoryNodesUrl = () => {
 
 export const mergeCategoryNodes = async (
   mergeCategoryBody: MergeCategoryBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<MergeCategoryNodes200> => {
   return customFetch<MergeCategoryNodes200>(getMergeCategoryNodesUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(mergeCategoryBody),
   });
 };
@@ -2189,11 +2024,9 @@ export const getMergeCategoryNodesMutationOptions = <
   { data: BodyType<MergeCategoryBody> },
   TContext
 > => {
-  const mutationKey = ["mergeCategoryNodes"];
+  const mutationKey = ['mergeCategoryNodes'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -2219,10 +2052,7 @@ export type MergeCategoryNodesMutationError = ErrorType<unknown>;
 /**
  * @summary Merge two category nodes; parts and children move to target (admin)
  */
-export const useMergeCategoryNodes = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useMergeCategoryNodes = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof mergeCategoryNodes>>,
     TError,
@@ -2249,17 +2079,14 @@ export const getAssignInventoryToCategoryUrl = (nodeId: number) => {
 export const assignInventoryToCategory = async (
   nodeId: number,
   assignCategoryBody: AssignCategoryBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<AssignCategoryResponse> => {
-  return customFetch<AssignCategoryResponse>(
-    getAssignInventoryToCategoryUrl(nodeId),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(assignCategoryBody),
-    },
-  );
+  return customFetch<AssignCategoryResponse>(getAssignInventoryToCategoryUrl(nodeId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(assignCategoryBody),
+  });
 };
 
 export const getAssignInventoryToCategoryMutationOptions = <
@@ -2279,11 +2106,9 @@ export const getAssignInventoryToCategoryMutationOptions = <
   { nodeId: number; data: BodyType<AssignCategoryBody> },
   TContext
 > => {
-  const mutationKey = ["assignInventoryToCategory"];
+  const mutationKey = ['assignInventoryToCategory'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -2303,8 +2128,7 @@ export const getAssignInventoryToCategoryMutationOptions = <
 export type AssignInventoryToCategoryMutationResult = NonNullable<
   Awaited<ReturnType<typeof assignInventoryToCategory>>
 >;
-export type AssignInventoryToCategoryMutationBody =
-  BodyType<AssignCategoryBody>;
+export type AssignInventoryToCategoryMutationBody = BodyType<AssignCategoryBody>;
 export type AssignInventoryToCategoryMutationError = ErrorType<unknown>;
 
 /**
@@ -2349,12 +2173,12 @@ export const getBarcodeLookupUrl = () => {
 
 export const barcodeLookup = async (
   barcodeLookupBody: BarcodeLookupBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<BarcodeLookupResponse> => {
   return customFetch<BarcodeLookupResponse>(getBarcodeLookupUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(barcodeLookupBody),
   });
 };
@@ -2376,11 +2200,9 @@ export const getBarcodeLookupMutationOptions = <
   { data: BodyType<BarcodeLookupBody> },
   TContext
 > => {
-  const mutationKey = ["barcodeLookup"];
+  const mutationKey = ['barcodeLookup'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -2397,19 +2219,14 @@ export const getBarcodeLookupMutationOptions = <
   return { mutationFn, ...mutationOptions };
 };
 
-export type BarcodeLookupMutationResult = NonNullable<
-  Awaited<ReturnType<typeof barcodeLookup>>
->;
+export type BarcodeLookupMutationResult = NonNullable<Awaited<ReturnType<typeof barcodeLookup>>>;
 export type BarcodeLookupMutationBody = BodyType<BarcodeLookupBody>;
 export type BarcodeLookupMutationError = ErrorType<unknown>;
 
 /**
  * @summary Look up an inventory item by scanned barcode / QR string
  */
-export const useBarcodeLookup = <
-  TError = ErrorType<unknown>,
-  TContext = unknown,
->(options?: {
+export const useBarcodeLookup = <TError = ErrorType<unknown>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof barcodeLookup>>,
     TError,
@@ -2440,12 +2257,12 @@ export const getBarcodeLinkUrl = () => {
 
 export const barcodeLink = async (
   barcodeLinkBody: BarcodeLinkBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<BarcodeLinkResponse> => {
   return customFetch<BarcodeLinkResponse>(getBarcodeLinkUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(barcodeLinkBody),
   });
 };
@@ -2467,11 +2284,9 @@ export const getBarcodeLinkMutationOptions = <
   { data: BodyType<BarcodeLinkBody> },
   TContext
 > => {
-  const mutationKey = ["barcodeLink"];
+  const mutationKey = ['barcodeLink'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -2488,9 +2303,7 @@ export const getBarcodeLinkMutationOptions = <
   return { mutationFn, ...mutationOptions };
 };
 
-export type BarcodeLinkMutationResult = NonNullable<
-  Awaited<ReturnType<typeof barcodeLink>>
->;
+export type BarcodeLinkMutationResult = NonNullable<Awaited<ReturnType<typeof barcodeLink>>>;
 export type BarcodeLinkMutationBody = BodyType<BarcodeLinkBody>;
 export type BarcodeLinkMutationError = ErrorType<BarcodeLinkConflict>;
 
@@ -2525,7 +2338,7 @@ export const getBarcodeRecentUrl = (params?: BarcodeRecentParams) => {
 
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
     }
   });
 
@@ -2538,11 +2351,11 @@ export const getBarcodeRecentUrl = (params?: BarcodeRecentParams) => {
 
 export const barcodeRecent = async (
   params?: BarcodeRecentParams,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<BarcodeRecentResponse> => {
   return customFetch<BarcodeRecentResponse>(getBarcodeRecentUrl(params), {
     ...options,
-    method: "GET",
+    method: 'GET',
   });
 };
 
@@ -2556,21 +2369,16 @@ export const getBarcodeRecentQueryOptions = <
 >(
   params?: BarcodeRecentParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof barcodeRecent>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof barcodeRecent>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
   const queryKey = queryOptions?.queryKey ?? getBarcodeRecentQueryKey(params);
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof barcodeRecent>>> = ({
-    signal,
-  }) => barcodeRecent(params, { signal, ...requestOptions });
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof barcodeRecent>>> = ({ signal }) =>
+    barcodeRecent(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof barcodeRecent>>,
@@ -2579,9 +2387,7 @@ export const getBarcodeRecentQueryOptions = <
   > & { queryKey: QueryKey };
 };
 
-export type BarcodeRecentQueryResult = NonNullable<
-  Awaited<ReturnType<typeof barcodeRecent>>
->;
+export type BarcodeRecentQueryResult = NonNullable<Awaited<ReturnType<typeof barcodeRecent>>>;
 export type BarcodeRecentQueryError = ErrorType<unknown>;
 
 /**
@@ -2594,19 +2400,13 @@ export function useBarcodeRecent<
 >(
   params?: BarcodeRecentParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof barcodeRecent>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof barcodeRecent>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getBarcodeRecentQueryOptions(params, options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -2621,12 +2421,12 @@ export const getAiReferenceUrl = () => {
 
 export const aiReference = async (
   aiReferenceBody: AiReferenceBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<unknown> => {
   return customFetch<unknown>(getAiReferenceUrl(), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(aiReferenceBody),
   });
 };
@@ -2648,11 +2448,9 @@ export const getAiReferenceMutationOptions = <
   { data: BodyType<AiReferenceBody> },
   TContext
 > => {
-  const mutationKey = ["aiReference"];
+  const mutationKey = ['aiReference'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -2669,9 +2467,7 @@ export const getAiReferenceMutationOptions = <
   return { mutationFn, ...mutationOptions };
 };
 
-export type AiReferenceMutationResult = NonNullable<
-  Awaited<ReturnType<typeof aiReference>>
->;
+export type AiReferenceMutationResult = NonNullable<Awaited<ReturnType<typeof aiReference>>>;
 export type AiReferenceMutationBody = BodyType<AiReferenceBody>;
 export type AiReferenceMutationError = ErrorType<void>;
 
@@ -2679,10 +2475,7 @@ export type AiReferenceMutationError = ErrorType<void>;
  * @deprecated
  * @summary [Deprecated] Use /reference/ask instead
  */
-export const useAiReference = <
-  TError = ErrorType<void>,
-  TContext = unknown,
->(options?: {
+export const useAiReference = <TError = ErrorType<void>, TContext = unknown>(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof aiReference>>,
     TError,
@@ -2706,14 +2499,12 @@ confidence ASC). Requires Bearer admin token.
 
  * @summary List low-confidence AI classification items pending admin review
  */
-export const getListClassificationReviewUrl = (
-  params?: ListClassificationReviewParams,
-) => {
+export const getListClassificationReviewUrl = (params?: ListClassificationReviewParams) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
     if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
     }
   });
 
@@ -2726,24 +2517,16 @@ export const getListClassificationReviewUrl = (
 
 export const listClassificationReview = async (
   params?: ListClassificationReviewParams,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<ReviewQueueResponse> => {
-  return customFetch<ReviewQueueResponse>(
-    getListClassificationReviewUrl(params),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
+  return customFetch<ReviewQueueResponse>(getListClassificationReviewUrl(params), {
+    ...options,
+    method: 'GET',
+  });
 };
 
-export const getListClassificationReviewQueryKey = (
-  params?: ListClassificationReviewParams,
-) => {
-  return [
-    `/api/admin/classification-review`,
-    ...(params ? [params] : []),
-  ] as const;
+export const getListClassificationReviewQueryKey = (params?: ListClassificationReviewParams) => {
+  return [`/api/admin/classification-review`, ...(params ? [params] : [])] as const;
 };
 
 export const getListClassificationReviewQueryOptions = <
@@ -2752,23 +2535,17 @@ export const getListClassificationReviewQueryOptions = <
 >(
   params?: ListClassificationReviewParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listClassificationReview>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listClassificationReview>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getListClassificationReviewQueryKey(params);
+  const queryKey = queryOptions?.queryKey ?? getListClassificationReviewQueryKey(params);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof listClassificationReview>>
-  > = ({ signal }) =>
-    listClassificationReview(params, { signal, ...requestOptions });
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listClassificationReview>>> = ({
+    signal,
+  }) => listClassificationReview(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof listClassificationReview>>,
@@ -2792,19 +2569,13 @@ export function useListClassificationReview<
 >(
   params?: ListClassificationReviewParams,
   options?: {
-    query?: UseQueryOptions<
-      Awaited<ReturnType<typeof listClassificationReview>>,
-      TError,
-      TData
-    >;
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listClassificationReview>>, TError, TData>;
     request?: SecondParameter<typeof customFetch>;
-  },
+  }
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListClassificationReviewQueryOptions(params, options);
 
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
@@ -2821,15 +2592,12 @@ export const getConfirmClassificationReviewUrl = (id: number) => {
 
 export const confirmClassificationReview = async (
   id: number,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<ReviewActionResponse> => {
-  return customFetch<ReviewActionResponse>(
-    getConfirmClassificationReviewUrl(id),
-    {
-      ...options,
-      method: "POST",
-    },
-  );
+  return customFetch<ReviewActionResponse>(getConfirmClassificationReviewUrl(id), {
+    ...options,
+    method: 'POST',
+  });
 };
 
 export const getConfirmClassificationReviewMutationOptions = <
@@ -2849,11 +2617,9 @@ export const getConfirmClassificationReviewMutationOptions = <
   { id: number },
   TContext
 > => {
-  const mutationKey = ["confirmClassificationReview"];
+  const mutationKey = ['confirmClassificationReview'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -2913,12 +2679,12 @@ export const getReclassifyReviewItemUrl = (id: number) => {
 export const reclassifyReviewItem = async (
   id: number,
   reclassifyBody: ReclassifyBody,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<ReviewActionResponse> => {
   return customFetch<ReviewActionResponse>(getReclassifyReviewItemUrl(id), {
     ...options,
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(reclassifyBody),
   });
 };
@@ -2940,11 +2706,9 @@ export const getReclassifyReviewItemMutationOptions = <
   { id: number; data: BodyType<ReclassifyBody> },
   TContext
 > => {
-  const mutationKey = ["reclassifyReviewItem"];
+  const mutationKey = ['reclassifyReviewItem'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };
@@ -3003,11 +2767,11 @@ export const getSkipClassificationReviewUrl = (id: number) => {
 
 export const skipClassificationReview = async (
   id: number,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<ReviewActionResponse> => {
   return customFetch<ReviewActionResponse>(getSkipClassificationReviewUrl(id), {
     ...options,
-    method: "POST",
+    method: 'POST',
   });
 };
 
@@ -3028,11 +2792,9 @@ export const getSkipClassificationReviewMutationOptions = <
   { id: number },
   TContext
 > => {
-  const mutationKey = ["skipClassificationReview"];
+  const mutationKey = ['skipClassificationReview'];
   const { mutation: mutationOptions, request: requestOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
+    ? options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey
       ? options
       : { ...options, mutation: { ...options.mutation, mutationKey } }
     : { mutation: { mutationKey }, request: undefined };

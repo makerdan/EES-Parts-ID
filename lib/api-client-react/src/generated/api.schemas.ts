@@ -105,9 +105,7 @@ export interface SearchResult {
 /**
  * Per-chip-dimension live match counts (dimKey → optionLabel → count)
  */
-export type SearchInventoryResponseDimensionCounts = {
-  [key: string]: { [key: string]: number };
-};
+export type SearchInventoryResponseDimensionCounts = { [key: string]: { [key: string]: number } };
 
 export interface SearchInventoryResponse {
   results: SearchResult[];
@@ -145,9 +143,9 @@ export type UpsertInventoryBodyMode =
   (typeof UpsertInventoryBodyMode)[keyof typeof UpsertInventoryBodyMode];
 
 export const UpsertInventoryBodyMode = {
-  "add-new-only": "add-new-only",
-  "overwrite-all": "overwrite-all",
-  selected: "selected",
+  'add-new-only': 'add-new-only',
+  'overwrite-all': 'overwrite-all',
+  selected: 'selected',
 } as const;
 
 export interface UpsertInventoryBody {
@@ -218,12 +216,18 @@ untouched. At least one field must be supplied.
 
  */
 export interface UpdateInventoryItemBody {
+  /** Replacement vendor code (trimmed and uppercased). Must be non-empty. */
+  vendor?: string;
+  /** Replacement catalog number (trimmed). Must be non-empty. */
+  catalog?: string;
   /** New description text. Empty string clears the description. */
   description?: string;
   /** Replacement AI keywords array. */
   keywords?: string[];
   /** Trade size to assign (e.g. `1/2"`, `3/4"`). Null clears the value. Omit to leave unchanged. */
   tradeSize?: string | null;
+  /** Replacement bin locations array. Duplicates are deduplicated case-insensitively. */
+  binLocations?: string[];
 }
 
 export interface SuggestDescriptionResponse {
@@ -257,9 +261,9 @@ export type AiIdentifyResponseMatchType =
   (typeof AiIdentifyResponseMatchType)[keyof typeof AiIdentifyResponseMatchType];
 
 export const AiIdentifyResponseMatchType = {
-  catalog_exact: "catalog_exact",
-  attribute_match: "attribute_match",
-  descriptive: "descriptive",
+  catalog_exact: 'catalog_exact',
+  attribute_match: 'attribute_match',
+  descriptive: 'descriptive',
 } as const;
 
 export type _AiIdentifyResponseTelemetry = {
@@ -360,9 +364,9 @@ export type ClassifyInventoryBodyMode =
   (typeof ClassifyInventoryBodyMode)[keyof typeof ClassifyInventoryBodyMode];
 
 export const ClassifyInventoryBodyMode = {
-  all: "all",
-  unclassified: "unclassified",
-  "specific-ids": "specific-ids",
+  all: 'all',
+  unclassified: 'unclassified',
+  'specific-ids': 'specific-ids',
 } as const;
 
 export interface ClassifyInventoryBody {
@@ -412,9 +416,9 @@ export interface BarcodeLookupBody {
 export type BarcodeSource = (typeof BarcodeSource)[keyof typeof BarcodeSource];
 
 export const BarcodeSource = {
-  "catalog-auto": "catalog-auto",
-  "upc-linked": "upc-linked",
-  manual: "manual",
+  'catalog-auto': 'catalog-auto',
+  'upc-linked': 'upc-linked',
+  manual: 'manual',
 } as const;
 
 export interface BarcodeLookupResponse {
@@ -503,6 +507,41 @@ export interface ReviewActionResponse {
 }
 
 /**
+ * Counts per Photo ID match path (catalog / attribute / descriptive).
+ */
+export interface PhotoStatsMatchTypeDistribution {
+  catalogExact: number;
+  attributeMatch: number;
+  descriptive: number;
+}
+
+/**
+ * A part the worker confirmed at least once in the window.
+ */
+export interface PhotoStatsTopConfirmedPart {
+  inventoryId: number;
+  catalog: string;
+  vendor: string;
+  confirmedCount: number;
+}
+
+/**
+ * Aggregated Photo ID telemetry over the requested window.
+ */
+export interface PhotoStatsResponse {
+  windowHours: number;
+  totalScans: number;
+  /** Fraction (0–1) of scans whose vision response parsed cleanly. */
+  parseSuccessRate: number;
+  /** Of scans that returned a top result, the fraction the worker confirmed. */
+  confirmationRate: number;
+  matchTypeDistribution: PhotoStatsMatchTypeDistribution;
+  avgLatencyMs: number | null;
+  p95LatencyMs: number | null;
+  topConfirmedParts: PhotoStatsTopConfirmedPart[];
+}
+
+/**
  * Generic error envelope returned on 4xx/5xx responses.
  */
 export interface ErrorResponse {
@@ -516,10 +555,23 @@ export type ListInventoryParams = {
    * When true, restricts both `items` and `total` to inventory rows that have not been AI-enriched (`enrichedAt IS NULL`). Default false preserves the global list.
    */
   unenrichedOnly?: boolean;
+  /**
+   * Case-insensitive substring search across vendor, catalog, and description. When provided, only matching rows are returned and `total` reflects the filtered count.
+   */
+  q?: string;
 };
 
 export type LookupDictionaryParams = {
   term: string;
+};
+
+export type GetPhotoStatsParams = {
+  /**
+   * Lookback window in hours (default 24, max 720 = 30 days).
+   * @minimum 1
+   * @maximum 720
+   */
+  windowHours?: number;
 };
 
 export type ListUncategorizedItemsParams = {

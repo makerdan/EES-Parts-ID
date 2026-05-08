@@ -9,6 +9,4 @@
 /**
  * Per-chip-dimension live match counts (dimKey → optionLabel → count)
  */
-export type SearchInventoryResponseDimensionCounts = {
-  [key: string]: { [key: string]: number };
-};
+export type SearchInventoryResponseDimensionCounts = { [key: string]: { [key: string]: number } };

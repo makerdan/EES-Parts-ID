@@ -293,6 +293,40 @@ paths:
         "404":
           description: Photo ID event not found
 
+  /photo/stats:
+    get:
+      operationId: getPhotoStats
+      tags: [admin]
+      summary: Aggregated Photo ID telemetry over a configurable window
+      description: |
+        Server-side aggregation of `photo_id_event` rows: total scans, parse
+        success rate, match-type distribution, confirmation rate, latency
+        (avg + p95), and the top confirmed parts. Admin Bearer required.
+      parameters:
+        - name: windowHours
+          in: query
+          description: Lookback window in hours (default 24, max 720 = 30 days).
+          schema:
+            type: integer
+            default: 24
+            minimum: 1
+            maximum: 720
+      security:
+        - bearerAdmin: []
+      responses:
+        "200":
+          description: Aggregated photo ID stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoStatsResponse"
+        "401":
+          description: Missing or invalid admin token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /reference/ask:
     post:
       operationId: askReference
@@ -1777,6 +1811,75 @@ components:
       required:
         - ok
         - inventoryId
+
+    PhotoStatsMatchTypeDistribution:
+      type: object
+      description: Counts per Photo ID match path (catalog / attribute / descriptive).
+      properties:
+        catalogExact:
+          type: integer
+        attributeMatch:
+          type: integer
+        descriptive:
+          type: integer
+      required:
+        - catalogExact
+        - attributeMatch
+        - descriptive
+
+    PhotoStatsTopConfirmedPart:
+      type: object
+      description: A part the worker confirmed at least once in the window.
+      properties:
+        inventoryId:
+          type: integer
+        catalog:
+          type: string
+        vendor:
+          type: string
+        confirmedCount:
+          type: integer
+      required:
+        - inventoryId
+        - catalog
+        - vendor
+        - confirmedCount
+
+    PhotoStatsResponse:
+      type: object
+      description: Aggregated Photo ID telemetry over the requested window.
+      properties:
+        windowHours:
+          type: integer
+        totalScans:
+          type: integer
+        parseSuccessRate:
+          type: number
+          description: Fraction (0–1) of scans whose vision response parsed cleanly.
+        confirmationRate:
+          type: number
+          description: Of scans that returned a top result, the fraction the worker confirmed.
+        matchTypeDistribution:
+          $ref: "#/components/schemas/PhotoStatsMatchTypeDistribution"
+        avgLatencyMs:
+          type: integer
+          nullable: true
+        p95LatencyMs:
+          type: integer
+          nullable: true
+        topConfirmedParts:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhotoStatsTopConfirmedPart"
+      required:
+        - windowHours
+        - totalScans
+        - parseSuccessRate
+        - confirmationRate
+        - matchTypeDistribution
+        - avgLatencyMs
+        - p95LatencyMs
+        - topConfirmedParts
 
     ErrorResponse:
       type: object

@@ -31,6 +31,12 @@ export const ListInventoryQueryParams = zod.object({
     .describe(
       'When true, restricts both `items` and `total` to inventory rows that have not been AI-enriched (`enrichedAt IS NULL`). Default false preserves the global list.'
     ),
+  q: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      'Case-insensitive substring search across vendor, catalog, and description. When provided, only matching rows are returned and `total` reflects the filtered count.'
+    ),
 });
 
 export const ListInventoryResponse = zod.object({
@@ -389,6 +395,14 @@ export const UpdateInventoryItemParams = zod.object({
 
 export const UpdateInventoryItemBody = zod
   .object({
+    vendor: zod
+      .string()
+      .optional()
+      .describe('Replacement vendor code (trimmed and uppercased). Must be non-empty.'),
+    catalog: zod
+      .string()
+      .optional()
+      .describe('Replacement catalog number (trimmed). Must be non-empty.'),
     description: zod
       .string()
       .optional()
@@ -400,6 +414,10 @@ export const UpdateInventoryItemBody = zod
       .describe(
         'Trade size to assign (e.g. `1\/2\"`, `3\/4\"`). Null clears the value. Omit to leave unchanged.'
       ),
+    binLocations: zod
+      .array(zod.string())
+      .optional()
+      .describe('Replacement bin locations array. Duplicates are deduplicated case-insensitively.'),
   })
   .describe(
     'Partial update for an inventory item. Only the fields explicitly\nprovided are touched. Sending `description: \"\"` is a real edit\n(clears the description); omit the field entirely to leave it\nuntouched. At least one field must be supplied.\n'
@@ -589,6 +607,57 @@ export const ConfirmPhotoIdResponse = zod.object({
   photoEventId: zod.number(),
   confirmedResultId: zod.number(),
 });
+
+/**
+ * Server-side aggregation of `photo_id_event` rows: total scans, parse
+success rate, match-type distribution, confirmation rate, latency
+(avg + p95), and the top confirmed parts. Admin Bearer required.
+
+ * @summary Aggregated Photo ID telemetry over a configurable window
+ */
+export const getPhotoStatsQueryWindowHoursDefault = 24;
+export const getPhotoStatsQueryWindowHoursMax = 720;
+
+export const GetPhotoStatsQueryParams = zod.object({
+  windowHours: zod.coerce
+    .number()
+    .min(1)
+    .max(getPhotoStatsQueryWindowHoursMax)
+    .default(getPhotoStatsQueryWindowHoursDefault)
+    .describe('Lookback window in hours (default 24, max 720 = 30 days).'),
+});
+
+export const GetPhotoStatsResponse = zod
+  .object({
+    windowHours: zod.number(),
+    totalScans: zod.number(),
+    parseSuccessRate: zod
+      .number()
+      .describe('Fraction (0–1) of scans whose vision response parsed cleanly.'),
+    confirmationRate: zod
+      .number()
+      .describe('Of scans that returned a top result, the fraction the worker confirmed.'),
+    matchTypeDistribution: zod
+      .object({
+        catalogExact: zod.number(),
+        attributeMatch: zod.number(),
+        descriptive: zod.number(),
+      })
+      .describe('Counts per Photo ID match path (catalog \/ attribute \/ descriptive).'),
+    avgLatencyMs: zod.number().nullable(),
+    p95LatencyMs: zod.number().nullable(),
+    topConfirmedParts: zod.array(
+      zod
+        .object({
+          inventoryId: zod.number(),
+          catalog: zod.string(),
+          vendor: zod.string(),
+          confirmedCount: zod.number(),
+        })
+        .describe('A part the worker confirmed at least once in the window.')
+    ),
+  })
+  .describe('Aggregated Photo ID telemetry over the requested window.');
 
 /**
  * @summary Ask a question about electrical terms (SSE streaming)

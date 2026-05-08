@@ -50,6 +50,7 @@ import type { InventoryItem } from '@workspace/api-client-react';
 import { secondaryBtnBase } from '@/styles/shared';
 import { ImportFileCard } from '@/components/ImportFileCard';
 import ClassificationReviewSection from '@/components/ClassificationReviewSection';
+import PhotoIdStatsSection from '@/components/PhotoIdStatsSection';
 import { RecordsBrowser } from '@/components/RecordsBrowser';
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -3607,6 +3608,15 @@ export default function UploadScreen() {
                         }}
                         expandTrigger={reviewExpandTrigger}
                         onReviewAction={fetchReviewCount}
+                      />
+
+                      {/* Photo ID telemetry dashboard */}
+                      <PhotoIdStatsSection
+                        adminHeaders={adminHeaders}
+                        onExpiredSession={() => {
+                          logoutAdmin();
+                          setUploadError('Admin session expired. Please unlock again.');
+                        }}
                       />
 
                       {/* ── Assign Series ──────────────────────────────────────────── */}
