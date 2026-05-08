@@ -325,6 +325,149 @@ describe('POST /api/inventory/upsert-batch', () => {
     expect(res.body.total).toBe(1);
   });
 
+  it('populates search_tokens immediately after insert so the new row is searchable on the next query', async () => {
+    await supertest(app)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        items: [
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: NEW_CATALOG,
+            description: 'Jest freshness probe widget alpha',
+          },
+        ],
+      })
+      .expect(200);
+
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
+    const [row] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, NEW_CATALOG));
+
+    expect(row).toBeDefined();
+    expect(row!.searchTokens).not.toBeNull();
+    expect(row!.searchTokens!.length).toBeGreaterThan(0);
+    // The base description words must be present in the pre-expanded tokens.
+    expect(row!.searchTokens).toContain('freshness');
+    expect(row!.searchTokens).toContain('widget');
+
+    // And the row is reachable via the search endpoint without any
+    // enrichment / rebuild-tokens / index-warming round trip.
+    const searchRes = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: NEW_CATALOG })
+      .expect(200);
+    expect(
+      (searchRes.body.results as Array<{ item: { catalog: string } }>).some(
+        (r) => r.item.catalog === NEW_CATALOG
+      )
+    ).toBe(true);
+  });
+
+  it('inserts a conduit item with derived trade-size keyword tokens searchable immediately', async () => {
+    // IMC212 → 2 1/2" conduit; the importer should derive trade-size keyword
+    // variants and store them in ai_keywords + search_tokens without waiting
+    // for AI enrichment.
+    await supertest(app)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        items: [
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: NEW_CATALOG,
+            description: 'IMC conduit nipple',
+          },
+        ],
+      })
+      .expect(200);
+
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
+    const [row] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, NEW_CATALOG));
+
+    expect(row).toBeDefined();
+    // We seed the catalog as "JEST-ITG-UPSERT-001" (no trade-size suffix), so
+    // no trade-size tokens are derivable here. Use a separate conduit catalog
+    // that ends in a parseable size to assert the trade-size path.
+    await supertest(app)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        items: [
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: 'JEST-ITG-IMC212',
+            description: 'IMC conduit',
+          },
+        ],
+      })
+      .expect(200);
+
+    const [conduitRow] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, 'JEST-ITG-IMC212'));
+
+    expect(conduitRow).toBeDefined();
+    // ai_keywords should contain the trade-size variants for 2 1/2"
+    expect(conduitRow!.aiKeywords).toEqual(expect.arrayContaining(['2-1/2"']));
+    // search_tokens should contain a recognizable size form
+    expect(conduitRow!.searchTokens).toMatch(/2-1\/2"|2 1\/2|2\.5/);
+
+    // Cleanup the extra conduit row we inserted in this test
+    await db.delete(inventoryTable).where(eq(inventoryTable.catalog, 'JEST-ITG-IMC212'));
+  });
+
+  it('refreshes search_tokens when an admin edits the description via PATCH /:id', async () => {
+    // Insert via upsert-batch so the row's search_tokens get populated.
+    await supertest(app)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        items: [
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: NEW_CATALOG,
+            description: 'Initial probe text',
+          },
+        ],
+      })
+      .expect(200);
+
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { eq } = await import('drizzle-orm');
+    const [before] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, NEW_CATALOG));
+
+    expect(before).toBeDefined();
+    expect(before!.searchTokens).toContain('probe');
+
+    // Edit the description: search_tokens must reflect the new content
+    // immediately (no enrichment / rebuild-tokens round trip).
+    await supertest(app)
+      .patch(`/api/inventory/${before!.id}`)
+      .send({ description: 'Replaced grommet wibblix uniqword' })
+      .expect(200);
+
+    const [after] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.catalog, NEW_CATALOG));
+
+    expect(after!.searchTokens).toContain('grommet');
+    expect(after!.searchTokens).toContain('uniqword');
+    expect(after!.searchTokens).not.toContain('probe');
+  });
+
   it('updates an existing item and returns inserted=0, updated=1', async () => {
     // First insert
     await supertest(app)

@@ -54,6 +54,7 @@ import {
 } from '../utils/tradeSize';
 import { parseCatalog, deriveAttrs, parseTradeSize } from '../enrichment/parseAttributes';
 import { buildSearchTokens } from '../enrichment/buildSearchTokens';
+import { refreshSearchTokensForIds } from '../enrichment/refreshSearchTokens';
 import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from '../enrichment/invalidation';
 import { classifyHandler } from './categories';
 import { categoryNodeTable, inventoryCategoryTable } from '@workspace/db';
@@ -1251,6 +1252,9 @@ router.post('/upsert-batch', requireAdminAuth, async (req, res) => {
     let inserted = 0;
     let updated = 0;
     let skipped = 0;
+    // Track every row we touched so we can refresh search_tokens (and merge
+    // derived trade-size keyword tokens) in one pass at the end of the batch.
+    const touchedIds: number[] = [];
 
     for (const item of dedupedItems) {
       const incomingBins = Array.isArray(item.binLocations) ? item.binLocations : [];
@@ -1287,6 +1291,7 @@ router.post('/upsert-batch', requireAdminAuth, async (req, res) => {
             // NB: vendor/catalog text on existing rows is intentionally NOT updated.
             .where(eq(inventoryTable.id, existing.id));
         }
+        touchedIds.push(existing.id);
         updated++;
       } else {
         // ── New row: bins-only skips; add-multi-access and all other modes insert ──
@@ -1294,16 +1299,25 @@ router.post('/upsert-batch', requireAdminAuth, async (req, res) => {
           skipped++;
           continue;
         }
-        await db.insert(inventoryTable).values({
-          vendor: item.vendor.trim().toUpperCase(),
-          catalog: item.catalog.trim(),
-          description: incomingDescRaw,
-          binLocations: mergeBins([], incomingBins),
-          aiKeywords: [],
-        });
+        const [insertedRow] = await db
+          .insert(inventoryTable)
+          .values({
+            vendor: item.vendor.trim().toUpperCase(),
+            catalog: item.catalog.trim(),
+            description: incomingDescRaw,
+            binLocations: mergeBins([], incomingBins),
+            aiKeywords: [],
+          })
+          .returning({ id: inventoryTable.id });
+        if (insertedRow) touchedIds.push(insertedRow.id);
         inserted++;
       }
     }
+
+    // Keep the search index fresh: rebuild search_tokens (and merge derived
+    // trade-size keyword tokens) for every row this batch touched so a worker
+    // searching immediately after upload finds them on the next query.
+    await refreshSearchTokensForIds(touchedIds);
 
     res.json({ inserted, updated, skipped, total: dedupedItems.length });
   } catch (err) {
@@ -2369,6 +2383,12 @@ router.patch('/:id', async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: 'Item not found' });
+
+    // Keep the search index fresh: any of vendor/catalog/description/keywords/
+    // tradeSize edits must be reflected in search_tokens immediately so the
+    // next search hits the new content (instead of waiting for the rebuild
+    // backstop or the next AI enrichment pass).
+    await refreshSearchTokensForIds([updated.id]);
 
     const vendorFullName = await lookupVendorFullName(updated.vendor);
     res.json(

@@ -42,6 +42,7 @@ import { db, inventoryTable } from '@workspace/db';
 import { verifyAdminToken } from './admin';
 import { aggregateRowsByPart, mergeBins, type AggregatedRow } from '../utils/binLocations';
 import { deriveTradeSizeTokens } from '../utils/tradeSize';
+import { refreshSearchTokensForIds } from '../enrichment/refreshSearchTokens';
 
 const router = Router();
 
@@ -201,6 +202,9 @@ router.post('/upload', requireAdminAuth, async (req, res) => {
 
     let inserted = 0;
     let updated = 0;
+    // Track every row touched so search_tokens (and trade-size keyword
+    // variants) can be refreshed in one pass at the end of the upload.
+    const touchedIds: number[] = [];
 
     for (const row of aggregated) {
       const existing = await db
@@ -223,20 +227,30 @@ router.post('/upload', requireAdminAuth, async (req, res) => {
             updatedAt: new Date(),
           })
           .where(sql`${inventoryTable.id} = ${existing[0]!.id}`);
+        touchedIds.push(existing[0]!.id);
         updated++;
       } else {
-        await db.insert(inventoryTable).values({
-          vendor: row.vendor.toUpperCase(),
-          catalog: row.catalog,
-          description: row.description,
-          binLocations: row.binLocations,
-          // Pre-seed conduit / pipe rows with trade-size tokens so the
-          // Trade Size filter chip works without waiting for AI enrichment.
-          aiKeywords: deriveTradeSizeTokens(row),
-        });
+        const [insertedRow] = await db
+          .insert(inventoryTable)
+          .values({
+            vendor: row.vendor.toUpperCase(),
+            catalog: row.catalog,
+            description: row.description,
+            binLocations: row.binLocations,
+            // Pre-seed conduit / pipe rows with trade-size tokens so the
+            // Trade Size filter chip works without waiting for AI enrichment.
+            aiKeywords: deriveTradeSizeTokens(row),
+          })
+          .returning({ id: inventoryTable.id });
+        if (insertedRow) touchedIds.push(insertedRow.id);
         inserted++;
       }
     }
+
+    // Keep the search index fresh so a worker searching immediately after
+    // the upload finds the new/updated rows without waiting for an
+    // enrichment pass or the rebuild-tokens backstop.
+    await refreshSearchTokensForIds(touchedIds);
 
     res.json({ inserted, updated, total: aggregated.length });
   } catch (err) {
