@@ -962,6 +962,13 @@ export default function UploadScreen() {
     }
     setUploadError(null);
     setCatalogPdfError(null);
+    setBulkEnrichError(null);
+    setMeasureEnrichError(null);
+    setRebuildTokensError(null);
+    setSeriesListError(null);
+    setAutoAssignError(null);
+    setSeriesModalError(null);
+    setCreateSeriesError(null);
     fetchEnrichSummary();
     fetchReviewCount();
     (async () => {
