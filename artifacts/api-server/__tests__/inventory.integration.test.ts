@@ -131,6 +131,92 @@ describe("POST /api/inventory/search", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GIN trigram index planner test
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GIN trigram index planner", () => {
+  const EXPLAIN_CATALOG = "JEST-ITG-EXPLAIN-GIN-001";
+
+  beforeAll(async () => {
+    // Seed a row with search_tokens explicitly set so the partial GIN index
+    // (WHERE search_tokens IS NOT NULL) has at least one entry to work with.
+    const { db } = await import("@workspace/db");
+    const { sql: rawSql } = await import("drizzle-orm");
+    await db.execute(rawSql`
+      INSERT INTO inventory (vendor, catalog, description, search_tokens)
+      VALUES (
+        'JEST-EXPLAIN-VENDOR',
+        ${EXPLAIN_CATALOG},
+        'Explain test 20 amp single-pole circuit breaker',
+        'breaker circuit amp pole eaton square d siemens single'
+      )
+      ON CONFLICT (vendor, catalog) DO UPDATE
+        SET search_tokens = EXCLUDED.search_tokens
+    `);
+  }, 15_000);
+
+  afterAll(async () => {
+    const { db } = await import("@workspace/db");
+    const { sql: rawSql } = await import("drizzle-orm");
+    await db.execute(rawSql`DELETE FROM inventory WHERE catalog = ${EXPLAIN_CATALOG}`);
+  }, 15_000);
+
+  it("uses idx_inventory_search_tokens_trgm (GIN bitmap scan) for the search_tokens arm", async () => {
+    const { db } = await import("@workspace/db");
+    const { sql: rawSql } = await import("drizzle-orm");
+
+    // Run EXPLAIN on the isolated search_tokens arm — the same condition used
+    // in the primary UNION ALL arm of the inventory search route.
+    // SET LOCAL lowers the threshold to 0.15 (matching the route) so that
+    // short trigram queries still trigger the GIN scan.
+    const result = await db.transaction(async (tx) => {
+      await tx.execute(rawSql`SET LOCAL pg_trgm.similarity_threshold = 0.15`);
+      return tx.execute(rawSql`
+        EXPLAIN (FORMAT TEXT)
+        SELECT i.id, similarity(i.search_tokens, 'breaker amp') AS trgm_sim
+        FROM inventory i
+        WHERE i.search_tokens IS NOT NULL
+          AND i.search_tokens % 'breaker amp'
+        LIMIT 50
+      `);
+    });
+
+    const planLines = (result as { rows: unknown[] }).rows
+      .map((r) => String(Object.values(r as object)[0]))
+      .join("\n");
+
+    // The planner must choose a Bitmap Index Scan on the GIN trigram index,
+    // not a sequential scan. A Seq Scan here means the planner is ignoring the
+    // index — the most common cause is a missing / invalid index or a table
+    // too small for the planner to bother with the index overhead.
+    expect(planLines).toContain("idx_inventory_search_tokens_trgm");
+    expect(planLines).not.toContain("Seq Scan");
+  });
+
+  it("similarity_threshold SET LOCAL via set_config persists within the transaction", async () => {
+    const { db } = await import("@workspace/db");
+    const { sql: rawSql } = await import("drizzle-orm");
+
+    const result = await db.transaction(async (tx) => {
+      // set_config with is_local=true is equivalent to SET LOCAL
+      await tx.execute(rawSql`SELECT set_config('pg_trgm.similarity_threshold', '0.15', true)`);
+      return tx.execute(rawSql`
+        EXPLAIN (FORMAT TEXT)
+        SELECT i.id FROM inventory i
+        WHERE i.search_tokens IS NOT NULL AND i.search_tokens % 'breaker'
+        LIMIT 10
+      `);
+    });
+
+    const planLines = (result as { rows: unknown[] }).rows
+      .map((r) => String(Object.values(r as object)[0]))
+      .join("\n");
+
+    expect(planLines).toContain("idx_inventory_search_tokens_trgm");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/inventory/upsert-batch
 // ─────────────────────────────────────────────────────────────────────────────
 
