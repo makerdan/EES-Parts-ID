@@ -77,9 +77,26 @@ router.get("/", async (req, res) => {
     const limit = Math.min(1000, Math.max(1, parseInt(req.query["limit"] as string) || 50));
     const offset = (page - 1) * limit;
     const unenrichedOnly = req.query["unenrichedOnly"] === "true";
-    const whereClause = unenrichedOnly
-      ? sql`${inventoryTable.enrichedAt} IS NULL`
-      : undefined;
+    const q = (req.query["q"] as string | undefined)?.trim() ?? "";
+
+    // Build where clause: combine unenrichedOnly filter with optional text search.
+    // Text search does ILIKE on vendor, catalog, and description.
+    let whereClause;
+    if (q) {
+      const like = `%${q}%`;
+      const searchFilter = or(
+        ilike(inventoryTable.vendor, like),
+        ilike(inventoryTable.catalog, like),
+        ilike(inventoryTable.description, like),
+      );
+      whereClause = unenrichedOnly
+        ? and(sql`${inventoryTable.enrichedAt} IS NULL`, searchFilter)
+        : searchFilter;
+    } else {
+      whereClause = unenrichedOnly
+        ? sql`${inventoryTable.enrichedAt} IS NULL`
+        : undefined;
+    }
 
     const [items, countResult, vendors] = await Promise.all([
       whereClause
