@@ -47,62 +47,78 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
   const scrollRef = useRef<ScrollView>(null);
   // Stores the question text that was sent so the error bubble can show it
   const askedQuestionRef = useRef('');
+  // In-memory cache: question string → completed answer string (session only)
+  const answerCacheRef = useRef<Map<string, string>>(new Map());
+  // Y offset of the active answer container within the ScrollView content
+  const answerContainerYRef = useRef<number>(0);
 
-  const askQuestion = useCallback(async () => {
-    if (!question.trim() || loading) return;
-    askedQuestionRef.current = question.trim();
-    setLoading(true);
-    setIsError(false);
-    setAnswer('');
+  // askQuestion accepts an optional override so chip handlers can pass the
+  // question text directly without waiting for a setState flush.
+  const askQuestion = useCallback(
+    async (overrideText?: string) => {
+      const q = (overrideText ?? question).trim();
+      if (!q || loading) return;
+      askedQuestionRef.current = q;
+      setQuestion(q);
+      setLoading(true);
+      setIsError(false);
+      setAnswer('');
 
-    try {
-      const res = await fetch(`${API_BASE}/reference/ask`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: question.trim() }),
-      });
+      try {
+        const res = await fetch(`${API_BASE}/reference/ask`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q }),
+        });
 
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let fullText = '';
+        const reader = res.body?.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
 
-      if (reader) {
-        // Buffer partial lines across chunk boundaries so SSE frames split
-        // across network packets are never passed to JSON.parse half-complete.
-        let sseBuffer = '';
-        const processLine = (line: string) => {
-          if (!line.startsWith('data: ')) return;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.content) {
-              fullText += data.content;
-              setAnswer(fullText);
-              scrollRef.current?.scrollToEnd({ animated: true });
-            }
-          } catch {}
-        };
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          sseBuffer += decoder.decode(value, { stream: true });
-          const lines = sseBuffer.split('\n');
-          // Keep the last (possibly incomplete) line in the buffer
-          sseBuffer = lines.pop() ?? '';
-          for (const line of lines) processLine(line);
+        if (reader) {
+          // Buffer partial lines across chunk boundaries so SSE frames split
+          // across network packets are never passed to JSON.parse half-complete.
+          let sseBuffer = '';
+          const processLine = (line: string) => {
+            if (!line.startsWith('data: ')) return;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.content) {
+                fullText += data.content;
+                setAnswer(fullText);
+                // Scroll so the answer bubble sits in the upper–middle portion
+                // of the viewport rather than snapping to the very bottom edge.
+                const targetY = Math.max(0, answerContainerYRef.current - 120);
+                scrollRef.current?.scrollTo({ y: targetY, animated: true });
+              }
+            } catch {}
+          };
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            sseBuffer += decoder.decode(value, { stream: true });
+            const lines = sseBuffer.split('\n');
+            // Keep the last (possibly incomplete) line in the buffer
+            sseBuffer = lines.pop() ?? '';
+            for (const line of lines) processLine(line);
+          }
+          // Process any remaining buffered content when the stream closes
+          if (sseBuffer.trim()) processLine(sseBuffer);
         }
-        // Process any remaining buffered content when the stream closes
-        if (sseBuffer.trim()) processLine(sseBuffer);
-      }
 
-      if (fullText) {
-        setHistory((h) => [...h, { q: askedQuestionRef.current, a: fullText }]);
+        if (fullText) {
+          setHistory((h) => [...h, { q: askedQuestionRef.current, a: fullText }]);
+          // Cache the completed answer so repeat chip taps are instant.
+          answerCacheRef.current.set(q, fullText);
+        }
+      } catch {
+        setIsError(true);
+      } finally {
+        setLoading(false);
       }
-    } catch {
-      setIsError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [question, loading]);
+    },
+    [question, loading]
+  );
 
   const clearAll = () => {
     setQuestion('');
@@ -110,6 +126,35 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
     setIsError(false);
     setHistory([]);
   };
+
+  // Clears only the active answer bubble; history entries remain intact.
+  const clearAnswer = () => {
+    setAnswer('');
+    setIsError(false);
+    setQuestion('');
+  };
+
+  // Called by chip onPress: show a cached answer instantly or fetch a new one.
+  const handleChipPress = useCallback(
+    (chipQuestion: string) => {
+      if (loading) return;
+      const cached = answerCacheRef.current.get(chipQuestion.trim());
+      if (cached) {
+        askedQuestionRef.current = chipQuestion.trim();
+        setQuestion(chipQuestion);
+        setAnswer(cached);
+        setIsError(false);
+        // Scroll to the answer bubble after a short layout delay
+        setTimeout(() => {
+          const targetY = Math.max(0, answerContainerYRef.current - 120);
+          scrollRef.current?.scrollTo({ y: targetY, animated: true });
+        }, 80);
+      } else {
+        askQuestion(chipQuestion);
+      }
+    },
+    [loading, askQuestion]
+  );
 
   // Simple markdown bold renderer
   const renderAnswer = (text: string) => {
@@ -196,7 +241,12 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
           ))}
 
           {answer || isError ? (
-            <View style={{ marginBottom: 16 }}>
+            <View
+              style={{ marginBottom: 16 }}
+              onLayout={(e) => {
+                answerContainerYRef.current = e.nativeEvent.layout.y;
+              }}
+            >
               <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + '22' }]}>
                 <Text style={[msgStyles.qText, { color: colors.foreground }]}>
                   Q: {askedQuestionRef.current || question}
@@ -206,7 +256,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                 <View style={msgStyles.errorWrap}>
                   <ErrorBanner message="No answer — check your connection and try again." />
                   <Pressable
-                    onPress={askQuestion}
+                    onPress={() => askQuestion()}
                     style={[msgStyles.retryBtn, { borderColor: colors.primary }]}
                   >
                     <Text
@@ -227,7 +277,21 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                     { backgroundColor: colors.card, borderColor: colors.border },
                   ]}
                 >
-                  <Text style={{ fontSize: 14, lineHeight: 22 }}>{renderAnswer(answer)}</Text>
+                  {/* Clear button — dismiss this answer without wiping history */}
+                  {!loading ? (
+                    <Pressable
+                      onPress={clearAnswer}
+                      style={[msgStyles.clearAnswerBtn, { backgroundColor: colors.muted }]}
+                      hitSlop={8}
+                    >
+                      <Text style={[msgStyles.clearAnswerText, { color: colors.mutedForeground }]}>
+                        ✕
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  <Text style={{ fontSize: 14, lineHeight: 22, paddingRight: 28 }}>
+                    {renderAnswer(answer)}
+                  </Text>
                   {loading ? (
                     <ActivityIndicator
                       size="small"
@@ -242,13 +306,11 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
 
           {!history.length && !answer && !isError ? (
             <View style={emptyStyles.container}>
-              <Text style={emptyStyles.emoji}>📖</Text>
-              <Text style={[emptyStyles.title, { color: colors.foreground }]}>
-                Electrical Reference
-              </Text>
+              <Text style={emptyStyles.emoji}>🤖</Text>
+              <Text style={[emptyStyles.title, { color: colors.foreground }]}>Ask the AI</Text>
               <Text style={[emptyStyles.hint, { color: colors.mutedForeground }]}>
-                Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical
-                term.
+                This is an AI assistant — ask it about NEMA codes, wire gauges, breaker ratings,
+                conduit types, or any electrical term and it will generate an answer for you.
               </Text>
               <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>
                 QUICK LOOKUPS
@@ -319,7 +381,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
               ).map(({ label, question: q }) => (
                 <Pressable
                   key={label}
-                  onPress={() => setQuestion(q)}
+                  onPress={() => handleChipPress(q)}
                   style={[
                     emptyStyles.chip,
                     { backgroundColor: colors.muted, borderColor: colors.border },
@@ -351,10 +413,10 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
             ]}
             multiline
             returnKeyType="send"
-            onSubmitEditing={askQuestion}
+            onSubmitEditing={() => askQuestion()}
           />
           <Pressable
-            onPress={askQuestion}
+            onPress={() => askQuestion()}
             disabled={loading || !question.trim()}
             style={[
               inputStyles.sendBtn,
@@ -411,6 +473,18 @@ const msgStyles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
   },
+  clearAnswerBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  clearAnswerText: { fontSize: 11, fontFamily: 'Inter_500Medium' },
 });
 
 const emptyStyles = StyleSheet.create({
