@@ -8,6 +8,8 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Animated,
+  Dimensions,
   KeyboardAvoidingView,
   LayoutChangeEvent,
   Modal,
@@ -388,6 +390,69 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
   // ── Modal open/close state ────────────────────────────────────────────────
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  // ── Swipe-to-dismiss: animated sheet Y position ───────────────────────────
+  // Starts off-screen (positive = below viewport). Animated to 0 on open,
+  // animated back off-screen before setFiltersOpen(false) on close.
+  const SCREEN_H = Dimensions.get("window").height;
+  const sheetY = useRef(new Animated.Value(SCREEN_H)).current;
+
+  // Animate sheet in whenever the modal opens.
+  useEffect(() => {
+    if (filtersOpen) {
+      sheetY.setValue(SCREEN_H);
+      Animated.spring(sheetY, {
+        toValue: 0,
+        tension: 60,
+        friction: 12,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [filtersOpen, sheetY, SCREEN_H]);
+
+  // Animate sheet out, then close the modal.
+  const dismissModal = useCallback(() => {
+    Animated.timing(sheetY, {
+      toValue: SCREEN_H,
+      duration: 260,
+      useNativeDriver: true,
+    }).start(() => setFiltersOpen(false));
+  }, [sheetY, SCREEN_H]);
+
+  // ── Drag-handle PanResponder (attached only to the pill strip) ────────────
+  // Using onStartShouldSetPanResponder on a dedicated small strip means the
+  // ScrollView and ConfidenceSlider PanResponder are never interrupted.
+  const dragPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderMove: (_, gs) => {
+        // Only allow downward movement; clamp to 0 so the sheet can't go up.
+        sheetY.setValue(Math.max(0, gs.dy));
+      },
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dy > 80 || gs.vy > 0.5) {
+          dismissModal();
+        } else {
+          // Not enough — spring back to resting position.
+          Animated.spring(sheetY, {
+            toValue: 0,
+            tension: 60,
+            friction: 12,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(sheetY, {
+          toValue: 0,
+          tension: 60,
+          friction: 12,
+          useNativeDriver: true,
+        }).start();
+      },
+    }),
+  ).current;
+
   return (
     <View>
       {/* ── Advanced Filters trigger button ── */}
@@ -417,169 +482,206 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
       </Pressable>
 
       {/* ── Advanced Filters modal overlay ── */}
+      {/*
+        transparent={true} so the search results beneath are visible while the
+        user drags the sheet down. animationType="none" lets our Animated.spring
+        handle the entrance/exit without fighting the native animation.
+      */}
       <Modal
         visible={filtersOpen}
-        animationType="slide"
-        transparent={false}
-        onRequestClose={() => setFiltersOpen(false)}
+        animationType="none"
+        transparent={true}
+        onRequestClose={dismissModal}
         statusBarTranslucent
       >
-        <KeyboardAvoidingView
-          style={[modalStyles.container, { backgroundColor: colors.background }]}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          {/* Modal header */}
-          <View
+        {/* Full-screen container: backdrop + animated sheet */}
+        <View style={modalStyles.backdrop}>
+          {/* Tapping outside the sheet dismisses it */}
+          <Pressable
+            style={StyleSheet.absoluteFillObject}
+            onPress={dismissModal}
+            accessibilityRole="button"
+            accessibilityLabel="Close advanced filters"
+          />
+
+          {/* Animated sheet */}
+          <Animated.View
             style={[
-              modalStyles.header,
+              modalStyles.sheet,
               {
-                borderBottomColor: colors.border,
-                paddingTop: insets.top + 12,
-                backgroundColor: colors.card,
+                backgroundColor: colors.background,
+                transform: [{ translateY: sheetY }],
               },
             ]}
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Feather name="sliders" size={16} color={colors.foreground} />
-              <Text style={[modalStyles.headerTitle, { color: colors.foreground }]}>Advanced Filters</Text>
-              {activeChipCount > 0 && (
-                <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
-                  <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
-                    {activeChipCount} active
-                  </Text>
-                </View>
-              )}
-            </View>
-            <Pressable
-              onPress={() => setFiltersOpen(false)}
-              style={[modalStyles.doneBtn, { backgroundColor: colors.primary }]}
-              accessibilityRole="button"
-              accessibilityLabel="Close advanced filters"
+            {/* ── Drag handle pill ── */}
+            <View
+              {...dragPan.panHandlers}
+              style={modalStyles.dragHandleArea}
+              accessibilityRole="adjustable"
+              accessibilityLabel="Drag down to close"
             >
-              <Text style={[modalStyles.doneBtnText, { color: colors.primaryForeground }]}>Done</Text>
-            </Pressable>
-          </View>
+              <View style={[modalStyles.dragPill, { backgroundColor: colors.border }]} />
+            </View>
 
-          {/* Scrollable filter content */}
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={[modalStyles.content, { paddingBottom: insets.bottom + 24 }]}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {/* ── Text fields header + clear button ── */}
-            <View style={chipAreaStyles.dimHeader}>
-              <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
-                TEXT FILTERS
-              </Text>
-              {activeTextFieldCount > 0 && (
-                <Pressable onPress={resetTextFields} hitSlop={8}>
-                  <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>
-                    Clear text
-                  </Text>
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === "ios" ? "padding" : undefined}
+            >
+              {/* Modal header */}
+              <View
+                style={[
+                  modalStyles.header,
+                  {
+                    borderBottomColor: colors.border,
+                    paddingTop: 12,
+                    backgroundColor: colors.card,
+                  },
+                ]}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Feather name="sliders" size={16} color={colors.foreground} />
+                  <Text style={[modalStyles.headerTitle, { color: colors.foreground }]}>Advanced Filters</Text>
+                  {activeChipCount > 0 && (
+                    <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
+                      <Text style={[chipAreaStyles.badgeText, { color: colors.primaryForeground }]}>
+                        {activeChipCount} active
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Pressable
+                  onPress={dismissModal}
+                  style={[modalStyles.doneBtn, { backgroundColor: colors.primary }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close advanced filters"
+                >
+                  <Text style={[modalStyles.doneBtnText, { color: colors.primaryForeground }]}>Done</Text>
                 </Pressable>
-              )}
-            </View>
+              </View>
 
-            {/* ── Text fields ── */}
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Catalog #"
-                  value={values.catalog}
-                  onChange={v => onChange("catalog", v)}
-                  placeholder="e.g. BR120..."
-                  colors={colors}
-                  autoCapitalize="characters"
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Vendor"
-                  value={values.vendor}
-                  onChange={v => onChange("vendor", v)}
-                  placeholder="Eaton, SQD..."
-                  colors={colors}
-                  autoCapitalize="words"
-                />
-              </View>
-            </View>
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Color"
-                  value={values.color}
-                  onChange={v => onChange("color", v)}
-                  placeholder="White, Black..."
-                  colors={colors}
-                  autoCapitalize="words"
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Size / Rating"
-                  value={values.size}
-                  onChange={v => onChange("size", v)}
-                  placeholder={'20A, 1/2", #12...'}
-                  colors={colors}
-                />
-              </View>
-            </View>
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Material"
-                  value={values.material}
-                  onChange={v => onChange("material", v)}
-                  placeholder="Steel, PVC, Copper..."
-                  colors={colors}
-                  autoCapitalize="words"
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Field
-                  label="Text / Numbers"
-                  value={values.textNumbers}
-                  onChange={v => onChange("textNumbers", v)}
-                  placeholder="Markings, UPC..."
-                  colors={colors}
-                />
-              </View>
-            </View>
-
-            {/* ── Chip dimensions header + reset button ── */}
-            <View style={chipAreaStyles.dimHeader}>
-              <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
-                DIMENSIONS
-              </Text>
-              {activeChipOnlyCount > 0 && (
-                <Pressable onPress={resetChips} hitSlop={8}>
-                  <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>
-                    Reset chips
+              {/* Scrollable filter content */}
+              <ScrollView
+                style={{ flex: 1 }}
+                contentContainerStyle={[modalStyles.content, { paddingBottom: insets.bottom + 24 }]}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {/* ── Text fields header + clear button ── */}
+                <View style={chipAreaStyles.dimHeader}>
+                  <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
+                    TEXT FILTERS
                   </Text>
-                </Pressable>
-              )}
-            </View>
+                  {activeTextFieldCount > 0 && (
+                    <Pressable onPress={resetTextFields} hitSlop={8}>
+                      <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>
+                        Clear text
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
 
-            {/* ── Chip dimensions ── */}
-            {CHIP_DIMS.map((dim) => (
-              <ChipRow
-                key={dim.key}
-                label={dim.label}
-                options={dim.options}
-                value={String(values[dim.key] ?? "")}
-                onChange={(v) => onChange(dim.key, v)}
-                colors={colors}
-                counts={dimensionCounts?.[dim.key]}
-              />
-            ))}
-            <ConfidenceSlider
-              value={values.confidenceThreshold}
-              onChange={v => onChange("confidenceThreshold", v)}
-              colors={colors}
-            />
-          </ScrollView>
-        </KeyboardAvoidingView>
+                {/* ── Text fields ── */}
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Field
+                      label="Catalog #"
+                      value={values.catalog}
+                      onChange={v => onChange("catalog", v)}
+                      placeholder="e.g. BR120..."
+                      colors={colors}
+                      autoCapitalize="characters"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Field
+                      label="Vendor"
+                      value={values.vendor}
+                      onChange={v => onChange("vendor", v)}
+                      placeholder="Eaton, SQD..."
+                      colors={colors}
+                      autoCapitalize="words"
+                    />
+                  </View>
+                </View>
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Field
+                      label="Color"
+                      value={values.color}
+                      onChange={v => onChange("color", v)}
+                      placeholder="White, Black..."
+                      colors={colors}
+                      autoCapitalize="words"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Field
+                      label="Size / Rating"
+                      value={values.size}
+                      onChange={v => onChange("size", v)}
+                      placeholder={'20A, 1/2", #12...'}
+                      colors={colors}
+                    />
+                  </View>
+                </View>
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Field
+                      label="Material"
+                      value={values.material}
+                      onChange={v => onChange("material", v)}
+                      placeholder="Steel, PVC, Copper..."
+                      colors={colors}
+                      autoCapitalize="words"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Field
+                      label="Text / Numbers"
+                      value={values.textNumbers}
+                      onChange={v => onChange("textNumbers", v)}
+                      placeholder="Markings, UPC..."
+                      colors={colors}
+                    />
+                  </View>
+                </View>
+
+                {/* ── Chip dimensions header + reset button ── */}
+                <View style={chipAreaStyles.dimHeader}>
+                  <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
+                    DIMENSIONS
+                  </Text>
+                  {activeChipOnlyCount > 0 && (
+                    <Pressable onPress={resetChips} hitSlop={8}>
+                      <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>
+                        Reset chips
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+
+                {/* ── Chip dimensions ── */}
+                {CHIP_DIMS.map((dim) => (
+                  <ChipRow
+                    key={dim.key}
+                    label={dim.label}
+                    options={dim.options}
+                    value={String(values[dim.key] ?? "")}
+                    onChange={(v) => onChange(dim.key, v)}
+                    colors={colors}
+                    counts={dimensionCounts?.[dim.key]}
+                  />
+                ))}
+                <ConfidenceSlider
+                  value={values.confidenceThreshold}
+                  onChange={v => onChange("confidenceThreshold", v)}
+                  colors={colors}
+                />
+              </ScrollView>
+            </KeyboardAvoidingView>
+          </Animated.View>
+        </View>
       </Modal>
     </View>
   );
@@ -640,8 +742,27 @@ const chipAreaStyles = StyleSheet.create({
 });
 
 const modalStyles = StyleSheet.create({
-  container: {
+  backdrop: {
     flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  sheet: {
+    maxHeight: "96%",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    overflow: "hidden",
+  },
+  dragHandleArea: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+  },
+  dragPill: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    opacity: 0.5,
   },
   header: {
     flexDirection: "row",
