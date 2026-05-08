@@ -18,7 +18,7 @@ describe('parseCatalog – breaker family', () => {
       amps: 20,
       variant: null,
       raw: 'BR120',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -29,7 +29,7 @@ describe('parseCatalog – breaker family', () => {
       amps: 20,
       variant: null,
       raw: 'QO220',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -40,7 +40,7 @@ describe('parseCatalog – breaker family', () => {
       amps: 100,
       variant: null,
       raw: 'CH3100',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -51,7 +51,7 @@ describe('parseCatalog – breaker family', () => {
       amps: 30,
       variant: null,
       raw: 'HOM230',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -62,7 +62,7 @@ describe('parseCatalog – breaker family', () => {
       amps: 20,
       variant: null,
       raw: 'THQL120',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -73,7 +73,7 @@ describe('parseCatalog – breaker family', () => {
       amps: 100,
       variant: 'PC',
       raw: 'QO1100PC',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -84,7 +84,7 @@ describe('parseCatalog – breaker family', () => {
       amps: 50,
       variant: null,
       raw: 'BR150',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -95,7 +95,7 @@ describe('parseCatalog – breaker family', () => {
       amps: 20,
       variant: null,
       raw: 'MP2020',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -113,7 +113,7 @@ describe('parseCatalog – breaker family', () => {
       amps: 100,
       variant: 'AF',
       raw: 'BR4100AF',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 });
@@ -126,7 +126,7 @@ describe('parseCatalog – device/receptacle family', () => {
       amps: 15,
       variant: 'WHI',
       raw: 'DR15WHI',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -137,7 +137,7 @@ describe('parseCatalog – device/receptacle family', () => {
       amps: 20,
       variant: 'BLK',
       raw: 'CR20BLK',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -148,7 +148,7 @@ describe('parseCatalog – device/receptacle family', () => {
       amps: 15,
       variant: null,
       raw: 'TR15',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -159,7 +159,7 @@ describe('parseCatalog – device/receptacle family', () => {
       amps: 20,
       variant: null,
       raw: 'GF20',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -284,6 +284,9 @@ describe('parseVoltage', () => {
   test('480 V', () => expect(parseVoltage('480 V')).toBe(480));
   test('120/240V takes 120 (first match)', () => expect(parseVoltage('120/240V')).toBe(120));
   test('12VDC', () => expect(parseVoltage('12VDC')).toBe(12));
+  test('125V (receptacles)', () => expect(parseVoltage('15A 125V duplex')).toBe(125));
+  test('500V (midget fuses)', () => expect(parseVoltage('15A 500V TD')).toBe(500));
+  test('250V (RK5 fuses)', () => expect(parseVoltage('250V class RK5')).toBe(250));
   test('embedded in description', () =>
     expect(parseVoltage('Double-pole 240V circuit breaker')).toBe(240));
   test('null for no voltage pattern', () => expect(parseVoltage('20A breaker')).toBeNull());
@@ -364,7 +367,7 @@ describe('parseCatalog – numeric device family', () => {
       amps: null,
       variant: 'WHI',
       raw: '5262WHI',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -375,7 +378,7 @@ describe('parseCatalog – numeric device family', () => {
       amps: null,
       variant: 'GRY',
       raw: '6150GRY',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -386,7 +389,7 @@ describe('parseCatalog – numeric device family', () => {
       amps: null,
       variant: null,
       raw: '5262',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -397,7 +400,7 @@ describe('parseCatalog – numeric device family', () => {
       amps: null,
       variant: 'I',
       raw: '5325I',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -408,7 +411,7 @@ describe('parseCatalog – numeric device family', () => {
       amps: null,
       variant: 'I',
       raw: '6200I',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
@@ -419,16 +422,153 @@ describe('parseCatalog – numeric device family', () => {
       amps: null,
       variant: 'BLK',
       raw: '5262-BLK',
-      parser_version: 2,
+      parser_version: 3,
     });
   });
 
-  test('unknown 5-digit catalog 52620 → null (does not match 4-digit rule)', () => {
-    expect(parseCatalog('52620')).toBeNull();
+  test('5-digit Hubbell-style code 53320 → series=53320 variant=null', () => {
+    expect(parseCatalog('53320')).toEqual({
+      series: '53320',
+      poles: null,
+      amps: null,
+      variant: null,
+      raw: '53320',
+      parser_version: 3,
+    });
   });
 
-  test('catalog not starting with 5 or 6 is not matched', () => {
-    expect(parseCatalog('4262WHI')).toBeNull();
+  test('5-digit Hubbell-style code with variant 51730WHT → series=51730 variant=WHT', () => {
+    const r = parseCatalog('51730WHT');
+    expect(r?.series).toBe('51730');
+    expect(r?.variant).toBe('WHT');
+  });
+
+  test('catalog not starting with 5 or 6 falls through to ALPHA_DEVICE_RE', () => {
+    // 4262WHI no longer matches the strict 5/6-prefix numeric device rule,
+    // but the generic alpha-numeric fallback still extracts series + variant.
+    const r = parseCatalog('4262WHI');
+    expect(r?.series).toBe('4262');
+    expect(r?.variant).toBe('WHI');
+  });
+});
+
+// ── parseCatalog – fuse family ──────────────────────────────────────────────
+
+describe('parseCatalog – fuse family', () => {
+  test('FNQ15 → series=FNQ amps=15', () => {
+    expect(parseCatalog('FNQ15')).toEqual({
+      series: 'FNQ',
+      poles: null,
+      amps: 15,
+      variant: null,
+      raw: 'FNQ15',
+      parser_version: 3,
+    });
+  });
+
+  test('LPCC15 → series=LPCC amps=15', () => {
+    const r = parseCatalog('LPCC15');
+    expect(r?.series).toBe('LPCC');
+    expect(r?.amps).toBe(15);
+  });
+
+  test('FRNR250 → series=FRNR amps=250', () => {
+    const r = parseCatalog('FRNR250');
+    expect(r?.series).toBe('FRNR');
+    expect(r?.amps).toBe(250);
+  });
+
+  test('LPJ35SP → series=LPJ amps=35 variant=SP', () => {
+    const r = parseCatalog('LPJ35SP');
+    expect(r?.series).toBe('LPJ');
+    expect(r?.amps).toBe(35);
+    expect(r?.variant).toBe('SP');
+  });
+
+  test('GMA4R → series=GMA amps=4 variant=R', () => {
+    const r = parseCatalog('GMA4R');
+    expect(r?.series).toBe('GMA');
+    expect(r?.amps).toBe(4);
+    expect(r?.variant).toBe('R');
+  });
+});
+
+// ── parseCatalog – expanded breaker series (BAB / GHB / CLCAF / BRN) ────────
+
+describe('parseCatalog – expanded breaker series', () => {
+  test('BAB2045 → series=BAB poles=2 amps=45', () => {
+    expect(parseCatalog('BAB2045')).toEqual({
+      series: 'BAB',
+      poles: 2,
+      amps: 45,
+      variant: null,
+      raw: 'BAB2045',
+      parser_version: 3,
+    });
+  });
+
+  test('BAB3090H → series=BAB poles=3 amps=90 variant=H', () => {
+    const r = parseCatalog('BAB3090H');
+    expect(r?.series).toBe('BAB');
+    expect(r?.poles).toBe(3);
+    expect(r?.amps).toBe(90);
+    expect(r?.variant).toBe('H');
+  });
+
+  test('GHB3100 → series=GHB poles=3 amps=100', () => {
+    const r = parseCatalog('GHB3100');
+    expect(r?.series).toBe('GHB');
+    expect(r?.poles).toBe(3);
+    expect(r?.amps).toBe(100);
+  });
+
+  test('CLCAF120 → series=CLCAF poles=1 amps=20', () => {
+    const r = parseCatalog('CLCAF120');
+    expect(r?.series).toBe('CLCAF');
+    expect(r?.poles).toBe(1);
+    expect(r?.amps).toBe(20);
+  });
+
+  test('BRN115GF → series=BRN poles=1 amps=15 variant=GF (GFCI)', () => {
+    const r = parseCatalog('BRN115GF');
+    expect(r?.series).toBe('BRN');
+    expect(r?.poles).toBe(1);
+    expect(r?.amps).toBe(15);
+    expect(r?.variant).toBe('GF');
+  });
+});
+
+// ── parseCatalog – generic alpha-numeric fallback ──────────────────────────
+
+describe('parseCatalog – generic alpha-numeric fallback', () => {
+  test('1226I (Pass switch) → series=1226 variant=I', () => {
+    const r = parseCatalog('1226I');
+    expect(r?.series).toBe('1226');
+    expect(r?.variant).toBe('I');
+    // Generic fallback never fills amps/poles even though the digits look amp-like
+    expect(r?.amps).toBeNull();
+    expect(r?.poles).toBeNull();
+  });
+
+  test('TM873BK (Pass tradesman switch) → series prefix retained', () => {
+    const r = parseCatalog('TM873BK');
+    expect(r?.series).toBe('TM873');
+    expect(r?.variant).toBe('BK');
+  });
+
+  test('PD6ANSWH (Lutron) → series=PD6 (matched by alpha fallback)', () => {
+    const r = parseCatalog('PD6ANSWH');
+    // ALPHA_DEVICE_RE requires 3+ digits, so PD6ANSWH (only one digit "6")
+    // does not match — confirm graceful null.
+    expect(r).toBeNull();
+  });
+
+  test('purely alphabetic catalogs return null', () => {
+    expect(parseCatalog('ABCDEF')).toBeNull();
+  });
+
+  test('purely numeric 3-digit catalogs return null (too generic)', () => {
+    expect(parseCatalog('663')).toBeNull();
   });
 });
 
