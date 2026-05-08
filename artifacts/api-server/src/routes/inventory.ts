@@ -504,6 +504,14 @@ router.post('/search', async (req, res) => {
       created_at: Date;
       updated_at: Date;
       series_id: number | null;
+      // Structured parse columns (migration 0010). Surfacing these into RawRow
+      // is what lets matchesChipColumn() in searchHelpers short-circuit chip
+      // filtering against scalar predicates instead of the slower text path.
+      catalog_parse: unknown;
+      amperage: number | null;
+      pole_count: number | null;
+      voltage: number | null;
+      mount_type: string | null;
       fts_rank: number;
       trgm_sim: number;
     };
@@ -571,6 +579,7 @@ router.post('/search', async (req, res) => {
                 i.id, i.vendor, i.catalog, i.description,
                 i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
                 i.series_id,
+                i.catalog_parse, i.amperage, i.pole_count, i.voltage, i.mount_type,
                 ${
                   tsQuery.trim()
                     ? sql`ts_rank_cd(
@@ -620,6 +629,7 @@ router.post('/search', async (req, res) => {
                   i.id, i.vendor, i.catalog, i.description,
                   i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
                   i.series_id,
+                  i.catalog_parse, i.amperage, i.pole_count, i.voltage, i.mount_type,
                   0::float AS fts_rank,
                   greatest(
                     similarity(i.catalog, ${trgmQuery}),
@@ -722,12 +732,15 @@ router.post('/search', async (req, res) => {
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
         updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
-        catalogParse: null,
-        amperage: null,
-        poleCount: null,
-        voltage: null,
+        // Structured parse columns — populated from the SQL select so chip
+        // filters in matchesChipColumn() can use scalar predicates and the
+        // search response carries the materialized attributes for the client.
+        catalogParse: row.catalog_parse ?? null,
+        amperage: typeof row.amperage === 'number' ? row.amperage : null,
+        poleCount: typeof row.pole_count === 'number' ? row.pole_count : null,
+        voltage: typeof row.voltage === 'number' ? row.voltage : null,
         tradeSizeIn: null,
-        mountType: null,
+        mountType: typeof row.mount_type === 'string' ? row.mount_type : null,
         attrsParsedAt: null,
         promptVersion: null,
         searchTokens: null,
@@ -815,6 +828,14 @@ router.post('/search', async (req, res) => {
     results.sort((a, b) => b.confidence - a.confidence);
 
     // ── Compute per-dimension counts (AND logic, using other active chip filters) ─
+    //
+    // Counts use matchesChipFilters() so that the four scalar dimensions
+    // (amperage, poleCount, voltage, mountingType) hit the structured
+    // columns first via matchesChipColumn() and only fall back to the text
+    // path for rows whose attribute is still NULL. Pre-v3 dimensions
+    // (vendor, color, size, …) continue to use the text path. This keeps
+    // dimension counts aligned with the actual chip-filter predicate so
+    // counts and filtered results never diverge.
     const dimensionCounts: Record<string, Record<string, number>> = {};
     for (const dim of CHIP_DIMS_SERVER) {
       dimensionCounts[dim.key] = {};
@@ -825,7 +846,7 @@ router.post('/search', async (req, res) => {
           : results;
       for (const opt of dim.options) {
         dimensionCounts[dim.key][opt] = baseResults.filter((r) =>
-          tokenMatch(itemFullText(r.item), opt)
+          matchesChipFilters(r.item, [{ key: dim.key, value: opt }])
         ).length;
       }
     }
