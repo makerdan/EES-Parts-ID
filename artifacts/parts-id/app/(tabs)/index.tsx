@@ -1531,12 +1531,6 @@ export default function SearchScreen() {
                       </Pressable>
                     ) : null}
                   </View>
-                  <Pressable
-                    onPress={handleClear}
-                    style={[styles.secondaryBtn, styles.newSearchBtn, { borderColor: colors.border }]}
-                  >
-                    <Text style={[styles.newSearchText, { color: colors.primary }]}>New Search</Text>
-                  </Pressable>
                 </View>
                 {/* Drill-down refinement bar — "Add keywords" input + chip
                     rows for any result-set variation. Always shown after a
@@ -1840,8 +1834,6 @@ const styles = StyleSheet.create({
   },
   lowerThresholdBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", textAlign: "center", lineHeight: 22 },
   secondaryBtn: { ...secondaryBtnBase },
-  newSearchBtn: { paddingHorizontal: 12, paddingVertical: 6 },
-  newSearchText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   browseBackBtn: { flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 4 },
   browseBackLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   loadingContainer: { alignItems: "center", padding: 40, gap: 12 },
