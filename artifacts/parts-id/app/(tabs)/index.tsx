@@ -19,6 +19,7 @@ import {
   type NativeSyntheticEvent,
   Platform,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -32,12 +33,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Fuse from "fuse.js";
-import { useNavigation, useRouter } from "expo-router";
+import { Stack, useNavigation, useRouter } from "expo-router";
 import { useSearchInventory } from "@workspace/api-client-react";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { FilterPanel, ConfidenceSlider, CHIP_DIMS, type FilterValues } from "@/components/FilterPanel";
 import { ResultCard } from "@/components/ResultCard";
+import { SkeletonResultCard } from "@/components/SkeletonResultCard";
 import {
   ResultRefinementBar,
   applyRefinement,
@@ -53,6 +55,7 @@ import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
 import { parseTradeSizeInches, isConduitOrPipe } from "@/lib/tradeSize";
 import { syncAllInventory as syncAllInventoryCore } from "@/lib/syncInventory";
+import { isLiquidGlassAvailable } from "expo-glass-effect";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v3";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v2";
@@ -209,6 +212,20 @@ export default function SearchScreen() {
   // without needing to re-run the search. Stored as Partial<InventoryItem> per
   // item id (currently description and/or aiKeywords).
   const [itemOverrides, setItemOverrides] = useState<Map<number, Partial<InventoryItem>>>(() => new Map());
+  // ── Optimistic result retention ──────────────────────────────────────────
+  // `displayedResults` holds the last successful server search results and is
+  // intentionally NOT cleared when a new search starts — this is what powers
+  // the "keep prior cards visible at reduced opacity while re-searching"
+  // (optimistic UI) behaviour. It is only replaced on success and reset on
+  // an explicit Clear. `searchMutation.data?.results` alone cannot serve this
+  // role because TanStack Query's mutation data goes undefined on a new
+  // mutate() call, causing the list to flash blank before new results arrive.
+  const [displayedResults, setDisplayedResults] = useState<SearchResult[]>([]);
+  const [displayedBelowThreshold, setDisplayedBelowThreshold] = useState(0);
+  // True once any search has returned successfully; stays true across
+  // re-searches so `hasResults` (and the results header) remain visible
+  // while a re-search is in-flight. Reset to false on handleClear().
+  const [searchHasSucceeded, setSearchHasSucceeded] = useState(false);
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
@@ -576,6 +593,13 @@ export default function SearchScreen() {
         setOfflineResults(null);
         setOfflineCacheType(null);
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
+        // Persist results in stable state so they remain visible during
+        // subsequent re-searches (optimistic UI). This must happen before
+        // the async version-check below to ensure the list updates on
+        // success regardless of cache-write outcome.
+        setDisplayedResults(data.results ?? []);
+        setDisplayedBelowThreshold(data.belowThreshold ?? 0);
+        setSearchHasSucceeded(true);
         // Capture the telemetry event id so result-tap clicks can be correlated.
         searchEventIdRef.current = (data as unknown as { _telemetry?: { searchEventId?: number | null } })._telemetry?.searchEventId ?? null;
 
@@ -746,6 +770,10 @@ export default function SearchScreen() {
     // Search tab (or app-title tap) always lands the worker back on the
     // empty welcome state, regardless of which secondary view they were in.
     setAisleBrowseOpen(false);
+    // Reset optimistic-UI state so the welcome screen shows clean.
+    setDisplayedResults([]);
+    setDisplayedBelowThreshold(0);
+    setSearchHasSucceeded(false);
   };
 
   // Tap-Search-tab-to-reset: when the worker is already on the Search tab
@@ -873,10 +901,15 @@ export default function SearchScreen() {
     });
   }, []);
 
+  // Use `displayedResults` (not `searchMutation.data?.results`) so prior cards
+  // remain visible at reduced opacity during a re-search. TanStack mutation
+  // data goes undefined on a new mutate() call, which would flash the list
+  // blank; `displayedResults` is only updated on success and only cleared on
+  // an explicit handleClear(), making optimistic re-search reliable.
   const rawResults: SearchResult[] =
     mode === "browse"
       ? browseResults ?? []
-      : offlineResults ?? (searchMutation.data?.results ?? []);
+      : offlineResults ?? displayedResults;
   // Merge in any local edits so the result card immediately reflects what was
   // just saved through the modal. Variants are patched the same way.
   const results: SearchResult[] = useMemo(() => {
@@ -923,11 +956,15 @@ export default function SearchScreen() {
     });
     return indexed.map(x => x.r);
   }, [rawResults, itemOverrides]);
-  const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
+  // `displayedBelowThreshold` mirrors the last onSuccess payload so the count
+  // stays visible while a re-search is in-flight.
+  const belowThreshold = displayedBelowThreshold;
+  // `searchHasSucceeded` remains true across re-searches so the results header
+  // and drill-down bar stay rendered while the new query is in-flight.
   const hasResults =
     mode === "browse"
       ? browseResults !== null
-      : searchMutation.isSuccess || offlineResults !== null;
+      : searchHasSucceeded || offlineResults !== null;
   // Results actually shown in the list — `results` filtered by any active
   // drill-down chips. When refinement is empty this is just `results`.
   const visibleResults: SearchResult[] = useMemo(
@@ -944,6 +981,15 @@ export default function SearchScreen() {
   // always renders the "Add keywords" input, plus chip rows when there's
   // variation across the result set (or chips were used up front).
   const showRefinementBar = hasResults && results.length > 0;
+  // When a search is in flight and prior results exist, wrap the FlatList
+  // content at reduced opacity (optimistic UI — no jarring blank-then-results).
+  // `displayedResults.length` (not `results.length`) guards the dimming so it
+  // activates as soon as a re-search fires, before the new results arrive.
+  const optimisticOpacity = searchMutation.isPending && displayedResults.length > 0 ? 0.45 : 1;
+
+  // Skeleton placeholder count: fill roughly two screen heights of cards
+  const SKELETON_COUNT = 6;
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/*
@@ -977,15 +1023,57 @@ export default function SearchScreen() {
           importantForAccessibility="no-hide-descendants"
         />
       ) : null}
+      {/*
+        iOS large collapsing title — configured per active tab layout:
+        • ClassicTabLayout (non-Liquid-Glass iOS): Tabs.Screen header options
+          in (tabs)/_layout.tsx handle headerShown + headerLargeTitle.
+        • NativeTabLayout (Liquid Glass iOS, isLiquidGlassAvailable()): each
+          NativeTabs screen is wrapped by UIKit in a UINavigationController.
+          <Stack.Screen> inside the screen component reaches that controller
+          and enables the large collapsing title. The root Stack's global
+          headerShown:false applies to the (tabs) group as a whole but does
+          not suppress per-screen overrides registered from within the screen.
+      */}
+      {isLiquidGlassAvailable() && (
+        <Stack.Screen
+          options={{
+            title: "PartsID",
+            headerShown: true,
+            headerLargeTitle: true,
+            headerLargeTitleStyle: { fontFamily: "Inter_700Bold" },
+            headerTitleStyle: { fontFamily: "Inter_700Bold" },
+          }}
+        />
+      )}
+      {/*
+        KeyboardAvoidingView for Android — switches to "height" mode so the
+        soft keyboard raises the content area rather than overlapping it.
+        On iOS the native header + SafeAreaView already manage the insets;
+        we skip this wrapper there to avoid double-adjusting.
+        On web this is a no-op (no soft keyboard).
+      */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "android" ? "height" : undefined}
+        keyboardVerticalOffset={0}
+      >
+
+      {/* Header — hidden on iOS because the native large-title header
+          (configured in (tabs)/_layout.tsx) already shows the "PartsID" title.
+          The sync badge and action buttons are still rendered below so
+          workers can access them. */}
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={{ flex: 1 }}>
-          {/* Tapping the app title resets the Search screen back to the
-              empty welcome state (same effect as tapping the Search tab
-              while already focused). */}
-          <Pressable onPress={() => handleClearRef.current()} hitSlop={8}>
-            <Text style={[styles.headerTitle, { color: colors.foreground }]}>Parts ID</Text>
-          </Pressable>
+          {/* "Parts ID" title text — both iOS paths (NativeTabs and
+              ClassicTabLayout) now have a native large collapsing header, so
+              the in-screen text is hidden on iOS and only shown on Android/web
+              where there is no native navigation bar. */}
+          {Platform.OS !== "ios" ? (
+            <Pressable onPress={() => handleClearRef.current()} hitSlop={8}>
+              <Text style={[styles.headerTitle, { color: colors.foreground }]}>Parts ID</Text>
+            </Pressable>
+          ) : null}
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
             {/* Sync progress — while fetching all inventory for offline cache */}
             {syncProgress ? (
@@ -1492,9 +1580,51 @@ export default function SearchScreen() {
         ) : null}
       </ScrollView>
 
+      <Animated.View style={{ flex: 1, opacity: optimisticOpacity }}>
+      {/* Optimistic loading indicator — visible while a re-search is in flight
+          and prior results are still rendered at reduced opacity above. */}
+      {searchMutation.isPending && results.length > 0 ? (
+        <View style={styles.optimisticBanner}>
+          <ActivityIndicator size="small" color={colors.primary} />
+          <Text style={[styles.optimisticBannerText, { color: colors.mutedForeground }]}>
+            Updating results…
+          </Text>
+        </View>
+      ) : null}
       <FlatList
         data={visibleResults}
         keyExtractor={item => String(item.item.id)}
+        // Pull-to-refresh: re-run search when there is an active search context
+        // (prior results OR a typed keyword / filter), or trigger a full
+        // inventory sync when the search field is truly empty and no search
+        // has ever been run. This matches the spec: "re-run handleSearch with
+        // the current filters if a prior search exists, or trigger syncInventory
+        // if the search field is empty."
+        refreshControl={
+          <RefreshControl
+            refreshing={searchMutation.isPending || isSyncing}
+            onRefresh={() => {
+              // In Browse mode, handleSearch() would run a text/field search
+              // rather than refreshing the browse view — skip it and sync
+              // instead so workers get fresh Browse data without a confusing
+              // mode switch. Search-mode re-queries when there's an active
+              // search context (prior results or typed keyword); falls back to
+              // a full inventory sync when the screen is at the welcome state.
+              if (mode === "browse") {
+                syncAllInventory();
+                return;
+              }
+              const hasSearchContext = hasResults || filters.keywords.trim() !== "";
+              if (hasSearchContext) {
+                handleSearch();
+              } else {
+                syncAllInventory();
+              }
+            }}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
         // IMPORTANT: pass a JSX element here, NOT an inline `() => (...)`
         // function. An inline arrow creates a fresh component type on every
         // render, which makes FlatList unmount/remount the header subtree
@@ -1556,13 +1686,14 @@ export default function SearchScreen() {
               </View>
             ) : null}
 
-            {/* Loading */}
-            {searchMutation.isPending ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>
-                  Searching Database…
-                </Text>
+            {/* Skeleton loading — shown on first search (no prior results).
+                When results already exist, optimistic opacity handles the
+                "pending" state so we never go blank. */}
+            {searchMutation.isPending && results.length === 0 ? (
+              <View style={styles.skeletonContainer}>
+                {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
+                  <SkeletonResultCard key={i} colors={colors} />
+                ))}
               </View>
             ) : null}
 
@@ -1641,6 +1772,7 @@ export default function SearchScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
       />
+      </Animated.View>
       </>
       ) : null}
 
@@ -1653,12 +1785,30 @@ export default function SearchScreen() {
         onDescriptionChanged={handleDescriptionChanged}
         onSeriesChanged={handleSeriesChanged}
       />
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
+  // ── Skeleton loading ─────────────────────────────────────────────────────
+  skeletonContainer: {
+    paddingHorizontal: 12,
+    paddingTop: 4,
+  },
+  // ── Optimistic re-search banner ──────────────────────────────────────────
+  optimisticBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  optimisticBannerText: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+  },
   // Invisible 1×1 ScrollView used to catch the iOS NativeTabs
   // repeated-tab-selection gesture. Absolutely positioned and pinned to
   // 1×1 so it never affects layout, with content height > frame height
