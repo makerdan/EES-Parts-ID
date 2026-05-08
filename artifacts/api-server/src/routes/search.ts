@@ -6,19 +6,14 @@
  *   previously recorded search_event row. Called fire-and-forget by the
  *   mobile client when a worker taps a result card.
  */
-import { Router } from "express";
-import { logSearchClick, type ClickAction } from "../search/telemetry";
+import { Router } from 'express';
+import { logSearchClick, type ClickAction } from '../search/telemetry';
 
 const router = Router();
 
-const VALID_ACTIONS = new Set<ClickAction>([
-  "view",
-  "add_to_list",
-  "scan_confirm",
-  "dismiss",
-]);
+const VALID_ACTIONS = new Set<ClickAction>(['view', 'add_to_list', 'scan_confirm', 'dismiss']);
 
-router.post("/click", async (req, res) => {
+router.post('/click', async (req, res) => {
   const { searchEventId, resultId, resultRank, action } = req.body as {
     searchEventId?: unknown;
     resultId?: unknown;
@@ -29,14 +24,20 @@ router.post("/click", async (req, res) => {
   // Require safe integers for all numeric fields so BigInt() and DB inserts
   // never receive floats or out-of-range values from malformed requests.
   if (
-    typeof searchEventId !== "number" || !Number.isInteger(searchEventId) || searchEventId <= 0 ||
-    typeof resultId !== "number" || !Number.isInteger(resultId) || resultId <= 0 ||
+    typeof searchEventId !== 'number' ||
+    !Number.isInteger(searchEventId) ||
+    searchEventId <= 0 ||
+    typeof resultId !== 'number' ||
+    !Number.isInteger(resultId) ||
+    resultId <= 0 ||
     // resultRank is 0-based (0 = first result shown) — matches mobile index
-    typeof resultRank !== "number" || !Number.isInteger(resultRank) || resultRank < 0 ||
-    typeof action !== "string" ||
+    typeof resultRank !== 'number' ||
+    !Number.isInteger(resultRank) ||
+    resultRank < 0 ||
+    typeof action !== 'string' ||
     !VALID_ACTIONS.has(action as ClickAction)
   ) {
-    res.status(400).json({ error: "Invalid click payload" });
+    res.status(400).json({ error: 'Invalid click payload' });
     return;
   }
 

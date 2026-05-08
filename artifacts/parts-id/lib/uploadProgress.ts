@@ -19,13 +19,18 @@
  * catalog text on existing rows is never modified).
  */
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const SEED_KEY = "@partsid/upload_seed_v1";
-export const CHECKPOINT_KEY = "@partsid/upload_checkpoint_v1";
+export const SEED_KEY = '@partsid/upload_seed_v1';
+export const CHECKPOINT_KEY = '@partsid/upload_checkpoint_v1';
 
 /** Mirror of the mobile-side upsert mode union. */
-export type UploadMode = "add-new-only" | "overwrite-all" | "selected" | "bins-only" | "add-multi-access";
+export type UploadMode =
+  | 'add-new-only'
+  | 'overwrite-all'
+  | 'selected'
+  | 'bins-only'
+  | 'add-multi-access';
 
 /** Match the row shape consumed by /inventory/upsert-batch. */
 export interface UploadRow {
@@ -38,10 +43,10 @@ export interface UploadRow {
 /** Static-for-the-run state. Written once when an upload starts. */
 export interface UploadSeed {
   fileName: string | null;
-  fileType: "csv" | "xlsx" | null;
+  fileType: 'csv' | 'xlsx' | null;
   parsedRows: UploadRow[];
   mode: UploadMode;
-  selectedKeys?: Array<{ vendor: string; catalog: string }>;
+  selectedKeys?: { vendor: string; catalog: string }[];
   startedAt: number;
 }
 
@@ -55,24 +60,28 @@ export interface UploadCheckpoint {
 export type InProgressUpload = UploadSeed & UploadCheckpoint;
 
 function isValidSeed(v: unknown): v is UploadSeed {
-  if (!v || typeof v !== "object") return false;
+  if (!v || typeof v !== 'object') return false;
   const o = v as Partial<UploadSeed>;
   return (
     Array.isArray(o.parsedRows) &&
-    typeof o.startedAt === "number" &&
-    (o.mode === "add-new-only" || o.mode === "overwrite-all" || o.mode === "selected" || o.mode === "bins-only" || o.mode === "add-multi-access")
+    typeof o.startedAt === 'number' &&
+    (o.mode === 'add-new-only' ||
+      o.mode === 'overwrite-all' ||
+      o.mode === 'selected' ||
+      o.mode === 'bins-only' ||
+      o.mode === 'add-multi-access')
   );
 }
 
 function isValidCheckpoint(v: unknown): v is UploadCheckpoint {
-  if (!v || typeof v !== "object") return false;
+  if (!v || typeof v !== 'object') return false;
   const o = v as Partial<UploadCheckpoint>;
   return (
-    typeof o.processedIndex === "number" &&
+    typeof o.processedIndex === 'number' &&
     !!o.totals &&
-    typeof o.totals.inserted === "number" &&
-    typeof o.totals.updated === "number" &&
-    typeof o.totals.skipped === "number"
+    typeof o.totals.inserted === 'number' &&
+    typeof o.totals.updated === 'number' &&
+    typeof o.totals.skipped === 'number'
   );
 }
 
@@ -125,7 +134,7 @@ export async function saveUploadSeed(seed: UploadSeed): Promise<void> {
       AsyncStorage.setItem(SEED_KEY, JSON.stringify(seed)),
       AsyncStorage.setItem(
         CHECKPOINT_KEY,
-        JSON.stringify({ processedIndex: 0, totals: { inserted: 0, updated: 0, skipped: 0 } }),
+        JSON.stringify({ processedIndex: 0, totals: { inserted: 0, updated: 0, skipped: 0 } })
       ),
     ]);
   } catch {
@@ -149,10 +158,7 @@ export async function saveUploadCheckpoint(checkpoint: UploadCheckpoint): Promis
 /** Remove all saved progress (called on success or when the user discards). */
 export async function clearUploadProgress(): Promise<void> {
   try {
-    await Promise.all([
-      AsyncStorage.removeItem(SEED_KEY),
-      AsyncStorage.removeItem(CHECKPOINT_KEY),
-    ]);
+    await Promise.all([AsyncStorage.removeItem(SEED_KEY), AsyncStorage.removeItem(CHECKPOINT_KEY)]);
   } catch {
     /* ignore */
   }
@@ -166,7 +172,7 @@ export const CHUNK_SIZE = 25;
  * The final chunk may be shorter than CHUNK_SIZE.
  */
 export function chunkRows<T>(rows: readonly T[], size: number = CHUNK_SIZE): T[][] {
-  if (size <= 0) throw new Error("chunkRows: size must be > 0");
+  if (size <= 0) throw new Error('chunkRows: size must be > 0');
   const out: T[][] = [];
   for (let i = 0; i < rows.length; i += size) {
     out.push(rows.slice(i, i + size));

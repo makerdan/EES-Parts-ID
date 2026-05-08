@@ -135,6 +135,8 @@ The Expo app is gated by a single password from `EXPO_PUBLIC_APP_PASSWORD`
 | Script | Command |
 | --- | --- |
 | `build` | `pnpm run typecheck && pnpm -r --if-present run build` |
+| `format:check` | `prettier --check "**/*.{ts,tsx,js,cjs,mjs}" --ignore-path .prettierignore` |
+| `lint` | `eslint .` |
 | `readme` | `pnpm --filter @workspace/scripts exec tsx ./src/update-readme.ts` |
 | `test` | `pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run…` |
 | `typecheck` | `pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-…` |
@@ -144,9 +146,9 @@ The Expo app is gated by a single password from `EXPO_PUBLIC_APP_PASSWORD`
 
 | Package | Scripts |
 | --- | --- |
-| `@workspace/api-server` | `build`, `dev`, `start`, `test`, `typecheck` |
+| `@workspace/api-server` | `build`, `dev`, `lint`, `start`, `test`, `typecheck` |
 | `@workspace/mockup-sandbox` | `build`, `dev`, `preview`, `typecheck` |
-| `@workspace/parts-id` | `build`, `dev`, `serve`, `test`, `typecheck` |
+| `@workspace/parts-id` | `build`, `dev`, `lint`, `serve`, `test`, `typecheck` |
 <!-- /AUTO:SCRIPTS -->
 
 ## Testing

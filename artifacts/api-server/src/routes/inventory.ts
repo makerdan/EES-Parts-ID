@@ -4,9 +4,9 @@
  * and returns dimension counts so the mobile app can render filter chips
  * without a second round-trip.
  */
-import { Router } from "express";
-import { eq, sql, ilike, or, and, desc, not, inArray } from "drizzle-orm";
-import { db } from "@workspace/db";
+import { Router } from 'express';
+import { eq, sql, ilike, or, and, desc, not, inArray } from 'drizzle-orm';
+import { db } from '@workspace/db';
 import {
   inventoryTable,
   abbreviationMapTable,
@@ -16,10 +16,10 @@ import {
   synonymGroupTable,
   productSeriesTable,
   dictionaryVersionTable,
-} from "@workspace/db";
-import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
-import { verifyAdminToken } from "./admin";
-import { expandMeasurements } from "../utils/measurementConversion";
+} from '@workspace/db';
+import { batchProcessWithSSE } from '@workspace/integrations-openai-ai-server/batch';
+import { verifyAdminToken } from './admin';
+import { expandMeasurements } from '../utils/measurementConversion';
 import {
   normalizeMeasurement,
   parseCatalogNumber,
@@ -29,37 +29,39 @@ import {
   itemFullText,
   tokenMatch,
   matchesChipFilters,
-} from "../utils/searchHelpers";
-import { generateKeywords } from "../utils/generateKeywords";
-import { suggestDescription } from "../utils/suggestDescription";
+} from '../utils/searchHelpers';
+import { generateKeywords } from '../utils/generateKeywords';
+import { suggestDescription } from '../utils/suggestDescription';
 import {
   buildVendorFullNameMap,
   lookupVendorFullName,
   withVendorFullName,
-} from "../utils/vendorFullName";
+} from '../utils/vendorFullName';
 import {
   blendPgScore,
   catalogScore,
   applyVendorBoost,
   shouldUpdateScore,
-} from "../utils/scoreHelpers";
-import { normalizeQuery } from "../search/normalize";
-import { logSearchEvent, type QuerySource } from "../search/telemetry";
-import { mergeBins, dedupeBinsCaseInsensitive } from "../utils/binLocations";
-import { deriveTradeSizeTokens, parseTradeSizeInches, tradeSizeChipLabel, isConduitOrPipe } from "../utils/tradeSize";
-import { parseCatalog, deriveAttrs, parseTradeSize } from "../enrichment/parseAttributes";
-import { buildSearchTokens } from "../enrichment/buildSearchTokens";
-import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from "../enrichment/invalidation";
-import { classifyHandler } from "./categories";
+} from '../utils/scoreHelpers';
+import { normalizeQuery } from '../search/normalize';
+import { logSearchEvent, type QuerySource } from '../search/telemetry';
+import { mergeBins, dedupeBinsCaseInsensitive } from '../utils/binLocations';
 import {
-  categoryNodeTable,
-  inventoryCategoryTable,
-} from "@workspace/db";
+  deriveTradeSizeTokens,
+  parseTradeSizeInches,
+  tradeSizeChipLabel,
+  isConduitOrPipe,
+} from '../utils/tradeSize';
+import { parseCatalog, deriveAttrs, parseTradeSize } from '../enrichment/parseAttributes';
+import { buildSearchTokens } from '../enrichment/buildSearchTokens';
+import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from '../enrichment/invalidation';
+import { classifyHandler } from './categories';
+import { categoryNodeTable, inventoryCategoryTable } from '@workspace/db';
 
 const router = Router();
 
 // ── GET /inventory/version ────────────────────────────────────────────────────
-router.get("/version", async (_req, res) => {
+router.get('/version', async (_req, res) => {
   try {
     const result = await db
       .select({ updatedAt: sql<string>`MAX(updated_at)` })
@@ -68,18 +70,18 @@ router.get("/version", async (_req, res) => {
     res.json({ updatedAt });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to get inventory version" });
+    res.status(500).json({ error: 'Failed to get inventory version' });
   }
 });
 
 // ── GET /inventory ────────────────────────────────────────────────────────────
-router.get("/", async (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const page = Math.max(1, parseInt(req.query["page"] as string) || 1);
-    const limit = Math.min(1000, Math.max(1, parseInt(req.query["limit"] as string) || 50));
+    const page = Math.max(1, parseInt(req.query['page'] as string) || 1);
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query['limit'] as string) || 50));
     const offset = (page - 1) * limit;
-    const unenrichedOnly = req.query["unenrichedOnly"] === "true";
-    const q = (req.query["q"] as string | undefined)?.trim() ?? "";
+    const unenrichedOnly = req.query['unenrichedOnly'] === 'true';
+    const q = (req.query['q'] as string | undefined)?.trim() ?? '';
 
     // Build where clause: combine unenrichedOnly filter with optional text search.
     // Text search does ILIKE on vendor, catalog, and description.
@@ -89,23 +91,35 @@ router.get("/", async (req, res) => {
       const searchFilter = or(
         ilike(inventoryTable.vendor, like),
         ilike(inventoryTable.catalog, like),
-        ilike(inventoryTable.description, like),
+        ilike(inventoryTable.description, like)
       );
       whereClause = unenrichedOnly
         ? and(sql`${inventoryTable.enrichedAt} IS NULL`, searchFilter)
         : searchFilter;
     } else {
-      whereClause = unenrichedOnly
-        ? sql`${inventoryTable.enrichedAt} IS NULL`
-        : undefined;
+      whereClause = unenrichedOnly ? sql`${inventoryTable.enrichedAt} IS NULL` : undefined;
     }
 
     const [items, countResult, vendors] = await Promise.all([
       whereClause
-        ? db.select().from(inventoryTable).where(whereClause).limit(limit).offset(offset).orderBy(inventoryTable.vendor, inventoryTable.catalog)
-        : db.select().from(inventoryTable).limit(limit).offset(offset).orderBy(inventoryTable.vendor, inventoryTable.catalog),
+        ? db
+            .select()
+            .from(inventoryTable)
+            .where(whereClause)
+            .limit(limit)
+            .offset(offset)
+            .orderBy(inventoryTable.vendor, inventoryTable.catalog)
+        : db
+            .select()
+            .from(inventoryTable)
+            .limit(limit)
+            .offset(offset)
+            .orderBy(inventoryTable.vendor, inventoryTable.catalog),
       whereClause
-        ? db.select({ count: sql<number>`count(*)` }).from(inventoryTable).where(whereClause)
+        ? db
+            .select({ count: sql<number>`count(*)` })
+            .from(inventoryTable)
+            .where(whereClause)
         : db.select({ count: sql<number>`count(*)` }).from(inventoryTable),
       db.select({ code: vendorMapTable.code, names: vendorMapTable.names }).from(vendorMapTable),
     ]);
@@ -113,73 +127,236 @@ router.get("/", async (req, res) => {
     const vendorFullNameMap = buildVendorFullNameMap(vendors);
 
     res.json({
-      items: items.map(item => withVendorFullName({
-        ...item,
-        binLocations: item.binLocations ?? [],
-        aiKeywords: item.aiKeywords ?? [],
-      }, vendorFullNameMap)),
+      items: items.map((item) =>
+        withVendorFullName(
+          {
+            ...item,
+            binLocations: item.binLocations ?? [],
+            aiKeywords: item.aiKeywords ?? [],
+          },
+          vendorFullNameMap
+        )
+      ),
       total: Number(countResult[0]?.count ?? 0),
       page,
       limit,
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to list inventory" });
+    res.status(500).json({ error: 'Failed to list inventory' });
   }
 });
 
 // ── POST /inventory/search ────────────────────────────────────────────────────
 // ── 16 required chip dimensions (must mirror FilterPanel.tsx CHIP_DIMS) ───────
 const CHIP_DIMS_SERVER = [
-  { key: "category",      options: ["Receptacle","Switch","Breaker","Wire","Conduit","Fitting","Box","Panel","Transformer","Fuse","Lighting","Motor","Connector","Dimmer","Sensor","Enclosure"] },
-  { key: "amperage",      options: ["15A","20A","30A","40A","50A","60A","100A","150A","200A","400A"] },
-  { key: "colorChip",     options: ["White","Black","Gray","Ivory","Almond","Red","Blue","Brown","Orange","Yellow"] },
-  { key: "manufacturer",  options: ["Eaton","Square D","Hubbell","Leviton","Siemens","GE","Legrand","Cooper","Lutron","3M","Panduit","T&B","Belden","Southwire","ABB","Rockwell"] },
-  { key: "sizeChip",      options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"','6"','12.7mm','19.1mm','25.4mm','31.8mm','38.1mm','50.8mm','63.5mm','76.2mm','101.6mm','152.4mm'] },
-  { key: "rating",        options: ["NEMA 1","NEMA 3R","NEMA 4","NEMA 4X","NEMA 12","NEMA 7","IP65","IP67","UL Listed","CSA"] },
-  { key: "wireType",      options: ["THHN","THWN","NM-B","MC","UF","SER","Armored","Plenum","URD","USE"] },
-  { key: "wireGauge",     options: ["#14","#12","#10","#8","#6","#4","#2","1/0","2/0","3/0","4/0","350","500"] },
-  { key: "conduitType",   options: ["EMT","PVC","RMC","IMC","FMC","LFMC","ENT","HDPE","RTRC","GRC"] },
-  { key: "conduitSize",   options: ['1/2"','3/4"','1"','1-1/4"','1-1/2"','2"','2-1/2"','3"','4"','12.7mm','19.1mm','25.4mm','31.8mm','38.1mm','50.8mm','63.5mm','76.2mm','101.6mm'] },
-  { key: "boxType",       options: ["New Work","Old Work","Junction","Weatherproof","Fan Box","Handy","Pull Box","Extension"] },
-  { key: "boxGangCount",  options: ["1-Gang","2-Gang","3-Gang","4-Gang","Multi-Gang"] },
-  { key: "mountingType",  options: ["Surface","Flush","DIN Rail","Panel Mount","Pole Mount","Pendant","Track"] },
-  { key: "environment",   options: ["Indoor","Outdoor","Wet","Damp","Plenum","Direct Burial","Hazardous"] },
-  { key: "voltage",       options: ["120V","240V","208V","277V","480V","24V","12V","600V"] },
-  { key: "poleCount",     options: ["1 Pole","2 Pole","3 Pole","4 Pole"] },
+  {
+    key: 'category',
+    options: [
+      'Receptacle',
+      'Switch',
+      'Breaker',
+      'Wire',
+      'Conduit',
+      'Fitting',
+      'Box',
+      'Panel',
+      'Transformer',
+      'Fuse',
+      'Lighting',
+      'Motor',
+      'Connector',
+      'Dimmer',
+      'Sensor',
+      'Enclosure',
+    ],
+  },
+  {
+    key: 'amperage',
+    options: ['15A', '20A', '30A', '40A', '50A', '60A', '100A', '150A', '200A', '400A'],
+  },
+  {
+    key: 'colorChip',
+    options: [
+      'White',
+      'Black',
+      'Gray',
+      'Ivory',
+      'Almond',
+      'Red',
+      'Blue',
+      'Brown',
+      'Orange',
+      'Yellow',
+    ],
+  },
+  {
+    key: 'manufacturer',
+    options: [
+      'Eaton',
+      'Square D',
+      'Hubbell',
+      'Leviton',
+      'Siemens',
+      'GE',
+      'Legrand',
+      'Cooper',
+      'Lutron',
+      '3M',
+      'Panduit',
+      'T&B',
+      'Belden',
+      'Southwire',
+      'ABB',
+      'Rockwell',
+    ],
+  },
+  {
+    key: 'sizeChip',
+    options: [
+      '1/2"',
+      '3/4"',
+      '1"',
+      '1-1/4"',
+      '1-1/2"',
+      '2"',
+      '2-1/2"',
+      '3"',
+      '4"',
+      '6"',
+      '12.7mm',
+      '19.1mm',
+      '25.4mm',
+      '31.8mm',
+      '38.1mm',
+      '50.8mm',
+      '63.5mm',
+      '76.2mm',
+      '101.6mm',
+      '152.4mm',
+    ],
+  },
+  {
+    key: 'rating',
+    options: [
+      'NEMA 1',
+      'NEMA 3R',
+      'NEMA 4',
+      'NEMA 4X',
+      'NEMA 12',
+      'NEMA 7',
+      'IP65',
+      'IP67',
+      'UL Listed',
+      'CSA',
+    ],
+  },
+  {
+    key: 'wireType',
+    options: ['THHN', 'THWN', 'NM-B', 'MC', 'UF', 'SER', 'Armored', 'Plenum', 'URD', 'USE'],
+  },
+  {
+    key: 'wireGauge',
+    options: [
+      '#14',
+      '#12',
+      '#10',
+      '#8',
+      '#6',
+      '#4',
+      '#2',
+      '1/0',
+      '2/0',
+      '3/0',
+      '4/0',
+      '350',
+      '500',
+    ],
+  },
+  {
+    key: 'conduitType',
+    options: ['EMT', 'PVC', 'RMC', 'IMC', 'FMC', 'LFMC', 'ENT', 'HDPE', 'RTRC', 'GRC'],
+  },
+  {
+    key: 'conduitSize',
+    options: [
+      '1/2"',
+      '3/4"',
+      '1"',
+      '1-1/4"',
+      '1-1/2"',
+      '2"',
+      '2-1/2"',
+      '3"',
+      '4"',
+      '12.7mm',
+      '19.1mm',
+      '25.4mm',
+      '31.8mm',
+      '38.1mm',
+      '50.8mm',
+      '63.5mm',
+      '76.2mm',
+      '101.6mm',
+    ],
+  },
+  {
+    key: 'boxType',
+    options: [
+      'New Work',
+      'Old Work',
+      'Junction',
+      'Weatherproof',
+      'Fan Box',
+      'Handy',
+      'Pull Box',
+      'Extension',
+    ],
+  },
+  { key: 'boxGangCount', options: ['1-Gang', '2-Gang', '3-Gang', '4-Gang', 'Multi-Gang'] },
+  {
+    key: 'mountingType',
+    options: ['Surface', 'Flush', 'DIN Rail', 'Panel Mount', 'Pole Mount', 'Pendant', 'Track'],
+  },
+  {
+    key: 'environment',
+    options: ['Indoor', 'Outdoor', 'Wet', 'Damp', 'Plenum', 'Direct Burial', 'Hazardous'],
+  },
+  { key: 'voltage', options: ['120V', '240V', '208V', '277V', '480V', '24V', '12V', '600V'] },
+  { key: 'poleCount', options: ['1 Pole', '2 Pole', '3 Pole', '4 Pole'] },
 ] as const;
 
-router.post("/search", async (req, res) => {
+router.post('/search', async (req, res) => {
   const startTime = performance.now();
   const layersHit: string[] = [];
   try {
     const {
-      keywords = "",
-      catalog: catalogInput = "",
-      vendor: vendorInput = "",
-      color = "",
-      size = "",
-      material = "",
-      textNumbers = "",
-      confidenceThreshold = 50,  // 0–100 percentage; divided by 100 for internal comparison
+      keywords = '',
+      catalog: catalogInput = '',
+      vendor: vendorInput = '',
+      color = '',
+      size = '',
+      material = '',
+      textNumbers = '',
+      confidenceThreshold = 50, // 0–100 percentage; divided by 100 for internal comparison
       // 16 structured chip dimensions (AND-logic applied post-FTS)
-      category = "",
-      amperage = "",
-      colorChip = "",
-      manufacturer = "",
-      sizeChip = "",
-      rating = "",
-      wireType = "",
-      wireGauge = "",
-      conduitType = "",
-      conduitSize = "",
-      boxType = "",
-      boxGangCount = "",
-      mountingType = "",
-      environment = "",
-      voltage = "",
-      poleCount = "",
-      querySource = "typed",
+      category = '',
+      amperage = '',
+      colorChip = '',
+      manufacturer = '',
+      sizeChip = '',
+      rating = '',
+      wireType = '',
+      wireGauge = '',
+      conduitType = '',
+      conduitSize = '',
+      boxType = '',
+      boxGangCount = '',
+      mountingType = '',
+      environment = '',
+      voltage = '',
+      poleCount = '',
+      querySource = 'typed',
     } = req.body as {
       keywords?: string;
       catalog?: string;
@@ -189,31 +366,43 @@ router.post("/search", async (req, res) => {
       material?: string;
       textNumbers?: string;
       confidenceThreshold?: number;
-      category?: string; amperage?: string; colorChip?: string; manufacturer?: string;
-      sizeChip?: string; rating?: string; wireType?: string; wireGauge?: string;
-      conduitType?: string; conduitSize?: string; boxType?: string; boxGangCount?: string;
-      mountingType?: string; environment?: string; voltage?: string; poleCount?: string;
+      category?: string;
+      amperage?: string;
+      colorChip?: string;
+      manufacturer?: string;
+      sizeChip?: string;
+      rating?: string;
+      wireType?: string;
+      wireGauge?: string;
+      conduitType?: string;
+      conduitSize?: string;
+      boxType?: string;
+      boxGangCount?: string;
+      mountingType?: string;
+      environment?: string;
+      voltage?: string;
+      poleCount?: string;
       querySource?: QuerySource;
     };
 
     const activeChipFilters: Array<{ key: string; value: string }> = [
-      { key: "category",     value: category },
-      { key: "amperage",     value: amperage },
-      { key: "colorChip",    value: colorChip },
-      { key: "manufacturer", value: manufacturer },
-      { key: "sizeChip",     value: sizeChip },
-      { key: "rating",       value: rating },
-      { key: "wireType",     value: wireType },
-      { key: "wireGauge",    value: wireGauge },
-      { key: "conduitType",  value: conduitType },
-      { key: "conduitSize",  value: conduitSize },
-      { key: "boxType",      value: boxType },
-      { key: "boxGangCount", value: boxGangCount },
-      { key: "mountingType", value: mountingType },
-      { key: "environment",  value: environment },
-      { key: "voltage",      value: voltage },
-      { key: "poleCount",    value: poleCount },
-    ].filter(f => f.value.trim() !== "");
+      { key: 'category', value: category },
+      { key: 'amperage', value: amperage },
+      { key: 'colorChip', value: colorChip },
+      { key: 'manufacturer', value: manufacturer },
+      { key: 'sizeChip', value: sizeChip },
+      { key: 'rating', value: rating },
+      { key: 'wireType', value: wireType },
+      { key: 'wireGauge', value: wireGauge },
+      { key: 'conduitType', value: conduitType },
+      { key: 'conduitSize', value: conduitSize },
+      { key: 'boxType', value: boxType },
+      { key: 'boxGangCount', value: boxGangCount },
+      { key: 'mountingType', value: mountingType },
+      { key: 'environment', value: environment },
+      { key: 'voltage', value: voltage },
+      { key: 'poleCount', value: poleCount },
+    ].filter((f) => f.value.trim() !== '');
 
     // Load dictionaries in parallel.
     // Synonyms, slang, and vendor aliases are now handled at enrichment time
@@ -224,12 +413,13 @@ router.post("/search", async (req, res) => {
       db.select().from(vendorMapTable),
     ]);
 
-    const correctionMap = new Map(misspellings.map(m => [m.misspelling, m.correction]));
-    const abbrevMap = new Map(abbreviations.map(a => [a.abbreviation, a.expansions]));
+    const correctionMap = new Map(misspellings.map((m) => [m.misspelling, m.correction]));
+    const abbrevMap = new Map(abbreviations.map((a) => [a.abbreviation, a.expansions]));
     const vendorFullNameMap = buildVendorFullNameMap(vendors);
 
     const allSearchText = [keywords, catalogInput, vendorInput, color, size, material, textNumbers]
-      .filter(Boolean).join(" ");
+      .filter(Boolean)
+      .join(' ');
 
     // ── Step 1: Unicode normalization (telemetry + pre-processing) ───────────
     // normalizeQuery runs first — before any expansion — so query_normalized
@@ -261,51 +451,61 @@ router.post("/search", async (req, res) => {
     // normalizeQuery output feeds into normalizeMeasurement, making Unicode
     // normalization the literal first step in the processing pipeline.
     const normalized = normalizeMeasurement(queryNormalizedForTelemetry);
-    const words = normalized.split(/\s+/).filter(w => w.length > 1);
-    const corrected = words.map(w => correctMisspelling(w, correctionMap));
+    const words = normalized.split(/\s+/).filter((w) => w.length > 1);
+    const corrected = words.map((w) => correctMisspelling(w, correctionMap));
 
     // Abbreviation expansion stays at query time (per task spec).
     // Synonym/slang/vendor alias expansion is now index-time (search_tokens column).
     const expandedTerms = new Set<string>(corrected);
     for (const word of corrected) {
       const wl = word.toLowerCase();
-      abbrevMap.get(wl)?.forEach(e => expandedTerms.add(e));
+      abbrevMap.get(wl)?.forEach((e) => expandedTerms.add(e));
     }
 
     const catalogTerms = catalogInput ? parseCatalogNumber(catalogInput) : [];
     const keywordCatalogTerms = keywords ? parseCatalogNumber(keywords) : [];
-    catalogTerms.forEach(t => expandedTerms.add(t));
-    keywordCatalogTerms.forEach(t => expandedTerms.add(t));
+    catalogTerms.forEach((t) => expandedTerms.add(t));
+    keywordCatalogTerms.forEach((t) => expandedTerms.add(t));
 
     // Inject cross-unit measurement conversions (mm ↔ inch, cm → inch, m ↔ ft)
     // so that e.g. "10mm conduit" surfaces parts described as "3/8 inch conduit"
     for (const mt of expandMeasurements(normalized)) expandedTerms.add(mt);
 
     const vendorFilter = vendorInput.trim().toUpperCase();
-    const allTermsArr = Array.from(expandedTerms).filter(t => t.length >= 2);
+    const allTermsArr = Array.from(expandedTerms).filter((t) => t.length >= 2);
     // Build the FTS tsquery: strip non-word/non-space chars, split on whitespace so
     // multi-word terms become separate OR tokens, then filter out tokens that would
     // cause to_tsquery to fail:
     //   • pure numeric strings (e.g. "12", "394") — useless for full-text search
     //   • tokens starting with a digit (e.g. "7mm" from "12.7mm" after dot-strip)
     //   • common English stopwords that to_tsquery rejects when they appear alone
-    const FTS_STOPWORDS = new Set(["in", "at", "on", "of", "to", "by", "as", "an", "or", "it"]);
+    const FTS_STOPWORDS = new Set(['in', 'at', 'on', 'of', 'to', 'by', 'as', 'an', 'or', 'it']);
     const tsQuery = allTermsArr
-      .flatMap(t => t.replace(/[^\w\s]/g, " ").trim().split(/\s+/).filter(Boolean))
-      .filter(t =>
-        t.length >= 2 &&
-        /^[a-zA-Z]/.test(t) &&
-        !FTS_STOPWORDS.has(t.toLowerCase()),
+      .flatMap((t) =>
+        t
+          .replace(/[^\w\s]/g, ' ')
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
       )
-      .join(" | ");
+      .filter((t) => t.length >= 2 && /^[a-zA-Z]/.test(t) && !FTS_STOPWORDS.has(t.toLowerCase()))
+      .join(' | ');
 
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
-      id: number; vendor: string; catalog: string; description: string;
-      bin_locations: string[]; ai_keywords: string[]; trade_size: string | null;
-      enriched_at: Date | null; created_at: Date; updated_at: Date;
+      id: number;
+      vendor: string;
+      catalog: string;
+      description: string;
+      bin_locations: string[];
+      ai_keywords: string[];
+      trade_size: string | null;
+      enriched_at: Date | null;
+      created_at: Date;
+      updated_at: Date;
       series_id: number | null;
-      fts_rank: number; trgm_sim: number;
+      fts_rank: number;
+      trgm_sim: number;
     };
 
     const rawKeywords = keywords.trim();
@@ -323,7 +523,7 @@ router.post("/search", async (req, res) => {
         // Token string used for trigram similarity against the pre-expanded
         // search_tokens column. Concatenating abbreviation-expanded terms with
         // the raw keyword gives the best coverage.
-        const trgmQuery = allTermsArr.slice(0, 5).join(" ");
+        const trgmQuery = allTermsArr.slice(0, 5).join(' ');
 
         // Dual tsquery: 'simple' matches catalog/vendor lexemes exactly (no stemming),
         // 'english' matches description/ai_keywords lexemes via stemming. OR-ing them
@@ -371,10 +571,14 @@ router.post("/search", async (req, res) => {
                 i.id, i.vendor, i.catalog, i.description,
                 i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
                 i.series_id,
-                ${tsQuery.trim() ? sql`ts_rank_cd(
+                ${
+                  tsQuery.trim()
+                    ? sql`ts_rank_cd(
                   '{0.1, 0.3, 0.6, 1.0}', i.search_tsv,
                   to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
-                )` : sql`0`} AS fts_rank,
+                )`
+                    : sql`0`
+                } AS fts_rank,
                 COALESCE(
                   CASE WHEN i.search_tokens IS NOT NULL
                     THEN similarity(i.search_tokens, ${trgmQuery})
@@ -387,16 +591,22 @@ router.post("/search", async (req, res) => {
                 ) AS trgm_sim
               FROM inventory i
               WHERE
-                ${tsQuery.trim() ? sql`i.search_tsv @@ (
+                ${
+                  tsQuery.trim()
+                    ? sql`i.search_tsv @@ (
                   to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
-                ) OR` : sql``}
+                ) OR`
+                    : sql``
+                }
                 (i.search_tokens IS NOT NULL AND i.search_tokens % ${trgmQuery})
                 ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
                 ${catalogLike ? sql`OR i.catalog ILIKE ${catalogLike}` : sql``}
                 ${trgmQuery ? sql`OR (i.catalog % ${trgmQuery})` : sql``}
                 ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
 
-              ${trgmQuery ? sql`
+              ${
+                trgmQuery
+                  ? sql`
               UNION ALL
 
               -- Fallback arm: un-enriched rows (search_tokens IS NULL) matched only by
@@ -423,7 +633,9 @@ router.post("/search", async (req, res) => {
                   )
                 LIMIT 50
               )
-              ` : sql``}
+              `
+                  : sql``
+              }
             ) AS __ranked
             ORDER BY (fts_rank * 0.65 + trgm_sim * 0.35) DESC
             LIMIT 200
@@ -432,27 +644,29 @@ router.post("/search", async (req, res) => {
         // Drizzle returns { rows: unknown[] } for raw SQL — validate shape at runtime
         const rawRows = (pgQueryResult as { rows: unknown[] }).rows;
         pgResults = rawRows.filter((r): r is RawRow => {
-          if (!r || typeof r !== "object") {
-            console.warn("[inventory/search] Unexpected non-object row from raw SQL:", r);
+          if (!r || typeof r !== 'object') {
+            console.warn('[inventory/search] Unexpected non-object row from raw SQL:', r);
             return false;
           }
           const row = r as Record<string, unknown>;
-          const valid = (
-            typeof row.id === "number" &&
-            typeof row.vendor === "string" &&
-            typeof row.catalog === "string" &&
-            typeof row.description === "string" &&
-            typeof row.fts_rank === "number" &&
-            typeof row.trgm_sim === "number"
-          );
+          const valid =
+            typeof row.id === 'number' &&
+            typeof row.vendor === 'string' &&
+            typeof row.catalog === 'string' &&
+            typeof row.description === 'string' &&
+            typeof row.fts_rank === 'number' &&
+            typeof row.trgm_sim === 'number';
           if (!valid) {
-            console.warn("[inventory/search] Row has unexpected shape (possible schema drift):", JSON.stringify(row));
+            console.warn(
+              '[inventory/search] Row has unexpected shape (possible schema drift):',
+              JSON.stringify(row)
+            );
           }
           return valid;
         });
       }
     } catch (pgErr) {
-      console.warn("PG search error:", pgErr);
+      console.warn('PG search error:', pgErr);
     }
 
     // Map PG results into scored items
@@ -463,7 +677,11 @@ router.post("/search", async (req, res) => {
     };
 
     const scoreMap = new Map<number, ScoredItem>();
-    const updateScore = (item: typeof inventoryTable.$inferSelect, confidence: number, reason: string) => {
+    const updateScore = (
+      item: typeof inventoryTable.$inferSelect,
+      confidence: number,
+      reason: string
+    ) => {
       const current = scoreMap.get(item.id);
       if (shouldUpdateScore(current?.confidence, confidence)) {
         scoreMap.set(item.id, { item, confidence, reason });
@@ -498,9 +716,9 @@ router.post("/search", async (req, res) => {
         catalog: row.catalog,
         description: row.description,
         // Safe fallbacks for fields not included in the runtime shape-validation filter
-        binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as string[] : [],
-        aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
-        tradeSize: typeof row.trade_size === "string" ? row.trade_size : null,
+        binLocations: Array.isArray(row.bin_locations) ? (row.bin_locations as string[]) : [],
+        aiKeywords: Array.isArray(row.ai_keywords) ? (row.ai_keywords as string[]) : [],
+        tradeSize: typeof row.trade_size === 'string' ? row.trade_size : null,
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
         updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
@@ -513,15 +731,21 @@ router.post("/search", async (req, res) => {
         attrsParsedAt: null,
         promptVersion: null,
         searchTokens: null,
-        seriesId: typeof row.series_id === "number" ? row.series_id : null,
+        seriesId: typeof row.series_id === 'number' ? row.series_id : null,
         tokensDictVersion: 0,
       };
 
-      const { score, reason } = catalogScore(pgScore, row.catalog, catalogInput, rawKeywords, ftsRank);
+      const { score, reason } = catalogScore(
+        pgScore,
+        row.catalog,
+        catalogInput,
+        rawKeywords,
+        ftsRank
+      );
       updateScore(item, score, reason);
     }
-    if (pgHasFts) layersHit.push("fts");
-    if (pgHasTrgm) layersHit.push("trigram");
+    if (pgHasFts) layersHit.push('fts');
+    if (pgHasTrgm) layersHit.push('trigram');
 
     // Catalog ILIKE lookup — always runs when a catalog number or keyword was entered.
     // The main PG query caps at LIMIT 200 ordered by FTS/trigram score, which
@@ -545,25 +769,35 @@ router.post("/search", async (req, res) => {
           catalogIlikeHit = true;
         }
       }
-      if (catalogIlikeHit) layersHit.push("catalog_ilike");
+      if (catalogIlikeHit) layersHit.push('catalog_ilike');
     }
 
     // Exact catalog fallback if PG didn't catch it (checks both Catalog # field and raw keywords)
     if (pgResults.length === 0) {
-      const lookups = [catalogInput, rawKeywords].filter(Boolean).map(v => v.toUpperCase());
+      const lookups = [catalogInput, rawKeywords].filter(Boolean).map((v) => v.toUpperCase());
       if (lookups.length > 0) {
         let exactCatalogHit = false;
         for (const lookupVal of lookups) {
-          const exactRows = await db.select().from(inventoryTable)
+          const exactRows = await db
+            .select()
+            .from(inventoryTable)
             .where(sql`upper(${inventoryTable.catalog}) = ${lookupVal}`);
-          for (const item of exactRows) { updateScore(item, 1.0, "exact catalog fallback"); exactCatalogHit = true; }
+          for (const item of exactRows) {
+            updateScore(item, 1.0, 'exact catalog fallback');
+            exactCatalogHit = true;
+          }
           // Also try ILIKE prefix fallback
-          const prefixRows = await db.select().from(inventoryTable)
-            .where(sql`upper(${inventoryTable.catalog}) LIKE ${lookupVal + "%"}`)
+          const prefixRows = await db
+            .select()
+            .from(inventoryTable)
+            .where(sql`upper(${inventoryTable.catalog}) LIKE ${lookupVal + '%'}`)
             .limit(20);
-          for (const item of prefixRows) { updateScore(item, 0.93, "catalog prefix fallback"); exactCatalogHit = true; }
+          for (const item of prefixRows) {
+            updateScore(item, 0.93, 'catalog prefix fallback');
+            exactCatalogHit = true;
+          }
         }
-        if (exactCatalogHit) layersHit.push("exact_catalog");
+        if (exactCatalogHit) layersHit.push('exact_catalog');
       }
     }
 
@@ -572,10 +806,11 @@ router.post("/search", async (req, res) => {
     let vendorBoosted = false;
     for (const entry of scoreMap.values()) {
       const conf = applyVendorBoost(entry.confidence, vendorFilter, entry.item.vendor);
-      if (vendorFilter && entry.item.vendor.toUpperCase() === vendorFilter.toUpperCase()) vendorBoosted = true;
+      if (vendorFilter && entry.item.vendor.toUpperCase() === vendorFilter.toUpperCase())
+        vendorBoosted = true;
       results.push({ ...entry, confidence: conf });
     }
-    if (vendorBoosted) layersHit.push("vendor_boost");
+    if (vendorBoosted) layersHit.push('vendor_boost');
 
     results.sort((a, b) => b.confidence - a.confidence);
 
@@ -583,31 +818,36 @@ router.post("/search", async (req, res) => {
     const dimensionCounts: Record<string, Record<string, number>> = {};
     for (const dim of CHIP_DIMS_SERVER) {
       dimensionCounts[dim.key] = {};
-      const otherFilters = activeChipFilters.filter(f => f.key !== dim.key);
-      const baseResults = otherFilters.length > 0
-        ? results.filter(r => matchesChipFilters(r.item, otherFilters))
-        : results;
+      const otherFilters = activeChipFilters.filter((f) => f.key !== dim.key);
+      const baseResults =
+        otherFilters.length > 0
+          ? results.filter((r) => matchesChipFilters(r.item, otherFilters))
+          : results;
       for (const opt of dim.options) {
-        dimensionCounts[dim.key][opt] = baseResults.filter(r =>
+        dimensionCounts[dim.key][opt] = baseResults.filter((r) =>
           tokenMatch(itemFullText(r.item), opt)
         ).length;
       }
     }
 
     // ── Apply structured chip AND-filters to narrow results ─────────────────
-    const chipFiltered = activeChipFilters.length > 0
-      ? results.filter(r => matchesChipFilters(r.item, activeChipFilters))
-      : results;
+    const chipFiltered =
+      activeChipFilters.length > 0
+        ? results.filter((r) => matchesChipFilters(r.item, activeChipFilters))
+        : results;
 
     // Group into series + find variants.
     // Items with an explicit series_id are grouped by that ID (preferred path).
     // Items without series_id fall back to the heuristic getSeriesBase() grouping.
-    const seriesGroups = new Map<string, { label: string; items: typeof inventoryTable.$inferSelect[] }>();
+    const seriesGroups = new Map<
+      string,
+      { label: string; items: (typeof inventoryTable.$inferSelect)[] }
+    >();
     for (const r of chipFiltered) {
       if (r.item.seriesId != null) {
         // Explicit series: use a stable key that won't collide with heuristic keys
         const key = `__series_id_${r.item.seriesId}`;
-        const existing = seriesGroups.get(key) ?? { label: "OTHER SIZES", items: [] };
+        const existing = seriesGroups.get(key) ?? { label: 'OTHER SIZES', items: [] };
         existing.items.push(r.item);
         seriesGroups.set(key, existing);
       } else {
@@ -620,8 +860,8 @@ router.post("/search", async (req, res) => {
       }
     }
 
-    const variantMap = new Map<number, typeof inventoryTable.$inferSelect[]>();
-    const resultIds = new Set(chipFiltered.map(r => r.item.id));
+    const variantMap = new Map<number, (typeof inventoryTable.$inferSelect)[]>();
+    const resultIds = new Set(chipFiltered.map((r) => r.item.id));
     const excludeArr = Array.from(resultIds);
 
     if (seriesGroups.size > 0) {
@@ -632,9 +872,9 @@ router.post("/search", async (req, res) => {
         const primaryItem = group.items[0];
         if (!primaryItem) continue;
 
-        let siblings: typeof inventoryTable.$inferSelect[];
+        let siblings: (typeof inventoryTable.$inferSelect)[];
 
-        if (groupKey.startsWith("__series_id_") && primaryItem.seriesId != null) {
+        if (groupKey.startsWith('__series_id_') && primaryItem.seriesId != null) {
           // Preferred: explicit series_id — uses the idx_inventory_series_id index
           siblings = await db
             .select()
@@ -642,10 +882,8 @@ router.post("/search", async (req, res) => {
             .where(
               and(
                 eq(inventoryTable.seriesId, primaryItem.seriesId),
-                excludeArr.length > 0
-                  ? not(inArray(inventoryTable.id, excludeArr))
-                  : undefined,
-              ),
+                excludeArr.length > 0 ? not(inArray(inventoryTable.id, excludeArr)) : undefined
+              )
             )
             .orderBy(sql`COALESCE(amperage, 9999) ASC, catalog ASC`)
             .limit(12);
@@ -668,16 +906,14 @@ router.post("/search", async (req, res) => {
                   sql`(
                     (catalog_parse IS NOT NULL AND (catalog_parse->>'series') = ${parsed.series})
                     OR
-                    (catalog_parse IS NULL AND catalog ILIKE ${parsed.series + "%"})
+                    (catalog_parse IS NULL AND catalog ILIKE ${parsed.series + '%'})
                   )`,
                   parsed.poles !== null
                     ? sql`(pole_count = ${parsed.poles} OR pole_count IS NULL)`
                     : undefined,
                   sql`(series_id IS NULL)`,
-                  excludeArr.length > 0
-                    ? not(inArray(inventoryTable.id, excludeArr))
-                    : undefined,
-                ),
+                  excludeArr.length > 0 ? not(inArray(inventoryTable.id, excludeArr)) : undefined
+                )
               )
               .orderBy(sql`COALESCE(amperage, 9999) ASC, catalog ASC`)
               .limit(12);
@@ -687,10 +923,8 @@ router.post("/search", async (req, res) => {
             // the bare type prefix (e.g. "EMT212" → "EMT").
             // For all-numeric catalogs (e.g. "5262") stripping digits yields an
             // empty string — use the first 4 characters as the prefix instead.
-            const stripped = primaryItem.catalog.replace(/^\d+/, "").slice(0, 8);
-            const catalogPrefix = stripped.length >= 2
-              ? stripped
-              : primaryItem.catalog.slice(0, 4);
+            const stripped = primaryItem.catalog.replace(/^\d+/, '').slice(0, 8);
+            const catalogPrefix = stripped.length >= 2 ? stripped : primaryItem.catalog.slice(0, 4);
             if (!catalogPrefix || catalogPrefix.length < 2) continue;
             siblings = await db
               .select()
@@ -698,12 +932,10 @@ router.post("/search", async (req, res) => {
               .where(
                 and(
                   eq(inventoryTable.vendor, primaryItem.vendor),
-                  sql`catalog ILIKE ${catalogPrefix + "%"}`,
+                  sql`catalog ILIKE ${catalogPrefix + '%'}`,
                   sql`(series_id IS NULL)`,
-                  excludeArr.length > 0
-                    ? not(inArray(inventoryTable.id, excludeArr))
-                    : undefined,
-                ),
+                  excludeArr.length > 0 ? not(inArray(inventoryTable.id, excludeArr)) : undefined
+                )
               )
               .orderBy(sql`catalog ASC`)
               .limit(12);
@@ -720,7 +952,7 @@ router.post("/search", async (req, res) => {
 
     // confidenceThreshold is 0–100 from client; confidence scores are 0–1 internally
     const thresholdFraction = Math.max(0, Math.min(100, confidenceThreshold)) / 100;
-    const aboveThreshold = chipFiltered.filter(r => r.confidence >= thresholdFraction);
+    const aboveThreshold = chipFiltered.filter((r) => r.confidence >= thresholdFraction);
     const belowCount = chipFiltered.length - aboveThreshold.length;
 
     aboveThreshold.sort((a, b) => {
@@ -747,28 +979,49 @@ router.post("/search", async (req, res) => {
       for (const row of seriesRows) seriesNameMap.set(row.id, row.name);
     }
 
-    const attachSeriesName = <T extends { seriesId: number | null }>(item: T): T & { seriesName: string | null } => ({
+    const attachSeriesName = <T extends { seriesId: number | null }>(
+      item: T
+    ): T & { seriesName: string | null } => ({
       ...item,
       seriesName: item.seriesId != null ? (seriesNameMap.get(item.seriesId) ?? null) : null,
     });
 
-    const finalResults = aboveThreshold.map(r => ({
+    const finalResults = aboveThreshold.map((r) => ({
       item: attachSeriesName(withVendorFullName(r.item, vendorFullNameMap)),
       confidence: r.confidence,
       matchReason: r.reason,
       seriesBase: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.key ?? null,
       seriesLabel: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.label ?? null,
-      variants: (variantMap.get(r.item.id) ?? []).map(v => attachSeriesName(withVendorFullName(v, vendorFullNameMap))),
+      variants: (variantMap.get(r.item.id) ?? []).map((v) =>
+        attachSeriesName(withVendorFullName(v, vendorFullNameMap))
+      ),
     }));
 
     const latencyMs = Math.round(performance.now() - startTime);
-    const rawQuery = [keywords, catalogInput].filter(Boolean).join(" ");
+    const rawQuery = [keywords, catalogInput].filter(Boolean).join(' ');
     const topResultId = finalResults[0]?.item?.id ?? null;
     const allFilters = {
-      vendor: vendorInput, color, size, material, textNumbers,
-      category, amperage, colorChip, manufacturer, sizeChip, rating,
-      wireType, wireGauge, conduitType, conduitSize, boxType, boxGangCount,
-      mountingType, environment, voltage, poleCount,
+      vendor: vendorInput,
+      color,
+      size,
+      material,
+      textNumbers,
+      category,
+      amperage,
+      colorChip,
+      manufacturer,
+      sizeChip,
+      rating,
+      wireType,
+      wireGauge,
+      conduitType,
+      conduitSize,
+      boxType,
+      boxGangCount,
+      mountingType,
+      environment,
+      voltage,
+      poleCount,
     };
 
     // logSearchEvent is non-blocking by design (catches internally and returns
@@ -796,29 +1049,29 @@ router.post("/search", async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Search failed" });
+    res.status(500).json({ error: 'Search failed' });
   }
 });
 
 // ── Admin token middleware ─────────────────────────────────────────────────────
 function requireAdminAuth(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
+  req: import('express').Request,
+  res: import('express').Response,
+  next: import('express').NextFunction
 ): void {
   const adminPassword = process.env.ADMIN_PASSWORD;
   if (!adminPassword) {
     res.status(503).json({
-      error: "Admin access is not configured on this server. Set ADMIN_PASSWORD.",
+      error: 'Admin access is not configured on this server. Set ADMIN_PASSWORD.',
     });
     return;
   }
 
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const authHeader = req.headers['authorization'] ?? '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
 
   if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
+    res.status(401).json({ error: 'Unauthorized: valid admin token required' });
     return;
   }
 
@@ -865,7 +1118,7 @@ function dedupeItems(items: readonly UpsertItemInput[]): UpsertItemInput[] {
   const byKey = new Map<string, UpsertItemInput>();
   for (const raw of items) {
     const key = keyOf(raw.vendor, raw.catalog);
-    const incomingDesc = typeof raw.description === "string" ? raw.description.trim() : "";
+    const incomingDesc = typeof raw.description === 'string' ? raw.description.trim() : '';
     const incomingBins = Array.isArray(raw.binLocations) ? raw.binLocations : [];
     const prev = byKey.get(key);
     if (!prev) {
@@ -877,7 +1130,7 @@ function dedupeItems(items: readonly UpsertItemInput[]): UpsertItemInput[] {
       });
       continue;
     }
-    const prevDesc = typeof prev.description === "string" ? prev.description : "";
+    const prevDesc = typeof prev.description === 'string' ? prev.description : '';
     byKey.set(key, {
       vendor: prev.vendor,
       catalog: prev.catalog,
@@ -901,7 +1154,7 @@ function binsEqual(a: readonly string[], b: readonly string[]): boolean {
  *  Returns a Map keyed by the case-insensitive composite key. Performs one
  *  per-item SELECT — fine for typical re-upload sizes (≤ a few hundred). */
 async function fetchExistingMatches(
-  items: readonly UpsertItemInput[],
+  items: readonly UpsertItemInput[]
 ): Promise<Map<string, ExistingRow>> {
   const result = new Map<string, ExistingRow>();
   // De-dupe so we don't query the same key twice.
@@ -916,8 +1169,8 @@ async function fetchExistingMatches(
       .where(
         and(
           sql`UPPER(${inventoryTable.vendor}) = UPPER(${item.vendor})`,
-          sql`UPPER(${inventoryTable.catalog}) = UPPER(${item.catalog})`,
-        ),
+          sql`UPPER(${inventoryTable.catalog}) = UPPER(${item.catalog})`
+        )
       )
       .limit(1);
     const row = rows[0];
@@ -926,7 +1179,7 @@ async function fetchExistingMatches(
         id: row.id,
         vendor: row.vendor,
         catalog: row.catalog,
-        description: row.description ?? "",
+        description: row.description ?? '',
         binLocations: row.binLocations ?? [],
       });
     }
@@ -935,31 +1188,39 @@ async function fetchExistingMatches(
 }
 
 // ── POST /inventory/upsert-batch ──────────────────────────────────────────────
-router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
+router.post('/upsert-batch', requireAdminAuth, async (req, res) => {
   try {
-    const { items, mode: rawMode, selectedKeys: rawSelectedKeys } = req.body as {
+    const {
+      items,
+      mode: rawMode,
+      selectedKeys: rawSelectedKeys,
+    } = req.body as {
       items?: UpsertItemInput[];
       mode?: string;
       selectedKeys?: Array<{ vendor: string; catalog: string }>;
     };
 
     if (!items?.length) {
-      return void res.status(400).json({ error: "No items provided" });
+      return void res.status(400).json({ error: 'No items provided' });
     }
 
-    const mode: "add-new-only" | "overwrite-all" | "selected" | "bins-only" | "add-multi-access" =
-      rawMode === "add-new-only" || rawMode === "selected" || rawMode === "overwrite-all" || rawMode === "bins-only" || rawMode === "add-multi-access"
+    const mode: 'add-new-only' | 'overwrite-all' | 'selected' | 'bins-only' | 'add-multi-access' =
+      rawMode === 'add-new-only' ||
+      rawMode === 'selected' ||
+      rawMode === 'overwrite-all' ||
+      rawMode === 'bins-only' ||
+      rawMode === 'add-multi-access'
         ? rawMode
-        : "overwrite-all";
+        : 'overwrite-all';
 
-    if (mode === "selected" && !Array.isArray(rawSelectedKeys)) {
+    if (mode === 'selected' && !Array.isArray(rawSelectedKeys)) {
       return void res
         .status(400)
         .json({ error: "selectedKeys is required when mode = 'selected'" });
     }
 
     const selectedSet = new Set<string>(
-      (rawSelectedKeys ?? []).map((k) => keyOf(k.vendor, k.catalog)),
+      (rawSelectedKeys ?? []).map((k) => keyOf(k.vendor, k.catalog))
     );
 
     // Collapse duplicate logical keys before any DB work — see dedupeItems().
@@ -972,24 +1233,24 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
 
     for (const item of dedupedItems) {
       const incomingBins = Array.isArray(item.binLocations) ? item.binLocations : [];
-      const incomingDescRaw = typeof item.description === "string" ? item.description.trim() : "";
+      const incomingDescRaw = typeof item.description === 'string' ? item.description.trim() : '';
       const key = keyOf(item.vendor, item.catalog);
       const existing = existingByKey.get(key);
 
       if (existing) {
         // ── Existing match: respect mode ──
-        if (mode === "add-new-only") {
+        if (mode === 'add-new-only') {
           skipped++;
           continue;
         }
-        if (mode === "selected" && !selectedSet.has(key)) {
+        if (mode === 'selected' && !selectedSet.has(key)) {
           skipped++;
           continue;
         }
 
         const mergedBins = mergeBins(existing.binLocations, incomingBins);
 
-        if (mode === "bins-only" || mode === "add-multi-access") {
+        if (mode === 'bins-only' || mode === 'add-multi-access') {
           // Only update bin locations — never touch description.
           await db
             .update(inventoryTable)
@@ -997,7 +1258,8 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
             .where(eq(inventoryTable.id, existing.id));
         } else {
           // Blank/missing description NEVER wipes the stored description.
-          const nextDescription = incomingDescRaw.length > 0 ? incomingDescRaw : existing.description;
+          const nextDescription =
+            incomingDescRaw.length > 0 ? incomingDescRaw : existing.description;
           await db
             .update(inventoryTable)
             .set({ description: nextDescription, binLocations: mergedBins, updatedAt: new Date() })
@@ -1007,7 +1269,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
         updated++;
       } else {
         // ── New row: bins-only skips; add-multi-access and all other modes insert ──
-        if (mode === "bins-only") {
+        if (mode === 'bins-only') {
           skipped++;
           continue;
         }
@@ -1025,7 +1287,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     res.json({ inserted, updated, skipped, total: dedupedItems.length });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Upsert failed" });
+    res.status(500).json({ error: 'Upsert failed' });
   }
 });
 
@@ -1034,14 +1296,14 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
 // Read-only classifier: returns which incoming rows would create new items,
 // which match existing items, and for each match the current vs. proposed
 // `binLocations` and `description`. No DB writes.
-router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
+router.post('/preview-upsert', requireAdminAuth, async (req, res) => {
   try {
     const { items, mode: rawMode } = req.body as { items?: UpsertItemInput[]; mode?: string };
     if (!items?.length) {
-      return void res.status(400).json({ error: "No items provided" });
+      return void res.status(400).json({ error: 'No items provided' });
     }
 
-    const binsOnly = rawMode === "bins-only";
+    const binsOnly = rawMode === 'bins-only';
 
     // Collapse duplicate logical keys before classification.
     const dedupedItems = dedupeItems(items);
@@ -1069,7 +1331,7 @@ router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
       const key = keyOf(item.vendor, item.catalog);
       const existing = existingByKey.get(key);
       const incomingBins = Array.isArray(item.binLocations) ? item.binLocations : [];
-      const incomingDescRaw = typeof item.description === "string" ? item.description.trim() : "";
+      const incomingDescRaw = typeof item.description === 'string' ? item.description.trim() : '';
 
       if (!existing) {
         newCount++;
@@ -1089,8 +1351,7 @@ router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
         incomingDescRaw.length > 0 ? incomingDescRaw : existing.description;
 
       const binChanged = !binsEqual(existing.binLocations, proposedBins);
-      const descChanged =
-        incomingDescRaw.length > 0 && incomingDescRaw !== existing.description;
+      const descChanged = incomingDescRaw.length > 0 && incomingDescRaw !== existing.description;
 
       if (binChanged || descChanged) {
         changedCount++;
@@ -1122,12 +1383,12 @@ router.post("/preview-upsert", requireAdminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Preview failed" });
+    res.status(500).json({ error: 'Preview failed' });
   }
 });
 
 // ── POST /inventory/enrich ────────────────────────────────────────────────────
-router.post("/enrich", requireAdminAuth, async (req, res) => {
+router.post('/enrich', requireAdminAuth, async (req, res) => {
   try {
     const { ids } = req.body as { ids?: number[] };
 
@@ -1146,18 +1407,20 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
       itemsToEnrich = await db
         .select()
         .from(inventoryTable)
-        .where(sql`(
+        .where(
+          sql`(
           ${inventoryTable.enrichedAt} IS NULL
           OR ${inventoryTable.updatedAt} > ${inventoryTable.enrichedAt}
           OR COALESCE(${inventoryTable.promptVersion}, 0) < ${CURRENT_PROMPT_VERSION}
           OR COALESCE((${inventoryTable.catalogParse}->>'parser_version')::int, 0) < ${CURRENT_PARSER_VERSION}
-        )`)
+        )`
+        )
         .limit(BATCH_SIZE);
     }
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
 
     if (!itemsToEnrich.length) {
       res.write(`data: ${JSON.stringify({ done: true, processed: 0, total: 0 })}\n\n`);
@@ -1174,27 +1437,21 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
       async (item) => {
         // Derive trade size before AI call so it can be passed as context.
         const tradeSizeInches =
-          parseTradeSizeInches(item.catalog) ??
-          parseTradeSizeInches(item.description);
-        const tradeSize = tradeSizeInches !== null
-          ? tradeSizeChipLabel(tradeSizeInches)
-          : null;
+          parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description);
+        const tradeSize = tradeSizeInches !== null ? tradeSizeChipLabel(tradeSizeInches) : null;
 
         const keywords = await generateKeywords(item, undefined, tradeSize ?? undefined);
 
         // Append trade-size keyword tokens (matching bulk-enrich behaviour).
         const tradeTokens = deriveTradeSizeTokens(item);
-        const existing = new Set(keywords.map(k => k.toLowerCase()));
-        const merged = [
-          ...keywords,
-          ...tradeTokens.filter(t => !existing.has(t.toLowerCase())),
-        ];
+        const existing = new Set(keywords.map((k) => k.toLowerCase()));
+        const merged = [...keywords, ...tradeTokens.filter((t) => !existing.has(t.toLowerCase()))];
 
         const attrs = deriveAttrs(item);
         const tsInFull = isConduitOrPipe(item.catalog, item.vendor, item.description)
-          ? (parseTradeSizeInches(item.catalog)
-             ?? parseTradeSize(item.description)
-             ?? parseTradeSize(item.catalog))
+          ? (parseTradeSizeInches(item.catalog) ??
+            parseTradeSize(item.description) ??
+            parseTradeSize(item.catalog))
           : null;
 
         // Build index-time synonym tokens (load synonym_group once per enrichment batch
@@ -1204,8 +1461,13 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
           .select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms })
           .from(synonymGroupTable);
         const searchTokens = buildSearchTokens(
-          { catalog: item.catalog, description: item.description, vendor: item.vendor, aiKeywords: merged },
-          synonymGroups,
+          {
+            catalog: item.catalog,
+            description: item.description,
+            vendor: item.vendor,
+            aiKeywords: merged,
+          },
+          synonymGroups
         );
 
         await db
@@ -1232,24 +1494,28 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
         return { id: item.id, keywords: merged };
       },
       (event) => {
-        if (event.type === "started") {
-          res.write(`data: ${JSON.stringify({ progress: 0, total: event.total, batchSize: BATCH_SIZE })}\n\n`);
-        } else if (event.type === "progress") {
+        if (event.type === 'started') {
+          res.write(
+            `data: ${JSON.stringify({ progress: 0, total: event.total, batchSize: BATCH_SIZE })}\n\n`
+          );
+        } else if (event.type === 'progress') {
           // Compute ETA based on elapsed time and items remaining
           const elapsed = Date.now() - startTime;
           const avgMs = processed > 0 ? elapsed / processed : 0;
           const remaining = total - processed;
           const etaSeconds = avgMs > 0 ? Math.round((avgMs * remaining) / 1000) : null;
-          res.write(`data: ${JSON.stringify({
-            progress: processed,
-            total,
-            batchSize: BATCH_SIZE,
-            etaSeconds,
-            item: event.result,
-          })}\n\n`);
+          res.write(
+            `data: ${JSON.stringify({
+              progress: processed,
+              total,
+              batchSize: BATCH_SIZE,
+              etaSeconds,
+              item: event.result,
+            })}\n\n`
+          );
         }
       },
-      { retries: 3 },
+      { retries: 3 }
     );
 
     res.write(`data: ${JSON.stringify({ done: true, processed, total })}\n\n`);
@@ -1284,16 +1550,15 @@ const bulkEnrichJob: BulkEnrichJob = {
   lastError: null,
 };
 
-const BULK_ENRICH_MODEL      = process.env["ENRICH_MODEL"] ?? "gpt-4o-mini";
-const BULK_ENRICH_BATCH      = 10;
-const BULK_ENRICH_CONCUR     = 5;
-const BULK_ENRICH_DELAY_MS   = 200;
-const BULK_ENRICH_MAX_RETRY  = 3;
-
+const BULK_ENRICH_MODEL = process.env['ENRICH_MODEL'] ?? 'gpt-4o-mini';
+const BULK_ENRICH_BATCH = 10;
+const BULK_ENRICH_CONCUR = 5;
+const BULK_ENRICH_DELAY_MS = 200;
+const BULK_ENRICH_MAX_RETRY = 3;
 
 async function enrichItemWithRetry(
   item: { id: number; vendor: string; catalog: string; description: string | null },
-  tradeSize?: string,
+  tradeSize?: string
 ): Promise<string[]> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= BULK_ENRICH_MAX_RETRY; attempt++) {
@@ -1335,7 +1600,7 @@ async function runBulkEnrich() {
 
   while (true) {
     if (bulkEnrichJob.stopRequested) {
-      console.log("[bulk-enrich] Stop requested – halting after current batch");
+      console.log('[bulk-enrich] Stop requested – halting after current batch');
       break;
     }
 
@@ -1354,41 +1619,42 @@ async function runBulkEnrich() {
 
     for (let i = 0; i < batch.length; i += BULK_ENRICH_CONCUR) {
       const wave = batch.slice(i, i + BULK_ENRICH_CONCUR);
-      const results = await Promise.allSettled(wave.map((item) => {
-        const tradeSizeInches =
-          parseTradeSizeInches(item.catalog) ??
-          parseTradeSizeInches(item.description);
-        const tradeSize = tradeSizeInches !== null
-          ? tradeSizeChipLabel(tradeSizeInches) ?? undefined
-          : undefined;
-        return enrichItemWithRetry(item, tradeSize);
-      }));
+      const results = await Promise.allSettled(
+        wave.map((item) => {
+          const tradeSizeInches =
+            parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description);
+          const tradeSize =
+            tradeSizeInches !== null
+              ? (tradeSizeChipLabel(tradeSizeInches) ?? undefined)
+              : undefined;
+          return enrichItemWithRetry(item, tradeSize);
+        })
+      );
 
       for (let j = 0; j < results.length; j++) {
         const r = results[j]!;
         const item = wave[j]!;
-        if (r.status === "fulfilled") {
+        if (r.status === 'fulfilled') {
           const tradeSizeInches =
-            parseTradeSizeInches(item.catalog) ??
-            parseTradeSizeInches(item.description);
-          const tradeSize = tradeSizeInches !== null
-            ? tradeSizeChipLabel(tradeSizeInches)
-            : null;
+            parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description);
+          const tradeSize = tradeSizeInches !== null ? tradeSizeChipLabel(tradeSizeInches) : null;
           const tradeTokens = deriveTradeSizeTokens(item);
           const existing = new Set(r.value.map((k: string) => k.toLowerCase()));
-          const merged = [
-            ...r.value,
-            ...tradeTokens.filter(t => !existing.has(t.toLowerCase())),
-          ];
+          const merged = [...r.value, ...tradeTokens.filter((t) => !existing.has(t.toLowerCase()))];
           const attrs = deriveAttrs(item);
           const tsInFull = isConduitOrPipe(item.catalog, item.vendor, item.description)
-            ? (parseTradeSizeInches(item.catalog)
-               ?? parseTradeSize(item.description)
-               ?? parseTradeSize(item.catalog))
+            ? (parseTradeSizeInches(item.catalog) ??
+              parseTradeSize(item.description) ??
+              parseTradeSize(item.catalog))
             : null;
           const searchTokens = buildSearchTokens(
-            { catalog: item.catalog, description: item.description, vendor: item.vendor, aiKeywords: merged },
-            bulkEnrichSynonymGroups,
+            {
+              catalog: item.catalog,
+              description: item.description,
+              vendor: item.vendor,
+              aiKeywords: merged,
+            },
+            bulkEnrichSynonymGroups
           );
           await db
             .update(inventoryTable)
@@ -1414,7 +1680,10 @@ async function runBulkEnrich() {
           // Leave enrichedAt NULL so the item remains retryable on next run
           bulkEnrichJob.errors++;
           bulkEnrichJob.lastError = String(r.reason);
-          console.error(`[bulk-enrich] Error id=${item.id} (${item.vendor}/${item.catalog}):`, r.reason);
+          console.error(
+            `[bulk-enrich] Error id=${item.id} (${item.vendor}/${item.catalog}):`,
+            r.reason
+          );
         }
       }
     }
@@ -1425,7 +1694,7 @@ async function runBulkEnrich() {
   bulkEnrichJob.running = false;
   bulkEnrichJob.finishedAt = new Date();
   console.log(
-    `[bulk-enrich] Done – processed=${bulkEnrichJob.processed} errors=${bulkEnrichJob.errors}`,
+    `[bulk-enrich] Done – processed=${bulkEnrichJob.processed} errors=${bulkEnrichJob.errors}`
   );
 }
 
@@ -1434,7 +1703,7 @@ async function runBulkEnrich() {
 // using all dictionary tables. Also stamps tokens_dict_version on each row so
 // they are not considered stale by the smarter rebuild-tokens endpoint.
 // Protected by admin auth; runs synchronously (returns when done).
-router.post("/rebuild-search-tokens", requireAdminAuth, async (_req, res) => {
+router.post('/rebuild-search-tokens', requireAdminAuth, async (_req, res) => {
   const startTime = Date.now();
   try {
     // Read current dict version so we can stamp rows as current after rebuild
@@ -1499,7 +1768,7 @@ router.post("/rebuild-search-tokens", requireAdminAuth, async (_req, res) => {
       dictVersion: currentVersion,
     });
   } catch (err) {
-    console.error("[rebuild-search-tokens] Fatal error:", err);
+    console.error('[rebuild-search-tokens] Fatal error:', err);
     res.status(500).json({ error: String(err) });
   }
 });
@@ -1616,25 +1885,25 @@ router.post("/rebuild-tokens", requireAdminAuth, async (_req, res) => {
 });
 
 // ── GET /inventory/enrich-summary ─────────────────────────────────────────────
-router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
+router.get('/enrich-summary', requireAdminAuth, async (_req, res) => {
   try {
-    const [{ total }] = await db
-      .select({ total: sql<number>`count(*)::int` })
-      .from(inventoryTable);
+    const [{ total }] = await db.select({ total: sql<number>`count(*)::int` }).from(inventoryTable);
     const [{ enriched }] = await db
       .select({ enriched: sql<number>`count(*)::int` })
       .from(inventoryTable)
       .where(sql`${inventoryTable.enrichedAt} IS NOT NULL`);
     res.json({ total, enriched, unenriched: total - enriched });
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch enrichment summary" });
+    res.status(500).json({ error: 'Failed to fetch enrichment summary' });
   }
 });
 
 // ── POST /inventory/bulk-enrich ───────────────────────────────────────────────
-router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
+router.post('/bulk-enrich', requireAdminAuth, (_req, res) => {
   if (bulkEnrichJob.running) {
-    return void res.status(409).json({ error: "Bulk enrichment already running", job: bulkEnrichJob });
+    return void res
+      .status(409)
+      .json({ error: 'Bulk enrichment already running', job: bulkEnrichJob });
   }
 
   bulkEnrichJob.running = true;
@@ -1650,24 +1919,27 @@ router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
     bulkEnrichJob.running = false;
     bulkEnrichJob.finishedAt = new Date();
     bulkEnrichJob.lastError = String(err);
-    console.error("[bulk-enrich] Fatal error:", err);
+    console.error('[bulk-enrich] Fatal error:', err);
   });
 
-  res.status(202).json({ message: "Bulk enrichment started", job: bulkEnrichJob });
+  res.status(202).json({ message: 'Bulk enrichment started', job: bulkEnrichJob });
 });
 
 // ── GET /inventory/bulk-enrich/status ─────────────────────────────────────────
-router.get("/bulk-enrich/status", requireAdminAuth, (_req, res) => {
+router.get('/bulk-enrich/status', requireAdminAuth, (_req, res) => {
   res.json(bulkEnrichJob);
 });
 
 // ── DELETE /inventory/bulk-enrich ─────────────────────────────────────────────
-router.delete("/bulk-enrich", requireAdminAuth, (_req, res) => {
+router.delete('/bulk-enrich', requireAdminAuth, (_req, res) => {
   if (!bulkEnrichJob.running) {
-    return void res.status(409).json({ error: "No bulk enrichment job is currently running" });
+    return void res.status(409).json({ error: 'No bulk enrichment job is currently running' });
   }
   bulkEnrichJob.stopRequested = true;
-  res.json({ message: "Stop requested – job will halt after the current batch completes", job: bulkEnrichJob });
+  res.json({
+    message: 'Stop requested – job will halt after the current batch completes',
+    job: bulkEnrichJob,
+  });
 });
 
 // ── Measurement-enrich job state ──────────────────────────────────────────────
@@ -1701,9 +1973,7 @@ const MEASURE_ENRICH_DELAY_MS = 50;
  * are skipped so the job can be re-run safely without overwriting data.
  */
 async function runMeasureEnrich(): Promise<void> {
-  const [countRow] = await db
-    .select({ total: sql<number>`count(*)::int` })
-    .from(inventoryTable);
+  const [countRow] = await db.select({ total: sql<number>`count(*)::int` }).from(inventoryTable);
 
   measureEnrichJob.total = countRow?.total ?? 0;
   console.log(`[measure-enrich] Starting – ${measureEnrichJob.total} items`);
@@ -1713,10 +1983,10 @@ async function runMeasureEnrich(): Promise<void> {
   while (true) {
     const batch = await db
       .select({
-        id:          inventoryTable.id,
-        catalog:     inventoryTable.catalog,
+        id: inventoryTable.id,
+        catalog: inventoryTable.catalog,
         description: inventoryTable.description,
-        aiKeywords:  inventoryTable.aiKeywords,
+        aiKeywords: inventoryTable.aiKeywords,
       })
       .from(inventoryTable)
       .where(sql`${inventoryTable.id} > ${lastId}`)
@@ -1731,7 +2001,7 @@ async function runMeasureEnrich(): Promise<void> {
 
       if (generated.length > 0) {
         const existing = new Set(item.aiKeywords ?? []);
-        const toAdd = generated.filter(t => !existing.has(t));
+        const toAdd = generated.filter((t) => !existing.has(t));
 
         if (toAdd.length > 0) {
           const merged = [...(item.aiKeywords ?? []), ...toAdd];
@@ -1752,45 +2022,45 @@ async function runMeasureEnrich(): Promise<void> {
     }
 
     lastId = batch[batch.length - 1]!.id;
-    await new Promise(r => setTimeout(r, MEASURE_ENRICH_DELAY_MS));
+    await new Promise((r) => setTimeout(r, MEASURE_ENRICH_DELAY_MS));
   }
 
   measureEnrichJob.running = false;
   measureEnrichJob.finishedAt = new Date();
   console.log(
-    `[measure-enrich] Done – processed=${measureEnrichJob.processed} updated=${measureEnrichJob.updated}`,
+    `[measure-enrich] Done – processed=${measureEnrichJob.processed} updated=${measureEnrichJob.updated}`
   );
 }
 
 // ── POST /inventory/enrich-measurements ───────────────────────────────────────
-router.post("/enrich-measurements", requireAdminAuth, (_req, res) => {
+router.post('/enrich-measurements', requireAdminAuth, (_req, res) => {
   if (measureEnrichJob.running) {
     return void res.status(409).json({
-      error: "Measurement enrichment already running",
+      error: 'Measurement enrichment already running',
       job: measureEnrichJob,
     });
   }
 
-  measureEnrichJob.running    = true;
-  measureEnrichJob.startedAt  = new Date();
-  measureEnrichJob.processed  = 0;
-  measureEnrichJob.updated    = 0;
-  measureEnrichJob.total      = null;
+  measureEnrichJob.running = true;
+  measureEnrichJob.startedAt = new Date();
+  measureEnrichJob.processed = 0;
+  measureEnrichJob.updated = 0;
+  measureEnrichJob.total = null;
   measureEnrichJob.finishedAt = null;
-  measureEnrichJob.lastError  = null;
+  measureEnrichJob.lastError = null;
 
-  runMeasureEnrich().catch(err => {
-    measureEnrichJob.running    = false;
+  runMeasureEnrich().catch((err) => {
+    measureEnrichJob.running = false;
     measureEnrichJob.finishedAt = new Date();
-    measureEnrichJob.lastError  = String(err);
-    console.error("[measure-enrich] Fatal error:", err);
+    measureEnrichJob.lastError = String(err);
+    console.error('[measure-enrich] Fatal error:', err);
   });
 
-  res.status(202).json({ message: "Measurement enrichment started", job: measureEnrichJob });
+  res.status(202).json({ message: 'Measurement enrichment started', job: measureEnrichJob });
 });
 
 // ── GET /inventory/enrich-measurements/status ─────────────────────────────────
-router.get("/enrich-measurements/status", requireAdminAuth, (_req, res) => {
+router.get('/enrich-measurements/status', requireAdminAuth, (_req, res) => {
   res.json(measureEnrichJob);
 });
 
@@ -1804,7 +2074,7 @@ router.get("/enrich-measurements/status", requireAdminAuth, (_req, res) => {
 // the mobile CSV parser.
 //
 // Requires admin auth so the full warehouse is not publicly downloadable.
-router.get("/export", requireAdminAuth, async (_req, res) => {
+router.get('/export', requireAdminAuth, async (_req, res) => {
   try {
     const items = await db
       .select()
@@ -1816,47 +2086,40 @@ router.get("/export", requireAdminAuth, async (_req, res) => {
       return val;
     };
 
-    const header = "vendor,catalog,description,binLocations";
+    const header = 'vendor,catalog,description,binLocations';
     const dataRows = items.map((item) =>
       [
-        csvEscape(item.vendor ?? ""),
-        csvEscape(item.catalog ?? ""),
-        csvEscape(item.description ?? ""),
-        csvEscape((item.binLocations ?? []).join("; ")),
-      ].join(","),
+        csvEscape(item.vendor ?? ''),
+        csvEscape(item.catalog ?? ''),
+        csvEscape(item.description ?? ''),
+        csvEscape((item.binLocations ?? []).join('; ')),
+      ].join(',')
     );
 
-    const csv = [header, ...dataRows].join("\r\n");
+    const csv = [header, ...dataRows].join('\r\n');
 
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      'attachment; filename="inventory.csv"',
-    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="inventory.csv"');
     res.send(csv);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Export failed" });
+    res.status(500).json({ error: 'Export failed' });
   }
 });
 
 // ── GET /inventory/:id ────────────────────────────────────────────────────────
 // Fetch a single inventory item by ID, including series_name when the item
 // belongs to a named product series.
-router.get("/:id", async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params["id"] ?? "0");
+    const id = parseInt(req.params['id'] ?? '0');
     if (!Number.isFinite(id) || id <= 0) {
-      return void res.status(400).json({ error: "id must be a positive integer" });
+      return void res.status(400).json({ error: 'id must be a positive integer' });
     }
 
-    const [item] = await db
-      .select()
-      .from(inventoryTable)
-      .where(eq(inventoryTable.id, id))
-      .limit(1);
+    const [item] = await db.select().from(inventoryTable).where(eq(inventoryTable.id, id)).limit(1);
 
-    if (!item) return void res.status(404).json({ error: "Item not found" });
+    if (!item) return void res.status(404).json({ error: 'Item not found' });
 
     // Resolve vendor full name and series name in parallel
     const [vendorFullName, seriesRow] = await Promise.all([
@@ -1867,7 +2130,7 @@ router.get("/:id", async (req, res) => {
             .from(productSeriesTable)
             .where(eq(productSeriesTable.id, item.seriesId))
             .limit(1)
-            .then(rows => rows[0] ?? null)
+            .then((rows) => rows[0] ?? null)
         : Promise.resolve(null),
     ]);
 
@@ -1880,7 +2143,7 @@ router.get("/:id", async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to fetch inventory item" });
+    res.status(500).json({ error: 'Failed to fetch inventory item' });
   }
 });
 
@@ -1888,19 +2151,19 @@ router.get("/:id", async (req, res) => {
 // Admin-only. Assigns or clears the series_id for one inventory item.
 // Body: { seriesId: number | null }
 // Returns: { ok: true, seriesName: string | null }
-router.patch("/:id/series", requireAdminAuth, async (req, res) => {
+router.patch('/:id/series', requireAdminAuth, async (req, res) => {
   try {
-    const id = parseInt(String(req.params["id"] ?? "0"));
+    const id = parseInt(String(req.params['id'] ?? '0'));
     if (!Number.isFinite(id) || id <= 0) {
-      return void res.status(400).json({ error: "id must be a positive integer" });
+      return void res.status(400).json({ error: 'id must be a positive integer' });
     }
     const body = req.body as { seriesId?: unknown };
-    if (!Object.prototype.hasOwnProperty.call(body, "seriesId")) {
-      return void res.status(400).json({ error: "seriesId is required" });
+    if (!Object.prototype.hasOwnProperty.call(body, 'seriesId')) {
+      return void res.status(400).json({ error: 'seriesId is required' });
     }
     const raw = body.seriesId;
-    if (raw !== null && (typeof raw !== "number" || !Number.isFinite(raw))) {
-      return void res.status(400).json({ error: "seriesId must be a finite number or null" });
+    if (raw !== null && (typeof raw !== 'number' || !Number.isFinite(raw))) {
+      return void res.status(400).json({ error: 'seriesId must be a finite number or null' });
     }
     const seriesId = raw as number | null;
 
@@ -1911,7 +2174,7 @@ router.patch("/:id/series", requireAdminAuth, async (req, res) => {
         .from(productSeriesTable)
         .where(eq(productSeriesTable.id, seriesId))
         .limit(1);
-      if (!series) return void res.status(404).json({ error: "Series not found" });
+      if (!series) return void res.status(404).json({ error: 'Series not found' });
       seriesName = series.name;
     }
 
@@ -1920,12 +2183,12 @@ router.patch("/:id/series", requireAdminAuth, async (req, res) => {
       .set({ seriesId, updatedAt: new Date() })
       .where(eq(inventoryTable.id, id))
       .returning({ id: inventoryTable.id });
-    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    if (!updated) return void res.status(404).json({ error: 'Item not found' });
 
     res.json({ ok: true, seriesName });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to update series assignment" });
+    res.status(500).json({ error: 'Failed to update series assignment' });
   }
 });
 
@@ -1940,11 +2203,11 @@ router.patch("/:id/series", requireAdminAuth, async (req, res) => {
 //   • keywords:    string[]       → replace ai_keywords
 //   • keywords:    undefined/missing → leave ai_keywords unchanged
 // At least one field must be supplied.
-router.patch("/:id", async (req, res) => {
+router.patch('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params["id"] ?? "0");
+    const id = parseInt(req.params['id'] ?? '0');
     if (!Number.isFinite(id) || id <= 0) {
-      return void res.status(400).json({ error: "id must be a positive integer" });
+      return void res.status(400).json({ error: 'id must be a positive integer' });
     }
 
     const body = (req.body ?? {}) as {
@@ -1955,16 +2218,24 @@ router.patch("/:id", async (req, res) => {
       tradeSize?: unknown;
       binLocations?: unknown;
     };
-    const hasVendor = Object.prototype.hasOwnProperty.call(body, "vendor");
-    const hasCatalog = Object.prototype.hasOwnProperty.call(body, "catalog");
-    const hasDescription = Object.prototype.hasOwnProperty.call(body, "description");
-    const hasKeywords = Object.prototype.hasOwnProperty.call(body, "keywords");
-    const hasTradeSize = Object.prototype.hasOwnProperty.call(body, "tradeSize");
-    const hasBinLocations = Object.prototype.hasOwnProperty.call(body, "binLocations");
+    const hasVendor = Object.prototype.hasOwnProperty.call(body, 'vendor');
+    const hasCatalog = Object.prototype.hasOwnProperty.call(body, 'catalog');
+    const hasDescription = Object.prototype.hasOwnProperty.call(body, 'description');
+    const hasKeywords = Object.prototype.hasOwnProperty.call(body, 'keywords');
+    const hasTradeSize = Object.prototype.hasOwnProperty.call(body, 'tradeSize');
+    const hasBinLocations = Object.prototype.hasOwnProperty.call(body, 'binLocations');
 
-    if (!hasVendor && !hasCatalog && !hasDescription && !hasKeywords && !hasTradeSize && !hasBinLocations) {
+    if (
+      !hasVendor &&
+      !hasCatalog &&
+      !hasDescription &&
+      !hasKeywords &&
+      !hasTradeSize &&
+      !hasBinLocations
+    ) {
       return void res.status(400).json({
-        error: "Provide at least one of `vendor`, `catalog`, `description`, `keywords`, `tradeSize`, or `binLocations` to update.",
+        error:
+          'Provide at least one of `vendor`, `catalog`, `description`, `keywords`, `tradeSize`, or `binLocations` to update.',
       });
     }
 
@@ -1973,43 +2244,46 @@ router.patch("/:id", async (req, res) => {
     };
 
     if (hasVendor) {
-      if (typeof body.vendor !== "string" || !body.vendor.trim()) {
-        return void res.status(400).json({ error: "vendor must be a non-empty string" });
+      if (typeof body.vendor !== 'string' || !body.vendor.trim()) {
+        return void res.status(400).json({ error: 'vendor must be a non-empty string' });
       }
       updates.vendor = body.vendor.trim().toUpperCase();
     }
 
     if (hasCatalog) {
-      if (typeof body.catalog !== "string" || !body.catalog.trim()) {
-        return void res.status(400).json({ error: "catalog must be a non-empty string" });
+      if (typeof body.catalog !== 'string' || !body.catalog.trim()) {
+        return void res.status(400).json({ error: 'catalog must be a non-empty string' });
       }
       updates.catalog = body.catalog.trim();
     }
 
     if (hasDescription) {
-      if (typeof body.description !== "string") {
-        return void res.status(400).json({ error: "description must be a string" });
+      if (typeof body.description !== 'string') {
+        return void res.status(400).json({ error: 'description must be a string' });
       }
       updates.description = body.description;
     }
 
     if (hasKeywords) {
-      if (!Array.isArray(body.keywords) || !body.keywords.every(k => typeof k === "string")) {
-        return void res.status(400).json({ error: "keywords must be an array of strings" });
+      if (!Array.isArray(body.keywords) || !body.keywords.every((k) => typeof k === 'string')) {
+        return void res.status(400).json({ error: 'keywords must be an array of strings' });
       }
       updates.aiKeywords = body.keywords as string[];
     }
 
     if (hasTradeSize) {
-      if (body.tradeSize !== null && typeof body.tradeSize !== "string") {
-        return void res.status(400).json({ error: "tradeSize must be a string or null" });
+      if (body.tradeSize !== null && typeof body.tradeSize !== 'string') {
+        return void res.status(400).json({ error: 'tradeSize must be a string or null' });
       }
       updates.tradeSize = (body.tradeSize as string | null) ?? null;
     }
 
     if (hasBinLocations) {
-      if (!Array.isArray(body.binLocations) || !body.binLocations.every(b => typeof b === "string")) {
-        return void res.status(400).json({ error: "binLocations must be an array of strings" });
+      if (
+        !Array.isArray(body.binLocations) ||
+        !body.binLocations.every((b) => typeof b === 'string')
+      ) {
+        return void res.status(400).json({ error: 'binLocations must be an array of strings' });
       }
       updates.binLocations = dedupeBinsCaseInsensitive(body.binLocations as string[]);
     }
@@ -2020,13 +2294,18 @@ router.patch("/:id", async (req, res) => {
       .where(eq(inventoryTable.id, id))
       .returning();
 
-    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    if (!updated) return void res.status(404).json({ error: 'Item not found' });
 
     const vendorFullName = await lookupVendorFullName(updated.vendor);
-    res.json(withVendorFullName(updated, new Map(vendorFullName ? [[updated.vendor.toUpperCase(), vendorFullName]] : [])));
+    res.json(
+      withVendorFullName(
+        updated,
+        new Map(vendorFullName ? [[updated.vendor.toUpperCase(), vendorFullName]] : [])
+      )
+    );
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to update inventory item" });
+    res.status(500).json({ error: 'Failed to update inventory item' });
   }
 });
 
@@ -2036,11 +2315,11 @@ router.patch("/:id", async (req, res) => {
 // already in the description. Nothing is saved here — the caller decides
 // whether to apply the suggestion (and the existing PATCH endpoint is what
 // actually persists it).
-router.post("/:id/suggest-description", async (req, res) => {
+router.post('/:id/suggest-description', async (req, res) => {
   try {
-    const id = parseInt(req.params["id"] ?? "0");
+    const id = parseInt(req.params['id'] ?? '0');
     if (!Number.isFinite(id) || id <= 0) {
-      return void res.status(400).json({ error: "id must be a positive integer" });
+      return void res.status(400).json({ error: 'id must be a positive integer' });
     }
 
     const [item] = await db
@@ -2054,19 +2333,19 @@ router.post("/:id/suggest-description", async (req, res) => {
       .where(eq(inventoryTable.id, id))
       .limit(1);
 
-    if (!item) return void res.status(404).json({ error: "Item not found" });
+    if (!item) return void res.status(404).json({ error: 'Item not found' });
 
     const description = await suggestDescription({
       vendor: item.vendor,
       catalog: item.catalog,
-      description: item.description ?? "",
+      description: item.description ?? '',
       keywords: item.aiKeywords ?? [],
     });
 
     res.json({ description });
   } catch (err) {
-    console.error("[inventory/suggest-description] failed:", err);
-    res.status(502).json({ error: "Failed to generate description suggestion" });
+    console.error('[inventory/suggest-description] failed:', err);
+    res.status(502).json({ error: 'Failed to generate description suggestion' });
   }
 });
 
@@ -2075,37 +2354,37 @@ router.post("/:id/suggest-description", async (req, res) => {
 //   { mode?: "all" | "unclassified" | "specific-ids", ids?: number[], useAi?: boolean }
 // Streams SSE progress.
 function requireAdminForClassify(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
+  req: import('express').Request,
+  res: import('express').Response,
+  next: import('express').NextFunction
 ): void {
   const adminPassword = process.env.ADMIN_PASSWORD;
   if (!adminPassword) {
-    res.status(503).json({ error: "Admin access is not configured. Set ADMIN_PASSWORD." });
+    res.status(503).json({ error: 'Admin access is not configured. Set ADMIN_PASSWORD.' });
     return;
   }
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const authHeader = req.headers['authorization'] ?? '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
+    res.status(401).json({ error: 'Unauthorized: valid admin token required' });
     return;
   }
   next();
 }
-router.post("/classify", requireAdminForClassify, classifyHandler);
+router.post('/classify', requireAdminForClassify, classifyHandler);
 
 // ── PATCH /inventory/:id/category ───────────────────────────────────────
 // Admin: manually set a part's category node. Always sets classified_by="manual"
 // so subsequent classifier runs in mode="unclassified" leave this row alone.
-router.patch("/:id/category", requireAdminForClassify, async (req, res) => {
+router.patch('/:id/category', requireAdminForClassify, async (req, res) => {
   try {
-    const id = parseInt(String(req.params["id"] ?? "0"));
+    const id = parseInt(String(req.params['id'] ?? '0'));
     if (!Number.isFinite(id) || id <= 0) {
-      return void res.status(400).json({ error: "id must be a positive integer" });
+      return void res.status(400).json({ error: 'id must be a positive integer' });
     }
     const { categoryNodeId } = req.body as { categoryNodeId?: number };
     if (!Number.isFinite(categoryNodeId) || (categoryNodeId ?? 0) <= 0) {
-      return void res.status(400).json({ error: "categoryNodeId is required" });
+      return void res.status(400).json({ error: 'categoryNodeId is required' });
     }
 
     // Verify both rows exist before mutating.
@@ -2114,19 +2393,19 @@ router.patch("/:id/category", requireAdminForClassify, async (req, res) => {
       .from(inventoryTable)
       .where(eq(inventoryTable.id, id))
       .limit(1);
-    if (!item) return void res.status(404).json({ error: "Inventory item not found" });
+    if (!item) return void res.status(404).json({ error: 'Inventory item not found' });
 
     const [node] = await db
       .select({ id: categoryNodeTable.id, level: categoryNodeTable.level })
       .from(categoryNodeTable)
       .where(eq(categoryNodeTable.id, categoryNodeId!))
       .limit(1);
-    if (!node) return void res.status(404).json({ error: "Category node not found" });
+    if (!node) return void res.status(404).json({ error: 'Category node not found' });
     // Enforce: inventory may only be assigned to a leaf "type" node so the
     // browse drill-down always lands on a Category → Subcategory → Type path.
-    if (node.level !== "type") {
+    if (node.level !== 'type') {
       return void res.status(400).json({
-        error: "Inventory can only be assigned to a leaf type node",
+        error: 'Inventory can only be assigned to a leaf type node',
       });
     }
 
@@ -2134,13 +2413,13 @@ router.patch("/:id/category", requireAdminForClassify, async (req, res) => {
     await db.insert(inventoryCategoryTable).values({
       inventoryId: id,
       categoryNodeId: categoryNodeId!,
-      confidence: "1.0000",
-      classifiedBy: "manual",
+      confidence: '1.0000',
+      classifiedBy: 'manual',
     });
     res.json({ ok: true, inventoryId: id, nodeId: categoryNodeId });
   } catch (err) {
-    console.error("[inventory/:id/category] failed:", err);
-    res.status(500).json({ error: "Failed to set category for item" });
+    console.error('[inventory/:id/category] failed:', err);
+    res.status(500).json({ error: 'Failed to set category for item' });
   }
 });
 

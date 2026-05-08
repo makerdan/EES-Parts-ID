@@ -7,12 +7,7 @@
  * (plus the custom-fetch wrapper) so consumers can import from a
  * single, stable entry point.
  */
-export * from "./generated/api";
-export * from "./generated/api.schemas";
-export {
-  setBaseUrl,
-  setAuthTokenGetter,
-  ApiError,
-  ResponseParseError,
-} from "./custom-fetch";
-export type { AuthTokenGetter } from "./custom-fetch";
+export * from './generated/api';
+export * from './generated/api.schemas';
+export { setBaseUrl, setAuthTokenGetter, ApiError, ResponseParseError } from './custom-fetch';
+export type { AuthTokenGetter } from './custom-fetch';

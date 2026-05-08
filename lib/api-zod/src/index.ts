@@ -4,4 +4,4 @@
 // `export *` ambiguous under composite project references. Consumers that
 // need the TypeScript interface form import them from `@workspace/api-client-react`
 // instead, which has its own non-conflicting copy.
-export * from "./generated/api";
+export * from './generated/api';

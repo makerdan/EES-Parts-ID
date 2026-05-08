@@ -52,7 +52,7 @@ export function dedupeBinsCaseInsensitive(bins: readonly string[]): string[] {
  */
 export function mergeBins(
   existing: readonly string[] | null | undefined,
-  incoming: readonly string[] | null | undefined,
+  incoming: readonly string[] | null | undefined
 ): string[] {
   return dedupeBinsCaseInsensitive([...(existing ?? []), ...(incoming ?? [])]);
 }
@@ -86,10 +86,7 @@ export function aggregateRowsByPart(rows: readonly RawSpreadsheetRow[]): Aggrega
     const catalog = row.catalog.trim();
     if (!vendor || !catalog) continue;
     const key = `${vendor}|${catalog}`;
-    const incoming = [
-      ...splitBinCell(row.binCell),
-      ...(row.binLocations ?? []),
-    ];
+    const incoming = [...splitBinCell(row.binCell), ...(row.binLocations ?? [])];
     const existing = byKey.get(key);
     if (existing) {
       existing.binLocations = mergeBins(existing.binLocations, incoming);
@@ -100,7 +97,7 @@ export function aggregateRowsByPart(rows: readonly RawSpreadsheetRow[]): Aggrega
       byKey.set(key, {
         vendor,
         catalog,
-        description: (row.description ?? "").trim(),
+        description: (row.description ?? '').trim(),
         binLocations: dedupeBinsCaseInsensitive(incoming),
       });
     }

@@ -22,55 +22,53 @@
  * runs every per-row restore inside a single outer transaction so a partial
  * revert can never leave half a run rolled back.
  */
-import { pgTable, serial, text, timestamp, integer, index } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
-import { inventoryTable } from "./inventory";
+import { pgTable, serial, text, timestamp, integer, index } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { inventoryTable } from './inventory';
 
 export const enrichmentRunTable = pgTable(
-  "inventory_enrichment_run",
+  'inventory_enrichment_run',
   {
-    id: serial("id").primaryKey(),
-    vendor: text("vendor").notNull(),
-    sourceFilename: text("source_filename"),
-    startedAt: timestamp("started_at").defaultNow().notNull(),
-    finishedAt: timestamp("finished_at"),
-    updatedCount: integer("updated_count").notNull().default(0),
-    skippedCount: integer("skipped_count").notNull().default(0),
-    errorCount: integer("error_count").notNull().default(0),
-    revertedAt: timestamp("reverted_at"),
+    id: serial('id').primaryKey(),
+    vendor: text('vendor').notNull(),
+    sourceFilename: text('source_filename'),
+    startedAt: timestamp('started_at').defaultNow().notNull(),
+    finishedAt: timestamp('finished_at'),
+    updatedCount: integer('updated_count').notNull().default(0),
+    skippedCount: integer('skipped_count').notNull().default(0),
+    errorCount: integer('error_count').notNull().default(0),
+    revertedAt: timestamp('reverted_at'),
   },
-  (table) => [
-    index("enrichment_run_started_at_idx").on(table.startedAt),
-  ],
+  (table) => [index('enrichment_run_started_at_idx').on(table.startedAt)]
 );
 
 export const enrichmentHistoryTable = pgTable(
-  "inventory_enrichment_history",
+  'inventory_enrichment_history',
   {
-    id: serial("id").primaryKey(),
-    runId: integer("run_id")
+    id: serial('id').primaryKey(),
+    runId: integer('run_id')
       .notNull()
-      .references(() => enrichmentRunTable.id, { onDelete: "cascade" }),
-    inventoryId: integer("inventory_id")
+      .references(() => enrichmentRunTable.id, { onDelete: 'cascade' }),
+    inventoryId: integer('inventory_id')
       .notNull()
-      .references(() => inventoryTable.id, { onDelete: "cascade" }),
-    catalogNumber: text("catalog_number").notNull(),
-    beforeDescription: text("before_description").notNull(),
-    afterDescription: text("after_description").notNull(),
-    beforeKeywords: text("before_keywords")
+      .references(() => inventoryTable.id, { onDelete: 'cascade' }),
+    catalogNumber: text('catalog_number').notNull(),
+    beforeDescription: text('before_description').notNull(),
+    afterDescription: text('after_description').notNull(),
+    beforeKeywords: text('before_keywords')
       .array()
       .notNull()
       .default(sql`ARRAY[]::text[]`),
-    afterKeywords: text("after_keywords")
+    afterKeywords: text('after_keywords')
       .array()
       .notNull()
       .default(sql`ARRAY[]::text[]`),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [
-    index("enrichment_history_run_id_idx").on(table.runId),
-    index("enrichment_history_inventory_id_idx").on(table.inventoryId),
-  ],
+    index('enrichment_history_run_id_idx').on(table.runId),
+    index('enrichment_history_inventory_id_idx').on(table.inventoryId),
+  ]
 );
 
 export type EnrichmentRun = typeof enrichmentRunTable.$inferSelect;

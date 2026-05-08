@@ -16,14 +16,11 @@ export interface CategoryTreeNode {
 }
 
 /** Walk `path` (array of slugs) down the tree and return the node, or null. */
-export function nodeAtPath(
-  tree: CategoryTreeNode[],
-  path: string[],
-): CategoryTreeNode | null {
+export function nodeAtPath(tree: CategoryTreeNode[], path: string[]): CategoryTreeNode | null {
   let level = tree;
   let node: CategoryTreeNode | null = null;
   for (const slug of path) {
-    const found = level.find(n => n.slug === slug);
+    const found = level.find((n) => n.slug === slug);
     if (!found) return null;
     node = found;
     level = found.children;
@@ -32,10 +29,7 @@ export function nodeAtPath(
 }
 
 /** Children visible at the current drill depth (roots when path is empty). */
-export function visibleChildren(
-  tree: CategoryTreeNode[],
-  path: string[],
-): CategoryTreeNode[] {
+export function visibleChildren(tree: CategoryTreeNode[], path: string[]): CategoryTreeNode[] {
   if (path.length === 0) return tree;
   const node = nodeAtPath(tree, path);
   return node?.children ?? [];

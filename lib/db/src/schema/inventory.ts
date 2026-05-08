@@ -34,59 +34,59 @@ import {
   timestamp,
   uniqueIndex,
   jsonb,
-} from "drizzle-orm/pg-core";
+} from 'drizzle-orm/pg-core';
 
-import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod/v4";
-import { sql } from "drizzle-orm";
-import { productSeriesTable } from "./product_series";
+import { createInsertSchema } from 'drizzle-zod';
+import { z } from 'zod/v4';
+import { sql } from 'drizzle-orm';
+import { productSeriesTable } from './product_series';
 
 export const inventoryTable = pgTable(
-  "inventory",
+  'inventory',
   {
-    id: serial("id").primaryKey(),
-    vendor: text("vendor").notNull(),
-    catalog: text("catalog").notNull(),
-    description: text("description").notNull().default(""),
-    binLocations: text("bin_locations")
+    id: serial('id').primaryKey(),
+    vendor: text('vendor').notNull(),
+    catalog: text('catalog').notNull(),
+    description: text('description').notNull().default(''),
+    binLocations: text('bin_locations')
       .array()
       .notNull()
       .default(sql`ARRAY[]::text[]`),
-    aiKeywords: text("ai_keywords")
+    aiKeywords: text('ai_keywords')
       .array()
       .notNull()
       .default(sql`ARRAY[]::text[]`),
-    tradeSize: text("trade_size"),
-    enrichedAt: timestamp("enriched_at"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    tradeSize: text('trade_size'),
+    enrichedAt: timestamp('enriched_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
     // ── Materialized parse columns (migration 0010) ──────────────────────────
-    catalogParse: jsonb("catalog_parse"),
-    amperage: integer("amperage"),
-    poleCount: smallint("pole_count"),
-    voltage: integer("voltage"),
-    tradeSizeIn: numeric("trade_size_in", { precision: 6, scale: 3 }),
-    mountType: text("mount_type"),
-    attrsParsedAt: timestamp("attrs_parsed_at"),
-    promptVersion: smallint("prompt_version"),
+    catalogParse: jsonb('catalog_parse'),
+    amperage: integer('amperage'),
+    poleCount: smallint('pole_count'),
+    voltage: integer('voltage'),
+    tradeSizeIn: numeric('trade_size_in', { precision: 6, scale: 3 }),
+    mountType: text('mount_type'),
+    attrsParsedAt: timestamp('attrs_parsed_at'),
+    promptVersion: smallint('prompt_version'),
     // ── Index-time synonym expansion (migration 0011) ─────────────────────────
     // Pre-expanded token string built by buildSearchTokens() at enrichment time.
     // Trigram search runs against this column instead of raw description/catalog,
     // eliminating per-request synonym table lookups.
-    searchTokens: text("search_tokens"),
+    searchTokens: text('search_tokens'),
     // ── Product series FK (migration 0014) ────────────────────────────────────
     // Nullable FK to product_series.id. When set, the Other Sizes query uses
     // this for grouping instead of the catalog-prefix heuristic.
-    seriesId: integer("series_id").references(() => productSeriesTable.id, { onDelete: "set null" }),
+    seriesId: integer('series_id').references(() => productSeriesTable.id, {
+      onDelete: 'set null',
+    }),
     // ── Dictionary version tracking (migration 0015) ──────────────────────────
     // Records which dictionary_version.version was current when search_tokens
     // was last built for this row. Rows where tokensDictVersion < current
     // dict_version are stale and need a lightweight rebuild (no AI call).
-    tokensDictVersion: integer("tokens_dict_version").notNull().default(0),
+    tokensDictVersion: integer('tokens_dict_version').notNull().default(0),
   },
-  (table) => [
-    uniqueIndex("inventory_vendor_catalog_idx").on(table.vendor, table.catalog),
-  ],
+  (table) => [uniqueIndex('inventory_vendor_catalog_idx').on(table.vendor, table.catalog)]
 );
 
 export const insertInventorySchema = createInsertSchema(inventoryTable).omit({

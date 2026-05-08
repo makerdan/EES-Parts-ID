@@ -9,9 +9,9 @@
  * Follows the same start/stop/setInterval pattern as `inventoryIndex.ts`
  * so the server entry point can manage it identically.
  */
-import { db, enrichmentRunTable } from "@workspace/db";
-import { lt } from "drizzle-orm";
-import { logger } from "./logger";
+import { db, enrichmentRunTable } from '@workspace/db';
+import { lt } from 'drizzle-orm';
+import { logger } from './logger';
 
 const RETENTION_DAYS = 7;
 const RETENTION_MS = RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -28,15 +28,15 @@ async function cleanup(): Promise<void> {
       .where(lt(enrichmentRunTable.startedAt, cutoff))
       .returning({ id: enrichmentRunTable.id });
     if (deleted.length === 0) {
-      logger.info("enrichmentRunCleanup: nothing to clean up");
+      logger.info('enrichmentRunCleanup: nothing to clean up');
     } else {
       logger.info(
         { deletedCount: deleted.length, cutoff },
-        "enrichmentRunCleanup: deleted old enrichment runs",
+        'enrichmentRunCleanup: deleted old enrichment runs'
       );
     }
   } catch (err) {
-    logger.error({ err }, "enrichmentRunCleanup: cleanup failed");
+    logger.error({ err }, 'enrichmentRunCleanup: cleanup failed');
   }
 }
 
@@ -47,7 +47,7 @@ async function cleanup(): Promise<void> {
 export function start(intervalMs: number = DEFAULT_INTERVAL_MS): void {
   if (timer) return;
   if (stopped) {
-    logger.debug("enrichmentRunCleanup.start skipped — shutdown already requested");
+    logger.debug('enrichmentRunCleanup.start skipped — shutdown already requested');
     return;
   }
   const safeInterval = Math.max(1_000, Math.floor(intervalMs));
@@ -56,7 +56,7 @@ export function start(intervalMs: number = DEFAULT_INTERVAL_MS): void {
     void cleanup();
   }, safeInterval);
   timer.unref?.();
-  logger.info({ intervalMs: safeInterval }, "enrichmentRunCleanup scheduler started");
+  logger.info({ intervalMs: safeInterval }, 'enrichmentRunCleanup scheduler started');
 }
 
 /**
@@ -67,6 +67,6 @@ export function stop(): void {
   if (timer) {
     clearInterval(timer);
     timer = null;
-    logger.info("enrichmentRunCleanup scheduler stopped");
+    logger.info('enrichmentRunCleanup scheduler stopped');
   }
 }

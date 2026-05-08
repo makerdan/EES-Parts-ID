@@ -6,22 +6,12 @@
  * the description) and `highlightBin` (which bin code to mark with
  * "← here" — used by Browse-by-Aisle to point to the exact shelf).
  */
-import React, { useCallback, useState } from "react";
-import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
-import { useColors } from "@/hooks/useColors";
-import { splitHighlightSegments } from "@/lib/refinement";
-import {
-  parseTradeSizeInches,
-  formatInchesAsFraction,
-} from "@/lib/tradeSize";
+import React, { useCallback, useState } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
+import { useColors } from '@/hooks/useColors';
+import { splitHighlightSegments } from '@/lib/refinement';
+import { parseTradeSizeInches, formatInchesAsFraction } from '@/lib/tradeSize';
 
 interface ResultCardProps {
   result: SearchResult;
@@ -79,25 +69,27 @@ function HighlightedText({
     <>
       {segments.map((seg, i) =>
         seg.match ? (
-          <Text key={i} style={matchStyle}>{seg.text}</Text>
+          <Text key={i} style={matchStyle}>
+            {seg.text}
+          </Text>
         ) : (
           <Text key={i}>{seg.text}</Text>
-        ),
+        )
       )}
     </>
   );
 }
 
 const CONFIDENCE_COLORS = {
-  high: "#10b981",
-  medium: "#f59e0b",
-  low: "#ef4444",
+  high: '#10b981',
+  medium: '#f59e0b',
+  low: '#ef4444',
 };
 
-function getConfidenceLevel(confidence: number): "high" | "medium" | "low" {
-  if (confidence >= 0.85) return "high";
-  if (confidence >= 0.60) return "medium";
-  return "low";
+function getConfidenceLevel(confidence: number): 'high' | 'medium' | 'low' {
+  if (confidence >= 0.85) return 'high';
+  if (confidence >= 0.6) return 'medium';
+  return 'low';
 }
 
 function ConfidenceBadge({ confidence }: { confidence: number }) {
@@ -105,7 +97,7 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
   const color = CONFIDENCE_COLORS[level];
   const pct = Math.round(confidence * 100);
   return (
-    <View style={[cardStyles.badge, { backgroundColor: color + "22" }]}>
+    <View style={[cardStyles.badge, { backgroundColor: color + '22' }]}>
       <View style={[cardStyles.badgeDot, { backgroundColor: color }]} />
       <Text style={[cardStyles.badgeText, { color }]}>{pct}%</Text>
     </View>
@@ -152,24 +144,23 @@ function VariantRow({
   const sizeLabel: string = item.tradeSize
     ? item.tradeSize
     : formatInchesAsFraction(
-        parseTradeSizeInches(item.catalog) ??
-        parseTradeSizeInches(item.description),
+        parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description)
       );
   const hasSize = sizeLabel.length > 0;
   // Speech-friendly size: strip the inch-mark glyph and append "inches".
-  const a11ySize = hasSize ? `, size ${sizeLabel.replace(/"/g, "")} inches` : "";
+  const a11ySize = hasSize ? `, size ${sizeLabel.replace(/"/g, '')} inches` : '';
   return (
     <Pressable
       onPress={onPress}
       android_ripple={{ color: colors.muted }}
       hitSlop={4}
       accessibilityRole="button"
-      accessibilityLabel={`Open ${item.vendor} ${item.catalog}${a11ySize}${primaryBin ? `, bin ${primaryBin}` : ", no bin"}`}
+      accessibilityLabel={`Open ${item.vendor} ${item.catalog}${a11ySize}${primaryBin ? `, bin ${primaryBin}` : ', no bin'}`}
       style={({ pressed }) => [
         varStyles.row,
         {
           borderBottomColor: colors.border,
-          backgroundColor: pressed ? colors.accent : "transparent",
+          backgroundColor: pressed ? colors.accent : 'transparent',
           opacity: pressed ? 0.85 : 1,
         },
       ]}
@@ -222,8 +213,8 @@ function VariantRow({
 
 const varStyles = StyleSheet.create({
   row: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 12,
     minHeight: 44,
@@ -233,26 +224,41 @@ const varStyles = StyleSheet.create({
   // Catalog and size both shrink under pressure so a long catalog won't
   // squeeze the bin off-screen and a long size suffix won't either. Bin
   // stays flex-fixed and right-aligned so workers always see it.
-  catalog: { fontFamily: "Inter_600SemiBold", flexShrink: 1, flexGrow: 1, flexBasis: 0 },
-  size: { fontFamily: "Inter_600SemiBold", textAlign: "center", flexShrink: 1, maxWidth: 96 },
-  sizeEmpty: { fontFamily: "Inter_400Regular", textAlign: "center", flexShrink: 0 },
-  bin: { fontFamily: "Inter_500Medium", textAlign: "right", flexShrink: 0 },
-  binEmpty: { fontFamily: "Inter_400Regular", fontStyle: "italic", textAlign: "right", flexShrink: 0 },
+  catalog: { fontFamily: 'Inter_600SemiBold', flexShrink: 1, flexGrow: 1, flexBasis: 0 },
+  size: { fontFamily: 'Inter_600SemiBold', textAlign: 'center', flexShrink: 1, maxWidth: 96 },
+  sizeEmpty: { fontFamily: 'Inter_400Regular', textAlign: 'center', flexShrink: 0 },
+  bin: { fontFamily: 'Inter_500Medium', textAlign: 'right', flexShrink: 0 },
+  binEmpty: {
+    fontFamily: 'Inter_400Regular',
+    fontStyle: 'italic',
+    textAlign: 'right',
+    flexShrink: 0,
+  },
 });
 
-export function ResultCard({ result, onEditKeywords, rank, showRank = true, fontScale = 1.0, highlightTokens, highlightBin, onFirstExpand, onConfirm }: ResultCardProps) {
+export function ResultCard({
+  result,
+  onEditKeywords,
+  rank,
+  showRank = true,
+  fontScale = 1.0,
+  highlightTokens,
+  highlightBin,
+  onFirstExpand,
+  onConfirm,
+}: ResultCardProps) {
   const colors = useColors();
   // Match style: a soft tint background + bold weight. Uses the theme's
   // primary color so it stays legible in light/dark mode.
   const hlStyle = React.useMemo(
     () => ({
-      backgroundColor: colors.primary + "33",
+      backgroundColor: colors.primary + '33',
       color: colors.foreground,
-      fontFamily: "Inter_700Bold" as const,
+      fontFamily: 'Inter_700Bold' as const,
     }),
-    [colors.primary, colors.foreground],
+    [colors.primary, colors.foreground]
   );
-  const hl = (highlightTokens && highlightTokens.length > 0) ? highlightTokens : undefined;
+  const hl = highlightTokens && highlightTokens.length > 0 ? highlightTokens : undefined;
   const [expanded, setExpanded] = useState(false);
   // Related-sizes panel toggles independently of the main card expand/collapse
   // so workers can peek at alternate sizes without revealing the rest of the
@@ -273,7 +279,7 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
   // already drops result IDs from variant lists, but we belt-and-suspender
   // here in case a variant rolls into the current item via id collision.
   const filteredVariants = React.useMemo(() => {
-    const list = (variants ?? []).filter(v => v.id !== item.id);
+    const list = (variants ?? []).filter((v) => v.id !== item.id);
     const sizeOf = (v: InventoryItem): number | null =>
       parseTradeSizeInches(v.tradeSize) ??
       parseTradeSizeInches(v.catalog) ??
@@ -282,7 +288,7 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
       const sa = sizeOf(a);
       const sb = sizeOf(b);
       if (sa === null && sb === null) return 0;
-      if (sa === null) return 1;   // unsized → end
+      if (sa === null) return 1; // unsized → end
       if (sb === null) return -1;
       return sa - sb;
     });
@@ -302,253 +308,302 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
 
   return (
     <>
-    <Pressable onPress={toggleCard}>
-      <View
-        style={[
-          cardStyles.container,
-          {
-            backgroundColor: colors.card,
-            borderColor: rank === 0 ? colors.primary : colors.border,
-            borderWidth: rank === 0 ? 1.5 : 1,
-          },
-        ]}
-      >
-        {/* Header */}
-        <View style={cardStyles.header}>
-          <View style={cardStyles.headerLeft}>
-            {showRank ? (
-              <View style={[cardStyles.rankBadge, { backgroundColor: rank === 0 ? colors.primary : colors.muted }]}>
-                <Text style={[cardStyles.rankText, { color: rank === 0 ? colors.primaryForeground : colors.mutedForeground }]}>
-                  #{rank + 1}
-                </Text>
-              </View>
-            ) : null}
-            <View style={cardStyles.titleGroup}>
-              <Text style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]} allowFontScaling={false}>
-                <HighlightedText text={item.vendor} tokens={hl} matchStyle={hlStyle} />
-              </Text>
-              <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(28) }]} allowFontScaling={false}>
-                <HighlightedText text={item.catalog} tokens={hl} matchStyle={hlStyle} />
-              </Text>
-              {item.seriesName ? (
-                <Pressable
-                  onPress={() => { if (hasVariants) setVariantsExpanded(v => !v); }}
-                  hitSlop={4}
-                  disabled={!hasVariants}
-                  accessibilityRole={hasVariants ? "button" : "text"}
-                  accessibilityLabel={`Part of series: ${item.seriesName}${hasVariants ? ". Tap to see other sizes." : ""}`}
-                  style={({ pressed }) => [
-                    cardStyles.seriesBadge,
-                    {
-                      backgroundColor: colors.primary + "1A",
-                      borderColor: colors.primary + "66",
-                      opacity: pressed ? 0.7 : 1,
-                    },
+      <Pressable onPress={toggleCard}>
+        <View
+          style={[
+            cardStyles.container,
+            {
+              backgroundColor: colors.card,
+              borderColor: rank === 0 ? colors.primary : colors.border,
+              borderWidth: rank === 0 ? 1.5 : 1,
+            },
+          ]}
+        >
+          {/* Header */}
+          <View style={cardStyles.header}>
+            <View style={cardStyles.headerLeft}>
+              {showRank ? (
+                <View
+                  style={[
+                    cardStyles.rankBadge,
+                    { backgroundColor: rank === 0 ? colors.primary : colors.muted },
                   ]}
                 >
-                  <Text style={[cardStyles.seriesBadgeText, { color: colors.primary, fontSize: fs(11) }]} allowFontScaling={false}>
-                    {hasVariants ? "⊞ " : ""}Part of {item.seriesName}
+                  <Text
+                    style={[
+                      cardStyles.rankText,
+                      { color: rank === 0 ? colors.primaryForeground : colors.mutedForeground },
+                    ]}
+                  >
+                    #{rank + 1}
                   </Text>
-                </Pressable>
+                </View>
+              ) : null}
+              <View style={cardStyles.titleGroup}>
+                <Text
+                  style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]}
+                  allowFontScaling={false}
+                >
+                  <HighlightedText text={item.vendor} tokens={hl} matchStyle={hlStyle} />
+                </Text>
+                <Text
+                  style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(28) }]}
+                  allowFontScaling={false}
+                >
+                  <HighlightedText text={item.catalog} tokens={hl} matchStyle={hlStyle} />
+                </Text>
+                {item.seriesName ? (
+                  <Pressable
+                    onPress={() => {
+                      if (hasVariants) setVariantsExpanded((v) => !v);
+                    }}
+                    hitSlop={4}
+                    disabled={!hasVariants}
+                    accessibilityRole={hasVariants ? 'button' : 'text'}
+                    accessibilityLabel={`Part of series: ${item.seriesName}${hasVariants ? '. Tap to see other sizes.' : ''}`}
+                    style={({ pressed }) => [
+                      cardStyles.seriesBadge,
+                      {
+                        backgroundColor: colors.primary + '1A',
+                        borderColor: colors.primary + '66',
+                        opacity: pressed ? 0.7 : 1,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        cardStyles.seriesBadgeText,
+                        { color: colors.primary, fontSize: fs(11) },
+                      ]}
+                      allowFontScaling={false}
+                    >
+                      {hasVariants ? '⊞ ' : ''}Part of {item.seriesName}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+            <View style={[cardStyles.headerRight, { alignItems: 'flex-end' }]}>
+              <ConfidenceBadge confidence={confidence} />
+              {item.tradeSize ? (
+                <Text style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}>
+                  {item.tradeSize}
+                </Text>
               ) : null}
             </View>
           </View>
-          <View style={[cardStyles.headerRight, { alignItems: "flex-end" }]}>
-            <ConfidenceBadge confidence={confidence} />
-            {item.tradeSize ? (
-              <Text style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}>
-                {item.tradeSize}
-              </Text>
-            ) : null}
-          </View>
-        </View>
 
-        {/* Description */}
-        <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2} allowFontScaling={false}>
-          {item.description ? (
-            <HighlightedText text={item.description} tokens={hl} matchStyle={hlStyle} />
-          ) : "No description"}
-        </Text>
+          {/* Description */}
+          <Text
+            style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]}
+            numberOfLines={expanded ? undefined : 2}
+            allowFontScaling={false}
+          >
+            {item.description ? (
+              <HighlightedText text={item.description} tokens={hl} matchStyle={hlStyle} />
+            ) : (
+              'No description'
+            )}
+          </Text>
 
-        {/* Bin location(s)
+          {/* Bin location(s)
             ─────────────────
             • Collapsed view: comma-separated on one line (tight, scannable).
             • Expanded view: one bin per line (easy to read on a phone).
             • Empty list: row hidden entirely so single-bin parts look identical
               to before the multi-bin migration. */}
-        {(item.binLocations ?? []).length > 0 ? (
-          <View style={[cardStyles.binRow, { backgroundColor: colors.accent }]}>
-            <Text style={[cardStyles.binIcon, { color: colors.accentForeground }]}>📍</Text>
-            <View style={cardStyles.binTextWrap}>
-              <Text style={[cardStyles.binText, { color: colors.accentForeground }]}>
-                {(item.binLocations ?? []).length === 1 ? "Bin: " : "Bins: "}
-                {(item.binLocations ?? []).map((b, i) => {
-                  const isMatch = !!highlightBin && b.toUpperCase() === highlightBin.toUpperCase();
-                  const sep = i === 0 ? "" : (expanded ? "\n      " : ", ");
-                  return (
-                    <Text key={`${b}-${i}`}>
-                      {sep}
-                      <Text
-                        style={isMatch ? { fontFamily: "Inter_700Bold", textDecorationLine: "underline" } : undefined}
-                      >
-                        {b}
+          {(item.binLocations ?? []).length > 0 ? (
+            <View style={[cardStyles.binRow, { backgroundColor: colors.accent }]}>
+              <Text style={[cardStyles.binIcon, { color: colors.accentForeground }]}>📍</Text>
+              <View style={cardStyles.binTextWrap}>
+                <Text style={[cardStyles.binText, { color: colors.accentForeground }]}>
+                  {(item.binLocations ?? []).length === 1 ? 'Bin: ' : 'Bins: '}
+                  {(item.binLocations ?? []).map((b, i) => {
+                    const isMatch =
+                      !!highlightBin && b.toUpperCase() === highlightBin.toUpperCase();
+                    const sep = i === 0 ? '' : expanded ? '\n      ' : ', ';
+                    return (
+                      <Text key={`${b}-${i}`}>
+                        {sep}
+                        <Text
+                          style={
+                            isMatch
+                              ? { fontFamily: 'Inter_700Bold', textDecorationLine: 'underline' }
+                              : undefined
+                          }
+                        >
+                          {b}
+                        </Text>
                       </Text>
-                    </Text>
-                  );
-                })}
-              </Text>
+                    );
+                  })}
+                </Text>
+              </View>
             </View>
-          </View>
-        ) : null}
+          ) : null}
 
-        {/* Dedicated related-sizes control
+          {/* Dedicated related-sizes control
             ────────────────────────────────
             Always visible (when the part has variants) so workers can find
             other sizes / amperages / lengths without expanding the whole card.
             Toggles a panel directly underneath; tapping the inner Pressable
             does NOT bubble to the outer card Pressable, so the rest of the
             card stays in its current state. */}
-        {hasVariants ? (
-          <Pressable
-            onPress={() => setVariantsExpanded(v => !v)}
-            style={({ pressed }) => [
-              cardStyles.variantsToggle,
-              {
-                borderColor: colors.border,
-                backgroundColor: colors.muted,
-                opacity: pressed ? 0.7 : 1,
-              },
-            ]}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: variantsExpanded }}
-            accessibilityLabel={`${seriesLabel ?? "Related sizes"}, ${variantCount} ${variantCount === 1 ? "item" : "items"}`}
-          >
-            <Text style={[cardStyles.variantsToggleText, { color: colors.foreground, fontSize: fs(12) }]} allowFontScaling={false}>
-              {seriesLabel ?? "RELATED SIZES"} ({variantCount})
-            </Text>
-            <Text style={[cardStyles.variantsToggleChevron, { color: colors.mutedForeground }]}>
-              {variantsExpanded ? "▲" : "▼"}
-            </Text>
-          </Pressable>
-        ) : null}
-
-        {/* Related-sizes panel (independent of card expand state) */}
-        {hasVariants && variantsExpanded ? (
-          <View
-            style={[
-              cardStyles.variantsPanel,
-              { borderColor: colors.border, backgroundColor: colors.card },
-            ]}
-          >
-            {filteredVariants.slice(0, 12).map((v) => (
-              <VariantRow
-                key={v.id}
-                item={v}
-                parentVendor={item.vendor}
-                parentCatalog={item.catalog}
-                colors={colors}
-                fontScale={fontScale}
-                onPress={() => { setVariantsExpanded(false); setDetailVariant(v); }}
-              />
-            ))}
-            {filteredVariants.length > 12 ? (
-              <Text style={[cardStyles.moreText, { color: colors.mutedForeground }]}>
-                +{filteredVariants.length - 12} more
+          {hasVariants ? (
+            <Pressable
+              onPress={() => setVariantsExpanded((v) => !v)}
+              style={({ pressed }) => [
+                cardStyles.variantsToggle,
+                {
+                  borderColor: colors.border,
+                  backgroundColor: colors.muted,
+                  opacity: pressed ? 0.7 : 1,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: variantsExpanded }}
+              accessibilityLabel={`${seriesLabel ?? 'Related sizes'}, ${variantCount} ${variantCount === 1 ? 'item' : 'items'}`}
+            >
+              <Text
+                style={[
+                  cardStyles.variantsToggleText,
+                  { color: colors.foreground, fontSize: fs(12) },
+                ]}
+                allowFontScaling={false}
+              >
+                {seriesLabel ?? 'RELATED SIZES'} ({variantCount})
               </Text>
-            ) : null}
-          </View>
-        ) : null}
-
-        {/* Expanded content */}
-        {expanded ? (
-          <>
-            {/* Keywords — always shown when expanded; edit button always accessible */}
-            <View style={cardStyles.section}>
-              <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
-                AI KEYWORDS
+              <Text style={[cardStyles.variantsToggleChevron, { color: colors.mutedForeground }]}>
+                {variantsExpanded ? '▲' : '▼'}
               </Text>
-              {hasKeywords ? (
-                <View style={cardStyles.keywordRow}>
-                  {(item.aiKeywords ?? []).map((kw, i) => {
-                    // A keyword chip is "matched" when the whole keyword
-                    // string would survive the same whole-word check used
-                    // by applyRefinement — tint the chip background so the
-                    // worker sees which AI tags drove the match.
-                    const matched = hl
-                      ? splitHighlightSegments(kw, hl).some(s => s.match)
-                      : false;
-                    return (
-                      <View
-                        key={i}
-                        style={[
-                          cardStyles.keyword,
-                          {
-                            backgroundColor: matched ? colors.primary + "33" : colors.muted,
-                            borderWidth: matched ? 1 : 0,
-                            borderColor: matched ? colors.primary : "transparent",
-                          },
-                        ]}
-                      >
-                        <Text
+            </Pressable>
+          ) : null}
+
+          {/* Related-sizes panel (independent of card expand state) */}
+          {hasVariants && variantsExpanded ? (
+            <View
+              style={[
+                cardStyles.variantsPanel,
+                { borderColor: colors.border, backgroundColor: colors.card },
+              ]}
+            >
+              {filteredVariants.slice(0, 12).map((v) => (
+                <VariantRow
+                  key={v.id}
+                  item={v}
+                  parentVendor={item.vendor}
+                  parentCatalog={item.catalog}
+                  colors={colors}
+                  fontScale={fontScale}
+                  onPress={() => {
+                    setVariantsExpanded(false);
+                    setDetailVariant(v);
+                  }}
+                />
+              ))}
+              {filteredVariants.length > 12 ? (
+                <Text style={[cardStyles.moreText, { color: colors.mutedForeground }]}>
+                  +{filteredVariants.length - 12} more
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/* Expanded content */}
+          {expanded ? (
+            <>
+              {/* Keywords — always shown when expanded; edit button always accessible */}
+              <View style={cardStyles.section}>
+                <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
+                  AI KEYWORDS
+                </Text>
+                {hasKeywords ? (
+                  <View style={cardStyles.keywordRow}>
+                    {(item.aiKeywords ?? []).map((kw, i) => {
+                      // A keyword chip is "matched" when the whole keyword
+                      // string would survive the same whole-word check used
+                      // by applyRefinement — tint the chip background so the
+                      // worker sees which AI tags drove the match.
+                      const matched = hl
+                        ? splitHighlightSegments(kw, hl).some((s) => s.match)
+                        : false;
+                      return (
+                        <View
+                          key={i}
                           style={[
-                            cardStyles.keywordText,
+                            cardStyles.keyword,
                             {
-                              color: colors.foreground,
-                              fontFamily: matched ? "Inter_700Bold" : "Inter_400Regular",
+                              backgroundColor: matched ? colors.primary + '33' : colors.muted,
+                              borderWidth: matched ? 1 : 0,
+                              borderColor: matched ? colors.primary : 'transparent',
                             },
                           ]}
                         >
-                          {kw}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              ) : (
-                <Text style={[cardStyles.keywordText, { color: colors.mutedForeground, marginBottom: 6 }]}>
-                  No keywords yet — tap Edit to add some.
-                </Text>
-              )}
-              {onEditKeywords ? (
-                <Pressable
-                  onPress={() => onEditKeywords(item)}
-                  style={[cardStyles.editBtn, { borderColor: colors.border }]}
-                >
-                  <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
-                    ✏️ Edit Part Details
+                          <Text
+                            style={[
+                              cardStyles.keywordText,
+                              {
+                                color: colors.foreground,
+                                fontFamily: matched ? 'Inter_700Bold' : 'Inter_400Regular',
+                              },
+                            ]}
+                          >
+                            {kw}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Text
+                    style={[
+                      cardStyles.keywordText,
+                      { color: colors.mutedForeground, marginBottom: 6 },
+                    ]}
+                  >
+                    No keywords yet — tap Edit to add some.
                   </Text>
-                </Pressable>
-              ) : null}
-              {onConfirm ? (
-                <Pressable
-                  onPress={onConfirm}
-                  style={[cardStyles.confirmBtn, { backgroundColor: "#10b981" }]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Confirm this is the correct part"
-                >
-                  <Text style={cardStyles.confirmBtnText}>✓ That's it</Text>
-                </Pressable>
-              ) : null}
-            </View>
+                )}
+                {onEditKeywords ? (
+                  <Pressable
+                    onPress={() => onEditKeywords(item)}
+                    style={[cardStyles.editBtn, { borderColor: colors.border }]}
+                  >
+                    <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
+                      ✏️ Edit Part Details
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {onConfirm ? (
+                  <Pressable
+                    onPress={onConfirm}
+                    style={[cardStyles.confirmBtn, { backgroundColor: '#10b981' }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Confirm this is the correct part"
+                  >
+                    <Text style={cardStyles.confirmBtnText}>✓ That's it</Text>
+                  </Pressable>
+                ) : null}
+              </View>
 
-            {/* Vendor full name — only shown when we have a vendor_map entry
+              {/* Vendor full name — only shown when we have a vendor_map entry
                 for this vendor code. Hidden entirely otherwise (no
                 "Unknown vendor" placeholder). */}
-            {item.vendorFullName ? (
-              <Text style={[cardStyles.vendorFullName, { color: colors.mutedForeground }]}>
-                Vendor: {item.vendorFullName}
-              </Text>
-            ) : null}
-          </>
-        ) : null}
+              {item.vendorFullName ? (
+                <Text style={[cardStyles.vendorFullName, { color: colors.mutedForeground }]}>
+                  Vendor: {item.vendorFullName}
+                </Text>
+              ) : null}
+            </>
+          ) : null}
 
-        {/* Expand chevron */}
-        <Text style={[cardStyles.chevron, { color: colors.mutedForeground }]}>
-          {expanded ? "▲" : "▼"}
-        </Text>
-      </View>
-    </Pressable>
-    {/* Variant detail modal — lives outside the outer card Pressable so the
+          {/* Expand chevron */}
+          <Text style={[cardStyles.chevron, { color: colors.mutedForeground }]}>
+            {expanded ? '▲' : '▼'}
+          </Text>
+        </View>
+      </Pressable>
+      {/* Variant detail modal — lives outside the outer card Pressable so the
         slide animation's touch-up event cannot leak into toggleCard. The
         inner ResultCard gets an empty variants array so we never recurse
         into a nested related-sizes panel. */}
@@ -559,7 +614,7 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
         onRequestClose={() => setDetailVariant(null)}
       >
         <Pressable
-          style={[cardStyles.detailOverlay, { backgroundColor: "#00000088" }]}
+          style={[cardStyles.detailOverlay, { backgroundColor: '#00000088' }]}
           onPress={() => setDetailVariant(null)}
           accessibilityRole="button"
           accessibilityLabel="Dismiss related size"
@@ -620,46 +675,51 @@ const cardStyles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
     marginBottom: 10,
-    shadowColor: "#000",
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
     shadowRadius: 4,
     elevation: 2,
   },
   header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
     marginBottom: 8,
   },
-  headerLeft: { flexDirection: "row", alignItems: "flex-start", flex: 1 },
+  headerLeft: { flexDirection: 'row', alignItems: 'flex-start', flex: 1 },
   headerRight: { marginLeft: 8 },
   rankBadge: {
     width: 26,
     height: 26,
     borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 8,
   },
-  rankText: { fontSize: 11, fontFamily: "Inter_700Bold" },
+  rankText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
   titleGroup: { flex: 1 },
-  vendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5 },
-  catalog: { fontSize: 17, fontFamily: "Inter_700Bold", marginTop: 2 },
+  vendor: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  catalog: { fontSize: 17, fontFamily: 'Inter_700Bold', marginTop: 2 },
   badge: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
     gap: 4,
   },
   badgeDot: { width: 6, height: 6, borderRadius: 3 },
-  badgeText: { fontSize: 12, fontFamily: "Inter_700Bold" },
-  description: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19, marginBottom: 8 },
+  badgeText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
+  description: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 19, marginBottom: 8 },
   binRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -668,24 +728,24 @@ const cardStyles = StyleSheet.create({
   },
   binIcon: { fontSize: 14 },
   binTextWrap: { flex: 1 },
-  binText: { fontSize: 13, fontFamily: "Inter_600SemiBold", flexShrink: 1 },
-  reason: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 4 },
-  tradeSizeLabel: { fontSize: 22, fontFamily: "Inter_700Bold", marginTop: 3 },
+  binText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', flexShrink: 1 },
+  reason: { fontSize: 11, fontFamily: 'Inter_400Regular', fontStyle: 'italic', marginBottom: 4 },
+  tradeSizeLabel: { fontSize: 22, fontFamily: 'Inter_700Bold', marginTop: 3 },
   section: { marginTop: 12 },
   sectionTitle: {
     fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
+    fontFamily: 'Inter_600SemiBold',
     letterSpacing: 1,
-    textTransform: "uppercase",
+    textTransform: 'uppercase',
     marginBottom: 8,
   },
-  keywordRow: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
+  keywordRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   keyword: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
-  keywordText: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  keywordText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   variantsToggle: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     borderWidth: 1,
     borderRadius: 6,
     paddingHorizontal: 10,
@@ -694,7 +754,7 @@ const cardStyles = StyleSheet.create({
   },
   variantsToggleText: {
     fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
+    fontFamily: 'Inter_600SemiBold',
     letterSpacing: 0.5,
     flexShrink: 1,
   },
@@ -706,31 +766,36 @@ const cardStyles = StyleSheet.create({
     marginTop: 8,
     borderWidth: 1,
     borderRadius: 6,
-    overflow: "hidden",
+    overflow: 'hidden',
   },
-  moreText: { fontSize: 12, fontFamily: "Inter_400Regular", alignSelf: "center", paddingVertical: 6 },
+  moreText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    alignSelf: 'center',
+    paddingVertical: 6,
+  },
   editBtn: {
     marginTop: 10,
     borderWidth: 1,
     borderRadius: 6,
     paddingVertical: 6,
     paddingHorizontal: 12,
-    alignSelf: "flex-start",
+    alignSelf: 'flex-start',
   },
-  editBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  editBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   confirmBtn: {
     marginTop: 10,
     borderRadius: 6,
     paddingVertical: 8,
     paddingHorizontal: 16,
-    alignSelf: "flex-start",
+    alignSelf: 'flex-start',
   },
-  confirmBtnText: { fontSize: 14, fontFamily: "Inter_700Bold", color: "#ffffff" },
-  vendorFullName: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
+  confirmBtnText: { fontSize: 14, fontFamily: 'Inter_700Bold', color: '#ffffff' },
+  vendorFullName: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 8 },
   seriesBadge: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
     borderWidth: 1,
     borderRadius: 4,
     paddingHorizontal: 6,
@@ -739,33 +804,33 @@ const cardStyles = StyleSheet.create({
   },
   seriesBadgeText: {
     fontSize: 11,
-    fontFamily: "Inter_500Medium",
+    fontFamily: 'Inter_500Medium',
   },
-  chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
+  chevron: { textAlign: 'center', fontSize: 12, marginTop: 8 },
   detailOverlay: {
     flex: 1,
-    justifyContent: "flex-end",
+    justifyContent: 'flex-end',
   },
   detailSheet: {
-    maxHeight: "92%",
+    maxHeight: '92%',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,
-    overflow: "hidden",
+    overflow: 'hidden',
   },
   detailHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   detailTitle: {
     fontSize: 15,
-    fontFamily: "Inter_700Bold",
+    fontFamily: 'Inter_700Bold',
     letterSpacing: 0.3,
   },
   detailClose: {
@@ -775,15 +840,14 @@ const cardStyles = StyleSheet.create({
     borderWidth: 1,
     minHeight: 44,
     minWidth: 44,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   detailCloseText: {
     fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
+    fontFamily: 'Inter_600SemiBold',
   },
   detailScroll: {
     padding: 14,
   },
 });
-

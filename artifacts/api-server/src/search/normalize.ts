@@ -22,8 +22,8 @@
 export function normalizeQuery(raw: string): string {
   return raw
     .trim()
-    .replace(/\s+/g, " ")
+    .replace(/\s+/g, ' ')
     .toLowerCase()
-    .normalize("NFKD")
-    .replace(/\p{Diacritic}/gu, "");
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '');
 }

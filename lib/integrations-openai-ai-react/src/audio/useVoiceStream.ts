@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef } from "react";
-import { useAudioPlayback } from "./useAudioPlayback";
+import { useCallback, useEffect, useRef } from 'react';
+import { useAudioPlayback } from './useAudioPlayback';
 
 interface StreamCallbacks {
   workletPath: string;
@@ -10,10 +10,10 @@ interface StreamCallbacks {
 }
 
 type TypedVoiceStreamEvent =
-  | { type: "user_transcript"; data: string }
-  | { type: "transcript"; data: string }
-  | { type: "audio"; data: string }
-  | { type: "error"; error: string };
+  | { type: 'user_transcript'; data: string }
+  | { type: 'transcript'; data: string }
+  | { type: 'audio'; data: string }
+  | { type: 'error'; error: string };
 
 type DoneEvent = { done: true };
 
@@ -29,17 +29,17 @@ type StreamState = {
 const SSE_EVENT_DELIMITER = /\r\n\r\n|\n\n|\r\r/g;
 
 function createAbortError(): Error {
-  const error = new Error("The operation was aborted");
-  error.name = "AbortError";
+  const error = new Error('The operation was aborted');
+  error.name = 'AbortError';
   return error;
 }
 
 function toError(error: unknown): Error {
   if (error instanceof Error) return error;
-  return new Error(typeof error === "string" ? error : "Unknown error");
+  return new Error(typeof error === 'string' ? error : 'Unknown error');
 }
 
-function notifyError(callbacks: Pick<StreamCallbacks, "onError">, error: Error) {
+function notifyError(callbacks: Pick<StreamCallbacks, 'onError'>, error: Error) {
   try {
     callbacks.onError?.(error);
   } catch {
@@ -48,19 +48,19 @@ function notifyError(callbacks: Pick<StreamCallbacks, "onError">, error: Error) 
 }
 
 function isVoiceStreamEvent(value: unknown): value is VoiceStreamEvent {
-  if (!value || typeof value !== "object") return false;
+  if (!value || typeof value !== 'object') return false;
 
   const record = value as Record<string, unknown>;
 
   if (record.done === true) return true;
 
   switch (record.type) {
-    case "user_transcript":
-    case "transcript":
-    case "audio":
-      return typeof record.data === "string";
-    case "error":
-      return typeof record.error === "string";
+    case 'user_transcript':
+    case 'transcript':
+    case 'audio':
+      return typeof record.data === 'string';
+    case 'error':
+      return typeof record.error === 'string';
     default:
       return false;
   }
@@ -72,34 +72,34 @@ function parseVoiceStreamEvent(raw: string): VoiceStreamEvent {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error("Received malformed SSE JSON payload");
+    throw new Error('Received malformed SSE JSON payload');
   }
 
   if (!isVoiceStreamEvent(parsed)) {
-    throw new Error("Received unexpected SSE event shape");
+    throw new Error('Received unexpected SSE event shape');
   }
 
   return parsed;
 }
 
 function readSseDataFromBlock(block: string): string | null {
-  const normalizedBlock = block.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const normalizedBlock = block.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const dataLines: string[] = [];
 
-  for (const line of normalizedBlock.split("\n")) {
-    if (!line.startsWith("data:")) {
+  for (const line of normalizedBlock.split('\n')) {
+    if (!line.startsWith('data:')) {
       continue;
     }
 
     // SSE allows one optional leading space after the colon.
-    dataLines.push(line.slice(5).replace(/^ /, ""));
+    dataLines.push(line.slice(5).replace(/^ /, ''));
   }
 
   if (dataLines.length === 0) {
     return null;
   }
 
-  return dataLines.join("\n");
+  return dataLines.join('\n');
 }
 
 function extractCompleteSseBlocks(buffer: string): {
@@ -124,13 +124,13 @@ function extractCompleteSseBlocks(buffer: string): {
 }
 
 function isDoneEvent(event: VoiceStreamEvent): event is DoneEvent {
-  return "done" in event && (event as DoneEvent).done === true;
+  return 'done' in event && (event as DoneEvent).done === true;
 }
 
 function handleVoiceStreamEvent(
   event: VoiceStreamEvent,
   playback: PlaybackHandle,
-  callbacks: Omit<StreamCallbacks, "workletPath">,
+  callbacks: Omit<StreamCallbacks, 'workletPath'>,
   state: StreamState
 ) {
   if (isDoneEvent(event)) {
@@ -143,20 +143,20 @@ function handleVoiceStreamEvent(
   }
 
   switch (event.type) {
-    case "user_transcript":
+    case 'user_transcript':
       callbacks.onUserTranscript?.(event.data);
       return;
 
-    case "transcript":
+    case 'transcript':
       state.fullTranscript += event.data;
       callbacks.onTranscript?.(event.data, state.fullTranscript);
       return;
 
-    case "audio":
+    case 'audio':
       playback.pushAudio(event.data);
       return;
 
-    case "error":
+    case 'error':
       throw new Error(event.error);
   }
 }
@@ -170,7 +170,7 @@ async function blobToBase64(blob: Blob, signal?: AbortSignal): Promise<string> {
     const reader = new FileReader();
 
     const cleanup = () => {
-      signal?.removeEventListener("abort", onAbort);
+      signal?.removeEventListener('abort', onAbort);
       reader.onload = null;
       reader.onerror = null;
       reader.onabort = null;
@@ -188,20 +188,20 @@ async function blobToBase64(blob: Blob, signal?: AbortSignal): Promise<string> {
       reject(createAbortError());
     };
 
-    signal?.addEventListener("abort", onAbort, { once: true });
+    signal?.addEventListener('abort', onAbort, { once: true });
 
     reader.onload = () => {
       const result = reader.result;
       cleanup();
 
-      if (typeof result !== "string") {
-        reject(new Error("Failed to read audio blob"));
+      if (typeof result !== 'string') {
+        reject(new Error('Failed to read audio blob'));
         return;
       }
 
-      const commaIndex = result.indexOf(",");
+      const commaIndex = result.indexOf(',');
       if (commaIndex === -1) {
-        reject(new Error("Failed to parse audio data URL"));
+        reject(new Error('Failed to parse audio data URL'));
         return;
       }
 
@@ -209,7 +209,7 @@ async function blobToBase64(blob: Blob, signal?: AbortSignal): Promise<string> {
     };
 
     reader.onerror = () => {
-      const error = reader.error ?? new Error("Failed to read audio blob");
+      const error = reader.error ?? new Error('Failed to read audio blob');
       cleanup();
       reject(error);
     };
@@ -227,14 +227,14 @@ async function readErrorText(response: Response): Promise<string> {
   try {
     return (await response.text()).trim();
   } catch {
-    return "";
+    return '';
   }
 }
 
 export function useVoiceStream({ workletPath, ...callbacks }: StreamCallbacks) {
   const playback = useAudioPlayback(workletPath);
 
-  const callbacksRef = useRef<Omit<StreamCallbacks, "workletPath">>(callbacks);
+  const callbacksRef = useRef<Omit<StreamCallbacks, 'workletPath'>>(callbacks);
   callbacksRef.current = callbacks;
 
   const playbackRef = useRef<PlaybackHandle>(playback);
@@ -248,145 +248,129 @@ export function useVoiceStream({ workletPath, ...callbacks }: StreamCallbacks) {
     };
   }, []);
 
-  const streamVoiceResponse = useCallback(
-    async (url: string, audioBlob: Blob): Promise<void> => {
-      activeRequestRef.current?.abort();
+  const streamVoiceResponse = useCallback(async (url: string, audioBlob: Blob): Promise<void> => {
+    activeRequestRef.current?.abort();
 
-      const abortController = new AbortController();
-      activeRequestRef.current = abortController;
+    const abortController = new AbortController();
+    activeRequestRef.current = abortController;
 
-      const throwIfNotCurrent = () => {
-        if (
-          abortController.signal.aborted ||
-          activeRequestRef.current !== abortController
-        ) {
-          throw createAbortError();
+    const throwIfNotCurrent = () => {
+      if (abortController.signal.aborted || activeRequestRef.current !== abortController) {
+        throw createAbortError();
+      }
+    };
+
+    const processBlocks = (blocks: string[], state: StreamState) => {
+      for (const block of blocks) {
+        throwIfNotCurrent();
+
+        const rawData = readSseDataFromBlock(block);
+        if (!rawData) {
+          continue;
         }
-      };
 
-      const processBlocks = (blocks: string[], state: StreamState) => {
-        for (const block of blocks) {
-          throwIfNotCurrent();
+        const event = parseVoiceStreamEvent(rawData);
+        handleVoiceStreamEvent(event, playbackRef.current, callbacksRef.current, state);
+      }
+    };
 
-          const rawData = readSseDataFromBlock(block);
-          if (!rawData) {
-            continue;
-          }
+    const state: StreamState = {
+      fullTranscript: '',
+      didComplete: false,
+    };
 
-          const event = parseVoiceStreamEvent(rawData);
-          handleVoiceStreamEvent(
-            event,
-            playbackRef.current,
-            callbacksRef.current,
-            state
-          );
-        }
-      };
+    try {
+      await playbackRef.current.init();
+      throwIfNotCurrent();
 
-      const state: StreamState = {
-        fullTranscript: "",
-        didComplete: false,
-      };
+      playbackRef.current.clear();
+
+      const base64Audio = await blobToBase64(audioBlob, abortController.signal);
+      throwIfNotCurrent();
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({ audio: base64Audio }),
+        signal: abortController.signal,
+      });
+      throwIfNotCurrent();
+
+      if (!response.ok) {
+        const detail = await readErrorText(response);
+        throw new Error(
+          detail
+            ? `Voice request failed (${response.status} ${response.statusText}): ${detail}`
+            : `Voice request failed (${response.status} ${response.statusText})`
+        );
+      }
+
+      if (!response.body) {
+        throw new Error('Voice request failed: response body is missing');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
       try {
-        await playbackRef.current.init();
-        throwIfNotCurrent();
+        while (true) {
+          const { done, value } = await reader.read();
+          throwIfNotCurrent();
 
-        playbackRef.current.clear();
-
-        const base64Audio = await blobToBase64(audioBlob, abortController.signal);
-        throwIfNotCurrent();
-
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "text/event-stream",
-          },
-          body: JSON.stringify({ audio: base64Audio }),
-          signal: abortController.signal,
-        });
-        throwIfNotCurrent();
-
-        if (!response.ok) {
-          const detail = await readErrorText(response);
-          throw new Error(
-            detail
-              ? `Voice request failed (${response.status} ${response.statusText}): ${detail}`
-              : `Voice request failed (${response.status} ${response.statusText})`
-          );
-        }
-
-        if (!response.body) {
-          throw new Error("Voice request failed: response body is missing");
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            throwIfNotCurrent();
-
-            if (done) {
-              break;
-            }
-
-            buffer += decoder.decode(value, { stream: true });
-
-            const { blocks, remaining } = extractCompleteSseBlocks(buffer);
-            buffer = remaining;
-
-            processBlocks(blocks, state);
+          if (done) {
+            break;
           }
 
-          // Flush any trailing UTF-8 bytes.
-          buffer += decoder.decode();
+          buffer += decoder.decode(value, { stream: true });
 
           const { blocks, remaining } = extractCompleteSseBlocks(buffer);
+          buffer = remaining;
+
           processBlocks(blocks, state);
-
-          // Process a final unterminated event if the server closed without a trailing blank line.
-          const finalData = readSseDataFromBlock(remaining);
-          if (finalData) {
-            throwIfNotCurrent();
-
-            const event = parseVoiceStreamEvent(finalData);
-            handleVoiceStreamEvent(
-              event,
-              playbackRef.current,
-              callbacksRef.current,
-              state
-            );
-          }
-        } finally {
-          try {
-            await reader.cancel();
-          } catch {
-            // Ignore cleanup errors.
-          }
-
-          reader.releaseLock();
-        }
-      } catch (error) {
-        const err = toError(error);
-
-        if (err.name === "AbortError") {
-          return;
         }
 
-        notifyError(callbacksRef.current, err);
-        throw err;
+        // Flush any trailing UTF-8 bytes.
+        buffer += decoder.decode();
+
+        const { blocks, remaining } = extractCompleteSseBlocks(buffer);
+        processBlocks(blocks, state);
+
+        // Process a final unterminated event if the server closed without a trailing blank line.
+        const finalData = readSseDataFromBlock(remaining);
+        if (finalData) {
+          throwIfNotCurrent();
+
+          const event = parseVoiceStreamEvent(finalData);
+          handleVoiceStreamEvent(event, playbackRef.current, callbacksRef.current, state);
+        }
       } finally {
-        if (activeRequestRef.current === abortController) {
-          activeRequestRef.current = null;
+        try {
+          await reader.cancel();
+        } catch {
+          // Ignore cleanup errors.
         }
+
+        reader.releaseLock();
       }
-    },
-    []
-  );
+    } catch (error) {
+      const err = toError(error);
+
+      if (err.name === 'AbortError') {
+        return;
+      }
+
+      notifyError(callbacksRef.current, err);
+      throw err;
+    } finally {
+      if (activeRequestRef.current === abortController) {
+        activeRequestRef.current = null;
+      }
+    }
+  }, []);
 
   return { streamVoiceResponse, playbackState: playback.state };
 }

@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { UpsertInventoryItem } from "./upsertInventoryItem";
+import type { UpsertInventoryItem } from './upsertInventoryItem';
 
 export interface PreviewUpsertBody {
   items: UpsertInventoryItem[];

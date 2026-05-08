@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { PreviewMatchRow } from "./previewMatchRow";
+import type { PreviewMatchRow } from './previewMatchRow';
 
 export interface PreviewUpsertResponse {
   /** Rows whose (vendor, catalog) does not exist in the DB. */

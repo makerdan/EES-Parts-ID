@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { CategoryCoverageResponseBySource } from "./categoryCoverageResponseBySource";
+import type { CategoryCoverageResponseBySource } from './categoryCoverageResponseBySource';
 
 export interface CategoryCoverageResponse {
   total: number;

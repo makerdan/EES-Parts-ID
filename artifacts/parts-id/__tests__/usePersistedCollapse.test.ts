@@ -7,8 +7,8 @@
  * toggleCollapsed flip-and-persist.
  */
 
-import { renderHook, act } from "@testing-library/react";
-import { usePersistedCollapse } from "../hooks/usePersistedCollapse";
+import { renderHook, act } from '@testing-library/react';
+import { usePersistedCollapse } from '../hooks/usePersistedCollapse';
 
 // ---------------------------------------------------------------------------
 // AsyncStorage mock
@@ -16,7 +16,7 @@ import { usePersistedCollapse } from "../hooks/usePersistedCollapse";
 const mockGetItem = jest.fn<Promise<string | null>, [string]>();
 const mockSetItem = jest.fn<Promise<void>, [string, string]>();
 
-jest.mock("@react-native-async-storage/async-storage", () => ({
+jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
   default: {
     getItem: (...args: [string]) => mockGetItem(...args),
@@ -26,15 +26,16 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 }));
 
 // Resolve all pending microtasks so that useEffect / setState chains settle.
-const flushPromises = () => act(async () => {
-  await new Promise<void>(resolve => setTimeout(resolve, 0));
-});
+const flushPromises = () =>
+  act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
 
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 beforeEach(() => {
-  mockGetItem.mockResolvedValue(null);  // default: key absent
+  mockGetItem.mockResolvedValue(null); // default: key absent
   mockSetItem.mockResolvedValue(undefined);
 });
 
@@ -53,25 +54,24 @@ function getState(result: { current: ReturnType<typeof usePersistedCollapse> }) 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-describe("usePersistedCollapse", () => {
-
+describe('usePersistedCollapse', () => {
   // ── Default value ──────────────────────────────────────────────────────────
 
-  describe("default value before AsyncStorage responds", () => {
-    it("returns the defaultValue (true) synchronously on first render", () => {
+  describe('default value before AsyncStorage responds', () => {
+    it('returns the defaultValue (true) synchronously on first render', () => {
       // getItem never resolves during this test
       mockGetItem.mockReturnValue(new Promise(() => {}));
 
-      const { result } = renderHook(() => usePersistedCollapse("@test/key"));
+      const { result } = renderHook(() => usePersistedCollapse('@test/key'));
 
       expect(getState(result).collapsed).toBe(true);
       expect(getState(result).isLoaded).toBe(false);
     });
 
-    it("uses a custom defaultValue (false) before AsyncStorage responds", () => {
+    it('uses a custom defaultValue (false) before AsyncStorage responds', () => {
       mockGetItem.mockReturnValue(new Promise(() => {}));
 
-      const { result } = renderHook(() => usePersistedCollapse("@test/key2", false));
+      const { result } = renderHook(() => usePersistedCollapse('@test/key2', false));
 
       expect(getState(result).collapsed).toBe(false);
       expect(getState(result).isLoaded).toBe(false);
@@ -80,11 +80,11 @@ describe("usePersistedCollapse", () => {
 
   // ── isLoaded transitions ───────────────────────────────────────────────────
 
-  describe("isLoaded transitions to true", () => {
-    it("sets isLoaded to true when the key is found in storage", async () => {
-      mockGetItem.mockResolvedValue("1");
+  describe('isLoaded transitions to true', () => {
+    it('sets isLoaded to true when the key is found in storage', async () => {
+      mockGetItem.mockResolvedValue('1');
 
-      const { result } = renderHook(() => usePersistedCollapse("@test/found"));
+      const { result } = renderHook(() => usePersistedCollapse('@test/found'));
       expect(getState(result).isLoaded).toBe(false);
 
       await flushPromises();
@@ -92,10 +92,10 @@ describe("usePersistedCollapse", () => {
       expect(getState(result).isLoaded).toBe(true);
     });
 
-    it("sets isLoaded to true when the key is absent from storage (null)", async () => {
+    it('sets isLoaded to true when the key is absent from storage (null)', async () => {
       mockGetItem.mockResolvedValue(null);
 
-      const { result } = renderHook(() => usePersistedCollapse("@test/absent"));
+      const { result } = renderHook(() => usePersistedCollapse('@test/absent'));
       expect(getState(result).isLoaded).toBe(false);
 
       await flushPromises();
@@ -103,10 +103,10 @@ describe("usePersistedCollapse", () => {
       expect(getState(result).isLoaded).toBe(true);
     });
 
-    it("sets isLoaded to true even when AsyncStorage.getItem rejects (error path)", async () => {
-      mockGetItem.mockRejectedValue(new Error("Storage unavailable"));
+    it('sets isLoaded to true even when AsyncStorage.getItem rejects (error path)', async () => {
+      mockGetItem.mockRejectedValue(new Error('Storage unavailable'));
 
-      const { result } = renderHook(() => usePersistedCollapse("@test/error"));
+      const { result } = renderHook(() => usePersistedCollapse('@test/error'));
       expect(getState(result).isLoaded).toBe(false);
 
       await flushPromises();
@@ -119,12 +119,12 @@ describe("usePersistedCollapse", () => {
 
   // ── Stored value hydration ─────────────────────────────────────────────────
 
-  describe("stored value hydration", () => {
+  describe('stored value hydration', () => {
     it('sets collapsed to true when stored value is "1"', async () => {
-      mockGetItem.mockResolvedValue("1");
+      mockGetItem.mockResolvedValue('1');
 
-      const { result } = renderHook(() =>
-        usePersistedCollapse("@test/stored-1", false), // start with false default
+      const { result } = renderHook(
+        () => usePersistedCollapse('@test/stored-1', false) // start with false default
       );
 
       await flushPromises();
@@ -134,10 +134,10 @@ describe("usePersistedCollapse", () => {
     });
 
     it('sets collapsed to false when stored value is "0"', async () => {
-      mockGetItem.mockResolvedValue("0");
+      mockGetItem.mockResolvedValue('0');
 
-      const { result } = renderHook(() =>
-        usePersistedCollapse("@test/stored-0", true), // start with true default
+      const { result } = renderHook(
+        () => usePersistedCollapse('@test/stored-0', true) // start with true default
       );
 
       await flushPromises();
@@ -146,11 +146,11 @@ describe("usePersistedCollapse", () => {
       expect(getState(result).isLoaded).toBe(true);
     });
 
-    it("keeps the defaultValue when the key is absent (null stored value)", async () => {
+    it('keeps the defaultValue when the key is absent (null stored value)', async () => {
       mockGetItem.mockResolvedValue(null);
 
       const { result } = renderHook(() =>
-        usePersistedCollapse("@test/absent-keeps-default", false),
+        usePersistedCollapse('@test/absent-keeps-default', false)
       );
 
       await flushPromises();
@@ -162,9 +162,9 @@ describe("usePersistedCollapse", () => {
 
   // ── setCollapsed ───────────────────────────────────────────────────────────
 
-  describe("setCollapsed", () => {
-    it("updates the collapsed state immediately", async () => {
-      const { result } = renderHook(() => usePersistedCollapse("@test/set"));
+  describe('setCollapsed', () => {
+    it('updates the collapsed state immediately', async () => {
+      const { result } = renderHook(() => usePersistedCollapse('@test/set'));
 
       await flushPromises(); // let hydration complete
 
@@ -176,39 +176,35 @@ describe("usePersistedCollapse", () => {
     });
 
     it('persists "1" to AsyncStorage when set to true', async () => {
-      const { result } = renderHook(() =>
-        usePersistedCollapse("@test/persist-true", false),
-      );
+      const { result } = renderHook(() => usePersistedCollapse('@test/persist-true', false));
       await flushPromises();
 
       act(() => {
         getState(result).setCollapsed(true);
       });
 
-      expect(mockSetItem).toHaveBeenCalledWith("@test/persist-true", "1");
+      expect(mockSetItem).toHaveBeenCalledWith('@test/persist-true', '1');
     });
 
     it('persists "0" to AsyncStorage when set to false', async () => {
-      const { result } = renderHook(() =>
-        usePersistedCollapse("@test/persist-false", true),
-      );
+      const { result } = renderHook(() => usePersistedCollapse('@test/persist-false', true));
       await flushPromises();
 
       act(() => {
         getState(result).setCollapsed(false);
       });
 
-      expect(mockSetItem).toHaveBeenCalledWith("@test/persist-false", "0");
+      expect(mockSetItem).toHaveBeenCalledWith('@test/persist-false', '0');
     });
   });
 
   // ── toggleCollapsed ────────────────────────────────────────────────────────
 
-  describe("toggleCollapsed", () => {
-    it("flips collapsed from true to false", async () => {
-      mockGetItem.mockResolvedValue("1"); // start collapsed
+  describe('toggleCollapsed', () => {
+    it('flips collapsed from true to false', async () => {
+      mockGetItem.mockResolvedValue('1'); // start collapsed
 
-      const { result } = renderHook(() => usePersistedCollapse("@test/toggle-on"));
+      const { result } = renderHook(() => usePersistedCollapse('@test/toggle-on'));
       await flushPromises();
 
       expect(getState(result).collapsed).toBe(true);
@@ -220,10 +216,10 @@ describe("usePersistedCollapse", () => {
       expect(getState(result).collapsed).toBe(false);
     });
 
-    it("flips collapsed from false to true", async () => {
-      mockGetItem.mockResolvedValue("0"); // start expanded
+    it('flips collapsed from false to true', async () => {
+      mockGetItem.mockResolvedValue('0'); // start expanded
 
-      const { result } = renderHook(() => usePersistedCollapse("@test/toggle-off"));
+      const { result } = renderHook(() => usePersistedCollapse('@test/toggle-off'));
       await flushPromises();
 
       expect(getState(result).collapsed).toBe(false);
@@ -236,67 +232,72 @@ describe("usePersistedCollapse", () => {
     });
 
     it('persists "0" after toggling from collapsed (true → false)', async () => {
-      mockGetItem.mockResolvedValue("1");
+      mockGetItem.mockResolvedValue('1');
 
-      const { result } = renderHook(() => usePersistedCollapse("@test/toggle-persist-0"));
+      const { result } = renderHook(() => usePersistedCollapse('@test/toggle-persist-0'));
       await flushPromises();
 
       act(() => {
         getState(result).toggleCollapsed();
       });
 
-      expect(mockSetItem).toHaveBeenCalledWith("@test/toggle-persist-0", "0");
+      expect(mockSetItem).toHaveBeenCalledWith('@test/toggle-persist-0', '0');
     });
 
     it('persists "1" after toggling from expanded (false → true)', async () => {
-      mockGetItem.mockResolvedValue("0");
+      mockGetItem.mockResolvedValue('0');
 
-      const { result } = renderHook(() => usePersistedCollapse("@test/toggle-persist-1"));
+      const { result } = renderHook(() => usePersistedCollapse('@test/toggle-persist-1'));
       await flushPromises();
 
       act(() => {
         getState(result).toggleCollapsed();
       });
 
-      expect(mockSetItem).toHaveBeenCalledWith("@test/toggle-persist-1", "1");
+      expect(mockSetItem).toHaveBeenCalledWith('@test/toggle-persist-1', '1');
     });
 
-    it("can toggle multiple times and persists each flip correctly", async () => {
-      const { result } = renderHook(() => usePersistedCollapse("@test/multi-toggle"));
+    it('can toggle multiple times and persists each flip correctly', async () => {
+      const { result } = renderHook(() => usePersistedCollapse('@test/multi-toggle'));
       await flushPromises();
 
       // Default is true (collapsed)
-      act(() => { getState(result).toggleCollapsed(); }); // → false
+      act(() => {
+        getState(result).toggleCollapsed();
+      }); // → false
       expect(getState(result).collapsed).toBe(false);
-      expect(mockSetItem).toHaveBeenLastCalledWith("@test/multi-toggle", "0");
+      expect(mockSetItem).toHaveBeenLastCalledWith('@test/multi-toggle', '0');
 
-      act(() => { getState(result).toggleCollapsed(); }); // → true
+      act(() => {
+        getState(result).toggleCollapsed();
+      }); // → true
       expect(getState(result).collapsed).toBe(true);
-      expect(mockSetItem).toHaveBeenLastCalledWith("@test/multi-toggle", "1");
+      expect(mockSetItem).toHaveBeenLastCalledWith('@test/multi-toggle', '1');
 
-      act(() => { getState(result).toggleCollapsed(); }); // → false again
+      act(() => {
+        getState(result).toggleCollapsed();
+      }); // → false again
       expect(getState(result).collapsed).toBe(false);
-      expect(mockSetItem).toHaveBeenLastCalledWith("@test/multi-toggle", "0");
+      expect(mockSetItem).toHaveBeenLastCalledWith('@test/multi-toggle', '0');
     });
   });
 
   // ── Key changes ────────────────────────────────────────────────────────────
 
-  describe("key change re-reads storage", () => {
-    it("resets isLoaded to false and re-reads when the key prop changes", async () => {
-      mockGetItem.mockResolvedValueOnce("1").mockResolvedValueOnce("0");
+  describe('key change re-reads storage', () => {
+    it('resets isLoaded to false and re-reads when the key prop changes', async () => {
+      mockGetItem.mockResolvedValueOnce('1').mockResolvedValueOnce('0');
 
-      const { result, rerender } = renderHook(
-        ({ k }) => usePersistedCollapse(k),
-        { initialProps: { k: "@test/key-a" } },
-      );
+      const { result, rerender } = renderHook(({ k }) => usePersistedCollapse(k), {
+        initialProps: { k: '@test/key-a' },
+      });
       await flushPromises();
 
       expect(getState(result).collapsed).toBe(true); // from stored "1"
       expect(getState(result).isLoaded).toBe(true);
 
       // Change the key — isLoaded should drop to false while the new read is pending
-      rerender({ k: "@test/key-b" });
+      rerender({ k: '@test/key-b' });
       expect(getState(result).isLoaded).toBe(false);
 
       await flushPromises();

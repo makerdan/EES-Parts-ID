@@ -8,11 +8,17 @@
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "test": "pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run test && pnpm --filter ./lib/api-client-react run test",
+    "lint": "eslint .",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,cjs,mjs}\" --ignore-path .prettierignore",
     "readme": "pnpm --filter @workspace/scripts exec tsx ./src/update-readme.ts"
   },
   "private": true,
   "devDependencies": {
-    "typescript": "~5.9.2",
-    "prettier": "^3.8.1"
+    "@typescript-eslint/eslint-plugin": "^8.59.2",
+    "@typescript-eslint/parser": "^8.59.2",
+    "eslint": "^9.39.4",
+    "eslint-config-expo": "^55.0.0",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2"
   }
 }

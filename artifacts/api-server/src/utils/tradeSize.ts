@@ -11,13 +11,13 @@
  */
 
 const FRACTION_CODES: Record<string, number> = {
-  "18": 1 / 8,
-  "14": 1 / 4,
-  "38": 3 / 8,
-  "12": 1 / 2,
-  "58": 5 / 8,
-  "34": 3 / 4,
-  "78": 7 / 8,
+  '18': 1 / 8,
+  '14': 1 / 4,
+  '38': 3 / 8,
+  '12': 1 / 2,
+  '58': 5 / 8,
+  '34': 3 / 4,
+  '78': 7 / 8,
 };
 
 /** Trade size in inches, or null when no recognizable size is present. */
@@ -46,15 +46,30 @@ export function parseTradeSizeInches(text: string | null | undefined): number | 
 }
 
 const CONDUIT_TOKENS = [
-  "IMC", "EMT", "RMC", "GRC", "RGS", "PVC", "ENT", "FMC", "LFMC", "LFNC",
-  "RNC", "CONDUIT", "PIPE", "NIPPLE", "COUPLING", "ELBOW", "STRAP",
-  "CONNECTOR",
+  'IMC',
+  'EMT',
+  'RMC',
+  'GRC',
+  'RGS',
+  'PVC',
+  'ENT',
+  'FMC',
+  'LFMC',
+  'LFNC',
+  'RNC',
+  'CONDUIT',
+  'PIPE',
+  'NIPPLE',
+  'COUPLING',
+  'ELBOW',
+  'STRAP',
+  'CONNECTOR',
 ];
 
 /** True when any text fragment looks like a conduit, pipe, or fitting. */
 export function isConduitOrPipe(...texts: Array<string | null | undefined>): boolean {
-  const blob = texts.filter(Boolean).join(" ").toUpperCase();
-  return CONDUIT_TOKENS.some(t => blob.includes(t));
+  const blob = texts.filter(Boolean).join(' ').toUpperCase();
+  return CONDUIT_TOKENS.some((t) => blob.includes(t));
 }
 
 /**
@@ -69,24 +84,24 @@ export function isConduitOrPipe(...texts: Array<string | null | undefined>): boo
  */
 export function tradeSizeChipLabel(inches: number): string | null {
   const map: Record<string, string> = {
-    "0.125": '1/8"',
-    "0.25": '1/4"',
-    "0.375": '3/8"',
-    "0.5": '1/2"',
-    "0.625": '5/8"',
-    "0.75": '3/4"',
-    "0.875": '7/8"',
-    "1": '1"',
-    "1.25": '1-1/4"',
-    "1.5": '1-1/2"',
-    "1.75": '1-3/4"',
-    "2": '2"',
-    "2.5": '2-1/2"',
-    "3": '3"',
-    "3.5": '3-1/2"',
-    "4": '4"',
-    "5": '5"',
-    "6": '6"',
+    '0.125': '1/8"',
+    '0.25': '1/4"',
+    '0.375': '3/8"',
+    '0.5': '1/2"',
+    '0.625': '5/8"',
+    '0.75': '3/4"',
+    '0.875': '7/8"',
+    '1': '1"',
+    '1.25': '1-1/4"',
+    '1.5': '1-1/2"',
+    '1.75': '1-3/4"',
+    '2': '2"',
+    '2.5': '2-1/2"',
+    '3': '3"',
+    '3.5': '3-1/2"',
+    '4': '4"',
+    '5': '5"',
+    '6': '6"',
   };
   // Round to 1/8" precision so floating-point noise doesn't miss the map.
   const rounded = Math.round(inches * 8) / 8;
@@ -105,14 +120,14 @@ export function tradeSizeKeywordTokens(inches: number): string[] {
   const tokens = new Set<string>([chip]);
 
   // Strip the trailing inch mark for the bare fraction/mixed-number form.
-  const bare = chip.replace(/"$/, "");
+  const bare = chip.replace(/"$/, '');
 
   // Collect every "display form" of the number that users might type.
   const forms: string[] = [bare];
 
   // "1 1/4" form (space instead of dash) for mixed numbers.
-  if (bare.includes("-")) {
-    forms.push(bare.replace("-", " "));
+  if (bare.includes('-')) {
+    forms.push(bare.replace('-', ' '));
   }
 
   // Decimal form (e.g. 1.25, 0.5) for vendor descriptions that use decimals.
@@ -120,16 +135,16 @@ export function tradeSizeKeywordTokens(inches: number): string[] {
 
   // For each display form emit every suffix variant a worker might type.
   const suffixes = [
-    "",        // bare number alone
-    '"',       // with inch mark  (e.g. 0.5")
-    "in.",     // e.g. 1/2in.
-    " in.",    // e.g. 1/2 in.
-    "in",      // e.g. 1/2in
-    " in",     // e.g. 1/2 in
-    "inch",    // e.g. 1/2inch
-    " inch",   // e.g. 1/2 inch
-    "inches",  // e.g. 1/2inches
-    " inches", // e.g. 1/2 inches
+    '', // bare number alone
+    '"', // with inch mark  (e.g. 0.5")
+    'in.', // e.g. 1/2in.
+    ' in.', // e.g. 1/2 in.
+    'in', // e.g. 1/2in
+    ' in', // e.g. 1/2 in
+    'inch', // e.g. 1/2inch
+    ' inch', // e.g. 1/2 inch
+    'inches', // e.g. 1/2inches
+    ' inches', // e.g. 1/2 inches
   ];
 
   for (const form of forms) {
@@ -153,9 +168,7 @@ export function deriveTradeSizeTokens(item: {
   description?: string | null;
 }): string[] {
   if (!isConduitOrPipe(item.catalog, item.vendor, item.description)) return [];
-  const inches =
-    parseTradeSizeInches(item.catalog) ??
-    parseTradeSizeInches(item.description);
+  const inches = parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description);
   if (inches === null) return [];
   return tradeSizeKeywordTokens(inches);
 }

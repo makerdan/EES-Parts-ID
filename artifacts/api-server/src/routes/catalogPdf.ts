@@ -33,30 +33,25 @@
  * use a 60 MB limit (the global JSON parser's 25 MB limit is bypassed).
  */
 
-import { Router, raw } from "express";
-import multer from "multer";
-import { sql, desc, asc, eq, and, inArray } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
-import {
-  db,
-  inventoryTable,
-  enrichmentRunTable,
-  enrichmentHistoryTable,
-} from "@workspace/db";
-import { verifyAdminToken } from "./admin";
+import { Router, raw } from 'express';
+import multer from 'multer';
+import { sql, desc, asc, eq, and, inArray } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import { db, inventoryTable, enrichmentRunTable, enrichmentHistoryTable } from '@workspace/db';
+import { verifyAdminToken } from './admin';
 import {
   parseCatalogPdf,
   getVendorProfile,
   listVendorProfiles,
   type CatalogEntry,
-} from "../utils/catalogPdfParser";
+} from '../utils/catalogPdfParser';
 import {
   classifyEntries,
   summarize,
   type MatchResult,
   type MatchTier,
   type MatchSummary,
-} from "../utils/catalogMatch";
+} from '../utils/catalogMatch';
 
 const router = Router();
 
@@ -64,19 +59,19 @@ const MAX_PDF_BYTES = 60 * 1024 * 1024;
 
 // ── Admin auth (same contract as other admin routes) ────────────────────────
 function requireAdminAuth(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
+  req: import('express').Request,
+  res: import('express').Response,
+  next: import('express').NextFunction
 ): void {
   const adminPassword = process.env.ADMIN_PASSWORD;
   if (!adminPassword) {
-    res.status(503).json({ error: "Admin access is not configured. Set ADMIN_PASSWORD." });
+    res.status(503).json({ error: 'Admin access is not configured. Set ADMIN_PASSWORD.' });
     return;
   }
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const authHeader = req.headers['authorization'] ?? '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
+    res.status(401).json({ error: 'Unauthorized: valid admin token required' });
     return;
   }
   next();
@@ -139,18 +134,18 @@ const upload = multer({
  *                           and `vendor` comes from the query string
  */
 function pdfBodyParser(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
+  req: import('express').Request,
+  res: import('express').Response,
+  next: import('express').NextFunction
 ): void {
-  const ct = (req.headers["content-type"] ?? "").toLowerCase();
-  if (ct.startsWith("multipart/form-data")) {
-    upload.single("file")(req, res, next);
-  } else if (ct.startsWith("application/pdf")) {
-    raw({ type: "application/pdf", limit: MAX_PDF_BYTES })(req, res, next);
+  const ct = (req.headers['content-type'] ?? '').toLowerCase();
+  if (ct.startsWith('multipart/form-data')) {
+    upload.single('file')(req, res, next);
+  } else if (ct.startsWith('application/pdf')) {
+    raw({ type: 'application/pdf', limit: MAX_PDF_BYTES })(req, res, next);
   } else {
     res.status(415).json({
-      error: "Content-Type must be multipart/form-data (file=PDF, vendor=text) or application/pdf.",
+      error: 'Content-Type must be multipart/form-data (file=PDF, vendor=text) or application/pdf.',
     });
   }
 }
@@ -161,69 +156,72 @@ function pdfBodyParser(
 // can render a dropdown instead of a free-text vendor field. Each entry
 // includes the canonical vendor code (sent back to /preview), the display
 // name, and a hint about which catalog PDF the profile expects.
-router.get("/catalog-pdf/vendors", requireAdminAuth, (_req, res) => {
+router.get('/catalog-pdf/vendors', requireAdminAuth, (_req, res) => {
   res.json({ vendors: listVendorProfiles() });
 });
 
 // ── POST /admin/catalog-pdf/preview ─────────────────────────────────────────
-router.post(
-  "/catalog-pdf/preview",
-  requireAdminAuth,
-  pdfBodyParser,
-  async (req, res) => {
-    try {
-      // Vendor: multipart body field OR query string fallback for raw uploads.
-      const vendorParam = (
-        (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)
-          ? (req.body as Record<string, unknown>)["vendor"]
-          : undefined) as string | undefined
-        ?? (req.query["vendor"] as string | undefined)
-        ?? ""
-      ).toString().trim();
-      if (!vendorParam) {
-        return void res.status(400).json({ error: "vendor is required (multipart field or ?vendor= query)" });
-      }
-      const profile = getVendorProfile(vendorParam);
-      if (!profile) {
-        const supported = listVendorProfiles().map(p => p.displayName).join(", ");
-        return void res.status(400).json({
-          error: `No catalog profile is available for vendor "${vendorParam}". Supported vendors: ${supported}.`,
-        });
-      }
-
-      // Body: multer file buffer or raw express body buffer.
-      const file = (req as { file?: Express.Multer.File }).file;
-      const buf: Buffer | undefined =
-        file?.buffer ?? (Buffer.isBuffer(req.body) ? req.body : undefined);
-      if (!buf || buf.length === 0) {
-        return void res.status(400).json({
-          error: "Missing PDF. Send multipart `file` or raw application/pdf body.",
-        });
-      }
-      if (buf.length < 4 || buf.slice(0, 4).toString() !== "%PDF") {
-        return void res.status(400).json({ error: "Body does not look like a PDF (no %PDF header)." });
-      }
-
-      // Parse + classify against the vendor's inventory rows.
-      const entries = await parseCatalogPdf(buf, profile, { extractBodySnippets: true });
-      const inventory = await db
-        .select()
-        .from(inventoryTable)
-        .where(sql`upper(${inventoryTable.vendor}) = ${profile.vendor}`);
-      const results = classifyEntries(entries, inventory);
-
-      const report: PreviewReport = {
-        vendor: profile.vendor,
-        summary: summarize(results),
-        rows: results.map(toReportRow),
-      };
-      res.json(report);
-    } catch (err) {
-      console.error("[catalog-pdf/preview]", err);
-      res.status(500).json({ error: "Failed to parse catalog PDF" });
+router.post('/catalog-pdf/preview', requireAdminAuth, pdfBodyParser, async (req, res) => {
+  try {
+    // Vendor: multipart body field OR query string fallback for raw uploads.
+    const vendorParam = (
+      ((req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)
+        ? (req.body as Record<string, unknown>)['vendor']
+        : undefined) as string | undefined) ??
+      (req.query['vendor'] as string | undefined) ??
+      ''
+    )
+      .toString()
+      .trim();
+    if (!vendorParam) {
+      return void res
+        .status(400)
+        .json({ error: 'vendor is required (multipart field or ?vendor= query)' });
     }
-  },
-);
+    const profile = getVendorProfile(vendorParam);
+    if (!profile) {
+      const supported = listVendorProfiles()
+        .map((p) => p.displayName)
+        .join(', ');
+      return void res.status(400).json({
+        error: `No catalog profile is available for vendor "${vendorParam}". Supported vendors: ${supported}.`,
+      });
+    }
+
+    // Body: multer file buffer or raw express body buffer.
+    const file = (req as { file?: Express.Multer.File }).file;
+    const buf: Buffer | undefined =
+      file?.buffer ?? (Buffer.isBuffer(req.body) ? req.body : undefined);
+    if (!buf || buf.length === 0) {
+      return void res.status(400).json({
+        error: 'Missing PDF. Send multipart `file` or raw application/pdf body.',
+      });
+    }
+    if (buf.length < 4 || buf.slice(0, 4).toString() !== '%PDF') {
+      return void res
+        .status(400)
+        .json({ error: 'Body does not look like a PDF (no %PDF header).' });
+    }
+
+    // Parse + classify against the vendor's inventory rows.
+    const entries = await parseCatalogPdf(buf, profile, { extractBodySnippets: true });
+    const inventory = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`upper(${inventoryTable.vendor}) = ${profile.vendor}`);
+    const results = classifyEntries(entries, inventory);
+
+    const report: PreviewReport = {
+      vendor: profile.vendor,
+      summary: summarize(results),
+      rows: results.map(toReportRow),
+    };
+    res.json(report);
+  } catch (err) {
+    console.error('[catalog-pdf/preview]', err);
+    res.status(500).json({ error: 'Failed to parse catalog PDF' });
+  }
+});
 
 // ── POST /admin/catalog-pdf/apply ───────────────────────────────────────────
 //
@@ -234,21 +232,23 @@ router.post(
 // and each "uncertain" row is applied only when the worker picked a candidate
 // in `uncertainDecisions`. "unmatched" rows are always skipped. This keeps
 // auto-apply semantics consistent regardless of the client.
-router.post("/catalog-pdf/apply", requireAdminAuth, async (req, res) => {
+router.post('/catalog-pdf/apply', requireAdminAuth, async (req, res) => {
   try {
     const body = req.body as {
       report?: PreviewReport;
-      uncertainDecisions?: Record<string, number | "skip">;
+      uncertainDecisions?: Record<string, number | 'skip'>;
       sourceFilename?: string;
     };
     const report = body?.report;
     const uncertainDecisions = body?.uncertainDecisions ?? {};
     const sourceFilename =
-      typeof body?.sourceFilename === "string" && body.sourceFilename.trim()
+      typeof body?.sourceFilename === 'string' && body.sourceFilename.trim()
         ? body.sourceFilename.trim().slice(0, 200)
         : null;
     if (!report || !Array.isArray(report.rows)) {
-      return void res.status(400).json({ error: "request body must include a `report` from /preview" });
+      return void res
+        .status(400)
+        .json({ error: 'request body must include a `report` from /preview' });
     }
 
     // Build the effective decision list server-side from the report + picks.
@@ -262,11 +262,11 @@ router.post("/catalog-pdf/apply", requireAdminAuth, async (req, res) => {
     const decisions: Decision[] = [];
     for (const row of report.rows) {
       let inventoryId: number | undefined;
-      if (row.tier === "exact" || row.tier === "highConfidence") {
+      if (row.tier === 'exact' || row.tier === 'highConfidence') {
         inventoryId = row.candidates[0]?.inventoryId;
-      } else if (row.tier === "uncertain") {
+      } else if (row.tier === 'uncertain') {
         const pick = uncertainDecisions[row.catalogNumber];
-        if (typeof pick === "number" && Number.isFinite(pick)) {
+        if (typeof pick === 'number' && Number.isFinite(pick)) {
           inventoryId = pick;
         }
       }
@@ -304,27 +304,29 @@ router.post("/catalog-pdf/apply", requireAdminAuth, async (req, res) => {
             .limit(1);
           const existing = rows[0];
           if (!existing) {
-            throw new Error("inventory row not found");
+            throw new Error('inventory row not found');
           }
 
           // description: fill when empty, replace when catalog text is
           // materially longer (≥ 1.5× and at least 30 chars).
-          const newDesc = (d.description ?? "").trim();
+          const newDesc = (d.description ?? '').trim();
           let nextDesc = existing.description;
           if (newDesc) {
             if (!existing.description.trim()) {
               nextDesc = newDesc;
-            } else if (newDesc.length >= 30 && newDesc.length >= existing.description.length * 1.5) {
+            } else if (
+              newDesc.length >= 30 &&
+              newDesc.length >= existing.description.length * 1.5
+            ) {
               nextDesc = newDesc;
             }
           }
 
           // aiKeywords: case-insensitive merge of catalog keywords +
           // chip-dimension labels. See "Schema note" in the file header.
-          const allTokens = [
-            ...(d.keywords ?? []),
-            ...Object.values(d.dimensions ?? {}),
-          ].filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+          const allTokens = [...(d.keywords ?? []), ...Object.values(d.dimensions ?? {})].filter(
+            (t): t is string => typeof t === 'string' && t.trim().length > 0
+          );
           const merged = mergeKeywordsCaseInsensitive(existing.aiKeywords ?? [], allTokens);
 
           const beforeKeywords = [...(existing.aiKeywords ?? [])];
@@ -362,7 +364,7 @@ router.post("/catalog-pdf/apply", requireAdminAuth, async (req, res) => {
       } catch (err) {
         result.errors.push({
           inventoryId: d.inventoryId,
-          error: err instanceof Error ? err.message : "update failed",
+          error: err instanceof Error ? err.message : 'update failed',
         });
       }
     }
@@ -380,8 +382,8 @@ router.post("/catalog-pdf/apply", requireAdminAuth, async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    console.error("[catalog-pdf/apply]", err);
-    res.status(500).json({ error: "Failed to apply catalog updates" });
+    console.error('[catalog-pdf/apply]', err);
+    res.status(500).json({ error: 'Failed to apply catalog updates' });
   }
 });
 
@@ -390,54 +392,51 @@ router.post("/catalog-pdf/apply", requireAdminAuth, async (req, res) => {
 // Lists the most recent catalog-PDF apply runs (newest first). The mobile
 // admin UI shows these in a "Recent enrichment runs" section and renders a
 // Revert button for each non-reverted run.
-router.get("/catalog-pdf/runs", requireAdminAuth, async (req, res) => {
+router.get('/catalog-pdf/runs', requireAdminAuth, async (req, res) => {
   try {
-    const limitParam = req.query["limit"];
-    const limitStr = typeof limitParam === "string" ? limitParam : "20";
+    const limitParam = req.query['limit'];
+    const limitStr = typeof limitParam === 'string' ? limitParam : '20';
     const limitRaw = Number.parseInt(limitStr, 10);
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100, limitRaw)) : 20;
 
     // Optional filters — both string-equal matches. `vendor` is upper-cased
     // because runs always store the canonical vendor code; `sourceFilename`
     // matches the trimmed value the apply route stored.
-    const vendorParam = req.query["vendor"];
-    const vendorFilter = typeof vendorParam === "string" && vendorParam.trim()
-      ? vendorParam.trim().toUpperCase()
-      : null;
-    const filenameParam = req.query["sourceFilename"];
-    const filenameFilter = typeof filenameParam === "string" && filenameParam.trim()
-      ? filenameParam.trim()
-      : null;
+    const vendorParam = req.query['vendor'];
+    const vendorFilter =
+      typeof vendorParam === 'string' && vendorParam.trim()
+        ? vendorParam.trim().toUpperCase()
+        : null;
+    const filenameParam = req.query['sourceFilename'];
+    const filenameFilter =
+      typeof filenameParam === 'string' && filenameParam.trim() ? filenameParam.trim() : null;
 
     const conditions = [];
     if (vendorFilter) conditions.push(eq(enrichmentRunTable.vendor, vendorFilter));
     if (filenameFilter) conditions.push(eq(enrichmentRunTable.sourceFilename, filenameFilter));
-    const where = conditions.length === 0
-      ? undefined
-      : conditions.length === 1
-        ? conditions[0]
-        : and(...conditions);
+    const where =
+      conditions.length === 0
+        ? undefined
+        : conditions.length === 1
+          ? conditions[0]
+          : and(...conditions);
 
     const baseQuery = db.select().from(enrichmentRunTable);
     const filtered = where ? baseQuery.where(where) : baseQuery;
-    const rows = await filtered
-      .orderBy(desc(enrichmentRunTable.startedAt))
-      .limit(limit);
+    const rows = await filtered.orderBy(desc(enrichmentRunTable.startedAt)).limit(limit);
     // For reverted runs, determine whether undo is safe. A run is "blocked"
     // when at least one inventory item it touched has a history row from a
     // newer run (higher id), meaning un-reverting would silently overwrite
     // those newer changes. We do this in a single batched query using a
     // self-join on inventory_enrichment_history.
-    const revertedIds = rows
-      .filter((r) => r.revertedAt !== null)
-      .map((r) => r.id);
+    const revertedIds = rows.filter((r) => r.revertedAt !== null).map((r) => r.id);
 
     const blockedRunIds = new Set<number>();
     if (revertedIds.length > 0) {
       // Parameterized self-join: find all reverted run IDs that share an
       // inventoryId with a history row from a newer run (higher run_id).
       // Using drizzle alias so both sides of the join are type-safe.
-      const h2 = alias(enrichmentHistoryTable, "h2");
+      const h2 = alias(enrichmentHistoryTable, 'h2');
       const overlapRows = await db
         .selectDistinct({ runId: enrichmentHistoryTable.runId })
         .from(enrichmentHistoryTable)
@@ -445,8 +444,8 @@ router.get("/catalog-pdf/runs", requireAdminAuth, async (req, res) => {
           h2,
           and(
             eq(h2.inventoryId, enrichmentHistoryTable.inventoryId),
-            sql`${h2.runId} > ${enrichmentHistoryTable.runId}`,
-          ),
+            sql`${h2.runId} > ${enrichmentHistoryTable.runId}`
+          )
         )
         .where(inArray(enrichmentHistoryTable.runId, revertedIds));
       for (const row of overlapRows) {
@@ -468,8 +467,8 @@ router.get("/catalog-pdf/runs", requireAdminAuth, async (req, res) => {
     }));
     res.json({ runs });
   } catch (err) {
-    console.error("[catalog-pdf/runs]", err);
-    res.status(500).json({ error: "Failed to load enrichment runs" });
+    console.error('[catalog-pdf/runs]', err);
+    res.status(500).json({ error: 'Failed to load enrichment runs' });
   }
 });
 
@@ -479,12 +478,12 @@ router.get("/catalog-pdf/runs", requireAdminAuth, async (req, res) => {
 // the run, in a single outer transaction so a partial revert is impossible.
 // The run is marked `reverted_at = now()` so the UI can grey it out and
 // reject double-reverts. Returns the count of rows restored.
-router.post("/catalog-pdf/runs/:id/revert", requireAdminAuth, async (req, res) => {
+router.post('/catalog-pdf/runs/:id/revert', requireAdminAuth, async (req, res) => {
   try {
-    const idParam = req.params["id"];
-    const runId = Number.parseInt(typeof idParam === "string" ? idParam : "", 10);
+    const idParam = req.params['id'];
+    const runId = Number.parseInt(typeof idParam === 'string' ? idParam : '', 10);
     if (!Number.isFinite(runId) || runId <= 0) {
-      return void res.status(400).json({ error: "invalid run id" });
+      return void res.status(400).json({ error: 'invalid run id' });
     }
 
     const result = await db.transaction(async (tx) => {
@@ -495,10 +494,10 @@ router.post("/catalog-pdf/runs/:id/revert", requireAdminAuth, async (req, res) =
         .limit(1);
       const run = runs[0];
       if (!run) {
-        return { status: 404 as const, body: { error: "run not found" } };
+        return { status: 404 as const, body: { error: 'run not found' } };
       }
       if (run.revertedAt) {
-        return { status: 409 as const, body: { error: "run already reverted" } };
+        return { status: 409 as const, body: { error: 'run already reverted' } };
       }
 
       // Order DESC by id so multiple history rows touching the same
@@ -535,8 +534,8 @@ router.post("/catalog-pdf/runs/:id/revert", requireAdminAuth, async (req, res) =
 
     res.status(result.status).json(result.body);
   } catch (err) {
-    console.error("[catalog-pdf/runs/revert]", err);
-    res.status(500).json({ error: "Failed to revert enrichment run" });
+    console.error('[catalog-pdf/runs/revert]', err);
+    res.status(500).json({ error: 'Failed to revert enrichment run' });
   }
 });
 
@@ -548,12 +547,12 @@ router.post("/catalog-pdf/runs/:id/revert", requireAdminAuth, async (req, res) =
 // revert's DESC/oldest-wins. Single transaction so a partial unrevert is
 // impossible. Clears `reverted_at`. 404 when missing, 409 when the run is
 // not currently reverted (so double-undo is rejected with a clear error).
-router.post("/catalog-pdf/runs/:id/unrevert", requireAdminAuth, async (req, res) => {
+router.post('/catalog-pdf/runs/:id/unrevert', requireAdminAuth, async (req, res) => {
   try {
-    const idParam = req.params["id"];
-    const runId = Number.parseInt(typeof idParam === "string" ? idParam : "", 10);
+    const idParam = req.params['id'];
+    const runId = Number.parseInt(typeof idParam === 'string' ? idParam : '', 10);
     if (!Number.isFinite(runId) || runId <= 0) {
-      return void res.status(400).json({ error: "invalid run id" });
+      return void res.status(400).json({ error: 'invalid run id' });
     }
 
     const result = await db.transaction(async (tx) => {
@@ -564,10 +563,10 @@ router.post("/catalog-pdf/runs/:id/unrevert", requireAdminAuth, async (req, res)
         .limit(1);
       const run = runs[0];
       if (!run) {
-        return { status: 404 as const, body: { error: "run not found" } };
+        return { status: 404 as const, body: { error: 'run not found' } };
       }
       if (!run.revertedAt) {
-        return { status: 409 as const, body: { error: "run is not reverted" } };
+        return { status: 409 as const, body: { error: 'run is not reverted' } };
       }
 
       const history = await tx
@@ -599,8 +598,8 @@ router.post("/catalog-pdf/runs/:id/unrevert", requireAdminAuth, async (req, res)
 
     res.status(result.status).json(result.body);
   } catch (err) {
-    console.error("[catalog-pdf/runs/unrevert]", err);
-    res.status(500).json({ error: "Failed to undo revert" });
+    console.error('[catalog-pdf/runs/unrevert]', err);
+    res.status(500).json({ error: 'Failed to undo revert' });
   }
 });
 
@@ -621,7 +620,10 @@ function toReportRow(r: MatchResult): PreviewReportRow {
  * whose lowercase form already exists in `existing` (or has just been added)
  * are dropped. The original casing of `existing` is preserved.
  */
-function mergeKeywordsCaseInsensitive(existing: readonly string[], incoming: readonly string[]): string[] {
+function mergeKeywordsCaseInsensitive(
+  existing: readonly string[],
+  incoming: readonly string[]
+): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const k of existing) {

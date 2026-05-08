@@ -20,8 +20,8 @@
  * rebind barcodes to arbitrary parts. Workers signed in as admin
  * (the same flow that unlocks the Upload tab) can scan-to-link.
  */
-import { Router, type Request, type Response, type NextFunction } from "express";
-import { eq, sql, desc } from "drizzle-orm";
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import { eq, sql, desc } from 'drizzle-orm';
 import {
   db,
   inventoryTable,
@@ -29,30 +29,30 @@ import {
   vendorMapTable,
   type Inventory,
   type BarcodeSource,
-} from "@workspace/db";
-import { normalizeBarcode } from "../utils/normalizeBarcode";
-import { verifyAdminToken } from "./admin";
+} from '@workspace/db';
+import { normalizeBarcode } from '../utils/normalizeBarcode';
+import { verifyAdminToken } from './admin';
 import {
   buildVendorFullNameMap,
   withVendorFullName,
   type VendorMapRow,
-} from "../utils/vendorFullName";
+} from '../utils/vendorFullName';
 
 const router = Router();
 
 /** Same admin-token gate used by the inventory upsert/enrich endpoints. */
 function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
-  const adminPassword = process.env["ADMIN_PASSWORD"];
+  const adminPassword = process.env['ADMIN_PASSWORD'];
   if (!adminPassword) {
     res.status(503).json({
-      error: "Admin access is not configured on this server. Set ADMIN_PASSWORD.",
+      error: 'Admin access is not configured on this server. Set ADMIN_PASSWORD.',
     });
     return;
   }
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const authHeader = req.headers['authorization'] ?? '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
+    res.status(401).json({ error: 'Unauthorized: valid admin token required' });
     return;
   }
   next();
@@ -76,7 +76,7 @@ function hydrate(item: InventoryRow, vendorMap: Map<string, string>) {
       binLocations: item.binLocations ?? [],
       aiKeywords: item.aiKeywords ?? [],
     },
-    vendorMap,
+    vendorMap
   );
 }
 
@@ -120,12 +120,12 @@ async function loadRecent(limit: number, vendorMap: Map<string, string>) {
 }
 
 // ── POST /barcode/lookup ─────────────────────────────────────────────────────
-router.post("/lookup", async (req, res) => {
+router.post('/lookup', async (req, res) => {
   try {
-    const raw = typeof req.body?.barcode === "string" ? req.body.barcode : "";
+    const raw = typeof req.body?.barcode === 'string' ? req.body.barcode : '';
     const barcode = normalizeBarcode(raw);
     if (!barcode) {
-      res.status(400).json({ error: "barcode is required" });
+      res.status(400).json({ error: 'barcode is required' });
       return;
     }
 
@@ -147,11 +147,11 @@ router.post("/lookup", async (req, res) => {
       // Persist the binding so future scans skip the catalog scan.
       await db
         .insert(inventoryBarcodeTable)
-        .values({ barcode, inventoryId: item.id, source: "catalog-auto" })
+        .values({ barcode, inventoryId: item.id, source: 'catalog-auto' })
         .onConflictDoNothing();
       res.json({
         match: hydrate(item, vendorMap),
-        source: "catalog-auto" as BarcodeSource,
+        source: 'catalog-auto' as BarcodeSource,
         recentlyViewed,
       });
       return;
@@ -177,26 +177,26 @@ router.post("/lookup", async (req, res) => {
     // No match — let the client open the scan-to-link picker.
     res.json({ match: null, source: null, recentlyViewed });
   } catch (err) {
-    console.error("/barcode/lookup failed", err);
-    res.status(500).json({ error: "Failed to look up barcode" });
+    console.error('/barcode/lookup failed', err);
+    res.status(500).json({ error: 'Failed to look up barcode' });
   }
 });
 
 // ── POST /barcode/link ───────────────────────────────────────────────────────
-router.post("/link", requireAdminAuth, async (req, res) => {
+router.post('/link', requireAdminAuth, async (req, res) => {
   try {
-    const raw = typeof req.body?.barcode === "string" ? req.body.barcode : "";
+    const raw = typeof req.body?.barcode === 'string' ? req.body.barcode : '';
     const barcode = normalizeBarcode(raw);
     const inventoryId = Number(req.body?.inventoryId);
     const force = req.body?.force === true;
-    const createdBy = typeof req.body?.createdBy === "string" ? req.body.createdBy : null;
+    const createdBy = typeof req.body?.createdBy === 'string' ? req.body.createdBy : null;
 
     if (!barcode) {
-      res.status(400).json({ error: "barcode is required" });
+      res.status(400).json({ error: 'barcode is required' });
       return;
     }
     if (!Number.isInteger(inventoryId) || inventoryId <= 0) {
-      res.status(400).json({ error: "inventoryId must be a positive integer" });
+      res.status(400).json({ error: 'inventoryId must be a positive integer' });
       return;
     }
 
@@ -206,7 +206,7 @@ router.post("/link", requireAdminAuth, async (req, res) => {
       .where(eq(inventoryTable.id, inventoryId))
       .limit(1);
     if (targetRows.length === 0) {
-      res.status(404).json({ error: "inventory item not found" });
+      res.status(404).json({ error: 'inventory item not found' });
       return;
     }
     const target = targetRows[0]!;
@@ -229,7 +229,7 @@ router.post("/link", requireAdminAuth, async (req, res) => {
       // Conflict — barcode is already bound to a different active part.
       if (!force) {
         res.status(409).json({
-          error: "barcode is already linked to a different part",
+          error: 'barcode is already linked to a different part',
           currentInventoryId: row.inventoryId,
         });
         return;
@@ -239,7 +239,7 @@ router.post("/link", requireAdminAuth, async (req, res) => {
         .update(inventoryBarcodeTable)
         .set({
           inventoryId,
-          source: "upc-linked",
+          source: 'upc-linked',
           createdAt: new Date(),
           createdBy,
         })
@@ -248,31 +248,29 @@ router.post("/link", requireAdminAuth, async (req, res) => {
       return;
     }
 
-    await db
-      .insert(inventoryBarcodeTable)
-      .values({
-        barcode,
-        inventoryId,
-        source: "upc-linked",
-        createdBy,
-      });
+    await db.insert(inventoryBarcodeTable).values({
+      barcode,
+      inventoryId,
+      source: 'upc-linked',
+      createdBy,
+    });
     res.json({ ok: true, item: hydrate(target, vendorMap) });
   } catch (err) {
-    console.error("/barcode/link failed", err);
-    res.status(500).json({ error: "Failed to link barcode" });
+    console.error('/barcode/link failed', err);
+    res.status(500).json({ error: 'Failed to link barcode' });
   }
 });
 
 // ── GET /barcode/recent ──────────────────────────────────────────────────────
-router.get("/recent", async (req, res) => {
+router.get('/recent', async (req, res) => {
   try {
-    const limit = Math.min(50, Math.max(1, Number(req.query["limit"]) || 20));
+    const limit = Math.min(50, Math.max(1, Number(req.query['limit']) || 20));
     const vendorMap = await loadVendorMap();
     const items = await loadRecent(limit, vendorMap);
     res.json({ items });
   } catch (err) {
-    console.error("/barcode/recent failed", err);
-    res.status(500).json({ error: "Failed to load recent items" });
+    console.error('/barcode/recent failed', err);
+    res.status(500).json({ error: 'Failed to load recent items' });
   }
 });
 

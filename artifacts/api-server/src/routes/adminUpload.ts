@@ -36,30 +36,30 @@
  *   401                    — missing or invalid admin token
  */
 
-import { Router } from "express";
-import { and, sql } from "drizzle-orm";
-import { db, inventoryTable } from "@workspace/db";
-import { verifyAdminToken } from "./admin";
-import { aggregateRowsByPart, mergeBins, type AggregatedRow } from "../utils/binLocations";
-import { deriveTradeSizeTokens } from "../utils/tradeSize";
+import { Router } from 'express';
+import { and, sql } from 'drizzle-orm';
+import { db, inventoryTable } from '@workspace/db';
+import { verifyAdminToken } from './admin';
+import { aggregateRowsByPart, mergeBins, type AggregatedRow } from '../utils/binLocations';
+import { deriveTradeSizeTokens } from '../utils/tradeSize';
 
 const router = Router();
 
 // ── Admin auth middleware (same contract as inventory.ts) ─────────────────────
 function requireAdminAuth(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
+  req: import('express').Request,
+  res: import('express').Response,
+  next: import('express').NextFunction
 ): void {
   const adminPassword = process.env.ADMIN_PASSWORD;
   if (!adminPassword) {
-    res.status(503).json({ error: "Admin access is not configured. Set ADMIN_PASSWORD." });
+    res.status(503).json({ error: 'Admin access is not configured. Set ADMIN_PASSWORD.' });
     return;
   }
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const authHeader = req.headers['authorization'] ?? '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
+    res.status(401).json({ error: 'Unauthorized: valid admin token required' });
     return;
   }
   next();
@@ -84,14 +84,17 @@ function requireAdminAuth(
 function parseCsvRecords(text: string): string[][] {
   const records: string[][] = [];
   let current: string[] = [];
-  let field = "";
+  let field = '';
   let inQuotes = false;
 
-  const pushField = () => { current.push(field.trim()); field = ""; };
+  const pushField = () => {
+    current.push(field.trim());
+    field = '';
+  };
   const pushRecord = () => {
     pushField();
     // Skip blank lines (record with a single empty field).
-    const isBlank = current.length === 1 && current[0] === "";
+    const isBlank = current.length === 1 && current[0] === '';
     if (!isBlank) records.push(current);
     current = [];
   };
@@ -100,18 +103,21 @@ function parseCsvRecords(text: string): string[][] {
     const ch = text[i]!;
     if (inQuotes) {
       if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } // escaped ""
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } // escaped ""
         else inQuotes = false;
       } else {
         field += ch; // newlines/commas literal inside quotes
       }
     } else if (ch === '"') {
       inQuotes = true;
-    } else if (ch === ",") {
+    } else if (ch === ',') {
       pushField();
-    } else if (ch === "\r") {
+    } else if (ch === '\r') {
       // swallow; the \n that usually follows triggers the record boundary
-    } else if (ch === "\n") {
+    } else if (ch === '\n') {
       pushRecord();
     } else {
       field += ch;
@@ -141,50 +147,52 @@ function parseCsv(csvText: string): RawCsvRow[] | null {
   const records = parseCsvRecords(csvText);
   if (records.length < 2) return null; // header-only or empty
 
-  const header = records[0]!.map(h => h.toLowerCase().replace(/\s+/g, ""));
-  const vendorIdx = header.findIndex(h => h === "vendor");
-  const catalogIdx = header.findIndex(h => h === "catalog" || h === "catalog#" || h === "catalognumber");
+  const header = records[0]!.map((h) => h.toLowerCase().replace(/\s+/g, ''));
+  const vendorIdx = header.findIndex((h) => h === 'vendor');
+  const catalogIdx = header.findIndex(
+    (h) => h === 'catalog' || h === 'catalog#' || h === 'catalognumber'
+  );
   if (vendorIdx === -1 || catalogIdx === -1) return null;
 
-  const descIdx = header.findIndex(h => h === "description");
-  const binIdx = header.findIndex(h => h === "binlocation" || h === "bin" || h === "binnumber");
+  const descIdx = header.findIndex((h) => h === 'description');
+  const binIdx = header.findIndex((h) => h === 'binlocation' || h === 'bin' || h === 'binnumber');
 
   const rows: RawCsvRow[] = [];
   for (let i = 1; i < records.length; i++) {
     const fields = records[i]!;
-    const vendor = fields[vendorIdx]?.trim() ?? "";
-    const catalog = fields[catalogIdx]?.trim() ?? "";
+    const vendor = fields[vendorIdx]?.trim() ?? '';
+    const catalog = fields[catalogIdx]?.trim() ?? '';
     if (!vendor || !catalog) continue; // skip blank/invalid rows
     rows.push({
       vendor,
       catalog,
-      description: (descIdx >= 0 ? fields[descIdx]?.trim() : "") ?? "",
+      description: (descIdx >= 0 ? fields[descIdx]?.trim() : '') ?? '',
       // Keep the raw bin cell verbatim — splitting on `,` `;` `/` `\n` is
       // performed by aggregateRowsByPart so that newline separators inside
       // a quoted multi-line cell survive parsing.
-      binCell: (binIdx >= 0 ? fields[binIdx] : "") ?? "",
+      binCell: (binIdx >= 0 ? fields[binIdx] : '') ?? '',
     });
   }
   return rows;
 }
 
 // ── POST /admin/upload ────────────────────────────────────────────────────────
-router.post("/upload", requireAdminAuth, async (req, res) => {
+router.post('/upload', requireAdminAuth, async (req, res) => {
   try {
     const { csv } = req.body as { csv?: string };
 
-    if (!csv || typeof csv !== "string" || !csv.trim()) {
-      return void res.status(400).json({ error: "Missing or empty csv field" });
+    if (!csv || typeof csv !== 'string' || !csv.trim()) {
+      return void res.status(400).json({ error: 'Missing or empty csv field' });
     }
 
     const rawRows = parseCsv(csv);
     if (!rawRows) {
       return void res.status(400).json({
-        error: "Malformed CSV: must have a header row with at least Vendor and Catalog columns",
+        error: 'Malformed CSV: must have a header row with at least Vendor and Catalog columns',
       });
     }
     if (rawRows.length === 0) {
-      return void res.status(400).json({ error: "CSV contains no valid data rows" });
+      return void res.status(400).json({ error: 'CSV contains no valid data rows' });
     }
 
     // Collapse repeated (vendor, catalog) rows and split bin cells on
@@ -201,8 +209,8 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
         .where(
           and(
             sql`UPPER(${inventoryTable.vendor}) = UPPER(${row.vendor})`,
-            sql`UPPER(${inventoryTable.catalog}) = UPPER(${row.catalog})`,
-          ),
+            sql`UPPER(${inventoryTable.catalog}) = UPPER(${row.catalog})`
+          )
         )
         .limit(1);
 
@@ -210,7 +218,7 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
         await db
           .update(inventoryTable)
           .set({
-            description: row.description || (existing[0]?.description ?? ""),
+            description: row.description || (existing[0]?.description ?? ''),
             binLocations: mergeBins(existing[0]!.binLocations, row.binLocations),
             updatedAt: new Date(),
           })
@@ -233,7 +241,7 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
     res.json({ inserted, updated, total: aggregated.length });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Upload failed" });
+    res.status(500).json({ error: 'Upload failed' });
   }
 });
 

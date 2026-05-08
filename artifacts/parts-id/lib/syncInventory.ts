@@ -10,7 +10,7 @@
  *      without starting a second fetch cycle.
  */
 
-import type { InventoryItem } from "@workspace/api-client-react";
+import type { InventoryItem } from '@workspace/api-client-react';
 
 export interface SyncCallbacks {
   setIsSyncing: (v: boolean) => void;
@@ -67,10 +67,10 @@ export async function syncAllInventory(opts: {
       const timeoutId = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS);
       let res: Response;
       try {
-        res = await fetch(
-          `${apiBase}/inventory?page=${page}&limit=${PAGE_SIZE}`,
-          { signal: controller.signal, cache: "no-store" },
-        );
+        res = await fetch(`${apiBase}/inventory?page=${page}&limit=${PAGE_SIZE}`, {
+          signal: controller.signal,
+          cache: 'no-store',
+        });
       } finally {
         clearTimeout(timeoutId);
       }
@@ -103,13 +103,13 @@ export async function syncAllInventory(opts: {
         const aData = (await aRes.json()) as {
           assignments: { inventoryId: number; typeSlug: string }[];
         };
-        const slim = aData.assignments.map(a => ({
+        const slim = aData.assignments.map((a) => ({
           inventoryId: a.inventoryId,
           typeSlug: a.typeSlug,
         }));
         cacheOps.push([assignmentsKey, JSON.stringify(slim)]);
       }
-    } catch { }
+    } catch {}
 
     try {
       const tRes = await fetch(`${apiBase}/categories/tree`);
@@ -117,7 +117,7 @@ export async function syncAllInventory(opts: {
         const tData = (await tRes.json()) as { tree: unknown };
         cacheOps.push([treeKey, JSON.stringify(tData.tree)]);
       }
-    } catch { }
+    } catch {}
 
     try {
       await storage.multiSet(cacheOps);
@@ -134,7 +134,7 @@ export async function syncAllInventory(opts: {
       if (attempt > 0) {
         callbacks.setSyncRetry({ attempt, max: MAX_AUTO_RETRIES });
         callbacks.setSyncProgress(null);
-        await new Promise<void>(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+        await new Promise<void>((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
       }
       try {
         await attemptSync();

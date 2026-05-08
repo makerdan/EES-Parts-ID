@@ -1,6 +1,6 @@
-import { resizeImage, ImageReadError } from "../utils/resizeImage";
-import * as ImageManipulator from "expo-image-manipulator";
-import * as FileSystem from "expo-file-system/legacy";
+import { resizeImage, ImageReadError } from '../utils/resizeImage';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const manipulateAsync = ImageManipulator.manipulateAsync as jest.Mock;
 const readAsStringAsync = FileSystem.readAsStringAsync as jest.Mock;
@@ -9,29 +9,29 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-describe("resizeImage", () => {
-  const TEST_URI = "file:///test/image.jpg";
+describe('resizeImage', () => {
+  const TEST_URI = 'file:///test/image.jpg';
 
-  describe("width within range (800–1920) — pass through without resize", () => {
-    it("passes through an image exactly at 800px", async () => {
+  describe('width within range (800–1920) — pass through without resize', () => {
+    it('passes through an image exactly at 800px', async () => {
       const result = await resizeImage(TEST_URI, 800);
 
       expect(manipulateAsync).not.toHaveBeenCalled();
-      expect(readAsStringAsync).toHaveBeenCalledWith(TEST_URI, { encoding: "base64" });
+      expect(readAsStringAsync).toHaveBeenCalledWith(TEST_URI, { encoding: 'base64' });
       expect(result.uri).toBe(TEST_URI);
-      expect(result.base64).toBe("data:image/jpeg;base64,RAW_BASE64");
+      expect(result.base64).toBe('data:image/jpeg;base64,RAW_BASE64');
     });
 
-    it("passes through an image exactly at 1920px", async () => {
+    it('passes through an image exactly at 1920px', async () => {
       const result = await resizeImage(TEST_URI, 1920);
 
       expect(manipulateAsync).not.toHaveBeenCalled();
-      expect(readAsStringAsync).toHaveBeenCalledWith(TEST_URI, { encoding: "base64" });
+      expect(readAsStringAsync).toHaveBeenCalledWith(TEST_URI, { encoding: 'base64' });
       expect(result.uri).toBe(TEST_URI);
-      expect(result.base64).toBe("data:image/jpeg;base64,RAW_BASE64");
+      expect(result.base64).toBe('data:image/jpeg;base64,RAW_BASE64');
     });
 
-    it("passes through an image at a typical mid-range width (1280px)", async () => {
+    it('passes through an image at a typical mid-range width (1280px)', async () => {
       const result = await resizeImage(TEST_URI, 1280);
 
       expect(manipulateAsync).not.toHaveBeenCalled();
@@ -39,8 +39,8 @@ describe("resizeImage", () => {
     });
   });
 
-  describe("width below 800 — upscale to 800px", () => {
-    it("upscales a small image (400px) to 800px", async () => {
+  describe('width below 800 — upscale to 800px', () => {
+    it('upscales a small image (400px) to 800px', async () => {
       const result = await resizeImage(TEST_URI, 400);
 
       expect(manipulateAsync).toHaveBeenCalledWith(
@@ -49,10 +49,10 @@ describe("resizeImage", () => {
         expect.objectContaining({ base64: true })
       );
       expect(result.uri).toBe(`resized://${TEST_URI}`);
-      expect(result.base64).toBe("data:image/jpeg;base64,RESIZED_BASE64");
+      expect(result.base64).toBe('data:image/jpeg;base64,RESIZED_BASE64');
     });
 
-    it("upscales an image at 799px (just below minimum) to 800px", async () => {
+    it('upscales an image at 799px (just below minimum) to 800px', async () => {
       await resizeImage(TEST_URI, 799);
 
       expect(manipulateAsync).toHaveBeenCalledWith(
@@ -62,7 +62,7 @@ describe("resizeImage", () => {
       );
     });
 
-    it("upscales a very small image (1px) to 800px", async () => {
+    it('upscales a very small image (1px) to 800px', async () => {
       await resizeImage(TEST_URI, 1);
 
       expect(manipulateAsync).toHaveBeenCalledWith(
@@ -73,8 +73,8 @@ describe("resizeImage", () => {
     });
   });
 
-  describe("width above 1920 — downscale to 1920px", () => {
-    it("downscales a large image (4000px) to 1920px", async () => {
+  describe('width above 1920 — downscale to 1920px', () => {
+    it('downscales a large image (4000px) to 1920px', async () => {
       const result = await resizeImage(TEST_URI, 4000);
 
       expect(manipulateAsync).toHaveBeenCalledWith(
@@ -83,10 +83,10 @@ describe("resizeImage", () => {
         expect.objectContaining({ base64: true })
       );
       expect(result.uri).toBe(`resized://${TEST_URI}`);
-      expect(result.base64).toBe("data:image/jpeg;base64,RESIZED_BASE64");
+      expect(result.base64).toBe('data:image/jpeg;base64,RESIZED_BASE64');
     });
 
-    it("downscales an image at 1921px (just above maximum) to 1920px", async () => {
+    it('downscales an image at 1921px (just above maximum) to 1920px', async () => {
       await resizeImage(TEST_URI, 1921);
 
       expect(manipulateAsync).toHaveBeenCalledWith(
@@ -97,42 +97,42 @@ describe("resizeImage", () => {
     });
   });
 
-  describe("unknown / zero width — fall back gracefully without resize", () => {
-    it("skips resize and reads raw file when width is 0", async () => {
+  describe('unknown / zero width — fall back gracefully without resize', () => {
+    it('skips resize and reads raw file when width is 0', async () => {
       const result = await resizeImage(TEST_URI, 0);
 
       expect(manipulateAsync).not.toHaveBeenCalled();
-      expect(readAsStringAsync).toHaveBeenCalledWith(TEST_URI, { encoding: "base64" });
+      expect(readAsStringAsync).toHaveBeenCalledWith(TEST_URI, { encoding: 'base64' });
       expect(result.uri).toBe(TEST_URI);
-      expect(result.base64).toBe("data:image/jpeg;base64,RAW_BASE64");
+      expect(result.base64).toBe('data:image/jpeg;base64,RAW_BASE64');
     });
 
-    it("skips resize and reads raw file when width is negative", async () => {
+    it('skips resize and reads raw file when width is negative', async () => {
       const result = await resizeImage(TEST_URI, -1);
 
       expect(manipulateAsync).not.toHaveBeenCalled();
-      expect(readAsStringAsync).toHaveBeenCalledWith(TEST_URI, { encoding: "base64" });
+      expect(readAsStringAsync).toHaveBeenCalledWith(TEST_URI, { encoding: 'base64' });
       expect(result.uri).toBe(TEST_URI);
     });
   });
 
-  describe("base64 fallback when manipulateAsync returns no base64", () => {
-    it("falls back to result.uri when base64 is undefined", async () => {
+  describe('base64 fallback when manipulateAsync returns no base64', () => {
+    it('falls back to result.uri when base64 is undefined', async () => {
       manipulateAsync.mockResolvedValueOnce({
-        uri: "resized://fallback.jpg",
+        uri: 'resized://fallback.jpg',
         base64: undefined,
       });
 
       const result = await resizeImage(TEST_URI, 4000);
 
-      expect(result.base64).toBe("resized://fallback.jpg");
-      expect(result.uri).toBe("resized://fallback.jpg");
+      expect(result.base64).toBe('resized://fallback.jpg');
+      expect(result.uri).toBe('resized://fallback.jpg');
     });
   });
 
-  describe("error handling — corrupt or unreadable images", () => {
-    it("throws ImageReadError with readable message when readAsStringAsync fails (pass-through path)", async () => {
-      readAsStringAsync.mockRejectedValueOnce(new Error("File not found"));
+  describe('error handling — corrupt or unreadable images', () => {
+    it('throws ImageReadError with readable message when readAsStringAsync fails (pass-through path)', async () => {
+      readAsStringAsync.mockRejectedValueOnce(new Error('File not found'));
 
       let caught: unknown;
       try {
@@ -142,14 +142,14 @@ describe("resizeImage", () => {
       }
 
       expect(caught).toBeInstanceOf(ImageReadError);
-      expect((caught as ImageReadError).name).toBe("ImageReadError");
+      expect((caught as ImageReadError).name).toBe('ImageReadError');
       expect((caught as ImageReadError).message).toBe(
-        "Could not read the image file — it may be corrupt, deleted, or inaccessible."
+        'Could not read the image file — it may be corrupt, deleted, or inaccessible.'
       );
     });
 
-    it("throws ImageReadError with readable message when manipulateAsync fails (resize path)", async () => {
-      manipulateAsync.mockRejectedValueOnce(new Error("Corrupt image data"));
+    it('throws ImageReadError with readable message when manipulateAsync fails (resize path)', async () => {
+      manipulateAsync.mockRejectedValueOnce(new Error('Corrupt image data'));
 
       let caught: unknown;
       try {
@@ -159,14 +159,14 @@ describe("resizeImage", () => {
       }
 
       expect(caught).toBeInstanceOf(ImageReadError);
-      expect((caught as ImageReadError).name).toBe("ImageReadError");
+      expect((caught as ImageReadError).name).toBe('ImageReadError');
       expect((caught as ImageReadError).message).toBe(
-        "Could not process the image — it may be corrupt, in an unsupported format, or the URI is stale."
+        'Could not process the image — it may be corrupt, in an unsupported format, or the URI is stale.'
       );
     });
 
-    it("preserves the original cause on ImageReadError", async () => {
-      const originalError = new Error("Device storage unavailable");
+    it('preserves the original cause on ImageReadError', async () => {
+      const originalError = new Error('Device storage unavailable');
       readAsStringAsync.mockRejectedValueOnce(originalError);
 
       let caught: unknown;

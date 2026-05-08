@@ -21,31 +21,34 @@
  */
 
 // ── Mock OpenAI BEFORE app import (sibling integration tests do the same) ──
-jest.mock("@workspace/integrations-openai-ai-server", () => ({
-  openai: { chat: { completions: { create: jest.fn() } }, audio: { transcriptions: { create: jest.fn() } } },
+jest.mock('@workspace/integrations-openai-ai-server', () => ({
+  openai: {
+    chat: { completions: { create: jest.fn() } },
+    audio: { transcriptions: { create: jest.fn() } },
+  },
   generateImageBuffer: jest.fn(),
   editImages: jest.fn(),
   batchProcess: jest.fn(),
   batchProcessWithSSE: jest.fn(),
   isRateLimitError: jest.fn(() => false),
 }));
-jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
+jest.mock('@workspace/integrations-openai-ai-server/batch', () => ({
   batchProcess: jest.fn(),
   batchProcessWithSSE: jest.fn(),
   isRateLimitError: jest.fn(() => false),
 }));
 
-import path from "node:path";
-import fs from "node:fs";
-import supertest from "supertest";
-import { and, desc, eq, gt, inArray } from "drizzle-orm";
-import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
-import { db, inventoryTable, enrichmentRunTable } from "@workspace/db";
-import { closePool, cleanupFixtures } from "./helpers/testDb";
-import type { PreviewReport } from "../src/routes/catalogPdf";
+import path from 'node:path';
+import fs from 'node:fs';
+import supertest from 'supertest';
+import { and, desc, eq, gt, inArray } from 'drizzle-orm';
+import app from '../src/app';
+import { signAdminToken } from '../src/routes/admin';
+import { db, inventoryTable, enrichmentRunTable } from '@workspace/db';
+import { closePool, cleanupFixtures } from './helpers/testDb';
+import type { PreviewReport } from '../src/routes/catalogPdf';
 
-const ADMIN_SECRET = "jest-catalog-pdf-route-secret";
+const ADMIN_SECRET = 'jest-catalog-pdf-route-secret';
 let adminToken: string;
 
 // Catalogs we'll seed for this suite. We deliberately use catalog numbers
@@ -54,24 +57,29 @@ let adminToken: string;
 // each other's INSERT/DELETE of the same vendor+catalog rows. Each anchor
 // has a `-SBLU` color sibling in the Bridgeport PDF at Levenshtein distance
 // 1, which is exactly what we want to drive the uncertain-tier branch.
-const SEEDED_CATALOGS = ["232-SBLK", "234-SBLK"] as const;
+const SEEDED_CATALOGS = ['232-SBLK', '234-SBLK'] as const;
 
 const PDF_PATH = path.resolve(
   __dirname,
-  "../../../attached_assets/Bridgeport_Fittings_2026_Catalog_Part1_1777767002957.pdf",
+  '../../../attached_assets/Bridgeport_Fittings_2026_Catalog_Part1_1777767002957.pdf'
 );
 const haveFixture = fs.existsSync(PDF_PATH);
 
 async function cleanupRows() {
   await db
     .delete(inventoryTable)
-    .where(and(eq(inventoryTable.vendor, "BRIDGEPORT"), inArray(inventoryTable.catalog, [...SEEDED_CATALOGS])));
+    .where(
+      and(
+        eq(inventoryTable.vendor, 'BRIDGEPORT'),
+        inArray(inventoryTable.catalog, [...SEEDED_CATALOGS])
+      )
+    );
 }
 
 async function seedRows() {
   await cleanupRows();
   for (const catalog of SEEDED_CATALOGS) {
-    await db.insert(inventoryTable).values({ vendor: "BRIDGEPORT", catalog, description: "" });
+    await db.insert(inventoryTable).values({ vendor: 'BRIDGEPORT', catalog, description: '' });
   }
 }
 
@@ -92,209 +100,228 @@ afterAll(async () => {
 
 const describeIfFixture = haveFixture ? describe : describe.skip;
 
-describeIfFixture("catalog-pdf route flow (raw upload + uncertainDecisions + idempotency)", () => {
-  it(
-    "raw application/pdf preview → apply with explicit uncertainDecisions → idempotent re-apply",
-    async () => {
-      await seedRows();
+describeIfFixture('catalog-pdf route flow (raw upload + uncertainDecisions + idempotency)', () => {
+  it('raw application/pdf preview → apply with explicit uncertainDecisions → idempotent re-apply', async () => {
+    await seedRows();
 
-      // Snapshot the highest existing enrichment_run id so cleanup at the
-      // end of this test only removes the rows WE created — never rows
-      // written by sibling tests in parallel jest workers.
-      const baselineRunRows = await db
-        .select({ id: enrichmentRunTable.id })
-        .from(enrichmentRunTable)
-        .orderBy(desc(enrichmentRunTable.id))
-        .limit(1);
-      const baselineRunId = baselineRunRows[0]?.id ?? 0;
+    // Snapshot the highest existing enrichment_run id so cleanup at the
+    // end of this test only removes the rows WE created — never rows
+    // written by sibling tests in parallel jest workers.
+    const baselineRunRows = await db
+      .select({ id: enrichmentRunTable.id })
+      .from(enrichmentRunTable)
+      .orderBy(desc(enrichmentRunTable.id))
+      .limit(1);
+    const baselineRunId = baselineRunRows[0]?.id ?? 0;
 
-      // ── 1. /preview via raw application/pdf body (vendor on querystring) ──
-      const pdfBuffer = fs.readFileSync(PDF_PATH);
-      const previewRes = await supertest(app)
-        .post("/api/admin/catalog-pdf/preview?vendor=Bridgeport")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .set("Content-Type", "application/pdf")
-        .send(pdfBuffer)
-        .expect(200);
+    // ── 1. /preview via raw application/pdf body (vendor on querystring) ──
+    const pdfBuffer = fs.readFileSync(PDF_PATH);
+    const previewRes = await supertest(app)
+      .post('/api/admin/catalog-pdf/preview?vendor=Bridgeport')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .set('Content-Type', 'application/pdf')
+      .send(pdfBuffer)
+      .expect(200);
 
-      const report = previewRes.body as PreviewReport;
+    const report = previewRes.body as PreviewReport;
 
-      // Sane tier counts on the real fixture.
-      expect(report.vendor).toBe("BRIDGEPORT");
-      expect(report.summary.total).toBeGreaterThan(3000);
-      expect(report.summary.exact).toBeGreaterThanOrEqual(2); // 232-SBLK + 234-SBLK are seeded
-      expect(report.summary.uncertain).toBeGreaterThan(0);    // their -SBLU siblings land here
-      expect(report.summary.unmatched).toBeGreaterThan(0);
+    // Sane tier counts on the real fixture.
+    expect(report.vendor).toBe('BRIDGEPORT');
+    expect(report.summary.total).toBeGreaterThan(3000);
+    expect(report.summary.exact).toBeGreaterThanOrEqual(2); // 232-SBLK + 234-SBLK are seeded
+    expect(report.summary.uncertain).toBeGreaterThan(0); // their -SBLU siblings land here
+    expect(report.summary.unmatched).toBeGreaterThan(0);
 
-      // Look up the seeded row IDs once so we can assert pick-vs-skip behavior.
-      const seeded = await db
-        .select()
-        .from(inventoryTable)
-        .where(and(eq(inventoryTable.vendor, "BRIDGEPORT"), inArray(inventoryTable.catalog, [...SEEDED_CATALOGS])));
-      const seededByCatalog = new Map(seeded.map(r => [r.catalog, r]));
-      const pickAnchor = seededByCatalog.get("232-SBLK")!;
-      const skipAnchor = seededByCatalog.get("234-SBLK")!;
-      expect(pickAnchor).toBeDefined();
-      expect(skipAnchor).toBeDefined();
-
-      // Both seeded SKUs must be exact-tier — proves the exact branch ran
-      // and the matcher pre-indexed the vendor's seeded rows.
-      for (const cat of SEEDED_CATALOGS) {
-        const exact = report.rows.find(r => r.catalogNumber === cat && r.tier === "exact");
-        expect(exact).toBeDefined();
-        expect(exact!.candidates[0]?.inventoryId).toBe(seededByCatalog.get(cat)!.id);
-      }
-
-      // Find the uncertain `-SBLU` siblings whose top candidate is each
-      // seeded anchor. They sit at Levenshtein distance 1 (BLK→BLU) from
-      // their respective seeded -SBLK row, so they must classify as
-      // uncertain — never exact or highConfidence (color-no-collapse).
-      const pickRow = report.rows.find(
-        r =>
-          r.catalogNumber === "232-SBLU" &&
-          r.tier === "uncertain" &&
-          r.candidates[0]?.inventoryId === pickAnchor.id,
+    // Look up the seeded row IDs once so we can assert pick-vs-skip behavior.
+    const seeded = await db
+      .select()
+      .from(inventoryTable)
+      .where(
+        and(
+          eq(inventoryTable.vendor, 'BRIDGEPORT'),
+          inArray(inventoryTable.catalog, [...SEEDED_CATALOGS])
+        )
       );
-      const skipRow = report.rows.find(
-        r =>
-          r.catalogNumber === "234-SBLU" &&
-          r.tier === "uncertain" &&
-          r.candidates[0]?.inventoryId === skipAnchor.id,
+    const seededByCatalog = new Map(seeded.map((r) => [r.catalog, r]));
+    const pickAnchor = seededByCatalog.get('232-SBLK')!;
+    const skipAnchor = seededByCatalog.get('234-SBLK')!;
+    expect(pickAnchor).toBeDefined();
+    expect(skipAnchor).toBeDefined();
+
+    // Both seeded SKUs must be exact-tier — proves the exact branch ran
+    // and the matcher pre-indexed the vendor's seeded rows.
+    for (const cat of SEEDED_CATALOGS) {
+      const exact = report.rows.find((r) => r.catalogNumber === cat && r.tier === 'exact');
+      expect(exact).toBeDefined();
+      expect(exact!.candidates[0]?.inventoryId).toBe(seededByCatalog.get(cat)!.id);
+    }
+
+    // Find the uncertain `-SBLU` siblings whose top candidate is each
+    // seeded anchor. They sit at Levenshtein distance 1 (BLK→BLU) from
+    // their respective seeded -SBLK row, so they must classify as
+    // uncertain — never exact or highConfidence (color-no-collapse).
+    const pickRow = report.rows.find(
+      (r) =>
+        r.catalogNumber === '232-SBLU' &&
+        r.tier === 'uncertain' &&
+        r.candidates[0]?.inventoryId === pickAnchor.id
+    );
+    const skipRow = report.rows.find(
+      (r) =>
+        r.catalogNumber === '234-SBLU' &&
+        r.tier === 'uncertain' &&
+        r.candidates[0]?.inventoryId === skipAnchor.id
+    );
+    expect(pickRow).toBeDefined();
+    expect(skipRow).toBeDefined();
+
+    // ── 2. /apply with explicit uncertainDecisions ──
+    // PICK 232-SBLU onto 232-SBLK; SKIP 234-SBLU. /apply must respect both.
+    const uncertainDecisions: Record<string, number | 'skip'> = {
+      [pickRow!.catalogNumber]: pickAnchor.id,
+      [skipRow!.catalogNumber]: 'skip',
+    };
+    const applyRes = await supertest(app)
+      .post('/api/admin/catalog-pdf/apply')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ report, uncertainDecisions })
+      .expect(200);
+
+    const applyBody = applyRes.body as {
+      updated: number;
+      skippedNoOp: number;
+      errors: Array<{ inventoryId: number; error: string }>;
+    };
+    expect(applyBody.errors).toEqual([]);
+    // Both exact rows + the picked uncertain row should have produced
+    // distinct DB writes (the pick lands on the 232-SBLK row which is
+    // also the exact row, so it may collapse into one update — either
+    // way at least the two exact anchors are updated).
+    expect(applyBody.updated).toBeGreaterThanOrEqual(2);
+
+    // ── 3. Verify enrichment landed on the seeded rows ──
+    const enriched = await db
+      .select()
+      .from(inventoryTable)
+      .where(
+        and(
+          eq(inventoryTable.vendor, 'BRIDGEPORT'),
+          inArray(inventoryTable.catalog, [...SEEDED_CATALOGS])
+        )
       );
-      expect(pickRow).toBeDefined();
-      expect(skipRow).toBeDefined();
+    expect(enriched).toHaveLength(SEEDED_CATALOGS.length);
+    for (const row of enriched) {
+      expect(row.enrichedAt).not.toBeNull();
+      expect(row.aiKeywords.length).toBeGreaterThan(0);
+    }
+    // 232-SBLK (the PICK target) must carry "blue" — that proves the
+    // picked uncertainDecision was applied (the 232-SBLU PDF entry's
+    // dimension keywords were merged onto the seeded 232-SBLK row).
+    const pickAfter = enriched.find((r) => r.catalog === '232-SBLK')!;
+    const pickKws = pickAfter.aiKeywords.map((k) => k.toLowerCase());
+    expect(pickKws).toContain('blue');
 
-      // ── 2. /apply with explicit uncertainDecisions ──
-      // PICK 232-SBLU onto 232-SBLK; SKIP 234-SBLU. /apply must respect both.
-      const uncertainDecisions: Record<string, number | "skip"> = {
-        [pickRow!.catalogNumber]: pickAnchor.id,
-        [skipRow!.catalogNumber]: "skip",
-      };
-      const applyRes = await supertest(app)
-        .post("/api/admin/catalog-pdf/apply")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ report, uncertainDecisions })
-        .expect(200);
+    // 234-SBLK (the SKIP target) must NOT carry "blue" — the 234-SBLU
+    // entry was skipped, so its color label must not have leaked onto the
+    // anchor row. The anchor still gets "black" from its own exact match.
+    const skipAfter = enriched.find((r) => r.catalog === '234-SBLK')!;
+    const skipKws = skipAfter.aiKeywords.map((k) => k.toLowerCase());
+    expect(skipKws).toContain('black');
+    expect(skipKws).not.toContain('blue');
 
-      const applyBody = applyRes.body as {
-        updated: number;
-        skippedNoOp: number;
-        errors: Array<{ inventoryId: number; error: string }>;
-      };
-      expect(applyBody.errors).toEqual([]);
-      // Both exact rows + the picked uncertain row should have produced
-      // distinct DB writes (the pick lands on the 232-SBLK row which is
-      // also the exact row, so it may collapse into one update — either
-      // way at least the two exact anchors are updated).
-      expect(applyBody.updated).toBeGreaterThanOrEqual(2);
+    // ── 4. Idempotency: re-applying the SAME report+decisions produces
+    //    no further updates. Every row should be reported as skippedNoOp.
+    const reapplyRes = await supertest(app)
+      .post('/api/admin/catalog-pdf/apply')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ report, uncertainDecisions })
+      .expect(200);
+    const reapplyBody = reapplyRes.body as {
+      updated: number;
+      skippedNoOp: number;
+      errors: Array<{ inventoryId: number; error: string }>;
+    };
+    expect(reapplyBody.errors).toEqual([]);
+    expect(reapplyBody.updated).toBe(0);
+    // Exact cardinality: every decision the first /apply touched (whether
+    // it produced an UPDATE or was already a no-op) must come back as a
+    // no-op on the second pass — no decisions silently dropped.
+    expect(reapplyBody.skippedNoOp).toBe(applyBody.updated + applyBody.skippedNoOp);
 
-      // ── 3. Verify enrichment landed on the seeded rows ──
-      const enriched = await db
-        .select()
-        .from(inventoryTable)
-        .where(and(eq(inventoryTable.vendor, "BRIDGEPORT"), inArray(inventoryTable.catalog, [...SEEDED_CATALOGS])));
-      expect(enriched).toHaveLength(SEEDED_CATALOGS.length);
-      for (const row of enriched) {
-        expect(row.enrichedAt).not.toBeNull();
-        expect(row.aiKeywords.length).toBeGreaterThan(0);
+    // ── 5. Run history + revert (task #118) ────────────────────────────
+    // The two /apply calls above each opened an enrichment_run row; the
+    // first one wrote per-inventory history. Listing runs must surface
+    // them, and reverting the first run must restore the seeded rows to
+    // their pre-enrichment state (empty description + empty aiKeywords).
+    const runsRes = await supertest(app)
+      .get('/api/admin/catalog-pdf/runs?limit=50&vendor=BRIDGEPORT')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const runs = (
+      runsRes.body as {
+        runs: Array<{
+          id: number;
+          vendor: string;
+          updatedCount: number;
+          revertedAt: string | null;
+        }>;
       }
-      // 232-SBLK (the PICK target) must carry "blue" — that proves the
-      // picked uncertainDecision was applied (the 232-SBLU PDF entry's
-      // dimension keywords were merged onto the seeded 232-SBLK row).
-      const pickAfter = enriched.find(r => r.catalog === "232-SBLK")!;
-      const pickKws = pickAfter.aiKeywords.map(k => k.toLowerCase());
-      expect(pickKws).toContain("blue");
+    ).runs;
+    expect(runs.length).toBeGreaterThanOrEqual(2);
+    // Newest first; pick the run with updatedCount > 0 (the first apply).
+    const writingRun = runs.find((r) => r.updatedCount > 0 && r.revertedAt === null);
+    expect(writingRun).toBeDefined();
 
-      // 234-SBLK (the SKIP target) must NOT carry "blue" — the 234-SBLU
-      // entry was skipped, so its color label must not have leaked onto the
-      // anchor row. The anchor still gets "black" from its own exact match.
-      const skipAfter = enriched.find(r => r.catalog === "234-SBLK")!;
-      const skipKws = skipAfter.aiKeywords.map(k => k.toLowerCase());
-      expect(skipKws).toContain("black");
-      expect(skipKws).not.toContain("blue");
+    const revertRes = await supertest(app)
+      .post(`/api/admin/catalog-pdf/runs/${writingRun!.id}/revert`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const revertBody = revertRes.body as { runId: number; restored: number };
+    expect(revertBody.runId).toBe(writingRun!.id);
+    expect(revertBody.restored).toBeGreaterThanOrEqual(2);
 
-      // ── 4. Idempotency: re-applying the SAME report+decisions produces
-      //    no further updates. Every row should be reported as skippedNoOp.
-      const reapplyRes = await supertest(app)
-        .post("/api/admin/catalog-pdf/apply")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ report, uncertainDecisions })
-        .expect(200);
-      const reapplyBody = reapplyRes.body as {
-        updated: number;
-        skippedNoOp: number;
-        errors: Array<{ inventoryId: number; error: string }>;
-      };
-      expect(reapplyBody.errors).toEqual([]);
-      expect(reapplyBody.updated).toBe(0);
-      // Exact cardinality: every decision the first /apply touched (whether
-      // it produced an UPDATE or was already a no-op) must come back as a
-      // no-op on the second pass — no decisions silently dropped.
-      expect(reapplyBody.skippedNoOp).toBe(applyBody.updated + applyBody.skippedNoOp);
+    // Seeded rows must be back to their pre-enrichment state.
+    const reverted = await db
+      .select()
+      .from(inventoryTable)
+      .where(
+        and(
+          eq(inventoryTable.vendor, 'BRIDGEPORT'),
+          inArray(inventoryTable.catalog, [...SEEDED_CATALOGS])
+        )
+      );
+    for (const row of reverted) {
+      expect(row.description).toBe('');
+      expect(row.aiKeywords).toEqual([]);
+    }
 
-      // ── 5. Run history + revert (task #118) ────────────────────────────
-      // The two /apply calls above each opened an enrichment_run row; the
-      // first one wrote per-inventory history. Listing runs must surface
-      // them, and reverting the first run must restore the seeded rows to
-      // their pre-enrichment state (empty description + empty aiKeywords).
-      const runsRes = await supertest(app)
-        .get("/api/admin/catalog-pdf/runs?limit=50&vendor=BRIDGEPORT")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .expect(200);
-      const runs = (runsRes.body as { runs: Array<{ id: number; vendor: string; updatedCount: number; revertedAt: string | null }> }).runs;
-      expect(runs.length).toBeGreaterThanOrEqual(2);
-      // Newest first; pick the run with updatedCount > 0 (the first apply).
-      const writingRun = runs.find(r => r.updatedCount > 0 && r.revertedAt === null);
-      expect(writingRun).toBeDefined();
+    // Filter contract: GET /runs?vendor=…&sourceFilename=… must restrict
+    // results server-side. The apply calls above didn't send a filename,
+    // so a non-matching filename filter must return zero rows; vendor
+    // BRIDGEPORT must include our writing run.
+    const filteredEmpty = await supertest(app)
+      .get('/api/admin/catalog-pdf/runs?sourceFilename=nope-no-such-file.pdf')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect((filteredEmpty.body as { runs: unknown[] }).runs).toEqual([]);
 
-      const revertRes = await supertest(app)
-        .post(`/api/admin/catalog-pdf/runs/${writingRun!.id}/revert`)
-        .set("Authorization", `Bearer ${adminToken}`)
-        .expect(200);
-      const revertBody = revertRes.body as { runId: number; restored: number };
-      expect(revertBody.runId).toBe(writingRun!.id);
-      expect(revertBody.restored).toBeGreaterThanOrEqual(2);
+    const filteredVendor = await supertest(app)
+      .get('/api/admin/catalog-pdf/runs?vendor=bridgeport&limit=50')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const vendorRuns = (filteredVendor.body as { runs: Array<{ id: number; vendor: string }> })
+      .runs;
+    expect(vendorRuns.every((r) => r.vendor === 'BRIDGEPORT')).toBe(true);
+    expect(vendorRuns.some((r) => r.id === writingRun!.id)).toBe(true);
 
-      // Seeded rows must be back to their pre-enrichment state.
-      const reverted = await db
-        .select()
-        .from(inventoryTable)
-        .where(and(eq(inventoryTable.vendor, "BRIDGEPORT"), inArray(inventoryTable.catalog, [...SEEDED_CATALOGS])));
-      for (const row of reverted) {
-        expect(row.description).toBe("");
-        expect(row.aiKeywords).toEqual([]);
-      }
+    // Double-revert must be rejected (409).
+    await supertest(app)
+      .post(`/api/admin/catalog-pdf/runs/${writingRun!.id}/revert`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(409);
 
-      // Filter contract: GET /runs?vendor=…&sourceFilename=… must restrict
-      // results server-side. The apply calls above didn't send a filename,
-      // so a non-matching filename filter must return zero rows; vendor
-      // BRIDGEPORT must include our writing run.
-      const filteredEmpty = await supertest(app)
-        .get("/api/admin/catalog-pdf/runs?sourceFilename=nope-no-such-file.pdf")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .expect(200);
-      expect((filteredEmpty.body as { runs: unknown[] }).runs).toEqual([]);
-
-      const filteredVendor = await supertest(app)
-        .get("/api/admin/catalog-pdf/runs?vendor=bridgeport&limit=50")
-        .set("Authorization", `Bearer ${adminToken}`)
-        .expect(200);
-      const vendorRuns = (filteredVendor.body as { runs: Array<{ id: number; vendor: string }> }).runs;
-      expect(vendorRuns.every(r => r.vendor === "BRIDGEPORT")).toBe(true);
-      expect(vendorRuns.some(r => r.id === writingRun!.id)).toBe(true);
-
-      // Double-revert must be rejected (409).
-      await supertest(app)
-        .post(`/api/admin/catalog-pdf/runs/${writingRun!.id}/revert`)
-        .set("Authorization", `Bearer ${adminToken}`)
-        .expect(409);
-
-      // Clean up only the run rows this test execution created (id >
-      // baselineRunId). FK cascade drops the history rows automatically.
-      await db
-        .delete(enrichmentRunTable)
-        .where(gt(enrichmentRunTable.id, baselineRunId));
-    },
-    120_000,
-  );
+    // Clean up only the run rows this test execution created (id >
+    // baselineRunId). FK cascade drops the history rows automatically.
+    await db.delete(enrichmentRunTable).where(gt(enrichmentRunTable.id, baselineRunId));
+  }, 120_000);
 });

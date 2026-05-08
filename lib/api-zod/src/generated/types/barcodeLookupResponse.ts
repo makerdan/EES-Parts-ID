@@ -5,8 +5,8 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { BarcodeSource } from "./barcodeSource";
-import type { InventoryItem } from "./inventoryItem";
+import type { BarcodeSource } from './barcodeSource';
+import type { InventoryItem } from './inventoryItem';
 
 export interface BarcodeLookupResponse {
   /** Matched inventory item, or null when nothing was found. */

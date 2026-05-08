@@ -6,20 +6,20 @@
  * arrays, so workers can keep walking the warehouse with no signal.
  * Closing the overlay returns them to their prior search/filter state.
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { BackHandler, FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Feather } from "@expo/vector-icons";
-import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
-import { useColors } from "@/hooks/useColors";
-import { useApp } from "@/contexts/AppContext";
-import { ResultCard } from "@/components/ResultCard";
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler, FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
+import { useColors } from '@/hooks/useColors';
+import { useApp } from '@/contexts/AppContext';
+import { ResultCard } from '@/components/ResultCard';
 import {
   buildAisleHierarchy,
   type AisleNode,
   type SectionNode,
   type ShelfNode,
   type PartOnShelf,
-} from "@/lib/aisleHierarchy";
+} from '@/lib/aisleHierarchy';
 
 interface Props {
   /** All inventory items currently cached locally (from the Search tab's
@@ -39,7 +39,7 @@ interface Props {
   shelfViewEnabled?: boolean;
 }
 
-type Level = "aisles" | "sections" | "shelves" | "parts";
+type Level = 'aisles' | 'sections' | 'shelves' | 'parts';
 
 interface CrumbState {
   aisle: AisleNode | null;
@@ -70,18 +70,18 @@ export function BrowseByAisle({
   const hierarchy = useMemo(() => buildAisleHierarchy(inventory), [inventory]);
 
   const level: Level = crumbs.shelf
-    ? "parts"
+    ? 'parts'
     : crumbs.section
-    ? "shelves"
-    : crumbs.aisle
-    ? "sections"
-    : "aisles";
+      ? 'shelves'
+      : crumbs.aisle
+        ? 'sections'
+        : 'aisles';
 
   // ── Scroll-position restoration for the sections list ─────────────────────
   const sectionsFlatListRef = useRef<FlatList>(null);
   const sectionsScrollOffsetRef = useRef(0);
   useEffect(() => {
-    if (level === "sections" && sectionsScrollOffsetRef.current > 0) {
+    if (level === 'sections' && sectionsScrollOffsetRef.current > 0) {
       const id = setTimeout(() => {
         sectionsFlatListRef.current?.scrollToOffset({
           offset: sectionsScrollOffsetRef.current,
@@ -93,7 +93,7 @@ export function BrowseByAisle({
   }, [level]);
 
   const goBack = () => {
-    setCrumbs(c => {
+    setCrumbs((c) => {
       if (c.shelf) return { ...c, shelf: null };
       if (c.section) return { ...c, section: null };
       if (c.aisle) return { ...c, aisle: null };
@@ -127,21 +127,17 @@ export function BrowseByAisle({
   if (inventory.length === 0) {
     return (
       <View style={styles.wrapper}>
-        <Header
-          colors={colors}
-          crumbs={crumbs}
-          onClose={onClose}
-          onBack={goBack}
-          onHome={goHome}
-        />
-        <View style={[styles.emptyCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Header colors={colors} crumbs={crumbs} onClose={onClose} onBack={goBack} onHome={goHome} />
+        <View
+          style={[styles.emptyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+        >
           <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-            {cacheReady ? "No inventory loaded" : "Inventory not synced yet"}
+            {cacheReady ? 'No inventory loaded' : 'Inventory not synced yet'}
           </Text>
           <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
             {cacheReady
-              ? "There are no parts to browse."
-              : "Browse by Aisle works offline once the inventory has been synced once. Connect to the network and wait for the sync badge in the header to finish."}
+              ? 'There are no parts to browse.'
+              : 'Browse by Aisle works offline once the inventory has been synced once. Connect to the network and wait for the sync badge in the header to finish.'}
           </Text>
         </View>
       </View>
@@ -150,18 +146,12 @@ export function BrowseByAisle({
 
   return (
     <View style={styles.wrapper}>
-      <Header
-        colors={colors}
-        crumbs={crumbs}
-        onClose={onClose}
-        onBack={goBack}
-        onHome={goHome}
-      />
+      <Header colors={colors} crumbs={crumbs} onClose={onClose} onBack={goBack} onHome={goHome} />
 
-      {level === "aisles" ? (
+      {level === 'aisles' ? (
         <FlatList
           data={hierarchy.aisles}
-          keyExtractor={a => a.aisle}
+          keyExtractor={(a) => a.aisle}
           renderItem={({ item }) => (
             <DrillRow
               colors={colors}
@@ -170,65 +160,69 @@ export function BrowseByAisle({
               onPress={() => setCrumbs({ aisle: item, section: null, shelf: null })}
             />
           )}
-          ListFooterComponent={hierarchy.unsorted ? (
-            <DrillRow
-              colors={colors}
-              label="Unsorted"
-              count={hierarchy.unsorted.partCount}
-              hint="bins that don't match the AA-SS-SHP pattern"
-              onPress={() => {
-                // Synthetic aisle/section/shelf so the parts level can render
-                // the unsorted list using the same path as a regular shelf.
-                const fakeShelf: ShelfNode = {
-                  shelfHundreds: -1,
-                  label: "Unsorted",
-                  partCount: hierarchy.unsorted!.partCount,
-                  parts: hierarchy.unsorted!.parts.map(item => ({
-                    item,
-                    bin: (item.binLocations ?? [])[0] ?? "",
-                    position: 0,
-                  })),
-                };
-                const fakeSection: SectionNode = {
-                  section: "—",
-                  label: "Unsorted",
-                  partCount: hierarchy.unsorted!.partCount,
-                  shelves: [fakeShelf],
-                };
-                const fakeAisle: AisleNode = {
-                  aisle: "—",
-                  label: "Unsorted",
-                  partCount: hierarchy.unsorted!.partCount,
-                  sections: [fakeSection],
-                };
-                setCrumbs({ aisle: fakeAisle, section: fakeSection, shelf: fakeShelf });
-              }}
-            />
-          ) : null}
+          ListFooterComponent={
+            hierarchy.unsorted ? (
+              <DrillRow
+                colors={colors}
+                label="Unsorted"
+                count={hierarchy.unsorted.partCount}
+                hint="bins that don't match the AA-SS-SHP pattern"
+                onPress={() => {
+                  // Synthetic aisle/section/shelf so the parts level can render
+                  // the unsorted list using the same path as a regular shelf.
+                  const fakeShelf: ShelfNode = {
+                    shelfHundreds: -1,
+                    label: 'Unsorted',
+                    partCount: hierarchy.unsorted!.partCount,
+                    parts: hierarchy.unsorted!.parts.map((item) => ({
+                      item,
+                      bin: (item.binLocations ?? [])[0] ?? '',
+                      position: 0,
+                    })),
+                  };
+                  const fakeSection: SectionNode = {
+                    section: '—',
+                    label: 'Unsorted',
+                    partCount: hierarchy.unsorted!.partCount,
+                    shelves: [fakeShelf],
+                  };
+                  const fakeAisle: AisleNode = {
+                    aisle: '—',
+                    label: 'Unsorted',
+                    partCount: hierarchy.unsorted!.partCount,
+                    sections: [fakeSection],
+                  };
+                  setCrumbs({ aisle: fakeAisle, section: fakeSection, shelf: fakeShelf });
+                }}
+              />
+            ) : null
+          }
           contentContainerStyle={styles.listContent}
         />
       ) : null}
 
-      {level === "sections" && crumbs.aisle ? (
+      {level === 'sections' && crumbs.aisle ? (
         <FlatList
           ref={sectionsFlatListRef}
           data={crumbs.aisle.sections}
-          keyExtractor={s => s.section}
+          keyExtractor={(s) => s.section}
           renderItem={({ item }) => (
             <DrillRow
               colors={colors}
               label={item.label}
               count={item.partCount}
-              onPress={() => setCrumbs(c => ({ ...c, section: item, shelf: null }))}
+              onPress={() => setCrumbs((c) => ({ ...c, section: item, shelf: null }))}
             />
           )}
-          onScroll={e => { sectionsScrollOffsetRef.current = e.nativeEvent.contentOffset.y; }}
+          onScroll={(e) => {
+            sectionsScrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+          }}
           scrollEventThrottle={16}
           contentContainerStyle={styles.listContent}
         />
       ) : null}
 
-      {level === "shelves" && crumbs.section ? (
+      {level === 'shelves' && crumbs.section ? (
         warehouseShelfView ? (
           <SectionShelfView
             section={crumbs.section}
@@ -240,13 +234,13 @@ export function BrowseByAisle({
         ) : (
           <FlatList
             data={crumbs.section.shelves}
-            keyExtractor={s => String(s.shelfHundreds)}
+            keyExtractor={(s) => String(s.shelfHundreds)}
             renderItem={({ item }) => (
               <DrillRow
                 colors={colors}
                 label={item.label}
                 count={item.partCount}
-                onPress={() => setCrumbs(c => ({ ...c, shelf: item }))}
+                onPress={() => setCrumbs((c) => ({ ...c, shelf: item }))}
               />
             )}
             contentContainerStyle={styles.listContent}
@@ -254,7 +248,7 @@ export function BrowseByAisle({
         )
       ) : null}
 
-      {level === "parts" && crumbs.shelf ? (
+      {level === 'parts' && crumbs.shelf ? (
         shelfViewEnabled ? (
           <ShelfView
             parts={crumbs.shelf.parts}
@@ -271,7 +265,7 @@ export function BrowseByAisle({
               const result: SearchResult = {
                 item: item.item,
                 confidence: 1,
-                matchReason: `On ${crumbs.aisle?.label ?? ""} › ${crumbs.section?.label ?? ""} › ${crumbs.shelf?.label ?? ""}`,
+                matchReason: `On ${crumbs.aisle?.label ?? ''} › ${crumbs.section?.label ?? ''} › ${crumbs.shelf?.label ?? ''}`,
                 seriesLabel: undefined,
                 variants: [],
               };
@@ -300,8 +294,8 @@ export function BrowseByAisle({
 
 const BIN_SLOT_W = 84;
 const BIN_SLOT_H = 76;
-const GAP_BASE   = 8;   // minimum px gap between slots
-const GAP_PER_POS = 7;  // additional px per position unit of separation
+const GAP_BASE = 8; // minimum px gap between slots
+const GAP_PER_POS = 7; // additional px per position unit of separation
 
 function ShelfView({
   parts,
@@ -319,11 +313,9 @@ function ShelfView({
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const selectedPart = selectedIdx !== null ? (parts[selectedIdx] ?? null) : null;
 
-  const locationLabel = [
-    crumbs.aisle?.label,
-    crumbs.section?.label,
-    crumbs.shelf?.label,
-  ].filter(Boolean).join(" › ");
+  const locationLabel = [crumbs.aisle?.label, crumbs.section?.label, crumbs.shelf?.label]
+    .filter(Boolean)
+    .join(' › ');
 
   return (
     <View style={{ flex: 1 }}>
@@ -337,7 +329,8 @@ function ShelfView({
           <View style={shelfStyles.slotsRow}>
             {parts.map((p, i) => {
               const prevPos = i === 0 ? p.position : parts[i - 1]!.position;
-              const gap = i === 0 ? 0 : GAP_BASE + Math.max(0, (p.position - prevPos - 1) * GAP_PER_POS);
+              const gap =
+                i === 0 ? 0 : GAP_BASE + Math.max(0, (p.position - prevPos - 1) * GAP_PER_POS);
               const isSelected = selectedIdx === i;
               return (
                 <React.Fragment key={`${p.bin}-${i}`}>
@@ -352,21 +345,31 @@ function ShelfView({
                       },
                     ]}
                     accessibilityRole="button"
-                    accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? "part"}`}
+                    accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
                   >
-                    <Text style={[shelfStyles.slotPos, { color: "#000000" }]}>
-                      {p.bin.split("-").pop() ?? p.bin}
+                    <Text style={[shelfStyles.slotPos, { color: '#000000' }]}>
+                      {p.bin.split('-').pop() ?? p.bin}
                     </Text>
                     <Text
                       numberOfLines={1}
-                      style={[shelfStyles.slotName, { color: isSelected ? colors.primaryForeground : colors.foreground }]}
+                      style={[
+                        shelfStyles.slotName,
+                        { color: isSelected ? colors.primaryForeground : colors.foreground },
+                      ]}
                     >
-                      {p.item.catalog ?? p.item.description ?? "—"}
+                      {p.item.catalog ?? p.item.description ?? '—'}
                     </Text>
                     {p.item.vendor ? (
                       <Text
                         numberOfLines={1}
-                        style={[shelfStyles.slotVendor, { color: isSelected ? colors.primaryForeground + "aa" : colors.mutedForeground }]}
+                        style={[
+                          shelfStyles.slotVendor,
+                          {
+                            color: isSelected
+                              ? colors.primaryForeground + 'aa'
+                              : colors.mutedForeground,
+                          },
+                        ]}
                       >
                         {p.item.vendor}
                       </Text>
@@ -377,10 +380,15 @@ function ShelfView({
             })}
           </View>
           {/* Physical shelf rail */}
-          <View style={[shelfStyles.rail, { backgroundColor: colors.muted, borderColor: colors.border }]} />
+          <View
+            style={[
+              shelfStyles.rail,
+              { backgroundColor: colors.muted, borderColor: colors.border },
+            ]}
+          />
         </ScrollView>
         <Text style={[shelfStyles.locationLabel, { color: colors.mutedForeground }]}>
-          {`${locationLabel} · ${parts.length} ${parts.length === 1 ? "part" : "parts"}`}
+          {`${locationLabel} · ${parts.length} ${parts.length === 1 ? 'part' : 'parts'}`}
         </Text>
       </View>
 
@@ -388,7 +396,7 @@ function ShelfView({
       {selectedPart ? (
         <FlatList
           data={[selectedPart]}
-          keyExtractor={p => `${p.bin}-detail`}
+          keyExtractor={(p) => `${p.bin}-detail`}
           renderItem={({ item: p }) => {
             const result: SearchResult = {
               item: p.item,
@@ -414,7 +422,12 @@ function ShelfView({
         />
       ) : (
         <View style={shelfStyles.hint}>
-          <Feather name="mouse-pointer" size={20} color={colors.mutedForeground} style={{ marginBottom: 8 }} />
+          <Feather
+            name="mouse-pointer"
+            size={20}
+            color={colors.mutedForeground}
+            style={{ marginBottom: 8 }}
+          />
           <Text style={[shelfStyles.hintText, { color: colors.mutedForeground }]}>
             Tap a bin above to see part details
           </Text>
@@ -425,9 +438,14 @@ function ShelfView({
 }
 
 const shelfStyles = StyleSheet.create({
-  diagramWrap:   { flexGrow: 0 },
-  diagramScroll: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 0, alignItems: "flex-end" },
-  slotsRow:      { flexDirection: "row", alignItems: "flex-end" },
+  diagramWrap: { flexGrow: 0 },
+  diagramScroll: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 0,
+    alignItems: 'flex-end',
+  },
+  slotsRow: { flexDirection: 'row', alignItems: 'flex-end' },
   slot: {
     width: BIN_SLOT_W,
     height: BIN_SLOT_H,
@@ -435,20 +453,32 @@ const shelfStyles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 8,
     borderWidth: 1,
-    justifyContent: "flex-end",
+    justifyContent: 'flex-end',
   },
-  slotPos:    { fontSize: 15, fontFamily: "Inter_500Medium", marginBottom: 3, textAlign: "center", textDecorationLine: "underline" },
-  slotName:   { fontSize: 11, fontFamily: "Inter_600SemiBold", lineHeight: 14 },
-  slotVendor: { fontSize: 9,  fontFamily: "Inter_400Regular", marginTop: 2 },
+  slotPos: {
+    fontSize: 15,
+    fontFamily: 'Inter_500Medium',
+    marginBottom: 3,
+    textAlign: 'center',
+    textDecorationLine: 'underline',
+  },
+  slotName: { fontSize: 11, fontFamily: 'Inter_600SemiBold', lineHeight: 14 },
+  slotVendor: { fontSize: 9, fontFamily: 'Inter_400Regular', marginTop: 2 },
   rail: {
     height: 8,
     borderRadius: 4,
     borderWidth: 1,
     marginTop: 4,
   },
-  locationLabel: { fontSize: 11, fontFamily: "Inter_400Regular", paddingHorizontal: 16, paddingTop: 5, paddingBottom: 2 },
-  hint:     { flex: 1, alignItems: "center", justifyContent: "center" },
-  hintText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  locationLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    paddingHorizontal: 16,
+    paddingTop: 5,
+    paddingBottom: 2,
+  },
+  hint: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  hintText: { fontSize: 13, fontFamily: 'Inter_400Regular' },
 });
 
 // ── Section-wide shelf view (all shelves in a section stacked) ────────────────
@@ -473,11 +503,9 @@ function SectionShelfView({
   const shelves = [...section.shelves].reverse();
 
   const selectedPart =
-    selected !== null
-      ? (shelves[selected.shelfIdx]?.parts[selected.partIdx] ?? null)
-      : null;
+    selected !== null ? (shelves[selected.shelfIdx]?.parts[selected.partIdx] ?? null) : null;
 
-  const locationLabel = [crumbs.aisle?.label, section.label].filter(Boolean).join(" › ");
+  const locationLabel = [crumbs.aisle?.label, section.label].filter(Boolean).join(' › ');
 
   return (
     <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
@@ -485,7 +513,7 @@ function SectionShelfView({
         <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
           {shelfIdx > 0 ? <View style={sectionStyles.shelfPlank} /> : null}
           <Text style={[sectionStyles.shelfLabel, { color: colors.foreground }]}>
-            {`${shelf.label} · ${shelf.partCount} ${shelf.partCount === 1 ? "part" : "parts"}`}
+            {`${shelf.label} · ${shelf.partCount} ${shelf.partCount === 1 ? 'part' : 'parts'}`}
           </Text>
           <ScrollView
             horizontal
@@ -495,7 +523,10 @@ function SectionShelfView({
             <View style={shelfStyles.slotsRow}>
               {shelf.parts.map((p, partIdx) => {
                 const prevPos = partIdx === 0 ? p.position : shelf.parts[partIdx - 1]!.position;
-                const gap = partIdx === 0 ? 0 : GAP_BASE + Math.max(0, (p.position - prevPos - 1) * GAP_PER_POS);
+                const gap =
+                  partIdx === 0
+                    ? 0
+                    : GAP_BASE + Math.max(0, (p.position - prevPos - 1) * GAP_PER_POS);
                 const isSelected = selected?.shelfIdx === shelfIdx && selected?.partIdx === partIdx;
                 return (
                   <React.Fragment key={`${p.bin}-${partIdx}`}>
@@ -510,21 +541,31 @@ function SectionShelfView({
                         },
                       ]}
                       accessibilityRole="button"
-                      accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? "part"}`}
+                      accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
                     >
-                      <Text style={[shelfStyles.slotPos, { color: "#000000" }]}>
-                        {p.bin.split("-").pop() ?? p.bin}
+                      <Text style={[shelfStyles.slotPos, { color: '#000000' }]}>
+                        {p.bin.split('-').pop() ?? p.bin}
                       </Text>
                       <Text
                         numberOfLines={1}
-                        style={[shelfStyles.slotName, { color: isSelected ? colors.primaryForeground : colors.foreground }]}
+                        style={[
+                          shelfStyles.slotName,
+                          { color: isSelected ? colors.primaryForeground : colors.foreground },
+                        ]}
                       >
-                        {p.item.catalog ?? p.item.description ?? "—"}
+                        {p.item.catalog ?? p.item.description ?? '—'}
                       </Text>
                       {p.item.vendor ? (
                         <Text
                           numberOfLines={1}
-                          style={[shelfStyles.slotVendor, { color: isSelected ? colors.primaryForeground + "aa" : colors.mutedForeground }]}
+                          style={[
+                            shelfStyles.slotVendor,
+                            {
+                              color: isSelected
+                                ? colors.primaryForeground + 'aa'
+                                : colors.mutedForeground,
+                            },
+                          ]}
                         >
                           {p.item.vendor}
                         </Text>
@@ -534,7 +575,12 @@ function SectionShelfView({
                 );
               })}
             </View>
-            <View style={[shelfStyles.rail, { backgroundColor: colors.muted, borderColor: colors.border }]} />
+            <View
+              style={[
+                shelfStyles.rail,
+                { backgroundColor: colors.muted, borderColor: colors.border },
+              ]}
+            />
           </ScrollView>
           {shelfIdx === shelves.length - 1 && shelf.partCount > 3 ? (
             <View style={sectionStyles.shelfPlank} />
@@ -561,7 +607,12 @@ function SectionShelfView({
         </View>
       ) : (
         <View style={[shelfStyles.hint, { minHeight: 80 }]}>
-          <Feather name="mouse-pointer" size={20} color={colors.mutedForeground} style={{ marginBottom: 8 }} />
+          <Feather
+            name="mouse-pointer"
+            size={20}
+            color={colors.mutedForeground}
+            style={{ marginBottom: 8 }}
+          />
           <Text style={[shelfStyles.hintText, { color: colors.mutedForeground }]}>
             Tap a bin above to see part details
           </Text>
@@ -573,8 +624,14 @@ function SectionShelfView({
 
 const sectionStyles = StyleSheet.create({
   shelfBlock: { marginBottom: 0 },
-  shelfLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold", paddingHorizontal: 16, paddingBottom: 4, paddingTop: 8 },
-  shelfPlank: { height: 2, backgroundColor: "#000000", marginHorizontal: 0 },
+  shelfLabel: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+    paddingTop: 8,
+  },
+  shelfPlank: { height: 2, backgroundColor: '#000000', marginHorizontal: 0 },
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -604,17 +661,17 @@ function Header({
         hitSlop={8}
         style={styles.headerBtn}
         accessibilityRole="button"
-        accessibilityLabel={isRoot ? "Close Browse by Aisle" : "Go back one level"}
+        accessibilityLabel={isRoot ? 'Close Browse by Aisle' : 'Go back one level'}
       >
-        <Feather name={isRoot ? "x" : "chevron-left"} size={18} color={colors.foreground} />
+        <Feather name={isRoot ? 'x' : 'chevron-left'} size={18} color={colors.foreground} />
         <Text style={[styles.headerBtnText, { color: colors.foreground }]}>
-          {isRoot ? "Close" : "Back"}
+          {isRoot ? 'Close' : 'Back'}
         </Text>
       </Pressable>
       <View style={styles.crumbWrap}>
         {parts.length > 0 ? (
-          <Text style={[styles.crumbPath, { color: "#000000" }]} numberOfLines={1}>
-            {parts.join(" › ")}
+          <Text style={[styles.crumbPath, { color: '#000000' }]} numberOfLines={1}>
+            {parts.join(' › ')}
           </Text>
         ) : null}
       </View>
@@ -646,7 +703,7 @@ function DrillRow({
         },
       ]}
       accessibilityRole="button"
-      accessibilityLabel={`${label}, ${count} ${count === 1 ? "part" : "parts"}`}
+      accessibilityLabel={`${label}, ${count} ${count === 1 ? 'part' : 'parts'}`}
     >
       <View style={{ flex: 1 }}>
         <Text style={[styles.drillLabel, { color: colors.foreground }]}>{label}</Text>
@@ -655,9 +712,14 @@ function DrillRow({
         ) : null}
       </View>
       <Text style={[styles.drillCount, { color: colors.mutedForeground }]}>
-        {count} {count === 1 ? "part" : "parts"}
+        {count} {count === 1 ? 'part' : 'parts'}
       </Text>
-      <Feather name="chevron-right" size={18} color={colors.mutedForeground} style={{ marginLeft: 6 }} />
+      <Feather
+        name="chevron-right"
+        size={18}
+        color={colors.mutedForeground}
+        style={{ marginLeft: 6 }}
+      />
     </Pressable>
   );
 }
@@ -665,8 +727,8 @@ function DrillRow({
 const styles = StyleSheet.create({
   wrapper: { flex: 1 },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 10,
     marginHorizontal: 12,
@@ -676,26 +738,32 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   headerBtn: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 4,
     paddingHorizontal: 6,
     paddingVertical: 4,
   },
-  headerBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  headerBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   crumbWrap: {
-    position: "absolute",
+    position: 'absolute',
     left: 0,
     right: 0,
-    alignItems: "center",
-    justifyContent: "center",
-    pointerEvents: "none",
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'none',
   },
-  crumbHome: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  crumbPath: { fontSize: 18, fontFamily: "Inter_700Bold", flexShrink: 1, textAlign: "center", textDecorationLine: "underline" },
+  crumbHome: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  crumbPath: {
+    fontSize: 18,
+    fontFamily: 'Inter_700Bold',
+    flexShrink: 1,
+    textAlign: 'center',
+    textDecorationLine: 'underline',
+  },
   drillRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 14,
     marginHorizontal: 12,
@@ -703,9 +771,16 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
   },
-  drillLabel: { fontSize: 15, fontFamily: Platform.select({ ios: "Courier New", android: "monospace", default: "monospace" }), fontWeight: "600" },
-  drillHint: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
-  drillCount: { fontSize: 13, fontFamily: Platform.select({ ios: "Courier New", android: "monospace", default: "monospace" }) },
+  drillLabel: {
+    fontSize: 15,
+    fontFamily: Platform.select({ ios: 'Courier New', android: 'monospace', default: 'monospace' }),
+    fontWeight: '600',
+  },
+  drillHint: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  drillCount: {
+    fontSize: 13,
+    fontFamily: Platform.select({ ios: 'Courier New', android: 'monospace', default: 'monospace' }),
+  },
   partRow: { paddingHorizontal: 12 },
   listContent: { paddingBottom: 140 },
   emptyCard: {
@@ -714,6 +789,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
-  emptyTitle: { fontSize: 16, fontFamily: "Inter_700Bold", marginBottom: 8 },
-  emptyHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  emptyTitle: { fontSize: 16, fontFamily: 'Inter_700Bold', marginBottom: 8 },
+  emptyHint: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 18 },
 });

@@ -13,7 +13,7 @@ export type AiIdentifyResponseMatchType =
   (typeof AiIdentifyResponseMatchType)[keyof typeof AiIdentifyResponseMatchType];
 
 export const AiIdentifyResponseMatchType = {
-  catalog_exact: "catalog_exact",
-  attribute_match: "attribute_match",
-  descriptive: "descriptive",
+  catalog_exact: 'catalog_exact',
+  attribute_match: 'attribute_match',
+  descriptive: 'descriptive',
 } as const;

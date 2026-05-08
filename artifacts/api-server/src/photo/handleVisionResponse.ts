@@ -7,25 +7,25 @@
  * and return a graceful "could not identify" response to the client.
  */
 
-import { z } from "zod";
+import { z } from 'zod';
 
 export const VisionContractSchema = z.object({
-  catalog_guess:      z.string().nullable().default(null),
-  vendor_guess:       z.string().nullable().default(null),
-  type_guess:         z.string().nullable().default(null),
+  catalog_guess: z.string().nullable().default(null),
+  vendor_guess: z.string().nullable().default(null),
+  type_guess: z.string().nullable().default(null),
   attributes: z
     .object({
-      amperage:      z.number().nullable().default(null),
-      poles:         z.number().nullable().default(null),
-      voltage:       z.number().nullable().default(null),
+      amperage: z.number().nullable().default(null),
+      poles: z.number().nullable().default(null),
+      voltage: z.number().nullable().default(null),
       trade_size_in: z.number().nullable().default(null),
-      color:         z.string().nullable().default(null),
+      color: z.string().nullable().default(null),
     })
     .nullable()
     .default(null),
   descriptive_tokens: z.array(z.string()).default([]),
-  confidence:         z.number().min(0).max(1).nullable().default(null),
-  notes:              z.string().nullable().default(null),
+  confidence: z.number().min(0).max(1).nullable().default(null),
+  notes: z.string().nullable().default(null),
 });
 
 export type VisionContract = z.infer<typeof VisionContractSchema>;
@@ -33,10 +33,10 @@ export type VisionContract = z.infer<typeof VisionContractSchema>;
 export class VisionParseError extends Error {
   constructor(
     public readonly raw: string,
-    cause: unknown,
+    cause: unknown
   ) {
-    super("Vision response could not be parsed");
-    this.name = "VisionParseError";
+    super('Vision response could not be parsed');
+    this.name = 'VisionParseError';
     this.cause = cause;
   }
 }
@@ -51,21 +51,21 @@ export class VisionParseError extends Error {
 export function handleVisionResponse(raw: string): VisionContract {
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) {
-    console.error("[handleVisionResponse] no JSON object found:", raw.slice(0, 400));
-    throw new VisionParseError(raw, new Error("No JSON object found in response"));
+    console.error('[handleVisionResponse] no JSON object found:', raw.slice(0, 400));
+    throw new VisionParseError(raw, new Error('No JSON object found in response'));
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(match[0]);
   } catch (e) {
-    console.error("[handleVisionResponse] JSON.parse failed:", e, raw.slice(0, 400));
+    console.error('[handleVisionResponse] JSON.parse failed:', e, raw.slice(0, 400));
     throw new VisionParseError(raw, e);
   }
 
   const result = VisionContractSchema.safeParse(parsed);
   if (!result.success) {
-    console.error("[handleVisionResponse] schema validation failed:", result.error.flatten());
+    console.error('[handleVisionResponse] schema validation failed:', result.error.flatten());
     throw new VisionParseError(raw, result.error);
   }
 

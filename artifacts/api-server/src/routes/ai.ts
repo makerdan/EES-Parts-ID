@@ -8,14 +8,14 @@
  * Calls go through the Replit AI Integrations proxy so we don't need
  * raw OpenAI keys in the environment.
  */
-import { Router } from "express";
-import crypto from "node:crypto";
-import { openai } from "@workspace/integrations-openai-ai-server";
-import { buildImageContent } from "../utils/aiHelpers";
-import { handleVisionResponse, VisionParseError } from "../photo/handleVisionResponse";
-import { db } from "@workspace/db";
-import { inventoryTable, photoIdEventTable } from "@workspace/db";
-import { eq, ilike, and } from "drizzle-orm";
+import { Router } from 'express';
+import crypto from 'node:crypto';
+import { openai } from '@workspace/integrations-openai-ai-server';
+import { buildImageContent } from '../utils/aiHelpers';
+import { handleVisionResponse, VisionParseError } from '../photo/handleVisionResponse';
+import { db } from '@workspace/db';
+import { inventoryTable, photoIdEventTable } from '@workspace/db';
+import { eq, ilike, and } from 'drizzle-orm';
 
 const router = Router();
 
@@ -61,17 +61,17 @@ Rules:
 - descriptive_tokens should contain 3–10 useful search keywords describing the part.`;
 
 // ── POST /ai/identify ─────────────────────────────────────────────────────────
-router.post("/identify", async (req, res) => {
+router.post('/identify', async (req, res) => {
   const startTime = Date.now();
   try {
     const {
       images = [],
-      keywords = "",
-      vendor = "",
-      color = "",
-      size = "",
-      material = "",
-      textNumbers = "",
+      keywords = '',
+      vendor = '',
+      color = '',
+      size = '',
+      material = '',
+      textNumbers = '',
     } = req.body as {
       images?: string[];
       keywords?: string;
@@ -83,49 +83,45 @@ router.post("/identify", async (req, res) => {
     };
 
     if (!images.length) {
-      return void res.status(400).json({ error: "At least one image is required" });
+      return void res.status(400).json({ error: 'At least one image is required' });
     }
 
     // Build a short SHA-256 fingerprint of the first image for telemetry dedup.
-    const imageHash = crypto
-      .createHash("sha256")
-      .update(images[0]!)
-      .digest("hex")
-      .slice(0, 16);
+    const imageHash = crypto.createHash('sha256').update(images[0]!).digest('hex').slice(0, 16);
 
     // Append any user-provided context to the user turn.
     const contextParts: string[] = [];
-    if (keywords)    contextParts.push(`Keywords: ${keywords}`);
-    if (vendor)      contextParts.push(`Manufacturer/Vendor: ${vendor}`);
-    if (color)       contextParts.push(`Color: ${color}`);
-    if (size)        contextParts.push(`Size: ${size}`);
-    if (material)    contextParts.push(`Material: ${material}`);
+    if (keywords) contextParts.push(`Keywords: ${keywords}`);
+    if (vendor) contextParts.push(`Manufacturer/Vendor: ${vendor}`);
+    if (color) contextParts.push(`Color: ${color}`);
+    if (size) contextParts.push(`Size: ${size}`);
+    if (material) contextParts.push(`Material: ${material}`);
     if (textNumbers) contextParts.push(`Text/Numbers visible: ${textNumbers}`);
-    const contextStr = contextParts.join("\n");
+    const contextStr = contextParts.join('\n');
 
     const imageContent = buildImageContent(images);
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: 'gpt-4o',
       max_completion_tokens: 512,
       messages: [
-        { role: "system", content: VISION_SYSTEM_PROMPT },
+        { role: 'system', content: VISION_SYSTEM_PROMPT },
         {
-          role: "user",
+          role: 'user',
           content: [
             ...imageContent,
             {
-              type: "text" as const,
+              type: 'text' as const,
               text: contextStr
                 ? `Identify this electrical part. Additional context:\n${contextStr}`
-                : "Identify this electrical part.",
+                : 'Identify this electrical part.',
             },
           ],
         },
       ],
     });
 
-    const rawText = response.choices[0]?.message?.content ?? "";
+    const rawText = response.choices[0]?.message?.content ?? '';
 
     // ── Parse & validate the Vision response ────────────────────────────────
     let vision;
@@ -136,28 +132,32 @@ router.post("/identify", async (req, res) => {
     } catch (parseErr) {
       // Log parse failure and return a graceful degradation response.
       if (parseErr instanceof VisionParseError) {
-        console.error("[ai/identify] Vision parse failed:", parseErr.cause);
+        console.error('[ai/identify] Vision parse failed:', parseErr.cause);
       } else {
-        console.error("[ai/identify] Unexpected parse error:", parseErr);
+        console.error('[ai/identify] Unexpected parse error:', parseErr);
       }
 
       // Non-blocking telemetry for parse failures.
-      void db.insert(photoIdEventTable).values({
-        imageHash,
-        visionRaw: { raw: rawText } as Record<string, unknown>,
-        parseOk: false,
-        latencyMs: Date.now() - startTime,
-      }).catch(e => console.error("[ai/identify] telemetry insert failed:", e));
+      void db
+        .insert(photoIdEventTable)
+        .values({
+          imageHash,
+          visionRaw: { raw: rawText } as Record<string, unknown>,
+          parseOk: false,
+          latencyMs: Date.now() - startTime,
+        })
+        .catch((e) => console.error('[ai/identify] telemetry insert failed:', e));
 
       return void res.status(422).json({
-        error: "Could not identify part from image — the AI response was not in the expected format. Please try again with a clearer photo.",
+        error:
+          'Could not identify part from image — the AI response was not in the expected format. Please try again with a clearer photo.',
       });
     }
 
     // ── Three-path routing ───────────────────────────────────────────────────
-    type MatchType = "catalog_exact" | "attribute_match" | "descriptive";
-    let matchType: MatchType = "descriptive";
-    let topResults: typeof inventoryTable.$inferSelect[] = [];
+    type MatchType = 'catalog_exact' | 'attribute_match' | 'descriptive';
+    let matchType: MatchType = 'descriptive';
+    let topResults: (typeof inventoryTable.$inferSelect)[] = [];
 
     // Path 1 — exact catalog lookup
     if (vision.catalog_guess) {
@@ -168,20 +168,16 @@ router.post("/identify", async (req, res) => {
         .limit(1);
 
       if (exactRows.length > 0) {
-        matchType = "catalog_exact";
+        matchType = 'catalog_exact';
         topResults = exactRows;
       }
     }
 
     // Path 2 — attribute match (vendor + amperage + poles required)
-    if (matchType === "descriptive") {
+    if (matchType === 'descriptive') {
       const a = vision.attributes;
       const vendorGuess = vision.vendor_guess;
-      if (
-        vendorGuess &&
-        a?.amperage != null &&
-        a?.poles != null
-      ) {
+      if (vendorGuess && a?.amperage != null && a?.poles != null) {
         const conditions = [
           ilike(inventoryTable.vendor, `%${vendorGuess}%`),
           eq(inventoryTable.amperage, a.amperage),
@@ -198,7 +194,7 @@ router.post("/identify", async (req, res) => {
           .limit(5);
 
         if (attrRows.length > 0) {
-          matchType = "attribute_match";
+          matchType = 'attribute_match';
           topResults = attrRows;
         }
       }
@@ -208,7 +204,7 @@ router.post("/identify", async (req, res) => {
     // topResults stays empty; the client uses searchTerms to drive its own query.
 
     const topResultId = topResults[0]?.id ?? null;
-    const latencyMs   = Date.now() - startTime;
+    const latencyMs = Date.now() - startTime;
 
     // ── Non-blocking telemetry ───────────────────────────────────────────────
     let photoEventId: number | null = null;
@@ -220,7 +216,7 @@ router.post("/identify", async (req, res) => {
           visionRaw: vision as unknown as Record<string, unknown>,
           parseOk,
           catalogGuess: vision.catalog_guess,
-          vendorGuess:  vision.vendor_guess,
+          vendorGuess: vision.vendor_guess,
           matchType,
           topResultId,
           latencyMs,
@@ -228,46 +224,45 @@ router.post("/identify", async (req, res) => {
         .returning({ id: photoIdEventTable.id });
       photoEventId = row?.id ?? null;
     } catch (e) {
-      console.error("[ai/identify] telemetry insert failed:", e);
+      console.error('[ai/identify] telemetry insert failed:', e);
     }
 
     // ── Build response ───────────────────────────────────────────────────────
     // Backward-compatible: always return searchTerms + synonyms so the client
     // can fall through to a keyword search when topResults is empty.
-    const searchTerms  = vision.descriptive_tokens;
+    const searchTerms = vision.descriptive_tokens;
     const detectedVendor = vision.vendor_guess;
-    const summary      = [
-      vision.type_guess,
-      vision.catalog_guess ? `Catalog: ${vision.catalog_guess}` : null,
-      vision.confidence != null
-        ? `Confidence: ${Math.round(vision.confidence * 100)}%`
-        : null,
-      vision.notes,
-    ]
-      .filter(Boolean)
-      .join(" · ") || "Part identified";
+    const summary =
+      [
+        vision.type_guess,
+        vision.catalog_guess ? `Catalog: ${vision.catalog_guess}` : null,
+        vision.confidence != null ? `Confidence: ${Math.round(vision.confidence * 100)}%` : null,
+        vision.notes,
+      ]
+        .filter(Boolean)
+        .join(' · ') || 'Part identified';
 
     res.json({
       searchTerms,
-      synonyms:            [] as string[],
-      relatedTerms:        [] as string[],
+      synonyms: [] as string[],
+      relatedTerms: [] as string[],
       manufacturerVerified: vision.vendor_guess != null,
       detectedVendor,
       summary,
-      results:             topResults,
-      match_type:          matchType,
-      _telemetry:          { photoEventId },
+      results: topResults,
+      match_type: matchType,
+      _telemetry: { photoEventId },
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "AI identification failed" });
+    res.status(500).json({ error: 'AI identification failed' });
   }
 });
 
 // POST /ai/reference — deprecated alias, forwards to /reference/ask behavior
 // Kept for backwards compat; primary route is /reference/ask
-router.post("/reference", async (_req, res) => {
-  res.status(308).json({ message: "Use /api/reference/ask instead" });
+router.post('/reference', async (_req, res) => {
+  res.status(308).json({ message: 'Use /api/reference/ask instead' });
 });
 
 export default router;

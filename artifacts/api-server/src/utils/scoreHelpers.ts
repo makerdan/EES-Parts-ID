@@ -42,35 +42,31 @@ export function catalogScore(
   catalog: string,
   catalogInput: string,
   rawKeywords: string,
-  ftsRank: number,
+  ftsRank: number
 ): { score: number; reason: string } {
   const c = catalog.toUpperCase();
   const ci = catalogInput.toUpperCase();
   const rk = rawKeywords.toUpperCase();
   const tokens = rk ? rk.split(/\s+/).filter(Boolean) : [];
 
-  if (
-    (catalogInput && c === ci) ||
-    (rawKeywords && c === rk) ||
-    tokens.some(t => t === c)
-  ) {
-    return { score: 1.0, reason: "exact catalog" };
+  if ((catalogInput && c === ci) || (rawKeywords && c === rk) || tokens.some((t) => t === c)) {
+    return { score: 1.0, reason: 'exact catalog' };
   }
   if (
     (catalogInput && c.startsWith(ci)) ||
     (rawKeywords && c.startsWith(rk)) ||
-    tokens.some(t => c.startsWith(t))
+    tokens.some((t) => c.startsWith(t))
   ) {
-    return { score: Math.max(pgScore, 0.93), reason: "catalog prefix" };
+    return { score: Math.max(pgScore, 0.93), reason: 'catalog prefix' };
   }
   if (
     (catalogInput && c.includes(ci)) ||
     (rawKeywords && c.includes(rk)) ||
-    tokens.some(t => c.includes(t))
+    tokens.some((t) => c.includes(t))
   ) {
-    return { score: Math.max(pgScore, 0.85), reason: "catalog substring" };
+    return { score: Math.max(pgScore, 0.85), reason: 'catalog substring' };
   }
-  return { score: pgScore, reason: ftsRank > 0 ? "fts match" : "trigram match" };
+  return { score: pgScore, reason: ftsRank > 0 ? 'fts match' : 'trigram match' };
 }
 
 /**
@@ -81,7 +77,7 @@ export function catalogScore(
 export function applyVendorBoost(
   confidence: number,
   vendorFilter: string,
-  itemVendor: string,
+  itemVendor: string
 ): number {
   if (!vendorFilter) return confidence;
   if (itemVendor.toUpperCase() === vendorFilter.toUpperCase()) {
@@ -97,7 +93,7 @@ export function applyVendorBoost(
  */
 export function shouldUpdateScore(
   currentConfidence: number | undefined,
-  newConfidence: number,
+  newConfidence: number
 ): boolean {
   return currentConfidence === undefined || newConfidence > currentConfidence;
 }

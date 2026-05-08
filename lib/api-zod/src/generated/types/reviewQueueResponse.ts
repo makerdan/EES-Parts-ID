@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { ReviewQueueItem } from "./reviewQueueItem";
+import type { ReviewQueueItem } from './reviewQueueItem';
 
 /**
  * Paginated list of items pending classification review.

@@ -3,11 +3,11 @@
  * Inserts clearly-labelled fixture rows and removes them after the suite.
  */
 
-import { db, pool, inventoryTable } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { db, pool, inventoryTable } from '@workspace/db';
+import { sql } from 'drizzle-orm';
 
 /** All fixture catalog numbers inserted by this helper (for cleanup). */
-const FIXTURE_CATALOG_PREFIX = "JEST-ITG-";
+const FIXTURE_CATALOG_PREFIX = 'JEST-ITG-';
 
 export interface FixtureItem {
   vendor: string;
@@ -24,13 +24,13 @@ export async function seedFixtures(items: FixtureItem[]) {
   const rows = await db
     .insert(inventoryTable)
     .values(
-      items.map(i => ({
+      items.map((i) => ({
         vendor: i.vendor.toUpperCase(),
         catalog: i.catalog,
         description: i.description,
         binLocations: i.binLocations ?? [],
         aiKeywords: [] as string[],
-      })),
+      }))
     )
     .onConflictDoNothing()
     .returning();
@@ -44,7 +44,7 @@ export async function seedFixtures(items: FixtureItem[]) {
 export async function cleanupFixtures() {
   await db
     .delete(inventoryTable)
-    .where(sql`${inventoryTable.catalog} LIKE ${FIXTURE_CATALOG_PREFIX + "%"}`);
+    .where(sql`${inventoryTable.catalog} LIKE ${FIXTURE_CATALOG_PREFIX + '%'}`);
 }
 
 /**
@@ -58,15 +58,15 @@ export async function closePool() {
 /** Convenience: standard fixtures used across multiple suites. */
 export const STANDARD_FIXTURES: FixtureItem[] = [
   {
-    vendor: "EATON",
-    catalog: "JEST-ITG-BR120",
-    description: "1 Pole 20A 120/240V Breaker",
-    binLocations: ["B-01"],
+    vendor: 'EATON',
+    catalog: 'JEST-ITG-BR120',
+    description: '1 Pole 20A 120/240V Breaker',
+    binLocations: ['B-01'],
   },
   {
-    vendor: "HUBBELL",
-    catalog: "JEST-ITG-HBL5262I",
-    description: "20A 125V Duplex Receptacle Ivory",
-    binLocations: ["C-07"],
+    vendor: 'HUBBELL',
+    catalog: 'JEST-ITG-HBL5262I',
+    description: '20A 125V Duplex Receptacle Ivory',
+    binLocations: ['C-07'],
   },
 ];

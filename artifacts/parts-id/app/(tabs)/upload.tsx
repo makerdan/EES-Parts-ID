@@ -8,7 +8,7 @@
  *   2. Browse / per-item edit the resulting inventory (paginated FlatList,
  *      KeywordEditor inline edit).
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -25,11 +25,11 @@ import {
   TextInput,
   UIManager,
   View,
-} from "react-native";
-import * as DocumentPicker from "expo-document-picker";
-import { router } from "expo-router";
-import * as XLSX from "xlsx";
-import { useListInventory } from "@workspace/api-client-react";
+} from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import { router } from 'expo-router';
+import * as XLSX from 'xlsx';
+import { useListInventory } from '@workspace/api-client-react';
 import {
   CHUNK_SIZE,
   chunkRows,
@@ -39,24 +39,22 @@ import {
   saveUploadSeed,
   type InProgressUpload,
   type UploadSeed,
-} from "../../lib/uploadProgress";
+} from '../../lib/uploadProgress';
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useColors } from "@/hooks/useColors";
-import { ReferenceModal } from "@/components/ReferenceModal";
-import { ErrorBanner } from "@/components/ErrorBanner";
-import { useApp } from "@/contexts/AppContext";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { secondaryBtnBase } from "@/styles/shared";
-import { ImportFileCard } from "@/components/ImportFileCard";
-import ClassificationReviewSection from "@/components/ClassificationReviewSection";
-import { RecordsBrowser } from "@/components/RecordsBrowser";
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useColors } from '@/hooks/useColors';
+import { ReferenceModal } from '@/components/ReferenceModal';
+import { ErrorBanner } from '@/components/ErrorBanner';
+import { useApp } from '@/contexts/AppContext';
+import type { InventoryItem } from '@workspace/api-client-react';
+import { secondaryBtnBase } from '@/styles/shared';
+import { ImportFileCard } from '@/components/ImportFileCard';
+import ClassificationReviewSection from '@/components/ClassificationReviewSection';
+import { RecordsBrowser } from '@/components/RecordsBrowser';
 
-const API_BASE =
-  process.env.EXPO_PUBLIC_DOMAIN
-    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-    : "";
-
+const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+  : '';
 
 // A single part as the upload UI sees it. `binLocations` is always an array;
 // when there's only one bin the array has one entry, when the part appears in
@@ -77,8 +75,8 @@ function splitBinCell(raw: string | null | undefined): string[] {
   if (!raw) return [];
   return raw
     .split(BIN_CELL_SEPARATORS)
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 function dedupeBinsCI(bins: readonly string[]): string[] {
@@ -143,9 +141,9 @@ type PreviewResponse = {
   changes: PreviewMatchRow[];
   binsOnlyUpdated?: number;
   binsOnlySkipped?: number;
-  matchedKeys?: Array<{ vendor: string; catalog: string }>;
+  matchedKeys?: { vendor: string; catalog: string }[];
 };
-type UpsertMode = "add-new-only" | "overwrite-all" | "selected" | "bins-only" | "add-multi-access";
+type UpsertMode = 'add-new-only' | 'overwrite-all' | 'selected' | 'bins-only' | 'add-multi-access';
 type UpsertResult = { inserted: number; updated: number; skipped: number; total: number };
 
 type EnrichProgress = {
@@ -195,30 +193,66 @@ type EnrichSummary = {
 };
 
 // ── Column header aliases ──────────────────────────────────────────────────
-const VENDOR_ALIASES = ["vendor", "mfr", "manufacturer", "brand", "make", "supplier"];
-const CATALOG_ALIASES = ["catalog", "catalog#", "cat#", "part", "part#", "partno", "item", "itemno", "sku", "model", "partnumber", "part number", "cat no", "catalog no"];
-const DESC_ALIASES = ["description", "desc", "name", "product", "productname", "title", "item description"];
-const BIN_ALIASES = ["bin", "bin location", "binlocation", "location", "loc", "shelf", "aisle", "bin#", "bin no"];
+const VENDOR_ALIASES = ['vendor', 'mfr', 'manufacturer', 'brand', 'make', 'supplier'];
+const CATALOG_ALIASES = [
+  'catalog',
+  'catalog#',
+  'cat#',
+  'part',
+  'part#',
+  'partno',
+  'item',
+  'itemno',
+  'sku',
+  'model',
+  'partnumber',
+  'part number',
+  'cat no',
+  'catalog no',
+];
+const DESC_ALIASES = [
+  'description',
+  'desc',
+  'name',
+  'product',
+  'productname',
+  'title',
+  'item description',
+];
+const BIN_ALIASES = [
+  'bin',
+  'bin location',
+  'binlocation',
+  'location',
+  'loc',
+  'shelf',
+  'aisle',
+  'bin#',
+  'bin no',
+];
 
 function findCol(headers: string[], aliases: string[]): number {
-  return aliases.map(a => headers.indexOf(a)).find(i => i >= 0) ?? -1;
+  return aliases.map((a) => headers.indexOf(a)).find((i) => i >= 0) ?? -1;
 }
 
 // ── Delimiter detection ────────────────────────────────────────────────────
 // Counts tabs vs commas in the first 5 non-empty lines. If tabs outnumber
 // commas, the data is almost certainly copied from Excel/Calc/ODS (which
 // always puts TSV on the clipboard). Otherwise assume CSV.
-function detectDelimiter(text: string): "," | "\t" {
-  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0).slice(0, 5);
+function detectDelimiter(text: string): ',' | '\t' {
+  const lines = text
+    .split(/\r?\n/)
+    .filter((l) => l.trim().length > 0)
+    .slice(0, 5);
   let tabs = 0;
   let commas = 0;
   for (const line of lines) {
     for (const ch of line) {
-      if (ch === "\t") tabs++;
-      else if (ch === ",") commas++;
+      if (ch === '\t') tabs++;
+      else if (ch === ',') commas++;
     }
   }
-  return tabs > commas ? "\t" : ",";
+  return tabs > commas ? '\t' : ',';
 }
 
 // ── Parse CSV text ─────────────────────────────────────────────────────────
@@ -226,11 +260,11 @@ function detectDelimiter(text: string): "," | "\t" {
 // Records are tokenised with full RFC-4180 quote handling so that a quoted
 // bin cell like "A-1\nB-2" survives parsing — splitting on bare `\r?\n`
 // before quotes are honoured would silently drop bins after the first newline.
-function parseCSV(text: string, delimiter: "," | "\t" = ","): ParsedRow[] {
+function parseCSV(text: string, delimiter: ',' | '\t' = ','): ParsedRow[] {
   const records = parseCSVRecords(text, delimiter);
   if (records.length < 2) return [];
 
-  const headers = records[0]!.map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
+  const headers = records[0]!.map((h) => h.trim().toLowerCase().replace(/['"]/g, ''));
   const vendorCol = findCol(headers, VENDOR_ALIASES);
   const catalogCol = findCol(headers, CATALOG_ALIASES);
   const descCol = findCol(headers, DESC_ALIASES);
@@ -239,16 +273,16 @@ function parseCSV(text: string, delimiter: "," | "\t" = ","): ParsedRow[] {
   const rows: ParsedRow[] = [];
   for (let i = 1; i < records.length; i++) {
     const cells = records[i]!;
-    const vendor = vendorCol >= 0 ? cells[vendorCol]?.trim() ?? "" : "";
-    const catalog = catalogCol >= 0 ? cells[catalogCol]?.trim() ?? "" : "";
+    const vendor = vendorCol >= 0 ? (cells[vendorCol]?.trim() ?? '') : '';
+    const catalog = catalogCol >= 0 ? (cells[catalogCol]?.trim() ?? '') : '';
     if (!vendor && !catalog) continue;
     // Don't trim the bin cell here — splitBinCell trims each token after
     // splitting so embedded newline separators are preserved.
-    const binCell = binCol >= 0 ? cells[binCol] ?? "" : "";
+    const binCell = binCol >= 0 ? (cells[binCol] ?? '') : '';
     rows.push({
-      vendor: vendor || "UNKNOWN",
-      catalog: catalog || "UNKNOWN",
-      description: descCol >= 0 ? cells[descCol]?.trim() ?? "" : "",
+      vendor: vendor || 'UNKNOWN',
+      catalog: catalog || 'UNKNOWN',
+      description: descCol >= 0 ? (cells[descCol]?.trim() ?? '') : '',
       binLocations: splitBinCell(binCell),
     });
   }
@@ -263,16 +297,19 @@ function parseCSV(text: string, delimiter: "," | "\t" = ","): ParsedRow[] {
  * delimiter, `\r`, and `\n` literally. Blank lines are skipped.
  * Pass delimiter="\t" for TSV (Excel/Calc clipboard copies).
  */
-function parseCSVRecords(text: string, delimiter: "," | "\t" = ","): string[][] {
+function parseCSVRecords(text: string, delimiter: ',' | '\t' = ','): string[][] {
   const records: string[][] = [];
   let current: string[] = [];
-  let field = "";
+  let field = '';
   let inQuotes = false;
 
-  const pushField = () => { current.push(field); field = ""; };
+  const pushField = () => {
+    current.push(field);
+    field = '';
+  };
   const pushRecord = () => {
     pushField();
-    const isBlank = current.length === 1 && current[0]!.trim() === "";
+    const isBlank = current.length === 1 && current[0]!.trim() === '';
     if (!isBlank) records.push(current);
     current = [];
   };
@@ -281,8 +318,10 @@ function parseCSVRecords(text: string, delimiter: "," | "\t" = ","): string[][] 
     const ch = text[i]!;
     if (inQuotes) {
       if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; }
-        else inQuotes = false;
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else inQuotes = false;
       } else {
         field += ch;
       }
@@ -290,9 +329,9 @@ function parseCSVRecords(text: string, delimiter: "," | "\t" = ","): string[][] 
       inQuotes = true;
     } else if (ch === delimiter) {
       pushField();
-    } else if (ch === "\r") {
+    } else if (ch === '\r') {
       // swallow; the following \n triggers the record boundary
-    } else if (ch === "\n") {
+    } else if (ch === '\n') {
       pushRecord();
     } else {
       field += ch;
@@ -307,7 +346,7 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
   const response = await fetch(uri);
   const arrayBuffer = await response.arrayBuffer();
   const uint8 = new Uint8Array(arrayBuffer);
-  const workbook = XLSX.read(uint8, { type: "array" });
+  const workbook = XLSX.read(uint8, { type: 'array' });
 
   // Find the sheet with a Vendor or Catalog column
   let bestSheet: XLSX.WorkSheet | null = null;
@@ -315,13 +354,16 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
   for (const sheetName of workbook.SheetNames) {
     const ws = workbook.Sheets[sheetName];
     if (!ws) continue;
-    const rows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as string[][];
+    const rows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as string[][];
     if (!rows[0]) continue;
-    const headers = rows[0].map(h => String(h).trim().toLowerCase());
+    const headers = rows[0].map((h) => String(h).trim().toLowerCase());
     let score = 0;
-    if (VENDOR_ALIASES.some(a => headers.includes(a))) score += 2;
-    if (CATALOG_ALIASES.some(a => headers.includes(a))) score += 2;
-    if (score > bestScore) { bestScore = score; bestSheet = ws; }
+    if (VENDOR_ALIASES.some((a) => headers.includes(a))) score += 2;
+    if (CATALOG_ALIASES.some((a) => headers.includes(a))) score += 2;
+    if (score > bestScore) {
+      bestScore = score;
+      bestSheet = ws;
+    }
   }
 
   if (!bestSheet) {
@@ -330,10 +372,13 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
     bestSheet = firstSheet;
   }
 
-  const rawRows: string[][] = XLSX.utils.sheet_to_json(bestSheet, { header: 1, defval: "" }) as string[][];
+  const rawRows: string[][] = XLSX.utils.sheet_to_json(bestSheet, {
+    header: 1,
+    defval: '',
+  }) as string[][];
   if (rawRows.length < 2) return [];
 
-  const headers = rawRows[0]!.map(h => String(h).trim().toLowerCase());
+  const headers = rawRows[0]!.map((h) => String(h).trim().toLowerCase());
   const vendorCol = findCol(headers, VENDOR_ALIASES);
   const catalogCol = findCol(headers, CATALOG_ALIASES);
   const descCol = findCol(headers, DESC_ALIASES);
@@ -341,15 +386,15 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
 
   const rows: ParsedRow[] = [];
   for (let i = 1; i < rawRows.length; i++) {
-    const cells = rawRows[i]!.map(c => String(c ?? "").trim());
-    const vendor = vendorCol >= 0 ? cells[vendorCol] ?? "" : "";
-    const catalog = catalogCol >= 0 ? cells[catalogCol] ?? "" : "";
+    const cells = rawRows[i]!.map((c) => String(c ?? '').trim());
+    const vendor = vendorCol >= 0 ? (cells[vendorCol] ?? '') : '';
+    const catalog = catalogCol >= 0 ? (cells[catalogCol] ?? '') : '';
     if (!vendor && !catalog) continue;
-    const binCell = binCol >= 0 ? cells[binCol] ?? "" : "";
+    const binCell = binCol >= 0 ? (cells[binCol] ?? '') : '';
     rows.push({
-      vendor: vendor || "UNKNOWN",
-      catalog: catalog || "UNKNOWN",
-      description: descCol >= 0 ? cells[descCol] ?? "" : "",
+      vendor: vendor || 'UNKNOWN',
+      catalog: catalog || 'UNKNOWN',
+      description: descCol >= 0 ? (cells[descCol] ?? '') : '',
       binLocations: splitBinCell(binCell),
     });
   }
@@ -359,7 +404,13 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
 }
 
 // ── Inventory row component ───────────────────────────────────────────────
-function InventoryRow({ item, colors }: { item: InventoryItem; colors: ReturnType<typeof useColors> }) {
+function InventoryRow({
+  item,
+  colors,
+}: {
+  item: InventoryItem;
+  colors: ReturnType<typeof useColors>;
+}) {
   const isEnriched = !!item.enrichedAt;
   return (
     <View style={[rowStyles.row, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -374,16 +425,23 @@ function InventoryRow({ item, colors }: { item: InventoryItem; colors: ReturnTyp
       </View>
       <View style={rowStyles.right}>
         {(item.binLocations ?? []).length > 0 ? (
-          <Text
-            style={[rowStyles.bin, { color: colors.primary }]}
-            numberOfLines={2}
-          >
-            {(item.binLocations ?? []).join(", ")}
+          <Text style={[rowStyles.bin, { color: colors.primary }]} numberOfLines={2}>
+            {(item.binLocations ?? []).join(', ')}
           </Text>
         ) : null}
-        <View style={[rowStyles.enrichBadge, { backgroundColor: isEnriched ? colors.success + "22" : colors.muted }]}>
-          <Text style={[rowStyles.enrichText, { color: isEnriched ? colors.success : colors.mutedForeground }]}>
-            {isEnriched ? "✓ AI" : "—"}
+        <View
+          style={[
+            rowStyles.enrichBadge,
+            { backgroundColor: isEnriched ? colors.success + '22' : colors.muted },
+          ]}
+        >
+          <Text
+            style={[
+              rowStyles.enrichText,
+              { color: isEnriched ? colors.success : colors.mutedForeground },
+            ]}
+          >
+            {isEnriched ? '✓ AI' : '—'}
           </Text>
         </View>
       </View>
@@ -393,27 +451,33 @@ function InventoryRow({ item, colors }: { item: InventoryItem; colors: ReturnTyp
 
 const rowStyles = StyleSheet.create({
   row: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
     marginBottom: 8,
   },
   left: { flex: 1 },
-  right: { alignItems: "flex-end", gap: 4 },
-  catalog: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  vendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 },
-  desc: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  bin: { fontSize: 12, fontFamily: "Inter_600SemiBold", textAlign: "right", maxWidth: 120 },
+  right: { alignItems: 'flex-end', gap: 4 },
+  catalog: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  vendor: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 2,
+  },
+  desc: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  bin: { fontSize: 12, fontFamily: 'Inter_600SemiBold', textAlign: 'right', maxWidth: 120 },
   enrichBadge: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4 },
-  enrichText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  enrichText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
 });
 
 // ── Admin gate component ──────────────────────────────────────────────────
 function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
   const { loginAdmin } = useApp();
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -423,8 +487,8 @@ function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
     const result = await loginAdmin(password);
     setLoading(false);
     if (!result.success) {
-      setError(result.error ?? "Incorrect admin password");
-      setPassword("");
+      setError(result.error ?? 'Incorrect admin password');
+      setPassword('');
     }
   };
 
@@ -438,7 +502,14 @@ function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
         </Text>
 
         <TextInput
-          style={[gateStyles.input, { backgroundColor: colors.muted, color: colors.foreground, borderColor: error ? colors.destructive : colors.border }]}
+          style={[
+            gateStyles.input,
+            {
+              backgroundColor: colors.muted,
+              color: colors.foreground,
+              borderColor: error ? colors.destructive : colors.border,
+            },
+          ]}
           placeholder="Admin password"
           placeholderTextColor={colors.mutedForeground}
           secureTextEntry
@@ -457,7 +528,10 @@ function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
         <Pressable
           onPress={handleLogin}
           disabled={loading || !password}
-          style={[gateStyles.btn, { backgroundColor: loading || !password ? colors.muted : colors.primary }]}
+          style={[
+            gateStyles.btn,
+            { backgroundColor: loading || !password ? colors.muted : colors.primary },
+          ]}
         >
           {loading ? (
             <ActivityIndicator color={colors.primaryForeground} />
@@ -471,14 +545,30 @@ function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
 }
 
 const gateStyles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  card: { width: "100%", maxWidth: 380, borderRadius: 16, padding: 28, borderWidth: 1, alignItems: "center", gap: 14 },
-  title: { fontSize: 20, fontFamily: "Inter_700Bold", textAlign: "center" },
-  hint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
-  input: { width: "100%", borderRadius: 8, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, fontFamily: "Inter_400Regular" },
-  error: { fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
-  btn: { width: "100%", borderRadius: 8, paddingVertical: 14, alignItems: "center" },
-  btnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  card: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 16,
+    padding: 28,
+    borderWidth: 1,
+    alignItems: 'center',
+    gap: 14,
+  },
+  title: { fontSize: 20, fontFamily: 'Inter_700Bold', textAlign: 'center' },
+  hint: { fontSize: 14, fontFamily: 'Inter_400Regular', textAlign: 'center', lineHeight: 20 },
+  input: {
+    width: '100%',
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    fontFamily: 'Inter_400Regular',
+  },
+  error: { fontSize: 13, fontFamily: 'Inter_500Medium', textAlign: 'center' },
+  btn: { width: '100%', borderRadius: 8, paddingVertical: 14, alignItems: 'center' },
+  btnText: { fontSize: 16, fontFamily: 'Inter_700Bold' },
 });
 
 // Returns only the parsed rows whose vendor+catalog appear in matchedKeys,
@@ -486,18 +576,18 @@ const gateStyles = StyleSheet.create({
 // server-side; we normalise both sides to be safe).
 function buildBinsOnlyRows(
   rows: ParsedRow[],
-  matchedKeys: Array<{ vendor: string; catalog: string }>,
+  matchedKeys: { vendor: string; catalog: string }[]
 ): ParsedRow[] {
   const keySet = new Set(
-    matchedKeys.map(k => `${k.vendor.trim().toUpperCase()}|${k.catalog.trim().toUpperCase()}`),
+    matchedKeys.map((k) => `${k.vendor.trim().toUpperCase()}|${k.catalog.trim().toUpperCase()}`)
   );
-  return rows.filter(r =>
-    keySet.has(`${r.vendor.trim().toUpperCase()}|${r.catalog.trim().toUpperCase()}`),
+  return rows.filter((r) =>
+    keySet.has(`${r.vendor.trim().toUpperCase()}|${r.catalog.trim().toUpperCase()}`)
   );
 }
 
 // Enable LayoutAnimation on Android (iOS has it by default).
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
@@ -509,11 +599,11 @@ export default function UploadScreen() {
   const [enrichOpen, setEnrichOpen] = useState(false);
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
-  const [pasteInputText, setPasteInputText] = useState("");
+  const [fileType, setFileType] = useState<'csv' | 'xlsx' | null>(null);
+  const [pasteInputText, setPasteInputText] = useState('');
   const [binsOnlyMode, setBinsOnlyMode] = useState(false);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
-  const [tab, setTab] = useState<"upload" | "inventory" | "records">("upload");
+  const [tab, setTab] = useState<'upload' | 'inventory' | 'records'>('upload');
   const [uploadSuccess, setUploadSuccess] = useState<UpsertResult | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadPending, setUploadPending] = useState(false);
@@ -549,9 +639,13 @@ export default function UploadScreen() {
   // Refs that mirror state we need to read inside the auto-resume effect
   // without causing it to re-run.
   const parsedRowsRef = useRef(parsedRows);
-  useEffect(() => { parsedRowsRef.current = parsedRows; }, [parsedRows]);
+  useEffect(() => {
+    parsedRowsRef.current = parsedRows;
+  }, [parsedRows]);
   const chunkProgressRef = useRef<typeof chunkProgress>(null);
-  useEffect(() => { chunkProgressRef.current = chunkProgress; }, [chunkProgress]);
+  useEffect(() => {
+    chunkProgressRef.current = chunkProgress;
+  }, [chunkProgress]);
 
   // ── Preview / review modal state ─────────────────────────────────────────
   // After parsing, we POST rows to /preview-upsert. If any existing rows would
@@ -562,8 +656,9 @@ export default function UploadScreen() {
   const [reviewVisible, setReviewVisible] = useState(false);
   const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
   const previewKey = useCallback(
-    (vendor: string, catalog: string) => `${vendor.trim().toUpperCase()}|${catalog.trim().toUpperCase()}`,
-    [],
+    (vendor: string, catalog: string) =>
+      `${vendor.trim().toUpperCase()}|${catalog.trim().toUpperCase()}`,
+    []
   );
 
   // ── Catalog PDF enrichment state ─────────────────────────────────────────
@@ -572,7 +667,7 @@ export default function UploadScreen() {
   // existing inventory rows, and returns a tiered report. Exact + high-
   // confidence rows auto-apply; uncertain rows surface a per-row review modal
   // so the worker picks the right inventory candidate (or skips).
-  type CatalogTier = "exact" | "highConfidence" | "uncertain" | "unmatched";
+  type CatalogTier = 'exact' | 'highConfidence' | 'uncertain' | 'unmatched';
   type CatalogReportRow = {
     catalogNumber: string;
     pageNumbers: number[];
@@ -580,21 +675,32 @@ export default function UploadScreen() {
     dimensions: Record<string, string>;
     keywords: string[];
     tier: CatalogTier;
-    candidates: Array<{
+    candidates: {
       inventoryId: number;
       vendor: string;
       catalog: string;
       description: string;
       distance: number;
       reason: string;
-    }>;
+    }[];
   };
   type CatalogReport = {
     vendor: string;
-    summary: { exact: number; highConfidence: number; uncertain: number; unmatched: number; total: number };
+    summary: {
+      exact: number;
+      highConfidence: number;
+      uncertain: number;
+      unmatched: number;
+      total: number;
+    };
     rows: CatalogReportRow[];
   };
-  type CatalogApplyResult = { runId: number | null; updated: number; skippedNoOp: number; errors: Array<{ inventoryId: number; error: string }> };
+  type CatalogApplyResult = {
+    runId: number | null;
+    updated: number;
+    skippedNoOp: number;
+    errors: { inventoryId: number; error: string }[];
+  };
   type CatalogRun = {
     id: number;
     vendor: string;
@@ -611,7 +717,7 @@ export default function UploadScreen() {
   const [catalogPdfFileName, setCatalogPdfFileName] = useState<string | null>(null);
   type CatalogVendorOption = { vendor: string; displayName: string; sourceCatalog: string };
   const [catalogVendorOptions, setCatalogVendorOptions] = useState<CatalogVendorOption[]>([]);
-  const [catalogPdfVendor, setCatalogPdfVendor] = useState<string>("BRIDGEPORT");
+  const [catalogPdfVendor, setCatalogPdfVendor] = useState<string>('BRIDGEPORT');
   const [vendorPickerOpen, setVendorPickerOpen] = useState(false);
   const [catalogPdfPending, setCatalogPdfPending] = useState(false);
   const [catalogPdfError, setCatalogPdfError] = useState<string | null>(null);
@@ -619,7 +725,9 @@ export default function UploadScreen() {
   const [catalogApplyResult, setCatalogApplyResult] = useState<CatalogApplyResult | null>(null);
   const [catalogReviewVisible, setCatalogReviewVisible] = useState(false);
   // Per-uncertain-row decision: chosen inventoryId, or "skip".
-  const [catalogReviewChoices, setCatalogReviewChoices] = useState<Record<string, number | "skip">>({});
+  const [catalogReviewChoices, setCatalogReviewChoices] = useState<Record<string, number | 'skip'>>(
+    {}
+  );
   // Recent enrichment runs + per-row revert pending state.
   const [catalogRuns, setCatalogRuns] = useState<CatalogRun[]>([]);
   // Recent enrichment runs list is collapsed by default (Task #131) so
@@ -652,15 +760,34 @@ export default function UploadScreen() {
 
   // ── Assign Series state ─────────────────────────────────────────────────────
   type SeriesCoverage = { total: number; assigned: number };
-  type SeriesRow = { id: number; name: string; vendor: string; member_count: number; created_at: string };
+  type SeriesRow = {
+    id: number;
+    name: string;
+    vendor: string;
+    member_count: number;
+    created_at: string;
+  };
   type SeriesMember = { id: number; vendor: string; catalog: string; description: string };
-  type SeriesSearchResult = { id: number; vendor: string; catalog: string; description: string; seriesId: number | null };
+  type SeriesSearchResult = {
+    id: number;
+    vendor: string;
+    catalog: string;
+    description: string;
+    seriesId: number | null;
+  };
 
   type AutoAssignProgress =
-    | { status: "started" }
-    | { status: "progress"; step: string; total?: number; done?: number; vendor?: string; series?: string }
-    | { status: "done"; seriesCount: number; assignedCount: number }
-    | { status: "error"; error: string };
+    | { status: 'started' }
+    | {
+        status: 'progress';
+        step: string;
+        total?: number;
+        done?: number;
+        vendor?: string;
+        series?: string;
+      }
+    | { status: 'done'; seriesCount: number; assignedCount: number }
+    | { status: 'error'; error: string };
 
   const [seriesCoverage, setSeriesCoverage] = useState<SeriesCoverage | null>(null);
   const [seriesList, setSeriesList] = useState<SeriesRow[]>([]);
@@ -675,17 +802,17 @@ export default function UploadScreen() {
   const [seriesMembers, setSeriesMembers] = useState<SeriesMember[]>([]);
   const [seriesMembersLoading, setSeriesMembersLoading] = useState(false);
   const [memberRemovePending, setMemberRemovePending] = useState<number | null>(null);
-  const [memberSearch, setMemberSearch] = useState("");
+  const [memberSearch, setMemberSearch] = useState('');
   const [memberSearchResults, setMemberSearchResults] = useState<SeriesSearchResult[]>([]);
   const [memberSearchLoading, setMemberSearchLoading] = useState(false);
   const [memberAddPending, setMemberAddPending] = useState(false);
   const [seriesRenaming, setSeriesRenaming] = useState(false);
-  const [seriesRenameText, setSeriesRenameText] = useState("");
+  const [seriesRenameText, setSeriesRenameText] = useState('');
   const [seriesModalError, setSeriesModalError] = useState<string | null>(null);
 
   const [createSeriesVisible, setCreateSeriesVisible] = useState(false);
-  const [createSeriesName, setCreateSeriesName] = useState("");
-  const [createSeriesVendor, setCreateSeriesVendor] = useState("");
+  const [createSeriesName, setCreateSeriesName] = useState('');
+  const [createSeriesVendor, setCreateSeriesVendor] = useState('');
   const [createSeriesPending, setCreateSeriesPending] = useState(false);
   const [createSeriesError, setCreateSeriesError] = useState<string | null>(null);
 
@@ -693,16 +820,20 @@ export default function UploadScreen() {
   // Stable ref so callbacks (e.g. bulk poll interval) can refetch without
   // re-creating themselves on every render.
   const inventoryRefetchRef = useRef(inventoryQuery.refetch);
-  useEffect(() => { inventoryRefetchRef.current = inventoryQuery.refetch; }, [inventoryQuery.refetch]);
+  useEffect(() => {
+    inventoryRefetchRef.current = inventoryQuery.refetch;
+  }, [inventoryQuery.refetch]);
 
   // Build admin auth headers for protected API calls
   const adminHeaders: Record<string, string> = adminToken
-    ? { "Authorization": `Bearer ${adminToken}` }
+    ? { Authorization: `Bearer ${adminToken}` }
     : {};
 
   // Keep a ref so interval callbacks always see the current token
   const adminTokenRef = useRef(adminToken);
-  useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+  useEffect(() => {
+    adminTokenRef.current = adminToken;
+  }, [adminToken]);
 
   const bulkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const measurePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -729,11 +860,11 @@ export default function UploadScreen() {
       const res = await fetch(`${API_BASE}/inventory/enrich-summary`, { headers });
       if (res.status === 401) {
         logoutAdmin();
-        setUploadError("Admin session expired. Please unlock again.");
+        setUploadError('Admin session expired. Please unlock again.');
         return;
       }
       if (!res.ok) return;
-      const data = await res.json() as EnrichSummary;
+      const data = (await res.json()) as EnrichSummary;
       setEnrichSummary(data);
     } catch {}
   }, [logoutAdmin]);
@@ -743,14 +874,16 @@ export default function UploadScreen() {
       const token = adminTokenRef.current;
       if (!token) return;
       const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-      const res = await fetch(`${API_BASE}/admin/classification-review?page=1&limit=1`, { headers });
+      const res = await fetch(`${API_BASE}/admin/classification-review?page=1&limit=1`, {
+        headers,
+      });
       if (res.status === 401) {
         logoutAdmin();
-        setUploadError("Admin session expired. Please unlock again.");
+        setUploadError('Admin session expired. Please unlock again.');
         return;
       }
       if (!res.ok) return;
-      const data = await res.json() as { total: number };
+      const data = (await res.json()) as { total: number };
       setReviewCount(data.total);
     } catch {}
   }, [logoutAdmin]);
@@ -763,11 +896,11 @@ export default function UploadScreen() {
       if (res.status === 401) {
         stopBulkPoll();
         logoutAdmin();
-        setUploadError("Admin session expired. Please unlock again.");
+        setUploadError('Admin session expired. Please unlock again.');
         return;
       }
       if (!res.ok) return;
-      const data = await res.json() as BulkJobStatus;
+      const data = (await res.json()) as BulkJobStatus;
       setBulkJobStatus(data);
       if (data.running) {
         void fetchEnrichSummary();
@@ -796,11 +929,11 @@ export default function UploadScreen() {
       if (res.status === 401) {
         stopMeasurePoll();
         logoutAdmin();
-        setUploadError("Admin session expired. Please unlock again.");
+        setUploadError('Admin session expired. Please unlock again.');
         return;
       }
       if (!res.ok) return;
-      const data = await res.json() as MeasureJobStatus;
+      const data = (await res.json()) as MeasureJobStatus;
       setMeasureJobStatus(data);
       if (data.running) {
         void fetchEnrichSummary();
@@ -840,29 +973,48 @@ export default function UploadScreen() {
         ]);
         if (bulkRes.status === 401 || measureRes.status === 401) {
           logoutAdmin();
-          setUploadError("Admin session expired. Please unlock again.");
+          setUploadError('Admin session expired. Please unlock again.');
           return;
         }
         if (bulkRes.ok) {
-          const data = await bulkRes.json() as BulkJobStatus;
+          const data = (await bulkRes.json()) as BulkJobStatus;
           setBulkJobStatus(data);
           if (data.running) startBulkPoll();
         }
         if (measureRes.ok) {
-          const data = await measureRes.json() as MeasureJobStatus;
+          const data = (await measureRes.json()) as MeasureJobStatus;
           setMeasureJobStatus(data);
           if (data.running) startMeasurePoll();
         }
       } catch {}
     })();
-  }, [isAdmin, fetchEnrichSummary, fetchReviewCount, startBulkPoll, stopBulkPoll, startMeasurePoll, stopMeasurePoll, logoutAdmin]);
+  }, [
+    isAdmin,
+    fetchEnrichSummary,
+    fetchReviewCount,
+    startBulkPoll,
+    stopBulkPoll,
+    startMeasurePoll,
+    stopMeasurePoll,
+    logoutAdmin,
+  ]);
 
   // Clean up polling on unmount
-  useEffect(() => () => { stopBulkPoll(); stopMeasurePoll(); }, [stopBulkPoll, stopMeasurePoll]);
+  useEffect(
+    () => () => {
+      stopBulkPoll();
+      stopMeasurePoll();
+    },
+    [stopBulkPoll, stopMeasurePoll]
+  );
 
   // Reset server-error dismissed flags whenever a new lastError value arrives
-  useEffect(() => { setBulkServerErrorDismissed(false); }, [bulkJobStatus?.lastError]);
-  useEffect(() => { setMeasureServerErrorDismissed(false); }, [measureJobStatus?.lastError]);
+  useEffect(() => {
+    setBulkServerErrorDismissed(false);
+  }, [bulkJobStatus?.lastError]);
+  useEffect(() => {
+    setMeasureServerErrorDismissed(false);
+  }, [measureJobStatus?.lastError]);
 
   // Fetch the supported catalog vendors so the picker shows real options.
   // Falls back to a Bridgeport-only list if the call fails (older server).
@@ -873,15 +1025,19 @@ export default function UploadScreen() {
       try {
         const res = await fetch(`${API_BASE}/admin/catalog-pdf/vendors`, { headers: adminHeaders });
         if (!res.ok) return;
-        const body = await res.json() as { vendors: CatalogVendorOption[] };
+        const body = (await res.json()) as { vendors: CatalogVendorOption[] };
         if (cancelled || !Array.isArray(body.vendors) || body.vendors.length === 0) return;
         setCatalogVendorOptions(body.vendors);
-        setCatalogPdfVendor(prev => body.vendors.some(v => v.vendor === prev) ? prev : body.vendors[0]!.vendor);
+        setCatalogPdfVendor((prev) =>
+          body.vendors.some((v) => v.vendor === prev) ? prev : body.vendors[0]!.vendor
+        );
       } catch {
         /* picker keeps default Bridgeport entry */
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // adminHeaders is recomputed every render but the underlying token is what matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, adminToken]);
@@ -891,25 +1047,25 @@ export default function UploadScreen() {
     setBulkEnrichPending(true);
     try {
       const res = await fetch(`${API_BASE}/inventory/bulk-enrich`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...adminHeaders },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders },
       });
       if (res.status === 409) {
-        const data = await res.json() as { job: BulkJobStatus };
+        const data = (await res.json()) as { job: BulkJobStatus };
         setBulkJobStatus(data.job);
         startBulkPoll();
         return;
       }
       if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setBulkEnrichError(err.error ?? "Failed to start bulk enrichment");
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setBulkEnrichError(err.error ?? 'Failed to start bulk enrichment');
         return;
       }
-      const data = await res.json() as { job: BulkJobStatus };
+      const data = (await res.json()) as { job: BulkJobStatus };
       setBulkJobStatus(data.job);
       startBulkPoll();
     } catch {
-      setBulkEnrichError("Failed to start bulk enrichment. Check your connection and try again.");
+      setBulkEnrichError('Failed to start bulk enrichment. Check your connection and try again.');
     } finally {
       setBulkEnrichPending(false);
     }
@@ -919,11 +1075,11 @@ export default function UploadScreen() {
     setBulkStopPending(true);
     try {
       const res = await fetch(`${API_BASE}/inventory/bulk-enrich`, {
-        method: "DELETE",
+        method: 'DELETE',
         headers: { ...adminHeaders },
       });
       if (res.ok) {
-        const data = await res.json() as { job: BulkJobStatus };
+        const data = (await res.json()) as { job: BulkJobStatus };
         setBulkJobStatus(data.job);
       }
     } catch {
@@ -938,25 +1094,27 @@ export default function UploadScreen() {
     setMeasureEnrichPending(true);
     try {
       const res = await fetch(`${API_BASE}/inventory/enrich-measurements`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...adminHeaders },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders },
       });
       if (res.status === 409) {
-        const data = await res.json() as { job: MeasureJobStatus };
+        const data = (await res.json()) as { job: MeasureJobStatus };
         setMeasureJobStatus(data.job);
         startMeasurePoll();
         return;
       }
       if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setMeasureEnrichError(err.error ?? "Failed to start measurement enrichment");
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setMeasureEnrichError(err.error ?? 'Failed to start measurement enrichment');
         return;
       }
-      const data = await res.json() as { job: MeasureJobStatus };
+      const data = (await res.json()) as { job: MeasureJobStatus };
       setMeasureJobStatus(data.job);
       startMeasurePoll();
     } catch {
-      setMeasureEnrichError("Failed to start measurement enrichment. Check your connection and try again.");
+      setMeasureEnrichError(
+        'Failed to start measurement enrichment. Check your connection and try again.'
+      );
     } finally {
       setMeasureEnrichPending(false);
     }
@@ -1014,39 +1172,42 @@ export default function UploadScreen() {
   // and that state update isn't visible to closures captured from the same
   // render. Forwarding the name as an argument guarantees we record the file
   // the worker actually picked, not whatever the previous render had.
-  const applyCatalogDecisions = useCallback(async (
-    report: CatalogReport,
-    uncertainPicks: Record<string, number | "skip">,
-    sourceFilename: string | null,
-  ): Promise<CatalogApplyResult | null> => {
-    try {
-      const res = await fetch(`${API_BASE}/admin/catalog-pdf/apply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...adminHeaders },
-        body: JSON.stringify({
-          report,
-          uncertainDecisions: uncertainPicks,
-          sourceFilename,
-        }),
-      });
-      if (res.status === 401) {
-        logoutAdmin();
-        setCatalogPdfError("Admin session expired. Please unlock again.");
+  const applyCatalogDecisions = useCallback(
+    async (
+      report: CatalogReport,
+      uncertainPicks: Record<string, number | 'skip'>,
+      sourceFilename: string | null
+    ): Promise<CatalogApplyResult | null> => {
+      try {
+        const res = await fetch(`${API_BASE}/admin/catalog-pdf/apply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders },
+          body: JSON.stringify({
+            report,
+            uncertainDecisions: uncertainPicks,
+            sourceFilename,
+          }),
+        });
+        if (res.status === 401) {
+          logoutAdmin();
+          setCatalogPdfError('Admin session expired. Please unlock again.');
+          return null;
+        }
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          setCatalogPdfError(err.error ?? 'Failed to apply catalog updates.');
+          return null;
+        }
+        return (await res.json()) as CatalogApplyResult;
+      } catch {
+        setCatalogPdfError('Network error while applying catalog updates.');
         return null;
       }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setCatalogPdfError(err.error ?? "Failed to apply catalog updates.");
-        return null;
-      }
-      return (await res.json()) as CatalogApplyResult;
-    } catch {
-      setCatalogPdfError("Network error while applying catalog updates.");
-      return null;
-    }
-    // adminHeaders is recomputed every render; the underlying token is what matters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminToken, logoutAdmin]);
+      // adminHeaders is recomputed every render; the underlying token is what matters.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [adminToken, logoutAdmin]
+  );
 
   // Fetch the most recent catalog-PDF apply runs so the worker can revert
   // any of them. The list reloads after every successful apply or revert.
@@ -1056,7 +1217,7 @@ export default function UploadScreen() {
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await fetch(`${API_BASE}/admin/catalog-pdf/runs?limit=20`, { headers });
       if (!res.ok) return;
-      const body = await res.json() as { runs: CatalogRun[] };
+      const body = (await res.json()) as { runs: CatalogRun[] };
       if (Array.isArray(body.runs)) setCatalogRuns(body.runs);
     } catch {
       /* silent — UI just won't show the section */
@@ -1064,95 +1225,121 @@ export default function UploadScreen() {
   }, []);
 
   useEffect(() => {
-    if (!isAdmin) { setCatalogRuns([]); return; }
+    if (!isAdmin) {
+      setCatalogRuns([]);
+      return;
+    }
     void fetchCatalogRuns();
   }, [isAdmin, fetchCatalogRuns]);
 
   // Performs the actual revert request after the user confirms. Kept
   // separate from the confirmation prompt so the prompt can be reused.
-  const performRevertRun = useCallback(async (runId: number) => {
-    setRevertingRunId(runId);
-    setCatalogPdfError(null);
-    try {
-      const res = await fetch(`${API_BASE}/admin/catalog-pdf/runs/${runId}/revert`, {
-        method: "POST",
-        headers: { ...adminHeaders },
-      });
-      if (res.status === 401) {
-        logoutAdmin();
-        setCatalogPdfError("Admin session expired. Please unlock again.");
-        return;
+  const performRevertRun = useCallback(
+    async (runId: number) => {
+      setRevertingRunId(runId);
+      setCatalogPdfError(null);
+      try {
+        const res = await fetch(`${API_BASE}/admin/catalog-pdf/runs/${runId}/revert`, {
+          method: 'POST',
+          headers: { ...adminHeaders },
+        });
+        if (res.status === 401) {
+          logoutAdmin();
+          setCatalogPdfError('Admin session expired. Please unlock again.');
+          return;
+        }
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          setCatalogPdfError(err.error ?? 'Failed to revert this run.');
+          return;
+        }
+        await fetchCatalogRuns();
+        void inventoryQuery.refetch();
+        void fetchEnrichSummary();
+      } catch {
+        setCatalogPdfError('Network error while reverting this run.');
+      } finally {
+        setRevertingRunId(null);
       }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setCatalogPdfError(err.error ?? "Failed to revert this run.");
-        return;
-      }
-      await fetchCatalogRuns();
-      void inventoryQuery.refetch();
-      void fetchEnrichSummary();
-    } catch {
-      setCatalogPdfError("Network error while reverting this run.");
-    } finally {
-      setRevertingRunId(null);
-    }
-    // adminHeaders is recomputed every render; the underlying token is what matters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminToken, fetchCatalogRuns, fetchEnrichSummary, inventoryQuery, logoutAdmin]);
+      // adminHeaders is recomputed every render; the underlying token is what matters.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [adminToken, fetchCatalogRuns, fetchEnrichSummary, inventoryQuery, logoutAdmin]
+  );
 
   // Confirm-before-destruct wrapper for Revert. The native Alert is the
   // shared destructive-confirm pattern in this app; OK on Web treats the
   // OK as confirm and Cancel as no-op. Cancelling leaves state untouched.
-  const handleRevertRun = useCallback((runId: number) => {
-    Alert.alert(
-      "Revert this enrichment run?",
-      "This will restore the description and AI keywords for every inventory row this run touched, undoing the enrichment. You can Undo afterwards.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Revert", style: "destructive", onPress: () => { void performRevertRun(runId); } },
-      ],
-    );
-  }, [performRevertRun]);
+  const handleRevertRun = useCallback(
+    (runId: number) => {
+      Alert.alert(
+        'Revert this enrichment run?',
+        'This will restore the description and AI keywords for every inventory row this run touched, undoing the enrichment. You can Undo afterwards.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Revert',
+            style: 'destructive',
+            onPress: () => {
+              void performRevertRun(runId);
+            },
+          },
+        ]
+      );
+    },
+    [performRevertRun]
+  );
 
-  const performUndoRevert = useCallback(async (runId: number) => {
-    setUndoingRunId(runId);
-    setCatalogPdfError(null);
-    try {
-      const res = await fetch(`${API_BASE}/admin/catalog-pdf/runs/${runId}/unrevert`, {
-        method: "POST",
-        headers: { ...adminHeaders },
-      });
-      if (res.status === 401) {
-        logoutAdmin();
-        setCatalogPdfError("Admin session expired. Please unlock again.");
-        return;
+  const performUndoRevert = useCallback(
+    async (runId: number) => {
+      setUndoingRunId(runId);
+      setCatalogPdfError(null);
+      try {
+        const res = await fetch(`${API_BASE}/admin/catalog-pdf/runs/${runId}/unrevert`, {
+          method: 'POST',
+          headers: { ...adminHeaders },
+        });
+        if (res.status === 401) {
+          logoutAdmin();
+          setCatalogPdfError('Admin session expired. Please unlock again.');
+          return;
+        }
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          setCatalogPdfError(err.error ?? 'Failed to undo this revert.');
+          return;
+        }
+        await fetchCatalogRuns();
+        void inventoryQuery.refetch();
+        void fetchEnrichSummary();
+      } catch {
+        setCatalogPdfError('Network error while undoing this revert.');
+      } finally {
+        setUndoingRunId(null);
       }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setCatalogPdfError(err.error ?? "Failed to undo this revert.");
-        return;
-      }
-      await fetchCatalogRuns();
-      void inventoryQuery.refetch();
-      void fetchEnrichSummary();
-    } catch {
-      setCatalogPdfError("Network error while undoing this revert.");
-    } finally {
-      setUndoingRunId(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminToken, fetchCatalogRuns, fetchEnrichSummary, inventoryQuery, logoutAdmin]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [adminToken, fetchCatalogRuns, fetchEnrichSummary, inventoryQuery, logoutAdmin]
+  );
 
-  const handleUndoRevert = useCallback((runId: number) => {
-    Alert.alert(
-      "Undo revert?",
-      "This will re-apply this run's enrichments, restoring the description and AI keywords for every inventory row it touched. Manual edits made since the revert will be overwritten.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Undo Revert", onPress: () => { void performUndoRevert(runId); } },
-      ],
-    );
-  }, [performUndoRevert]);
+  const handleUndoRevert = useCallback(
+    (runId: number) => {
+      Alert.alert(
+        'Undo revert?',
+        "This will re-apply this run's enrichments, restoring the description and AI keywords for every inventory row it touched. Manual edits made since the revert will be overwritten.",
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Undo Revert',
+            onPress: () => {
+              void performUndoRevert(runId);
+            },
+          },
+        ]
+      );
+    },
+    [performUndoRevert]
+  );
 
   const handleCatalogPdfPick = async () => {
     setCatalogPdfError(null);
@@ -1161,7 +1348,7 @@ export default function UploadScreen() {
     setCatalogReviewChoices({});
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ["application/pdf"],
+        type: ['application/pdf'],
         copyToCacheDirectory: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
@@ -1174,29 +1361,29 @@ export default function UploadScreen() {
       // for file fields and streams the file directly without loading it into
       // memory as a blob.
       const form = new FormData();
-      form.append("vendor", catalogPdfVendor);
-      form.append("file", {
+      form.append('vendor', catalogPdfVendor);
+      form.append('file', {
         // RN-specific FormData file shape; cast for TS.
         uri: asset.uri,
-        name: asset.name || "catalog.pdf",
-        type: "application/pdf",
+        name: asset.name || 'catalog.pdf',
+        type: 'application/pdf',
       } as unknown as Blob);
 
       const previewUrl = `${API_BASE}/admin/catalog-pdf/preview`;
       const res = await fetch(previewUrl, {
-        method: "POST",
+        method: 'POST',
         // Do NOT set Content-Type — RN sets the multipart boundary itself.
         headers: { ...adminHeaders },
         body: form,
       });
       if (res.status === 401) {
         logoutAdmin();
-        setCatalogPdfError("Admin session expired. Please unlock again.");
+        setCatalogPdfError('Admin session expired. Please unlock again.');
         return;
       }
       if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setCatalogPdfError(err.error ?? "Failed to parse the catalog PDF.");
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setCatalogPdfError(err.error ?? 'Failed to parse the catalog PDF.');
         return;
       }
       const report = (await res.json()) as CatalogReport;
@@ -1211,7 +1398,7 @@ export default function UploadScreen() {
         void fetchCatalogRuns();
       }
     } catch (err) {
-      setCatalogPdfError(err instanceof Error ? err.message : "Could not process the catalog PDF.");
+      setCatalogPdfError(err instanceof Error ? err.message : 'Could not process the catalog PDF.');
     } finally {
       setCatalogPdfPending(false);
     }
@@ -1226,9 +1413,13 @@ export default function UploadScreen() {
       // exact + highConfidence rows were already auto-applied on preview).
       const uncertainOnly: CatalogReport = {
         ...catalogReport,
-        rows: catalogReport.rows.filter(r => r.tier === "uncertain"),
+        rows: catalogReport.rows.filter((r) => r.tier === 'uncertain'),
       };
-      const applied = await applyCatalogDecisions(uncertainOnly, catalogReviewChoices, catalogPdfFileName);
+      const applied = await applyCatalogDecisions(
+        uncertainOnly,
+        catalogReviewChoices,
+        catalogPdfFileName
+      );
       if (applied) {
         const prev = catalogApplyResult ?? { runId: null, updated: 0, skippedNoOp: 0, errors: [] };
         setCatalogApplyResult({
@@ -1253,7 +1444,7 @@ export default function UploadScreen() {
       const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
       const res = await fetch(`${API_BASE}/series/coverage`, { headers });
       if (!res.ok) return;
-      const data = await res.json() as { total: number; assigned: number };
+      const data = (await res.json()) as { total: number; assigned: number };
       setSeriesCoverage(data);
     } catch {}
   }, []);
@@ -1264,14 +1455,16 @@ export default function UploadScreen() {
       if (!token) return;
       const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
       const res = await fetch(`${API_BASE}/series`, { headers });
-      if (!res.ok) { setSeriesListError("Failed to load series"); return; }
-      const data = await res.json() as { series: SeriesRow[] };
+      if (!res.ok) {
+        setSeriesListError('Failed to load series');
+        return;
+      }
+      const data = (await res.json()) as { series: SeriesRow[] };
       setSeriesList(data.series);
       setSeriesListError(null);
     } catch {
-      setSeriesListError("Failed to load series");
+      setSeriesListError('Failed to load series');
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1283,13 +1476,13 @@ export default function UploadScreen() {
   const handleAutoAssign = async () => {
     setAutoAssignError(null);
     setAutoAssignConflict(false);
-    setAutoAssignProgress({ status: "started" });
+    setAutoAssignProgress({ status: 'started' });
     setAutoAssignRunning(true);
     try {
       const token = adminTokenRef.current;
       const res = await fetch(`${API_BASE}/series/auto-assign`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token ?? ""}` },
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token ?? ''}` },
       });
       if (res.status === 409) {
         setAutoAssignConflict(true);
@@ -1298,23 +1491,23 @@ export default function UploadScreen() {
         return;
       }
       if (!res.ok || !res.body) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setAutoAssignError(err.error ?? "Failed to start auto-assign");
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setAutoAssignError(err.error ?? 'Failed to start auto-assign');
         setAutoAssignRunning(false);
         setAutoAssignProgress(null);
         return;
       }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let buf = "";
+      let buf = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
         for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
+          if (!line.startsWith('data: ')) continue;
           try {
             const evt = JSON.parse(line.slice(6)) as AutoAssignProgress;
             setAutoAssignProgress(evt);
@@ -1324,7 +1517,7 @@ export default function UploadScreen() {
       await fetchSeriesCoverage();
       await fetchSeriesList();
     } catch {
-      setAutoAssignError("Network error during auto-assign");
+      setAutoAssignError('Network error during auto-assign');
     } finally {
       setAutoAssignRunning(false);
     }
@@ -1334,7 +1527,7 @@ export default function UploadScreen() {
     setActiveSeries(series);
     setSeriesMembers([]);
     setSeriesModalError(null);
-    setMemberSearch("");
+    setMemberSearch('');
     setMemberSearchResults([]);
     setSeriesRenaming(false);
     setSeriesRenameText(series.name);
@@ -1343,13 +1536,16 @@ export default function UploadScreen() {
     try {
       const token = adminTokenRef.current;
       const res = await fetch(`${API_BASE}/series/${series.id}/items`, {
-        headers: { Authorization: `Bearer ${token ?? ""}` },
+        headers: { Authorization: `Bearer ${token ?? ''}` },
       });
-      if (!res.ok) { setSeriesModalError("Failed to load members"); return; }
-      const data = await res.json() as { items: SeriesMember[] };
+      if (!res.ok) {
+        setSeriesModalError('Failed to load members');
+        return;
+      }
+      const data = (await res.json()) as { items: SeriesMember[] };
       setSeriesMembers(data.items);
     } catch {
-      setSeriesModalError("Failed to load members");
+      setSeriesModalError('Failed to load members');
     } finally {
       setSeriesMembersLoading(false);
     }
@@ -1362,44 +1558,56 @@ export default function UploadScreen() {
     try {
       const token = adminTokenRef.current;
       const res = await fetch(`${API_BASE}/series/${activeSeries.id}/items/${inventoryId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token ?? ""}` },
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token ?? ''}` },
       });
-      if (!res.ok) { setSeriesModalError("Failed to remove member"); return; }
-      setSeriesMembers(prev => prev.filter(m => m.id !== inventoryId));
-      setActiveSeries(prev => prev ? { ...prev, member_count: prev.member_count - 1 } : prev);
+      if (!res.ok) {
+        setSeriesModalError('Failed to remove member');
+        return;
+      }
+      setSeriesMembers((prev) => prev.filter((m) => m.id !== inventoryId));
+      setActiveSeries((prev) => (prev ? { ...prev, member_count: prev.member_count - 1 } : prev));
       await fetchSeriesList();
       await fetchSeriesCoverage();
     } catch {
-      setSeriesModalError("Failed to remove member");
+      setSeriesModalError('Failed to remove member');
     } finally {
       setMemberRemovePending(null);
     }
   };
 
   const memberSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleMemberSearch = useCallback((q: string) => {
-    setMemberSearch(q);
-    if (memberSearchTimeoutRef.current) clearTimeout(memberSearchTimeoutRef.current);
-    if (!q.trim()) { setMemberSearchResults([]); return; }
-    setMemberSearchLoading(true);
-    memberSearchTimeoutRef.current = setTimeout(async () => {
-      try {
-        const token = adminTokenRef.current;
-        const seriesId = activeSeries?.id;
-        if (!seriesId) return;
-        const res = await fetch(`${API_BASE}/series/${seriesId}/search?q=${encodeURIComponent(q)}`, {
-          headers: { Authorization: `Bearer ${token ?? ""}` },
-        });
-        if (!res.ok) return;
-        const data = await res.json() as { items: SeriesSearchResult[] };
-        setMemberSearchResults(data.items);
-      } catch {} finally {
-        setMemberSearchLoading(false);
+  const handleMemberSearch = useCallback(
+    (q: string) => {
+      setMemberSearch(q);
+      if (memberSearchTimeoutRef.current) clearTimeout(memberSearchTimeoutRef.current);
+      if (!q.trim()) {
+        setMemberSearchResults([]);
+        return;
       }
-    }, 300);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSeries?.id]);
+      setMemberSearchLoading(true);
+      memberSearchTimeoutRef.current = setTimeout(async () => {
+        try {
+          const token = adminTokenRef.current;
+          const seriesId = activeSeries?.id;
+          if (!seriesId) return;
+          const res = await fetch(
+            `${API_BASE}/series/${seriesId}/search?q=${encodeURIComponent(q)}`,
+            {
+              headers: { Authorization: `Bearer ${token ?? ''}` },
+            }
+          );
+          if (!res.ok) return;
+          const data = (await res.json()) as { items: SeriesSearchResult[] };
+          setMemberSearchResults(data.items);
+        } catch {
+        } finally {
+          setMemberSearchLoading(false);
+        }
+      }, 300);
+    },
+    [activeSeries?.id]
+  );
 
   const handleAddMember = async (inventoryId: number) => {
     if (!activeSeries) return;
@@ -1408,22 +1616,33 @@ export default function UploadScreen() {
     try {
       const token = adminTokenRef.current;
       const res = await fetch(`${API_BASE}/series/${activeSeries.id}/items`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
         body: JSON.stringify({ inventoryIds: [inventoryId] }),
       });
-      if (!res.ok) { setSeriesModalError("Failed to add member"); return; }
-      setMemberSearchResults(prev => prev.filter(r => r.id !== inventoryId));
-      setSeriesMembers(prev => {
-        const added = memberSearchResults.find(r => r.id === inventoryId);
+      if (!res.ok) {
+        setSeriesModalError('Failed to add member');
+        return;
+      }
+      setMemberSearchResults((prev) => prev.filter((r) => r.id !== inventoryId));
+      setSeriesMembers((prev) => {
+        const added = memberSearchResults.find((r) => r.id === inventoryId);
         if (!added) return prev;
-        return [...prev, { id: added.id, vendor: added.vendor, catalog: added.catalog, description: added.description }];
+        return [
+          ...prev,
+          {
+            id: added.id,
+            vendor: added.vendor,
+            catalog: added.catalog,
+            description: added.description,
+          },
+        ];
       });
-      setActiveSeries(prev => prev ? { ...prev, member_count: prev.member_count + 1 } : prev);
+      setActiveSeries((prev) => (prev ? { ...prev, member_count: prev.member_count + 1 } : prev));
       await fetchSeriesList();
       await fetchSeriesCoverage();
     } catch {
-      setSeriesModalError("Failed to add member");
+      setSeriesModalError('Failed to add member');
     } finally {
       setMemberAddPending(false);
     }
@@ -1435,23 +1654,26 @@ export default function UploadScreen() {
     try {
       const token = adminTokenRef.current;
       const res = await fetch(`${API_BASE}/series/${activeSeries.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` },
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
         body: JSON.stringify({ name: seriesRenameText.trim() }),
       });
-      if (!res.ok) { setSeriesModalError("Failed to rename series"); return; }
-      const data = await res.json() as { series: { name: string } };
-      setActiveSeries(prev => prev ? { ...prev, name: data.series.name } : prev);
+      if (!res.ok) {
+        setSeriesModalError('Failed to rename series');
+        return;
+      }
+      const data = (await res.json()) as { series: { name: string } };
+      setActiveSeries((prev) => (prev ? { ...prev, name: data.series.name } : prev));
       setSeriesRenaming(false);
       await fetchSeriesList();
     } catch {
-      setSeriesModalError("Failed to rename series");
+      setSeriesModalError('Failed to rename series');
     }
   };
 
   const handleCreateSeries = async () => {
     if (!createSeriesName.trim() || !createSeriesVendor.trim()) {
-      setCreateSeriesError("Name and vendor are required");
+      setCreateSeriesError('Name and vendor are required');
       return;
     }
     setCreateSeriesPending(true);
@@ -1459,24 +1681,28 @@ export default function UploadScreen() {
     try {
       const token = adminTokenRef.current;
       const res = await fetch(`${API_BASE}/series`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
         body: JSON.stringify({ name: createSeriesName.trim(), vendor: createSeriesVendor.trim() }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
-        setCreateSeriesError(err.error ?? "Failed to create series");
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        setCreateSeriesError(err.error ?? 'Failed to create series');
         return;
       }
-      const data = await res.json() as { series: SeriesRow };
+      const data = (await res.json()) as { series: SeriesRow };
       setCreateSeriesVisible(false);
-      setCreateSeriesName("");
-      setCreateSeriesVendor("");
+      setCreateSeriesName('');
+      setCreateSeriesVendor('');
       await fetchSeriesList();
       await fetchSeriesCoverage();
-      void openSeriesModal({ ...data.series, member_count: 0, created_at: new Date().toISOString() });
+      void openSeriesModal({
+        ...data.series,
+        member_count: 0,
+        created_at: new Date().toISOString(),
+      });
     } catch {
-      setCreateSeriesError("Failed to create series");
+      setCreateSeriesError('Failed to create series');
     } finally {
       setCreateSeriesPending(false);
     }
@@ -1486,14 +1712,14 @@ export default function UploadScreen() {
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [
-          "text/csv",
-          "text/comma-separated-values",
-          "text/plain",
-          "application/vnd.ms-excel",
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "application/vnd.oasis.opendocument.spreadsheet",
-          "application/octet-stream",
-          "*/*",
+          'text/csv',
+          'text/comma-separated-values',
+          'text/plain',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.oasis.opendocument.spreadsheet',
+          'application/octet-stream',
+          '*/*',
         ],
         copyToCacheDirectory: true,
       });
@@ -1503,61 +1729,65 @@ export default function UploadScreen() {
       const asset = result.assets[0];
       setFileName(asset.name);
 
-      const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
+      const ext = asset.name.split('.').pop()?.toLowerCase() ?? '';
       let rows: ParsedRow[] = [];
 
-      if (ext === "csv" || ext === "txt") {
+      if (ext === 'csv' || ext === 'txt') {
         const response = await fetch(asset.uri);
         if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
         const text = await response.text();
         rows = parseCSV(text);
-        setFileType("csv");
-      } else if (["xlsx", "xls", "xlsm", "ods"].includes(ext)) {
+        setFileType('csv');
+      } else if (['xlsx', 'xls', 'xlsm', 'ods'].includes(ext)) {
         rows = await parseXlsx(asset.uri);
-        setFileType("xlsx");
+        setFileType('xlsx');
       } else {
         try {
           const response = await fetch(asset.uri);
           if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
           const text = await response.text();
           rows = parseCSV(text);
-          setFileType("csv");
+          setFileType('csv');
         } catch {
           rows = await parseXlsx(asset.uri);
-          setFileType("xlsx");
+          setFileType('xlsx');
         }
       }
 
       if (rows.length === 0) {
-        setUploadError("No data rows found. Ensure your file has columns named: vendor, catalog (required), description, bin (optional).");
+        setUploadError(
+          'No data rows found. Ensure your file has columns named: vendor, catalog (required), description, bin (optional).'
+        );
         return;
       }
       setUploadError(null);
       setUploadSuccess(null);
       setParsedRows(rows);
     } catch (err) {
-      setUploadError("Failed to read file. Please try again.");
+      setUploadError('Failed to read file. Please try again.');
     }
   };
 
   const handleParsePastedText = (text: string) => {
     const trimmed = text.trim();
     if (!trimmed) {
-      setUploadError("Paste box is empty. Copy rows from your spreadsheet first.");
+      setUploadError('Paste box is empty. Copy rows from your spreadsheet first.');
       return;
     }
     const delimiter = detectDelimiter(trimmed);
     const rows = parseCSV(trimmed, delimiter);
     if (rows.length === 0) {
-      setUploadError("No data rows found. Ensure your spreadsheet has columns named: vendor, catalog (required), description, bin (optional).");
+      setUploadError(
+        'No data rows found. Ensure your spreadsheet has columns named: vendor, catalog (required), description, bin (optional).'
+      );
       return;
     }
     setUploadError(null);
     setUploadSuccess(null);
-    setFileName("Pasted data");
-    setFileType("csv");
+    setFileName('Pasted data');
+    setFileType('csv');
     setParsedRows(rows);
-    setPasteInputText("");
+    setPasteInputText('');
   };
 
   const clearPendingFile = useCallback(() => {
@@ -1565,7 +1795,7 @@ export default function UploadScreen() {
     setFileName(null);
     setFileType(null);
     setPreviewData(null);
-    setPasteInputText("");
+    setPasteInputText('');
     setBinsOnlyMode(false);
   }, []);
 
@@ -1618,17 +1848,17 @@ export default function UploadScreen() {
           const body: {
             items: typeof chunk;
             mode: UpsertMode;
-            selectedKeys?: Array<{ vendor: string; catalog: string }>;
+            selectedKeys?: { vendor: string; catalog: string }[];
           } = { items: chunk, mode: initial.mode };
-          if (initial.mode === "selected" && initial.selectedKeys) {
+          if (initial.mode === 'selected' && initial.selectedKeys) {
             body.selectedKeys = initial.selectedKeys;
           }
 
           let response: Response;
           try {
             response = await fetch(`${API_BASE}/inventory/upsert-batch`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...adminHeaders },
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...adminHeaders },
               body: JSON.stringify(body),
               signal: ctrl.signal,
             });
@@ -1637,10 +1867,10 @@ export default function UploadScreen() {
             // exit silently. Otherwise keep state so user can Resume.
             if (!isCurrent()) return;
             const aborted =
-              err instanceof Error && (err.name === "AbortError" || ctrl.signal.aborted);
+              err instanceof Error && (err.name === 'AbortError' || ctrl.signal.aborted);
             if (aborted) return;
             setUploadError(
-              "Network error mid-upload — your progress was saved. Tap Resume to continue.",
+              'Network error mid-upload — your progress was saved. Tap Resume to continue.'
             );
             setIsPaused(true);
             setUploadPending(false);
@@ -1656,14 +1886,15 @@ export default function UploadScreen() {
               await clearUploadProgress();
               if (!isCurrent()) return;
               logoutAdmin();
-              setUploadError("Admin session expired. Please unlock again.");
+              setUploadError('Admin session expired. Please unlock again.');
               setChunkProgress(null);
               setUploadPending(false);
               return;
             }
             // Keep persisted state so the user can Resume after fixing the issue.
             setUploadError(
-              errBody.error ?? "Upload failed mid-run — your progress was saved. Tap Resume to continue.",
+              errBody.error ??
+                'Upload failed mid-run — your progress was saved. Tap Resume to continue.'
             );
             setIsPaused(true);
             setUploadPending(false);
@@ -1701,7 +1932,7 @@ export default function UploadScreen() {
         if (isCurrent()) setUploadPending(false);
       }
     },
-    [adminHeaders, logoutAdmin, inventoryQuery],
+    [adminHeaders, logoutAdmin, inventoryQuery]
   );
 
   // Apply step — kicks off a chunked upload from row 0. Writes the static
@@ -1710,8 +1941,8 @@ export default function UploadScreen() {
   const applyUpsert = useCallback(
     async (
       mode: UpsertMode,
-      selectedKeys?: Array<{ vendor: string; catalog: string }>,
-      rowsOverride?: ParsedRow[],
+      selectedKeys?: { vendor: string; catalog: string }[],
+      rowsOverride?: ParsedRow[]
     ) => {
       const rows = rowsOverride ?? parsedRows;
       if (!rows.length) return;
@@ -1720,7 +1951,7 @@ export default function UploadScreen() {
         fileType,
         parsedRows: rows,
         mode,
-        selectedKeys: mode === "selected" ? selectedKeys : undefined,
+        selectedKeys: mode === 'selected' ? selectedKeys : undefined,
         startedAt: Date.now(),
       };
       await saveUploadSeed(seed);
@@ -1730,7 +1961,7 @@ export default function UploadScreen() {
         totals: { inserted: 0, updated: 0, skipped: 0 },
       });
     },
-    [parsedRows, fileName, fileType, runChunkedUpload],
+    [parsedRows, fileName, fileType, runChunkedUpload]
   );
 
   // Pause: flip the ref so the in-flight loop exits between chunks. We do
@@ -1792,7 +2023,6 @@ export default function UploadScreen() {
     };
     // Intentionally only on mount + when admin status changes; current
     // state is read through refs above to avoid stale-closure races.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
   // Resume from the banner prompt — same as Resume during a paused run.
@@ -1803,7 +2033,7 @@ export default function UploadScreen() {
     // Rehydrate the visible "what's being uploaded" labels.
     setFileName(saved.fileName);
     setFileType(saved.fileType);
-    setTab("upload");
+    setTab('upload');
     await runChunkedUpload(saved);
   }, [resumePrompt, runChunkedUpload]);
 
@@ -1823,27 +2053,27 @@ export default function UploadScreen() {
     setUploadPending(true);
     try {
       const response = await fetch(`${API_BASE}/inventory/preview-upsert`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...adminHeaders },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders },
         body: JSON.stringify({
           items: parsedRows,
-          ...(binsOnlyMode ? { mode: "bins-only" } : {}),
+          ...(binsOnlyMode ? { mode: 'bins-only' } : {}),
         }),
       });
 
       if (!response.ok) {
-        const errBody = await response.json().catch(() => ({})) as { error?: string };
+        const errBody = (await response.json().catch(() => ({}))) as { error?: string };
         if (response.status === 401) {
           logoutAdmin();
-          setUploadError("Admin session expired. Please unlock again.");
+          setUploadError('Admin session expired. Please unlock again.');
         } else {
-          setUploadError(errBody.error ?? "Could not analyze the file. Please try again.");
+          setUploadError(errBody.error ?? 'Could not analyze the file. Please try again.');
         }
         setUploadPending(false);
         return;
       }
 
-      const preview = await response.json() as PreviewResponse;
+      const preview = (await response.json()) as PreviewResponse;
       setPreviewData(preview);
 
       if (binsOnlyMode) {
@@ -1854,19 +2084,22 @@ export default function UploadScreen() {
         setUploadPending(false);
         if (filteredRows.length === 0) {
           Alert.alert(
-            "No Matches Found",
-            "None of the rows in this file matched existing catalog items. Nothing was updated.",
-            [{ text: "OK" }],
+            'No Matches Found',
+            'None of the rows in this file matched existing catalog items. Nothing was updated.',
+            [{ text: 'OK' }]
           );
           return;
         }
         Alert.alert(
-          "Update Bins Only",
-          `${updated} item${updated !== 1 ? "s" : ""} will have bin locations updated.\n${skipped} row${skipped !== 1 ? "s" : ""} not found — will be skipped.\n\nDescriptions will not be changed.`,
+          'Update Bins Only',
+          `${updated} item${updated !== 1 ? 's' : ''} will have bin locations updated.\n${skipped} row${skipped !== 1 ? 's' : ''} not found — will be skipped.\n\nDescriptions will not be changed.`,
           [
-            { text: "Cancel", style: "cancel" },
-            { text: "Update Bins", onPress: () => void applyUpsert("bins-only", undefined, filteredRows) },
-          ],
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Update Bins',
+              onPress: () => void applyUpsert('bins-only', undefined, filteredRows),
+            },
+          ]
         );
         return;
       }
@@ -1874,7 +2107,7 @@ export default function UploadScreen() {
       if (preview.changedCount === 0) {
         // Nothing to ask about — apply immediately.
         setUploadPending(false);
-        await applyUpsert("overwrite-all");
+        await applyUpsert('overwrite-all');
         return;
       }
 
@@ -1883,7 +2116,7 @@ export default function UploadScreen() {
       setUploadPending(false);
       setChooserVisible(true);
     } catch {
-      setUploadError("Could not analyze the file. Please try again.");
+      setUploadError('Could not analyze the file. Please try again.');
       setUploadPending(false);
     }
   };
@@ -1895,44 +2128,47 @@ export default function UploadScreen() {
     setUploadPending(true);
     try {
       const response = await fetch(`${API_BASE}/inventory/preview-upsert`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...adminHeaders },
-        body: JSON.stringify({ items: parsedRows, mode: "bins-only" }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders },
+        body: JSON.stringify({ items: parsedRows, mode: 'bins-only' }),
       });
       if (!response.ok) {
-        const errBody = await response.json().catch(() => ({})) as { error?: string };
+        const errBody = (await response.json().catch(() => ({}))) as { error?: string };
         if (response.status === 401) {
           logoutAdmin();
-          setUploadError("Admin session expired. Please unlock again.");
+          setUploadError('Admin session expired. Please unlock again.');
         } else {
-          setUploadError(errBody.error ?? "Could not start bins-only update. Please try again.");
+          setUploadError(errBody.error ?? 'Could not start bins-only update. Please try again.');
         }
         setUploadPending(false);
         return;
       }
-      const preview = await response.json() as PreviewResponse;
+      const preview = (await response.json()) as PreviewResponse;
       const updated = preview.binsOnlyUpdated ?? 0;
       const skipped = preview.binsOnlySkipped ?? 0;
       const filteredRows = buildBinsOnlyRows(parsedRows, preview.matchedKeys ?? []);
       setUploadPending(false);
       if (filteredRows.length === 0) {
         Alert.alert(
-          "No Matches Found",
-          "None of the rows in this file matched existing catalog items. Nothing was updated.",
-          [{ text: "OK" }],
+          'No Matches Found',
+          'None of the rows in this file matched existing catalog items. Nothing was updated.',
+          [{ text: 'OK' }]
         );
         return;
       }
       Alert.alert(
-        "Update Bins Only",
-        `${updated} item${updated !== 1 ? "s" : ""} will have bin locations updated.\n${skipped} row${skipped !== 1 ? "s" : ""} not found — will be skipped.\n\nDescriptions will not be changed.`,
+        'Update Bins Only',
+        `${updated} item${updated !== 1 ? 's' : ''} will have bin locations updated.\n${skipped} row${skipped !== 1 ? 's' : ''} not found — will be skipped.\n\nDescriptions will not be changed.`,
         [
-          { text: "Cancel", style: "cancel" },
-          { text: "Update Bins", onPress: () => void applyUpsert("bins-only", undefined, filteredRows) },
-        ],
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Update Bins',
+            onPress: () => void applyUpsert('bins-only', undefined, filteredRows),
+          },
+        ]
       );
     } catch {
-      setUploadError("Could not start bins-only update. Please try again.");
+      setUploadError('Could not start bins-only update. Please try again.');
       setUploadPending(false);
     }
   }, [parsedRows, adminHeaders, logoutAdmin, applyUpsert]);
@@ -1947,7 +2183,7 @@ export default function UploadScreen() {
         return next;
       });
     },
-    [previewKey],
+    [previewKey]
   );
 
   // Selected-mode keys = every changed match the user did NOT exclude.
@@ -1963,21 +2199,23 @@ export default function UploadScreen() {
     try {
       const body = idsToEnrich?.length ? { ids: idsToEnrich } : {};
       const response = await fetch(`${API_BASE}/inventory/enrich`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
           ...adminHeaders,
         },
         body: JSON.stringify(body),
       });
 
       if (!response.ok) {
-        const errBody = await response.json().catch(() => ({})) as { error?: string };
+        const errBody = (await response.json().catch(() => ({}))) as { error?: string };
         if (response.status === 401) {
           logoutAdmin();
-          setUploadError("Admin session expired. Please unlock again.");
+          setUploadError('Admin session expired. Please unlock again.');
         } else {
-          setUploadError(errBody.error ?? "AI enrichment failed — please check your connection and try again.");
+          setUploadError(
+            errBody.error ?? 'AI enrichment failed — please check your connection and try again.'
+          );
         }
         setEnrichProgress(null);
         return;
@@ -1989,9 +2227,9 @@ export default function UploadScreen() {
       if (reader) {
         // Buffer partial lines across chunk boundaries so we never try to parse
         // an incomplete "data: ..." SSE line.
-        let sseBuffer = "";
+        let sseBuffer = '';
         const processLine = async (line: string) => {
-          if (!line.startsWith("data: ")) return;
+          if (!line.startsWith('data: ')) return;
           try {
             const data: EnrichProgress = JSON.parse(line.slice(6));
             setEnrichProgress(data);
@@ -2002,16 +2240,16 @@ export default function UploadScreen() {
           const { done, value } = await reader.read();
           if (done) break;
           sseBuffer += decoder.decode(value, { stream: true });
-          const lines = sseBuffer.split("\n");
+          const lines = sseBuffer.split('\n');
           // Keep the last (possibly incomplete) line in the buffer
-          sseBuffer = lines.pop() ?? "";
+          sseBuffer = lines.pop() ?? '';
           for (const line of lines) await processLine(line);
         }
         // Process any remaining buffered content when the stream closes
         if (sseBuffer.trim()) await processLine(sseBuffer);
       }
     } catch {
-      setUploadError("AI enrichment failed — please check your connection and try again.");
+      setUploadError('AI enrichment failed — please check your connection and try again.');
       setEnrichProgress(null);
     }
   };
@@ -2026,14 +2264,23 @@ export default function UploadScreen() {
         <View style={styles.headerRow}>
           {/* Tapping the app title from any tab jumps back to the Search
               tab's empty welcome state (handled there by tabPress). */}
-          <Pressable onPress={() => router.replace("/(tabs)")} hitSlop={8}>
+          <Pressable onPress={() => router.replace('/(tabs)')} hitSlop={8}>
             <Text style={[styles.headerTitle, { color: colors.foreground }]}>Inventory</Text>
-            <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
+            <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
+              Upload & AI Enrich
+            </Text>
           </Pressable>
           {isAdmin ? (
-            <Pressable onPress={logoutAdmin} style={[styles.lockBtn, { borderColor: colors.border }]}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                <MaterialCommunityIcons name="lock-open-outline" size={14} color={colors.mutedForeground} />
+            <Pressable
+              onPress={logoutAdmin}
+              style={[styles.lockBtn, { borderColor: colors.border }]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <MaterialCommunityIcons
+                  name="lock-open-outline"
+                  size={14}
+                  color={colors.mutedForeground}
+                />
                 <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>Lock</Text>
               </View>
             </Pressable>
@@ -2051,17 +2298,31 @@ export default function UploadScreen() {
             <ErrorBanner message={uploadError} onDismiss={() => setUploadError(null)} />
           ) : null}
           {uploadSuccess ? (
-            <View style={[styles.inlineBanner, styles.successBanner, { backgroundColor: "#10b98115", borderColor: "#10b98155" }]}>
-              <Text style={[styles.inlineBannerText, { color: "#059669" }]}>
+            <View
+              style={[
+                styles.inlineBanner,
+                styles.successBanner,
+                { backgroundColor: '#10b98115', borderColor: '#10b98155' },
+              ]}
+            >
+              <Text style={[styles.inlineBannerText, { color: '#059669' }]}>
                 Upload complete — created {uploadSuccess.inserted}, updated {uploadSuccess.updated}
-                {uploadSuccess.skipped > 0 ? `, skipped ${uploadSuccess.skipped}` : ""} ({uploadSuccess.total} total)
+                {uploadSuccess.skipped > 0 ? `, skipped ${uploadSuccess.skipped}` : ''} (
+                {uploadSuccess.total} total)
               </Text>
-              <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                <Pressable onPress={() => { setUploadSuccess(null); setTab("inventory"); }}>
-                  <Text style={{ color: "#059669", fontSize: 12, fontFamily: "Inter_600SemiBold" }}>View →</Text>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                <Pressable
+                  onPress={() => {
+                    setUploadSuccess(null);
+                    setTab('inventory');
+                  }}
+                >
+                  <Text style={{ color: '#059669', fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>
+                    View →
+                  </Text>
                 </Pressable>
                 <Pressable onPress={() => setUploadSuccess(null)} style={styles.bannerClose}>
-                  <Text style={{ color: "#059669", fontSize: 14 }}>✕</Text>
+                  <Text style={{ color: '#059669', fontSize: 14 }}>✕</Text>
                 </Pressable>
               </View>
             </View>
@@ -2070,25 +2331,39 @@ export default function UploadScreen() {
           {/* Auto-resume banner — shown when a previous session left an upload
               partway through (app killed / crash / manual close). */}
           {resumePrompt ? (
-            <View style={[styles.resumeBanner, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "55" }]}>
+            <View
+              style={[
+                styles.resumeBanner,
+                { backgroundColor: colors.primary + '12', borderColor: colors.primary + '55' },
+              ]}
+            >
               <Text style={[styles.resumeTitle, { color: colors.primary }]}>
                 Resume previous upload?
               </Text>
               <Text style={[styles.resumeBody, { color: colors.foreground }]}>
-                {resumePrompt.fileName ?? "Untitled file"} — {resumePrompt.processedIndex} of {resumePrompt.parsedRows.length} rows processed.
+                {resumePrompt.fileName ?? 'Untitled file'} — {resumePrompt.processedIndex} of{' '}
+                {resumePrompt.parsedRows.length} rows processed.
               </Text>
               <View style={styles.resumeBtnRow}>
                 <Pressable
-                  onPress={() => { void handleResumeFromBanner(); }}
+                  onPress={() => {
+                    void handleResumeFromBanner();
+                  }}
                   style={[styles.resumePrimary, { backgroundColor: colors.primary }]}
                 >
-                  <Text style={[styles.resumePrimaryText, { color: colors.primaryForeground }]}>Resume</Text>
+                  <Text style={[styles.resumePrimaryText, { color: colors.primaryForeground }]}>
+                    Resume
+                  </Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => { void handleDiscardFromBanner(); }}
+                  onPress={() => {
+                    void handleDiscardFromBanner();
+                  }}
                   style={[styles.resumeSecondary, { borderColor: colors.border }]}
                 >
-                  <Text style={[styles.resumeSecondaryText, { color: colors.foreground }]}>Discard</Text>
+                  <Text style={[styles.resumeSecondaryText, { color: colors.foreground }]}>
+                    Discard
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -2098,15 +2373,20 @@ export default function UploadScreen() {
               is running OR paused. Shows totals so far and Pause / Resume /
               Cancel controls. */}
           {chunkProgress ? (
-            <View style={[styles.chunkCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View
+              style={[
+                styles.chunkCard,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
               <Text style={[styles.chunkTitle, { color: colors.foreground }]}>
-                {isPaused ? "⏸ Upload paused" : "⬆️ Uploading…"}
+                {isPaused ? '⏸ Upload paused' : '⬆️ Uploading…'}
               </Text>
               <Text style={[styles.chunkBody, { color: colors.mutedForeground }]}>
                 {chunkProgress.processed} of {chunkProgress.total} rows processed
-                {" — "}
+                {' — '}
                 created {chunkProgress.inserted}, updated {chunkProgress.updated}
-                {chunkProgress.skipped > 0 ? `, skipped ${chunkProgress.skipped}` : ""}
+                {chunkProgress.skipped > 0 ? `, skipped ${chunkProgress.skipped}` : ''}
               </Text>
               <View style={[styles.chunkTrack, { backgroundColor: colors.muted }]}>
                 <View
@@ -2122,24 +2402,34 @@ export default function UploadScreen() {
               <View style={styles.chunkBtnRow}>
                 {isPaused ? (
                   <Pressable
-                    onPress={() => { void handleResumeUpload(); }}
+                    onPress={() => {
+                      void handleResumeUpload();
+                    }}
                     style={[styles.chunkPrimary, { backgroundColor: colors.primary }]}
                   >
-                    <Text style={[styles.chunkPrimaryText, { color: colors.primaryForeground }]}>Resume</Text>
+                    <Text style={[styles.chunkPrimaryText, { color: colors.primaryForeground }]}>
+                      Resume
+                    </Text>
                   </Pressable>
                 ) : (
                   <Pressable
                     onPress={handlePauseUpload}
                     style={[styles.chunkPrimary, { backgroundColor: colors.primary }]}
                   >
-                    <Text style={[styles.chunkPrimaryText, { color: colors.primaryForeground }]}>Pause</Text>
+                    <Text style={[styles.chunkPrimaryText, { color: colors.primaryForeground }]}>
+                      Pause
+                    </Text>
                   </Pressable>
                 )}
                 <Pressable
-                  onPress={() => { void handleCancelUpload(); }}
+                  onPress={() => {
+                    void handleCancelUpload();
+                  }}
                   style={[styles.chunkSecondary, { borderColor: colors.border }]}
                 >
-                  <Text style={[styles.chunkSecondaryText, { color: colors.foreground }]}>Cancel</Text>
+                  <Text style={[styles.chunkSecondaryText, { color: colors.foreground }]}>
+                    Cancel
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -2147,23 +2437,32 @@ export default function UploadScreen() {
 
           {/* Tab bar */}
           <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-            {(["upload", "inventory", "records"] as const).map(t => (
+            {(['upload', 'inventory', 'records'] as const).map((t) => (
               <Pressable
                 key={t}
                 onPress={() => setTab(t)}
                 style={[
                   styles.tabItem,
-                  { borderBottomColor: tab === t ? colors.primary : "transparent" },
+                  { borderBottomColor: tab === t ? colors.primary : 'transparent' },
                 ]}
               >
-                <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
-                  {t === "upload" ? "Upload File" : t === "inventory" ? `New Inventory (${inventoryTotal})` : "Records"}
+                <Text
+                  style={[
+                    styles.tabLabel,
+                    { color: tab === t ? colors.primary : colors.mutedForeground },
+                  ]}
+                >
+                  {t === 'upload'
+                    ? 'Upload File'
+                    : t === 'inventory'
+                      ? `New Inventory (${inventoryTotal})`
+                      : 'Records'}
                 </Text>
               </Pressable>
             ))}
           </View>
 
-          {tab === "upload" ? (
+          {tab === 'upload' ? (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
               {/* File import + export card */}
               <ImportFileCard
@@ -2183,16 +2482,24 @@ export default function UploadScreen() {
 
               {/* Preview */}
               {parsedRows.length > 0 ? (
-                <View style={[styles.previewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View
+                  style={[
+                    styles.previewCard,
+                    { backgroundColor: colors.card, borderColor: colors.border },
+                  ]}
+                >
                   <Text style={[styles.cardTitle, { color: colors.foreground }]}>
                     Preview ({parsedRows.length} rows)
                   </Text>
 
                   <View style={[styles.previewHeaderRow, { backgroundColor: colors.muted }]}>
-                    {["VENDOR", "CATALOG", "DESCRIPTION", "BIN"].map(h => (
+                    {['VENDOR', 'CATALOG', 'DESCRIPTION', 'BIN'].map((h) => (
                       <Text
                         key={h}
-                        style={[styles.previewHeaderCell, { color: colors.mutedForeground, flex: h === "DESCRIPTION" ? 2 : 1 }]}
+                        style={[
+                          styles.previewHeaderCell,
+                          { color: colors.mutedForeground, flex: h === 'DESCRIPTION' ? 2 : 1 },
+                        ]}
                       >
                         {h}
                       </Text>
@@ -2201,17 +2508,29 @@ export default function UploadScreen() {
 
                   {parsedRows.slice(0, 8).map((row, i) => (
                     <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border }]}>
-                      <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
+                      <Text
+                        style={[styles.previewCell, { color: colors.foreground, flex: 1 }]}
+                        numberOfLines={1}
+                      >
                         {row.vendor}
                       </Text>
-                      <Text style={[styles.previewCell, { color: colors.primary, flex: 1 }]} numberOfLines={1}>
+                      <Text
+                        style={[styles.previewCell, { color: colors.primary, flex: 1 }]}
+                        numberOfLines={1}
+                      >
                         {row.catalog}
                       </Text>
-                      <Text style={[styles.previewCell, { color: colors.mutedForeground, flex: 2 }]} numberOfLines={1}>
+                      <Text
+                        style={[styles.previewCell, { color: colors.mutedForeground, flex: 2 }]}
+                        numberOfLines={1}
+                      >
                         {row.description}
                       </Text>
-                      <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
-                        {row.binLocations.join(", ")}
+                      <Text
+                        style={[styles.previewCell, { color: colors.foreground, flex: 1 }]}
+                        numberOfLines={1}
+                      >
+                        {row.binLocations.join(', ')}
                       </Text>
                     </View>
                   ))}
@@ -2224,48 +2543,63 @@ export default function UploadScreen() {
 
                   {/* Bins-only mode toggle */}
                   <Pressable
-                    onPress={() => setBinsOnlyMode(v => !v)}
+                    onPress={() => setBinsOnlyMode((v) => !v)}
                     style={[
                       styles.binsOnlyToggle,
                       {
-                        backgroundColor: binsOnlyMode ? colors.warning + "22" : colors.muted,
+                        backgroundColor: binsOnlyMode ? colors.warning + '22' : colors.muted,
                         borderColor: binsOnlyMode ? colors.warning : colors.border,
                       },
                     ]}
                   >
-                    <Text style={[styles.binsOnlyToggleText, { color: binsOnlyMode ? colors.warning : colors.mutedForeground }]}>
-                      {binsOnlyMode ? "Mode: Update Bins Only" : "Mode: Standard import"}
+                    <Text
+                      style={[
+                        styles.binsOnlyToggleText,
+                        { color: binsOnlyMode ? colors.warning : colors.mutedForeground },
+                      ]}
+                    >
+                      {binsOnlyMode ? 'Mode: Update Bins Only' : 'Mode: Standard import'}
                     </Text>
                     <Text style={[styles.binsOnlyToggleHint, { color: colors.mutedForeground }]}>
                       {binsOnlyMode
-                        ? "Only bin locations will be updated — descriptions untouched, new rows skipped."
-                        : "Tap to switch to Bins Only mode."}
+                        ? 'Only bin locations will be updated — descriptions untouched, new rows skipped.'
+                        : 'Tap to switch to Bins Only mode.'}
                     </Text>
                   </Pressable>
 
                   <Pressable
                     onPress={handleUploadStart}
                     disabled={uploadPending}
-                    style={[styles.uploadBtn, { backgroundColor: uploadPending ? colors.muted : (binsOnlyMode ? colors.warning : colors.primary) }]}
+                    style={[
+                      styles.uploadBtn,
+                      {
+                        backgroundColor: uploadPending
+                          ? colors.muted
+                          : binsOnlyMode
+                            ? colors.warning
+                            : colors.primary,
+                      },
+                    ]}
                   >
                     {uploadPending ? (
                       <ActivityIndicator color={colors.primaryForeground} />
                     ) : (
                       <Text style={[styles.uploadBtnText, { color: colors.primaryForeground }]}>
-                        {binsOnlyMode ? `Update Bins for ${parsedRows.length} Rows` : `Upload ${parsedRows.length} Items`}
+                        {binsOnlyMode
+                          ? `Update Bins for ${parsedRows.length} Rows`
+                          : `Upload ${parsedRows.length} Items`}
                       </Text>
                     )}
                   </Pressable>
                 </View>
               ) : null}
-
             </ScrollView>
-          ) : tab === "records" ? (
+          ) : tab === 'records' ? (
             <RecordsBrowser adminHeaders={adminHeaders} />
           ) : (
             <FlatList
               data={inventory}
-              keyExtractor={item => String(item.id)}
+              keyExtractor={(item) => String(item.id)}
               renderItem={({ item }) => <InventoryRow item={item} colors={colors} />}
               contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 120 }}
               ListHeaderComponent={() => (
@@ -2273,13 +2607,15 @@ export default function UploadScreen() {
                   <Pressable
                     onPress={() => {
                       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                      setEnrichOpen(v => !v);
+                      setEnrichOpen((v) => !v);
                     }}
                     accessibilityRole="button"
-                    accessibilityLabel={enrichOpen ? "Collapse enrichment tools" : "Expand enrichment tools"}
+                    accessibilityLabel={
+                      enrichOpen ? 'Collapse enrichment tools' : 'Expand enrichment tools'
+                    }
                     style={{
-                      flexDirection: "row",
-                      alignItems: "center",
+                      flexDirection: 'row',
+                      alignItems: 'center',
                       paddingVertical: 10,
                       paddingHorizontal: 4,
                       borderBottomWidth: enrichOpen ? StyleSheet.hairlineWidth : 0,
@@ -2287,10 +2623,23 @@ export default function UploadScreen() {
                       marginBottom: enrichOpen ? 8 : 0,
                     }}
                   >
-                    <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_600SemiBold", fontSize: 26, width: 28 }}>
-                      {enrichOpen ? "▾" : "▸"}
+                    <Text
+                      style={{
+                        color: colors.mutedForeground,
+                        fontFamily: 'Inter_600SemiBold',
+                        fontSize: 26,
+                        width: 28,
+                      }}
+                    >
+                      {enrichOpen ? '▾' : '▸'}
                     </Text>
-                    <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 22 }}>
+                    <Text
+                      style={{
+                        color: colors.foreground,
+                        fontFamily: 'Inter_600SemiBold',
+                        fontSize: 22,
+                      }}
+                    >
                       Enrichment
                     </Text>
                   </Pressable>
@@ -2589,492 +2938,785 @@ export default function UploadScreen() {
                 </Pressable>
               </View>
 
-              {/* Quick-enrich (SSE streaming for immediate feedback) */}
-              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Quick Enrich</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Enrich a small batch immediately with live progress. Useful for newly imported items.
-                </Text>
-
-                {enrichProgress && !enrichProgress.done ? (
-                  <View style={styles.progressContainer}>
-                    <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                      {/* Quick-enrich (SSE streaming for immediate feedback) */}
                       <View
                         style={[
-                          styles.progressFill,
-                          {
-                            backgroundColor: colors.primary,
-                            width: enrichProgress.total > 0
-                              ? `${Math.round((enrichProgress.progress / enrichProgress.total) * 100)}%`
-                              : "0%",
-                          },
+                          styles.enrichCard,
+                          { backgroundColor: colors.card, borderColor: colors.border },
                         ]}
-                      />
-                    </View>
-                    <Text style={[styles.progressText, { color: colors.foreground }]}>
-                      {enrichProgress.progress} / {enrichProgress.total} items
-                      {enrichProgress.batchSize ? ` (batch of ${enrichProgress.batchSize})` : ""}
-                    </Text>
-                    {enrichProgress.etaSeconds != null && enrichProgress.etaSeconds > 0 ? (
-                      <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                        ETA: ~{enrichProgress.etaSeconds < 60
-                          ? `${enrichProgress.etaSeconds}s`
-                          : `${Math.ceil(enrichProgress.etaSeconds / 60)}m`}
-                      </Text>
-                    ) : null}
-                  </View>
-                ) : null}
-
-                {enrichProgress?.done ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.success }]}>
-                      ✓ Done! {enrichProgress.progress} items processed.
-                    </Text>
-                  </View>
-                ) : null}
-
-                <Pressable
-                  onPress={() => handleEnrich()}
-                  disabled={!!enrichProgress && !enrichProgress.done}
-                  style={[
-                    styles.enrichBtn,
-                    { backgroundColor: (enrichProgress && !enrichProgress.done) ? colors.muted : colors.primary },
-                  ]}
-                >
-                  <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                    {enrichProgress && !enrichProgress.done ? "Enriching…" : "Quick Enrich"}
-                  </Text>
-                </Pressable>
-              </View>
-
-              {/* ── Catalog PDF Enrichment ──────────────────────────────────── */}
-              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Catalog PDF</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Pick a supported vendor and upload its catalog PDF to enrich
-                  matching inventory rows with descriptions, dimension chips, and
-                  search keywords from the catalog.
-                </Text>
-
-                <View style={{ flexDirection: "row", alignItems: "center", marginVertical: 8 }}>
-                  <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: "Inter_500Medium", marginRight: 8 }}>
-                    VENDOR
-                  </Text>
-                  <Pressable
-                    onPress={() => setVendorPickerOpen(true)}
-                    style={{
-                      flex: 1,
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      borderRadius: 8,
-                      paddingHorizontal: 10,
-                      paddingVertical: 8,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <Text style={{ color: colors.foreground, fontFamily: "Inter_500Medium" }}>
-                      {catalogVendorOptions.find(v => v.vendor === catalogPdfVendor)?.displayName ?? catalogPdfVendor}
-                    </Text>
-                    <Text style={{ color: colors.mutedForeground }}>▾</Text>
-                  </Pressable>
-                </View>
-
-                {(() => {
-                  const selected = catalogVendorOptions.find(v => v.vendor === catalogPdfVendor);
-                  return selected ? (
-                    <Text style={{ color: colors.mutedForeground, fontSize: 11, marginBottom: 6 }}>
-                      Expects: {selected.sourceCatalog}
-                    </Text>
-                  ) : null;
-                })()}
-
-                <Modal
-                  transparent
-                  visible={vendorPickerOpen}
-                  animationType="fade"
-                  onRequestClose={() => setVendorPickerOpen(false)}
-                >
-                  <Pressable
-                    onPress={() => setVendorPickerOpen(false)}
-                    style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center", padding: 24 }}
-                  >
-                    <View style={{ width: "100%", maxWidth: 380, backgroundColor: colors.card, borderRadius: 12, borderWidth: 1, borderColor: colors.border, padding: 12 }}>
-                      <Text style={{ color: colors.foreground, fontFamily: "Inter_700Bold", fontSize: 14, marginBottom: 8 }}>
-                        Select catalog vendor
-                      </Text>
-                      {(catalogVendorOptions.length > 0
-                        ? catalogVendorOptions
-                        : [{ vendor: "BRIDGEPORT", displayName: "Bridgeport", sourceCatalog: "Bridgeport Fittings 2026 Catalog" }]
-                      ).map(opt => {
-                        const isActive = opt.vendor === catalogPdfVendor;
-                        return (
-                          <Pressable
-                            key={opt.vendor}
-                            onPress={() => { setCatalogPdfVendor(opt.vendor); setVendorPickerOpen(false); }}
-                            style={{
-                              paddingVertical: 10,
-                              paddingHorizontal: 12,
-                              borderRadius: 8,
-                              backgroundColor: isActive ? colors.primary + "22" : "transparent",
-                              marginBottom: 4,
-                            }}
-                          >
-                            <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold" }}>{opt.displayName}</Text>
-                            <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 2 }}>{opt.sourceCatalog}</Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  </Pressable>
-                </Modal>
-
-                <Pressable
-                  onPress={handleCatalogPdfPick}
-                  disabled={catalogPdfPending}
-                  style={[styles.pickBtn, { borderColor: colors.primary }]}
-                >
-                  {catalogPdfPending ? (
-                    <ActivityIndicator color={colors.primary} />
-                  ) : (
-                    <Text style={[styles.pickBtnText, { color: colors.primary }]}>
-                      Choose Catalog PDF
-                    </Text>
-                  )}
-                </Pressable>
-
-                {catalogPdfFileName ? (
-                  <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
-                    <Text style={[styles.fileChipText, { color: colors.foreground }]}>
-                      {catalogPdfFileName}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {catalogPdfError ? (
-                  <ErrorBanner message={catalogPdfError} onDismiss={() => setCatalogPdfError(null)} />
-                ) : null}
-
-                {catalogRuns.length > 0 ? (
-                  <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border }}>
-                    <Pressable
-                      onPress={() => setCatalogRunsExpanded((v) => !v)}
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        catalogRunsExpanded
-                          ? "Collapse recent enrichment runs"
-                          : "Expand recent enrichment runs"
-                      }
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        paddingVertical: 4,
-                        marginBottom: catalogRunsExpanded ? 8 : 0,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: colors.mutedForeground,
-                          fontFamily: "Inter_600SemiBold",
-                          fontSize: 13,
-                          width: 14,
-                        }}
                       >
-                        {catalogRunsExpanded ? "▾" : "▸"}
-                      </Text>
-                      <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold" }}>
-                        Recent enrichment runs
-                      </Text>
-                      <Text style={{ color: colors.mutedForeground, marginLeft: 6, fontSize: 13 }}>
-                        ({catalogRuns.length})
-                      </Text>
-                    </Pressable>
-                    {catalogRunsExpanded ? catalogRuns.map((run) => {
-                      const when = new Date(run.startedAt).toLocaleString();
-                      const isReverting = revertingRunId === run.id;
-                      const isUndoing = undoingRunId === run.id;
-                      const isReverted = !!run.revertedAt;
-                      const anyInFlight = revertingRunId !== null || undoingRunId !== null;
-                      return (
-                        <View
-                          key={run.id}
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            paddingVertical: 8,
-                            borderBottomWidth: 1,
-                            borderBottomColor: colors.border,
-                            opacity: isReverted ? 0.55 : 1,
-                          }}
-                        >
-                          <View style={{ flex: 1, paddingRight: 8 }}>
-                            <Text style={{ color: colors.foreground, fontSize: 13, fontFamily: "Inter_500Medium" }} numberOfLines={1}>
-                              {run.vendor} · {run.sourceFilename ?? "raw upload"}
+                        <Text style={[styles.cardTitle, { color: colors.foreground }]}>
+                          Quick Enrich
+                        </Text>
+                        <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                          Enrich a small batch immediately with live progress. Useful for newly
+                          imported items.
+                        </Text>
+
+                        {enrichProgress && !enrichProgress.done ? (
+                          <View style={styles.progressContainer}>
+                            <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                              <View
+                                style={[
+                                  styles.progressFill,
+                                  {
+                                    backgroundColor: colors.primary,
+                                    width:
+                                      enrichProgress.total > 0
+                                        ? `${Math.round((enrichProgress.progress / enrichProgress.total) * 100)}%`
+                                        : '0%',
+                                  },
+                                ]}
+                              />
+                            </View>
+                            <Text style={[styles.progressText, { color: colors.foreground }]}>
+                              {enrichProgress.progress} / {enrichProgress.total} items
+                              {enrichProgress.batchSize
+                                ? ` (batch of ${enrichProgress.batchSize})`
+                                : ''}
                             </Text>
-                            <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 2 }}>
-                              {when} · {run.updatedCount} updated
-                              {run.errorCount > 0 ? ` · ${run.errorCount} errors` : ""}
-                              {isReverted ? " · reverted" : ""}
+                            {enrichProgress.etaSeconds != null && enrichProgress.etaSeconds > 0 ? (
+                              <Text
+                                style={[
+                                  styles.progressText,
+                                  { color: colors.mutedForeground, fontSize: 12 },
+                                ]}
+                              >
+                                ETA: ~
+                                {enrichProgress.etaSeconds < 60
+                                  ? `${enrichProgress.etaSeconds}s`
+                                  : `${Math.ceil(enrichProgress.etaSeconds / 60)}m`}
+                              </Text>
+                            ) : null}
+                          </View>
+                        ) : null}
+
+                        {enrichProgress?.done ? (
+                          <View
+                            style={[styles.doneCard, { backgroundColor: colors.success + '11' }]}
+                          >
+                            <Text style={[styles.doneText, { color: colors.success }]}>
+                              ✓ Done! {enrichProgress.progress} items processed.
                             </Text>
                           </View>
-                          {isReverted ? (
-                            <Pressable
-                              onPress={run.undoBlocked ? undefined : () => { handleUndoRevert(run.id); }}
-                              disabled={anyInFlight || !!run.undoBlocked}
-                              accessibilityRole="button"
-                              accessibilityLabel="Undo revert"
-                              style={{
-                                paddingHorizontal: 12,
-                                paddingVertical: 6,
-                                borderRadius: 6,
-                                borderWidth: 1,
-                                borderColor: run.undoBlocked ? colors.border : isUndoing ? colors.border : colors.foreground,
-                                opacity: run.undoBlocked ? 0.35 : anyInFlight && !isUndoing ? 0.5 : 1,
-                              }}
-                            >
-                              {isUndoing ? (
-                                <ActivityIndicator size="small" color={colors.foreground} />
-                              ) : (
-                                <Text style={{ color: run.undoBlocked ? colors.mutedForeground : colors.foreground, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
-                                  Undo
-                                </Text>
-                              )}
-                            </Pressable>
-                          ) : (
-                            <Pressable
-                              onPress={() => { handleRevertRun(run.id); }}
-                              disabled={anyInFlight}
-                              accessibilityRole="button"
-                              accessibilityLabel="Revert this enrichment run"
-                              style={{
-                                paddingHorizontal: 12,
-                                paddingVertical: 6,
-                                borderRadius: 6,
-                                borderWidth: 1,
-                                borderColor: isReverting ? colors.border : colors.destructive,
-                                opacity: anyInFlight && !isReverting ? 0.5 : 1,
-                              }}
-                            >
-                              {isReverting ? (
-                                <ActivityIndicator size="small" color={colors.destructive} />
-                              ) : (
-                                <Text style={{ color: colors.destructive, fontSize: 12, fontFamily: "Inter_600SemiBold" }}>
-                                  Revert
-                                </Text>
-                              )}
-                            </Pressable>
-                          )}
-                        </View>
-                      );
-                    }) : null}
-                  </View>
-                ) : null}
+                        ) : null}
 
-                {catalogReport ? (
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={{ color: colors.foreground, fontFamily: "Inter_500Medium", marginBottom: 4 }}>
-                      Parsed {catalogReport.summary.total.toLocaleString()} catalog entries:
-                    </Text>
-                    <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
-                      ✅ {catalogReport.summary.exact} exact ·{" "}
-                      ⚡ {catalogReport.summary.highConfidence} high-confidence ·{" "}
-                      ❓ {catalogReport.summary.uncertain} uncertain ·{" "}
-                      ❌ {catalogReport.summary.unmatched} no match
-                    </Text>
-                    {catalogApplyResult ? (
-                      <Text style={{ color: colors.success, fontSize: 13, marginTop: 4 }}>
-                        ✓ Applied: {catalogApplyResult.updated} updated, {catalogApplyResult.skippedNoOp} unchanged
-                        {catalogApplyResult.errors.length > 0 ? `, ${catalogApplyResult.errors.length} errors` : ""}
-                      </Text>
-                    ) : null}
-                    {catalogReport.summary.uncertain > 0 ? (
-                      <Pressable
-                        onPress={() => setCatalogReviewVisible(true)}
-                        style={[styles.enrichBtn, { backgroundColor: colors.primary, marginTop: 8 }]}
+                        <Pressable
+                          onPress={() => handleEnrich()}
+                          disabled={!!enrichProgress && !enrichProgress.done}
+                          style={[
+                            styles.enrichBtn,
+                            {
+                              backgroundColor:
+                                enrichProgress && !enrichProgress.done
+                                  ? colors.muted
+                                  : colors.primary,
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                            {enrichProgress && !enrichProgress.done ? 'Enriching…' : 'Quick Enrich'}
+                          </Text>
+                        </Pressable>
+                      </View>
+
+                      {/* ── Catalog PDF Enrichment ──────────────────────────────────── */}
+                      <View
+                        style={[
+                          styles.enrichCard,
+                          { backgroundColor: colors.card, borderColor: colors.border },
+                        ]}
                       >
-                        <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                          Review {catalogReport.summary.uncertain} uncertain matches
+                        <Text style={[styles.cardTitle, { color: colors.foreground }]}>
+                          Catalog PDF
                         </Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                ) : null}
-              </View>
+                        <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                          Pick a supported vendor and upload its catalog PDF to enrich matching
+                          inventory rows with descriptions, dimension chips, and search keywords
+                          from the catalog.
+                        </Text>
 
-              {/* Classification Review Queue */}
-              <ClassificationReviewSection
-                apiBase={API_BASE}
-                adminHeaders={adminHeaders}
-                onExpiredSession={() => {
-                  logoutAdmin();
-                  setUploadError("Admin session expired. Please unlock again.");
-                }}
-                expandTrigger={reviewExpandTrigger}
-                onReviewAction={fetchReviewCount}
-              />
+                        <View
+                          style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8 }}
+                        >
+                          <Text
+                            style={{
+                              color: colors.mutedForeground,
+                              fontSize: 12,
+                              fontFamily: 'Inter_500Medium',
+                              marginRight: 8,
+                            }}
+                          >
+                            VENDOR
+                          </Text>
+                          <Pressable
+                            onPress={() => setVendorPickerOpen(true)}
+                            style={{
+                              flex: 1,
+                              borderWidth: 1,
+                              borderColor: colors.border,
+                              borderRadius: 8,
+                              paddingHorizontal: 10,
+                              paddingVertical: 8,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                            }}
+                          >
+                            <Text
+                              style={{ color: colors.foreground, fontFamily: 'Inter_500Medium' }}
+                            >
+                              {catalogVendorOptions.find((v) => v.vendor === catalogPdfVendor)
+                                ?.displayName ?? catalogPdfVendor}
+                            </Text>
+                            <Text style={{ color: colors.mutedForeground }}>▾</Text>
+                          </Pressable>
+                        </View>
 
-              {/* ── Assign Series ──────────────────────────────────────────── */}
-              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>Assign Series</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Link inventory items into named product series so "Other Sizes" shows related parts reliably — even for irregularly named products.
-                </Text>
+                        {(() => {
+                          const selected = catalogVendorOptions.find(
+                            (v) => v.vendor === catalogPdfVendor
+                          );
+                          return selected ? (
+                            <Text
+                              style={{
+                                color: colors.mutedForeground,
+                                fontSize: 11,
+                                marginBottom: 6,
+                              }}
+                            >
+                              Expects: {selected.sourceCatalog}
+                            </Text>
+                          ) : null;
+                        })()}
 
-                {seriesCoverage ? (
-                  <View style={styles.enrichStats}>
-                    <View style={[styles.statChip, { backgroundColor: colors.success + "11" }]}>
-                      <Text style={[styles.statValue, { color: colors.success }]}>
-                        {seriesCoverage.assigned.toLocaleString()}
-                      </Text>
-                      <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Assigned</Text>
-                    </View>
-                    <View style={[styles.statChip, { backgroundColor: colors.warning + "11" }]}>
-                      <Text style={[styles.statValue, { color: colors.warning }]}>
-                        {(seriesCoverage.total - seriesCoverage.assigned).toLocaleString()}
-                      </Text>
-                      <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Unassigned</Text>
-                    </View>
-                    <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
-                      <Text style={[styles.statValue, { color: colors.foreground }]}>
-                        {seriesCoverage.total > 0
-                          ? `${Math.round((seriesCoverage.assigned / seriesCoverage.total) * 100)}%`
-                          : "—"}
-                      </Text>
-                      <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Coverage</Text>
-                    </View>
-                  </View>
-                ) : null}
+                        <Modal
+                          transparent
+                          visible={vendorPickerOpen}
+                          animationType="fade"
+                          onRequestClose={() => setVendorPickerOpen(false)}
+                        >
+                          <Pressable
+                            onPress={() => setVendorPickerOpen(false)}
+                            style={{
+                              flex: 1,
+                              backgroundColor: 'rgba(0,0,0,0.4)',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              padding: 24,
+                            }}
+                          >
+                            <View
+                              style={{
+                                width: '100%',
+                                maxWidth: 380,
+                                backgroundColor: colors.card,
+                                borderRadius: 12,
+                                borderWidth: 1,
+                                borderColor: colors.border,
+                                padding: 12,
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  color: colors.foreground,
+                                  fontFamily: 'Inter_700Bold',
+                                  fontSize: 14,
+                                  marginBottom: 8,
+                                }}
+                              >
+                                Select catalog vendor
+                              </Text>
+                              {(catalogVendorOptions.length > 0
+                                ? catalogVendorOptions
+                                : [
+                                    {
+                                      vendor: 'BRIDGEPORT',
+                                      displayName: 'Bridgeport',
+                                      sourceCatalog: 'Bridgeport Fittings 2026 Catalog',
+                                    },
+                                  ]
+                              ).map((opt) => {
+                                const isActive = opt.vendor === catalogPdfVendor;
+                                return (
+                                  <Pressable
+                                    key={opt.vendor}
+                                    onPress={() => {
+                                      setCatalogPdfVendor(opt.vendor);
+                                      setVendorPickerOpen(false);
+                                    }}
+                                    style={{
+                                      paddingVertical: 10,
+                                      paddingHorizontal: 12,
+                                      borderRadius: 8,
+                                      backgroundColor: isActive
+                                        ? colors.primary + '22'
+                                        : 'transparent',
+                                      marginBottom: 4,
+                                    }}
+                                  >
+                                    <Text
+                                      style={{
+                                        color: colors.foreground,
+                                        fontFamily: 'Inter_600SemiBold',
+                                      }}
+                                    >
+                                      {opt.displayName}
+                                    </Text>
+                                    <Text
+                                      style={{
+                                        color: colors.mutedForeground,
+                                        fontSize: 11,
+                                        marginTop: 2,
+                                      }}
+                                    >
+                                      {opt.sourceCatalog}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })}
+                            </View>
+                          </Pressable>
+                        </Modal>
 
-                {autoAssignProgress && autoAssignProgress.status !== "done" && autoAssignProgress.status !== "error" ? (
-                  <View style={styles.progressContainer}>
-                    <View style={styles.bulkStatusRow}>
-                      <ActivityIndicator size="small" color={colors.primary} />
-                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8 }]}>
-                        {autoAssignProgress.status === "started"
-                          ? "Starting auto-assign…"
-                          : autoAssignProgress.status === "progress" && autoAssignProgress.step === "upsert_series"
-                            ? `Creating series rows… (${autoAssignProgress.total ?? 0} pairs)`
-                            : autoAssignProgress.status === "progress" && autoAssignProgress.step === "assign_items"
-                              ? `Assigning items… ${autoAssignProgress.vendor ?? ""} / ${autoAssignProgress.series ?? ""}`
-                              : "Running…"}
-                      </Text>
-                    </View>
-                  </View>
-                ) : null}
+                        <Pressable
+                          onPress={handleCatalogPdfPick}
+                          disabled={catalogPdfPending}
+                          style={[styles.pickBtn, { borderColor: colors.primary }]}
+                        >
+                          {catalogPdfPending ? (
+                            <ActivityIndicator color={colors.primary} />
+                          ) : (
+                            <Text style={[styles.pickBtnText, { color: colors.primary }]}>
+                              Choose Catalog PDF
+                            </Text>
+                          )}
+                        </Pressable>
 
-                {autoAssignProgress?.status === "done" ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.success }]}>
-                      ✓ Created {autoAssignProgress.seriesCount} series, assigned {autoAssignProgress.assignedCount} items
-                    </Text>
-                  </View>
-                ) : null}
+                        {catalogPdfFileName ? (
+                          <View style={[styles.fileChip, { backgroundColor: colors.muted }]}>
+                            <Text style={[styles.fileChipText, { color: colors.foreground }]}>
+                              {catalogPdfFileName}
+                            </Text>
+                          </View>
+                        ) : null}
 
-                {autoAssignConflict ? (
-                  <View
-                    style={[
-                      styles.infoBanner,
-                      { backgroundColor: colors.warning + "18", borderLeftColor: colors.warning },
-                    ]}
-                    accessibilityRole="alert"
-                    accessibilityLiveRegion="polite"
-                  >
-                    <Text style={[styles.infoBannerIcon, { color: colors.warning }]}>⏳</Text>
-                    <Text style={[styles.infoBannerText, { color: colors.warning }]} numberOfLines={3}>
-                      Auto-assign is already running. Wait for it to finish before starting again.
-                    </Text>
-                    <Pressable
-                      onPress={() => setAutoAssignConflict(false)}
-                      hitSlop={10}
-                      accessibilityRole="button"
-                      accessibilityLabel="Dismiss notice"
-                      style={styles.infoBannerDismiss}
-                    >
-                      <Text style={[styles.infoBannerDismissText, { color: colors.warning }]}>✕</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
+                        {catalogPdfError ? (
+                          <ErrorBanner
+                            message={catalogPdfError}
+                            onDismiss={() => setCatalogPdfError(null)}
+                          />
+                        ) : null}
 
-                {autoAssignError ? (
-                  <ErrorBanner message={autoAssignError} onDismiss={() => setAutoAssignError(null)} />
-                ) : null}
+                        {catalogRuns.length > 0 ? (
+                          <View
+                            style={{
+                              marginTop: 12,
+                              paddingTop: 12,
+                              borderTopWidth: 1,
+                              borderTopColor: colors.border,
+                            }}
+                          >
+                            <Pressable
+                              onPress={() => setCatalogRunsExpanded((v) => !v)}
+                              accessibilityRole="button"
+                              accessibilityLabel={
+                                catalogRunsExpanded
+                                  ? 'Collapse recent enrichment runs'
+                                  : 'Expand recent enrichment runs'
+                              }
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                paddingVertical: 4,
+                                marginBottom: catalogRunsExpanded ? 8 : 0,
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  color: colors.mutedForeground,
+                                  fontFamily: 'Inter_600SemiBold',
+                                  fontSize: 13,
+                                  width: 14,
+                                }}
+                              >
+                                {catalogRunsExpanded ? '▾' : '▸'}
+                              </Text>
+                              <Text
+                                style={{
+                                  color: colors.foreground,
+                                  fontFamily: 'Inter_600SemiBold',
+                                }}
+                              >
+                                Recent enrichment runs
+                              </Text>
+                              <Text
+                                style={{
+                                  color: colors.mutedForeground,
+                                  marginLeft: 6,
+                                  fontSize: 13,
+                                }}
+                              >
+                                ({catalogRuns.length})
+                              </Text>
+                            </Pressable>
+                            {catalogRunsExpanded
+                              ? catalogRuns.map((run) => {
+                                  const when = new Date(run.startedAt).toLocaleString();
+                                  const isReverting = revertingRunId === run.id;
+                                  const isUndoing = undoingRunId === run.id;
+                                  const isReverted = !!run.revertedAt;
+                                  const anyInFlight =
+                                    revertingRunId !== null || undoingRunId !== null;
+                                  return (
+                                    <View
+                                      key={run.id}
+                                      style={{
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        paddingVertical: 8,
+                                        borderBottomWidth: 1,
+                                        borderBottomColor: colors.border,
+                                        opacity: isReverted ? 0.55 : 1,
+                                      }}
+                                    >
+                                      <View style={{ flex: 1, paddingRight: 8 }}>
+                                        <Text
+                                          style={{
+                                            color: colors.foreground,
+                                            fontSize: 13,
+                                            fontFamily: 'Inter_500Medium',
+                                          }}
+                                          numberOfLines={1}
+                                        >
+                                          {run.vendor} · {run.sourceFilename ?? 'raw upload'}
+                                        </Text>
+                                        <Text
+                                          style={{
+                                            color: colors.mutedForeground,
+                                            fontSize: 11,
+                                            marginTop: 2,
+                                          }}
+                                        >
+                                          {when} · {run.updatedCount} updated
+                                          {run.errorCount > 0 ? ` · ${run.errorCount} errors` : ''}
+                                          {isReverted ? ' · reverted' : ''}
+                                        </Text>
+                                      </View>
+                                      {isReverted ? (
+                                        <Pressable
+                                          onPress={
+                                            run.undoBlocked
+                                              ? undefined
+                                              : () => {
+                                                  handleUndoRevert(run.id);
+                                                }
+                                          }
+                                          disabled={anyInFlight || !!run.undoBlocked}
+                                          accessibilityRole="button"
+                                          accessibilityLabel="Undo revert"
+                                          style={{
+                                            paddingHorizontal: 12,
+                                            paddingVertical: 6,
+                                            borderRadius: 6,
+                                            borderWidth: 1,
+                                            borderColor: run.undoBlocked
+                                              ? colors.border
+                                              : isUndoing
+                                                ? colors.border
+                                                : colors.foreground,
+                                            opacity: run.undoBlocked
+                                              ? 0.35
+                                              : anyInFlight && !isUndoing
+                                                ? 0.5
+                                                : 1,
+                                          }}
+                                        >
+                                          {isUndoing ? (
+                                            <ActivityIndicator
+                                              size="small"
+                                              color={colors.foreground}
+                                            />
+                                          ) : (
+                                            <Text
+                                              style={{
+                                                color: run.undoBlocked
+                                                  ? colors.mutedForeground
+                                                  : colors.foreground,
+                                                fontSize: 12,
+                                                fontFamily: 'Inter_600SemiBold',
+                                              }}
+                                            >
+                                              Undo
+                                            </Text>
+                                          )}
+                                        </Pressable>
+                                      ) : (
+                                        <Pressable
+                                          onPress={() => {
+                                            handleRevertRun(run.id);
+                                          }}
+                                          disabled={anyInFlight}
+                                          accessibilityRole="button"
+                                          accessibilityLabel="Revert this enrichment run"
+                                          style={{
+                                            paddingHorizontal: 12,
+                                            paddingVertical: 6,
+                                            borderRadius: 6,
+                                            borderWidth: 1,
+                                            borderColor: isReverting
+                                              ? colors.border
+                                              : colors.destructive,
+                                            opacity: anyInFlight && !isReverting ? 0.5 : 1,
+                                          }}
+                                        >
+                                          {isReverting ? (
+                                            <ActivityIndicator
+                                              size="small"
+                                              color={colors.destructive}
+                                            />
+                                          ) : (
+                                            <Text
+                                              style={{
+                                                color: colors.destructive,
+                                                fontSize: 12,
+                                                fontFamily: 'Inter_600SemiBold',
+                                              }}
+                                            >
+                                              Revert
+                                            </Text>
+                                          )}
+                                        </Pressable>
+                                      )}
+                                    </View>
+                                  );
+                                })
+                              : null}
+                          </View>
+                        ) : null}
 
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  <Pressable
-                    onPress={() => void handleAutoAssign()}
-                    disabled={autoAssignRunning}
-                    style={[styles.enrichBtn, { flex: 2, backgroundColor: autoAssignRunning ? colors.muted : colors.primary }]}
-                  >
-                    {autoAssignRunning ? (
-                      <ActivityIndicator color={colors.primaryForeground} />
-                    ) : (
-                      <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                        Auto-Assign from Catalog Parse
-                      </Text>
-                    )}
-                  </Pressable>
-                  <Pressable
-                    onPress={() => {
-                      setCreateSeriesError(null);
-                      setCreateSeriesName("");
-                      setCreateSeriesVendor("");
-                      setCreateSeriesVisible(true);
-                    }}
-                    style={[styles.enrichBtn, { flex: 1, backgroundColor: colors.muted }]}
-                  >
-                    <Text style={[styles.enrichBtnText, { color: colors.foreground }]}>+ New</Text>
-                  </Pressable>
-                </View>
+                        {catalogReport ? (
+                          <View style={{ marginTop: 8 }}>
+                            <Text
+                              style={{
+                                color: colors.foreground,
+                                fontFamily: 'Inter_500Medium',
+                                marginBottom: 4,
+                              }}
+                            >
+                              Parsed {catalogReport.summary.total.toLocaleString()} catalog entries:
+                            </Text>
+                            <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
+                              ✅ {catalogReport.summary.exact} exact · ⚡{' '}
+                              {catalogReport.summary.highConfidence} high-confidence · ❓{' '}
+                              {catalogReport.summary.uncertain} uncertain · ❌{' '}
+                              {catalogReport.summary.unmatched} no match
+                            </Text>
+                            {catalogApplyResult ? (
+                              <Text style={{ color: colors.success, fontSize: 13, marginTop: 4 }}>
+                                ✓ Applied: {catalogApplyResult.updated} updated,{' '}
+                                {catalogApplyResult.skippedNoOp} unchanged
+                                {catalogApplyResult.errors.length > 0
+                                  ? `, ${catalogApplyResult.errors.length} errors`
+                                  : ''}
+                              </Text>
+                            ) : null}
+                            {catalogReport.summary.uncertain > 0 ? (
+                              <Pressable
+                                onPress={() => setCatalogReviewVisible(true)}
+                                style={[
+                                  styles.enrichBtn,
+                                  { backgroundColor: colors.primary, marginTop: 8 },
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.enrichBtnText,
+                                    { color: colors.primaryForeground },
+                                  ]}
+                                >
+                                  Review {catalogReport.summary.uncertain} uncertain matches
+                                </Text>
+                              </Pressable>
+                            ) : null}
+                          </View>
+                        ) : null}
+                      </View>
 
-                {seriesListError ? (
-                  <Text style={{ color: colors.destructive, fontSize: 12 }}>{seriesListError}</Text>
-                ) : null}
-
-                {seriesList.length > 0 ? (
-                  <View style={{ gap: 6 }}>
-                    <Text style={{ color: colors.mutedForeground, fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5 }}>
-                      {seriesList.length} SERIES
-                    </Text>
-                    {seriesList.map(series => (
-                      <Pressable
-                        key={series.id}
-                        onPress={() => void openSeriesModal(series)}
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: colors.border,
-                          backgroundColor: colors.background,
+                      {/* Classification Review Queue */}
+                      <ClassificationReviewSection
+                        apiBase={API_BASE}
+                        adminHeaders={adminHeaders}
+                        onExpiredSession={() => {
+                          logoutAdmin();
+                          setUploadError('Admin session expired. Please unlock again.');
                         }}
+                        expandTrigger={reviewExpandTrigger}
+                        onReviewAction={fetchReviewCount}
+                      />
+
+                      {/* ── Assign Series ──────────────────────────────────────────── */}
+                      <View
+                        style={[
+                          styles.enrichCard,
+                          { backgroundColor: colors.card, borderColor: colors.border },
+                        ]}
                       >
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>
-                            {series.name}
-                          </Text>
-                          <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 2, fontFamily: "Inter_400Regular" }}>
-                            {series.vendor}
-                          </Text>
+                        <Text style={[styles.cardTitle, { color: colors.foreground }]}>
+                          Assign Series
+                        </Text>
+                        <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                          Link inventory items into named product series so "Other Sizes" shows
+                          related parts reliably — even for irregularly named products.
+                        </Text>
+
+                        {seriesCoverage ? (
+                          <View style={styles.enrichStats}>
+                            <View
+                              style={[styles.statChip, { backgroundColor: colors.success + '11' }]}
+                            >
+                              <Text style={[styles.statValue, { color: colors.success }]}>
+                                {seriesCoverage.assigned.toLocaleString()}
+                              </Text>
+                              <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+                                Assigned
+                              </Text>
+                            </View>
+                            <View
+                              style={[styles.statChip, { backgroundColor: colors.warning + '11' }]}
+                            >
+                              <Text style={[styles.statValue, { color: colors.warning }]}>
+                                {(seriesCoverage.total - seriesCoverage.assigned).toLocaleString()}
+                              </Text>
+                              <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+                                Unassigned
+                              </Text>
+                            </View>
+                            <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
+                              <Text style={[styles.statValue, { color: colors.foreground }]}>
+                                {seriesCoverage.total > 0
+                                  ? `${Math.round((seriesCoverage.assigned / seriesCoverage.total) * 100)}%`
+                                  : '—'}
+                              </Text>
+                              <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
+                                Coverage
+                              </Text>
+                            </View>
+                          </View>
+                        ) : null}
+
+                        {autoAssignProgress &&
+                        autoAssignProgress.status !== 'done' &&
+                        autoAssignProgress.status !== 'error' ? (
+                          <View style={styles.progressContainer}>
+                            <View style={styles.bulkStatusRow}>
+                              <ActivityIndicator size="small" color={colors.primary} />
+                              <Text
+                                style={[
+                                  styles.progressText,
+                                  { color: colors.foreground, marginLeft: 8 },
+                                ]}
+                              >
+                                {autoAssignProgress.status === 'started'
+                                  ? 'Starting auto-assign…'
+                                  : autoAssignProgress.status === 'progress' &&
+                                      autoAssignProgress.step === 'upsert_series'
+                                    ? `Creating series rows… (${autoAssignProgress.total ?? 0} pairs)`
+                                    : autoAssignProgress.status === 'progress' &&
+                                        autoAssignProgress.step === 'assign_items'
+                                      ? `Assigning items… ${autoAssignProgress.vendor ?? ''} / ${autoAssignProgress.series ?? ''}`
+                                      : 'Running…'}
+                              </Text>
+                            </View>
+                          </View>
+                        ) : null}
+
+                        {autoAssignProgress?.status === 'done' ? (
+                          <View
+                            style={[styles.doneCard, { backgroundColor: colors.success + '11' }]}
+                          >
+                            <Text style={[styles.doneText, { color: colors.success }]}>
+                              ✓ Created {autoAssignProgress.seriesCount} series, assigned{' '}
+                              {autoAssignProgress.assignedCount} items
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        {autoAssignConflict ? (
+                          <View
+                            style={[
+                              styles.infoBanner,
+                              {
+                                backgroundColor: colors.warning + '18',
+                                borderLeftColor: colors.warning,
+                              },
+                            ]}
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="polite"
+                          >
+                            <Text style={[styles.infoBannerIcon, { color: colors.warning }]}>
+                              ⏳
+                            </Text>
+                            <Text
+                              style={[styles.infoBannerText, { color: colors.warning }]}
+                              numberOfLines={3}
+                            >
+                              Auto-assign is already running. Wait for it to finish before starting
+                              again.
+                            </Text>
+                            <Pressable
+                              onPress={() => setAutoAssignConflict(false)}
+                              hitSlop={10}
+                              accessibilityRole="button"
+                              accessibilityLabel="Dismiss notice"
+                              style={styles.infoBannerDismiss}
+                            >
+                              <Text
+                                style={[styles.infoBannerDismissText, { color: colors.warning }]}
+                              >
+                                ✕
+                              </Text>
+                            </Pressable>
+                          </View>
+                        ) : null}
+
+                        {autoAssignError ? (
+                          <ErrorBanner
+                            message={autoAssignError}
+                            onDismiss={() => setAutoAssignError(null)}
+                          />
+                        ) : null}
+
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <Pressable
+                            onPress={() => void handleAutoAssign()}
+                            disabled={autoAssignRunning}
+                            style={[
+                              styles.enrichBtn,
+                              {
+                                flex: 2,
+                                backgroundColor: autoAssignRunning ? colors.muted : colors.primary,
+                              },
+                            ]}
+                          >
+                            {autoAssignRunning ? (
+                              <ActivityIndicator color={colors.primaryForeground} />
+                            ) : (
+                              <Text
+                                style={[styles.enrichBtnText, { color: colors.primaryForeground }]}
+                              >
+                                Auto-Assign from Catalog Parse
+                              </Text>
+                            )}
+                          </Pressable>
+                          <Pressable
+                            onPress={() => {
+                              setCreateSeriesError(null);
+                              setCreateSeriesName('');
+                              setCreateSeriesVendor('');
+                              setCreateSeriesVisible(true);
+                            }}
+                            style={[styles.enrichBtn, { flex: 1, backgroundColor: colors.muted }]}
+                          >
+                            <Text style={[styles.enrichBtnText, { color: colors.foreground }]}>
+                              + New
+                            </Text>
+                          </Pressable>
                         </View>
-                        <View style={{ alignItems: "flex-end" }}>
-                          <Text style={{ color: colors.primary, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>
-                            {series.member_count}
+
+                        {seriesListError ? (
+                          <Text style={{ color: colors.destructive, fontSize: 12 }}>
+                            {seriesListError}
                           </Text>
-                          <Text style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 1 }}>items</Text>
-                        </View>
-                        <Text style={{ color: colors.mutedForeground, marginLeft: 10 }}>›</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                ) : seriesList.length === 0 && !seriesListError ? (
-                  <Text style={{ color: colors.mutedForeground, fontSize: 13, textAlign: "center", paddingVertical: 8 }}>
-                    No series yet. Run Auto-Assign or create one manually.
-                  </Text>
-                ) : null}
-              </View>
+                        ) : null}
+
+                        {seriesList.length > 0 ? (
+                          <View style={{ gap: 6 }}>
+                            <Text
+                              style={{
+                                color: colors.mutedForeground,
+                                fontSize: 11,
+                                fontFamily: 'Inter_600SemiBold',
+                                letterSpacing: 0.5,
+                              }}
+                            >
+                              {seriesList.length} SERIES
+                            </Text>
+                            {seriesList.map((series) => (
+                              <Pressable
+                                key={series.id}
+                                onPress={() => void openSeriesModal(series)}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  paddingVertical: 10,
+                                  paddingHorizontal: 12,
+                                  borderRadius: 8,
+                                  borderWidth: 1,
+                                  borderColor: colors.border,
+                                  backgroundColor: colors.background,
+                                }}
+                              >
+                                <View style={{ flex: 1 }}>
+                                  <Text
+                                    style={{
+                                      color: colors.foreground,
+                                      fontFamily: 'Inter_600SemiBold',
+                                      fontSize: 13,
+                                    }}
+                                  >
+                                    {series.name}
+                                  </Text>
+                                  <Text
+                                    style={{
+                                      color: colors.mutedForeground,
+                                      fontSize: 11,
+                                      marginTop: 2,
+                                      fontFamily: 'Inter_400Regular',
+                                    }}
+                                  >
+                                    {series.vendor}
+                                  </Text>
+                                </View>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                  <Text
+                                    style={{
+                                      color: colors.primary,
+                                      fontFamily: 'Inter_600SemiBold',
+                                      fontSize: 13,
+                                    }}
+                                  >
+                                    {series.member_count}
+                                  </Text>
+                                  <Text
+                                    style={{
+                                      color: colors.mutedForeground,
+                                      fontSize: 10,
+                                      marginTop: 1,
+                                    }}
+                                  >
+                                    items
+                                  </Text>
+                                </View>
+                                <Text style={{ color: colors.mutedForeground, marginLeft: 10 }}>
+                                  ›
+                                </Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                        ) : seriesList.length === 0 && !seriesListError ? (
+                          <Text
+                            style={{
+                              color: colors.mutedForeground,
+                              fontSize: 13,
+                              textAlign: 'center',
+                              paddingVertical: 8,
+                            }}
+                          >
+                            No series yet. Run Auto-Assign or create one manually.
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
                   )}
 
@@ -3091,20 +3733,31 @@ export default function UploadScreen() {
                 inventoryQuery.isLoading ? (
                   <View style={styles.loadingContainer}>
                     <ActivityIndicator size="large" color={colors.primary} />
-                    <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
+                    <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>
+                      Loading inventory…
+                    </Text>
                   </View>
                 ) : (
                   <View style={styles.emptyContainer}>
-                    <MaterialCommunityIcons name="package-variant-closed" size={48} color={colors.mutedForeground} style={{ marginBottom: 12 }} />
-                    <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
+                    <MaterialCommunityIcons
+                      name="package-variant-closed"
+                      size={48}
+                      color={colors.mutedForeground}
+                      style={{ marginBottom: 12 }}
+                    />
+                    <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+                      No Inventory
+                    </Text>
                     <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
                       Upload a CSV or Excel file to add inventory items.
                     </Text>
                     <Pressable
-                      onPress={() => setTab("upload")}
+                      onPress={() => setTab('upload')}
                       style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
                     >
-                      <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Back to Upload</Text>
+                      <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>
+                        Back to Upload
+                      </Text>
                     </Pressable>
                   </View>
                 )
@@ -3112,7 +3765,7 @@ export default function UploadScreen() {
               ListFooterComponent={() =>
                 inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
                   <Pressable
-                    onPress={() => setInventoryPage(p => p + 1)}
+                    onPress={() => setInventoryPage((p) => p + 1)}
                     style={[styles.loadMoreBtn, { borderColor: colors.border }]}
                   >
                     <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
@@ -3136,7 +3789,7 @@ export default function UploadScreen() {
         <SafeAreaView style={[styles.reviewSafeArea, { backgroundColor: colors.background }]}>
           <View style={[styles.reviewHeader, { borderBottomColor: colors.border }]}>
             {seriesRenaming ? (
-              <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <TextInput
                   style={{
                     flex: 1,
@@ -3146,7 +3799,7 @@ export default function UploadScreen() {
                     paddingHorizontal: 10,
                     paddingVertical: 6,
                     fontSize: 16,
-                    fontFamily: "Inter_600SemiBold",
+                    fontFamily: 'Inter_600SemiBold',
                     color: colors.foreground,
                     backgroundColor: colors.muted,
                   }}
@@ -3158,29 +3811,59 @@ export default function UploadScreen() {
                 />
                 <Pressable
                   onPress={() => void handleRenameSeries()}
-                  style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: colors.primary }}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    backgroundColor: colors.primary,
+                  }}
                 >
-                  <Text style={{ color: colors.primaryForeground, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>Save</Text>
+                  <Text
+                    style={{
+                      color: colors.primaryForeground,
+                      fontFamily: 'Inter_600SemiBold',
+                      fontSize: 13,
+                    }}
+                  >
+                    Save
+                  </Text>
                 </Pressable>
                 <Pressable onPress={() => setSeriesRenaming(false)}>
-                  <Text style={{ color: colors.mutedForeground, fontSize: 13, paddingHorizontal: 4 }}>Cancel</Text>
+                  <Text
+                    style={{ color: colors.mutedForeground, fontSize: 13, paddingHorizontal: 4 }}
+                  >
+                    Cancel
+                  </Text>
                 </Pressable>
               </View>
             ) : (
               <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Text style={[styles.reviewTitle, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
-                    {activeSeries?.name ?? "Series"}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text
+                    style={[styles.reviewTitle, { color: colors.foreground, flex: 1 }]}
+                    numberOfLines={1}
+                  >
+                    {activeSeries?.name ?? 'Series'}
                   </Text>
                   <Pressable
-                    onPress={() => { setSeriesRenameText(activeSeries?.name ?? ""); setSeriesRenaming(true); }}
-                    style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: colors.border }}
+                    onPress={() => {
+                      setSeriesRenameText(activeSeries?.name ?? '');
+                      setSeriesRenaming(true);
+                    }}
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                      borderRadius: 6,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}
                   >
                     <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>Rename</Text>
                   </Pressable>
                 </View>
                 <Text style={[styles.reviewSub, { color: colors.mutedForeground }]}>
-                  {activeSeries?.vendor} · {activeSeries?.member_count ?? seriesMembers.length} members
+                  {activeSeries?.vendor} · {activeSeries?.member_count ?? seriesMembers.length}{' '}
+                  members
                 </Text>
               </View>
             )}
@@ -3192,10 +3875,21 @@ export default function UploadScreen() {
             </View>
           ) : null}
 
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, paddingBottom: 40 }}>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
+          >
             {/* Add members via search */}
             <View style={{ marginBottom: 16 }}>
-              <Text style={{ color: colors.mutedForeground, fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, marginBottom: 6 }}>
+              <Text
+                style={{
+                  color: colors.mutedForeground,
+                  fontSize: 11,
+                  fontFamily: 'Inter_600SemiBold',
+                  letterSpacing: 0.5,
+                  marginBottom: 6,
+                }}
+              >
                 ADD ITEMS
               </Text>
               <TextInput
@@ -3206,7 +3900,7 @@ export default function UploadScreen() {
                   paddingHorizontal: 12,
                   paddingVertical: 9,
                   fontSize: 14,
-                  fontFamily: "Inter_400Regular",
+                  fontFamily: 'Inter_400Regular',
                   color: colors.foreground,
                   backgroundColor: colors.muted,
                 }}
@@ -3220,21 +3914,62 @@ export default function UploadScreen() {
               ) : null}
               {memberSearchResults.length > 0 ? (
                 <View style={{ marginTop: 6, gap: 4 }}>
-                  {memberSearchResults.map(r => (
-                    <View key={r.id} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background }}>
+                  {memberSearchResults.map((r) => (
+                    <View
+                      key={r.id}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                        paddingVertical: 6,
+                        paddingHorizontal: 10,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: colors.border,
+                        backgroundColor: colors.background,
+                      }}
+                    >
                       <View style={{ flex: 1 }}>
-                        <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>{r.catalog}</Text>
-                        <Text style={{ color: colors.mutedForeground, fontSize: 11 }} numberOfLines={1}>{r.vendor} · {r.description}</Text>
+                        <Text
+                          style={{
+                            color: colors.foreground,
+                            fontFamily: 'Inter_600SemiBold',
+                            fontSize: 13,
+                          }}
+                        >
+                          {r.catalog}
+                        </Text>
+                        <Text
+                          style={{ color: colors.mutedForeground, fontSize: 11 }}
+                          numberOfLines={1}
+                        >
+                          {r.vendor} · {r.description}
+                        </Text>
                         {r.seriesId != null && r.seriesId !== activeSeries?.id ? (
-                          <Text style={{ color: colors.warning, fontSize: 10 }}>Already in another series</Text>
+                          <Text style={{ color: colors.warning, fontSize: 10 }}>
+                            Already in another series
+                          </Text>
                         ) : null}
                       </View>
                       <Pressable
                         onPress={() => void handleAddMember(r.id)}
                         disabled={memberAddPending}
-                        style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: colors.primary }}
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 6,
+                          backgroundColor: colors.primary,
+                        }}
                       >
-                        <Text style={{ color: colors.primaryForeground, fontFamily: "Inter_600SemiBold", fontSize: 12 }}>Add</Text>
+                        <Text
+                          style={{
+                            color: colors.primaryForeground,
+                            fontFamily: 'Inter_600SemiBold',
+                            fontSize: 12,
+                          }}
+                        >
+                          Add
+                        </Text>
                       </Pressable>
                     </View>
                   ))}
@@ -3243,34 +3978,88 @@ export default function UploadScreen() {
             </View>
 
             {/* Current members */}
-            <Text style={{ color: colors.mutedForeground, fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, marginBottom: 6 }}>
+            <Text
+              style={{
+                color: colors.mutedForeground,
+                fontSize: 11,
+                fontFamily: 'Inter_600SemiBold',
+                letterSpacing: 0.5,
+                marginBottom: 6,
+              }}
+            >
               CURRENT MEMBERS ({seriesMembers.length})
             </Text>
             {seriesMembersLoading ? (
               <ActivityIndicator size="small" color={colors.primary} />
             ) : seriesMembers.length === 0 ? (
-              <Text style={{ color: colors.mutedForeground, fontSize: 13, textAlign: "center", paddingVertical: 16 }}>
+              <Text
+                style={{
+                  color: colors.mutedForeground,
+                  fontSize: 13,
+                  textAlign: 'center',
+                  paddingVertical: 16,
+                }}
+              >
                 No members yet. Use search above to add items.
               </Text>
             ) : (
               <View style={{ gap: 4 }}>
-                {seriesMembers.map(m => (
-                  <View key={m.id} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background }}>
+                {seriesMembers.map((m) => (
+                  <View
+                    key={m.id}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 8,
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      backgroundColor: colors.background,
+                    }}
+                  >
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold", fontSize: 13 }}>{m.catalog}</Text>
-                      <Text style={{ color: colors.mutedForeground, fontSize: 11 }} numberOfLines={1}>
-                        {m.vendor}{m.description ? ` · ${m.description}` : ""}
+                      <Text
+                        style={{
+                          color: colors.foreground,
+                          fontFamily: 'Inter_600SemiBold',
+                          fontSize: 13,
+                        }}
+                      >
+                        {m.catalog}
+                      </Text>
+                      <Text
+                        style={{ color: colors.mutedForeground, fontSize: 11 }}
+                        numberOfLines={1}
+                      >
+                        {m.vendor}
+                        {m.description ? ` · ${m.description}` : ''}
                       </Text>
                     </View>
                     <Pressable
                       onPress={() => void handleRemoveMember(m.id)}
                       disabled={memberRemovePending === m.id}
-                      style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: colors.destructive }}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: colors.destructive,
+                      }}
                     >
                       {memberRemovePending === m.id ? (
                         <ActivityIndicator size="small" color={colors.destructive} />
                       ) : (
-                        <Text style={{ color: colors.destructive, fontFamily: "Inter_600SemiBold", fontSize: 12 }}>Remove</Text>
+                        <Text
+                          style={{
+                            color: colors.destructive,
+                            fontFamily: 'Inter_600SemiBold',
+                            fontSize: 12,
+                          }}
+                        >
+                          Remove
+                        </Text>
                       )}
                     </Pressable>
                   </View>
@@ -3279,7 +4068,12 @@ export default function UploadScreen() {
             )}
           </ScrollView>
 
-          <View style={[styles.reviewFooter, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
+          <View
+            style={[
+              styles.reviewFooter,
+              { borderTopColor: colors.border, backgroundColor: colors.background },
+            ]}
+          >
             <Pressable
               onPress={() => setSeriesModalVisible(false)}
               style={[styles.reviewCancel, { borderColor: colors.border, flex: 1 }]}
@@ -3298,22 +4092,27 @@ export default function UploadScreen() {
         onRequestClose={() => setCreateSeriesVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[styles.chooserCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View
+            style={[
+              styles.chooserCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
             <Text style={[styles.chooserTitle, { color: colors.foreground }]}>Create Series</Text>
-            <Text style={[styles.cardHint, { color: colors.mutedForeground, textAlign: "center" }]}>
+            <Text style={[styles.cardHint, { color: colors.mutedForeground, textAlign: 'center' }]}>
               Give the series a display name and the vendor it belongs to.
             </Text>
 
             <TextInput
               style={{
-                width: "100%",
+                width: '100%',
                 borderWidth: 1,
                 borderColor: colors.border,
                 borderRadius: 8,
                 paddingHorizontal: 12,
                 paddingVertical: 10,
                 fontSize: 15,
-                fontFamily: "Inter_400Regular",
+                fontFamily: 'Inter_400Regular',
                 color: colors.foreground,
                 backgroundColor: colors.muted,
               }}
@@ -3326,14 +4125,14 @@ export default function UploadScreen() {
             />
             <TextInput
               style={{
-                width: "100%",
+                width: '100%',
                 borderWidth: 1,
                 borderColor: colors.border,
                 borderRadius: 8,
                 paddingHorizontal: 12,
                 paddingVertical: 10,
                 fontSize: 15,
-                fontFamily: "Inter_400Regular",
+                fontFamily: 'Inter_400Regular',
                 color: colors.foreground,
                 backgroundColor: colors.muted,
               }}
@@ -3347,22 +4146,34 @@ export default function UploadScreen() {
             />
 
             {createSeriesError ? (
-              <Text style={{ color: colors.destructive, fontSize: 13, textAlign: "center" }}>{createSeriesError}</Text>
+              <Text style={{ color: colors.destructive, fontSize: 13, textAlign: 'center' }}>
+                {createSeriesError}
+              </Text>
             ) : null}
 
             <Pressable
               onPress={() => void handleCreateSeries()}
               disabled={createSeriesPending}
-              style={[styles.chooserBtn, { backgroundColor: createSeriesPending ? colors.muted : colors.primary, width: "100%" }]}
+              style={[
+                styles.chooserBtn,
+                {
+                  backgroundColor: createSeriesPending ? colors.muted : colors.primary,
+                  width: '100%',
+                },
+              ]}
             >
               {createSeriesPending ? (
                 <ActivityIndicator color={colors.primaryForeground} />
               ) : (
-                <Text style={[styles.chooserBtnText, { color: colors.primaryForeground }]}>Create &amp; Assign Items</Text>
+                <Text style={[styles.chooserBtnText, { color: colors.primaryForeground }]}>
+                  Create &amp; Assign Items
+                </Text>
               )}
             </Pressable>
             <Pressable onPress={() => setCreateSeriesVisible(false)} style={styles.chooserCancel}>
-              <Text style={[styles.chooserCancelText, { color: colors.mutedForeground }]}>Cancel</Text>
+              <Text style={[styles.chooserCancelText, { color: colors.mutedForeground }]}>
+                Cancel
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -3386,12 +4197,12 @@ export default function UploadScreen() {
           </View>
 
           <FlatList
-            data={catalogReport?.rows.filter(r => r.tier === "uncertain") ?? []}
+            data={catalogReport?.rows.filter((r) => r.tier === 'uncertain') ?? []}
             keyExtractor={(r) => r.catalogNumber}
             contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
             ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
             ListEmptyComponent={() => (
-              <Text style={{ color: colors.mutedForeground, textAlign: "center", marginTop: 40 }}>
+              <Text style={{ color: colors.mutedForeground, textAlign: 'center', marginTop: 40 }}>
                 No uncertain matches.
               </Text>
             )}
@@ -3404,14 +4215,23 @@ export default function UploadScreen() {
                     { backgroundColor: colors.card, borderColor: colors.border },
                   ]}
                 >
-                  <Text style={[styles.reviewCatalog, { color: colors.foreground }]} numberOfLines={1}>
+                  <Text
+                    style={[styles.reviewCatalog, { color: colors.foreground }]}
+                    numberOfLines={1}
+                  >
                     {item.catalogNumber}
                   </Text>
-                  <Text style={[styles.reviewVendor, { color: colors.mutedForeground }]} numberOfLines={2}>
+                  <Text
+                    style={[styles.reviewVendor, { color: colors.mutedForeground }]}
+                    numberOfLines={2}
+                  >
                     {item.description}
                   </Text>
                   <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 4 }}>
-                    Pages {item.pageNumbers.join(", ")} · {Object.entries(item.dimensions).map(([k, v]) => `${k}=${v}`).join(" · ") || "no chip dims"}
+                    Pages {item.pageNumbers.join(', ')} ·{' '}
+                    {Object.entries(item.dimensions)
+                      .map(([k, v]) => `${k}=${v}`)
+                      .join(' · ') || 'no chip dims'}
                   </Text>
 
                   <View style={{ marginTop: 10, gap: 6 }}>
@@ -3421,21 +4241,30 @@ export default function UploadScreen() {
                         <Pressable
                           key={c.inventoryId}
                           onPress={() =>
-                            setCatalogReviewChoices((prev) => ({ ...prev, [item.catalogNumber]: c.inventoryId }))
+                            setCatalogReviewChoices((prev) => ({
+                              ...prev,
+                              [item.catalogNumber]: c.inventoryId,
+                            }))
                           }
                           style={{
                             borderWidth: 1,
                             borderColor: selected ? colors.primary : colors.border,
-                            backgroundColor: selected ? colors.primary + "11" : "transparent",
+                            backgroundColor: selected ? colors.primary + '11' : 'transparent',
                             borderRadius: 8,
                             padding: 8,
                           }}
                         >
-                          <Text style={{ color: colors.foreground, fontFamily: "Inter_500Medium" }}>
-                            {c.catalog} <Text style={{ color: colors.mutedForeground, fontSize: 11 }}>· {c.reason}</Text>
+                          <Text style={{ color: colors.foreground, fontFamily: 'Inter_500Medium' }}>
+                            {c.catalog}{' '}
+                            <Text style={{ color: colors.mutedForeground, fontSize: 11 }}>
+                              · {c.reason}
+                            </Text>
                           </Text>
                           {c.description ? (
-                            <Text style={{ color: colors.mutedForeground, fontSize: 12 }} numberOfLines={2}>
+                            <Text
+                              style={{ color: colors.mutedForeground, fontSize: 12 }}
+                              numberOfLines={2}
+                            >
                               {c.description}
                             </Text>
                           ) : null}
@@ -3444,17 +4273,23 @@ export default function UploadScreen() {
                     })}
                     <Pressable
                       onPress={() =>
-                        setCatalogReviewChoices((prev) => ({ ...prev, [item.catalogNumber]: "skip" }))
+                        setCatalogReviewChoices((prev) => ({
+                          ...prev,
+                          [item.catalogNumber]: 'skip',
+                        }))
                       }
                       style={{
                         borderWidth: 1,
-                        borderColor: choice === "skip" ? colors.destructive : colors.border,
-                        backgroundColor: choice === "skip" ? colors.destructive + "11" : "transparent",
+                        borderColor: choice === 'skip' ? colors.destructive : colors.border,
+                        backgroundColor:
+                          choice === 'skip' ? colors.destructive + '11' : 'transparent',
                         borderRadius: 8,
                         padding: 8,
                       }}
                     >
-                      <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_500Medium" }}>
+                      <Text
+                        style={{ color: colors.mutedForeground, fontFamily: 'Inter_500Medium' }}
+                      >
                         Skip this entry
                       </Text>
                     </Pressable>
@@ -3466,7 +4301,7 @@ export default function UploadScreen() {
 
           <View
             style={{
-              flexDirection: "row",
+              flexDirection: 'row',
               gap: 8,
               padding: 12,
               borderTopWidth: 1,
@@ -3478,7 +4313,7 @@ export default function UploadScreen() {
               onPress={() => setCatalogReviewVisible(false)}
               style={[secondaryBtnBase, { flex: 1, borderColor: colors.border }]}
             >
-              <Text style={{ color: colors.foreground, fontFamily: "Inter_500Medium" }}>Close</Text>
+              <Text style={{ color: colors.foreground, fontFamily: 'Inter_500Medium' }}>Close</Text>
             </Pressable>
             <Pressable
               onPress={handleCatalogReviewApply}
@@ -3505,18 +4340,26 @@ export default function UploadScreen() {
         onRequestClose={() => setChooserVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[styles.chooserCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View
+            style={[
+              styles.chooserCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
             <Text style={[styles.chooserTitle, { color: colors.foreground }]}>
               Existing items would change
             </Text>
             <Text style={[styles.chooserBody, { color: colors.mutedForeground }]}>
               {previewData
-                ? `${previewData.newCount} new ${previewData.newCount === 1 ? "item" : "items"} to add. ${previewData.changedCount} existing ${previewData.changedCount === 1 ? "item" : "items"} would change (location and/or description).`
-                : ""}
+                ? `${previewData.newCount} new ${previewData.newCount === 1 ? 'item' : 'items'} to add. ${previewData.changedCount} existing ${previewData.changedCount === 1 ? 'item' : 'items'} would change (location and/or description).`
+                : ''}
             </Text>
 
             <Pressable
-              onPress={() => { setChooserVisible(false); setReviewVisible(true); }}
+              onPress={() => {
+                setChooserVisible(false);
+                setReviewVisible(true);
+              }}
               style={[styles.chooserBtn, { backgroundColor: colors.primary }]}
             >
               <Text style={[styles.chooserBtnText, { color: colors.primaryForeground }]}>
@@ -3525,7 +4368,10 @@ export default function UploadScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => { setChooserVisible(false); void applyUpsert("add-new-only"); }}
+              onPress={() => {
+                setChooserVisible(false);
+                void applyUpsert('add-new-only');
+              }}
               style={[styles.chooserBtnAlt, { borderColor: colors.border }]}
             >
               <Text style={[styles.chooserBtnAltText, { color: colors.foreground }]}>
@@ -3534,7 +4380,10 @@ export default function UploadScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => { setChooserVisible(false); void applyUpsert("overwrite-all"); }}
+              onPress={() => {
+                setChooserVisible(false);
+                void applyUpsert('overwrite-all');
+              }}
               style={[styles.chooserBtnAlt, { borderColor: colors.border }]}
             >
               <Text style={[styles.chooserBtnAltText, { color: colors.foreground }]}>
@@ -3543,7 +4392,10 @@ export default function UploadScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => { setChooserVisible(false); void applyUpsert("add-multi-access"); }}
+              onPress={() => {
+                setChooserVisible(false);
+                void applyUpsert('add-multi-access');
+              }}
               style={[styles.chooserBtnAlt, { borderColor: colors.border }]}
             >
               <Text style={[styles.chooserBtnAltText, { color: colors.foreground }]}>
@@ -3556,17 +4408,14 @@ export default function UploadScreen() {
                 setChooserVisible(false);
                 void handleApplyBinsOnly();
               }}
-              style={[styles.chooserBtnAlt, { borderColor: colors.warning + "88" }]}
+              style={[styles.chooserBtnAlt, { borderColor: colors.warning + '88' }]}
             >
               <Text style={[styles.chooserBtnAltText, { color: colors.warning }]}>
                 Update Bins Only
               </Text>
             </Pressable>
 
-            <Pressable
-              onPress={() => setChooserVisible(false)}
-              style={styles.chooserCancel}
-            >
+            <Pressable onPress={() => setChooserVisible(false)} style={styles.chooserCancel}>
               <Text style={[styles.chooserCancelText, { color: colors.mutedForeground }]}>
                 Cancel
               </Text>
@@ -3584,13 +4433,11 @@ export default function UploadScreen() {
       >
         <SafeAreaView style={[styles.reviewSafeArea, { backgroundColor: colors.background }]}>
           <View style={[styles.reviewHeader, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.reviewTitle, { color: colors.foreground }]}>
-              Review changes
-            </Text>
+            <Text style={[styles.reviewTitle, { color: colors.foreground }]}>Review changes</Text>
             <Text style={[styles.reviewSub, { color: colors.mutedForeground }]}>
               {previewData
                 ? `${selectedKeysFromReview.length} of ${previewData.changedCount} included`
-                : ""}
+                : ''}
             </Text>
           </View>
 
@@ -3615,10 +4462,16 @@ export default function UploadScreen() {
                 >
                   <View style={styles.reviewRowHeader}>
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.reviewCatalog, { color: colors.foreground }]} numberOfLines={1}>
+                      <Text
+                        style={[styles.reviewCatalog, { color: colors.foreground }]}
+                        numberOfLines={1}
+                      >
                         {item.catalog}
                       </Text>
-                      <Text style={[styles.reviewVendor, { color: colors.mutedForeground }]} numberOfLines={1}>
+                      <Text
+                        style={[styles.reviewVendor, { color: colors.mutedForeground }]}
+                        numberOfLines={1}
+                      >
                         {item.vendor}
                       </Text>
                     </View>
@@ -3630,21 +4483,34 @@ export default function UploadScreen() {
 
                   {item.binChanged ? (
                     <View style={styles.diffBlock}>
-                      <Text style={[styles.diffLabel, { color: colors.mutedForeground }]}>BIN LOCATION</Text>
-                      <Text style={[styles.diffOld, { color: colors.mutedForeground }]} numberOfLines={2}>
-                        was: {item.existingBinLocations.length > 0 ? item.existingBinLocations.join(", ") : "(none)"}
+                      <Text style={[styles.diffLabel, { color: colors.mutedForeground }]}>
+                        BIN LOCATION
+                      </Text>
+                      <Text
+                        style={[styles.diffOld, { color: colors.mutedForeground }]}
+                        numberOfLines={2}
+                      >
+                        was:{' '}
+                        {item.existingBinLocations.length > 0
+                          ? item.existingBinLocations.join(', ')
+                          : '(none)'}
                       </Text>
                       <Text style={[styles.diffNew, { color: colors.success }]} numberOfLines={2}>
-                        new: {item.proposedBinLocations.join(", ")}
+                        new: {item.proposedBinLocations.join(', ')}
                       </Text>
                     </View>
                   ) : null}
 
                   {item.descChanged ? (
                     <View style={styles.diffBlock}>
-                      <Text style={[styles.diffLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
-                      <Text style={[styles.diffOld, { color: colors.mutedForeground }]} numberOfLines={3}>
-                        was: {item.existingDescription || "(empty)"}
+                      <Text style={[styles.diffLabel, { color: colors.mutedForeground }]}>
+                        DESCRIPTION
+                      </Text>
+                      <Text
+                        style={[styles.diffOld, { color: colors.mutedForeground }]}
+                        numberOfLines={3}
+                      >
+                        was: {item.existingDescription || '(empty)'}
                       </Text>
                       <Text style={[styles.diffNew, { color: colors.success }]} numberOfLines={3}>
                         new: {item.proposedDescription}
@@ -3661,7 +4527,12 @@ export default function UploadScreen() {
             )}
           />
 
-          <View style={[styles.reviewFooter, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
+          <View
+            style={[
+              styles.reviewFooter,
+              { borderTopColor: colors.border, backgroundColor: colors.background },
+            ]}
+          >
             <Pressable
               onPress={() => setReviewVisible(false)}
               style={[styles.reviewCancel, { borderColor: colors.border }]}
@@ -3671,7 +4542,7 @@ export default function UploadScreen() {
             <Pressable
               onPress={() => {
                 setReviewVisible(false);
-                void applyUpsert("selected", selectedKeysFromReview);
+                void applyUpsert('selected', selectedKeysFromReview);
               }}
               disabled={uploadPending}
               style={[
@@ -3683,10 +4554,10 @@ export default function UploadScreen() {
                 <ActivityIndicator color={colors.primaryForeground} />
               ) : (
                 <Text style={[styles.reviewConfirmText, { color: colors.primaryForeground }]}>
-                  {`Apply ${selectedKeysFromReview.length} ${selectedKeysFromReview.length === 1 ? "change" : "changes"}`}
+                  {`Apply ${selectedKeysFromReview.length} ${selectedKeysFromReview.length === 1 ? 'change' : 'changes'}`}
                   {previewData && previewData.newCount > 0
-                    ? ` (${previewData.newCount} new ${previewData.newCount === 1 ? "row" : "rows"} will still be added)`
-                    : ""}
+                    ? ` (${previewData.newCount} new ${previewData.newCount === 1 ? 'row' : 'rows'} will still be added)`
+                    : ''}
                 </Text>
               )}
             </Pressable>
@@ -3700,137 +4571,259 @@ export default function UploadScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   header: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
-  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
-  headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headerTitle: { fontSize: 20, fontFamily: 'Inter_700Bold' },
+  headerSub: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
   lockBtn: { ...secondaryBtnBase, paddingHorizontal: 12, paddingVertical: 7 },
-  lockBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  tabBar: { flexDirection: "row", borderBottomWidth: 1 },
-  tabItem: { flex: 1, alignItems: "center", paddingVertical: 12, borderBottomWidth: 2 },
-  tabLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  lockBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  tabBar: { flexDirection: 'row', borderBottomWidth: 1 },
+  tabItem: { flex: 1, alignItems: 'center', paddingVertical: 12, borderBottomWidth: 2 },
+  tabLabel: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
   uploadCard: { borderRadius: 12, padding: 16, borderWidth: 1, marginBottom: 14, gap: 10 },
-  resumeBanner: { marginHorizontal: 16, marginTop: 10, padding: 12, borderRadius: 10, borderWidth: 1, gap: 6 },
-  resumeTitle: { fontSize: 14, fontFamily: "Inter_700Bold" },
-  resumeBody: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
-  resumeBtnRow: { flexDirection: "row", gap: 8, marginTop: 6 },
-  resumePrimary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center" },
-  resumePrimaryText: { fontSize: 14, fontFamily: "Inter_700Bold" },
-  resumeSecondary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center", borderWidth: 1 },
-  resumeSecondaryText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  chunkCard: { marginHorizontal: 16, marginTop: 10, padding: 14, borderRadius: 12, borderWidth: 1, gap: 8 },
-  chunkTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
-  chunkBody: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
-  chunkTrack: { height: 8, borderRadius: 4, overflow: "hidden", marginTop: 4 },
-  chunkFill: { height: "100%", borderRadius: 4 },
-  chunkBtnRow: { flexDirection: "row", gap: 8, marginTop: 6 },
-  chunkPrimary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center" },
-  chunkPrimaryText: { fontSize: 14, fontFamily: "Inter_700Bold" },
-  chunkSecondary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center", borderWidth: 1 },
-  chunkSecondaryText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  cardTitle: { fontSize: 16, fontFamily: "Inter_700Bold" },
-  cardHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
-  pickBtn: { borderWidth: 2, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
-  pickBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  resumeBanner: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 6,
+  },
+  resumeTitle: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  resumeBody: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 18 },
+  resumeBtnRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  resumePrimary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+  resumePrimaryText: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  resumeSecondary: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+  },
+  resumeSecondaryText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  chunkCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 8,
+  },
+  chunkTitle: { fontSize: 15, fontFamily: 'Inter_700Bold' },
+  chunkBody: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 },
+  chunkTrack: { height: 8, borderRadius: 4, overflow: 'hidden', marginTop: 4 },
+  chunkFill: { height: '100%', borderRadius: 4 },
+  chunkBtnRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  chunkPrimary: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+  chunkPrimaryText: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  chunkSecondary: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+  },
+  chunkSecondaryText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  cardTitle: { fontSize: 16, fontFamily: 'Inter_700Bold' },
+  cardHint: { fontSize: 13, fontFamily: 'Inter_400Regular', lineHeight: 19 },
+  pickBtn: { borderWidth: 2, borderRadius: 8, paddingVertical: 13, alignItems: 'center' },
+  pickBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
   pasteInput: {
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 13,
-    fontFamily: "Inter_400Regular",
+    fontFamily: 'Inter_400Regular',
     minHeight: 72,
-    textAlignVertical: "top",
+    textAlignVertical: 'top',
     marginTop: 10,
   },
   pasteParseBtn: {
     borderRadius: 8,
     paddingVertical: 11,
-    alignItems: "center",
+    alignItems: 'center',
     marginTop: 8,
   },
-  pasteParseBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  fileChip: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, alignSelf: "flex-start" },
-  fileChipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  pasteParseBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  fileChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  fileChipText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   fileChipDismiss: { marginLeft: 8, padding: 2 },
-  fileChipDismissText: { fontSize: 18, lineHeight: 20, fontFamily: "Inter_500Medium" },
+  fileChipDismissText: { fontSize: 18, lineHeight: 20, fontFamily: 'Inter_500Medium' },
   previewCard: { borderRadius: 12, padding: 14, borderWidth: 1, marginBottom: 14 },
-  previewHeaderRow: { flexDirection: "row", paddingHorizontal: 6, paddingVertical: 6, borderRadius: 4, marginBottom: 2, marginTop: 8 },
-  previewHeaderCell: { fontSize: 10, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5 },
-  previewRow: { flexDirection: "row", paddingHorizontal: 6, paddingVertical: 7, borderBottomWidth: 1 },
-  previewCell: { fontSize: 12, fontFamily: "Inter_400Regular", paddingRight: 4 },
-  moreRows: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", marginTop: 8 },
-  uploadBtn: { marginTop: 12, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
-  uploadBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  previewHeaderRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    borderRadius: 4,
+    marginBottom: 2,
+    marginTop: 8,
+  },
+  previewHeaderCell: { fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5 },
+  previewRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 6,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+  },
+  previewCell: { fontSize: 12, fontFamily: 'Inter_400Regular', paddingRight: 4 },
+  moreRows: { fontSize: 12, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 8 },
+  uploadBtn: { marginTop: 12, borderRadius: 8, paddingVertical: 13, alignItems: 'center' },
+  uploadBtnText: { fontSize: 15, fontFamily: 'Inter_700Bold' },
   enrichCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 14 },
   progressContainer: { gap: 8 },
-  bulkStatusRow: { flexDirection: "row", alignItems: "center" },
-  stopBtn: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, marginLeft: 8 },
-  stopBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  progressBar: { height: 8, borderRadius: 4, overflow: "hidden" },
-  progressFill: { height: "100%", borderRadius: 4 },
-  progressText: { fontSize: 13, fontFamily: "Inter_500Medium", textAlign: "center" },
+  bulkStatusRow: { flexDirection: 'row', alignItems: 'center' },
+  stopBtn: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginLeft: 8,
+  },
+  stopBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  progressBar: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 4 },
+  progressText: { fontSize: 13, fontFamily: 'Inter_500Medium', textAlign: 'center' },
   doneCard: { padding: 12, borderRadius: 8 },
-  doneText: { fontSize: 14, fontFamily: "Inter_600SemiBold", textAlign: "center" },
-  enrichStats: { flexDirection: "row", gap: 10 },
-  statChip: { flex: 1, alignItems: "center", padding: 12, borderRadius: 8 },
-  statValue: { fontSize: 22, fontFamily: "Inter_700Bold" },
-  statLabel: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  enrichBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
-  enrichBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
-  infoBanner: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderLeftWidth: 3, borderRadius: 6, paddingVertical: 10, paddingLeft: 12, paddingRight: 8, marginVertical: 8 },
+  doneText: { fontSize: 14, fontFamily: 'Inter_600SemiBold', textAlign: 'center' },
+  enrichStats: { flexDirection: 'row', gap: 10 },
+  statChip: { flex: 1, alignItems: 'center', padding: 12, borderRadius: 8 },
+  statValue: { fontSize: 22, fontFamily: 'Inter_700Bold' },
+  statLabel: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  enrichBtn: { borderRadius: 8, paddingVertical: 13, alignItems: 'center' },
+  enrichBtnText: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  infoBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    borderLeftWidth: 3,
+    borderRadius: 6,
+    paddingVertical: 10,
+    paddingLeft: 12,
+    paddingRight: 8,
+    marginVertical: 8,
+  },
   infoBannerIcon: { fontSize: 13, marginTop: 1, flexShrink: 0 },
-  infoBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 19, flexShrink: 1, flex: 1 },
+  infoBannerText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    lineHeight: 19,
+    flexShrink: 1,
+    flex: 1,
+  },
   infoBannerDismiss: { flexShrink: 0, paddingHorizontal: 4, paddingVertical: 2, marginTop: 1 },
-  infoBannerDismissText: { fontSize: 13, fontFamily: "Inter_700Bold", opacity: 0.7 },
-  loadingContainer: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
-  loadingText: { fontSize: 14, fontFamily: "Inter_400Regular" },
-  emptyContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  emptyTitle: { fontSize: 20, fontFamily: "Inter_700Bold", marginBottom: 8 },
-  emptyHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 20 },
+  infoBannerDismissText: { fontSize: 13, fontFamily: 'Inter_700Bold', opacity: 0.7 },
+  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingText: { fontSize: 14, fontFamily: 'Inter_400Regular' },
+  emptyContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  emptyTitle: { fontSize: 20, fontFamily: 'Inter_700Bold', marginBottom: 8 },
+  emptyHint: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
   goUploadBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
-  goUploadText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  inventoryHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
-  inventoryCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  goUploadText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  inventoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  inventoryCount: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
 
-  loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: "center", marginTop: 8 },
-  loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  inlineBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
+  loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: 'center', marginTop: 8 },
+  loadMoreText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  inlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+  },
   successBanner: {},
-  inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
+  inlineBannerText: { fontSize: 13, fontFamily: 'Inter_500Medium', flex: 1, lineHeight: 18 },
   bannerClose: { paddingLeft: 10 },
 
   // Chooser modal
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", alignItems: "center", justifyContent: "center", padding: 20 },
-  binsOnlyToggle: { borderRadius: 8, borderWidth: 1, paddingVertical: 10, paddingHorizontal: 12, marginTop: 4 },
-  binsOnlyToggleText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  binsOnlyToggleHint: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
-  chooserCard: { width: "100%", maxWidth: 380, borderRadius: 16, padding: 20, borderWidth: 1, gap: 10 },
-  chooserTitle: { fontSize: 18, fontFamily: "Inter_700Bold", textAlign: "center" },
-  chooserBody: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 19, marginBottom: 6 },
-  chooserBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
-  chooserBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
-  chooserBtnAlt: { borderRadius: 8, paddingVertical: 13, alignItems: "center", borderWidth: 1 },
-  chooserBtnAltText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  chooserCancel: { paddingVertical: 10, alignItems: "center", marginTop: 4 },
-  chooserCancelText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  binsOnlyToggle: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 4,
+  },
+  binsOnlyToggleText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  binsOnlyToggleHint: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  chooserCard: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    gap: 10,
+  },
+  chooserTitle: { fontSize: 18, fontFamily: 'Inter_700Bold', textAlign: 'center' },
+  chooserBody: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: 6,
+  },
+  chooserBtn: { borderRadius: 8, paddingVertical: 13, alignItems: 'center' },
+  chooserBtnText: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  chooserBtnAlt: { borderRadius: 8, paddingVertical: 13, alignItems: 'center', borderWidth: 1 },
+  chooserBtnAltText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  chooserCancel: { paddingVertical: 10, alignItems: 'center', marginTop: 4 },
+  chooserCancelText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
 
   // Review modal
   reviewSafeArea: { flex: 1 },
   reviewHeader: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
-  reviewTitle: { fontSize: 18, fontFamily: "Inter_700Bold" },
-  reviewSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  reviewTitle: { fontSize: 18, fontFamily: 'Inter_700Bold' },
+  reviewSub: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 2 },
   reviewRow: { borderRadius: 10, borderWidth: 1, padding: 12, gap: 8 },
-  reviewRowHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
-  reviewCatalog: { fontSize: 14, fontFamily: "Inter_700Bold" },
-  reviewVendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 },
+  reviewRowHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  reviewCatalog: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  reviewVendor: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 2,
+  },
   diffBlock: { gap: 2, marginTop: 4 },
-  diffLabel: { fontSize: 10, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5 },
-  diffOld: { fontSize: 12, fontFamily: "Inter_400Regular", textDecorationLine: "line-through" },
-  diffNew: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  reviewEmpty: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", marginTop: 40 },
-  reviewFooter: { flexDirection: "row", gap: 10, padding: 12, borderTopWidth: 1 },
-  reviewCancel: { flex: 1, borderRadius: 8, paddingVertical: 13, alignItems: "center", borderWidth: 1 },
-  reviewCancelText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  reviewConfirm: { flex: 2, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
-  reviewConfirmText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  diffLabel: { fontSize: 10, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5 },
+  diffOld: { fontSize: 12, fontFamily: 'Inter_400Regular', textDecorationLine: 'line-through' },
+  diffNew: { fontSize: 12, fontFamily: 'Inter_500Medium' },
+  reviewEmpty: { fontSize: 14, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 40 },
+  reviewFooter: { flexDirection: 'row', gap: 10, padding: 12, borderTopWidth: 1 },
+  reviewCancel: {
+    flex: 1,
+    borderRadius: 8,
+    paddingVertical: 13,
+    alignItems: 'center',
+    borderWidth: 1,
+  },
+  reviewCancelText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  reviewConfirm: { flex: 2, borderRadius: 8, paddingVertical: 13, alignItems: 'center' },
+  reviewConfirmText: { fontSize: 14, fontFamily: 'Inter_700Bold' },
 });

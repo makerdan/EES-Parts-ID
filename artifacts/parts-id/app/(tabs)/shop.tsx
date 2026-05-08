@@ -3,42 +3,32 @@
  * Supply website so workers can browse it without leaving the app.
  * Shows a friendly offline state when the network is unreachable.
  */
-import React, { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-import { WebView } from "react-native-webview";
-import NetInfo from "@react-native-community/netinfo";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useColors } from "@/hooks/useColors";
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { WebView } from 'react-native-webview';
+import NetInfo from '@react-native-community/netinfo';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useColors } from '@/hooks/useColors';
 
-const SHOP_URL = "https://www.elliottelectric.com";
+const SHOP_URL = 'https://www.elliottelectric.com';
 
 const OFFLINE_PATTERNS = [
-  "internet connection appears to be offline",
-  "err_internet_disconnected",
-  "err_name_not_resolved",
-  "err_address_unreachable",
-  "err_network_changed",
-  "err_proxy_connection_failed",
-  "could not connect to the server",
-  "a server with the specified hostname could not be found",
-  "the network connection was lost",
-  "network is unreachable",
-  "no internet",
+  'internet connection appears to be offline',
+  'err_internet_disconnected',
+  'err_name_not_resolved',
+  'err_address_unreachable',
+  'err_network_changed',
+  'err_proxy_connection_failed',
+  'could not connect to the server',
+  'a server with the specified hostname could not be found',
+  'the network connection was lost',
+  'network is unreachable',
+  'no internet',
 ];
 
 const OFFLINE_ERROR_CODES = new Set([-1009, -1003, -1004, -1005, -1020]);
 
-function looksLikeOfflineError(
-  description: string | undefined,
-  code: number | undefined,
-): boolean {
+function looksLikeOfflineError(description: string | undefined, code: number | undefined): boolean {
   if (code !== undefined && OFFLINE_ERROR_CODES.has(code)) return true;
   if (!description) return false;
   const d = description.toLowerCase();
@@ -65,8 +55,7 @@ export default function ShopScreen() {
   // tap retry themselves.
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
-      const online =
-        state.isConnected === true && state.isInternetReachable !== false;
+      const online = state.isConnected === true && state.isInternetReachable !== false;
       if (!online) {
         wasOfflineRef.current = true;
         setIsOffline(true);
@@ -87,12 +76,10 @@ export default function ShopScreen() {
         {showingOffline ? (
           <View style={styles.errorContainer}>
             <MaterialCommunityIcons name="wifi-off" size={48} color={colors.mutedForeground} />
-            <Text style={[styles.errorTitle, { color: colors.foreground }]}>
-              You're offline
-            </Text>
+            <Text style={[styles.errorTitle, { color: colors.foreground }]}>You're offline</Text>
             <Text style={[styles.errorBody, { color: colors.mutedForeground }]}>
-              Connect to the internet to browse Elliott Electric Supply. We'll
-              reload the page automatically once you're back online.
+              Connect to the internet to browse Elliott Electric Supply. We'll reload the page
+              automatically once you're back online.
             </Text>
             <Pressable
               onPress={handleRetry}
@@ -105,7 +92,11 @@ export default function ShopScreen() {
           </View>
         ) : showingError ? (
           <View style={styles.errorContainer}>
-            <MaterialCommunityIcons name="alert-circle-outline" size={48} color={colors.destructive} />
+            <MaterialCommunityIcons
+              name="alert-circle-outline"
+              size={48}
+              color={colors.destructive}
+            />
             <Text style={[styles.errorTitle, { color: colors.foreground }]}>
               Couldn't load Elliott Electric Supply
             </Text>
@@ -137,9 +128,7 @@ export default function ShopScreen() {
                   setIsOffline(true);
                   setErrorMessage(null);
                 } else {
-                  setErrorMessage(
-                    description || "Check your connection and try again.",
-                  );
+                  setErrorMessage(description || 'Check your connection and try again.');
                 }
               }}
               onHttpError={(e) => {
@@ -147,7 +136,7 @@ export default function ShopScreen() {
                 if (status >= 400) {
                   setLoading(false);
                   setErrorMessage(
-                    `The page returned an error (${status}). Please try again later.`,
+                    `The page returned an error (${status}). Please try again later.`
                   );
                 }
               }}
@@ -156,14 +145,11 @@ export default function ShopScreen() {
               cacheEnabled
               domStorageEnabled
               javaScriptEnabled
-              originWhitelist={["*"]}
+              originWhitelist={['*']}
             />
             {loading ? (
               <View
-                style={[
-                  styles.loadingOverlay,
-                  { backgroundColor: colors.background + "CC" },
-                ]}
+                style={[styles.loadingOverlay, { backgroundColor: colors.background + 'CC' }]}
                 pointerEvents="none"
               >
                 <ActivityIndicator size="large" color={colors.primary} />
@@ -181,35 +167,35 @@ export default function ShopScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
-  container: { flex: 1, position: "relative" },
+  container: { flex: 1, position: 'relative' },
   webView: { flex: 1 },
   loadingOverlay: {
-    position: "absolute",
+    position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 12,
   },
-  loadingText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  loadingText: { fontSize: 14, fontFamily: 'Inter_500Medium' },
   errorContainer: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     padding: 32,
     gap: 12,
   },
   errorTitle: {
     fontSize: 18,
-    fontFamily: "Inter_700Bold",
-    textAlign: "center",
+    fontFamily: 'Inter_700Bold',
+    textAlign: 'center',
   },
   errorBody: {
     fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    textAlign: "center",
+    fontFamily: 'Inter_400Regular',
+    textAlign: 'center',
     lineHeight: 20,
   },
   retryBtn: {
@@ -218,5 +204,5 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
   },
-  retryBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  retryBtnText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
 });

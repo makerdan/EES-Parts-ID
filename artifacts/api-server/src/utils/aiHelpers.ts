@@ -19,13 +19,13 @@ export interface AiAnalysis {
  * Bare base64 strings (no data: prefix) are treated as JPEG.
  */
 export function buildImageContent(images: string[]): Array<{
-  type: "image_url";
+  type: 'image_url';
   image_url: { url: string };
 }> {
-  return images.slice(0, 2).map(img => ({
-    type: "image_url" as const,
+  return images.slice(0, 2).map((img) => ({
+    type: 'image_url' as const,
     image_url: {
-      url: img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`,
+      url: img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`,
     },
   }));
 }
@@ -51,7 +51,7 @@ export function extractJsonFromText(text: string): Record<string, unknown> | nul
  */
 export function normalizeAnalysis(
   parsed: Record<string, unknown> | null,
-  rawText: string,
+  rawText: string
 ): AiAnalysis {
   if (!parsed) {
     return {
@@ -67,12 +67,9 @@ export function normalizeAnalysis(
     searchTerms: Array.isArray(parsed.searchTerms) ? (parsed.searchTerms as string[]) : [],
     synonyms: Array.isArray(parsed.synonyms) ? (parsed.synonyms as string[]) : [],
     relatedTerms: Array.isArray(parsed.relatedTerms) ? (parsed.relatedTerms as string[]) : [],
-    manufacturerVerified: typeof parsed.manufacturerVerified === "boolean"
-      ? parsed.manufacturerVerified
-      : false,
-    detectedVendor: typeof parsed.detectedVendor === "string"
-      ? parsed.detectedVendor
-      : null,
-    summary: typeof parsed.summary === "string" ? parsed.summary : "",
+    manufacturerVerified:
+      typeof parsed.manufacturerVerified === 'boolean' ? parsed.manufacturerVerified : false,
+    detectedVendor: typeof parsed.detectedVendor === 'string' ? parsed.detectedVendor : null,
+    summary: typeof parsed.summary === 'string' ? parsed.summary : '',
   };
 }

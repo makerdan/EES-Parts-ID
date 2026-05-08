@@ -9,9 +9,9 @@
  * Pass `onDismiss` to show a ✕ button that lets the worker clear the
  * banner after reading it.
  */
-import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { useColors } from "@/hooks/useColors";
+import React from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useColors } from '@/hooks/useColors';
 
 interface ErrorBannerProps {
   message: string;
@@ -27,7 +27,7 @@ export function ErrorBanner({ message, style, onDismiss }: ErrorBannerProps) {
       style={[
         styles.banner,
         {
-          backgroundColor: colors.destructive + "12",
+          backgroundColor: colors.destructive + '12',
           borderLeftColor: colors.destructive,
         },
         style,
@@ -56,8 +56,8 @@ export function ErrorBanner({ message, style, onDismiss }: ErrorBannerProps) {
 
 const styles = StyleSheet.create({
   banner: {
-    flexDirection: "row",
-    alignItems: "flex-start",
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     gap: 10,
     borderLeftWidth: 3,
     borderRadius: 6,
@@ -68,13 +68,13 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 13,
-    fontFamily: "Inter_700Bold",
+    fontFamily: 'Inter_700Bold',
     marginTop: 1,
     flexShrink: 0,
   },
   text: {
     fontSize: 13,
-    fontFamily: "Inter_500Medium",
+    fontFamily: 'Inter_500Medium',
     lineHeight: 19,
     flexShrink: 1,
     flex: 1,
@@ -87,7 +87,7 @@ const styles = StyleSheet.create({
   },
   dismissText: {
     fontSize: 13,
-    fontFamily: "Inter_700Bold",
+    fontFamily: 'Inter_700Bold',
     opacity: 0.7,
   },
 });

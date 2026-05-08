@@ -9,31 +9,27 @@
  * Auth: all routes require the admin Bearer token (same as other admin routes).
  * The :id parameter is the inventory_id (primary key of inventory_category).
  */
-import { Router } from "express";
-import { and, eq, isNull, sql } from "drizzle-orm";
-import {
-  db,
-  inventoryCategoryTable,
-  categoryNodeTable,
-} from "@workspace/db";
-import { verifyAdminToken } from "./admin";
+import { Router } from 'express';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { db, inventoryCategoryTable, categoryNodeTable } from '@workspace/db';
+import { verifyAdminToken } from './admin';
 
 const router = Router();
 
 function requireAdminAuth(
-  req: import("express").Request,
-  res: import("express").Response,
-  next: import("express").NextFunction,
+  req: import('express').Request,
+  res: import('express').Response,
+  next: import('express').NextFunction
 ): void {
   const adminPassword = process.env.ADMIN_PASSWORD;
   if (!adminPassword) {
-    res.status(503).json({ error: "Admin access is not configured." });
+    res.status(503).json({ error: 'Admin access is not configured.' });
     return;
   }
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const authHeader = req.headers['authorization'] ?? '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
+    res.status(401).json({ error: 'Unauthorized: valid admin token required' });
     return;
   }
   next();
@@ -43,10 +39,10 @@ function requireAdminAuth(
 // Returns the paginated review queue: AI-classified rows where confidence < 0.70
 // and reviewed_at IS NULL, oldest-first.
 // Query params: page (default 1), limit (default 50, max 100).
-router.get("/classification-review", requireAdminAuth, async (req, res) => {
+router.get('/classification-review', requireAdminAuth, async (req, res) => {
   try {
-    const page  = Math.max(1, parseInt(String(req.query["page"]  ?? "1"))  || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(String(req.query["limit"] ?? "50")) || 50));
+    const page = Math.max(1, parseInt(String(req.query['page'] ?? '1')) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query['limit'] ?? '50')) || 50));
     const offset = (page - 1) * limit;
 
     // Count of pending items (hits the partial index).
@@ -58,7 +54,7 @@ router.get("/classification-review", requireAdminAuth, async (req, res) => {
         AND confidence < 0.70
     `);
     const pendingCount = Number(
-      (countResult as { rows: Record<string, unknown>[] }).rows[0]?.["total"] ?? 0,
+      (countResult as { rows: Record<string, unknown>[] }).rows[0]?.['total'] ?? 0
     );
 
     // Fetch queue items with a three-level category breadcrumb.
@@ -87,70 +83,73 @@ router.get("/classification-review", requireAdminAuth, async (req, res) => {
       LIMIT ${limit} OFFSET ${offset}
     `);
 
-    const items = (rows as { rows: Record<string, unknown>[] }).rows.map(r => ({
-      inventoryId:    Number(r["inventoryId"]),
-      vendor:         String(r["vendor"] ?? ""),
-      catalog:        String(r["catalog"] ?? ""),
-      description:    String(r["description"] ?? ""),
-      confidencePct:  Number(r["confidencePct"] ?? 0),
-      classifiedAt:   r["classifiedAt"] instanceof Date
-        ? r["classifiedAt"].toISOString()
-        : String(r["classifiedAt"] ?? ""),
-      categoryNodeId: Number(r["categoryNodeId"]),
-      categoryPath: [r["catName"], r["subcatName"], r["typeName"]]
-        .filter(Boolean)
-        .join(" › "),
+    const items = (rows as { rows: Record<string, unknown>[] }).rows.map((r) => ({
+      inventoryId: Number(r['inventoryId']),
+      vendor: String(r['vendor'] ?? ''),
+      catalog: String(r['catalog'] ?? ''),
+      description: String(r['description'] ?? ''),
+      confidencePct: Number(r['confidencePct'] ?? 0),
+      classifiedAt:
+        r['classifiedAt'] instanceof Date
+          ? r['classifiedAt'].toISOString()
+          : String(r['classifiedAt'] ?? ''),
+      categoryNodeId: Number(r['categoryNodeId']),
+      categoryPath: [r['catName'], r['subcatName'], r['typeName']].filter(Boolean).join(' › '),
     }));
 
     res.json({ items, total: pendingCount, page, limit });
   } catch (err) {
-    console.error("[classification-review/GET] failed:", err);
-    res.status(500).json({ error: "Failed to load review queue" });
+    console.error('[classification-review/GET] failed:', err);
+    res.status(500).json({ error: 'Failed to load review queue' });
   }
 });
 
 // ── POST /admin/classification-review/:id/confirm ───────────────────────────
 // Mark the item as reviewed without changing its category.
-router.post("/classification-review/:id/confirm", requireAdminAuth, async (req, res) => {
+router.post('/classification-review/:id/confirm', requireAdminAuth, async (req, res) => {
   try {
-    const inventoryId = parseInt(String(req.params["id"] ?? "0"));
+    const inventoryId = parseInt(String(req.params['id'] ?? '0'));
     if (!Number.isFinite(inventoryId) || inventoryId <= 0) {
-      return void res.status(400).json({ error: "id must be a positive integer" });
+      return void res.status(400).json({ error: 'id must be a positive integer' });
     }
 
     const result = await db
       .update(inventoryCategoryTable)
-      .set({ reviewedAt: new Date(), reviewedBy: "admin" })
-      .where(and(
-        eq(inventoryCategoryTable.inventoryId, inventoryId),
-        eq(inventoryCategoryTable.classifiedBy, "ai"),
-        isNull(inventoryCategoryTable.reviewedAt),
-      ))
+      .set({ reviewedAt: new Date(), reviewedBy: 'admin' })
+      .where(
+        and(
+          eq(inventoryCategoryTable.inventoryId, inventoryId),
+          eq(inventoryCategoryTable.classifiedBy, 'ai'),
+          isNull(inventoryCategoryTable.reviewedAt)
+        )
+      )
       .returning({ inventoryId: inventoryCategoryTable.inventoryId });
 
     if (result.length === 0) {
-      return void res.status(404).json({ error: "Item not found in review queue (not AI-classified or already reviewed)" });
+      return void res
+        .status(404)
+        .json({ error: 'Item not found in review queue (not AI-classified or already reviewed)' });
     }
     res.json({ ok: true, inventoryId });
   } catch (err) {
-    console.error("[classification-review/confirm] failed:", err);
-    res.status(500).json({ error: "Failed to confirm classification" });
+    console.error('[classification-review/confirm] failed:', err);
+    res.status(500).json({ error: 'Failed to confirm classification' });
   }
 });
 
 // ── POST /admin/classification-review/:id/reclassify ────────────────────────
 // Reassign to a different leaf category node and mark as manually reviewed.
 // Body: { categoryNodeId: number }
-router.post("/classification-review/:id/reclassify", requireAdminAuth, async (req, res) => {
+router.post('/classification-review/:id/reclassify', requireAdminAuth, async (req, res) => {
   try {
-    const inventoryId = parseInt(String(req.params["id"] ?? "0"));
+    const inventoryId = parseInt(String(req.params['id'] ?? '0'));
     if (!Number.isFinite(inventoryId) || inventoryId <= 0) {
-      return void res.status(400).json({ error: "id must be a positive integer" });
+      return void res.status(400).json({ error: 'id must be a positive integer' });
     }
 
     const { categoryNodeId } = req.body as { categoryNodeId?: number };
     if (!Number.isFinite(categoryNodeId) || (categoryNodeId ?? 0) <= 0) {
-      return void res.status(400).json({ error: "categoryNodeId must be a positive integer" });
+      return void res.status(400).json({ error: 'categoryNodeId must be a positive integer' });
     }
 
     // Validate the target node exists and is a leaf type node.
@@ -161,45 +160,47 @@ router.post("/classification-review/:id/reclassify", requireAdminAuth, async (re
       .limit(1);
 
     if (!node) {
-      return void res.status(404).json({ error: "Target category node not found" });
+      return void res.status(404).json({ error: 'Target category node not found' });
     }
-    if (node.level !== "type") {
-      return void res.status(400).json({ error: "Inventory must be assigned to a leaf type node" });
+    if (node.level !== 'type') {
+      return void res.status(400).json({ error: 'Inventory must be assigned to a leaf type node' });
     }
 
     const result = await db
       .update(inventoryCategoryTable)
       .set({
         categoryNodeId: categoryNodeId!,
-        classifiedBy: "manual",
-        confidence:   "1.0000",
-        reviewedAt:   new Date(),
-        reviewedBy:   "admin",
+        classifiedBy: 'manual',
+        confidence: '1.0000',
+        reviewedAt: new Date(),
+        reviewedBy: 'admin',
       })
-      .where(and(
-        eq(inventoryCategoryTable.inventoryId, inventoryId),
-        isNull(inventoryCategoryTable.reviewedAt),
-      ))
+      .where(
+        and(
+          eq(inventoryCategoryTable.inventoryId, inventoryId),
+          isNull(inventoryCategoryTable.reviewedAt)
+        )
+      )
       .returning({ inventoryId: inventoryCategoryTable.inventoryId });
 
     if (result.length === 0) {
-      return void res.status(404).json({ error: "Item not found or already reviewed" });
+      return void res.status(404).json({ error: 'Item not found or already reviewed' });
     }
     res.json({ ok: true, inventoryId, categoryNodeId });
   } catch (err) {
-    console.error("[classification-review/reclassify] failed:", err);
-    res.status(500).json({ error: "Failed to reclassify item" });
+    console.error('[classification-review/reclassify] failed:', err);
+    res.status(500).json({ error: 'Failed to reclassify item' });
   }
 });
 
 // ── POST /admin/classification-review/:id/skip ──────────────────────────────
 // Defer the item to the end of the queue by bumping classified_at to now().
 // The oldest-first ORDER BY then places it after all current items.
-router.post("/classification-review/:id/skip", requireAdminAuth, async (req, res) => {
+router.post('/classification-review/:id/skip', requireAdminAuth, async (req, res) => {
   try {
-    const inventoryId = parseInt(String(req.params["id"] ?? "0"));
+    const inventoryId = parseInt(String(req.params['id'] ?? '0'));
     if (!Number.isFinite(inventoryId) || inventoryId <= 0) {
-      return void res.status(400).json({ error: "id must be a positive integer" });
+      return void res.status(400).json({ error: 'id must be a positive integer' });
     }
 
     // Bump classified_at to now() so it sorts after all existing queue items.
@@ -214,12 +215,12 @@ router.post("/classification-review/:id/skip", requireAdminAuth, async (req, res
 
     const updated = (result as { rows: Record<string, unknown>[] }).rows.length;
     if (updated === 0) {
-      return void res.status(404).json({ error: "Item not found or already reviewed" });
+      return void res.status(404).json({ error: 'Item not found or already reviewed' });
     }
     res.json({ ok: true, inventoryId });
   } catch (err) {
-    console.error("[classification-review/skip] failed:", err);
-    res.status(500).json({ error: "Failed to skip item" });
+    console.error('[classification-review/skip] failed:', err);
+    res.status(500).json({ error: 'Failed to skip item' });
   }
 });
 
