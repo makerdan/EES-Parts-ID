@@ -1751,7 +1751,7 @@ const styles = StyleSheet.create({
   },
   searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   filterCard: {
-    marginHorizontal: 12,
+    marginHorizontal: 24,
     marginBottom: 6,
   },
   aisleEntryBtn: {
