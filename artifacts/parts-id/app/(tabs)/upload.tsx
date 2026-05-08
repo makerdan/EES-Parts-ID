@@ -2663,45 +2663,62 @@ export default function UploadScreen() {
                           database permanently.
                         </Text>
 
-                        {enrichSummary ? (
-                          <>
-                            <View style={styles.enrichStats}>
-                              <View
-                                style={[
-                                  styles.statChip,
-                                  { backgroundColor: colors.success + '11' },
-                                ]}
-                              >
-                                <Text style={[styles.statValue, { color: colors.success }]}>
-                                  {enrichSummary.enriched.toLocaleString()}
-                                </Text>
-                                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
-                                  Enriched
-                                </Text>
-                              </View>
-                              <View
-                                style={[
-                                  styles.statChip,
-                                  { backgroundColor: colors.warning + '11' },
-                                ]}
-                              >
-                                <Text style={[styles.statValue, { color: colors.warning }]}>
-                                  {enrichSummary.unenriched.toLocaleString()}
-                                </Text>
-                                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
-                                  Pending
-                                </Text>
-                              </View>
-                              <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
-                                <Text style={[styles.statValue, { color: colors.foreground }]}>
-                                  {enrichSummary.total > 0
-                                    ? `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`
-                                    : '—'}
-                                </Text>
-                                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
-                                  Coverage
-                                </Text>
-                              </View>
+                        {/*
+                         * Render the Review Queue chip independently of
+                         * enrichSummary. The enrichment summary call can be
+                         * slow, but the review-queue count is its own request
+                         * — when it lands first, the chip should be visible
+                         * (and trustworthy) without waiting on coverage stats.
+                         */}
+                        {enrichSummary || reviewCount != null ? (
+                          <View style={styles.enrichStats}>
+                            {enrichSummary ? (
+                              <>
+                                <View
+                                  style={[
+                                    styles.statChip,
+                                    { backgroundColor: colors.success + '11' },
+                                  ]}
+                                >
+                                  <Text style={[styles.statValue, { color: colors.success }]}>
+                                    {enrichSummary.enriched.toLocaleString()}
+                                  </Text>
+                                  <Text
+                                    style={[styles.statLabel, { color: colors.mutedForeground }]}
+                                  >
+                                    Enriched
+                                  </Text>
+                                </View>
+                                <View
+                                  style={[
+                                    styles.statChip,
+                                    { backgroundColor: colors.warning + '11' },
+                                  ]}
+                                >
+                                  <Text style={[styles.statValue, { color: colors.warning }]}>
+                                    {enrichSummary.unenriched.toLocaleString()}
+                                  </Text>
+                                  <Text
+                                    style={[styles.statLabel, { color: colors.mutedForeground }]}
+                                  >
+                                    Pending
+                                  </Text>
+                                </View>
+                                <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
+                                  <Text style={[styles.statValue, { color: colors.foreground }]}>
+                                    {enrichSummary.total > 0
+                                      ? `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`
+                                      : '—'}
+                                  </Text>
+                                  <Text
+                                    style={[styles.statLabel, { color: colors.mutedForeground }]}
+                                  >
+                                    Coverage
+                                  </Text>
+                                </View>
+                              </>
+                            ) : null}
+                            {reviewCount != null ? (
                               <Pressable
                                 style={[
                                   styles.statChip,
@@ -2714,31 +2731,31 @@ export default function UploadScreen() {
                                 accessibilityLabel="Open review queue"
                               >
                                 <Text style={[styles.statValue, { color: colors.primary }]}>
-                                  {reviewCount != null ? reviewCount.toLocaleString() : '—'}
+                                  {reviewCount.toLocaleString()}
                                 </Text>
                                 <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
                                   Review Queue
                                 </Text>
                               </Pressable>
-                            </View>
-
-                            {enrichSummary.total > 0 ? (
-                              <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
-                                <View
-                                  style={[
-                                    styles.progressFill,
-                                    {
-                                      backgroundColor: colors.success,
-                                      width: `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`,
-                                    },
-                                  ]}
-                                />
-                              </View>
                             ) : null}
-                          </>
-                        ) : (
+                          </View>
+                        ) : null}
+
+                        {!enrichSummary ? (
                           <ActivityIndicator size="small" color={colors.primary} />
-                        )}
+                        ) : enrichSummary.total > 0 ? (
+                          <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                            <View
+                              style={[
+                                styles.progressFill,
+                                {
+                                  backgroundColor: colors.success,
+                                  width: `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`,
+                                },
+                              ]}
+                            />
+                          </View>
+                        ) : null}
 
                         {bulkJobStatus?.running ? (
                           <View style={styles.progressContainer}>
