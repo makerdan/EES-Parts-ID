@@ -74,7 +74,12 @@ export function ResultRefinementBar({ results, refinement, onChange }: Props) {
       const counts: Record<string, number> = {};
       for (const opt of dim.options) {
         const matched = subset.reduce(
-          (acc, r) => (tokenMatch(itemFullText(r.item), opt) ? acc + 1 : acc),
+          (acc, r) => {
+            const text = dim.key === "category"
+              ? (r.item.aiKeywords ?? []).join(" ").toLowerCase()
+              : itemFullText(r.item);
+            return tokenMatch(text, opt) ? acc + 1 : acc;
+          },
           0,
         );
         if (matched > 0) counts[opt] = matched;

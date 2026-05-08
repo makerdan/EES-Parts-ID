@@ -123,6 +123,11 @@ export function applyRefinement(results: SearchResult[], refinement: RefinementS
   return results.filter(r => {
     const text = itemFullText(r.item);
     if (extra && !tokenMatch(text, extra)) return false;
-    return activeChips.every(([, v]) => tokenMatch(text, v));
+    return activeChips.every(([k, v]) => {
+      const chipText = k === "category"
+        ? (r.item.aiKeywords ?? []).join(" ").toLowerCase()
+        : text;
+      return tokenMatch(chipText, v);
+    });
   });
 }
