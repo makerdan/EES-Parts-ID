@@ -383,7 +383,7 @@ export default function SearchScreen() {
   // when settings finish loading from AsyncStorage (settingsLoading: true→false).
   // After that point, changes made in the Settings modal do NOT overwrite the
   // threshold the worker has already chosen for the current search.
-  // handleClear() already applies the new default when starting a fresh search.
+  // handleClear() already applies the new default whenever the worker resets the search.
   useEffect(() => {
     if (settingsLoading) return;
     setFilters(f => ({ ...f, confidenceThreshold: settings.defaultConfidenceThreshold }));
@@ -743,17 +743,16 @@ export default function SearchScreen() {
     setBrowseResults(null);
     setBrowseError(null);
     // Also dismiss the Browse-by-Aisle overlay so a repeat-tap of the
-    // Search tab (or the "New Search" button / app-title tap) always
-    // lands the worker back on the empty welcome state, regardless of
-    // which secondary view they were in.
+    // Search tab (or app-title tap) always lands the worker back on the
+    // empty welcome state, regardless of which secondary view they were in.
     setAisleBrowseOpen(false);
   };
 
   // Tap-Search-tab-to-reset: when the worker is already on the Search tab
   // and has results (or typed filters) on screen, tapping the Search tab
-  // again should bring them back to the empty welcome state — same
-  // behavior as the "New Search" button. We stash handleClear in a ref so
-  // the listener subscribes exactly once and never resubscribes mid-search.
+  // again should bring them back to the empty welcome state. We stash
+  // handleClear in a ref so the listener subscribes exactly once and never
+  // resubscribes mid-search.
   const handleClearRef = useRef(handleClear);
   useEffect(() => { handleClearRef.current = handleClear; });
   const navigation = useNavigation();
@@ -982,8 +981,8 @@ export default function SearchScreen() {
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={{ flex: 1 }}>
           {/* Tapping the app title resets the Search screen back to the
-              empty welcome state (same effect as the "New Search" button
-              and tapping the Search tab while focused). */}
+              empty welcome state (same effect as tapping the Search tab
+              while already focused). */}
           <Pressable onPress={() => handleClearRef.current()} hitSlop={8}>
             <Text style={[styles.headerTitle, { color: colors.foreground }]}>Parts ID</Text>
           </Pressable>
@@ -1499,8 +1498,7 @@ export default function SearchScreen() {
         // IMPORTANT: pass a JSX element here, NOT an inline `() => (...)`
         // function. An inline arrow creates a fresh component type on every
         // render, which makes FlatList unmount/remount the header subtree
-        // and silently swallow in-flight Pressable taps — this is what
-        // broke the "New Search" button.
+        // and silently swallow in-flight Pressable taps.
         ListHeaderComponent={(
           <View>
             {/* Results header */}
