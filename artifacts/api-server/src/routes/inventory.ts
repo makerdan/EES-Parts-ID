@@ -30,7 +30,6 @@ import {
   tokenMatch,
   matchesChipFilters,
 } from "../utils/searchHelpers";
-import type { AbbreviationMapRow, SlangMapRow, MisspellingMapRow } from "../enrichment/buildSearchTokens";
 import { generateKeywords } from "../utils/generateKeywords";
 import { suggestDescription } from "../utils/suggestDescription";
 import {
@@ -1475,7 +1474,7 @@ router.post("/rebuild-search-tokens", requireAdminAuth, async (_req, res) => {
 
       for (const item of batch) {
         try {
-          const tokens = buildSearchTokens(item, synonymGroups, { abbreviationMaps: abbreviationMaps as AbbreviationMapRow[], slangMaps: slangMaps as SlangMapRow[], misspellingMaps: misspellingMaps as MisspellingMapRow[] });
+          const tokens = buildSearchTokens(item, synonymGroups, { abbreviationMaps, slangMaps, misspellingMaps });
           await db
             .update(inventoryTable)
             .set({ searchTokens: tokens, tokensDictVersion: currentVersion })
@@ -1589,11 +1588,7 @@ router.post("/rebuild-tokens", requireAdminAuth, async (_req, res) => {
 
       for (const item of batch) {
         try {
-          const tokens = buildSearchTokens(item, synonymGroups, {
-            abbreviationMaps: abbreviationMaps as AbbreviationMapRow[],
-            slangMaps: slangMaps as SlangMapRow[],
-            misspellingMaps: misspellingMaps as MisspellingMapRow[],
-          });
+          const tokens = buildSearchTokens(item, synonymGroups, { abbreviationMaps, slangMaps, misspellingMaps });
           await db
             .update(inventoryTable)
             .set({ searchTokens: tokens, tokensDictVersion: currentVersion })
