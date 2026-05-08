@@ -7,7 +7,16 @@
  * Closing the overlay returns them to their prior search/filter state.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  BackHandler,
+  FlatList,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
@@ -111,9 +120,9 @@ export function BrowseByAisle({
   // navigator. The effect re-registers whenever the drill level changes so
   // the handler always has the correct behaviour for the current depth.
   useEffect(() => {
-    if (Platform.OS !== "android") return;
-    const handler = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (level === "aisles") {
+    if (Platform.OS !== 'android') return;
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (level === 'aisles') {
         onClose();
       } else {
         goBack();
@@ -134,7 +143,10 @@ export function BrowseByAisle({
           <Text allowFontScaling={false} style={[styles.emptyTitle, { color: colors.foreground }]}>
             {cacheReady ? 'No inventory loaded' : 'Inventory not synced yet'}
           </Text>
-          <Text allowFontScaling={false} style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+          <Text
+            allowFontScaling={false}
+            style={[styles.emptyHint, { color: colors.mutedForeground }]}
+          >
             {cacheReady
               ? 'There are no parts to browse.'
               : 'Browse by Aisle works offline once the inventory has been synced once. Connect to the network and wait for the sync badge in the header to finish.'}
@@ -347,10 +359,14 @@ function ShelfView({
                     accessibilityRole="button"
                     accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
                   >
-                    <Text allowFontScaling={false} style={[shelfStyles.slotPos, { color: '#000000' }]}>
+                    <Text
+                      allowFontScaling={false}
+                      style={[shelfStyles.slotPos, { color: '#000000' }]}
+                    >
                       {p.bin.split('-').pop() ?? p.bin}
                     </Text>
-                    <Text allowFontScaling={false}
+                    <Text
+                      allowFontScaling={false}
                       numberOfLines={1}
                       style={[
                         shelfStyles.slotName,
@@ -360,7 +376,8 @@ function ShelfView({
                       {p.item.catalog ?? p.item.description ?? '—'}
                     </Text>
                     {p.item.vendor ? (
-                      <Text allowFontScaling={false}
+                      <Text
+                        allowFontScaling={false}
                         numberOfLines={1}
                         style={[
                           shelfStyles.slotVendor,
@@ -387,7 +404,10 @@ function ShelfView({
             ]}
           />
         </ScrollView>
-        <Text allowFontScaling={false} style={[shelfStyles.locationLabel, { color: colors.mutedForeground }]}>
+        <Text
+          allowFontScaling={false}
+          style={[shelfStyles.locationLabel, { color: colors.mutedForeground }]}
+        >
           {`${locationLabel} · ${parts.length} ${parts.length === 1 ? 'part' : 'parts'}`}
         </Text>
       </View>
@@ -428,7 +448,10 @@ function ShelfView({
             color={colors.mutedForeground}
             style={{ marginBottom: 8 }}
           />
-          <Text allowFontScaling={false} style={[shelfStyles.hintText, { color: colors.mutedForeground }]}>
+          <Text
+            allowFontScaling={false}
+            style={[shelfStyles.hintText, { color: colors.mutedForeground }]}
+          >
             Tap a bin above to see part details
           </Text>
         </View>
@@ -512,7 +535,10 @@ function SectionShelfView({
       {shelves.map((shelf, shelfIdx) => (
         <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
           {shelfIdx > 0 ? <View style={sectionStyles.shelfPlank} /> : null}
-          <Text allowFontScaling={false} style={[sectionStyles.shelfLabel, { color: colors.foreground }]}>
+          <Text
+            allowFontScaling={false}
+            style={[sectionStyles.shelfLabel, { color: colors.foreground }]}
+          >
             {`${shelf.label} · ${shelf.partCount} ${shelf.partCount === 1 ? 'part' : 'parts'}`}
           </Text>
           <ScrollView
@@ -543,10 +569,14 @@ function SectionShelfView({
                       accessibilityRole="button"
                       accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
                     >
-                      <Text allowFontScaling={false} style={[shelfStyles.slotPos, { color: '#000000' }]}>
+                      <Text
+                        allowFontScaling={false}
+                        style={[shelfStyles.slotPos, { color: '#000000' }]}
+                      >
                         {p.bin.split('-').pop() ?? p.bin}
                       </Text>
-                      <Text allowFontScaling={false}
+                      <Text
+                        allowFontScaling={false}
                         numberOfLines={1}
                         style={[
                           shelfStyles.slotName,
@@ -556,7 +586,8 @@ function SectionShelfView({
                         {p.item.catalog ?? p.item.description ?? '—'}
                       </Text>
                       {p.item.vendor ? (
-                        <Text allowFontScaling={false}
+                        <Text
+                          allowFontScaling={false}
                           numberOfLines={1}
                           style={[
                             shelfStyles.slotVendor,
@@ -613,7 +644,10 @@ function SectionShelfView({
             color={colors.mutedForeground}
             style={{ marginBottom: 8 }}
           />
-          <Text allowFontScaling={false} style={[shelfStyles.hintText, { color: colors.mutedForeground }]}>
+          <Text
+            allowFontScaling={false}
+            style={[shelfStyles.hintText, { color: colors.mutedForeground }]}
+          >
             Tap a bin above to see part details
           </Text>
         </View>
@@ -670,7 +704,11 @@ function Header({
       </Pressable>
       <View style={styles.crumbWrap}>
         {parts.length > 0 ? (
-          <Text allowFontScaling={false} style={[styles.crumbPath, { color: '#000000' }]} numberOfLines={1}>
+          <Text
+            allowFontScaling={false}
+            style={[styles.crumbPath, { color: '#000000' }]}
+            numberOfLines={1}
+          >
             {parts.join(' › ')}
           </Text>
         ) : null}
@@ -706,9 +744,16 @@ function DrillRow({
       accessibilityLabel={`${label}, ${count} ${count === 1 ? 'part' : 'parts'}`}
     >
       <View style={{ flex: 1 }}>
-        <Text allowFontScaling={false} style={[styles.drillLabel, { color: colors.foreground }]}>{label}</Text>
+        <Text allowFontScaling={false} style={[styles.drillLabel, { color: colors.foreground }]}>
+          {label}
+        </Text>
         {hint ? (
-          <Text allowFontScaling={false} style={[styles.drillHint, { color: colors.mutedForeground }]}>{hint}</Text>
+          <Text
+            allowFontScaling={false}
+            style={[styles.drillHint, { color: colors.mutedForeground }]}
+          >
+            {hint}
+          </Text>
         ) : null}
       </View>
       <Text allowFontScaling={false} style={[styles.drillCount, { color: colors.mutedForeground }]}>
