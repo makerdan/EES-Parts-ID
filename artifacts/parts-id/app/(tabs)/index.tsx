@@ -1447,7 +1447,7 @@ export default function SearchScreen() {
           >
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
               <Feather name="folder" size={14} color={colors.foreground} />
-              <Text style={[styles.modeToggleText, { color: colors.foreground }]}>Browse</Text>
+              <Text style={[styles.modeToggleText, { color: colors.foreground }]}>Browse Categories</Text>
             </View>
           </Pressable>
         </View>
