@@ -7,7 +7,7 @@
  * Features:
  *   - Debounced search bar (400 ms) that re-fetches with ?q=… on GET /inventory
  *   - Pull-to-refresh (RefreshControl)
- *   - Load-more footer button (page-based pagination, 50 per page)
+ *   - Scroll-triggered load-more via onEndReached (threshold 0.3)
  *   - Tap a row to open RecordEditModal for inline editing
  *   - Optimistic list update after a successful PATCH
  */
@@ -48,14 +48,15 @@ export function RecordsBrowser({ adminHeaders }: Props) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [allLoaded, setAllLoaded] = useState(false);
 
   const [search, setSearch] = useState("");
-  const searchRef = useRef(search);
-  searchRef.current = search;
 
   const [editItem, setEditItem] = useState<ListItem | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Guard so onEndReached can't double-trigger while a fetch is in flight
+  const fetchingRef = useRef(false);
 
   const fetchPage = useCallback(async (opts: {
     pageNum: number;
@@ -64,6 +65,9 @@ export function RecordsBrowser({ adminHeaders }: Props) {
     isRefresh?: boolean;
   }) => {
     const { pageNum, q, append, isRefresh } = opts;
+    if (fetchingRef.current && append) return;
+    fetchingRef.current = true;
+
     if (isRefresh) setRefreshing(true);
     else if (append) setLoadingMore(true);
     else setLoading(true);
@@ -93,26 +97,30 @@ export function RecordsBrowser({ adminHeaders }: Props) {
         limit: number;
       };
 
+      const newItems = append ? (prev: ListItem[]) => [...prev, ...data.items] : () => data.items;
       setTotal(data.total);
       setPage(pageNum);
-      setItems(prev => append ? [...prev, ...data.items] : data.items);
+      setItems(newItems);
+      setAllLoaded(data.items.length < PAGE_SIZE || pageNum * PAGE_SIZE >= data.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error — please try again.");
     } finally {
       setLoading(false);
       setLoadingMore(false);
       setRefreshing(false);
+      fetchingRef.current = false;
     }
   }, [adminHeaders]);
 
   useEffect(() => {
     void fetchPage({ pageNum: 1, q: "", append: false });
-  // fetchPage is stable (useCallback with adminHeaders dep); intentionally run once on mount
+  // Run once on mount; fetchPage is stable via useCallback
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSearchChange = (text: string) => {
     setSearch(text);
+    setAllLoaded(false);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       void fetchPage({ pageNum: 1, q: text, append: false });
@@ -120,14 +128,13 @@ export function RecordsBrowser({ adminHeaders }: Props) {
   };
 
   const handleRefresh = () => {
+    setAllLoaded(false);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     void fetchPage({ pageNum: 1, q: search, append: false, isRefresh: true });
   };
 
-  const handleLoadMore = () => {
-    if (loadingMore || loading) return;
-    const loaded = items.length;
-    if (total !== null && loaded >= total) return;
+  const handleEndReached = () => {
+    if (loadingMore || loading || allLoaded) return;
     void fetchPage({ pageNum: page + 1, q: search, append: true });
   };
 
@@ -136,44 +143,48 @@ export function RecordsBrowser({ adminHeaders }: Props) {
     setEditItem(prev => prev && prev.id === updated.id ? { ...prev, ...updated } : prev);
   }, []);
 
-  const renderItem = ({ item }: { item: ListItem }) => (
-    <Pressable
-      onPress={() => setEditItem(item)}
-      style={({ pressed }) => [
-        s.row,
-        {
-          backgroundColor: pressed ? colors.muted : colors.background,
-          borderBottomColor: colors.border,
-        },
-      ]}
-      accessibilityRole="button"
-      accessibilityLabel={`Edit ${item.catalog}`}
-    >
-      <View style={s.rowMain}>
-        <View style={s.rowLeft}>
-          <Text style={[s.catalog, { color: colors.foreground }]} numberOfLines={1}>
-            {item.catalog}
-          </Text>
-          <Text style={[s.vendor, { color: colors.mutedForeground }]} numberOfLines={1}>
-            {item.vendorFullName ?? item.vendor}
-          </Text>
-          {item.description ? (
-            <Text style={[s.desc, { color: colors.mutedForeground }]} numberOfLines={2}>
-              {item.description}
-            </Text>
-          ) : null}
-          {item.binLocations && item.binLocations.length > 0 ? (
-            <Text style={[s.bins, { color: colors.primary }]} numberOfLines={1}>
-              {item.binLocations.join(", ")}
-            </Text>
-          ) : null}
-        </View>
-        <Text style={[s.chevron, { color: colors.mutedForeground }]}>›</Text>
-      </View>
-    </Pressable>
-  );
+  const renderItem = ({ item }: { item: ListItem }) => {
+    const vendorLine = item.vendorFullName && item.vendorFullName !== item.vendor
+      ? `${item.vendor} · ${item.vendorFullName}`
+      : item.vendor;
 
-  const hasMore = total !== null && items.length < total;
+    return (
+      <Pressable
+        onPress={() => setEditItem(item)}
+        style={({ pressed }) => [
+          s.row,
+          {
+            backgroundColor: pressed ? colors.muted : colors.background,
+            borderBottomColor: colors.border,
+          },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit ${item.catalog}`}
+      >
+        <View style={s.rowMain}>
+          <View style={s.rowLeft}>
+            <Text style={[s.catalog, { color: colors.foreground }]} numberOfLines={1}>
+              {item.catalog}
+            </Text>
+            <Text style={[s.vendor, { color: colors.mutedForeground }]} numberOfLines={1}>
+              {vendorLine}
+            </Text>
+            {item.description ? (
+              <Text style={[s.desc, { color: colors.mutedForeground }]} numberOfLines={2}>
+                {item.description}
+              </Text>
+            ) : null}
+            {item.binLocations && item.binLocations.length > 0 ? (
+              <Text style={[s.bins, { color: colors.primary }]} numberOfLines={1}>
+                {item.binLocations.join(", ")}
+              </Text>
+            ) : null}
+          </View>
+          <Text style={[s.chevron, { color: colors.mutedForeground }]}>›</Text>
+        </View>
+      </Pressable>
+    );
+  };
 
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
@@ -235,6 +246,8 @@ export function RecordsBrowser({ adminHeaders }: Props) {
           data={items}
           keyExtractor={item => String(item.id)}
           renderItem={renderItem}
+          onEndReached={handleEndReached}
+          onEndReachedThreshold={0.3}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -253,21 +266,11 @@ export function RecordsBrowser({ adminHeaders }: Props) {
             ) : null
           }
           ListFooterComponent={() =>
-            hasMore ? (
-              <Pressable
-                onPress={handleLoadMore}
-                disabled={loadingMore}
-                style={[s.loadMoreBtn, { borderColor: colors.border }]}
-              >
-                {loadingMore ? (
-                  <ActivityIndicator size="small" color={colors.primary} />
-                ) : (
-                  <Text style={[s.loadMoreText, { color: colors.primary }]}>
-                    Load more ({items.length} of {total})
-                  </Text>
-                )}
-              </Pressable>
-            ) : items.length > 0 ? (
+            loadingMore ? (
+              <View style={s.footerLoader}>
+                <ActivityIndicator size="small" color={colors.primary} />
+              </View>
+            ) : allLoaded && items.length > 0 ? (
               <Text style={[s.endText, { color: colors.mutedForeground }]}>
                 All {items.length} records loaded
               </Text>
@@ -342,14 +345,7 @@ const s = StyleSheet.create({
   desc: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17, marginTop: 1 },
   bins: { fontSize: 11, fontFamily: "Inter_600SemiBold", marginTop: 2 },
   chevron: { fontSize: 18, fontFamily: "Inter_400Regular" },
-  loadMoreBtn: {
-    margin: 12,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  footerLoader: { paddingVertical: 16, alignItems: "center" },
   endText: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
