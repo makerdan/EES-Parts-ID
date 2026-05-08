@@ -46,11 +46,14 @@ interface BrowseTaxonomyProps {
   onSelectNode: (node: CategoryTreeNode | null) => void;
   /** Optional pre-supplied tree (e.g. for tests). */
   initialTree?: CategoryTreeNode[];
+  /** Increment this to pop the current path up one level (e.g. Back from results). */
+  popTrigger?: number;
 }
 
 export default function BrowseTaxonomy({
   onSelectNode,
   initialTree,
+  popTrigger = 0,
 }: BrowseTaxonomyProps): React.JSX.Element {
   const colors = useColors();
   const [tree, setTree] = useState<CategoryTreeNode[]>(initialTree ?? []);
@@ -110,6 +113,15 @@ export default function BrowseTaxonomy({
     if (!userHasNavigated.current) return;
     onSelectNode(nodeAtPath(tree, path));
   }, [path, tree, onSelectNode]);
+
+  // Pop one level when the parent signals Back from the results screen.
+  const prevPopTrigger = useRef(popTrigger);
+  useEffect(() => {
+    if (popTrigger === prevPopTrigger.current) return;
+    prevPopTrigger.current = popTrigger;
+    userHasNavigated.current = true;
+    setPath(prev => prev.slice(0, -1));
+  }, [popTrigger]);
 
   useEffect(() => {
     if (path.length > 0) {
