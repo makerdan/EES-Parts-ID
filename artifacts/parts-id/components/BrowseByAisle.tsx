@@ -7,7 +7,7 @@
  * Closing the overlay returns them to their prior search/filter state.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -683,7 +683,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
   },
-  drillLabel: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  drillLabel: { fontSize: 15, fontFamily: Platform.select({ ios: "Courier New", android: "monospace", default: "monospace" }), fontWeight: "600" },
   drillHint: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
   drillCount: { fontSize: 13, fontFamily: "Inter_500Medium" },
   partRow: { paddingHorizontal: 12 },
