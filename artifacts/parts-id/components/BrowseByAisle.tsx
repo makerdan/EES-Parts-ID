@@ -672,7 +672,7 @@ const styles = StyleSheet.create({
     pointerEvents: "none",
   },
   crumbHome: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  crumbPath: { fontSize: 12, fontFamily: "Inter_700Bold", flexShrink: 1, textAlign: "center" },
+  crumbPath: { fontSize: 24, fontFamily: "Inter_700Bold", flexShrink: 1, textAlign: "center", textDecorationLine: "underline" },
   drillRow: {
     flexDirection: "row",
     alignItems: "center",
