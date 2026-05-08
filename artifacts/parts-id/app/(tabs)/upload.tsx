@@ -810,6 +810,8 @@ export default function UploadScreen() {
       stopMeasurePoll();
       return;
     }
+    setUploadError(null);
+    setCatalogPdfError(null);
     fetchEnrichSummary();
     fetchReviewCount();
     (async () => {
