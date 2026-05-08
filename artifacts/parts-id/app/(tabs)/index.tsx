@@ -1444,6 +1444,25 @@ export default function SearchScreen() {
             dimensionCounts={dimensionCounts}
           />
         </View>
+        {mode !== "browse" && !hasResults ? (
+          <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
+            <Pressable
+              onPress={() => switchMode("browse")}
+              style={[
+                styles.modeToggleBtn,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: "rgba(0,0,0,0.75)",
+                },
+              ]}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Feather name="folder" size={14} color={colors.foreground} />
+                <Text style={[styles.modeToggleText, { color: colors.foreground }]}>Browse Categories</Text>
+              </View>
+            </Pressable>
+          </View>
+        ) : null}
         {mode === "browse" ? (
           <View>
             <BrowseTaxonomy onSelectNode={handleBrowseNodeChange} />
@@ -1465,27 +1484,6 @@ export default function SearchScreen() {
           </View>
         ) : null}
       </ScrollView>
-
-      {/* ── Browse mode toggle ──────────────────────────────────────────── */}
-      {mode !== "browse" && !hasResults ? (
-        <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
-          <Pressable
-            onPress={() => switchMode("browse")}
-            style={[
-              styles.modeToggleBtn,
-              {
-                backgroundColor: colors.card,
-                borderColor: "rgba(0,0,0,0.75)",
-              },
-            ]}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Feather name="folder" size={14} color={colors.foreground} />
-              <Text style={[styles.modeToggleText, { color: colors.foreground }]}>Browse Categories</Text>
-            </View>
-          </Pressable>
-        </View>
-      ) : null}
 
       <FlatList
         data={visibleResults}
