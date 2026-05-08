@@ -216,6 +216,7 @@ export default function SearchScreen() {
   const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showRefModal, setShowRefModal] = useState(false);
+  const [searchSelection, setSearchSelection] = useState<{ start: number; end: number } | undefined>(undefined);
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
   const [cacheAge, setCacheAge] = useState<string | null>(null);
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
@@ -1386,6 +1387,12 @@ export default function SearchScreen() {
             autoCorrect={false}
             returnKeyType="search"
             onSubmitEditing={handleSearch}
+            selection={searchSelection}
+            onFocus={() => {
+              const len = (filters.keywords ?? "").length;
+              if (len > 0) setSearchSelection({ start: len, end: len });
+            }}
+            onSelectionChange={() => setSearchSelection(undefined)}
           />
           {filters.keywords ? (
             <Pressable
