@@ -104,11 +104,18 @@ export default function BrowseTaxonomy({
   // starts with the taxonomy visible and results only load after an explicit
   // tap, even when a previous path is cached in AsyncStorage.
   const userHasNavigated = useRef(false);
+  const crumbsScrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     if (!userHasNavigated.current) return;
     onSelectNode(nodeAtPath(tree, path));
   }, [path, tree, onSelectNode]);
+
+  useEffect(() => {
+    if (path.length > 0) {
+      crumbsScrollRef.current?.scrollToEnd({ animated: true });
+    }
+  }, [path]);
 
   const children = useMemo(() => visibleChildren(tree, path), [tree, path]);
   const breadcrumbs = useMemo(() => {
@@ -164,6 +171,7 @@ export default function BrowseTaxonomy({
       ) : null}
       {/* Breadcrumbs */}
       <ScrollView
+        ref={crumbsScrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.crumbs}
