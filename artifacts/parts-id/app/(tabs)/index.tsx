@@ -1776,7 +1776,11 @@ export default function SearchScreen() {
               ) : null}
               {mode === 'browse' ? (
                 <View>
-                  <BrowseTaxonomy onSelectNode={handleBrowseNodeChange} popTrigger={browsePop} />
+                  <BrowseTaxonomy
+                    onSelectNode={handleBrowseNodeChange}
+                    popTrigger={browsePop}
+                    onExitBrowse={() => switchMode('search')}
+                  />
                   {browseLoading ? (
                     <Text style={[styles.refinementHint, { color: colors.mutedForeground }]}>
                       Loading items in {browseSelectedNode?.name ?? 'category'}…
