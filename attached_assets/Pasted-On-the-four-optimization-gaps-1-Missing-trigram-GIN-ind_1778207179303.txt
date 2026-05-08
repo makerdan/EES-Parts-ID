@@ -1,0 +1,44 @@
+On the four optimization gaps
+1. Missing trigram GIN index — agree it's the top priority, with one caveat.
+
+This is the right call. But the index alone isn't enough. A gin_trgm_ops index only gets used when the query contains a % operator (or LIKE '%...%' patterns the planner can rewrite). If the current code does something like ORDER BY similarity(search_tokens, $1) DESC LIMIT 20 without a WHERE search_tokens % $1 prefilter, Postgres will still sequential-scan and compute similarity for every row.
+
+So the fix is two-part: create the index and make sure the query looks like:
+
+sql
+WHERE search_tokens % $1
+ORDER BY similarity(search_tokens, $1) DESC
+LIMIT 20
+
+Verify with EXPLAIN ANALYZE that the plan shows Bitmap Index Scan on idx_inventory_search_tokens_trgm. If it shows Seq Scan, the index exists but isn't being used, and you've fixed nothing.
+
+Also set pg_trgm.similarity_threshold appropriately (default 0.3) or use set_limit() — too high and you drop fuzzy matches, too low and the bitmap scan degenerates to a full scan anyway.
+
+2. Indexes on chip filter columns — partially agree, but this is where cargo-cult indexing happens.
+
+Blanket B-tree indexes on every filter column is the wrong instinct. Specifically:
+
+pole_count has maybe 4 distinct values (1, 2, 3, 4). A B-tree index on it is essentially useless — the planner will ignore it in favor of a sequential scan for any query that isn't already highly selective. Don't bother.
+mount_type has a handful of values. Same problem.
+amperage has more cardinality (15, 20, 30, 40, 50, 60, 100, 200...) and is more selective. Worth indexing.
+trade_size_in similar — worth indexing.
+voltage low cardinality, skip it standalone.
+The right move is not one index per column. It's:
+
+Look at the telemetry (search_event.filters_json) for the actual chip combinations users apply.
+Build composite partial indexes matching the top 3–5 combinations, e.g. CREATE INDEX ON inventory (amperage, pole_count) WHERE amperage IS NOT NULL AND pole_count IS NOT NULL;.
+Rely on bitmap-AND of the FTS/trigram index with a single selective B-tree (usually amperage or trade_size) for the rest.
+Indexing is a cost — writes get slower, VACUUM gets slower, plan time increases. Only add what the query plans prove you need. This recommendation as written would add a bunch of dead weight.
+
+3. search_tokens staleness — real problem, correct diagnosis, wrong implied fix.
+
+"No automatic refresh mechanism" is the right observation. But "re-enrich everything when a synonym changes" is the wrong reflex. Re-running AI enrichment costs money and time; synonym changes don't need the AI pass.
+
+The right fix is a versioned dictionary with a lightweight rebuild:
+
+sql
+ALTER TABLE inventory ADD COLUMN tokens_dict_version integer NOT NULL DEFAULT 0;
+
+Keep a single dict_version counter that increments whenever any of synonym_group, abbreviation_map, electrical_slang_map, or misspelling_map changes (triggers handle this). A background job periodically runs buildSearchTokens for rows where tokens_dict_version < current_dict_version. This is a pure string operation — no LLM call, no cost per row, processes tens of thousands of rows per minute.
+
+Separate this from AI re-enrichment, which should have its own invalidation rules (description changed, prompt version bumped, etc.) as I laid out in Stage 3.6 of the earlier plan.
