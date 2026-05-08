@@ -84,7 +84,16 @@ function ClassicTabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: "Search",
+          title: "PartsID",
+          tabBarLabel: "Search",
+          // Show the native iOS large-collapsible-title header on this tab.
+          // `headerLargeTitle` is a valid React Navigation / expo-router header
+          // option at runtime but is not yet surfaced in Tabs.Screen's TypeScript
+          // types — hence the suppression below.
+          headerShown: isIOS,
+          // @ts-expect-error — headerLargeTitle is supported by the underlying
+          // React Navigation stack renderer on iOS but not typed for Tabs.Screen
+          headerLargeTitle: isIOS,
           tabBarIcon: ({ color }) =>
             isIOS ? (
               <SymbolView name="magnifyingglass" tintColor={color} size={24} />
