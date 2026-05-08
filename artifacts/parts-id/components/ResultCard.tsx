@@ -6,7 +6,7 @@
  * the description) and `highlightBin` (which bin code to mark with
  * "← here" — used by Browse-by-Aisle to point to the exact shelf).
  */
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -140,7 +140,7 @@ function VariantRow({
   fontScale: number;
   onPress: () => void;
 }) {
-  const fs = (base: number) => Math.round(base * fontScale);
+  const fs = useCallback((base: number) => Math.round(base * fontScale), [fontScale]);
   const bins = item.binLocations ?? [];
   const primaryBin = bins[0];
   const sameVendor = item.vendor.toUpperCase() === parentVendor.toUpperCase();
@@ -177,6 +177,7 @@ function VariantRow({
       <Text
         style={[varStyles.catalog, { color: colors.foreground, fontSize: fs(13) }]}
         numberOfLines={1}
+        allowFontScaling={false}
       >
         {label}
       </Text>
@@ -185,6 +186,7 @@ function VariantRow({
           style={[varStyles.size, { color: colors.foreground, fontSize: fs(13) }]}
           numberOfLines={1}
           ellipsizeMode="tail"
+          allowFontScaling={false}
         >
           {sizeLabel}
         </Text>
@@ -192,6 +194,7 @@ function VariantRow({
         <Text
           style={[varStyles.sizeEmpty, { color: colors.mutedForeground, fontSize: fs(13) }]}
           numberOfLines={1}
+          allowFontScaling={false}
         >
           —
         </Text>
@@ -200,6 +203,7 @@ function VariantRow({
         <Text
           style={[varStyles.bin, { color: colors.foreground, fontSize: fs(13) }]}
           numberOfLines={1}
+          allowFontScaling={false}
         >
           {primaryBin}
         </Text>
@@ -207,6 +211,7 @@ function VariantRow({
         <Text
           style={[varStyles.binEmpty, { color: colors.mutedForeground, fontSize: fs(12) }]}
           numberOfLines={1}
+          allowFontScaling={false}
         >
           No bin
         </Text>
@@ -261,7 +266,7 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
   // the visible result list.
   const [detailVariant, setDetailVariant] = useState<InventoryItem | null>(null);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
-  const fs = (base: number) => Math.round(base * fontScale);
+  const fs = useCallback((base: number) => Math.round(base * fontScale), [fontScale]);
 
   // Exclude the current part from its own related-sizes list — a card
   // should never list itself as a "related" size. Server-side filtering
@@ -319,10 +324,10 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
               </View>
             ) : null}
             <View style={cardStyles.titleGroup}>
-              <Text style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]}>
+              <Text style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]} allowFontScaling={false}>
                 <HighlightedText text={item.vendor} tokens={hl} matchStyle={hlStyle} />
               </Text>
-              <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(28) }]}>
+              <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(28) }]} allowFontScaling={false}>
                 <HighlightedText text={item.catalog} tokens={hl} matchStyle={hlStyle} />
               </Text>
               {item.seriesName ? (
@@ -341,7 +346,7 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
                     },
                   ]}
                 >
-                  <Text style={[cardStyles.seriesBadgeText, { color: colors.primary, fontSize: fs(11) }]}>
+                  <Text style={[cardStyles.seriesBadgeText, { color: colors.primary, fontSize: fs(11) }]} allowFontScaling={false}>
                     {hasVariants ? "⊞ " : ""}Part of {item.seriesName}
                   </Text>
                 </Pressable>
@@ -359,7 +364,7 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
         </View>
 
         {/* Description */}
-        <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
+        <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2} allowFontScaling={false}>
           {item.description ? (
             <HighlightedText text={item.description} tokens={hl} matchStyle={hlStyle} />
           ) : "No description"}
@@ -418,7 +423,7 @@ export function ResultCard({ result, onEditKeywords, rank, showRank = true, font
             accessibilityState={{ expanded: variantsExpanded }}
             accessibilityLabel={`${seriesLabel ?? "Related sizes"}, ${variantCount} ${variantCount === 1 ? "item" : "items"}`}
           >
-            <Text style={[cardStyles.variantsToggleText, { color: colors.foreground, fontSize: fs(12) }]}>
+            <Text style={[cardStyles.variantsToggleText, { color: colors.foreground, fontSize: fs(12) }]} allowFontScaling={false}>
               {seriesLabel ?? "RELATED SIZES"} ({variantCount})
             </Text>
             <Text style={[cardStyles.variantsToggleChevron, { color: colors.mutedForeground }]}>
