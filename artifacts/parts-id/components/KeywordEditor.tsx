@@ -115,8 +115,19 @@ export function KeywordEditor({
   const lastSavedTradeSizeRef = useRef<string>(item?.tradeSize ?? '');
   const lastSavedBinsRef = useRef<string[]>(item?.binLocations ?? []);
 
+  // Session-scoped undo stack for description edits. Each entry is the
+  // value that was on the row BEFORE a save (or before AI "Use this"
+  // overwrote it). Cleared whenever the editor is opened on a different
+  // item so undo never crosses items.
+  const [descUndoStack, setDescUndoStack] = useState<string[]>([]);
+
   // Tracks whether a mutateAsync call is currently in flight
   const isSavingRef = useRef(false);
+
+  // Set while persist() is being driven by an undo so we don't re-push the
+  // value we're rolling back FROM onto the undo stack (which would create
+  // an A→B→A→B loop and never let the user reach earlier values).
+  const isUndoingDescRef = useRef(false);
 
   // When a save is in flight at close-time, stash the latest snapshot here so
   // the in-flight save's finally block can fire one follow-up flush.
@@ -156,6 +167,7 @@ export function KeywordEditor({
     lastSavedDescriptionRef.current = desc;
     lastSavedTradeSizeRef.current = ts;
     lastSavedBinsRef.current = bins;
+    setDescUndoStack([]);
     setSaveStatus('idle');
     setLocalSeriesName(item?.seriesName ?? null);
     setSeriesSearch('');
@@ -184,6 +196,11 @@ export function KeywordEditor({
         return;
       isSavingRef.current = true;
       setSaveStatus('saving');
+      // Snapshot the previous saved description BEFORE the network round-
+      // trip so we can push it onto the undo stack if (and only if) the
+      // save succeeds and the description actually changed.
+      const prevDesc = lastSavedDescriptionRef.current;
+      const undoingThisSave = isUndoingDescRef.current;
       try {
         await updateMutation.mutateAsync({ id, data: payload });
         if (payload.keywords !== undefined) {
@@ -191,6 +208,9 @@ export function KeywordEditor({
           onKeywordsChanged?.(id, payload.keywords);
         }
         if (payload.description !== undefined) {
+          if (!undoingThisSave && payload.description !== prevDesc) {
+            setDescUndoStack((stack) => [...stack, prevDesc]);
+          }
           lastSavedDescriptionRef.current = payload.description;
           onDescriptionChanged?.(id, payload.description);
         }
@@ -516,6 +536,33 @@ export function KeywordEditor({
     setSuggestError(null);
   };
 
+  // Pop the most recent prior description value off the undo stack and
+  // persist it. Cancels any pending debounced description save so the
+  // undo round-trip isn't immediately overwritten by a stale autosave.
+  const handleUndoDescription = useCallback(() => {
+    const current = itemRef.current;
+    if (!current) return;
+    setDescUndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const next = stack.slice(0, -1);
+      const prior = stack[stack.length - 1] ?? '';
+      // Cancel any pending debounce so the undone value isn't overwritten.
+      if (descDebounceRef.current) {
+        clearTimeout(descDebounceRef.current);
+        descDebounceRef.current = null;
+      }
+      setDescription(prior);
+      latestDescriptionRef.current = prior;
+      // Drive the persist with the undo flag set so we don't push the
+      // current value back onto the stack.
+      isUndoingDescRef.current = true;
+      void persist(current.id, { description: prior }).finally(() => {
+        isUndoingDescRef.current = false;
+      });
+      return next;
+    });
+  }, [persist]);
+
   const handleDismissSuggestion = () => {
     setSuggestion(null);
     setSuggestError(null);
@@ -679,7 +726,43 @@ export function KeywordEditor({
           </Text>
 
           {/* ── Description ───────────────────────────────────────────── */}
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+              DESCRIPTION
+            </Text>
+            <Pressable
+              onPress={handleUndoDescription}
+              disabled={descUndoStack.length === 0}
+              accessibilityRole="button"
+              accessibilityLabel="Undo last description change"
+              accessibilityState={{ disabled: descUndoStack.length === 0 }}
+              style={{
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 6,
+                borderWidth: 1,
+                borderColor: colors.border,
+                opacity: descUndoStack.length === 0 ? 0.4 : 1,
+                marginBottom: 8,
+              }}
+            >
+              <Text
+                style={{
+                  color: colors.foreground,
+                  fontSize: 11,
+                  fontFamily: 'Inter_600SemiBold',
+                }}
+              >
+                ↶ Undo
+              </Text>
+            </Pressable>
+          </View>
           <TextInput
             value={description}
             onChangeText={handleDescriptionChange}

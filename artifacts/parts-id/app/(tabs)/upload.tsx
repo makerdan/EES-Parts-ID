@@ -3451,122 +3451,149 @@ export default function UploadScreen() {
                                     <View
                                       key={run.id}
                                       style={{
-                                        flexDirection: 'row',
-                                        alignItems: 'center',
+                                        flexDirection: 'column',
                                         paddingVertical: 8,
                                         borderBottomWidth: 1,
                                         borderBottomColor: colors.border,
                                         opacity: isReverted ? 0.55 : 1,
                                       }}
                                     >
-                                      <View style={{ flex: 1, paddingRight: 8 }}>
-                                        <Text
-                                          style={{
-                                            color: colors.foreground,
-                                            fontSize: 13,
-                                            fontFamily: 'Inter_500Medium',
-                                          }}
-                                          numberOfLines={1}
-                                        >
-                                          {run.vendor} · {run.sourceFilename ?? 'raw upload'}
-                                        </Text>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        <View style={{ flex: 1, paddingRight: 8 }}>
+                                          <Text
+                                            style={{
+                                              color: colors.foreground,
+                                              fontSize: 13,
+                                              fontFamily: 'Inter_500Medium',
+                                            }}
+                                            numberOfLines={1}
+                                          >
+                                            {run.vendor} · {run.sourceFilename ?? 'raw upload'}
+                                          </Text>
+                                          <Text
+                                            style={{
+                                              color: colors.mutedForeground,
+                                              fontSize: 11,
+                                              marginTop: 2,
+                                            }}
+                                          >
+                                            {when} · {run.updatedCount} updated
+                                            {run.errorCount > 0
+                                              ? ` · ${run.errorCount} errors`
+                                              : ''}
+                                            {isReverted ? ' · reverted' : ''}
+                                          </Text>
+                                        </View>
+                                        {isReverted ? (
+                                          <Pressable
+                                            onPress={
+                                              run.undoBlocked
+                                                ? () => {
+                                                    Alert.alert(
+                                                      'Undo unavailable',
+                                                      'A newer enrichment run has changed one or more of these items, so undoing this revert would overwrite those newer changes.'
+                                                    );
+                                                  }
+                                                : () => {
+                                                    handleUndoRevert(run.id);
+                                                  }
+                                            }
+                                            disabled={anyInFlight}
+                                            accessibilityState={{ disabled: !!run.undoBlocked }}
+                                            accessibilityHint={
+                                              run.undoBlocked
+                                                ? 'Undo is disabled because a newer enrichment run has modified these items.'
+                                                : undefined
+                                            }
+                                            accessibilityRole="button"
+                                            accessibilityLabel="Undo revert"
+                                            style={{
+                                              paddingHorizontal: 12,
+                                              paddingVertical: 6,
+                                              borderRadius: 6,
+                                              borderWidth: 1,
+                                              borderColor: run.undoBlocked
+                                                ? colors.border
+                                                : isUndoing
+                                                  ? colors.border
+                                                  : colors.foreground,
+                                              opacity: run.undoBlocked
+                                                ? 0.35
+                                                : anyInFlight && !isUndoing
+                                                  ? 0.5
+                                                  : 1,
+                                            }}
+                                          >
+                                            {isUndoing ? (
+                                              <ActivityIndicator
+                                                size="small"
+                                                color={colors.foreground}
+                                              />
+                                            ) : (
+                                              <Text
+                                                style={{
+                                                  color: run.undoBlocked
+                                                    ? colors.mutedForeground
+                                                    : colors.foreground,
+                                                  fontSize: 12,
+                                                  fontFamily: 'Inter_600SemiBold',
+                                                }}
+                                              >
+                                                Undo
+                                              </Text>
+                                            )}
+                                          </Pressable>
+                                        ) : (
+                                          <Pressable
+                                            onPress={() => {
+                                              handleRevertRun(run.id);
+                                            }}
+                                            disabled={anyInFlight}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="Revert this enrichment run"
+                                            style={{
+                                              paddingHorizontal: 12,
+                                              paddingVertical: 6,
+                                              borderRadius: 6,
+                                              borderWidth: 1,
+                                              borderColor: isReverting
+                                                ? colors.border
+                                                : colors.destructive,
+                                              opacity: anyInFlight && !isReverting ? 0.5 : 1,
+                                            }}
+                                          >
+                                            {isReverting ? (
+                                              <ActivityIndicator
+                                                size="small"
+                                                color={colors.destructive}
+                                              />
+                                            ) : (
+                                              <Text
+                                                style={{
+                                                  color: colors.destructive,
+                                                  fontSize: 12,
+                                                  fontFamily: 'Inter_600SemiBold',
+                                                }}
+                                              >
+                                                Revert
+                                              </Text>
+                                            )}
+                                          </Pressable>
+                                        )}
+                                      </View>
+                                      {isReverted && run.undoBlocked ? (
                                         <Text
                                           style={{
                                             color: colors.mutedForeground,
                                             fontSize: 11,
-                                            marginTop: 2,
+                                            fontStyle: 'italic',
+                                            marginTop: 4,
+                                            paddingRight: 8,
                                           }}
                                         >
-                                          {when} · {run.updatedCount} updated
-                                          {run.errorCount > 0 ? ` · ${run.errorCount} errors` : ''}
-                                          {isReverted ? ' · reverted' : ''}
+                                          A newer run has changed these items — undo is disabled.
                                         </Text>
-                                      </View>
-                                      {isReverted ? (
-                                        <Pressable
-                                          onPress={
-                                            run.undoBlocked
-                                              ? undefined
-                                              : () => {
-                                                  handleUndoRevert(run.id);
-                                                }
-                                          }
-                                          disabled={anyInFlight || !!run.undoBlocked}
-                                          accessibilityRole="button"
-                                          accessibilityLabel="Undo revert"
-                                          style={{
-                                            paddingHorizontal: 12,
-                                            paddingVertical: 6,
-                                            borderRadius: 6,
-                                            borderWidth: 1,
-                                            borderColor: run.undoBlocked
-                                              ? colors.border
-                                              : isUndoing
-                                                ? colors.border
-                                                : colors.foreground,
-                                            opacity: run.undoBlocked
-                                              ? 0.35
-                                              : anyInFlight && !isUndoing
-                                                ? 0.5
-                                                : 1,
-                                          }}
-                                        >
-                                          {isUndoing ? (
-                                            <ActivityIndicator
-                                              size="small"
-                                              color={colors.foreground}
-                                            />
-                                          ) : (
-                                            <Text
-                                              style={{
-                                                color: run.undoBlocked
-                                                  ? colors.mutedForeground
-                                                  : colors.foreground,
-                                                fontSize: 12,
-                                                fontFamily: 'Inter_600SemiBold',
-                                              }}
-                                            >
-                                              Undo
-                                            </Text>
-                                          )}
-                                        </Pressable>
-                                      ) : (
-                                        <Pressable
-                                          onPress={() => {
-                                            handleRevertRun(run.id);
-                                          }}
-                                          disabled={anyInFlight}
-                                          accessibilityRole="button"
-                                          accessibilityLabel="Revert this enrichment run"
-                                          style={{
-                                            paddingHorizontal: 12,
-                                            paddingVertical: 6,
-                                            borderRadius: 6,
-                                            borderWidth: 1,
-                                            borderColor: isReverting
-                                              ? colors.border
-                                              : colors.destructive,
-                                            opacity: anyInFlight && !isReverting ? 0.5 : 1,
-                                          }}
-                                        >
-                                          {isReverting ? (
-                                            <ActivityIndicator
-                                              size="small"
-                                              color={colors.destructive}
-                                            />
-                                          ) : (
-                                            <Text
-                                              style={{
-                                                color: colors.destructive,
-                                                fontSize: 12,
-                                                fontFamily: 'Inter_600SemiBold',
-                                              }}
-                                            >
-                                              Revert
-                                            </Text>
-                                          )}
-                                        </Pressable>
-                                      )}
+                                      ) : null}
                                     </View>
                                   );
                                 })
