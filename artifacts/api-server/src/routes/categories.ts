@@ -1073,6 +1073,7 @@ function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable
     promptVersion: null,
     searchTokens: null,
     seriesId: null,
+    tokensDictVersion: 0,
   };
 }
 

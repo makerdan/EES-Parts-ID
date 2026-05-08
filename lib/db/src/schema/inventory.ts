@@ -78,6 +78,11 @@ export const inventoryTable = pgTable(
     // Nullable FK to product_series.id. When set, the Other Sizes query uses
     // this for grouping instead of the catalog-prefix heuristic.
     seriesId: integer("series_id").references(() => productSeriesTable.id, { onDelete: "set null" }),
+    // ── Dictionary version tracking (migration 0015) ──────────────────────────
+    // Records which dictionary_version.version was current when search_tokens
+    // was last built for this row. Rows where tokensDictVersion < current
+    // dict_version are stale and need a lightweight rebuild (no AI call).
+    tokensDictVersion: integer("tokens_dict_version").notNull().default(0),
   },
   (table) => [
     uniqueIndex("inventory_vendor_catalog_idx").on(table.vendor, table.catalog),

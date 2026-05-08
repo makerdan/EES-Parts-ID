@@ -14,6 +14,7 @@ import {
   misspellingMapTable,
   synonymGroupTable,
   productSeriesTable,
+  dictionaryVersionTable,
 } from "@workspace/db";
 import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/batch";
 import { verifyAdminToken } from "./admin";
@@ -512,6 +513,7 @@ router.post("/search", async (req, res) => {
         promptVersion: null,
         searchTokens: null,
         seriesId: typeof row.series_id === "number" ? row.series_id : null,
+        tokensDictVersion: 0,
       };
 
       const { score, reason } = catalogScore(pgScore, row.catalog, catalogInput, rawKeywords, ftsRank);
@@ -1488,6 +1490,153 @@ router.post("/rebuild-search-tokens", requireAdminAuth, async (_req, res) => {
     console.error("[rebuild-search-tokens] Fatal error:", err);
     res.status(500).json({ error: String(err) });
   }
+});
+
+// ── Rebuild-tokens job state ───────────────────────────────────────────────────
+// Async background job that re-builds search_tokens only for rows whose
+// tokens_dict_version lags behind the current dictionary_version.version.
+// This avoids a full-table rebuild when only a handful of synonyms changed.
+
+interface RebuildTokensJob {
+  running: boolean;
+  startedAt: Date | null;
+  processed: number;
+  updated: number;
+  total: number | null;
+  dictVersion: number | null;
+  finishedAt: Date | null;
+  lastError: string | null;
+}
+
+const rebuildTokensJob: RebuildTokensJob = {
+  running: false,
+  startedAt: null,
+  processed: 0,
+  updated: 0,
+  total: null,
+  dictVersion: null,
+  finishedAt: null,
+  lastError: null,
+};
+
+const REBUILD_TOKENS_BATCH = 500;
+const REBUILD_TOKENS_DELAY_MS = 50;
+
+async function runRebuildTokens(): Promise<void> {
+  // 1. Read the current dictionary version
+  const [versionRow] = await db
+    .select({ version: dictionaryVersionTable.version })
+    .from(dictionaryVersionTable)
+    .where(eq(dictionaryVersionTable.id, 1));
+
+  const currentVersion = versionRow?.version ?? 0;
+  rebuildTokensJob.dictVersion = currentVersion;
+
+  if (currentVersion === 0) {
+    console.log("[rebuild-tokens] dict_version=0, no dictionary changes recorded — nothing to rebuild");
+    rebuildTokensJob.total = 0;
+    rebuildTokensJob.running = false;
+    rebuildTokensJob.finishedAt = new Date();
+    return;
+  }
+
+  // 2. Count stale rows so the UI can show a progress bar
+  const [countRow] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(inventoryTable)
+    .where(sql`${inventoryTable.tokensDictVersion} < ${currentVersion}`);
+
+  rebuildTokensJob.total = countRow?.total ?? 0;
+  console.log(
+    `[rebuild-tokens] Starting – ${rebuildTokensJob.total} stale rows (dict v${currentVersion})`,
+  );
+
+  // 3. Load synonym groups once (they drive buildSearchTokens)
+  const synonymGroups = await db
+    .select({ canonical: synonymGroupTable.canonical, synonyms: synonymGroupTable.synonyms })
+    .from(synonymGroupTable);
+
+  // 4. Cursor-paginated batch loop — only processes rows that are stale
+  let lastId = 0;
+
+  while (true) {
+    const batch = await db
+      .select({
+        id:          inventoryTable.id,
+        catalog:     inventoryTable.catalog,
+        description: inventoryTable.description,
+        vendor:      inventoryTable.vendor,
+        aiKeywords:  inventoryTable.aiKeywords,
+      })
+      .from(inventoryTable)
+      .where(
+        and(
+          sql`${inventoryTable.id} > ${lastId}`,
+          sql`${inventoryTable.tokensDictVersion} < ${currentVersion}`,
+        ),
+      )
+      .orderBy(inventoryTable.id)
+      .limit(REBUILD_TOKENS_BATCH);
+
+    if (batch.length === 0) break;
+
+    for (const item of batch) {
+      try {
+        const tokens = buildSearchTokens(item, synonymGroups);
+        await db
+          .update(inventoryTable)
+          .set({ searchTokens: tokens, tokensDictVersion: currentVersion })
+          .where(eq(inventoryTable.id, item.id));
+        rebuildTokensJob.updated++;
+      } catch (err) {
+        rebuildTokensJob.lastError = String(err);
+        console.error(`[rebuild-tokens] Error id=${item.id}:`, err);
+      }
+      rebuildTokensJob.processed++;
+    }
+
+    lastId = batch[batch.length - 1]!.id;
+    await new Promise((r) => setTimeout(r, REBUILD_TOKENS_DELAY_MS));
+  }
+
+  rebuildTokensJob.running = false;
+  rebuildTokensJob.finishedAt = new Date();
+  console.log(
+    `[rebuild-tokens] Done – processed=${rebuildTokensJob.processed} updated=${rebuildTokensJob.updated} dictV=${currentVersion}`,
+  );
+}
+
+// ── POST /inventory/rebuild-tokens ────────────────────────────────────────────
+// Starts the versioned async rebuild job. Returns 409 if already running.
+// Only processes rows where tokens_dict_version < current dict_version,
+// so re-running after a job completes is a no-op (0 stale rows).
+router.post("/rebuild-tokens", requireAdminAuth, (_req, res) => {
+  if (rebuildTokensJob.running) {
+    return void res.status(409).json({ error: "Rebuild already running", job: rebuildTokensJob });
+  }
+
+  rebuildTokensJob.running    = true;
+  rebuildTokensJob.startedAt  = new Date();
+  rebuildTokensJob.processed  = 0;
+  rebuildTokensJob.updated    = 0;
+  rebuildTokensJob.total      = null;
+  rebuildTokensJob.dictVersion = null;
+  rebuildTokensJob.finishedAt = null;
+  rebuildTokensJob.lastError  = null;
+
+  runRebuildTokens().catch((err) => {
+    rebuildTokensJob.running    = false;
+    rebuildTokensJob.finishedAt = new Date();
+    rebuildTokensJob.lastError  = String(err);
+    console.error("[rebuild-tokens] Fatal error:", err);
+  });
+
+  res.status(202).json({ message: "Rebuild started", job: rebuildTokensJob });
+});
+
+// ── GET /inventory/rebuild-tokens/status ──────────────────────────────────────
+router.get("/rebuild-tokens/status", requireAdminAuth, (_req, res) => {
+  res.json(rebuildTokensJob);
 });
 
 // ── GET /inventory/enrich-summary ─────────────────────────────────────────────
