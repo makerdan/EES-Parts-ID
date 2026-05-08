@@ -344,44 +344,85 @@ router.post("/search", async (req, res) => {
         // Wrap in a subquery so ORDER BY can reference the computed column aliases.
         // PostgreSQL only resolves aliases in ORDER BY when used as direct references
         // (not inside arithmetic expressions like fts_rank * 0.65 + trgm_sim * 0.35).
-        const pgQueryResult = await db.execute(sql`
-          SELECT * FROM (
-            SELECT
-              i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
-              i.series_id,
-              ${tsQuery.trim() ? sql`ts_rank_cd(
-                '{0.1, 0.3, 0.6, 1.0}', i.search_tsv,
-                to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
-              )` : sql`0`} AS fts_rank,
-              COALESCE(
-                CASE WHEN i.search_tokens IS NOT NULL
-                  THEN similarity(i.search_tokens, ${trgmQuery})
-                  ELSE greatest(
-                    similarity(i.catalog, ${trgmQuery}),
-                    similarity(i.description, ${trgmQuery})
-                  )
-                END,
-                0.0
-              ) AS trgm_sim
-            FROM inventory i
-            WHERE
-              ${tsQuery.trim() ? sql`i.search_tsv @@ (
-                to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
-              ) OR` : sql``}
-              (i.search_tokens IS NOT NULL AND i.search_tokens % ${trgmQuery})
-              OR (i.search_tokens IS NULL AND (
-                similarity(i.catalog, ${trgmQuery}) > 0.1
-                OR similarity(i.description, ${trgmQuery}) > 0.1
-              ))
-              ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
-              ${catalogLike ? sql`OR i.catalog ILIKE ${catalogLike}` : sql``}
-              ${trgmQuery ? sql`OR (i.catalog % ${trgmQuery})` : sql``}
-              ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
-          ) AS __ranked
-          ORDER BY (fts_rank * 0.65 + trgm_sim * 0.35) DESC
-          LIMIT 200
-        `);
+        //
+        // The query runs inside a transaction so SET LOCAL scopes the similarity
+        // threshold to this single operation. pg_trgm defaults to 0.3 which is too
+        // strict for short electrical catalog codes (e.g. "BR120") — those produce
+        // only 2-3 shared trigrams with natural-language queries. 0.15 is the chosen
+        // floor: it activates the GIN bitmap scan on idx_inventory_search_tokens_trgm
+        // for typical warehouse queries while keeping false-positive volume manageable.
+        //
+        // The NULL fallback arm (rows not yet enriched with search_tokens) is isolated
+        // in a separate UNION ALL member with LIMIT 50 so that un-enriched rows cannot
+        // force a full sequential scan that dominates query time. Any row that appears
+        // in both arms is deduplicated downstream by the scoreMap keyed on item ID.
+        const pgQueryResult = await db.transaction(async (tx) => {
+          await tx.execute(sql`SET LOCAL pg_trgm.similarity_threshold = 0.15`);
+          return tx.execute(sql`
+            SELECT * FROM (
+              -- Primary arm: FTS (idx_inventory_search_tsv GIN) and trigram on the
+              -- pre-expanded search_tokens column (idx_inventory_search_tokens_trgm GIN).
+              -- Catalog ILIKE, catalog %, and vendor exact-match are OR'd into this arm.
+              -- Rows matched here but lacking search_tokens (e.g. via ILIKE) get their
+              -- trgm_sim scored via catalog/description fallback in the COALESCE.
+              SELECT
+                i.id, i.vendor, i.catalog, i.description,
+                i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
+                i.series_id,
+                ${tsQuery.trim() ? sql`ts_rank_cd(
+                  '{0.1, 0.3, 0.6, 1.0}', i.search_tsv,
+                  to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
+                )` : sql`0`} AS fts_rank,
+                COALESCE(
+                  CASE WHEN i.search_tokens IS NOT NULL
+                    THEN similarity(i.search_tokens, ${trgmQuery})
+                    ELSE greatest(
+                      similarity(i.catalog, ${trgmQuery}),
+                      similarity(i.description, ${trgmQuery})
+                    )
+                  END,
+                  0.0
+                ) AS trgm_sim
+              FROM inventory i
+              WHERE
+                ${tsQuery.trim() ? sql`i.search_tsv @@ (
+                  to_tsquery('simple', ${tsQuery}) || to_tsquery('english', ${tsQuery})
+                ) OR` : sql``}
+                (i.search_tokens IS NOT NULL AND i.search_tokens % ${trgmQuery})
+                ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
+                ${catalogLike ? sql`OR i.catalog ILIKE ${catalogLike}` : sql``}
+                ${trgmQuery ? sql`OR (i.catalog % ${trgmQuery})` : sql``}
+                ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
+
+              ${trgmQuery ? sql`
+              UNION ALL
+
+              -- Fallback arm: un-enriched rows (search_tokens IS NULL) matched only by
+              -- fuzzy catalog/description similarity. Bounded to 50 rows so the
+              -- unindexed sequential scan on this arm cannot dominate query time even
+              -- when a large fraction of the table has not yet been backfilled.
+              SELECT
+                i.id, i.vendor, i.catalog, i.description,
+                i.bin_locations, i.ai_keywords, i.trade_size, i.enriched_at, i.created_at, i.updated_at,
+                i.series_id,
+                0::float AS fts_rank,
+                greatest(
+                  similarity(i.catalog, ${trgmQuery}),
+                  similarity(i.description, ${trgmQuery})
+                ) AS trgm_sim
+              FROM inventory i
+              WHERE i.search_tokens IS NULL
+                AND (
+                  similarity(i.catalog, ${trgmQuery}) > 0.1
+                  OR similarity(i.description, ${trgmQuery}) > 0.1
+                )
+              LIMIT 50
+              ` : sql``}
+            ) AS __ranked
+            ORDER BY (fts_rank * 0.65 + trgm_sim * 0.35) DESC
+            LIMIT 200
+          `);
+        });
         // Drizzle returns { rows: unknown[] } for raw SQL — validate shape at runtime
         const rawRows = (pgQueryResult as { rows: unknown[] }).rows;
         pgResults = rawRows.filter((r): r is RawRow => {
