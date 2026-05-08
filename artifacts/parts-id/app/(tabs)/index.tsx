@@ -1428,31 +1428,6 @@ export default function SearchScreen() {
 
       {!aisleBrowseOpen ? (
       <>
-      {/* ── Browse mode toggle ──────────────────────────────────────────── */}
-      {/* Only visible in Search mode — once the worker is browsing the
-          taxonomy, the toggle is hidden to free up vertical space. To
-          return to Search mode, tap the "⚡ Parts ID" title in the
-          header (which clears state) or re-tap the Search tab. */}
-      {mode !== "browse" && !hasResults ? (
-        <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
-          <Pressable
-            onPress={() => switchMode("browse")}
-            style={[
-              styles.modeToggleBtn,
-              {
-                backgroundColor: colors.card,
-                borderColor: "rgba(0,0,0,0.75)",
-              },
-            ]}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Feather name="folder" size={14} color={colors.foreground} />
-              <Text style={[styles.modeToggleText, { color: colors.foreground }]}>Browse Categories</Text>
-            </View>
-          </Pressable>
-        </View>
-      ) : null}
-
       {/* ── Advanced Filters (Search mode) OR Browse panel (Browse mode) ──
           In Browse mode we let this region grow (flex: 1) since the welcome
           state is hidden and there are usually no Search results competing
@@ -1490,6 +1465,27 @@ export default function SearchScreen() {
           </View>
         ) : null}
       </ScrollView>
+
+      {/* ── Browse mode toggle ──────────────────────────────────────────── */}
+      {mode !== "browse" && !hasResults ? (
+        <View style={[styles.modeToggleRow, { borderColor: colors.border }]}>
+          <Pressable
+            onPress={() => switchMode("browse")}
+            style={[
+              styles.modeToggleBtn,
+              {
+                backgroundColor: colors.card,
+                borderColor: "rgba(0,0,0,0.75)",
+              },
+            ]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Feather name="folder" size={14} color={colors.foreground} />
+              <Text style={[styles.modeToggleText, { color: colors.foreground }]}>Browse Categories</Text>
+            </View>
+          </Pressable>
+        </View>
+      ) : null}
 
       <FlatList
         data={visibleResults}
