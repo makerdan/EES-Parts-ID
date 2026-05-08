@@ -306,8 +306,16 @@ export default function PhotoScreen() {
           {/* Tapping the app title from any tab jumps back to the Search
               tab's empty welcome state (handled there by tabPress). */}
           <Pressable onPress={() => router.replace('/(tabs)')} hitSlop={8}>
-            <Text allowFontScaling={false} style={[styles.headerTitle, { color: colors.foreground }]}>Photo ID</Text>
-            <Text allowFontScaling={false} style={[styles.headerSub, { color: colors.mutedForeground }]}>
+            <Text
+              allowFontScaling={false}
+              style={[styles.headerTitle, { color: colors.foreground }]}
+            >
+              Photo ID
+            </Text>
+            <Text
+              allowFontScaling={false}
+              style={[styles.headerSub, { color: colors.mutedForeground }]}
+            >
               Identify parts from photos
             </Text>
           </Pressable>
@@ -328,7 +336,9 @@ export default function PhotoScreen() {
                     onPress={() => removeImage(index)}
                     style={[styles.removeBtn, { backgroundColor: colors.destructive }]}
                   >
-                    <Text allowFontScaling={false} style={styles.removeBtnText}>✕</Text>
+                    <Text allowFontScaling={false} style={styles.removeBtnText}>
+                      ✕
+                    </Text>
                   </Pressable>
                 </View>
               ))}
@@ -342,7 +352,10 @@ export default function PhotoScreen() {
                     ]}
                   >
                     <ActivityIndicator size="small" color={colors.primary} />
-                    <Text allowFontScaling={false} style={[styles.processingLabel, { color: colors.mutedForeground }]}>
+                    <Text
+                      allowFontScaling={false}
+                      style={[styles.processingLabel, { color: colors.mutedForeground }]}
+                    >
                       Processing…
                     </Text>
                   </View>
@@ -359,7 +372,10 @@ export default function PhotoScreen() {
                       accessibilityLabel="Take photo with camera"
                     >
                       <MaterialCommunityIcons name="camera" size={28} color={colors.foreground} />
-                      <Text allowFontScaling={false} style={[styles.addImageLabel, { color: colors.foreground }]}>
+                      <Text
+                        allowFontScaling={false}
+                        style={[styles.addImageLabel, { color: colors.foreground }]}
+                      >
                         Camera
                       </Text>
                     </Pressable>
@@ -378,7 +394,10 @@ export default function PhotoScreen() {
                         size={28}
                         color={colors.foreground}
                       />
-                      <Text allowFontScaling={false} style={[styles.addImageLabel, { color: colors.foreground }]}>
+                      <Text
+                        allowFontScaling={false}
+                        style={[styles.addImageLabel, { color: colors.foreground }]}
+                      >
                         Photo Library
                       </Text>
                     </Pressable>
@@ -397,7 +416,10 @@ export default function PhotoScreen() {
                         size={28}
                         color={colors.foreground}
                       />
-                      <Text allowFontScaling={false} style={[styles.addImageLabel, { color: colors.foreground }]}>
+                      <Text
+                        allowFontScaling={false}
+                        style={[styles.addImageLabel, { color: colors.foreground }]}
+                      >
                         Barcode
                       </Text>
                     </Pressable>
@@ -407,11 +429,17 @@ export default function PhotoScreen() {
             </View>
 
             {images.length === 0 ? (
-              <Text allowFontScaling={false} style={[styles.imageHint, { color: colors.mutedForeground }]}>
+              <Text
+                allowFontScaling={false}
+                style={[styles.imageHint, { color: colors.mutedForeground }]}
+              >
                 Add up to 2 photos — front and label work best
               </Text>
             ) : (
-              <Text allowFontScaling={false} style={[styles.photoCounter, { color: colors.mutedForeground }]}>
+              <Text
+                allowFontScaling={false}
+                style={[styles.photoCounter, { color: colors.mutedForeground }]}
+              >
                 {images.length} / 2 photos
               </Text>
             )}
@@ -424,7 +452,10 @@ export default function PhotoScreen() {
               { backgroundColor: colors.card, borderColor: colors.border },
             ]}
           >
-            <Text allowFontScaling={false} style={[styles.contextTitle, { color: colors.foreground }]}>
+            <Text
+              allowFontScaling={false}
+              style={[styles.contextTitle, { color: colors.foreground }]}
+            >
               Optional Context
             </Text>
             {[
@@ -445,7 +476,12 @@ export default function PhotoScreen() {
               { label: 'Size', value: size, key: 'size', ph: 'e.g. 20A, 3/4 inch...' },
             ].map(({ label, value, key, ph }) => (
               <View key={key} style={{ marginBottom: 10 }}>
-                <Text allowFontScaling={false} style={[styles.fieldLabel, { color: colors.foreground }]}>{label}:</Text>
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.fieldLabel, { color: colors.foreground }]}
+                >
+                  {label}:
+                </Text>
                 <TextInput
                   value={value}
                   onChangeText={(v) => {
@@ -485,7 +521,10 @@ export default function PhotoScreen() {
             {isLoading ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <ActivityIndicator color={colors.primaryForeground} />
-                <Text allowFontScaling={false} style={[styles.identifyBtnText, { color: colors.primaryForeground }]}>
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.identifyBtnText, { color: colors.primaryForeground }]}
+                >
                   {progressLabel ?? 'Working…'}
                 </Text>
               </View>
@@ -496,7 +535,8 @@ export default function PhotoScreen() {
                   size={20}
                   color={images.length === 0 ? colors.mutedForeground : colors.primaryForeground}
                 />
-                <Text allowFontScaling={false}
+                <Text
+                  allowFontScaling={false}
                   style={[
                     styles.identifyBtnText,
                     {
@@ -536,7 +576,9 @@ export default function PhotoScreen() {
                         ]}
                       >
                         {isDone ? (
-                          <Text allowFontScaling={false} style={styles.stepDotCheck}>✓</Text>
+                          <Text allowFontScaling={false} style={styles.stepDotCheck}>
+                            ✓
+                          </Text>
                         ) : isActive ? (
                           <ActivityIndicator
                             size="small"
@@ -545,7 +587,8 @@ export default function PhotoScreen() {
                           />
                         ) : null}
                       </View>
-                      <Text allowFontScaling={false}
+                      <Text
+                        allowFontScaling={false}
                         style={[
                           styles.stepLabel,
                           {
@@ -596,12 +639,17 @@ export default function PhotoScreen() {
                   size={14}
                   color={colors.destructive}
                 />
-                <Text allowFontScaling={false} style={[styles.inlineBannerText, { color: colors.destructive, flex: 1 }]}>
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.inlineBannerText, { color: colors.destructive, flex: 1 }]}
+                >
                   {inlineError}
                 </Text>
               </View>
               <Pressable onPress={() => setInlineError(null)} style={styles.inlineBannerClose}>
-                <Text allowFontScaling={false} style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
+                <Text allowFontScaling={false} style={{ color: colors.destructive, fontSize: 14 }}>
+                  ✕
+                </Text>
               </Pressable>
             </View>
           ) : null}
@@ -614,13 +662,24 @@ export default function PhotoScreen() {
                 { backgroundColor: colors.accent, borderColor: colors.primary + '44' },
               ]}
             >
-              <Text allowFontScaling={false} style={[styles.summaryTitle, { color: colors.accentForeground }]}>
+              <Text
+                allowFontScaling={false}
+                style={[styles.summaryTitle, { color: colors.accentForeground }]}
+              >
                 AI Identification
               </Text>
-              <Text allowFontScaling={false} style={[styles.summaryText, { color: colors.foreground }]}>{aiSummary}</Text>
+              <Text
+                allowFontScaling={false}
+                style={[styles.summaryText, { color: colors.foreground }]}
+              >
+                {aiSummary}
+              </Text>
               {aiTerms.length > 0 ? (
                 <View style={{ marginTop: 10 }}>
-                  <Text allowFontScaling={false} style={[styles.termLabel, { color: colors.accentForeground }]}>
+                  <Text
+                    allowFontScaling={false}
+                    style={[styles.termLabel, { color: colors.accentForeground }]}
+                  >
                     SEARCH TERMS USED
                   </Text>
                   <View style={styles.termRow}>
@@ -629,7 +688,12 @@ export default function PhotoScreen() {
                         key={i}
                         style={[styles.termChip, { backgroundColor: colors.primary + '22' }]}
                       >
-                        <Text allowFontScaling={false} style={[styles.termText, { color: colors.primary }]}>{term}</Text>
+                        <Text
+                          allowFontScaling={false}
+                          style={[styles.termText, { color: colors.primary }]}
+                        >
+                          {term}
+                        </Text>
                       </View>
                     ))}
                   </View>
@@ -641,7 +705,10 @@ export default function PhotoScreen() {
           {/* Results */}
           {results.length > 0 ? (
             <View>
-              <Text allowFontScaling={false} style={[styles.resultsTitle, { color: colors.foreground }]}>
+              <Text
+                allowFontScaling={false}
+                style={[styles.resultsTitle, { color: colors.foreground }]}
+              >
                 {results.length} Matching Parts
               </Text>
               {results.map((result, index) => (
@@ -672,7 +739,10 @@ export default function PhotoScreen() {
                 { backgroundColor: colors.card, borderColor: colors.border },
               ]}
             >
-              <Text allowFontScaling={false} style={[styles.noResultsText, { color: colors.mutedForeground }]}>
+              <Text
+                allowFontScaling={false}
+                style={[styles.noResultsText, { color: colors.mutedForeground }]}
+              >
                 No inventory matches found for this part. Try adding it to inventory via the Upload
                 tab.
               </Text>
@@ -690,7 +760,10 @@ export default function PhotoScreen() {
                 },
               ]}
             >
-              <Text allowFontScaling={false} style={[styles.errorText, { color: colors.destructive }]}>
+              <Text
+                allowFontScaling={false}
+                style={[styles.errorText, { color: colors.destructive }]}
+              >
                 AI identification failed. Check your connection.
               </Text>
             </View>
@@ -704,14 +777,23 @@ export default function PhotoScreen() {
                 { backgroundColor: colors.card, borderColor: colors.border },
               ]}
             >
-              <Text allowFontScaling={false} style={[styles.welcomeTitle, { color: colors.foreground }]}>How it works</Text>
+              <Text
+                allowFontScaling={false}
+                style={[styles.welcomeTitle, { color: colors.foreground }]}
+              >
+                How it works
+              </Text>
               {[
                 '📷 Take or select up to 2 photos of the part',
                 '📝 Add any visible text, numbers, or labels',
                 '🤖 AI identifies the part type and specifications',
                 '📦 Matching items from inventory are shown',
               ].map((step, i) => (
-                <Text allowFontScaling={false} key={i} style={[styles.welcomeStep, { color: colors.mutedForeground }]}>
+                <Text
+                  allowFontScaling={false}
+                  key={i}
+                  style={[styles.welcomeStep, { color: colors.mutedForeground }]}
+                >
                   {step}
                 </Text>
               ))}
