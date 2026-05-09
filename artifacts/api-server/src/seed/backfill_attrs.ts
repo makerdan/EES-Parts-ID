@@ -51,7 +51,9 @@ async function backfillAttrs() {
   console.log(`Batch size: ${BATCH_SIZE}\n`);
 
   if (total === 0) {
-    console.log(`Nothing to do – all items already at parser_version >= ${CURRENT_PARSER_VERSION}.`);
+    console.log(
+      `Nothing to do – all items already at parser_version >= ${CURRENT_PARSER_VERSION}.`
+    );
     await pool.end();
     return;
   }
@@ -100,11 +102,11 @@ async function backfillAttrs() {
         // description so the correct size can still be found.
         const rawCatalogSize = isConduit ? parseTradeSizeInches(item.catalog) : null;
         const tradeSizeInches = isConduit
-          ? (rawCatalogSize !== null && rawCatalogSize <= 12
-              ? rawCatalogSize
-              : parseTradeSize(item.description) ??
-                parseTradeSize(item.catalog) ??
-                parseTradeSize(item.tradeSize))
+          ? rawCatalogSize !== null && rawCatalogSize <= 12
+            ? rawCatalogSize
+            : (parseTradeSize(item.description) ??
+              parseTradeSize(item.catalog) ??
+              parseTradeSize(item.tradeSize))
           : null;
         const tradeSizeIn =
           tradeSizeInches !== null && tradeSizeInches <= 12 ? tradeSizeInches.toFixed(3) : null;
@@ -117,11 +119,9 @@ async function backfillAttrs() {
         // future version bumps can find these rows through the version check rather
         // than the catalog_parse IS NULL arm (which never clears).
         const catalogParseRaw = attrs.catalogParse;
-        const catalogParseValue = (
-          catalogParseRaw
-            ? { ...catalogParseRaw, parser_version: CURRENT_PARSER_VERSION }
-            : { parser_version: CURRENT_PARSER_VERSION }
-        ) as unknown as Record<string, unknown>;
+        const catalogParseValue = (catalogParseRaw
+          ? { ...catalogParseRaw, parser_version: CURRENT_PARSER_VERSION }
+          : { parser_version: CURRENT_PARSER_VERSION }) as unknown as Record<string, unknown>;
 
         await db
           .update(inventoryTable)
@@ -186,7 +186,9 @@ async function backfillAttrs() {
   `);
   const c = ((coverageResult as { rows: unknown[] }).rows[0] ?? {}) as Record<string, number>;
   console.log(`\nColumn coverage (${c['total']} total rows):`);
-  console.log(`  catalog_parse  : ${c['has_catalog_parse']}  (real matches; sentinel-only excluded)`);
+  console.log(
+    `  catalog_parse  : ${c['has_catalog_parse']}  (real matches; sentinel-only excluded)`
+  );
   console.log(`  amperage       : ${c['has_amperage']}`);
   console.log(`  pole_count     : ${c['has_pole_count']}`);
   console.log(`  voltage        : ${c['has_voltage']}`);

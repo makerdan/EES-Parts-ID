@@ -16,6 +16,9 @@ module.exports = {
     ],
   },
   testMatch: ['**/__tests__/**/*.test.ts'],
+  // Run test suites serially to prevent concurrent DB mutations (advisory locks,
+  // row-count drift) from breaking integration tests that share a live database.
+  maxWorkers: 1,
   // Resolve workspace packages to their TypeScript source so ts-jest can
   // transform them without relying on package.json "exports" field support
   // (which "moduleResolution: node" does not honour).

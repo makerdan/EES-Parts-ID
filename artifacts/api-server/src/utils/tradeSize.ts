@@ -64,10 +64,10 @@ const CONDUIT_TOKENS = [
   'ELBOW',
   'STRAP',
   'CONNECTOR',
-  'FITTING',   // conduit bodies, cord/cable fittings, PVC fittings, etc.
-  'BUSHING',   // ground bushing, reducing bushing, insulating bushing
-  'LOCKNUT',   // conduit locknut
-  'KNOCKOUT',  // conduit knockout plug
+  'FITTING', // conduit bodies, cord/cable fittings, PVC fittings, etc.
+  'BUSHING', // ground bushing, reducing bushing, insulating bushing
+  'LOCKNUT', // conduit locknut
+  'KNOCKOUT', // conduit knockout plug
 ];
 
 /** True when any text fragment looks like a conduit, pipe, or fitting. */
