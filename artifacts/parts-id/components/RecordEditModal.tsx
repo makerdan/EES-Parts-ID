@@ -12,13 +12,14 @@
  * Saves via PATCH /api/inventory/{id}.  On success the caller receives the
  * updated item so it can do an optimistic in-place list update.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -30,6 +31,12 @@ import { useSuggestItemDescription } from '@workspace/api-client-react';
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : '';
+
+interface SeriesResult {
+  id: number;
+  name: string;
+  vendor: string;
+}
 
 interface Props {
   item: InventoryItem | null;
@@ -54,6 +61,18 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [suggestError, setSuggestError] = useState<string | null>(null);
 
+  // ── Series state ─────────────────────────────────────────────────────────
+  const [seriesEnabled, setSeriesEnabled] = useState(false);
+  const [seriesId, setSeriesId] = useState<number | null>(null);
+  const [seriesRenameText, setSeriesRenameText] = useState('');
+  const [seriesSearchQuery, setSeriesSearchQuery] = useState('');
+  const [seriesSearchResults, setSeriesSearchResults] = useState<SeriesResult[]>([]);
+  const [seriesSearchLoading, setSeriesSearchLoading] = useState(false);
+  const [seriesError, setSeriesError] = useState<string | null>(null);
+  const seriesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const originalSeriesIdRef = useRef<number | null>(null);
+  const originalSeriesNameRef = useRef<string>('');
+
   const suggestMutation = useSuggestItemDescription();
   const isSuggesting = suggestMutation.isPending;
 
@@ -69,6 +88,18 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
     setNewKeyword('');
     setSuggestion(null);
     setSuggestError(null);
+    // Series — seriesId is present in API responses but not in the generated TS type
+    const rawId = (item as unknown as Record<string, unknown>).seriesId;
+    const initSeriesId = typeof rawId === 'number' ? rawId : null;
+    const initSeriesName = item.seriesName ?? '';
+    setSeriesEnabled(!!initSeriesName);
+    setSeriesId(initSeriesId);
+    setSeriesRenameText(initSeriesName);
+    setSeriesSearchQuery('');
+    setSeriesSearchResults([]);
+    setSeriesError(null);
+    originalSeriesIdRef.current = initSeriesId;
+    originalSeriesNameRef.current = initSeriesName;
   }, [item]);
 
   const addKeyword = () => {
@@ -107,6 +138,81 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
   const handleDismissSuggestion = () => {
     setSuggestion(null);
     setSuggestError(null);
+  };
+
+  // ── Series handlers ────────────────────────────────────────────────────────
+  const handleSeriesToggle = (val: boolean) => {
+    setSeriesEnabled(val);
+    if (!val) {
+      if (seriesTimerRef.current) clearTimeout(seriesTimerRef.current);
+      setSeriesSearchQuery('');
+      setSeriesSearchResults([]);
+      setSeriesError(null);
+    }
+  };
+
+  const handleSeriesSearchChange = useCallback(
+    (q: string) => {
+      setSeriesSearchQuery(q);
+      setSeriesError(null);
+      if (seriesTimerRef.current) clearTimeout(seriesTimerRef.current);
+      if (!q.trim()) {
+        setSeriesSearchResults([]);
+        return;
+      }
+      seriesTimerRef.current = setTimeout(() => {
+        seriesTimerRef.current = null;
+        setSeriesSearchLoading(true);
+        fetch(`${API_BASE}/series/search?q=${encodeURIComponent(q.trim())}`, {
+          headers: adminHeaders,
+        })
+          .then(async (res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = (await res.json()) as { series: SeriesResult[] };
+            setSeriesSearchResults(data.series);
+          })
+          .catch(() => {
+            setSeriesError("Couldn't load series list.");
+          })
+          .finally(() => {
+            setSeriesSearchLoading(false);
+          });
+      }, 400);
+    },
+    [adminHeaders]
+  );
+
+  const selectSeries = (sr: SeriesResult) => {
+    setSeriesId(sr.id);
+    setSeriesRenameText(sr.name);
+    setSeriesSearchQuery('');
+    setSeriesSearchResults([]);
+  };
+
+  const createAndSelectSeries = async () => {
+    if (!item || !seriesSearchQuery.trim()) return;
+    setSeriesSearchLoading(true);
+    setSeriesError(null);
+    try {
+      const res = await fetch(`${API_BASE}/series`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...adminHeaders },
+        body: JSON.stringify({ name: seriesSearchQuery.trim(), vendor: item.vendor }),
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(d.error ?? `HTTP ${res.status}`);
+      }
+      const { series } = (await res.json()) as { series: { id: number; name: string } };
+      setSeriesId(series.id);
+      setSeriesRenameText(series.name);
+      setSeriesSearchQuery('');
+      setSeriesSearchResults([]);
+    } catch (e) {
+      setSeriesError(e instanceof Error ? e.message : 'Failed to create series.');
+    } finally {
+      setSeriesSearchLoading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -154,6 +260,42 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
       }
 
       const updated = (await res.json()) as InventoryItem;
+
+      // ── Series: rename if staged ─────────────────────────────────────────
+      const renameText = seriesRenameText.trim();
+      if (
+        seriesEnabled &&
+        seriesId !== null &&
+        renameText &&
+        renameText !== originalSeriesNameRef.current
+      ) {
+        const renameRes = await fetch(`${API_BASE}/series/${seriesId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders },
+          body: JSON.stringify({ name: renameText }),
+        });
+        if (!renameRes.ok) {
+          const d = (await renameRes.json().catch(() => ({}))) as { error?: string };
+          setToast({ msg: d.error ?? 'Series rename failed — record saved.', ok: false });
+          return;
+        }
+      }
+
+      // ── Series: update assignment if changed ────────────────────────────
+      const newSeriesId = seriesEnabled ? seriesId : null;
+      if (newSeriesId !== originalSeriesIdRef.current) {
+        const seriesRes = await fetch(`${API_BASE}/inventory/${item.id}/series`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...adminHeaders },
+          body: JSON.stringify({ seriesId: newSeriesId }),
+        });
+        if (!seriesRes.ok) {
+          const d = (await seriesRes.json().catch(() => ({}))) as { error?: string };
+          setToast({ msg: d.error ?? 'Series update failed — record saved.', ok: false });
+          return;
+        }
+      }
+
       setToast({ msg: 'Saved successfully.', ok: true });
       onSaved(updated);
       setTimeout(() => {
@@ -379,6 +521,135 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
               ]}
               autoCorrect={false}
             />
+
+            {/* Product Series */}
+            <View style={s.seriesHeader}>
+              <Text style={[s.label, { color: colors.mutedForeground, marginTop: 12, marginBottom: 0 }]}>
+                PRODUCT SERIES
+              </Text>
+              <Switch
+                value={seriesEnabled}
+                onValueChange={handleSeriesToggle}
+                trackColor={{ false: colors.border, true: colors.primary + 'aa' }}
+                thumbColor={seriesEnabled ? colors.primary : colors.mutedForeground}
+                accessibilityRole="switch"
+                accessibilityLabel="Toggle series membership"
+              />
+            </View>
+
+            {!seriesEnabled ? (
+              <Text style={[s.seriesHint, { color: colors.mutedForeground }]}>
+                This part is not assigned to any product series.
+              </Text>
+            ) : (
+              <>
+                {seriesId !== null ? (
+                  <>
+                    <Text style={[s.label, { color: colors.mutedForeground }]}>SERIES NAME</Text>
+                    <TextInput
+                      value={seriesRenameText}
+                      onChangeText={setSeriesRenameText}
+                      placeholder="Series name…"
+                      placeholderTextColor={colors.mutedForeground}
+                      style={[
+                        s.input,
+                        { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                      ]}
+                      autoCorrect={false}
+                    />
+                    <Text style={[s.seriesHint, { color: colors.mutedForeground }]}>
+                      Renaming this will update the name for all parts in this series.
+                    </Text>
+                    <Pressable
+                      onPress={() => {
+                        setSeriesId(null);
+                        setSeriesRenameText('');
+                      }}
+                      style={[s.seriesRemoveBtn, { borderColor: '#ef444466' }]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove from series"
+                    >
+                      <Text style={[s.seriesRemoveText, { color: '#ef4444' }]}>
+                        Remove from series
+                      </Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <Text style={[s.seriesHint, { color: colors.mutedForeground }]}>
+                    Search for an existing series or create a new one.
+                  </Text>
+                )}
+
+                <View style={[s.seriesSearchRow, { marginTop: 10 }]}>
+                  <TextInput
+                    value={seriesSearchQuery}
+                    onChangeText={handleSeriesSearchChange}
+                    placeholder={seriesId !== null ? 'Search to change series…' : 'Search series by name…'}
+                    placeholderTextColor={colors.mutedForeground}
+                    style={[
+                      s.kwInput,
+                      { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                    ]}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                  />
+                  {seriesSearchLoading ? (
+                    <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 8 }} />
+                  ) : null}
+                </View>
+
+                {seriesSearchResults.length > 0 ? (
+                  <View style={[s.seriesResultList, { borderColor: colors.border }]}>
+                    {seriesSearchResults.map((sr, idx) => (
+                      <Pressable
+                        key={sr.id}
+                        onPress={() => selectSeries(sr)}
+                        style={[
+                          s.seriesResultRow,
+                          idx < seriesSearchResults.length - 1 && {
+                            borderBottomWidth: StyleSheet.hairlineWidth,
+                            borderBottomColor: colors.border,
+                          },
+                          { backgroundColor: colors.muted },
+                        ]}
+                      >
+                        <Text style={[s.seriesResultName, { color: colors.foreground }]}>
+                          {sr.name}
+                        </Text>
+                        <Text style={[s.seriesResultVendor, { color: colors.mutedForeground }]}>
+                          {sr.vendor}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+
+                {seriesSearchQuery.trim() &&
+                !seriesSearchLoading &&
+                seriesSearchResults.every(
+                  (r) => r.name.toLowerCase() !== seriesSearchQuery.trim().toLowerCase()
+                ) ? (
+                  <Pressable
+                    onPress={() => {
+                      void createAndSelectSeries();
+                    }}
+                    style={[
+                      s.seriesCreateBtn,
+                      { borderColor: colors.primary + '55', backgroundColor: colors.accent },
+                    ]}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[s.seriesCreateText, { color: colors.primary }]}>
+                      + Create "{seriesSearchQuery.trim()}" series
+                    </Text>
+                  </Pressable>
+                ) : null}
+
+                {seriesError ? (
+                  <Text style={[s.suggestError, { color: '#ef4444' }]}>{seriesError}</Text>
+                ) : null}
+              </>
+            )}
 
             {/* AI Keywords */}
             <Text style={[s.label, { color: colors.mutedForeground }]}>AI KEYWORDS</Text>
@@ -621,4 +892,48 @@ const s = StyleSheet.create({
     borderWidth: 1,
   },
   suggestionDismissText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
+  seriesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  seriesHint: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    fontStyle: 'italic',
+    marginTop: 4,
+    marginBottom: 4,
+    lineHeight: 16,
+  },
+  seriesSearchRow: { flexDirection: 'row', alignItems: 'center' },
+  seriesResultList: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    marginTop: 8,
+    overflow: 'hidden',
+  },
+  seriesResultRow: { paddingHorizontal: 12, paddingVertical: 10 },
+  seriesResultName: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+  seriesResultVendor: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  seriesCreateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginTop: 8,
+  },
+  seriesCreateText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  seriesRemoveBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+  },
+  seriesRemoveText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
 });
