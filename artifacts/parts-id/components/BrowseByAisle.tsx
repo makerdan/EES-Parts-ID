@@ -66,7 +66,7 @@ export function BrowseByAisle({
 }: Props) {
   const colors = useColors();
   const { settings } = useApp();
-  const warehouseShelfView = settings.warehouseShelfView;
+  const warehouseShelfView = settings.shelfViewEnabled;
   const [crumbs, setCrumbs] = useState<CrumbState>({
     aisle: null,
     section: null,

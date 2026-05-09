@@ -1417,14 +1417,14 @@ export default function SearchScreen() {
                   </View>
                 </View>
 
-                {/* Visual shelf view toggle */}
+                {/* Shelf view toggle */}
                 <View style={[styles.settingsRow, { borderColor: colors.border }]}>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>
-                      Visual shelf view
+                      Shelf view
                     </Text>
                     <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                      Show parts physically arranged on the shelf in Browse by Aisle.
+                      Shows parts arranged on the shelf and all shelves in a section at once.
                     </Text>
                   </View>
                   <Switch
@@ -1432,26 +1432,6 @@ export default function SearchScreen() {
                     onValueChange={(v) => updateSetting('shelfViewEnabled', v)}
                     trackColor={{ false: colors.muted, true: colors.primary + '99' }}
                     thumbColor={settings.shelfViewEnabled ? colors.primary : colors.mutedForeground}
-                  />
-                </View>
-
-                {/* Warehouse shelf view toggle */}
-                <View style={[styles.settingsRow, { borderColor: colors.border }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>
-                      Warehouse shelf view
-                    </Text>
-                    <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                      Shows all shelves in a section at once.
-                    </Text>
-                  </View>
-                  <Switch
-                    value={settings.warehouseShelfView}
-                    onValueChange={(v) => updateSetting('warehouseShelfView', v)}
-                    trackColor={{ false: colors.muted, true: colors.primary + '99' }}
-                    thumbColor={
-                      settings.warehouseShelfView ? colors.primary : colors.mutedForeground
-                    }
                   />
                 </View>
 

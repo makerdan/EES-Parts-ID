@@ -24,14 +24,12 @@ export type AppSettings = {
   defaultConfidenceThreshold: number;
   themeMode: ThemeMode;
   shelfViewEnabled: boolean;
-  warehouseShelfView: boolean;
 };
 export const DEFAULT_SETTINGS: AppSettings = {
   textSize: 'normal',
   defaultConfidenceThreshold: 50,
   themeMode: 'system',
   shelfViewEnabled: true,
-  warehouseShelfView: true,
 };
 
 const VALID_TEXT_SIZES: TextSize[] = ['small', 'normal', 'large'];
@@ -41,7 +39,10 @@ export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await AsyncStorage.getItem(SETTINGS_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & { warehouseShelfView?: boolean };
+    // Migration: if either of the old keys was explicitly false, keep shelf view off.
+    const legacyOff =
+      parsed.shelfViewEnabled === false || parsed.warehouseShelfView === false;
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
@@ -51,14 +52,7 @@ export async function loadSettings(): Promise<AppSettings> {
       themeMode: VALID_THEME_MODES.includes(parsed.themeMode as ThemeMode)
         ? (parsed.themeMode as ThemeMode)
         : DEFAULT_SETTINGS.themeMode,
-      shelfViewEnabled:
-        typeof parsed.shelfViewEnabled === 'boolean'
-          ? parsed.shelfViewEnabled
-          : DEFAULT_SETTINGS.shelfViewEnabled,
-      warehouseShelfView:
-        typeof parsed.warehouseShelfView === 'boolean'
-          ? parsed.warehouseShelfView
-          : DEFAULT_SETTINGS.warehouseShelfView,
+      shelfViewEnabled: legacyOff ? false : DEFAULT_SETTINGS.shelfViewEnabled,
     };
   } catch {
     return DEFAULT_SETTINGS;
