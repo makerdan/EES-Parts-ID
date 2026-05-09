@@ -379,6 +379,49 @@ function useSectionSwipe({
   return panResponder.panHandlers;
 }
 
+// ── Card-item swipe hook (iOS only) ──────────────────────────────────────────
+// Navigates between individual parts on the same shelf when the user swipes
+// left/right on the detail card area. iOS-only: returns false from
+// onMoveShouldSetPanResponder on other platforms so the PanResponder is inert.
+//
+// Must be instantiated BEFORE useSectionSwipe in every consuming component so
+// its PanResponder config occupies a lower index in the panConfigs capture
+// array used by tests. That keeps panConfigs[panConfigs.length - 1] as the
+// section-swipe config, leaving the existing swipe() test helper unchanged.
+function useCardItemSwipe({
+  onSwipeLeft,
+  onSwipeRight,
+}: {
+  onSwipeLeft: (() => void) | null;
+  onSwipeRight: (() => void) | null;
+}) {
+  const leftRef = useRef(onSwipeLeft);
+  const rightRef = useRef(onSwipeRight);
+  leftRef.current = onSwipeLeft;
+  rightRef.current = onSwipeRight;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onStartShouldSetPanResponderCapture: () => false,
+      // iOS-only: claim clearly-horizontal moves on the card detail area before
+      // the outer section-swipe PanResponder can claim them. On Android the
+      // section swipe alone handles horizontal navigation.
+      onMoveShouldSetPanResponder: (_, gs) =>
+        Platform.OS === 'ios' && Math.abs(gs.dx) > 10 && Math.abs(gs.dx) > Math.abs(gs.dy) * 2.5,
+      onMoveShouldSetPanResponderCapture: () => false,
+      onPanResponderRelease: (_, gs) => {
+        if (Platform.OS !== 'ios') return;
+        if (Math.abs(gs.dx) < 40) return;
+        if (gs.dx < 0 && leftRef.current) leftRef.current();
+        else if (gs.dx > 0 && rightRef.current) rightRef.current();
+      },
+    })
+  ).current;
+
+  return panResponder.panHandlers;
+}
+
 // ── Visual shelf view ─────────────────────────────────────────────────────────
 
 const BIN_SLOT_W = 84;
@@ -422,6 +465,18 @@ function ShelfView({
     .filter(Boolean)
     .join(' › ');
 
+  // Card-to-card swipe (iOS-only). Created before useSectionSwipe so its
+  // PanResponder sits at a lower panConfigs index, keeping the section-swipe
+  // config last (preserving the existing swipe() test helper).
+  const cardSwipeHandlers = useCardItemSwipe({
+    onSwipeLeft:
+      selectedIdx !== null && selectedIdx < parts.length - 1
+        ? () => setSelectedIdx(selectedIdx + 1)
+        : null,
+    onSwipeRight:
+      selectedIdx !== null && selectedIdx > 0 ? () => setSelectedIdx(selectedIdx - 1) : null,
+  });
+
   const swipeHandlers = useSectionSwipe({
     onSwipeLeft: nextSectionLabel ? onNextSection : null,
     onSwipeRight: prevSectionLabel ? onPrevSection : null,
@@ -464,6 +519,7 @@ function ShelfView({
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
+                    accessibilityState={{ selected: isSelected }}
                   >
                     <Text
                       allowFontScaling={false}
@@ -520,33 +576,35 @@ function ShelfView({
 
       {/* ── Part detail ── */}
       {selectedPart ? (
-        <FlatList
-          data={[selectedPart]}
-          keyExtractor={(p) => `${p.bin}-detail`}
-          renderItem={({ item: p }) => {
-            const result: SearchResult = {
-              item: p.item,
-              confidence: 1,
-              matchReason: locationLabel,
-              seriesLabel: undefined,
-              variants: [],
-            };
-            return (
-              <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
-                <ResultCard
-                  result={result}
-                  rank={0}
-                  showRank={false}
-                  fontScale={fontScale}
-                  onEditKeywords={onEditKeywords}
-                  highlightBin={p.bin}
-                  initiallyExpanded
-                />
-              </View>
-            );
-          }}
-          contentContainerStyle={{ paddingBottom: 140 }}
-        />
+        <View style={{ flex: 1 }} {...cardSwipeHandlers}>
+          <FlatList
+            data={[selectedPart]}
+            keyExtractor={(p) => `${p.bin}-detail`}
+            renderItem={({ item: p }) => {
+              const result: SearchResult = {
+                item: p.item,
+                confidence: 1,
+                matchReason: locationLabel,
+                seriesLabel: undefined,
+                variants: [],
+              };
+              return (
+                <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+                  <ResultCard
+                    result={result}
+                    rank={0}
+                    showRank={false}
+                    fontScale={fontScale}
+                    onEditKeywords={onEditKeywords}
+                    highlightBin={p.bin}
+                    initiallyExpanded
+                  />
+                </View>
+              );
+            }}
+            contentContainerStyle={{ paddingBottom: 140 }}
+          />
+        </View>
       ) : (
         <View style={shelfStyles.hint}>
           <Feather
@@ -652,6 +710,23 @@ function SectionShelfView({
 
   const locationLabel = [crumbs.aisle?.label, section.label].filter(Boolean).join(' › ');
 
+  // Card-to-card swipe (iOS-only). Created before useSectionSwipe so its
+  // PanResponder sits at a lower panConfigs index, keeping the section-swipe
+  // config last (preserving the existing swipe() test helper).
+  const selectedShelf = selected !== null ? (shelves[selected.shelfIdx] ?? null) : null;
+  const cardSwipeHandlers = useCardItemSwipe({
+    onSwipeLeft:
+      selected !== null &&
+      selectedShelf !== null &&
+      selected.partIdx < selectedShelf.parts.length - 1
+        ? () => setSelected((s) => (s ? { ...s, partIdx: s.partIdx + 1 } : null))
+        : null,
+    onSwipeRight:
+      selected !== null && selected.partIdx > 0
+        ? () => setSelected((s) => (s ? { ...s, partIdx: s.partIdx - 1 } : null))
+        : null,
+  });
+
   const swipeHandlers = useSectionSwipe({
     onSwipeLeft: nextSectionLabel ? onNextSection : null,
     onSwipeRight: prevSectionLabel ? onPrevSection : null,
@@ -706,6 +781,7 @@ function SectionShelfView({
                         ]}
                         accessibilityRole="button"
                         accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
+                        accessibilityState={{ selected: isSelected }}
                       >
                         <Text
                           allowFontScaling={false}
@@ -758,7 +834,7 @@ function SectionShelfView({
         ))}
 
         {selectedPart ? (
-          <View style={{ paddingHorizontal: 12, paddingTop: 4 }}>
+          <View style={{ paddingHorizontal: 12, paddingTop: 4 }} {...cardSwipeHandlers}>
             <ResultCard
               key={`${selectedPart.item.id}-${selectedPart.bin}`}
               result={{
