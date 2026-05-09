@@ -290,8 +290,9 @@ describe('BrowseByAisle — Edit Part Details button via onEditKeywords prop', (
   const INVENTORY = [makeItem(1, '17-01-100')];
 
   /**
-   * Drill: Aisle 17 → Section 01 → click bin slot (Bin 17-01-100) → expand
-   * the ResultCard → assert button.
+   * Drill: Aisle 17 → Section 01 → click bin slot (Bin 17-01-100) → assert
+   * button. The ResultCard mounts with initiallyExpanded=true in the visual
+   * shelf context so no second tap is needed to reveal the edit button.
    */
   function drillToResultCard(onEditKeywords?: (item: InventoryItem) => void) {
     render(
@@ -314,15 +315,9 @@ describe('BrowseByAisle — Edit Part Details button via onEditKeywords prop', (
       fireEvent.click(screen.getByText(/Section 01/));
     });
 
-    // ── Shelf view: tap the bin slot to select the part ──────────────────────
+    // ── Shelf view: tap the bin slot — detail card auto-expands ──────────────
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: /Bin 17-01-100: ITEM-1/ }));
-    });
-
-    // ── Expand the ResultCard to reveal the edit button area ─────────────────
-    const buttons = screen.getAllByRole('button');
-    act(() => {
-      fireEvent.click(buttons[buttons.length - 1]);
     });
   }
 
