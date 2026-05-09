@@ -361,7 +361,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                 <View style={msgStyles.errorWrap}>
                   <ErrorBanner message="No answer — check your connection and try again." />
                   <Pressable
-                    onPress={() => askQuestion()}
+                    onPress={() => askQuestion(askedQuestionRef.current)}
                     style={[msgStyles.retryBtn, { borderColor: colors.primary }]}
                   >
                     <Text
