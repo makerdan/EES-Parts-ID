@@ -13,24 +13,35 @@
  * return 503 until all chips are seeded. The Replit proxy uses this to
  * gate traffic on production deploys, guaranteeing every chip tap is
  * instant from the very first request.
+ *
+ * Readiness guarantee: `_ready` is only set to `true` after a post-seed
+ * verification query confirms that all 12 canonical chip labels are present
+ * in the database. Individual chip failures are retried up to MAX_RETRIES
+ * times before the verification step runs.
  */
 import { db, quickLookupCache } from '@workspace/db';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { openai } from '@workspace/integrations-openai-ai-server';
 import { logger } from './logger';
 
 let _ready = false;
 
 /**
- * Returns true once seedQuickLookups() has finished (successfully or with
- * per-chip errors). Used by the /healthz endpoint to block traffic until
- * all chips are pre-populated in the DB.
+ * Returns true once seedQuickLookups() has verified that all 12 canonical
+ * chip labels are present in the database. Used by the /healthz endpoint to
+ * block traffic until the cache is fully pre-populated.
  */
 export function isQuickLookupSeederReady(): boolean {
   return _ready;
 }
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Number of times to retry a chip that fails on the first attempt. */
+const MAX_RETRIES = 2;
+
+/** Delay (ms) between retries to avoid hammering the AI on transient errors. */
+const RETRY_DELAY_MS = 2_000;
 
 const SYSTEM_PROMPT =
   'You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.';
@@ -97,6 +108,8 @@ const CHIPS = [
   },
 ] as const;
 
+const ALL_CHIP_LABELS = CHIPS.map((c) => c.label);
+
 async function fetchAnswer(question: string): Promise<string> {
   const stream = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -116,59 +129,121 @@ async function fetchAnswer(question: string): Promise<string> {
   return fullText;
 }
 
+async function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function seedChip(
+  chip: (typeof CHIPS)[number],
+  staleThreshold: Date
+): Promise<'skipped' | 'upserted' | 'failed'> {
+  const [existing] = await db
+    .select()
+    .from(quickLookupCache)
+    .where(eq(quickLookupCache.label, chip.label))
+    .limit(1);
+
+  const isStale = !existing || existing.refreshedAt < staleThreshold;
+  if (!isStale) {
+    logger.debug({ label: chip.label }, 'Quick lookup cache hit — skipping');
+    return 'skipped';
+  }
+
+  logger.info({ label: chip.label }, 'Fetching quick lookup answer from AI');
+  const answer = await fetchAnswer(chip.question);
+
+  if (!answer.trim()) {
+    logger.warn({ label: chip.label }, 'AI returned empty answer — skipping upsert');
+    return 'failed';
+  }
+
+  await db
+    .insert(quickLookupCache)
+    .values({
+      label: chip.label,
+      question: chip.question,
+      answer,
+    })
+    .onConflictDoUpdate({
+      target: quickLookupCache.label,
+      set: {
+        question: chip.question,
+        answer,
+        refreshedAt: new Date(),
+      },
+    });
+
+  logger.info({ label: chip.label }, 'Quick lookup cache upserted');
+  return 'upserted';
+}
+
 export async function seedQuickLookups(): Promise<void> {
   logger.info('Quick lookup cache seeder starting');
 
   const staleThreshold = new Date(Date.now() - THIRTY_DAYS_MS);
 
-  try {
-    for (const chip of CHIPS) {
-      try {
-        const [existing] = await db
-          .select()
-          .from(quickLookupCache)
-          .where(eq(quickLookupCache.label, chip.label))
-          .limit(1);
+  const failedLabels = new Set<string>();
 
-        const isStale = !existing || existing.refreshedAt < staleThreshold;
-        if (!isStale) {
-          logger.debug({ label: chip.label }, 'Quick lookup cache hit — skipping');
-          continue;
-        }
-
-        logger.info({ label: chip.label }, 'Fetching quick lookup answer from AI');
-        const answer = await fetchAnswer(chip.question);
-
-        if (!answer.trim()) {
-          logger.warn({ label: chip.label }, 'AI returned empty answer — skipping upsert');
-          continue;
-        }
-
-        await db
-          .insert(quickLookupCache)
-          .values({
-            label: chip.label,
-            question: chip.question,
-            answer,
-          })
-          .onConflictDoUpdate({
-            target: quickLookupCache.label,
-            set: {
-              question: chip.question,
-              answer,
-              refreshedAt: new Date(),
-            },
-          });
-
-        logger.info({ label: chip.label }, 'Quick lookup cache upserted');
-      } catch (err) {
-        logger.error({ err, label: chip.label }, 'Failed to seed quick lookup — skipping');
+  for (const chip of CHIPS) {
+    try {
+      const result = await seedChip(chip, staleThreshold);
+      if (result === 'failed') {
+        failedLabels.add(chip.label);
       }
+    } catch (err) {
+      logger.error({ err, label: chip.label }, 'Failed to seed quick lookup — will retry');
+      failedLabels.add(chip.label);
     }
+  }
 
-    logger.info('Quick lookup cache seeder finished');
-  } finally {
-    // Always mark ready so /healthz never stays at 503 indefinitely.
-    _ready = true;
+  if (failedLabels.size > 0) {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      logger.info(
+        { labels: [...failedLabels], attempt },
+        'Retrying failed quick lookup chips'
+      );
+      await delay(RETRY_DELAY_MS);
+
+      const toRetry = CHIPS.filter((c) => failedLabels.has(c.label));
+      for (const chip of toRetry) {
+        try {
+          const result = await seedChip(chip, staleThreshold);
+          if (result !== 'failed') {
+            failedLabels.delete(chip.label);
+          }
+        } catch (err) {
+          logger.error(
+            { err, label: chip.label, attempt },
+            'Retry failed for quick lookup chip'
+          );
+        }
+      }
+
+      if (failedLabels.size === 0) break;
+    }
+  }
+
+  logger.info('Quick lookup cache seeder loop complete — verifying all chips present');
+
+  try {
+    const rows = await db
+      .select({ label: quickLookupCache.label })
+      .from(quickLookupCache)
+      .where(inArray(quickLookupCache.label, ALL_CHIP_LABELS as unknown as string[]));
+
+    const presentLabels = new Set(rows.map((r) => r.label));
+    const missingLabels = ALL_CHIP_LABELS.filter((l) => !presentLabels.has(l));
+
+    if (missingLabels.length === 0) {
+      logger.info('Quick lookup cache fully verified — all 12 chips present');
+      _ready = true;
+    } else {
+      logger.error(
+        { missingLabels },
+        'Quick lookup cache verification failed — some chips missing after retries; server will remain at 503'
+      );
+    }
+  } catch (err) {
+    logger.error({ err }, 'Quick lookup cache verification query failed — server will remain at 503');
   }
 }
