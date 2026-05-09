@@ -598,6 +598,7 @@ function ShelfView({
                     onEditKeywords={onEditKeywords}
                     highlightBin={p.bin}
                     initiallyExpanded
+                    showConfidence={false}
                   />
                 </View>
               );
@@ -850,6 +851,7 @@ function SectionShelfView({
               onEditKeywords={onEditKeywords}
               highlightBin={selectedPart.bin}
               initiallyExpanded
+              showConfidence={false}
             />
           </View>
         ) : (

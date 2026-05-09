@@ -52,6 +52,12 @@ interface ResultCardProps {
    * is immediately visible after the worker taps a bin — no second tap required.
    */
   initiallyExpanded?: boolean;
+  /**
+   * When false the confidence percentage badge is not rendered. Defaults to true.
+   * Set to false in visual shelf views where the confidence is always 1.0 and
+   * the badge adds no information.
+   */
+  showConfidence?: boolean;
 }
 
 /**
@@ -253,6 +259,7 @@ export function ResultCard({
   onFirstExpand,
   onConfirm,
   initiallyExpanded = false,
+  showConfidence = true,
 }: ResultCardProps) {
   const colors = useColors();
   // Match style: a soft tint background + bold weight. Uses the theme's
@@ -391,7 +398,7 @@ export function ResultCard({
               </View>
             </View>
             <View style={[cardStyles.headerRight, { alignItems: 'flex-end' }]}>
-              <ConfidenceBadge confidence={confidence} />
+              {showConfidence !== false ? <ConfidenceBadge confidence={confidence} /> : null}
               {item.tradeSize ? (
                 <Text style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}>
                   {item.tradeSize}
