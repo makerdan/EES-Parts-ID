@@ -160,51 +160,33 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
       setAnswer('');
 
       try {
-        const res = await fetch(`${API_BASE}/reference/ask`, {
+        // Use the JSON (non-streaming) mode so this works on iOS React Native,
+        // which does not expose ReadableStream on fetch response bodies.
+        const res = await fetch(`${API_BASE}/reference/ask?stream=false`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
           body: JSON.stringify({ question: q }),
         });
 
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let fullText = '';
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        if (reader) {
-          // Buffer partial lines across chunk boundaries so SSE frames split
-          // across network packets are never passed to JSON.parse half-complete.
-          let sseBuffer = '';
-          const processLine = (line: string) => {
-            if (!line.startsWith('data: ')) return;
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.content) {
-                fullText += data.content;
-                setAnswer(fullText);
-                // Scroll so the answer bubble sits in the upper–middle portion
-                // of the viewport rather than snapping to the very bottom edge.
-                const targetY = Math.max(0, answerContainerYRef.current - 120);
-                scrollRef.current?.scrollTo({ y: targetY, animated: true });
-              }
-            } catch {}
-          };
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            sseBuffer += decoder.decode(value, { stream: true });
-            const lines = sseBuffer.split('\n');
-            // Keep the last (possibly incomplete) line in the buffer
-            sseBuffer = lines.pop() ?? '';
-            for (const line of lines) processLine(line);
-          }
-          // Process any remaining buffered content when the stream closes
-          if (sseBuffer.trim()) processLine(sseBuffer);
-        }
+        const data = (await res.json()) as { answer?: string };
+        const fullText = data.answer ?? '';
 
         if (fullText) {
+          setAnswer(fullText);
+          // Scroll so the answer bubble sits in the upper–middle portion
+          // of the viewport rather than snapping to the very bottom edge.
+          const targetY = Math.max(0, answerContainerYRef.current - 120);
+          scrollRef.current?.scrollTo({ y: targetY, animated: true });
           setHistory((h) => [...h, { q: askedQuestionRef.current, a: fullText }]);
           // Cache the completed answer so repeat chip taps are instant.
           answerCacheRef.current.set(q, fullText);
+        } else {
+          setIsError(true);
         }
       } catch {
         setIsError(true);
