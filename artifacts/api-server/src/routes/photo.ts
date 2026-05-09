@@ -181,8 +181,7 @@ router.get('/events', requireAdminAuth, async (req, res) => {
     const offset = (page - 1) * limit;
 
     const parseOkRaw = req.query['parseOk'];
-    const parseOkFilter =
-      parseOkRaw === 'true' ? true : parseOkRaw === 'false' ? false : undefined;
+    const parseOkFilter = parseOkRaw === 'true' ? true : parseOkRaw === 'false' ? false : undefined;
 
     const matchTypeFilter =
       typeof req.query['matchType'] === 'string' && req.query['matchType'].length > 0
@@ -227,7 +226,12 @@ router.get('/events', requireAdminAuth, async (req, res) => {
         top.catalog     AS "topResultCatalog",
         top.vendor      AS "topResultVendor",
         conf.catalog    AS "confirmedResultCatalog",
-        conf.vendor     AS "confirmedResultVendor"
+        conf.vendor     AS "confirmedResultVendor",
+        CASE
+          WHEN e.vision_raw ? 'raw' THEN left(e.vision_raw->>'raw', 200)
+          WHEN e.vision_raw IS NOT NULL THEN left(e.vision_raw::text, 200)
+          ELSE NULL
+        END             AS "visionRawSummary"
       FROM photo_id_event e
       LEFT JOIN ${inventoryTable} top  ON top.id  = e.top_result_id
       LEFT JOIN ${inventoryTable} conf ON conf.id = e.confirmed_result_id
@@ -252,6 +256,7 @@ router.get('/events', requireAdminAuth, async (req, res) => {
         r['confirmedResultCatalog'] != null ? String(r['confirmedResultCatalog']) : null,
       confirmedResultVendor:
         r['confirmedResultVendor'] != null ? String(r['confirmedResultVendor']) : null,
+      visionRawSummary: r['visionRawSummary'] != null ? String(r['visionRawSummary']) : null,
     }));
 
     res.json({ items, total, page, limit });
