@@ -124,6 +124,8 @@ export default function ScanScreen() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const lastScanRef = useRef<string>('');
+  const pendingBarcodeRef = useRef<string>('');
+  const lockOnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Result panel state
   const [matchedItem, setMatchedItem] = useState<InventoryItem | null>(null);
@@ -153,6 +155,11 @@ export default function ScanScreen() {
     setPickerMode('menu');
     setError(null);
     lastScanRef.current = '';
+    pendingBarcodeRef.current = '';
+    if (lockOnTimerRef.current) {
+      clearTimeout(lockOnTimerRef.current);
+      lockOnTimerRef.current = null;
+    }
     setScanning(true);
   }, []);
 
@@ -197,15 +204,34 @@ export default function ScanScreen() {
 
   const handleBarcodeScanned = useCallback(
     ({ data }: { data: string }) => {
-      // Guard against the camera firing the same code repeatedly while the
-      // worker holds the phone over the label.
       if (!scanning || lookupMutation.isPending) return;
+      // Always record the latest barcode so the shutter button can fire it.
+      pendingBarcodeRef.current = data;
+      // If it's the same code still in frame the timer is already running — leave it.
       if (data === lastScanRef.current) return;
       lastScanRef.current = data;
-      void performLookup(data);
+      // Restart the lock-on timer: auto-fire only after the barcode is held
+      // steady for 1.5 seconds, giving the user time to reposition.
+      if (lockOnTimerRef.current) clearTimeout(lockOnTimerRef.current);
+      lockOnTimerRef.current = setTimeout(() => {
+        lockOnTimerRef.current = null;
+        void performLookup(pendingBarcodeRef.current);
+      }, 1500);
     },
     [scanning, lookupMutation.isPending, performLookup]
   );
+
+  const handleShutter = useCallback(() => {
+    if (pendingBarcodeRef.current) {
+      if (lockOnTimerRef.current) {
+        clearTimeout(lockOnTimerRef.current);
+        lockOnTimerRef.current = null;
+      }
+      void performLookup(pendingBarcodeRef.current);
+    } else {
+      setToast('Aim at a barcode first');
+    }
+  }, [performLookup]);
 
   const handleManualSubmit = useCallback(() => {
     if (!manualValue.trim()) return;
@@ -417,6 +443,17 @@ export default function ScanScreen() {
               {lookupMutation.isPending ? 'Looking up…' : 'Center barcode in the box'}
             </Text>
           </View>
+          {/* Shutter button — tap to capture immediately without waiting for the lock-on delay */}
+          {scanning && !lookupMutation.isPending ? (
+            <Pressable
+              onPress={handleShutter}
+              style={styles.shutterBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Capture barcode now"
+            >
+              <View style={styles.shutterInner} />
+            </Pressable>
+          ) : null}
           <View style={styles.controlsRow}>
             <Pressable
               onPress={() => setTorchOn((v) => !v)}
@@ -428,7 +465,7 @@ export default function ScanScreen() {
               accessibilityLabel={torchOn ? 'Turn torch off' : 'Turn torch on'}
             >
               <Text allowFontScaling={false} style={[styles.controlText, { color: '#fff' }]}>
-                {torchOn ? 'Light ON' : 'Light OFF'}
+                {torchOn ? 'Light OFF' : 'Light ON'}
               </Text>
             </Pressable>
             <Pressable
@@ -987,6 +1024,25 @@ const styles = StyleSheet.create({
   recentVendor: { fontFamily: 'Inter_500Medium', fontSize: 11, letterSpacing: 0.5 },
   recentCatalog: { fontFamily: 'Inter_700Bold', fontSize: 16, marginTop: 2 },
   recentDesc: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 4 },
+  shutterBtn: {
+    position: 'absolute',
+    bottom: 92,
+    alignSelf: 'center',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#ffffff33',
+    borderWidth: 3,
+    borderColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shutterInner: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#fff',
+  },
   cancelBtn: {
     position: 'absolute',
     minWidth: 44,
