@@ -71,6 +71,7 @@ async function backfillAttrs() {
         description: inventoryTable.description,
         vendor: inventoryTable.vendor,
         tradeSize: inventoryTable.tradeSize,
+        tradeSizeIn: inventoryTable.tradeSizeIn,
       })
       .from(inventoryTable)
       .where(NEEDS_PARSE)
@@ -95,8 +96,9 @@ async function backfillAttrs() {
         const hasTradeSizeText = item.tradeSize != null && item.tradeSize.trim() !== '';
         const isConduit =
           isConduitOrPipe(item.catalog, item.vendor, item.description) || hasTradeSizeText;
-        // parseTradeSizeInches handles catalog-code encoded sizes (e.g. "EMT212" → 2.5).
-        // parseTradeSize handles richer free-text in descriptions ("1/2 inch", "25mm", etc.).
+        // parseTradeSizeInches handles catalog-code encoded sizes (e.g. "EMT212" → 2.5,
+        // "EMT150" → 1.5, "EMT250" → 2.5 via decimal×100 encoding).
+        // parseTradeSize handles richer free-text ("1/2 inch", "25mm", "1-1/2 in", etc.).
         // IMPORTANT: only use the catalog-code result when it is in a plausible range (≤12");
         // out-of-range catalog parses (e.g. N3034 → 30.75) must fall through to the
         // description so the correct size can still be found.
@@ -104,12 +106,18 @@ async function backfillAttrs() {
         const tradeSizeInches = isConduit
           ? rawCatalogSize !== null && rawCatalogSize <= 12
             ? rawCatalogSize
-            : (parseTradeSize(item.description) ??
+            : (parseTradeSizeInches(item.description) ??
+              parseTradeSize(item.description) ??
               parseTradeSize(item.catalog) ??
               parseTradeSize(item.tradeSize))
           : null;
-        const tradeSizeIn =
+        // Cap at 12" to guard against bogus matches (e.g. a catalog digit string that
+        // happens to look like a large fraction code).
+        const computedTradeSizeIn =
           tradeSizeInches !== null && tradeSizeInches <= 12 ? tradeSizeInches.toFixed(3) : null;
+        // Idempotency: preserve a previously correct value if the current derivation
+        // produces null (e.g. the parser got more conservative between backfill runs).
+        const tradeSizeIn = computedTradeSizeIn ?? item.tradeSizeIn ?? null;
 
         // Always stamp parser_version with CURRENT_PARSER_VERSION when storing,
         // regardless of what parseCatalog() returns internally (parseCatalog

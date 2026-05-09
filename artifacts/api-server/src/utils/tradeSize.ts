@@ -20,19 +20,47 @@ const FRACTION_CODES: Record<string, number> = {
   '78': 7 / 8,
 };
 
+/**
+ * Decimal × 100 codes used by some vendors (e.g. "EMT150" = 1.50" = 1-1/2",
+ * "EMT250" = 2.50" = 2-1/2", "EMT75" = 0.75" = 3/4").
+ *
+ * Checked after FRACTION_CODES so that the fraction encoding (e.g. "12" for
+ * 1/2) always wins. Only the three quarter-inch boundary values are needed
+ * because "00" (whole inches) is already handled by the n%100===0 path.
+ */
+const DECIMAL_CODES: Record<string, number> = {
+  '25': 0.25,
+  '50': 0.5,
+  '75': 0.75,
+};
+
 /** Trade size in inches, or null when no recognizable size is present. */
 export function parseTradeSizeInches(text: string | null | undefined): number | null {
   if (!text) return null;
   const m = text.toUpperCase().match(/(\d+)\s*$/);
   if (!m) return null;
-  const digits = m[1];
+  const digits = m[1]!;
 
   if (digits.length >= 2) {
     const tail = digits.slice(-2);
+
+    // Fraction-code encoding wins (e.g. "12"→0.5, "34"→0.75, "112"→1.5).
     const frac = FRACTION_CODES[tail];
     if (frac !== undefined) {
       const wholePart = digits.length > 2 ? parseInt(digits.slice(0, -2), 10) : 0;
       if (Number.isFinite(wholePart)) return wholePart + frac;
+    }
+
+    // Decimal×100 encoding: "50"→0.5, "75"→0.75, "150"→1.5, "250"→2.5, etc.
+    // Used by vendors that express trade sizes as hundredths of an inch
+    // (e.g. EMT150 = 1.50" = 1-1/2", EMT250 = 2.50" = 2-1/2").
+    const dec = DECIMAL_CODES[tail];
+    if (dec !== undefined) {
+      const wholePart = digits.length > 2 ? parseInt(digits.slice(0, -2), 10) : 0;
+      if (Number.isFinite(wholePart)) {
+        const val = wholePart + dec;
+        if (val > 0 && val <= 12) return val;
+      }
     }
   }
 
@@ -46,6 +74,7 @@ export function parseTradeSizeInches(text: string | null | undefined): number | 
 }
 
 const CONDUIT_TOKENS = [
+  // Conduit type abbreviations
   'IMC',
   'EMT',
   'RMC',
@@ -57,17 +86,24 @@ const CONDUIT_TOKENS = [
   'LFMC',
   'LFNC',
   'RNC',
+  // Generic conduit/pipe terms
   'CONDUIT',
   'PIPE',
+  // Fittings and accessories — each has a trade size encoded in the catalog
   'NIPPLE',
   'COUPLING',
   'ELBOW',
-  'STRAP',
+  'SWEEP',
+  'OFFSET',
+  'FITTING',
   'CONNECTOR',
-  'FITTING', // conduit bodies, cord/cable fittings, PVC fittings, etc.
-  'BUSHING', // ground bushing, reducing bushing, insulating bushing
-  'LOCKNUT', // conduit locknut
-  'KNOCKOUT', // conduit knockout plug
+  'STRAP',
+  'CLAMP',
+  'HANGER',
+  'LOCKNUT',
+  'BUSHING',
+  'REDUCER',
+  'KNOCKOUT',
 ];
 
 /** True when any text fragment looks like a conduit, pipe, or fitting. */
