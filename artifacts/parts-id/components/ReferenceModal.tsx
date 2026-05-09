@@ -106,6 +106,8 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
   const [loading, setLoading] = useState(false);
   const [isError, setIsError] = useState(false);
   const [history, setHistory] = useState<{ q: string; a: string }[]>([]);
+  // When true the input is pinned to a single-line height; typing re-enables auto-grow.
+  const [inputCollapsed, setInputCollapsed] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   // Stores the question text that was sent so the error bubble can show it
   const askedQuestionRef = useRef('');
@@ -113,6 +115,8 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
   const answerCacheRef = useRef<Map<string, string>>(new Map());
   // Y offset of the active answer container within the ScrollView content
   const answerContainerYRef = useRef<number>(0);
+  // Timestamp of the last tap on any answer bubble, used for double-tap detection
+  const lastAnswerTapRef = useRef<number>(0);
 
   // Pre-fetch all cached quick-lookup answers from the server when the modal
   // opens so every chip tap is instant. Falls back silently if this fails.
@@ -150,7 +154,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
       const q = (overrideText ?? question).trim();
       if (!q || loading) return;
       askedQuestionRef.current = q;
-      setQuestion(q);
+      setQuestion('');
       setLoading(true);
       setIsError(false);
       setAnswer('');
@@ -232,7 +236,6 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
       const cached = answerCacheRef.current.get(chipQuestion.trim());
       if (cached) {
         askedQuestionRef.current = chipQuestion.trim();
-        setQuestion(chipQuestion);
         setAnswer(cached);
         setIsError(false);
         // Scroll to the answer bubble after a short layout delay
@@ -246,6 +249,16 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
     },
     [loading, askQuestion]
   );
+
+  // Detects a double-tap (two taps within 300 ms) on any answer bubble and
+  // collapses the input back to a single-line height.
+  const handleAnswerDoubleTap = useCallback(() => {
+    const now = Date.now();
+    if (now - lastAnswerTapRef.current < 300) {
+      setInputCollapsed(true);
+    }
+    lastAnswerTapRef.current = now;
+  }, []);
 
   // Simple markdown bold renderer
   const renderAnswer = (text: string) => {
@@ -320,14 +333,15 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
               <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + '22' }]}>
                 <Text style={[msgStyles.qText, { color: colors.foreground }]}>Q: {h.q}</Text>
               </View>
-              <View
+              <Pressable
+                onPress={handleAnswerDoubleTap}
                 style={[
                   msgStyles.aBubble,
                   { backgroundColor: colors.card, borderColor: colors.border },
                 ]}
               >
                 <Text style={{ fontSize: 14, lineHeight: 22 }}>{renderAnswer(h.a)}</Text>
-              </View>
+              </Pressable>
             </View>
           ))}
 
@@ -362,7 +376,8 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                   </Pressable>
                 </View>
               ) : (
-                <View
+                <Pressable
+                  onPress={handleAnswerDoubleTap}
                   style={[
                     msgStyles.aBubble,
                     { backgroundColor: colors.card, borderColor: colors.border },
@@ -390,7 +405,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                       style={{ marginTop: 4 }}
                     />
                   ) : null}
-                </View>
+                </Pressable>
               )}
             </View>
           ) : null}
@@ -428,7 +443,10 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
         >
           <TextInput
             value={question}
-            onChangeText={setQuestion}
+            onChangeText={(text) => {
+              setQuestion(text);
+              setInputCollapsed(false);
+            }}
             placeholder="Ask about any electrical term..."
             placeholderTextColor={colors.mutedForeground}
             style={[
@@ -438,6 +456,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                 color: colors.foreground,
                 borderColor: colors.border,
               },
+              inputCollapsed ? { height: 40, maxHeight: 40 } : { maxHeight: 144 },
             ]}
             multiline
             returnKeyType="send"
@@ -554,7 +573,6 @@ const inputStyles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 14,
     fontFamily: 'Inter_400Regular',
-    maxHeight: 100,
   },
   sendBtn: {
     width: 40,
