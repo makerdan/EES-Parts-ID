@@ -218,9 +218,7 @@ describe('PhotoIdStatsSection — window selector triggers re-fetch', () => {
   it('fetches with windowHours=24 when the section is first expanded', async () => {
     mockGetPhotoStats.mockResolvedValue(makeStats(42, 24));
 
-    render(
-      <PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />
-    );
+    render(<PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />);
 
     // Panel is collapsed — no fetch yet
     expect(mockGetPhotoStats).not.toHaveBeenCalled();
@@ -247,9 +245,7 @@ describe('PhotoIdStatsSection — window selector triggers re-fetch', () => {
       .mockResolvedValueOnce(makeStats(42, 24))
       .mockResolvedValueOnce(makeStats(300, 168));
 
-    render(
-      <PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />
-    );
+    render(<PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />);
 
     // Expand
     act(() => {
@@ -283,9 +279,7 @@ describe('PhotoIdStatsSection — window selector triggers re-fetch', () => {
       .mockResolvedValueOnce(makeStats(42, 24))
       .mockResolvedValueOnce(makeStats(1500, 720));
 
-    render(
-      <PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />
-    );
+    render(<PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />);
 
     act(() => {
       fireEvent.click(screen.getByLabelText('Expand Photo ID stats'));
@@ -316,15 +310,15 @@ describe('PhotoIdStatsSection — window selector triggers re-fetch', () => {
     });
     mockGetPhotoStats.mockReturnValue(pendingStats);
 
-    render(
-      <PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />
-    );
+    render(<PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />);
 
     act(() => {
       fireEvent.click(screen.getByLabelText('Expand Photo ID stats'));
     });
     // Flush without resolving — loader should be visible
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     expect(screen.getByLabelText('loading')).toBeTruthy();
 
@@ -337,6 +331,61 @@ describe('PhotoIdStatsSection — window selector triggers re-fetch', () => {
 
     expect(screen.queryByLabelText('loading')).toBeNull();
     expect(screen.getByText('7')).toBeTruthy();
+  });
+
+  it('hides stale 24h data and shows a loading indicator while the 7d request is in-flight', async () => {
+    // Resolve initial 24h fetch immediately
+    mockGetPhotoStats.mockResolvedValueOnce(makeStats(42, 24));
+
+    // Second call (7d) stays pending until we manually resolve it
+    let resolve7d!: (v: PhotoStatsResponse) => void;
+    const pending7d = new Promise<PhotoStatsResponse>((resolve) => {
+      resolve7d = resolve;
+    });
+    mockGetPhotoStats.mockReturnValueOnce(pending7d);
+
+    render(<PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />);
+
+    // Expand and wait for 24h stats to render
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Expand Photo ID stats'));
+    });
+    await flush();
+
+    expect(screen.getByText('42')).toBeTruthy();
+    expect(screen.queryByLabelText('loading')).toBeNull();
+
+    // Switch to 7d — chip press clears stats (setStats(null)) before windowHours changes
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Show last 7d'));
+    });
+    // One tick to let the state updates flush (stats=null, loading=true)
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Stale 24h total must be gone
+    expect(screen.queryByText('42')).toBeNull();
+    // Loading indicator must be visible (loading=true && stats=null)
+    expect(screen.getByLabelText('loading')).toBeTruthy();
+
+    // Resolve the 7d request
+    await act(async () => {
+      resolve7d(makeStats(300, 168));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Loader gone, new data shown
+    expect(screen.queryByLabelText('loading')).toBeNull();
+    expect(screen.getByText('300')).toBeTruthy();
+
+    // Confirm the second call used windowHours=168
+    expect(mockGetPhotoStats).toHaveBeenCalledTimes(2);
+    expect(mockGetPhotoStats).toHaveBeenLastCalledWith(
+      { windowHours: 168 },
+      expect.objectContaining({ headers: ADMIN_HEADERS })
+    );
   });
 
   it('calls onExpiredSession and does not show an error banner on 401', async () => {
