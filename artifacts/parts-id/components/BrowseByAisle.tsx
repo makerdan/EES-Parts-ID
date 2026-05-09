@@ -368,7 +368,8 @@ function useSectionSwipe({
         Math.abs(gs.dx) > 10 && Math.abs(gs.dx) > Math.abs(gs.dy) * 2.5,
       onMoveShouldSetPanResponderCapture: () => false,
       onPanResponderRelease: (_, gs) => {
-        if (Math.abs(gs.dx) < 60) return;
+        const threshold = Platform.OS === 'ios' ? 75 : 60;
+        if (Math.abs(gs.dx) < threshold) return;
         if (gs.dx < 0 && leftRef.current) leftRef.current();
         else if (gs.dx > 0 && rightRef.current) rightRef.current();
       },
