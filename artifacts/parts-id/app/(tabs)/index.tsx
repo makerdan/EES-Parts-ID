@@ -1631,7 +1631,7 @@ export default function SearchScreen() {
                     paddingRight: filters.keywords ? 36 : 12,
                   },
                 ]}
-                autoCapitalize="none"
+                autoCapitalize="characters"
                 autoCorrect={false}
                 returnKeyType="search"
                 onSubmitEditing={handleSearch}
