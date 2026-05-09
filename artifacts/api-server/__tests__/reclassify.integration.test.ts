@@ -162,11 +162,14 @@ async function cleanupFixtures(): Promise<void> {
 }
 
 // ── Top-level lifecycle ────────────────────────────────────────────────────────
+// Timeout raised to 60 s — seedTaxonomy performs many sequential upserts on a
+// fresh database and must complete before getWrongTypeNode() (called inside the
+// pipeline-correctness beforeAll) can find a suitable leaf node.
 beforeAll(async () => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   await seedTaxonomy();
-}, 30_000);
+}, 60_000);
 
 afterAll(async () => {
   await closePool();
