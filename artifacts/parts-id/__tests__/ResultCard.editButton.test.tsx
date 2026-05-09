@@ -1,0 +1,237 @@
+/**
+ * @jest-environment jsdom
+ *
+ * Verifies that the "✏️ Edit Part Details" button inside ResultCard:
+ *   1. Appears when `onEditKeywords` is provided (admin path).
+ *   2. Is absent when `onEditKeywords` is omitted (non-admin path).
+ *   3. Calls `onEditKeywords` with the correct InventoryItem when pressed.
+ *
+ * The edit button lives in the expanded section of the card, so every test
+ * that needs to assert its presence/absence clicks the card to expand it first.
+ *
+ * Mock strategy mirrors ResultCard.fontScaling.test.tsx:
+ *   • Pressable → <div role="button"> with onClick wired to onPress.
+ *   • Modal renders children when visible so the detail-variant sheet doesn't
+ *     throw during render.
+ */
+import React from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
+
+// ── react-native mock ──────────────────────────────────────────────────────
+jest.mock('react-native', () => {
+  const React = require('react');
+
+  function flatStyle(style: unknown): object | undefined {
+    if (!style) return undefined;
+    if (Array.isArray(style)) {
+      return Object.assign({}, ...(style as unknown[]).filter(Boolean).map(flatStyle));
+    }
+    if (typeof style === 'function') return undefined;
+    return style as object;
+  }
+
+  const View = React.forwardRef(
+    ({ children, style, ...rest }: Record<string, unknown>, ref: React.Ref<unknown>) =>
+      React.createElement('div', { ref, style: flatStyle(style), ...rest }, children)
+  );
+  View.displayName = 'View';
+
+  const Text = React.forwardRef(
+    (
+      {
+        children,
+        style,
+        numberOfLines: _nl,
+        ellipsizeMode: _em,
+        allowFontScaling: _afs,
+        ...rest
+      }: Record<string, unknown>,
+      ref: React.Ref<unknown>
+    ) => React.createElement('span', { ref, style: flatStyle(style), ...rest }, children)
+  );
+  Text.displayName = 'Text';
+
+  const ScrollView = React.forwardRef(
+    ({ children, style, ...rest }: Record<string, unknown>, ref: React.Ref<unknown>) =>
+      React.createElement('div', { ref, style: flatStyle(style), ...rest }, children)
+  );
+  ScrollView.displayName = 'ScrollView';
+
+  // Render as <div role="button"> to avoid <button>-in-<button> nesting errors.
+  const Pressable = React.forwardRef(
+    (
+      {
+        onPress,
+        children,
+        accessibilityLabel,
+        accessibilityRole,
+        accessibilityState,
+        style,
+        hitSlop: _hs,
+        android_ripple: _ar,
+        ...rest
+      }: Record<string, unknown>,
+      ref: React.Ref<unknown>
+    ) => {
+      const resolvedStyle =
+        typeof style === 'function'
+          ? flatStyle((style as (s: { pressed: boolean }) => unknown)({ pressed: false }))
+          : flatStyle(style);
+      return React.createElement(
+        'div',
+        {
+          ref,
+          role: accessibilityRole ?? 'button',
+          'aria-label': accessibilityLabel,
+          onClick: onPress,
+          style: resolvedStyle,
+          ...(accessibilityState &&
+          typeof accessibilityState === 'object' &&
+          'selected' in (accessibilityState as object)
+            ? { 'aria-selected': (accessibilityState as { selected: boolean }).selected }
+            : {}),
+          ...rest,
+        },
+        typeof children === 'function'
+          ? (children as (s: { pressed: boolean }) => unknown)({ pressed: false })
+          : children
+      );
+    }
+  );
+  Pressable.displayName = 'Pressable';
+
+  const Modal = ({ visible, children }: { visible: boolean; children: React.ReactNode }) =>
+    visible ? React.createElement('div', { role: 'dialog' }, children) : null;
+  Modal.displayName = 'Modal';
+
+  const StyleSheet = {
+    create: (obj: object) => obj,
+    flatten: flatStyle,
+    hairlineWidth: 1,
+    absoluteFill: {},
+  };
+
+  return {
+    View,
+    Text,
+    ScrollView,
+    TextInput: View,
+    Pressable,
+    Modal,
+    StyleSheet,
+    Platform: { OS: 'web', select: (o: Record<string, unknown>) => o['web'] ?? o['default'] },
+  };
+});
+
+// ── Auxiliary mocks ────────────────────────────────────────────────────────
+jest.mock('@/hooks/useColors', () => ({
+  useColors: () => ({
+    border: '#ccc',
+    card: '#fff',
+    background: '#fff',
+    foreground: '#000',
+    muted: '#f4f4f5',
+    mutedForeground: '#666',
+    primary: '#2563eb',
+    primaryForeground: '#fff',
+    accent: '#f4f4f5',
+    accentForeground: '#000',
+    success: '#10b981',
+    warning: '#f59e0b',
+    destructive: '#dc2626',
+  }),
+}));
+
+jest.mock('@/lib/refinement', () => ({
+  splitHighlightSegments: (text: string) => [{ text, match: false }],
+}));
+
+jest.mock('@/lib/tradeSize', () => ({
+  parseTradeSizeInches: () => null,
+  formatInchesAsFraction: () => '',
+}));
+
+// ── Import after mocks ─────────────────────────────────────────────────────
+import { ResultCard } from '@/components/ResultCard';
+
+// ── Fixture helpers ────────────────────────────────────────────────────────
+function makeResult(overrides: Partial<InventoryItem> = {}): SearchResult {
+  return {
+    item: {
+      id: 42,
+      vendor: 'SQD',
+      catalog: 'QO120',
+      description: '20A 1-Pole QO Breaker',
+      binLocations: ['B-3'],
+      aiKeywords: ['breaker', 'qo'],
+      vendorFullName: 'Schneider Electric',
+      enrichedAt: '2024-01-01T00:00:00Z',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+      seriesName: null,
+      tradeSize: null,
+      ...overrides,
+    },
+    confidence: 0.95,
+    matchReason: 'keyword',
+    seriesLabel: undefined,
+    variants: [],
+  };
+}
+
+/** Click the outer card Pressable to toggle it open. */
+function expandCard() {
+  // The outer card Pressable is the first role="button" element in the tree
+  // (no accessibilityRole override → defaults to "button" in the mock above).
+  const buttons = screen.getAllByRole('button');
+  fireEvent.click(buttons[0]);
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+describe('ResultCard — Edit Part Details button visibility', () => {
+  it('shows the Edit button when onEditKeywords is provided (admin)', () => {
+    const onEdit = jest.fn();
+    render(<ResultCard result={makeResult()} rank={1} onEditKeywords={onEdit} />);
+    expandCard();
+    expect(screen.getByText('✏️ Edit Part Details')).toBeTruthy();
+  });
+
+  it('hides the Edit button when onEditKeywords is omitted (non-admin)', () => {
+    render(<ResultCard result={makeResult()} rank={1} />);
+    expandCard();
+    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
+  });
+
+  it('hides the Edit button when onEditKeywords is explicitly undefined (non-admin)', () => {
+    render(<ResultCard result={makeResult()} rank={1} onEditKeywords={undefined} />);
+    expandCard();
+    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
+  });
+
+  it('calls onEditKeywords with the correct InventoryItem when pressed', () => {
+    const onEdit = jest.fn();
+    const result = makeResult({ catalog: 'QO240', id: 99 });
+    render(<ResultCard result={result} rank={1} onEditKeywords={onEdit} />);
+    expandCard();
+    fireEvent.click(screen.getByText('✏️ Edit Part Details'));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onEdit).toHaveBeenCalledWith(result.item);
+  });
+
+  it('Edit button is absent before the card is expanded', () => {
+    const onEdit = jest.fn();
+    render(<ResultCard result={makeResult()} rank={1} onEditKeywords={onEdit} />);
+    // Do NOT expand — button must not be in the DOM yet
+    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
+  });
+
+  it('Edit button disappears again after collapsing the card', () => {
+    const onEdit = jest.fn();
+    render(<ResultCard result={makeResult()} rank={1} onEditKeywords={onEdit} />);
+    expandCard(); // expand
+    expect(screen.getByText('✏️ Edit Part Details')).toBeTruthy();
+    expandCard(); // collapse (second click)
+    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
+  });
+});
