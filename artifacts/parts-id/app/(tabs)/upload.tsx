@@ -50,10 +50,7 @@ import type { InventoryItem } from '@workspace/api-client-react';
 import { secondaryBtnBase } from '@/styles/shared';
 import { ImportFileCard } from '@/components/ImportFileCard';
 import ClassificationReviewSection from '@/components/ClassificationReviewSection';
-import {
-  EnrichmentStatsChips,
-  type EnrichSummary,
-} from '@/components/EnrichmentStatsChips';
+import { EnrichmentStatsChips, type EnrichSummary } from '@/components/EnrichmentStatsChips';
 import PhotoIdStatsSection from '@/components/PhotoIdStatsSection';
 import { RecordsBrowser } from '@/components/RecordsBrowser';
 
@@ -190,7 +187,6 @@ type RebuildTokensProgress = {
   done?: boolean;
   error?: string;
 };
-
 
 // ── Column header aliases ──────────────────────────────────────────────────
 const VENDOR_ALIASES = ['vendor', 'mfr', 'manufacturer', 'brand', 'make', 'supplier'];

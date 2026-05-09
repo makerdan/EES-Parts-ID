@@ -75,12 +75,10 @@ jest.mock('react-native', () => {
   const View = makeHost('div');
   const Text = makeHost('span');
 
-  const ScrollView = React.forwardRef(
-    (props: Record<string, unknown>, ref: React.Ref<unknown>) => {
-      React.useImperativeHandle(ref, () => ({ scrollTo: () => {}, scrollToOffset: () => {} }), []);
-      return React.createElement(makeHost('div'), props as Record<string, unknown>);
-    }
-  );
+  const ScrollView = React.forwardRef((props: Record<string, unknown>, ref: React.Ref<unknown>) => {
+    React.useImperativeHandle(ref, () => ({ scrollTo: () => {}, scrollToOffset: () => {} }), []);
+    return React.createElement(makeHost('div'), props as Record<string, unknown>);
+  });
 
   const Pressable = React.forwardRef(
     (
@@ -191,10 +189,7 @@ jest.mock('@/hooks/useColors', () => ({
 
 // ── Imports after mocks ───────────────────────────────────────────────────────
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import {
-  EnrichmentStatsChips,
-  type EnrichSummary,
-} from '../components/EnrichmentStatsChips';
+import { EnrichmentStatsChips, type EnrichSummary } from '../components/EnrichmentStatsChips';
 import ClassificationReviewSection from '../components/ClassificationReviewSection';
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
@@ -239,7 +234,9 @@ function ReviewQueueSyncFixture() {
 
   return (
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    React.createElement(require('react-native').View, null,
+    React.createElement(
+      require('react-native').View,
+      null,
       React.createElement(EnrichmentStatsChips, {
         reviewCount,
         enrichSummary,
