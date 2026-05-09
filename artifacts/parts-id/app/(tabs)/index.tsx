@@ -60,9 +60,8 @@ import { Feather } from '@expo/vector-icons';
 import { secondaryBtnBase } from '@/styles/shared';
 import { parseTradeSizeInches, isConduitOrPipe } from '@/lib/tradeSize';
 import { syncAllInventory as syncAllInventoryCore } from '@/lib/syncInventory';
+import { FUSE_CACHE_KEY, updateFuseCache } from '@/lib/updateFuseCache';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
-
-const FUSE_CACHE_KEY = 'parts_id_fuse_cache_v3';
 const QUERY_CACHE_KEY = 'parts_id_query_cache_v2';
 const INVENTORY_VERSION_KEY = 'parts_id_inventory_version';
 const BROWSE_MODE_KEY = 'parts_id_browse_mode_v1';
@@ -936,7 +935,7 @@ export default function SearchScreen() {
         item.id === updated.id ? { ...item, ...updated } : item
       );
       buildFuseIndex(items);
-      AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
+      updateFuseCache(updated, items).catch(() => {});
     },
     [buildFuseIndex]
   );
