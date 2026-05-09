@@ -114,6 +114,29 @@ export function BrowseByAisle({
 
   const goHome = useCallback(() => setCrumbs({ aisle: null, section: null, shelf: null }), []);
 
+  // ── Section-to-section navigation (Prev / Next within the same aisle) ─────
+  // Derived inline — cheap lookup that re-evaluates whenever crumbs changes.
+  const currentSectionIdx =
+    crumbs.aisle && crumbs.section
+      ? crumbs.aisle.sections.findIndex((s) => s.section === crumbs.section!.section)
+      : -1;
+  const prevSection =
+    currentSectionIdx > 0 ? (crumbs.aisle?.sections[currentSectionIdx - 1] ?? null) : null;
+  const nextSection =
+    currentSectionIdx >= 0 &&
+    crumbs.aisle &&
+    currentSectionIdx < crumbs.aisle.sections.length - 1
+      ? (crumbs.aisle.sections[currentSectionIdx + 1] ?? null)
+      : null;
+
+  const goToPrevSection = useCallback(() => {
+    if (prevSection) setCrumbs((c) => ({ ...c, section: prevSection, shelf: null }));
+  }, [prevSection]);
+
+  const goToNextSection = useCallback(() => {
+    if (nextSection) setCrumbs((c) => ({ ...c, section: nextSection, shelf: null }));
+  }, [nextSection]);
+
   // ── Android hardware back gesture ─────────────────────────────────────────
   // When the overlay is open, intercept the hardware back press:
   //   • At root (aisles) → close the overlay entirely (call onClose)
@@ -244,6 +267,10 @@ export function BrowseByAisle({
             colors={colors}
             fontScale={fontScale}
             onEditKeywords={onEditKeywords}
+            prevSectionLabel={prevSection?.label ?? null}
+            nextSectionLabel={nextSection?.label ?? null}
+            onPrevSection={goToPrevSection}
+            onNextSection={goToNextSection}
           />
         ) : (
           <FlatList
@@ -270,6 +297,10 @@ export function BrowseByAisle({
             colors={colors}
             fontScale={fontScale}
             onEditKeywords={onEditKeywords}
+            prevSectionLabel={prevSection?.label ?? null}
+            nextSectionLabel={nextSection?.label ?? null}
+            onPrevSection={goToPrevSection}
+            onNextSection={goToNextSection}
           />
         ) : (
           <FlatList
@@ -317,12 +348,20 @@ function ShelfView({
   colors,
   fontScale,
   onEditKeywords,
+  prevSectionLabel,
+  nextSectionLabel,
+  onPrevSection,
+  onNextSection,
 }: {
   parts: PartOnShelf[];
   crumbs: CrumbState;
   colors: ReturnType<typeof useColors>;
   fontScale: number;
   onEditKeywords: (item: InventoryItem) => void;
+  prevSectionLabel: string | null;
+  nextSectionLabel: string | null;
+  onPrevSection: () => void;
+  onNextSection: () => void;
 }) {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const selectedPart = selectedIdx !== null ? (parts[selectedIdx] ?? null) : null;
@@ -333,6 +372,13 @@ function ShelfView({
 
   return (
     <View style={{ flex: 1 }}>
+      <SectionNavBar
+        prevLabel={prevSectionLabel}
+        nextLabel={nextSectionLabel}
+        onPrev={onPrevSection}
+        onNext={onNextSection}
+        colors={colors}
+      />
       {/* ── Shelf diagram ── */}
       <View style={shelfStyles.diagramWrap}>
         <ScrollView
@@ -514,12 +560,20 @@ function SectionShelfView({
   colors,
   fontScale,
   onEditKeywords,
+  prevSectionLabel,
+  nextSectionLabel,
+  onPrevSection,
+  onNextSection,
 }: {
   section: SectionNode;
   crumbs: CrumbState;
   colors: ReturnType<typeof useColors>;
   fontScale: number;
   onEditKeywords: (item: InventoryItem) => void;
+  prevSectionLabel: string | null;
+  nextSectionLabel: string | null;
+  onPrevSection: () => void;
+  onNextSection: () => void;
 }) {
   const [selected, setSelected] = useState<{ shelfIdx: number; partIdx: number } | null>(null);
 
@@ -533,7 +587,15 @@ function SectionShelfView({
   const locationLabel = [crumbs.aisle?.label, section.label].filter(Boolean).join(' › ');
 
   return (
-    <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
+    <View style={{ flex: 1 }}>
+      <SectionNavBar
+        prevLabel={prevSectionLabel}
+        nextLabel={nextSectionLabel}
+        onPrev={onPrevSection}
+        onNext={onNextSection}
+        colors={colors}
+      />
+      <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
       {shelves.map((shelf, shelfIdx) => (
         <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
           {shelfIdx > 0 ? <View style={sectionStyles.shelfPlank} /> : null}
@@ -655,6 +717,7 @@ function SectionShelfView({
         </View>
       )}
     </ScrollView>
+    </View>
   );
 }
 
@@ -668,6 +731,94 @@ const sectionStyles = StyleSheet.create({
     paddingTop: 8,
   },
   shelfPlank: { height: 2, backgroundColor: '#000000', marginHorizontal: 0 },
+});
+
+// ── Prev / Next section navigation bar ───────────────────────────────────────
+
+function SectionNavBar({
+  prevLabel,
+  nextLabel,
+  onPrev,
+  onNext,
+  colors,
+}: {
+  prevLabel: string | null;
+  nextLabel: string | null;
+  onPrev: () => void;
+  onNext: () => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  return (
+    <View style={[navStyles.bar, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      <Pressable
+        onPress={onPrev}
+        disabled={!prevLabel}
+        hitSlop={8}
+        style={[navStyles.btn, !prevLabel && navStyles.btnDisabled]}
+        accessibilityRole="button"
+        accessibilityLabel={prevLabel ? `Previous section: ${prevLabel}` : 'No previous section'}
+      >
+        <Feather
+          name="chevron-left"
+          size={16}
+          color={prevLabel ? colors.foreground : colors.mutedForeground}
+        />
+        <Text
+          allowFontScaling={false}
+          numberOfLines={1}
+          style={[navStyles.btnText, { color: prevLabel ? colors.foreground : colors.mutedForeground }]}
+        >
+          {prevLabel ?? 'Previous'}
+        </Text>
+      </Pressable>
+      <View style={[navStyles.divider, { backgroundColor: colors.border }]} />
+      <Pressable
+        onPress={onNext}
+        disabled={!nextLabel}
+        hitSlop={8}
+        style={[navStyles.btn, !nextLabel && navStyles.btnDisabled]}
+        accessibilityRole="button"
+        accessibilityLabel={nextLabel ? `Next section: ${nextLabel}` : 'No next section'}
+      >
+        <Text
+          allowFontScaling={false}
+          numberOfLines={1}
+          style={[navStyles.btnText, { color: nextLabel ? colors.foreground : colors.mutedForeground }]}
+        >
+          {nextLabel ?? 'Next'}
+        </Text>
+        <Feather
+          name="chevron-right"
+          size={16}
+          color={nextLabel ? colors.foreground : colors.mutedForeground}
+        />
+      </Pressable>
+    </View>
+  );
+}
+
+const navStyles = StyleSheet.create({
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 12,
+    marginBottom: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  btn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  btnDisabled: { opacity: 0.38 },
+  btnText: { fontSize: 13, fontFamily: 'Inter_500Medium', flexShrink: 1 },
+  divider: { width: 1, alignSelf: 'stretch' },
 });
 
 // ──────────────────────────────────────────────────────────────────────────────

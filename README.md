@@ -87,7 +87,7 @@ The Expo app is gated by a single password from `EXPO_PUBLIC_APP_PASSWORD`
 <!-- AUTO:ARTIFACTS -->
 | Title | Kind | Directory | Preview path | Dev command |
 | --- | --- | --- | --- | --- |
-| API Server | `api` | `artifacts/api-server` | `/api` | `pnpm --filter @workspace/api-server run dev` |
+| API Server | `api` | `artifacts/api-server` | `/api` | `pnpm --filter @workspace/api-server run dev:supervised` |
 | Canvas | `design` | `artifacts/mockup-sandbox` | `/__mockup` | `pnpm --filter @workspace/mockup-sandbox run dev` |
 | Parts ID | `mobile` | `artifacts/parts-id` | `/` | `pnpm --filter @workspace/parts-id run dev` |
 <!-- /AUTO:ARTIFACTS -->
@@ -146,7 +146,7 @@ The Expo app is gated by a single password from `EXPO_PUBLIC_APP_PASSWORD`
 
 | Package | Scripts |
 | --- | --- |
-| `@workspace/api-server` | `build`, `dev`, `lint`, `start`, `test`, `typecheck` |
+| `@workspace/api-server` | `build`, `dev`, `dev:supervised`, `lint`, `start`, `test`, `typecheck` |
 | `@workspace/mockup-sandbox` | `build`, `dev`, `preview`, `typecheck` |
 | `@workspace/parts-id` | `build`, `dev`, `lint`, `serve`, `test`, `typecheck` |
 <!-- /AUTO:SCRIPTS -->
