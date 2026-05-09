@@ -6,9 +6,9 @@
  *
  * Covered scenarios:
  *   SectionShelfView (level = 'shelves', settings.shelfViewEnabled = true):
- *     • swipe-left  (dx ≤ -60) → navigates to the next section
- *     • swipe-right (dx ≥  60) → navigates to the prev section
- *     • sub-threshold (|dx| < 60) → no navigation
+ *     • swipe-left  (dx ≤ -75) → navigates to the next section   [iOS threshold]
+ *     • swipe-right (dx ≥  75) → navigates to the prev section   [iOS threshold]
+ *     • sub-threshold (|dx| < 75) → no navigation on iOS (threshold = 60 × 1.25)
  *     • at the last section: swipe-left callback is null → no navigation
  *     • at the first section: swipe-right callback is null → no navigation
  *
@@ -337,6 +337,19 @@ describe('SectionShelfView swipe navigation', () => {
     drillToSection('Section 06');
 
     swipe(40);
+
+    expect(screen.getByLabelText('Previous section: Section 04')).toBeTruthy();
+    expect(screen.getByLabelText('Next section: Section 08')).toBeTruthy();
+  });
+
+  it('iOS boundary: dx = 65 does NOT navigate (below the 75-px iOS threshold)', () => {
+    // On iOS the threshold is 75 px (60 × 1.25 — 25% less sensitive than other
+    // platforms). A swipe of 65 px would have triggered on the old 60-px threshold
+    // but must be treated as sub-threshold on iOS.
+    render(<BrowseByAisle {...defaultProps} />);
+    drillToSection('Section 06');
+
+    swipe(-65);
 
     expect(screen.getByLabelText('Previous section: Section 04')).toBeTruthy();
     expect(screen.getByLabelText('Next section: Section 08')).toBeTruthy();
