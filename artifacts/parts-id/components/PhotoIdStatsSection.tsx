@@ -122,8 +122,10 @@ export default function PhotoIdStatsSection({ adminHeaders, onExpiredSession }: 
                 <Pressable
                   key={opt.hours}
                   onPress={() => {
-                    setStats(null);
-                    setWindowHours(opt.hours);
+                    if (opt.hours !== windowHours) {
+                      setStats(null);
+                      setWindowHours(opt.hours);
+                    }
                   }}
                   accessibilityRole="button"
                   accessibilityLabel={`Show last ${opt.label}`}
