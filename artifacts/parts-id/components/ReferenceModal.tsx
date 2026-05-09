@@ -11,7 +11,7 @@
  * top bar (next to Scan). This component only renders the modal itself;
  * open/close state is owned by the parent.
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -32,6 +32,68 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : '';
 
+const QUICK_LOOKUP_CHIPS = [
+  {
+    label: '1G',
+    question:
+      'What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?',
+  },
+  {
+    label: 'GFCI',
+    question: 'What does GFCI stand for, how does it work, and where is it required by the NEC?',
+  },
+  {
+    label: 'AFCI',
+    question:
+      'What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?',
+  },
+  {
+    label: 'TRWR',
+    question:
+      'What does TRWR mean on a receptacle — what is Tamper Resistant and Weather Resistant, and where is each required?',
+  },
+  {
+    label: 'Decora',
+    question:
+      'What is a Decora style switch or receptacle, who makes them, and how do they differ from standard toggle style?',
+  },
+  {
+    label: 'Romex',
+    question:
+      'What is Romex (NM-B cable), what do the numbers on the sheath mean, and when is it allowed by code?',
+  },
+  {
+    label: 'MC Cable',
+    question:
+      'What is MC cable (Metal Clad armored cable), how does it differ from Romex, and when should it be used?',
+  },
+  {
+    label: 'EMT',
+    question:
+      'What is EMT (Electrical Metallic Tubing) conduit, what are its common uses, and how does it differ from rigid conduit?',
+  },
+  {
+    label: 'Toggle vs Rocker',
+    question:
+      'What is the difference between a toggle switch and a rocker (paddle) switch — are they interchangeable?',
+  },
+  {
+    label: 'Duplex',
+    question:
+      'What is a duplex receptacle, how does it differ from simplex and quadplex outlets, and what are standard amperage ratings?',
+  },
+  {
+    label: '15A vs 20A',
+    question:
+      'What is the difference between 15 amp and 20 amp circuits, receptacles, and breakers — how do I tell them apart?',
+  },
+  {
+    label: 'AWG',
+    question:
+      'What does AWG mean, how does wire gauge numbering work, and which gauge should I use for common circuits?',
+  },
+] as const;
+
 interface ReferenceModalProps {
   open: boolean;
   onClose: () => void;
@@ -51,6 +113,35 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
   const answerCacheRef = useRef<Map<string, string>>(new Map());
   // Y offset of the active answer container within the ScrollView content
   const answerContainerYRef = useRef<number>(0);
+
+  // Pre-fetch all cached quick-lookup answers from the server when the modal
+  // opens so every chip tap is instant. Falls back silently if this fails.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/reference/quick-lookups`);
+        if (!res.ok || cancelled) return;
+        const rows = (await res.json()) as { label: string; answer: string }[];
+        for (const { label, answer } of rows) {
+          if (!cancelled && label && answer) {
+            // Map the label back to its canonical question so chip presses hit
+            // the cache using the full question string (matching handleChipPress).
+            const chip = QUICK_LOOKUP_CHIPS.find((c) => c.label === label);
+            if (chip && !answerCacheRef.current.has(chip.question.trim())) {
+              answerCacheRef.current.set(chip.question.trim(), answer);
+            }
+          }
+        }
+      } catch {
+        // Pre-fetch failure is non-fatal; the on-demand SSE path is the fallback.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   // askQuestion accepts an optional override so chip handlers can pass the
   // question text directly without waiting for a setState flush.
@@ -315,70 +406,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
               <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>
                 QUICK LOOKUPS
               </Text>
-              {(
-                [
-                  {
-                    label: '1G',
-                    question:
-                      'What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?',
-                  },
-                  {
-                    label: 'GFCI',
-                    question:
-                      'What does GFCI stand for, how does it work, and where is it required by the NEC?',
-                  },
-                  {
-                    label: 'AFCI',
-                    question:
-                      'What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?',
-                  },
-                  {
-                    label: 'TRWR',
-                    question:
-                      'What does TRWR mean on a receptacle — what is Tamper Resistant and Weather Resistant, and where is each required?',
-                  },
-                  {
-                    label: 'Decora',
-                    question:
-                      'What is a Decora style switch or receptacle, who makes them, and how do they differ from standard toggle style?',
-                  },
-                  {
-                    label: 'Romex',
-                    question:
-                      'What is Romex (NM-B cable), what do the numbers on the sheath mean, and when is it allowed by code?',
-                  },
-                  {
-                    label: 'MC Cable',
-                    question:
-                      'What is MC cable (Metal Clad armored cable), how does it differ from Romex, and when should it be used?',
-                  },
-                  {
-                    label: 'EMT',
-                    question:
-                      'What is EMT (Electrical Metallic Tubing) conduit, what are its common uses, and how does it differ from rigid conduit?',
-                  },
-                  {
-                    label: 'Toggle vs Rocker',
-                    question:
-                      'What is the difference between a toggle switch and a rocker (paddle) switch — are they interchangeable?',
-                  },
-                  {
-                    label: 'Duplex',
-                    question:
-                      'What is a duplex receptacle, how does it differ from simplex and quadplex outlets, and what are standard amperage ratings?',
-                  },
-                  {
-                    label: '15A vs 20A',
-                    question:
-                      'What is the difference between 15 amp and 20 amp circuits, receptacles, and breakers — how do I tell them apart?',
-                  },
-                  {
-                    label: 'AWG',
-                    question:
-                      'What does AWG mean, how does wire gauge numbering work, and which gauge should I use for common circuits?',
-                  },
-                ] as const
-              ).map(({ label, question: q }) => (
+              {QUICK_LOOKUP_CHIPS.map(({ label, question: q }) => (
                 <Pressable
                   key={label}
                   onPress={() => handleChipPress(q)}

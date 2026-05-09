@@ -5,6 +5,7 @@
  */
 import { Router } from 'express';
 import { openai } from '@workspace/integrations-openai-ai-server';
+import { db, quickLookupCache } from '@workspace/db';
 
 const router = Router();
 
@@ -47,6 +48,22 @@ router.post('/ask', async (req, res) => {
     console.error(err);
     res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
     res.end();
+  }
+});
+
+// GET /reference/quick-lookups — returns all cached quick lookup answers
+router.get('/quick-lookups', async (_req, res) => {
+  try {
+    const rows = await db
+      .select({
+        label: quickLookupCache.label,
+        answer: quickLookupCache.answer,
+      })
+      .from(quickLookupCache);
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load quick lookup cache' });
   }
 });
 

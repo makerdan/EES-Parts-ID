@@ -99,6 +99,34 @@
       "when": 1747075200000,
       "tag": "0013_classification_review",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1747161600000,
+      "tag": "0014_product_series",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1747248000000,
+      "tag": "0015_dictionary_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1747334400000,
+      "tag": "0016_chip_filter_composite_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1747420800000,
+      "tag": "0017_quick_lookup_cache",
+      "breakpoints": true
     }
   ]
 }
