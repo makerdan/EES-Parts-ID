@@ -30,6 +30,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Fuse from 'fuse.js';
@@ -1024,6 +1025,14 @@ export default function SearchScreen() {
   // `displayedResults.length` (not `results.length`) guards the dimming so it
   // activates as soon as a re-search fires, before the new results arrive.
   const optimisticOpacity = searchMutation.isPending && displayedResults.length > 0 ? 0.45 : 1;
+  // Gesture.Native() tells RNGH's gesture system that the results FlatList
+  // owns its own native scroll gesture. Without this, RNGH's gesture
+  // recognizers (installed at the GestureHandlerRootView level in _layout.tsx)
+  // can claim vertical pan events before UIScrollView processes them,
+  // making finger and trackpad scrolling unreliable on iOS.
+  // The gesture object is stable (useMemo with no deps) so GestureDetector
+  // never re-registers it on re-render.
+  const nativeScrollGesture = useMemo(() => Gesture.Native(), []);
 
   // Skeleton placeholder count: fill roughly two screen heights of cards
   const SKELETON_COUNT = 6;
@@ -1706,6 +1715,7 @@ export default function SearchScreen() {
               }
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
+              scrollsToTop={false}
             >
               <View style={styles.filterCard}>
                 <FilterPanel
@@ -1761,260 +1771,265 @@ export default function SearchScreen() {
               ) : null}
             </ScrollView>
 
-            <Animated.View style={{ flex: 1, opacity: optimisticOpacity }}>
-              {/* Optimistic loading indicator — visible while a re-search is in flight
+            <GestureDetector gesture={nativeScrollGesture}>
+              <Animated.View style={{ flex: 1, opacity: optimisticOpacity }}>
+                {/* Optimistic loading indicator — visible while a re-search is in flight
           and prior results are still rendered at reduced opacity above. */}
-              {searchMutation.isPending && results.length > 0 ? (
-                <View style={styles.optimisticBanner}>
-                  <ActivityIndicator size="small" color={colors.primary} />
-                  <Text style={[styles.optimisticBannerText, { color: colors.mutedForeground }]}>
-                    Updating results…
-                  </Text>
-                </View>
-              ) : null}
-              <FlatList
-                data={visibleResults}
-                keyExtractor={(item) => String(item.item.id)}
-                // Pull-to-refresh: re-run search when there is an active search context
-                // (prior results OR a typed keyword / filter), or trigger a full
-                // inventory sync when the search field is truly empty and no search
-                // has ever been run. This matches the spec: "re-run handleSearch with
-                // the current filters if a prior search exists, or trigger syncInventory
-                // if the search field is empty."
-                refreshControl={
-                  <RefreshControl
-                    refreshing={searchMutation.isPending || isSyncing}
-                    onRefresh={() => {
-                      // In Browse mode, handleSearch() would run a text/field search
-                      // rather than refreshing the browse view — skip it and sync
-                      // instead so workers get fresh Browse data without a confusing
-                      // mode switch. Search-mode re-queries when there's an active
-                      // search context (prior results or typed keyword); falls back to
-                      // a full inventory sync when the screen is at the welcome state.
-                      if (mode === 'browse') {
-                        syncAllInventory();
-                        return;
-                      }
-                      const hasSearchContext = hasResults || filters.keywords.trim() !== '';
-                      if (hasSearchContext) {
-                        handleSearch();
-                      } else {
-                        syncAllInventory();
-                      }
-                    }}
-                    tintColor={colors.primary}
-                    colors={[colors.primary]}
-                  />
-                }
-                // IMPORTANT: pass a JSX element here, NOT an inline `() => (...)`
-                // function. An inline arrow creates a fresh component type on every
-                // render, which makes FlatList unmount/remount the header subtree
-                // and silently swallow in-flight Pressable taps.
-                ListHeaderComponent={
-                  <View>
-                    {/* Results header */}
-                    {hasResults && mode === 'browse' ? (
-                      <Pressable
-                        onPress={() => setBrowsePop((p) => p + 1)}
-                        hitSlop={8}
-                        style={styles.browseBackBtn}
-                      >
-                        <Feather name="chevron-left" size={18} color={colors.foreground} />
-                        <Text style={[styles.browseBackLabel, { color: colors.foreground }]}>
-                          Back
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                    {hasResults ? (
-                      <View>
-                        <View style={styles.resultsHeader}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.resultsCount, { color: colors.foreground }]}>
-                              {refinementActive
-                                ? `${visibleResults.length} of ${results.length} shown`
-                                : `${results.length} ${isOffline ? 'offline ' : ''}match${results.length !== 1 ? 'es' : ''} found`}
-                            </Text>
-                            {refinementActive ? (
+                {searchMutation.isPending && results.length > 0 ? (
+                  <View style={styles.optimisticBanner}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text style={[styles.optimisticBannerText, { color: colors.mutedForeground }]}>
+                      Updating results…
+                    </Text>
+                  </View>
+                ) : null}
+                <FlatList
+                  data={visibleResults}
+                  keyExtractor={(item) => String(item.item.id)}
+                  // Pull-to-refresh: re-run search when there is an active search context
+                  // (prior results OR a typed keyword / filter), or trigger a full
+                  // inventory sync when the search field is truly empty and no search
+                  // has ever been run. This matches the spec: "re-run handleSearch with
+                  // the current filters if a prior search exists, or trigger syncInventory
+                  // if the search field is empty."
+                  refreshControl={
+                    <RefreshControl
+                      refreshing={searchMutation.isPending || isSyncing}
+                      onRefresh={() => {
+                        // In Browse mode, handleSearch() would run a text/field search
+                        // rather than refreshing the browse view — skip it and sync
+                        // instead so workers get fresh Browse data without a confusing
+                        // mode switch. Search-mode re-queries when there's an active
+                        // search context (prior results or typed keyword); falls back to
+                        // a full inventory sync when the screen is at the welcome state.
+                        if (mode === 'browse') {
+                          syncAllInventory();
+                          return;
+                        }
+                        const hasSearchContext = hasResults || filters.keywords.trim() !== '';
+                        if (hasSearchContext) {
+                          handleSearch();
+                        } else {
+                          syncAllInventory();
+                        }
+                      }}
+                      tintColor={colors.primary}
+                      colors={[colors.primary]}
+                    />
+                  }
+                  // IMPORTANT: pass a JSX element here, NOT an inline `() => (...)`
+                  // function. An inline arrow creates a fresh component type on every
+                  // render, which makes FlatList unmount/remount the header subtree
+                  // and silently swallow in-flight Pressable taps.
+                  ListHeaderComponent={
+                    <View>
+                      {/* Results header */}
+                      {hasResults && mode === 'browse' ? (
+                        <Pressable
+                          onPress={() => setBrowsePop((p) => p + 1)}
+                          hitSlop={8}
+                          style={styles.browseBackBtn}
+                        >
+                          <Feather name="chevron-left" size={18} color={colors.foreground} />
+                          <Text style={[styles.browseBackLabel, { color: colors.foreground }]}>
+                            Back
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                      {hasResults ? (
+                        <View>
+                          <View style={styles.resultsHeader}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.resultsCount, { color: colors.foreground }]}>
+                                {refinementActive
+                                  ? `${visibleResults.length} of ${results.length} shown`
+                                  : `${results.length} ${isOffline ? 'offline ' : ''}match${results.length !== 1 ? 'es' : ''} found`}
+                              </Text>
+                              {refinementActive ? (
+                                <Pressable onPress={() => setRefinement({})} hitSlop={6}>
+                                  <Text
+                                    style={[styles.clearRefinementLink, { color: colors.primary }]}
+                                  >
+                                    Clear refinement
+                                  </Text>
+                                </Pressable>
+                              ) : null}
+                            </View>
+                          </View>
+                          {/* Drill-down refinement bar — "Add keywords" input + chip
+                    rows for any result-set variation. Always shown after a
+                    search returning results. */}
+                          {showRefinementBar ? (
+                            <ResultRefinementBar
+                              results={results}
+                              refinement={refinement}
+                              onChange={setRefinement}
+                            />
+                          ) : null}
+                          {/* Refinement filtered everything out */}
+                          {refinementActive && visibleResults.length === 0 ? (
+                            <View
+                              style={[
+                                styles.refinementEmpty,
+                                { borderColor: colors.border, backgroundColor: colors.card },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.refinementEmptyText,
+                                  { color: colors.mutedForeground },
+                                ]}
+                              >
+                                No results match the current refinement. Tap a chip again to remove
+                                it, or
+                              </Text>
                               <Pressable onPress={() => setRefinement({})} hitSlop={6}>
                                 <Text
-                                  style={[styles.clearRefinementLink, { color: colors.primary }]}
+                                  style={[
+                                    styles.clearRefinementLink,
+                                    { color: colors.primary, marginTop: 4 },
+                                  ]}
                                 >
                                   Clear refinement
                                 </Text>
                               </Pressable>
-                            ) : null}
-                          </View>
+                            </View>
+                          ) : null}
                         </View>
-                        {/* Drill-down refinement bar — "Add keywords" input + chip
-                    rows for any result-set variation. Always shown after a
-                    search returning results. */}
-                        {showRefinementBar ? (
-                          <ResultRefinementBar
-                            results={results}
-                            refinement={refinement}
-                            onChange={setRefinement}
-                          />
-                        ) : null}
-                        {/* Refinement filtered everything out */}
-                        {refinementActive && visibleResults.length === 0 ? (
-                          <View
-                            style={[
-                              styles.refinementEmpty,
-                              { borderColor: colors.border, backgroundColor: colors.card },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.refinementEmptyText,
-                                { color: colors.mutedForeground },
-                              ]}
-                            >
-                              No results match the current refinement. Tap a chip again to remove
-                              it, or
-                            </Text>
-                            <Pressable onPress={() => setRefinement({})} hitSlop={6}>
-                              <Text
-                                style={[
-                                  styles.clearRefinementLink,
-                                  { color: colors.primary, marginTop: 4 },
-                                ]}
-                              >
-                                Clear refinement
-                              </Text>
-                            </Pressable>
-                          </View>
-                        ) : null}
-                      </View>
-                    ) : null}
+                      ) : null}
 
-                    {/* Skeleton loading — shown on first search (no prior results).
+                      {/* Skeleton loading — shown on first search (no prior results).
                 When results already exist, optimistic opacity handles the
                 "pending" state so we never go blank. */}
-                    {searchMutation.isPending && results.length === 0 ? (
-                      <View style={styles.skeletonContainer}>
-                        {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
-                          <SkeletonResultCard key={i} colors={colors} />
-                        ))}
-                      </View>
-                    ) : null}
+                      {searchMutation.isPending && results.length === 0 ? (
+                        <View style={styles.skeletonContainer}>
+                          {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
+                            <SkeletonResultCard key={i} colors={colors} />
+                          ))}
+                        </View>
+                      ) : null}
 
-                    {/* Error: server failed + no offline cache */}
-                    {searchMutation.isError && !isOffline ? (
-                      <View
+                      {/* Error: server failed + no offline cache */}
+                      {searchMutation.isError && !isOffline ? (
+                        <View
+                          style={[
+                            styles.errorCard,
+                            {
+                              backgroundColor: colors.destructive + '11',
+                              borderColor: colors.destructive + '44',
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.errorText, { color: colors.destructive }]}>
+                            Search failed. Check your connection and try again.
+                          </Text>
+                        </View>
+                      ) : null}
+                      {isOffline && offlineResults !== null && offlineResults.length === 0 ? (
+                        <View
+                          style={[
+                            styles.errorCard,
+                            {
+                              backgroundColor: colors.warning + '11',
+                              borderColor: colors.warning + '44',
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.errorText, { color: colors.warning }]}>
+                            Offline — no cached items match your search. Connect to load more
+                            results.
+                          </Text>
+                        </View>
+                      ) : null}
+
+                      {/* Empty state */}
+                      {hasResults && results.length === 0 && !isOffline ? (
+                        <View style={styles.emptyContainer}>
+                          <Feather
+                            name="search"
+                            size={48}
+                            color={colors.mutedForeground}
+                            style={{ marginBottom: 12 }}
+                          />
+                          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+                            No Results Found
+                          </Text>
+                          <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+                            Try broader terms, check spelling, or lower the confidence threshold.
+                          </Text>
+                          {belowThreshold > 0 ? (
+                            <Pressable
+                              onPress={() => {
+                                const lower = Math.max(0, filters.confidenceThreshold - 20);
+                                handleChange('confidenceThreshold', lower);
+                                setTimeout(handleSearch, 50);
+                              }}
+                              style={[
+                                styles.lowerThresholdBtn,
+                                {
+                                  backgroundColor: colors.warning + '18',
+                                  borderColor: colors.warning + '55',
+                                },
+                              ]}
+                            >
+                              <Text
+                                style={[styles.lowerThresholdBtnText, { color: colors.warning }]}
+                              >
+                                {belowThreshold} match{belowThreshold !== 1 ? 'es' : ''} at lower
+                                confidence —{'\n'}
+                                Tap to search at {Math.max(0, filters.confidenceThreshold - 20)}%
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      ) : null}
+                    </View>
+                  }
+                  renderItem={({ item: result, index }) => (
+                    <View style={styles.resultItem}>
+                      <ResultCard
+                        result={result}
+                        onEditKeywords={adminToken ? setEditItem : undefined}
+                        rank={index}
+                        showRank={mode !== 'browse'}
+                        fontScale={textFontScale}
+                        highlightTokens={highlightTokens}
+                        onFirstExpand={() => logResultClick(result.item.id, index)}
+                      />
+                    </View>
+                  )}
+                  ListFooterComponent={
+                    !isOffline && belowThreshold > 0 && hasResults && results.length > 0 ? (
+                      <Pressable
+                        onPress={() => {
+                          const lower = Math.max(0, filters.confidenceThreshold - 20);
+                          handleChange('confidenceThreshold', lower);
+                          setTimeout(handleSearch, 50);
+                        }}
                         style={[
-                          styles.errorCard,
+                          styles.belowThresholdBanner,
                           {
-                            backgroundColor: colors.destructive + '11',
-                            borderColor: colors.destructive + '44',
+                            backgroundColor: colors.warning + '18',
+                            borderColor: colors.warning + '55',
                           },
                         ]}
                       >
-                        <Text style={[styles.errorText, { color: colors.destructive }]}>
-                          Search failed. Check your connection and try again.
+                        <Text style={[styles.belowThresholdBannerText, { color: colors.warning }]}>
+                          {belowThreshold} more match{belowThreshold !== 1 ? 'es' : ''} available —
+                          tap to lower confidence threshold to{' '}
+                          {Math.max(0, filters.confidenceThreshold - 20)}%
                         </Text>
-                      </View>
-                    ) : null}
-                    {isOffline && offlineResults !== null && offlineResults.length === 0 ? (
-                      <View
-                        style={[
-                          styles.errorCard,
-                          {
-                            backgroundColor: colors.warning + '11',
-                            borderColor: colors.warning + '44',
-                          },
-                        ]}
-                      >
-                        <Text style={[styles.errorText, { color: colors.warning }]}>
-                          Offline — no cached items match your search. Connect to load more results.
-                        </Text>
-                      </View>
-                    ) : null}
-
-                    {/* Empty state */}
-                    {hasResults && results.length === 0 && !isOffline ? (
-                      <View style={styles.emptyContainer}>
-                        <Feather
-                          name="search"
-                          size={48}
-                          color={colors.mutedForeground}
-                          style={{ marginBottom: 12 }}
-                        />
-                        <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-                          No Results Found
-                        </Text>
-                        <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-                          Try broader terms, check spelling, or lower the confidence threshold.
-                        </Text>
-                        {belowThreshold > 0 ? (
-                          <Pressable
-                            onPress={() => {
-                              const lower = Math.max(0, filters.confidenceThreshold - 20);
-                              handleChange('confidenceThreshold', lower);
-                              setTimeout(handleSearch, 50);
-                            }}
-                            style={[
-                              styles.lowerThresholdBtn,
-                              {
-                                backgroundColor: colors.warning + '18',
-                                borderColor: colors.warning + '55',
-                              },
-                            ]}
-                          >
-                            <Text style={[styles.lowerThresholdBtnText, { color: colors.warning }]}>
-                              {belowThreshold} match{belowThreshold !== 1 ? 'es' : ''} at lower
-                              confidence —{'\n'}
-                              Tap to search at {Math.max(0, filters.confidenceThreshold - 20)}%
-                            </Text>
-                          </Pressable>
-                        ) : null}
-                      </View>
-                    ) : null}
-                  </View>
-                }
-                renderItem={({ item: result, index }) => (
-                  <View style={styles.resultItem}>
-                    <ResultCard
-                      result={result}
-                      onEditKeywords={adminToken ? setEditItem : undefined}
-                      rank={index}
-                      showRank={mode !== 'browse'}
-                      fontScale={textFontScale}
-                      highlightTokens={highlightTokens}
-                      onFirstExpand={() => logResultClick(result.item.id, index)}
-                    />
-                  </View>
-                )}
-                ListFooterComponent={
-                  !isOffline && belowThreshold > 0 && hasResults && results.length > 0 ? (
-                    <Pressable
-                      onPress={() => {
-                        const lower = Math.max(0, filters.confidenceThreshold - 20);
-                        handleChange('confidenceThreshold', lower);
-                        setTimeout(handleSearch, 50);
-                      }}
-                      style={[
-                        styles.belowThresholdBanner,
-                        {
-                          backgroundColor: colors.warning + '18',
-                          borderColor: colors.warning + '55',
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.belowThresholdBannerText, { color: colors.warning }]}>
-                        {belowThreshold} more match{belowThreshold !== 1 ? 'es' : ''} available —
-                        tap to lower confidence threshold to{' '}
-                        {Math.max(0, filters.confidenceThreshold - 20)}%
-                      </Text>
-                    </Pressable>
-                  ) : null
-                }
-                contentContainerStyle={styles.listContent}
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="none"
-                scrollEventThrottle={16}
-              />
-            </Animated.View>
+                      </Pressable>
+                    ) : null
+                  }
+                  contentContainerStyle={styles.listContent}
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="none"
+                  scrollEventThrottle={16}
+                />
+              </Animated.View>
+            </GestureDetector>
           </>
         ) : null}
 

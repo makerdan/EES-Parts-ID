@@ -439,6 +439,29 @@ jest.mock('expo-glass-effect', () => ({
   isLiquidGlassAvailable: () => false,
 }));
 
+jest.mock('react-native-gesture-handler', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const R = require('react') as typeof import('react');
+  const GestureDetector = ({ children }: { children: React.ReactNode }) =>
+    R.createElement(R.Fragment, null, children);
+  const Gesture = {
+    Native: () => ({}),
+    Pan: () => ({
+      onStart: () => Gesture.Pan(),
+      onUpdate: () => Gesture.Pan(),
+      onEnd: () => Gesture.Pan(),
+    }),
+    Simultaneous: (..._args: unknown[]) => ({}),
+    Race: (..._args: unknown[]) => ({}),
+  };
+  return {
+    GestureDetector,
+    Gesture,
+    GestureHandlerRootView: ({ children }: { children: React.ReactNode }) =>
+      R.createElement(R.Fragment, null, children),
+  };
+});
+
 // ── Imports after mocks ────────────────────────────────────────────────────────
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
