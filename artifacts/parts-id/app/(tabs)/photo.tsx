@@ -12,6 +12,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   ActivityIndicator,
   Image,
+  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -49,6 +50,7 @@ export default function PhotoScreen() {
   const [aiSummary, setAiSummary] = useState('');
   const [aiTerms, setAiTerms] = useState<string[]>([]);
   const [inlineError, setInlineError] = useState<string | null>(null);
+  const [cameraPermissionDenied, setCameraPermissionDenied] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   // Tracks which phase of the multi-step AI identification flow we are in.
   type ProgressPhase = 'uploading' | 'analysing' | 'searching' | null;
@@ -79,12 +81,13 @@ export default function PhotoScreen() {
       return;
     }
     setInlineError(null);
+    setCameraPermissionDenied(false);
 
     let result;
     if (source === 'camera') {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        setInlineError('Camera access denied — please enable it in your device Settings.');
+        setCameraPermissionDenied(true);
         return;
       }
       result = await ImagePicker.launchCameraAsync({
@@ -622,6 +625,54 @@ export default function PhotoScreen() {
             </View>
           ) : null}
 
+          {/* Camera permission denied card */}
+          {cameraPermissionDenied ? (
+            <View
+              style={[
+                styles.permissionCard,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
+              <Text
+                allowFontScaling={false}
+                style={[styles.permissionTitle, { color: colors.foreground }]}
+              >
+                Camera access is off
+              </Text>
+              <Text
+                allowFontScaling={false}
+                style={[styles.permissionBody, { color: colors.mutedForeground }]}
+              >
+                Open Settings to allow camera access for Photo ID.
+              </Text>
+              <Pressable
+                style={[styles.permissionPrimaryBtn, { backgroundColor: colors.primary }]}
+                onPress={() => {
+                  setCameraPermissionDenied(false);
+                  Linking.openSettings();
+                }}
+              >
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.permissionPrimaryBtnText, { color: colors.primaryForeground }]}
+                >
+                  Open Settings
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setCameraPermissionDenied(false)}
+                style={styles.permissionSecondaryBtn}
+              >
+                <Text
+                  allowFontScaling={false}
+                  style={{ color: colors.primary, fontFamily: 'Inter_500Medium' }}
+                >
+                  Dismiss
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           {/* Inline error banner */}
           {inlineError ? (
             <View
@@ -946,4 +997,24 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     borderRadius: 1,
   },
+  permissionCard: {
+    margin: 24,
+    padding: 20,
+    gap: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  permissionTitle: { fontSize: 18, fontFamily: 'Inter_700Bold' },
+  permissionBody: { fontSize: 14, fontFamily: 'Inter_400Regular', lineHeight: 20 },
+  permissionPrimaryBtn: {
+    marginTop: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  permissionPrimaryBtnText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  permissionSecondaryBtn: { paddingVertical: 8, alignItems: 'center' },
 });
