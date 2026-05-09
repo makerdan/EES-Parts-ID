@@ -660,6 +660,86 @@ export const GetPhotoStatsResponse = zod
   .describe('Aggregated Photo ID telemetry over the requested window.');
 
 /**
+ * Returns raw `photo_id_event` rows with optional filters. Each item
+includes the AI-guessed catalog/vendor, match type, top result and
+confirmed result (catalog + vendor from the inventory table), and
+latency. Admin Bearer required.
+
+ * @summary Paginated list of individual Photo ID scan events
+ */
+export const listPhotoEventsQueryWindowHoursDefault = 24;
+export const listPhotoEventsQueryWindowHoursMax = 720;
+
+export const listPhotoEventsQueryPageDefault = 1;
+
+export const listPhotoEventsQueryLimitDefault = 20;
+export const listPhotoEventsQueryLimitMax = 100;
+
+export const ListPhotoEventsQueryParams = zod.object({
+  windowHours: zod.coerce
+    .number()
+    .min(1)
+    .max(listPhotoEventsQueryWindowHoursMax)
+    .default(listPhotoEventsQueryWindowHoursDefault)
+    .describe('Lookback window in hours (default 24, max 720 = 30 days).'),
+  parseOk: zod.coerce
+    .boolean()
+    .optional()
+    .describe('Filter by whether the vision response parsed cleanly. Omit for all.'),
+  matchType: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      'Filter by match type (catalog_exact | attribute_match | descriptive). Omit for all.'
+    ),
+  confirmed: zod.coerce
+    .string()
+    .optional()
+    .describe("'yes' = must have a confirmed result, 'no' = no confirmed result, omit for all."),
+  page: zod.coerce.number().min(1).default(listPhotoEventsQueryPageDefault),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listPhotoEventsQueryLimitMax)
+    .default(listPhotoEventsQueryLimitDefault),
+});
+
+export const ListPhotoEventsResponse = zod
+  .object({
+    items: zod.array(
+      zod
+        .object({
+          id: zod.number(),
+          ts: zod.coerce.date().describe('When the scan occurred.'),
+          imageHash: zod.string().nullish(),
+          parseOk: zod.boolean().describe('Whether the vision response parsed cleanly.'),
+          catalogGuess: zod.string().nullish().describe('Catalog number extracted by the AI.'),
+          vendorGuess: zod.string().nullish().describe('Vendor name extracted by the AI.'),
+          matchType: zod
+            .string()
+            .nullish()
+            .describe('Match path used (catalog_exact | attribute_match | descriptive).'),
+          topResultCatalog: zod.string().nullish().describe('Catalog of the'),
+          topResultVendor: zod.string().nullish().describe('Vendor of the'),
+          confirmedResultCatalog: zod
+            .string()
+            .nullish()
+            .describe('Catalog of the result the worker confirmed, if any.'),
+          confirmedResultVendor: zod
+            .string()
+            .nullish()
+            .describe('Vendor of the result the worker confirmed, if any.'),
+          latencyMs: zod.number().nullish(),
+        })
+        .describe('A single raw Photo ID scan event with joined inventory data.')
+    ),
+    total: zod.number().describe('Total number of events matching the current filters.'),
+    page: zod.number(),
+    limit: zod.number(),
+  })
+  .describe('Paginated list of individual Photo ID scan events.');
+
+/**
  * @summary Ask a question about electrical terms (SSE streaming)
  */
 export const AskReferenceBody = zod.object({
