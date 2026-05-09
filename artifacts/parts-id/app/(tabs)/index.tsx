@@ -1075,7 +1075,7 @@ export default function SearchScreen() {
       {isLiquidGlassAvailable() && (
         <Stack.Screen
           options={{
-            title: 'PartsID',
+            title: 'Search',
             headerShown: true,
             headerLargeTitle: true,
             headerLargeTitleStyle: { fontFamily: 'Inter_700Bold' },
