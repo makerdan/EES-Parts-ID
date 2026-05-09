@@ -913,11 +913,12 @@ function Header({
   onBack: () => void;
   onHome: () => void;
 }) {
-  const parts: string[] = [];
-  if (crumbs.aisle) parts.push(crumbs.aisle.label);
-  if (crumbs.section) parts.push(crumbs.section.label);
-  if (crumbs.shelf) parts.push(crumbs.shelf.label);
   const isRoot = !crumbs.aisle;
+  const locationTitle = crumbs.aisle
+    ? crumbs.section
+      ? `${crumbs.aisle.label} - ${crumbs.section.label}`
+      : crumbs.aisle.label
+    : null;
   return (
     <View style={[styles.header, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Pressable
@@ -933,13 +934,13 @@ function Header({
         </Text>
       </Pressable>
       <View style={styles.crumbWrap}>
-        {parts.length > 0 ? (
+        {locationTitle ? (
           <Text
             allowFontScaling={false}
-            style={[styles.crumbPath, { color: '#000000' }]}
+            style={[styles.crumbPath, { color: colors.foreground }]}
             numberOfLines={1}
           >
-            {parts.join(' › ')}
+            {locationTitle}
           </Text>
         ) : null}
       </View>
@@ -1034,7 +1035,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     flexShrink: 1,
     textAlign: 'center',
-    textDecorationLine: 'underline',
   },
   drillRow: {
     flexDirection: 'row',
