@@ -4,6 +4,7 @@
  * URL contract can evolve without churn in the dictionaries router.
  */
 import { Router } from 'express';
+import { eq } from 'drizzle-orm';
 import { openai } from '@workspace/integrations-openai-ai-server';
 import { db, quickLookupCache } from '@workspace/db';
 
@@ -64,6 +65,25 @@ router.get('/quick-lookups', async (_req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load quick lookup cache' });
+  }
+});
+
+// GET /reference/quick-lookups/:label — returns a single cached quick lookup answer by label
+router.get('/quick-lookups/:label', async (req, res) => {
+  try {
+    const { label } = req.params;
+    const [row] = await db
+      .select({ answer: quickLookupCache.answer })
+      .from(quickLookupCache)
+      .where(eq(quickLookupCache.label, label))
+      .limit(1);
+    if (!row) {
+      return void res.status(404).json({ error: 'Not cached' });
+    }
+    res.json({ answer: row.answer });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load quick lookup' });
   }
 });
 
