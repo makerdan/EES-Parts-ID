@@ -66,9 +66,7 @@ export function EnrichmentStatsChips({ reviewCount, enrichSummary, onReviewQueue
           onPress={onReviewQueuePress}
           accessibilityLabel="Open review queue"
         >
-          <Text style={[s.value, { color: colors.primary }]}>
-            {reviewCount.toLocaleString()}
-          </Text>
+          <Text style={[s.value, { color: colors.primary }]}>{reviewCount.toLocaleString()}</Text>
           <Text style={[s.label, { color: colors.mutedForeground }]}>Review Queue</Text>
         </Pressable>
       ) : null}
