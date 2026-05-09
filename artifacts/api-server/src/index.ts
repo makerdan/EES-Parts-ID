@@ -11,6 +11,7 @@ import {
   start as startEnrichmentRunCleanup,
   stop as stopEnrichmentRunCleanup,
 } from './lib/enrichmentRunCleanup';
+import { seedQuickLookups } from './lib/seedQuickLookups';
 
 const rawPort = process.env['PORT'];
 
@@ -46,6 +47,8 @@ function startServer(retries: number): void {
   const server = app.listen(port, () => {
     logger.info({ port }, 'Server listening');
     startEnrichmentRunCleanup();
+    // Warm the quick lookup cache non-blocking — errors logged, not fatal.
+    seedQuickLookups().catch((err) => logger.error({ err }, 'Quick lookup seeder failed'));
   });
 
   // Defer the rest of server-startup wiring to a separate handler so
