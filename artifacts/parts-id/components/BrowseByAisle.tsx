@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BackHandler,
   FlatList,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -335,6 +336,49 @@ export function BrowseByAisle({
   );
 }
 
+// ── Swipe-to-navigate hook ────────────────────────────────────────────────────
+// Detects horizontal swipes on the container view and calls the appropriate
+// callback. Uses refs for callbacks so the PanResponder (created once) never
+// holds stale closures.
+//
+// Conflict avoidance: `onStartShouldSetPanResponder` is false, and we rely on
+// `onMoveShouldSetPanResponder` (non-capture) with a high horizontal ratio so
+// nested horizontal ScrollViews — which claim the responder at touch-start —
+// refuse the termination request and keep their own scroll. Swipes on blank
+// areas (shelf labels, gaps, the nav bar) where nothing else claimed the
+// touch will be picked up cleanly here.
+function useSectionSwipe({
+  onSwipeLeft,
+  onSwipeRight,
+}: {
+  onSwipeLeft: (() => void) | null;
+  onSwipeRight: (() => void) | null;
+}) {
+  const leftRef = useRef(onSwipeLeft);
+  const rightRef = useRef(onSwipeRight);
+  leftRef.current = onSwipeLeft;
+  rightRef.current = onSwipeRight;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onStartShouldSetPanResponderCapture: () => false,
+      // Only claim if the swipe is clearly horizontal and no nested component
+      // (horizontal ScrollView) already has the responder and won't yield.
+      onMoveShouldSetPanResponder: (_, gs) =>
+        Math.abs(gs.dx) > 10 && Math.abs(gs.dx) > Math.abs(gs.dy) * 2.5,
+      onMoveShouldSetPanResponderCapture: () => false,
+      onPanResponderRelease: (_, gs) => {
+        if (Math.abs(gs.dx) < 60) return;
+        if (gs.dx < 0 && leftRef.current) leftRef.current();
+        else if (gs.dx > 0 && rightRef.current) rightRef.current();
+      },
+    }),
+  ).current;
+
+  return panResponder.panHandlers;
+}
+
 // ── Visual shelf view ─────────────────────────────────────────────────────────
 
 const BIN_SLOT_W = 84;
@@ -370,8 +414,13 @@ function ShelfView({
     .filter(Boolean)
     .join(' › ');
 
+  const swipeHandlers = useSectionSwipe({
+    onSwipeLeft: nextSectionLabel ? onNextSection : null,
+    onSwipeRight: prevSectionLabel ? onPrevSection : null,
+  });
+
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1 }} {...swipeHandlers}>
       <SectionNavBar
         prevLabel={prevSectionLabel}
         nextLabel={nextSectionLabel}
@@ -586,8 +635,13 @@ function SectionShelfView({
 
   const locationLabel = [crumbs.aisle?.label, section.label].filter(Boolean).join(' › ');
 
+  const swipeHandlers = useSectionSwipe({
+    onSwipeLeft: nextSectionLabel ? onNextSection : null,
+    onSwipeRight: prevSectionLabel ? onPrevSection : null,
+  });
+
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1 }} {...swipeHandlers}>
       <SectionNavBar
         prevLabel={prevSectionLabel}
         nextLabel={nextSectionLabel}
