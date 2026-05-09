@@ -47,6 +47,7 @@ import { useColors } from '@/hooks/useColors';
 import { useApp } from '@/contexts/AppContext';
 import { ResultCard } from '@/components/ResultCard';
 import { RecordEditModal } from '@/components/RecordEditModal';
+import { updateFuseCache } from '@/lib/updateFuseCache';
 import { Toast } from '@/components/Toast';
 import { ErrorBanner } from '@/components/ErrorBanner';
 
@@ -839,6 +840,7 @@ export default function ScanScreen() {
           if (matchedItem && matchedItem.id === updated.id) {
             setMatchedItem({ ...matchedItem, ...updated });
           }
+          updateFuseCache(updated).catch(() => {});
           setEditItem(null);
         }}
       />

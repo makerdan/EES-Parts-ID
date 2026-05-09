@@ -36,6 +36,7 @@ import { ResultCard } from '@/components/ResultCard';
 import { ReferenceModal } from '@/components/ReferenceModal';
 import { RecordEditModal } from '@/components/RecordEditModal';
 import { secondaryBtnBase } from '@/styles/shared';
+import { updateFuseCache } from '@/lib/updateFuseCache';
 
 export default function PhotoScreen() {
   const colors = useColors();
@@ -866,6 +867,7 @@ export default function PhotoScreen() {
               r.item.id === updated.id ? { ...r, item: { ...r.item, ...updated } } : r
             )
           );
+          updateFuseCache(updated).catch(() => {});
           setEditItem(null);
         }}
       />
