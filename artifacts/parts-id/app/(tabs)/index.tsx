@@ -2012,6 +2012,7 @@ export default function SearchScreen() {
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="none"
+                scrollEventThrottle={16}
               />
             </Animated.View>
           </>

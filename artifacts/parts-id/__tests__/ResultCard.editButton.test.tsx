@@ -219,19 +219,20 @@ describe('ResultCard — Edit Part Details button visibility', () => {
     expect(onEdit).toHaveBeenCalledWith(result.item);
   });
 
-  it('Edit button is absent before the card is expanded', () => {
+  it('Edit button is visible before the card is expanded', () => {
     const onEdit = jest.fn();
     render(<ResultCard result={makeResult()} rank={1} onEditKeywords={onEdit} />);
-    // Do NOT expand — button must not be in the DOM yet
-    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
+    // Do NOT expand — button must still be in the DOM (always-visible footer)
+    expect(screen.getByText('✏️ Edit Part Details')).toBeTruthy();
   });
 
-  it('Edit button disappears again after collapsing the card', () => {
+  it('Edit button stays visible after collapsing the card', () => {
     const onEdit = jest.fn();
     render(<ResultCard result={makeResult()} rank={1} onEditKeywords={onEdit} />);
     expandCard(); // expand
     expect(screen.getByText('✏️ Edit Part Details')).toBeTruthy();
     expandCard(); // collapse (second click)
-    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
+    // Button remains — it lives outside the expanded block
+    expect(screen.getByText('✏️ Edit Part Details')).toBeTruthy();
   });
 });

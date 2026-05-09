@@ -583,16 +583,6 @@ export function ResultCard({
                     No keywords yet — tap Edit to add some.
                   </Text>
                 )}
-                {onEditKeywords ? (
-                  <Pressable
-                    onPress={() => onEditKeywords(item)}
-                    style={[cardStyles.editBtn, { borderColor: colors.border }]}
-                  >
-                    <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
-                      ✏️ Edit Part Details
-                    </Text>
-                  </Pressable>
-                ) : null}
                 {onConfirm ? (
                   <Pressable
                     onPress={onConfirm}
@@ -614,6 +604,18 @@ export function ResultCard({
                 </Text>
               ) : null}
             </>
+          ) : null}
+
+          {/* Edit Part Details — always visible when admin prop is provided */}
+          {onEditKeywords ? (
+            <Pressable
+              onPress={() => onEditKeywords(item)}
+              style={[cardStyles.editBtn, { borderColor: colors.border }]}
+            >
+              <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
+                ✏️ Edit Part Details
+              </Text>
+            </Pressable>
           ) : null}
 
           {/* Expand chevron */}
