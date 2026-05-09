@@ -198,10 +198,7 @@ export async function seedQuickLookups(): Promise<void> {
 
   if (failedLabels.size > 0) {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      logger.info(
-        { labels: [...failedLabels], attempt },
-        'Retrying failed quick lookup chips'
-      );
+      logger.info({ labels: [...failedLabels], attempt }, 'Retrying failed quick lookup chips');
       await delay(RETRY_DELAY_MS);
 
       const toRetry = CHIPS.filter((c) => failedLabels.has(c.label));
@@ -212,10 +209,7 @@ export async function seedQuickLookups(): Promise<void> {
             failedLabels.delete(chip.label);
           }
         } catch (err) {
-          logger.error(
-            { err, label: chip.label, attempt },
-            'Retry failed for quick lookup chip'
-          );
+          logger.error({ err, label: chip.label, attempt }, 'Retry failed for quick lookup chip');
         }
       }
 
@@ -244,6 +238,9 @@ export async function seedQuickLookups(): Promise<void> {
       );
     }
   } catch (err) {
-    logger.error({ err }, 'Quick lookup cache verification query failed — server will remain at 503');
+    logger.error(
+      { err },
+      'Quick lookup cache verification query failed — server will remain at 503'
+    );
   }
 }
