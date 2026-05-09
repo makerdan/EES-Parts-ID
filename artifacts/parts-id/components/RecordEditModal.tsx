@@ -524,7 +524,9 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
 
             {/* Product Series */}
             <View style={s.seriesHeader}>
-              <Text style={[s.label, { color: colors.mutedForeground, marginTop: 12, marginBottom: 0 }]}>
+              <Text
+                style={[s.label, { color: colors.mutedForeground, marginTop: 12, marginBottom: 0 }]}
+              >
                 PRODUCT SERIES
               </Text>
               <Switch
@@ -553,7 +555,11 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
                       placeholderTextColor={colors.mutedForeground}
                       style={[
                         s.input,
-                        { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                        {
+                          backgroundColor: colors.muted,
+                          borderColor: colors.border,
+                          color: colors.foreground,
+                        },
                       ]}
                       autoCorrect={false}
                     />
@@ -584,17 +590,28 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
                   <TextInput
                     value={seriesSearchQuery}
                     onChangeText={handleSeriesSearchChange}
-                    placeholder={seriesId !== null ? 'Search to change series…' : 'Search series by name…'}
+                    placeholder={
+                      seriesId !== null ? 'Search to change series…' : 'Search series by name…'
+                    }
                     placeholderTextColor={colors.mutedForeground}
                     style={[
                       s.kwInput,
-                      { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                      {
+                        flex: 1,
+                        backgroundColor: colors.muted,
+                        borderColor: colors.border,
+                        color: colors.foreground,
+                      },
                     ]}
                     autoCorrect={false}
                     autoCapitalize="none"
                   />
                   {seriesSearchLoading ? (
-                    <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 8 }} />
+                    <ActivityIndicator
+                      size="small"
+                      color={colors.primary}
+                      style={{ marginLeft: 8 }}
+                    />
                   ) : null}
                 </View>
 
