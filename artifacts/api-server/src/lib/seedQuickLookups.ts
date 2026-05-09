@@ -8,11 +8,27 @@
  *
  * Called non-blocking from the server startup path — errors are logged but
  * never propagate to crash the process.
+ *
+ * Exposes `isQuickLookupSeederReady()` so the health-check endpoint can
+ * return 503 until all chips are seeded. The Replit proxy uses this to
+ * gate traffic on production deploys, guaranteeing every chip tap is
+ * instant from the very first request.
  */
 import { db, quickLookupCache } from '@workspace/db';
 import { eq } from 'drizzle-orm';
 import { openai } from '@workspace/integrations-openai-ai-server';
 import { logger } from './logger';
+
+let _ready = false;
+
+/**
+ * Returns true once seedQuickLookups() has finished (successfully or with
+ * per-chip errors). Used by the /healthz endpoint to block traffic until
+ * all chips are pre-populated in the DB.
+ */
+export function isQuickLookupSeederReady(): boolean {
+  return _ready;
+}
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -105,49 +121,54 @@ export async function seedQuickLookups(): Promise<void> {
 
   const staleThreshold = new Date(Date.now() - THIRTY_DAYS_MS);
 
-  for (const chip of CHIPS) {
-    try {
-      const [existing] = await db
-        .select()
-        .from(quickLookupCache)
-        .where(eq(quickLookupCache.label, chip.label))
-        .limit(1);
+  try {
+    for (const chip of CHIPS) {
+      try {
+        const [existing] = await db
+          .select()
+          .from(quickLookupCache)
+          .where(eq(quickLookupCache.label, chip.label))
+          .limit(1);
 
-      const isStale = !existing || existing.refreshedAt < staleThreshold;
-      if (!isStale) {
-        logger.debug({ label: chip.label }, 'Quick lookup cache hit — skipping');
-        continue;
-      }
+        const isStale = !existing || existing.refreshedAt < staleThreshold;
+        if (!isStale) {
+          logger.debug({ label: chip.label }, 'Quick lookup cache hit — skipping');
+          continue;
+        }
 
-      logger.info({ label: chip.label }, 'Fetching quick lookup answer from AI');
-      const answer = await fetchAnswer(chip.question);
+        logger.info({ label: chip.label }, 'Fetching quick lookup answer from AI');
+        const answer = await fetchAnswer(chip.question);
 
-      if (!answer.trim()) {
-        logger.warn({ label: chip.label }, 'AI returned empty answer — skipping upsert');
-        continue;
-      }
+        if (!answer.trim()) {
+          logger.warn({ label: chip.label }, 'AI returned empty answer — skipping upsert');
+          continue;
+        }
 
-      await db
-        .insert(quickLookupCache)
-        .values({
-          label: chip.label,
-          question: chip.question,
-          answer,
-        })
-        .onConflictDoUpdate({
-          target: quickLookupCache.label,
-          set: {
+        await db
+          .insert(quickLookupCache)
+          .values({
+            label: chip.label,
             question: chip.question,
             answer,
-            refreshedAt: new Date(),
-          },
-        });
+          })
+          .onConflictDoUpdate({
+            target: quickLookupCache.label,
+            set: {
+              question: chip.question,
+              answer,
+              refreshedAt: new Date(),
+            },
+          });
 
-      logger.info({ label: chip.label }, 'Quick lookup cache upserted');
-    } catch (err) {
-      logger.error({ err, label: chip.label }, 'Failed to seed quick lookup — skipping');
+        logger.info({ label: chip.label }, 'Quick lookup cache upserted');
+      } catch (err) {
+        logger.error({ err, label: chip.label }, 'Failed to seed quick lookup — skipping');
+      }
     }
-  }
 
-  logger.info('Quick lookup cache seeder finished');
+    logger.info('Quick lookup cache seeder finished');
+  } finally {
+    // Always mark ready so /healthz never stays at 503 indefinitely.
+    _ready = true;
+  }
 }
