@@ -247,21 +247,25 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
         const res = await fetch(
           `${API_BASE}/reference/quick-lookups/${encodeURIComponent(chipLabel)}`
         );
-        if (!res.ok) throw new Error('lookup-not-cached');
-        const data = (await res.json()) as { answer: string };
-        if (data.answer) {
-          setAnswer(data.answer);
-          answerCacheRef.current.set(q, data.answer);
-        } else {
-          setIsError(true);
+        if (res.ok) {
+          const data = (await res.json()) as { answer: string };
+          if (data.answer) {
+            setAnswer(data.answer);
+            answerCacheRef.current.set(q, data.answer);
+            chipFetchingRef.current = false;
+            return;
+          }
         }
-      } catch {
-        setIsError(true);
-      } finally {
+        // DB cache miss (404) or empty answer — fall back to the full AI call
+        // so the user always gets an answer rather than a dead error state.
         chipFetchingRef.current = false;
+        await askQuestion(q);
+      } catch {
+        chipFetchingRef.current = false;
+        await askQuestion(q);
       }
     },
-    [loading]
+    [loading, askQuestion]
   );
 
   // Detects a double-tap (two taps within 300 ms) on any answer bubble and
