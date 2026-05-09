@@ -439,15 +439,19 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                       style={[msgStyles.clearAnswerBtn, { backgroundColor: colors.muted }]}
                       hitSlop={8}
                     >
-                      <Text
-                        style={[msgStyles.clearAnswerText, { color: colors.mutedForeground }]}
-                      >
+                      <Text style={[msgStyles.clearAnswerText, { color: colors.mutedForeground }]}>
                         ✕
                       </Text>
                     </Pressable>
                   ) : null}
                   {answer ? (
-                    <Text style={{ fontSize: 14, lineHeight: 22, paddingRight: answer && !loading ? 28 : 0 }}>
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        lineHeight: 22,
+                        paddingRight: answer && !loading ? 28 : 0,
+                      }}
+                    >
                       {renderAnswer(answer)}
                     </Text>
                   ) : null}
@@ -470,8 +474,8 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
               <Text style={emptyStyles.emoji}>🤖</Text>
               <Text style={[emptyStyles.title, { color: colors.foreground }]}>Ask the AI</Text>
               <Text style={[emptyStyles.hint, { color: colors.mutedForeground }]}>
-                Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any
-                electrical term and it will generate an answer for you.
+                Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical
+                term and it will generate an answer for you.
               </Text>
               <View style={emptyStyles.chipsWrapper}>
                 <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>
