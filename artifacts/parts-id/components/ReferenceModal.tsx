@@ -229,13 +229,20 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
     setQuestion('');
   };
 
-  // Called by chip onPress: show a cached answer instantly or fetch a new one.
+  // Tracks an in-flight chip DB fetch so double-taps are ignored without
+  // involving the main `loading` state (which would show the send-button spinner).
+  const chipFetchingRef = useRef(false);
+
+  // Called by chip onPress: show a cached answer instantly (in-memory cache) or
+  // silently fetch from the DB quick-lookup endpoint (non-streaming JSON, no spinner).
+  // Chips never set `loading` and never enter the SSE streaming path.
   const handleChipPress = useCallback(
-    (chipQuestion: string) => {
-      if (loading) return;
-      const cached = answerCacheRef.current.get(chipQuestion.trim());
+    async (chipQuestion: string, chipLabel: string) => {
+      if (loading || chipFetchingRef.current) return;
+      const q = chipQuestion.trim();
+      const cached = answerCacheRef.current.get(q);
       if (cached) {
-        askedQuestionRef.current = chipQuestion.trim();
+        askedQuestionRef.current = q;
         setQuestion('');
         setAnswer(cached);
         setIsError(false);
@@ -244,11 +251,35 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
           const targetY = Math.max(0, answerContainerYRef.current - 120);
           scrollRef.current?.scrollTo({ y: targetY, animated: true });
         }, 80);
-      } else {
-        askQuestion(chipQuestion);
+        return;
+      }
+
+      // Not in memory — fetch directly from the DB cache.
+      // No setLoading call here: chips must never show the send-button spinner.
+      chipFetchingRef.current = true;
+      askedQuestionRef.current = q;
+      setQuestion('');
+      setIsError(false);
+      setAnswer('');
+      try {
+        const res = await fetch(
+          `${API_BASE}/reference/quick-lookups/${encodeURIComponent(chipLabel)}`
+        );
+        if (!res.ok) throw new Error('lookup-not-cached');
+        const data = (await res.json()) as { answer: string };
+        if (data.answer) {
+          setAnswer(data.answer);
+          answerCacheRef.current.set(q, data.answer);
+        } else {
+          setIsError(true);
+        }
+      } catch {
+        setIsError(true);
+      } finally {
+        chipFetchingRef.current = false;
       }
     },
-    [loading, askQuestion]
+    [loading]
   );
 
   // Detects a double-tap (two taps within 300 ms) on any answer bubble and
@@ -280,6 +311,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
     });
   };
 
+  // True only in the pure empty state — no history, no answer, not loading, no error.
   const isEmpty = !history.length && !answer && !loading && !isError;
 
   return (
@@ -324,58 +356,13 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
           </View>
         </View>
 
-        {/* Input bar — sits above Quick Lookups */}
-        <View
-          style={[
-            inputStyles.bar,
-            { backgroundColor: colors.card, borderBottomColor: colors.border },
-          ]}
-        >
-          <TextInput
-            value={question}
-            onChangeText={(text) => {
-              setQuestion(text);
-              setInputCollapsed(false);
-            }}
-            placeholder="Ask about any electrical term..."
-            placeholderTextColor={colors.mutedForeground}
-            style={[
-              inputStyles.input,
-              {
-                backgroundColor: colors.muted,
-                color: colors.foreground,
-                borderColor: colors.border,
-              },
-              inputCollapsed ? { height: 40, maxHeight: 40 } : { maxHeight: 144 },
-            ]}
-            multiline
-            returnKeyType="send"
-            onSubmitEditing={() => askQuestion()}
-          />
-          <Pressable
-            onPress={() => askQuestion()}
-            disabled={loading || !question.trim()}
-            style={[
-              inputStyles.sendBtn,
-              { backgroundColor: loading ? colors.muted : colors.primary },
-            ]}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color={colors.primaryForeground} />
-            ) : (
-              <Text style={[inputStyles.sendText, { color: colors.primaryForeground }]}>→</Text>
-            )}
-          </Pressable>
-        </View>
-
-        {/* Scrollable content */}
+        {/* History + active answer + empty state */}
         <ScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
           contentContainerStyle={[{ padding: 16 }, isEmpty && { flexGrow: 1 }]}
           keyboardShouldPersistTaps="handled"
         >
-          {/* History */}
           {history.map((h, i) => (
             <View key={i} style={{ marginBottom: 16 }}>
               <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + '22' }]}>
@@ -393,7 +380,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
             </View>
           ))}
 
-          {/* Active Q+A — visible as soon as loading starts so chip taps feel instant */}
+          {/* Active Q+A — visible as soon as loading starts so questions feel instant */}
           {answer || loading || isError ? (
             <View
               style={{ marginBottom: 16 }}
@@ -468,7 +455,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
             </View>
           ) : null}
 
-          {/* Empty state — icon centered in available space with Quick Lookups below */}
+          {/* Empty state — inline input sits directly above Quick Lookups */}
           {isEmpty ? (
             <View style={emptyStyles.container}>
               <Text style={emptyStyles.emoji}>🤖</Text>
@@ -477,6 +464,53 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                 Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical
                 term and it will generate an answer for you.
               </Text>
+
+              {/* Inline input row — sits directly above Quick Lookups in empty state */}
+              <View
+                style={[
+                  inlineInputStyles.bar,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
+              >
+                <TextInput
+                  value={question}
+                  onChangeText={(text) => {
+                    setQuestion(text);
+                    setInputCollapsed(false);
+                  }}
+                  placeholder="Ask about any electrical term..."
+                  placeholderTextColor={colors.mutedForeground}
+                  style={[
+                    inputStyles.input,
+                    {
+                      backgroundColor: colors.muted,
+                      color: colors.foreground,
+                      borderColor: colors.border,
+                    },
+                    inputCollapsed ? { height: 40, maxHeight: 40 } : { maxHeight: 144 },
+                  ]}
+                  multiline
+                  returnKeyType="send"
+                  onSubmitEditing={() => askQuestion()}
+                />
+                <Pressable
+                  onPress={() => askQuestion()}
+                  disabled={loading || !question.trim()}
+                  style={[
+                    inputStyles.sendBtn,
+                    { backgroundColor: loading ? colors.muted : colors.primary },
+                  ]}
+                >
+                  {loading ? (
+                    <ActivityIndicator size="small" color={colors.primaryForeground} />
+                  ) : (
+                    <Text style={[inputStyles.sendText, { color: colors.primaryForeground }]}>
+                      →
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+
               <View style={emptyStyles.chipsWrapper}>
                 <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>
                   QUICK LOOKUPS
@@ -484,7 +518,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                 {QUICK_LOOKUP_CHIPS.map(({ label, question: q }) => (
                   <Pressable
                     key={label}
-                    onPress={() => handleChipPress(q)}
+                    onPress={() => handleChipPress(q, label)}
                     style={[
                       emptyStyles.chip,
                       { backgroundColor: colors.muted, borderColor: colors.border },
@@ -499,6 +533,52 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
             </View>
           ) : null}
         </ScrollView>
+
+        {/* Bottom input bar — only shown when there is chat history, an active answer, or loading */}
+        {history.length > 0 || answer || loading || isError ? (
+          <View
+            style={[
+              inputStyles.bar,
+              { backgroundColor: colors.card, borderTopColor: colors.border },
+            ]}
+          >
+            <TextInput
+              value={question}
+              onChangeText={(text) => {
+                setQuestion(text);
+                setInputCollapsed(false);
+              }}
+              placeholder="Ask about any electrical term..."
+              placeholderTextColor={colors.mutedForeground}
+              style={[
+                inputStyles.input,
+                {
+                  backgroundColor: colors.muted,
+                  color: colors.foreground,
+                  borderColor: colors.border,
+                },
+                inputCollapsed ? { height: 40, maxHeight: 40 } : { maxHeight: 144 },
+              ]}
+              multiline
+              returnKeyType="send"
+              onSubmitEditing={() => askQuestion()}
+            />
+            <Pressable
+              onPress={() => askQuestion()}
+              disabled={loading || !question.trim()}
+              style={[
+                inputStyles.sendBtn,
+                { backgroundColor: loading ? colors.muted : colors.primary },
+              ]}
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color={colors.primaryForeground} />
+              ) : (
+                <Text style={[inputStyles.sendText, { color: colors.primaryForeground }]}>→</Text>
+              )}
+            </Pressable>
+          </View>
+        ) : null}
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -556,6 +636,19 @@ const msgStyles = StyleSheet.create({
   clearAnswerText: { fontSize: 11, fontFamily: 'Inter_500Medium' },
 });
 
+const inlineInputStyles = StyleSheet.create({
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    width: '100%',
+    padding: 10,
+    gap: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+});
+
 const emptyStyles = StyleSheet.create({
   container: {
     flex: 1,
@@ -564,8 +657,8 @@ const emptyStyles = StyleSheet.create({
     paddingVertical: 32,
     paddingHorizontal: 8,
   },
-  emoji: { fontSize: 52, marginBottom: 14 },
-  title: { fontSize: 20, fontFamily: 'Inter_700Bold', marginBottom: 10 },
+  emoji: { fontSize: 40, marginBottom: 12, alignSelf: 'center' },
+  title: { fontSize: 18, fontFamily: 'Inter_700Bold', marginBottom: 8 },
   hint: {
     fontSize: 14,
     fontFamily: 'Inter_400Regular',
@@ -591,7 +684,7 @@ const inputStyles = StyleSheet.create({
     alignItems: 'flex-end',
     padding: 12,
     gap: 10,
-    borderBottomWidth: 1,
+    borderTopWidth: 1,
   },
   input: {
     flex: 1,
