@@ -124,9 +124,7 @@ export function BrowseByAisle({
   const prevSection =
     currentSectionIdx > 0 ? (crumbs.aisle?.sections[currentSectionIdx - 1] ?? null) : null;
   const nextSection =
-    currentSectionIdx >= 0 &&
-    crumbs.aisle &&
-    currentSectionIdx < crumbs.aisle.sections.length - 1
+    currentSectionIdx >= 0 && crumbs.aisle && currentSectionIdx < crumbs.aisle.sections.length - 1
       ? (crumbs.aisle.sections[currentSectionIdx + 1] ?? null)
       : null;
 
@@ -373,7 +371,7 @@ function useSectionSwipe({
         if (gs.dx < 0 && leftRef.current) leftRef.current();
         else if (gs.dx > 0 && rightRef.current) rightRef.current();
       },
-    }),
+    })
   ).current;
 
   return panResponder.panHandlers;
@@ -650,127 +648,128 @@ function SectionShelfView({
         colors={colors}
       />
       <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
-      {shelves.map((shelf, shelfIdx) => (
-        <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
-          {shelfIdx > 0 ? <View style={sectionStyles.shelfPlank} /> : null}
-          <Text
-            allowFontScaling={false}
-            style={[sectionStyles.shelfLabel, { color: colors.foreground }]}
-          >
-            {`${shelf.label} · ${shelf.partCount} ${shelf.partCount === 1 ? 'part' : 'parts'}`}
-          </Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={shelfStyles.diagramScroll}
-          >
-            <View style={shelfStyles.slotsRow}>
-              {shelf.parts.map((p, partIdx) => {
-                const prevPos = partIdx === 0 ? p.position : shelf.parts[partIdx - 1]!.position;
-                const gap =
-                  partIdx === 0
-                    ? 0
-                    : GAP_BASE + Math.max(0, (p.position - prevPos - 1) * GAP_PER_POS);
-                const isSelected = selected?.shelfIdx === shelfIdx && selected?.partIdx === partIdx;
-                return (
-                  <React.Fragment key={`${p.bin}-${partIdx}`}>
-                    {gap > 0 ? <View style={{ width: gap }} /> : null}
-                    <Pressable
-                      onPress={() => setSelected(isSelected ? null : { shelfIdx, partIdx })}
-                      style={[
-                        shelfStyles.slot,
-                        {
-                          backgroundColor: isSelected ? colors.primary : colors.card,
-                          borderColor: isSelected ? colors.primary : colors.border,
-                        },
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
-                    >
-                      <Text
-                        allowFontScaling={false}
-                        style={[shelfStyles.slotPos, { color: '#000000' }]}
-                      >
-                        {p.bin.split('-').pop() ?? p.bin}
-                      </Text>
-                      <Text
-                        allowFontScaling={false}
-                        numberOfLines={1}
+        {shelves.map((shelf, shelfIdx) => (
+          <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
+            {shelfIdx > 0 ? <View style={sectionStyles.shelfPlank} /> : null}
+            <Text
+              allowFontScaling={false}
+              style={[sectionStyles.shelfLabel, { color: colors.foreground }]}
+            >
+              {`${shelf.label} · ${shelf.partCount} ${shelf.partCount === 1 ? 'part' : 'parts'}`}
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={shelfStyles.diagramScroll}
+            >
+              <View style={shelfStyles.slotsRow}>
+                {shelf.parts.map((p, partIdx) => {
+                  const prevPos = partIdx === 0 ? p.position : shelf.parts[partIdx - 1]!.position;
+                  const gap =
+                    partIdx === 0
+                      ? 0
+                      : GAP_BASE + Math.max(0, (p.position - prevPos - 1) * GAP_PER_POS);
+                  const isSelected =
+                    selected?.shelfIdx === shelfIdx && selected?.partIdx === partIdx;
+                  return (
+                    <React.Fragment key={`${p.bin}-${partIdx}`}>
+                      {gap > 0 ? <View style={{ width: gap }} /> : null}
+                      <Pressable
+                        onPress={() => setSelected(isSelected ? null : { shelfIdx, partIdx })}
                         style={[
-                          shelfStyles.slotName,
-                          { color: isSelected ? colors.primaryForeground : colors.foreground },
+                          shelfStyles.slot,
+                          {
+                            backgroundColor: isSelected ? colors.primary : colors.card,
+                            borderColor: isSelected ? colors.primary : colors.border,
+                          },
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Bin ${p.bin}: ${p.item.catalog ?? p.item.description ?? 'part'}`}
                       >
-                        {p.item.catalog ?? p.item.description ?? '—'}
-                      </Text>
-                      {p.item.vendor ? (
+                        <Text
+                          allowFontScaling={false}
+                          style={[shelfStyles.slotPos, { color: '#000000' }]}
+                        >
+                          {p.bin.split('-').pop() ?? p.bin}
+                        </Text>
                         <Text
                           allowFontScaling={false}
                           numberOfLines={1}
                           style={[
-                            shelfStyles.slotVendor,
-                            {
-                              color: isSelected
-                                ? colors.primaryForeground + 'aa'
-                                : colors.mutedForeground,
-                            },
+                            shelfStyles.slotName,
+                            { color: isSelected ? colors.primaryForeground : colors.foreground },
                           ]}
                         >
-                          {p.item.vendor}
+                          {p.item.catalog ?? p.item.description ?? '—'}
                         </Text>
-                      ) : null}
-                    </Pressable>
-                  </React.Fragment>
-                );
-              })}
-            </View>
-            <View
-              style={[
-                shelfStyles.rail,
-                { backgroundColor: colors.muted, borderColor: colors.border },
-              ]}
-            />
-          </ScrollView>
-          {shelfIdx === shelves.length - 1 && shelf.partCount > 3 ? (
-            <View style={sectionStyles.shelfPlank} />
-          ) : null}
-        </View>
-      ))}
+                        {p.item.vendor ? (
+                          <Text
+                            allowFontScaling={false}
+                            numberOfLines={1}
+                            style={[
+                              shelfStyles.slotVendor,
+                              {
+                                color: isSelected
+                                  ? colors.primaryForeground + 'aa'
+                                  : colors.mutedForeground,
+                              },
+                            ]}
+                          >
+                            {p.item.vendor}
+                          </Text>
+                        ) : null}
+                      </Pressable>
+                    </React.Fragment>
+                  );
+                })}
+              </View>
+              <View
+                style={[
+                  shelfStyles.rail,
+                  { backgroundColor: colors.muted, borderColor: colors.border },
+                ]}
+              />
+            </ScrollView>
+            {shelfIdx === shelves.length - 1 && shelf.partCount > 3 ? (
+              <View style={sectionStyles.shelfPlank} />
+            ) : null}
+          </View>
+        ))}
 
-      {selectedPart ? (
-        <View style={{ paddingHorizontal: 12, paddingTop: 4 }}>
-          <ResultCard
-            result={{
-              item: selectedPart.item,
-              confidence: 1,
-              matchReason: locationLabel,
-              seriesLabel: undefined,
-              variants: [],
-            }}
-            rank={0}
-            showRank={false}
-            fontScale={fontScale}
-            onEditKeywords={onEditKeywords}
-            highlightBin={selectedPart.bin}
-          />
-        </View>
-      ) : (
-        <View style={[shelfStyles.hint, { minHeight: 80 }]}>
-          <Feather
-            name="mouse-pointer"
-            size={20}
-            color={colors.mutedForeground}
-            style={{ marginBottom: 8 }}
-          />
-          <Text
-            allowFontScaling={false}
-            style={[shelfStyles.hintText, { color: colors.mutedForeground }]}
-          >
-            Tap a bin above to see part details
-          </Text>
-        </View>
-      )}
-    </ScrollView>
+        {selectedPart ? (
+          <View style={{ paddingHorizontal: 12, paddingTop: 4 }}>
+            <ResultCard
+              result={{
+                item: selectedPart.item,
+                confidence: 1,
+                matchReason: locationLabel,
+                seriesLabel: undefined,
+                variants: [],
+              }}
+              rank={0}
+              showRank={false}
+              fontScale={fontScale}
+              onEditKeywords={onEditKeywords}
+              highlightBin={selectedPart.bin}
+            />
+          </View>
+        ) : (
+          <View style={[shelfStyles.hint, { minHeight: 80 }]}>
+            <Feather
+              name="mouse-pointer"
+              size={20}
+              color={colors.mutedForeground}
+              style={{ marginBottom: 8 }}
+            />
+            <Text
+              allowFontScaling={false}
+              style={[shelfStyles.hintText, { color: colors.mutedForeground }]}
+            >
+              Tap a bin above to see part details
+            </Text>
+          </View>
+        )}
+      </ScrollView>
     </View>
   );
 }
@@ -820,7 +819,10 @@ function SectionNavBar({
         <Text
           allowFontScaling={false}
           numberOfLines={1}
-          style={[navStyles.btnText, { color: prevLabel ? colors.foreground : colors.mutedForeground }]}
+          style={[
+            navStyles.btnText,
+            { color: prevLabel ? colors.foreground : colors.mutedForeground },
+          ]}
         >
           {prevLabel ?? 'Previous'}
         </Text>
@@ -837,7 +839,10 @@ function SectionNavBar({
         <Text
           allowFontScaling={false}
           numberOfLines={1}
-          style={[navStyles.btnText, { color: nextLabel ? colors.foreground : colors.mutedForeground }]}
+          style={[
+            navStyles.btnText,
+            { color: nextLabel ? colors.foreground : colors.mutedForeground },
+          ]}
         >
           {nextLabel ?? 'Next'}
         </Text>
