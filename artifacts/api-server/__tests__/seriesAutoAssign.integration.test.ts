@@ -385,6 +385,15 @@ describe('GET /api/series/coverage — before/after auto-assign delta', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('POST /api/series/auto-assign — idempotency', () => {
+  beforeAll(async () => {
+    // Release any stale session-level advisory lock that a previously-aborted
+    // test run may have left behind. pg_advisory_unlock is a no-op when the
+    // lock is not held, so this is always safe to call unconditionally.
+    await db.execute(sql`SELECT pg_advisory_unlock(20250001::bigint)`);
+  });
+
+  // Timeout raised to 30 s — auto-assign scans the full inventory table and
+  // can take several seconds on a populated dev database.
   it('second run leaves all fixture series_ids unchanged', async () => {
     const before = await db
       .select({ catalog: inventoryTable.catalog, seriesId: inventoryTable.seriesId })
@@ -411,7 +420,7 @@ describe('POST /api/series/auto-assign — idempotency', () => {
     const beforeMap = Object.fromEntries(before.map((r) => [r.catalog, r.seriesId]));
     const afterMap = Object.fromEntries(after.map((r) => [r.catalog, r.seriesId]));
     expect(afterMap).toEqual(beforeMap);
-  });
+  }, 30_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -419,6 +428,13 @@ describe('POST /api/series/auto-assign — idempotency', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('POST /api/series/auto-assign — concurrency lock', () => {
+  beforeAll(async () => {
+    // Same stale-lock guard as the idempotency block above.
+    await db.execute(sql`SELECT pg_advisory_unlock(20250001::bigint)`);
+  });
+
+  // Timeout raised to 30 s — the first (SSE) request runs a full auto-assign
+  // pass that can take well over the default 5 s on a populated dev database.
   it("returns 409 with 'already running' message when triggered concurrently", async () => {
     const firstRequest = supertest(app)
       .post('/api/series/auto-assign')
@@ -442,5 +458,5 @@ describe('POST /api/series/auto-assign — concurrency lock', () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(409);
     expect((second.body as { error?: string }).error).toMatch(/already running/i);
-  });
+  }, 30_000);
 });
