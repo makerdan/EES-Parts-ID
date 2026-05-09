@@ -6,7 +6,9 @@ import {
   getSeriesBase,
   itemFullText,
   tokenMatch,
+  matchesChipColumn,
   matchesChipFilters,
+  type ChipFilterItem,
 } from '../src/utils/searchHelpers';
 
 // ── normalizeMeasurement ──────────────────────────────────────────────────────
@@ -309,6 +311,348 @@ describe('tokenMatch', () => {
     // Sanity: the matching size still selects its own item.
     expect(tokenMatch('1/2" emt conduit', '1/2"')).toBe(true);
     expect(tokenMatch('1-1/2" emt conduit', '1-1/2"')).toBe(true);
+  });
+});
+
+// ── matchesChipColumn ─────────────────────────────────────────────────────────
+
+describe('matchesChipColumn', () => {
+  // Helper: base item with no structured columns set
+  const base: ChipFilterItem = {
+    vendor: 'Eaton',
+    catalog: 'BR120',
+    description: '20A single pole breaker',
+    aiKeywords: null,
+  };
+
+  // ── amperage ──────────────────────────────────────────────────────────────
+
+  describe('amperage', () => {
+    it('returns true when column is populated and matches the chip value', () => {
+      const item: ChipFilterItem = { ...base, amperage: 20 };
+      expect(matchesChipColumn(item, 'amperage', '20A')).toBe(true);
+    });
+
+    it('returns false when column is populated and does NOT match the chip value', () => {
+      const item: ChipFilterItem = { ...base, amperage: 30 };
+      expect(matchesChipColumn(item, 'amperage', '20A')).toBe(false);
+    });
+
+    it('returns null when column is NULL (caller should fall back to text match)', () => {
+      const item: ChipFilterItem = { ...base, amperage: null };
+      expect(matchesChipColumn(item, 'amperage', '20A')).toBeNull();
+    });
+
+    it('returns null when column is absent (undefined)', () => {
+      expect(matchesChipColumn(base, 'amperage', '20A')).toBeNull();
+    });
+  });
+
+  // ── poleCount ─────────────────────────────────────────────────────────────
+
+  describe('poleCount', () => {
+    it('returns true when column is populated and matches the chip value', () => {
+      const item: ChipFilterItem = { ...base, poleCount: 1 };
+      expect(matchesChipColumn(item, 'poleCount', '1 Pole')).toBe(true);
+    });
+
+    it('returns false when column is populated and does NOT match the chip value', () => {
+      const item: ChipFilterItem = { ...base, poleCount: 2 };
+      expect(matchesChipColumn(item, 'poleCount', '1 Pole')).toBe(false);
+    });
+
+    it('returns null when column is NULL (caller should fall back to text match)', () => {
+      const item: ChipFilterItem = { ...base, poleCount: null };
+      expect(matchesChipColumn(item, 'poleCount', '1 Pole')).toBeNull();
+    });
+
+    it('returns null when column is absent (undefined)', () => {
+      expect(matchesChipColumn(base, 'poleCount', '1 Pole')).toBeNull();
+    });
+  });
+
+  // ── voltage ───────────────────────────────────────────────────────────────
+
+  describe('voltage', () => {
+    it('returns true when column is populated and matches the chip value', () => {
+      const item: ChipFilterItem = { ...base, voltage: 120 };
+      expect(matchesChipColumn(item, 'voltage', '120V')).toBe(true);
+    });
+
+    it('returns false when column is populated and does NOT match the chip value', () => {
+      const item: ChipFilterItem = { ...base, voltage: 240 };
+      expect(matchesChipColumn(item, 'voltage', '120V')).toBe(false);
+    });
+
+    it('returns null when column is NULL (caller should fall back to text match)', () => {
+      const item: ChipFilterItem = { ...base, voltage: null };
+      expect(matchesChipColumn(item, 'voltage', '120V')).toBeNull();
+    });
+
+    it('returns null when column is absent (undefined)', () => {
+      expect(matchesChipColumn(base, 'voltage', '120V')).toBeNull();
+    });
+  });
+
+  // ── mountingType ──────────────────────────────────────────────────────────
+
+  describe('mountingType', () => {
+    it('returns true when column is populated and matches the chip value', () => {
+      const item: ChipFilterItem = { ...base, mountType: 'surface' };
+      expect(matchesChipColumn(item, 'mountingType', 'Surface')).toBe(true);
+    });
+
+    it('returns false when column is populated and does NOT match the chip value', () => {
+      const item: ChipFilterItem = { ...base, mountType: 'flush' };
+      expect(matchesChipColumn(item, 'mountingType', 'Surface')).toBe(false);
+    });
+
+    it('returns null when column is NULL (caller should fall back to text match)', () => {
+      const item: ChipFilterItem = { ...base, mountType: null };
+      expect(matchesChipColumn(item, 'mountingType', 'Surface')).toBeNull();
+    });
+
+    it('returns null for chip options without a column counterpart (e.g. "Panel Mount")', () => {
+      const item: ChipFilterItem = { ...base, mountType: 'surface' };
+      expect(matchesChipColumn(item, 'mountingType', 'Panel Mount')).toBeNull();
+    });
+
+    it('returns null for DIN Rail chip value when column is NULL', () => {
+      const item: ChipFilterItem = { ...base, mountType: null };
+      expect(matchesChipColumn(item, 'mountingType', 'DIN Rail')).toBeNull();
+    });
+
+    it('returns true for DIN Rail chip value when column matches', () => {
+      const item: ChipFilterItem = { ...base, mountType: 'din-rail' };
+      expect(matchesChipColumn(item, 'mountingType', 'DIN Rail')).toBe(true);
+    });
+  });
+
+  // ── unknown key ───────────────────────────────────────────────────────────
+
+  it('returns null for unrecognised chip keys (no column path)', () => {
+    const item: ChipFilterItem = { ...base, amperage: 20 };
+    expect(matchesChipColumn(item, 'colorChip', 'White')).toBeNull();
+    expect(matchesChipColumn(item, 'tradeSize', '1/2"')).toBeNull();
+  });
+});
+
+// ── matchesChipFilters — column-aware fallback ────────────────────────────────
+
+describe('matchesChipFilters — column-aware fallback', () => {
+  // ── amperage ──────────────────────────────────────────────────────────────
+
+  describe('amperage chip', () => {
+    it('column populated and matches → included', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR120',
+        description: 'breaker',
+        aiKeywords: null,
+        amperage: 20,
+      };
+      expect(matchesChipFilters(item, [{ key: 'amperage', value: '20A' }])).toBe(true);
+    });
+
+    it('column populated and mismatches → excluded', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR130',
+        description: 'breaker',
+        aiKeywords: null,
+        amperage: 30,
+      };
+      expect(matchesChipFilters(item, [{ key: 'amperage', value: '20A' }])).toBe(false);
+    });
+
+    it('column NULL, description contains value → included via text fallback', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR120',
+        description: '20A single pole breaker',
+        aiKeywords: null,
+        amperage: null,
+      };
+      expect(matchesChipFilters(item, [{ key: 'amperage', value: '20A' }])).toBe(true);
+    });
+
+    it('column NULL, description does NOT contain value → excluded via text fallback', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR130',
+        description: '30A single pole breaker',
+        aiKeywords: null,
+        amperage: null,
+      };
+      expect(matchesChipFilters(item, [{ key: 'amperage', value: '20A' }])).toBe(false);
+    });
+  });
+
+  // ── poleCount ─────────────────────────────────────────────────────────────
+
+  describe('poleCount chip', () => {
+    it('column populated and matches → included', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR120',
+        description: 'breaker',
+        aiKeywords: null,
+        poleCount: 2,
+      };
+      expect(matchesChipFilters(item, [{ key: 'poleCount', value: '2 Pole' }])).toBe(true);
+    });
+
+    it('column populated and mismatches → excluded', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR120',
+        description: 'breaker',
+        aiKeywords: null,
+        poleCount: 1,
+      };
+      expect(matchesChipFilters(item, [{ key: 'poleCount', value: '2 Pole' }])).toBe(false);
+    });
+
+    it('column NULL, description contains value → included via text fallback', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR220',
+        description: '20A 2 pole breaker',
+        aiKeywords: null,
+        poleCount: null,
+      };
+      expect(matchesChipFilters(item, [{ key: 'poleCount', value: '2' }])).toBe(true);
+    });
+
+    it('column NULL, description does NOT contain value → excluded via text fallback', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR120',
+        description: '20A single pole breaker',
+        aiKeywords: null,
+        poleCount: null,
+      };
+      expect(matchesChipFilters(item, [{ key: 'poleCount', value: '2 Pole' }])).toBe(false);
+    });
+  });
+
+  // ── voltage ───────────────────────────────────────────────────────────────
+
+  describe('voltage chip', () => {
+    it('column populated and matches → included', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR120',
+        description: 'breaker',
+        aiKeywords: null,
+        voltage: 120,
+      };
+      expect(matchesChipFilters(item, [{ key: 'voltage', value: '120V' }])).toBe(true);
+    });
+
+    it('column populated and mismatches → excluded', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR240',
+        description: 'breaker',
+        aiKeywords: null,
+        voltage: 240,
+      };
+      expect(matchesChipFilters(item, [{ key: 'voltage', value: '120V' }])).toBe(false);
+    });
+
+    it('column NULL, description contains value → included via text fallback', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR120',
+        description: '120V 20A breaker',
+        aiKeywords: null,
+        voltage: null,
+      };
+      expect(matchesChipFilters(item, [{ key: 'voltage', value: '120V' }])).toBe(true);
+    });
+
+    it('column NULL, description does NOT contain value → excluded via text fallback', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Eaton',
+        catalog: 'BR240',
+        description: '240V 20A breaker',
+        aiKeywords: null,
+        voltage: null,
+      };
+      expect(matchesChipFilters(item, [{ key: 'voltage', value: '120V' }])).toBe(false);
+    });
+  });
+
+  // ── mountingType ──────────────────────────────────────────────────────────
+
+  describe('mountingType chip', () => {
+    it('column populated and matches → included', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Legrand',
+        catalog: 'SURF1',
+        description: 'surface box',
+        aiKeywords: null,
+        mountType: 'surface',
+      };
+      expect(matchesChipFilters(item, [{ key: 'mountingType', value: 'Surface' }])).toBe(true);
+    });
+
+    it('column populated and mismatches → excluded', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Legrand',
+        catalog: 'FLUSH1',
+        description: 'flush box',
+        aiKeywords: null,
+        mountType: 'flush',
+      };
+      expect(matchesChipFilters(item, [{ key: 'mountingType', value: 'Surface' }])).toBe(false);
+    });
+
+    it('column NULL, description contains value → included via text fallback', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Legrand',
+        catalog: 'SURF1',
+        description: 'surface mount enclosure',
+        aiKeywords: null,
+        mountType: null,
+      };
+      expect(matchesChipFilters(item, [{ key: 'mountingType', value: 'Surface' }])).toBe(true);
+    });
+
+    it('column NULL, description does NOT contain value → excluded via text fallback', () => {
+      const item: ChipFilterItem = {
+        vendor: 'Legrand',
+        catalog: 'FLUSH1',
+        description: 'flush mount enclosure',
+        aiKeywords: null,
+        mountType: null,
+      };
+      expect(matchesChipFilters(item, [{ key: 'mountingType', value: 'Surface' }])).toBe(false);
+    });
+
+    it('chip option with no column counterpart falls back to text match', () => {
+      const withText: ChipFilterItem = {
+        vendor: 'Legrand',
+        catalog: 'PNL1',
+        description: 'panel mount enclosure',
+        aiKeywords: null,
+        mountType: 'surface',
+      };
+      const withoutText: ChipFilterItem = {
+        vendor: 'Legrand',
+        catalog: 'PNL2',
+        description: 'surface enclosure',
+        aiKeywords: null,
+        mountType: 'surface',
+      };
+      expect(matchesChipFilters(withText, [{ key: 'mountingType', value: 'Panel Mount' }])).toBe(
+        true
+      );
+      expect(matchesChipFilters(withoutText, [{ key: 'mountingType', value: 'Panel Mount' }])).toBe(
+        false
+      );
+    });
   });
 });
 
