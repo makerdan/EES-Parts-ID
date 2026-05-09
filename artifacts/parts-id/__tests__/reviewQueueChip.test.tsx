@@ -26,6 +26,7 @@ import React from 'react';
 // ── Mutable mock fns (mock* prefix bypasses jest hoisting) ────────────────────
 const mockListClassificationReview = jest.fn();
 const mockConfirmClassificationReview = jest.fn();
+const mockSkipClassificationReview = jest.fn();
 
 // ── react-native mock ─────────────────────────────────────────────────────────
 jest.mock('react-native', () => {
@@ -165,7 +166,7 @@ jest.mock('@workspace/api-client-react', () => {
     listClassificationReview: (...args: unknown[]) => mockListClassificationReview(...args),
     confirmClassificationReview: (...args: unknown[]) => mockConfirmClassificationReview(...args),
     reclassifyReviewItem: jest.fn(async () => undefined),
-    skipClassificationReview: jest.fn(async () => undefined),
+    skipClassificationReview: (...args: unknown[]) => mockSkipClassificationReview(...args),
     ApiError,
   };
 });
@@ -319,6 +320,64 @@ describe('Review Queue chip — stays in sync with admin actions', () => {
       expect(screen.queryByText('Enriched')).toBeNull();
       expect(screen.queryByText('Pending')).toBeNull();
       expect(screen.queryByText('Coverage')).toBeNull();
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('chip count stays accurate after ClassificationReviewSection skip action', () => {
+    it('chip count remains 4 after a skip (item moved to end of queue, not removed)', async () => {
+      jest.setTimeout(20_000);
+      let reviewFetchCount = 0;
+      global.fetch = jest.fn((url: unknown) => {
+        if (typeof url === 'string' && url.includes('/admin/classification-review')) {
+          reviewFetchCount++;
+          // Both initial fetch and post-skip re-fetch return 4 — skip doesn't
+          // remove the item, it just moves it to the end of the queue.
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ total: 4 }),
+          } as Response);
+        }
+        return new Promise<Response>(() => {}); // enrich-summary never resolves
+      }) as typeof global.fetch;
+
+      // Initial list fetch (count badge) + expanded list fetch
+      mockListClassificationReview
+        .mockResolvedValueOnce({ total: 4, items: [] })
+        .mockResolvedValueOnce({ total: 4, items: [REVIEW_ITEM] })
+        // fetchQueue re-fetch after skip (page 1, fresh list)
+        .mockResolvedValue({ total: 4, items: [REVIEW_ITEM] });
+
+      mockSkipClassificationReview.mockResolvedValue(undefined);
+
+      render(<ReviewQueueSyncFixture />);
+      await flush();
+
+      // Chip starts at 4
+      expect(screen.getByLabelText('Open review queue').textContent).toContain('4');
+
+      // Expand the review section
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: /expand classification review/i }));
+      });
+      await flush();
+
+      // Skip the first item
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: /skip.*defer to end of queue/i }));
+      });
+      await flush();
+
+      // skipClassificationReview was called for the right item
+      expect(mockSkipClassificationReview).toHaveBeenCalledWith(
+        REVIEW_ITEM.inventoryId,
+        expect.objectContaining({ headers: expect.any(Object) })
+      );
+
+      // onReviewAction fired fetchReviewCount — count re-fetched and still 4
+      expect(reviewFetchCount).toBeGreaterThanOrEqual(2);
+      expect(screen.getByLabelText('Open review queue').textContent).toContain('4');
     });
   });
 
