@@ -41,8 +41,7 @@ export async function loadSettings(): Promise<AppSettings> {
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<AppSettings> & { warehouseShelfView?: boolean };
     // Migration: if either of the old keys was explicitly false, keep shelf view off.
-    const legacyOff =
-      parsed.shelfViewEnabled === false || parsed.warehouseShelfView === false;
+    const legacyOff = parsed.shelfViewEnabled === false || parsed.warehouseShelfView === false;
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,

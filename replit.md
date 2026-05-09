@@ -21,6 +21,7 @@ pnpm workspace monorepo using TypeScript. **Parts ID** — Expo (React Native) e
 ## Artifacts
 
 ### parts-id (Expo mobile app)
+
 - Password-only login (EXPO_PUBLIC_APP_PASSWORD env var, default: "warehouse2024")
 - 3 tabs: Search, Photo ID, Upload/Inventory
 - Dark industrial amber theme (primary: #f59e0b, dark bg: #0d1117)
@@ -30,7 +31,9 @@ pnpm workspace monorepo using TypeScript. **Parts ID** — Expo (React Native) e
 - Floating Reference modal with electrical abbreviations/slang
 
 ### api-server (Express API)
+
 Routes:
+
 - `POST /api/inventory/search` — semantic search with Fuse.js fallback
 - `GET /api/inventory` — list all inventory
 - `POST /api/inventory/batch` — upsert batch (no wipe)
@@ -41,9 +44,11 @@ Routes:
 - `GET /api/dictionaries/*` — abbreviations, vendors, synonyms, misspellings, slang
 
 ### DB Schema
+
 Tables: `inventory`, `abbreviation_map`, `vendor_map`, `synonym_map`, `misspelling_map`, `electrical_slang_map`, `category_node` (3-level taxonomy: category→subcategory→type), `inventory_category` (item↔node mapping with confidence + source).
 
 Materialized parse columns on `inventory` (migration 0010, Stage 3 of Search Overhaul):
+
 - `catalog_parse jsonb` — structured parse: `{series, poles, amps, variant, raw, parser_version}`
 - `amperage integer`, `pole_count smallint`, `voltage integer` — scalar filter indexes
 - `trade_size_in numeric(6,3)` — conduit/pipe trade size in inches (capped ≤ 12)
@@ -53,6 +58,7 @@ Materialized parse columns on `inventory` (migration 0010, Stage 3 of Search Ove
 Backfill: `pnpm --filter @workspace/api-server exec tsx src/seed/backfill_attrs.ts`
 
 ### Browse-by-Category (Task #100)
+
 - 6 endpoints under `/api/categories`: `tree`, `:slug/items`, `uncategorized`, `coverage`, `:nodeId/assign` (admin), `classify` (admin SSE).
 - Hybrid classifier: rule pass (`utils/taxonomyClassifier.ts`, ~60 rules over catalog/desc/aiKeywords) + AI fallback (`utils/aiClassify.ts`, gpt-4o-mini, default ON). Rule-misses go to AI; AI-misses fall through to the `Uncategorized` leaf.
 - Slug uniqueness: `category_node.slug` is **globally unique** (DB constraint). Slugs are assigned by the seed/admin layer with prefixes (e.g. `breaker-gfci`, `wire-thhn`) so a single slug always resolves to one node — `/categories/{slug}/items` never needs disambiguation.
@@ -62,6 +68,7 @@ Backfill: `pnpm --filter @workspace/api-server exec tsx src/seed/backfill_attrs.
 - Mobile UI: Search/Browse segmented toggle in `app/(tabs)/index.tsx`; `components/BrowseTaxonomy.tsx` drills 3 levels with AsyncStorage persistence (`parts_id_browse_tree_v1`, `parts_id_browse_path_v1`, `parts_id_browse_mode_v1`); pure helpers extracted to `lib/taxonomy.ts`.
 
 ### Seed Data
+
 210 abbreviations, 66 vendors, 177 synonyms, 283 misspellings, 144 slang entries
 Seed: `node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-server/`
 

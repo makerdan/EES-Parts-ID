@@ -30,12 +30,12 @@ paths:
       summary: Health check
       description: Returns server health status
       responses:
-        "200":
+        '200':
           description: Healthy
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HealthStatus"
+                $ref: '#/components/schemas/HealthStatus'
 
   /inventory:
     get:
@@ -65,12 +65,12 @@ paths:
           schema:
             type: string
       responses:
-        "200":
+        '200':
           description: Paginated inventory
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryListResponse"
+                $ref: '#/components/schemas/InventoryListResponse'
 
   /inventory/search:
     post:
@@ -82,14 +82,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SearchInventoryBody"
+              $ref: '#/components/schemas/SearchInventoryBody'
       responses:
-        "200":
+        '200':
           description: Search results with confidence scores
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SearchInventoryResponse"
+                $ref: '#/components/schemas/SearchInventoryResponse'
 
   /inventory/upsert-batch:
     post:
@@ -101,14 +101,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpsertInventoryBody"
+              $ref: '#/components/schemas/UpsertInventoryBody'
       responses:
-        "200":
+        '200':
           description: Upsert summary
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpsertInventoryResponse"
+                $ref: '#/components/schemas/UpsertInventoryResponse'
 
   /inventory/preview-upsert:
     post:
@@ -126,14 +126,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PreviewUpsertBody"
+              $ref: '#/components/schemas/PreviewUpsertBody'
       responses:
-        "200":
+        '200':
           description: Classification summary plus per-match details
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PreviewUpsertResponse"
+                $ref: '#/components/schemas/PreviewUpsertResponse'
 
   /inventory/enrich:
     post:
@@ -145,9 +145,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EnrichInventoryBody"
+              $ref: '#/components/schemas/EnrichInventoryBody'
       responses:
-        "200":
+        '200':
           description: SSE stream of enrichment progress
           content:
             text/event-stream: {}
@@ -167,18 +167,18 @@ paths:
           schema:
             type: integer
       responses:
-        "200":
+        '200':
           description: Inventory item
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryItem"
-        "404":
+                $ref: '#/components/schemas/InventoryItem'
+        '404':
           description: Item not found
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
     patch:
       operationId: updateInventoryItem
       tags: [inventory]
@@ -199,14 +199,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateInventoryItemBody"
+              $ref: '#/components/schemas/UpdateInventoryItemBody'
       responses:
-        "200":
+        '200':
           description: Updated inventory item
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryItem"
+                $ref: '#/components/schemas/InventoryItem'
 
   /inventory/{id}/suggest-description:
     post:
@@ -225,12 +225,12 @@ paths:
           schema:
             type: integer
       responses:
-        "200":
+        '200':
           description: Suggested description
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuggestDescriptionResponse"
+                $ref: '#/components/schemas/SuggestDescriptionResponse'
 
   /dictionaries/lookup:
     get:
@@ -244,12 +244,12 @@ paths:
           schema:
             type: string
       responses:
-        "200":
+        '200':
           description: Dictionary lookup results
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DictionaryLookupResponse"
+                $ref: '#/components/schemas/DictionaryLookupResponse'
 
   /ai/identify:
     post:
@@ -261,15 +261,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AiIdentifyBody"
+              $ref: '#/components/schemas/AiIdentifyBody'
       responses:
-        "200":
+        '200':
           description: AI identification result
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AiIdentifyResponse"
-        "422":
+                $ref: '#/components/schemas/AiIdentifyResponse'
+        '422':
           description: Vision response could not be parsed into the expected contract
 
   /photo/confirm:
@@ -282,15 +282,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PhotoConfirmBody"
+              $ref: '#/components/schemas/PhotoConfirmBody'
       responses:
-        "200":
+        '200':
           description: Confirmation recorded
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PhotoConfirmResponse"
-        "404":
+                $ref: '#/components/schemas/PhotoConfirmResponse'
+        '404':
           description: Photo ID event not found
 
   /photo/stats:
@@ -314,18 +314,18 @@ paths:
       security:
         - bearerAdmin: []
       responses:
-        "200":
+        '200':
           description: Aggregated photo ID stats
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PhotoStatsResponse"
-        "401":
+                $ref: '#/components/schemas/PhotoStatsResponse'
+        '401':
           description: Missing or invalid admin token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
 
   /reference/ask:
     post:
@@ -337,9 +337,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AiReferenceBody"
+              $ref: '#/components/schemas/AiReferenceBody'
       responses:
-        "200":
+        '200':
           description: SSE stream of answer chunks
           content:
             text/event-stream: {}
@@ -350,12 +350,12 @@ paths:
       tags: [categories]
       summary: Get the full three-level taxonomy with item counts
       responses:
-        "200":
+        '200':
           description: Nested taxonomy tree
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CategoryTreeResponse"
+                $ref: '#/components/schemas/CategoryTreeResponse'
 
   /categories/coverage:
     get:
@@ -363,12 +363,12 @@ paths:
       tags: [categories]
       summary: Classification coverage stats (total / classified / by source)
       responses:
-        "200":
+        '200':
           description: Coverage summary
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CategoryCoverageResponse"
+                $ref: '#/components/schemas/CategoryCoverageResponse'
 
   /categories/uncategorized:
     get:
@@ -387,12 +387,12 @@ paths:
             type: integer
             default: 50
       responses:
-        "200":
+        '200':
           description: Paginated uncategorized items
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InventoryListResponse"
+                $ref: '#/components/schemas/InventoryListResponse'
 
   /categories/{slug}/items:
     get:
@@ -419,29 +419,29 @@ paths:
         - name: confidenceThreshold
           in: query
           schema: { type: integer, default: 0 }
-        - { name: category,     in: query, schema: { type: string } }
-        - { name: amperage,     in: query, schema: { type: string } }
-        - { name: colorChip,    in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: amperage, in: query, schema: { type: string } }
+        - { name: colorChip, in: query, schema: { type: string } }
         - { name: manufacturer, in: query, schema: { type: string } }
-        - { name: sizeChip,     in: query, schema: { type: string } }
-        - { name: rating,       in: query, schema: { type: string } }
-        - { name: wireType,     in: query, schema: { type: string } }
-        - { name: wireGauge,    in: query, schema: { type: string } }
-        - { name: conduitType,  in: query, schema: { type: string } }
-        - { name: conduitSize,  in: query, schema: { type: string } }
-        - { name: boxType,      in: query, schema: { type: string } }
+        - { name: sizeChip, in: query, schema: { type: string } }
+        - { name: rating, in: query, schema: { type: string } }
+        - { name: wireType, in: query, schema: { type: string } }
+        - { name: wireGauge, in: query, schema: { type: string } }
+        - { name: conduitType, in: query, schema: { type: string } }
+        - { name: conduitSize, in: query, schema: { type: string } }
+        - { name: boxType, in: query, schema: { type: string } }
         - { name: boxGangCount, in: query, schema: { type: string } }
         - { name: mountingType, in: query, schema: { type: string } }
-        - { name: environment,  in: query, schema: { type: string } }
-        - { name: voltage,      in: query, schema: { type: string } }
-        - { name: poleCount,    in: query, schema: { type: string } }
+        - { name: environment, in: query, schema: { type: string } }
+        - { name: voltage, in: query, schema: { type: string } }
+        - { name: poleCount, in: query, schema: { type: string } }
       responses:
-        "200":
+        '200':
           description: Paginated items under the node
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CategoryItemsResponse"
+                $ref: '#/components/schemas/CategoryItemsResponse'
 
   /categories/{nodeId}/parts:
     get:
@@ -467,29 +467,29 @@ paths:
         - name: confidenceThreshold
           in: query
           schema: { type: integer, default: 0 }
-        - { name: category,     in: query, schema: { type: string } }
-        - { name: amperage,     in: query, schema: { type: string } }
-        - { name: colorChip,    in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: amperage, in: query, schema: { type: string } }
+        - { name: colorChip, in: query, schema: { type: string } }
         - { name: manufacturer, in: query, schema: { type: string } }
-        - { name: sizeChip,     in: query, schema: { type: string } }
-        - { name: rating,       in: query, schema: { type: string } }
-        - { name: wireType,     in: query, schema: { type: string } }
-        - { name: wireGauge,    in: query, schema: { type: string } }
-        - { name: conduitType,  in: query, schema: { type: string } }
-        - { name: conduitSize,  in: query, schema: { type: string } }
-        - { name: boxType,      in: query, schema: { type: string } }
+        - { name: sizeChip, in: query, schema: { type: string } }
+        - { name: rating, in: query, schema: { type: string } }
+        - { name: wireType, in: query, schema: { type: string } }
+        - { name: wireGauge, in: query, schema: { type: string } }
+        - { name: conduitType, in: query, schema: { type: string } }
+        - { name: conduitSize, in: query, schema: { type: string } }
+        - { name: boxType, in: query, schema: { type: string } }
         - { name: boxGangCount, in: query, schema: { type: string } }
         - { name: mountingType, in: query, schema: { type: string } }
-        - { name: environment,  in: query, schema: { type: string } }
-        - { name: voltage,      in: query, schema: { type: string } }
-        - { name: poleCount,    in: query, schema: { type: string } }
+        - { name: environment, in: query, schema: { type: string } }
+        - { name: voltage, in: query, schema: { type: string } }
+        - { name: poleCount, in: query, schema: { type: string } }
       responses:
-        "200":
+        '200':
           description: Paginated items under the node
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CategoryItemsResponse"
+                $ref: '#/components/schemas/CategoryItemsResponse'
 
   /categories/assignments:
     get:
@@ -497,12 +497,12 @@ paths:
       tags: [categories]
       summary: Flat list of every part's current taxonomy node (offline cache)
       responses:
-        "200":
+        '200':
           description: Assignment list
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CategoryAssignmentsResponse"
+                $ref: '#/components/schemas/CategoryAssignmentsResponse'
 
   /categories/classify:
     post:
@@ -514,9 +514,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ClassifyInventoryBody"
+              $ref: '#/components/schemas/ClassifyInventoryBody'
       responses:
-        "200":
+        '200':
           description: SSE stream of classification progress
           content:
             text/event-stream: {}
@@ -531,9 +531,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ClassifyInventoryBody"
+              $ref: '#/components/schemas/ClassifyInventoryBody'
       responses:
-        "200":
+        '200':
           description: SSE stream of classification progress
           content:
             text/event-stream: {}
@@ -553,14 +553,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SetInventoryCategoryBody"
+              $ref: '#/components/schemas/SetInventoryCategoryBody'
       responses:
-        "200":
+        '200':
           description: Assignment recorded
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AssignCategoryResponse"
+                $ref: '#/components/schemas/AssignCategoryResponse'
 
   /categories/{nodeId}:
     patch:
@@ -577,9 +577,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateCategoryNodeBody"
+              $ref: '#/components/schemas/UpdateCategoryNodeBody'
       responses:
-        "200":
+        '200':
           description: Updated node
           content:
             application/json:
@@ -599,9 +599,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/MergeCategoryBody"
+              $ref: '#/components/schemas/MergeCategoryBody'
       responses:
-        "200":
+        '200':
           description: Merge summary
           content:
             application/json:
@@ -630,14 +630,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AssignCategoryBody"
+              $ref: '#/components/schemas/AssignCategoryBody'
       responses:
-        "200":
+        '200':
           description: Assignment recorded
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AssignCategoryResponse"
+                $ref: '#/components/schemas/AssignCategoryResponse'
 
   /barcode/lookup:
     post:
@@ -659,14 +659,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/BarcodeLookupBody"
+              $ref: '#/components/schemas/BarcodeLookupBody'
       responses:
-        "200":
+        '200':
           description: Lookup result (match or no-match with recently viewed)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BarcodeLookupResponse"
+                $ref: '#/components/schemas/BarcodeLookupResponse'
 
   /barcode/link:
     post:
@@ -683,20 +683,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/BarcodeLinkBody"
+              $ref: '#/components/schemas/BarcodeLinkBody'
       responses:
-        "200":
+        '200':
           description: Barcode linked to part
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BarcodeLinkResponse"
-        "409":
+                $ref: '#/components/schemas/BarcodeLinkResponse'
+        '409':
           description: Barcode already linked to a different part (omit `force` to keep)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BarcodeLinkConflict"
+                $ref: '#/components/schemas/BarcodeLinkConflict'
 
   /barcode/recent:
     get:
@@ -710,27 +710,27 @@ paths:
             type: integer
             default: 20
       responses:
-        "200":
+        '200':
           description: Recent inventory items
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BarcodeRecentResponse"
+                $ref: '#/components/schemas/BarcodeRecentResponse'
 
   /ai/reference:
     post:
       operationId: aiReference
       tags: [ai]
       deprecated: true
-      summary: "[Deprecated] Use /reference/ask instead"
+      summary: '[Deprecated] Use /reference/ask instead'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AiReferenceBody"
+              $ref: '#/components/schemas/AiReferenceBody'
       responses:
-        "308":
+        '308':
           description: Redirect to /reference/ask
 
   /admin/classification-review:
@@ -759,18 +759,18 @@ paths:
       security:
         - bearerAdmin: []
       responses:
-        "200":
+        '200':
           description: Paginated review queue
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReviewQueueResponse"
-        "401":
+                $ref: '#/components/schemas/ReviewQueueResponse'
+        '401':
           description: Missing or invalid admin token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
 
   /admin/classification-review/{id}/confirm:
     post:
@@ -790,24 +790,24 @@ paths:
       security:
         - bearerAdmin: []
       responses:
-        "200":
+        '200':
           description: Item confirmed
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReviewActionResponse"
-        "401":
+                $ref: '#/components/schemas/ReviewActionResponse'
+        '401':
           description: Missing or invalid admin token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
           description: Item not found or already reviewed
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
 
   /admin/classification-review/{id}/reclassify:
     post:
@@ -832,32 +832,32 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ReclassifyBody"
+              $ref: '#/components/schemas/ReclassifyBody'
       responses:
-        "200":
+        '200':
           description: Item reclassified
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReviewActionResponse"
-        "400":
+                $ref: '#/components/schemas/ReviewActionResponse'
+        '400':
           description: Invalid categoryNodeId or not a leaf type node
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
           description: Missing or invalid admin token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
           description: Item or target node not found
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
 
   /admin/classification-review/{id}/skip:
     post:
@@ -878,24 +878,24 @@ paths:
       security:
         - bearerAdmin: []
       responses:
-        "200":
+        '200':
           description: Item deferred
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReviewActionResponse"
-        "401":
+                $ref: '#/components/schemas/ReviewActionResponse'
+        '401':
           description: Missing or invalid admin token
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
           description: Item not found or already reviewed
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   schemas:
@@ -922,7 +922,7 @@ components:
           type: array
           items:
             type: string
-          description: "Every bin this part is currently stocked in. Empty array means no bin assigned."
+          description: 'Every bin this part is currently stocked in. Empty array means no bin assigned.'
         aiKeywords:
           type: array
           items:
@@ -975,7 +975,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/InventoryItem"
+            $ref: '#/components/schemas/InventoryItem'
         total:
           type: integer
         page:
@@ -1065,7 +1065,7 @@ components:
       type: object
       properties:
         item:
-          $ref: "#/components/schemas/InventoryItem"
+          $ref: '#/components/schemas/InventoryItem'
         confidence:
           type: number
         matchReason:
@@ -1079,7 +1079,7 @@ components:
         variants:
           type: array
           items:
-            $ref: "#/components/schemas/InventoryItem"
+            $ref: '#/components/schemas/InventoryItem'
       required:
         - item
         - confidence
@@ -1092,7 +1092,7 @@ components:
         results:
           type: array
           items:
-            $ref: "#/components/schemas/SearchResult"
+            $ref: '#/components/schemas/SearchResult'
         totalMatches:
           type: integer
         belowThreshold:
@@ -1118,7 +1118,7 @@ components:
           type: string
         description:
           type: string
-          description: "Proposed description. Blank/missing values never overwrite an existing description."
+          description: 'Proposed description. Blank/missing values never overwrite an existing description.'
         binLocations:
           type: array
           items:
@@ -1130,7 +1130,7 @@ components:
 
     SelectedKey:
       type: object
-      description: "Identifies a single existing-item update to apply when mode is `selected`. Match is case-insensitive."
+      description: 'Identifies a single existing-item update to apply when mode is `selected`. Match is case-insensitive.'
       properties:
         vendor:
           type: string
@@ -1146,7 +1146,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/UpsertInventoryItem"
+            $ref: '#/components/schemas/UpsertInventoryItem'
         mode:
           type: string
           enum:
@@ -1162,8 +1162,8 @@ components:
         selectedKeys:
           type: array
           items:
-            $ref: "#/components/schemas/SelectedKey"
-          description: "Required when `mode = selected`. Existing matches NOT in this list are skipped."
+            $ref: '#/components/schemas/SelectedKey'
+          description: 'Required when `mode = selected`. Existing matches NOT in this list are skipped.'
       required:
         - items
 
@@ -1179,7 +1179,7 @@ components:
           type: integer
         skipped:
           type: integer
-          description: "Existing matches that were intentionally not updated (e.g. mode=add-new-only or not in selectedKeys)."
+          description: 'Existing matches that were intentionally not updated (e.g. mode=add-new-only or not in selectedKeys).'
         total:
           type: integer
       required:
@@ -1194,25 +1194,25 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/UpsertInventoryItem"
+            $ref: '#/components/schemas/UpsertInventoryItem'
       required:
         - items
 
     PreviewMatchRow:
       type: object
-      description: "An incoming row that matched an existing inventory item. Includes the current stored values and the proposed merged values."
+      description: 'An incoming row that matched an existing inventory item. Includes the current stored values and the proposed merged values.'
       properties:
         vendor:
           type: string
-          description: "Vendor as stored in the DB (its original casing is preserved)."
+          description: 'Vendor as stored in the DB (its original casing is preserved).'
         catalog:
           type: string
-          description: "Catalog as stored in the DB."
+          description: 'Catalog as stored in the DB.'
         existingDescription:
           type: string
         proposedDescription:
           type: string
-          description: "Description that will be written if this row is included in an `overwrite-all`/`selected` apply. Empty proposed description means description will not change."
+          description: 'Description that will be written if this row is included in an `overwrite-all`/`selected` apply. Empty proposed description means description will not change.'
         existingBinLocations:
           type: array
           items:
@@ -1221,7 +1221,7 @@ components:
           type: array
           items:
             type: string
-          description: "Bin list after additive merge of incoming bins into the existing list."
+          description: 'Bin list after additive merge of incoming bins into the existing list.'
         binChanged:
           type: boolean
         descChanged:
@@ -1241,21 +1241,21 @@ components:
       properties:
         newCount:
           type: integer
-          description: "Rows whose (vendor, catalog) does not exist in the DB."
+          description: 'Rows whose (vendor, catalog) does not exist in the DB.'
         changedCount:
           type: integer
-          description: "Existing matches where bin and/or description would change."
+          description: 'Existing matches where bin and/or description would change.'
         unchangedCount:
           type: integer
-          description: "Existing matches where nothing would change."
+          description: 'Existing matches where nothing would change.'
         totalIncoming:
           type: integer
-          description: "Number of distinct (vendor, catalog) rows after de-duplication."
+          description: 'Number of distinct (vendor, catalog) rows after de-duplication.'
         changes:
           type: array
           items:
-            $ref: "#/components/schemas/PreviewMatchRow"
-          description: "Per-row details for every existing match that would change. Unchanged matches are NOT included."
+            $ref: '#/components/schemas/PreviewMatchRow'
+          description: 'Per-row details for every existing match that would change. Unchanged matches are NOT included.'
       required:
         - newCount
         - changedCount
@@ -1392,7 +1392,7 @@ components:
         results:
           type: array
           items:
-            $ref: "#/components/schemas/SearchResult"
+            $ref: '#/components/schemas/SearchResult'
         match_type:
           type: string
           enum: [catalog_exact, attribute_match, descriptive]
@@ -1459,16 +1459,16 @@ components:
           type: string
         level:
           type: string
-          description: "category | subcategory | type"
+          description: 'category | subcategory | type'
         sortOrder:
           type: integer
         itemCount:
           type: integer
-          description: "Total inventory items assigned at this node OR any descendant."
+          description: 'Total inventory items assigned at this node OR any descendant.'
         children:
           type: array
           items:
-            $ref: "#/components/schemas/CategoryNode"
+            $ref: '#/components/schemas/CategoryNode'
       required:
         - id
         - slug
@@ -1484,7 +1484,7 @@ components:
         tree:
           type: array
           items:
-            $ref: "#/components/schemas/CategoryNode"
+            $ref: '#/components/schemas/CategoryNode'
       required:
         - tree
 
@@ -1501,7 +1501,7 @@ components:
           type: object
           additionalProperties:
             type: integer
-          description: "Count of distinct items classified by each method (rule/ai/manual)."
+          description: 'Count of distinct items classified by each method (rule/ai/manual).'
       required:
         - total
         - classified
@@ -1514,7 +1514,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/InventoryItem"
+            $ref: '#/components/schemas/InventoryItem'
         total:
           type: integer
         page:
@@ -1570,7 +1570,7 @@ components:
       properties:
         mode:
           type: string
-          enum: [all, unclassified, "specific-ids"]
+          enum: [all, unclassified, 'specific-ids']
           default: unclassified
           description: |
             "all" re-classifies every inventory row (overwrites manual overrides).
@@ -1584,7 +1584,7 @@ components:
         useAi:
           type: boolean
           default: true
-          description: "When true (default), fall back to AI (gpt-4o-mini) for items the rule classifier could not place. Pass false to skip AI and route rule-misses straight to Uncategorized."
+          description: 'When true (default), fall back to AI (gpt-4o-mini) for items the rule classifier could not place. Pass false to skip AI and route rule-misses straight to Uncategorized.'
 
     AssignCategoryBody:
       type: object
@@ -1649,18 +1649,18 @@ components:
       properties:
         match:
           allOf:
-            - $ref: "#/components/schemas/InventoryItem"
+            - $ref: '#/components/schemas/InventoryItem'
           nullable: true
           description: Matched inventory item, or null when nothing was found.
         source:
           allOf:
-            - $ref: "#/components/schemas/BarcodeSource"
+            - $ref: '#/components/schemas/BarcodeSource'
           nullable: true
           description: How the binding was found, or null on no-match.
         recentlyViewed:
           type: array
           items:
-            $ref: "#/components/schemas/InventoryItem"
+            $ref: '#/components/schemas/InventoryItem'
           description: Recently scanned/linked items, used for the no-match picker.
       required:
         - match
@@ -1692,7 +1692,7 @@ components:
         ok:
           type: boolean
         item:
-          $ref: "#/components/schemas/InventoryItem"
+          $ref: '#/components/schemas/InventoryItem'
       required:
         - ok
         - item
@@ -1714,7 +1714,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/InventoryItem"
+            $ref: '#/components/schemas/InventoryItem'
       required:
         - items
 
@@ -1754,7 +1754,7 @@ components:
           description: Current leaf category node assigned by AI.
         categoryPath:
           type: string
-          description: "Human-readable breadcrumb: Category › Subcategory › Type."
+          description: 'Human-readable breadcrumb: Category › Subcategory › Type.'
       required:
         - inventoryId
         - vendor
@@ -1772,7 +1772,7 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/ReviewQueueItem"
+            $ref: '#/components/schemas/ReviewQueueItem'
         total:
           type: integer
           description: Total number of items currently in the review queue.
@@ -1860,7 +1860,7 @@ components:
           type: number
           description: Of scans that returned a top result, the fraction the worker confirmed.
         matchTypeDistribution:
-          $ref: "#/components/schemas/PhotoStatsMatchTypeDistribution"
+          $ref: '#/components/schemas/PhotoStatsMatchTypeDistribution'
         avgLatencyMs:
           type: integer
           nullable: true
@@ -1870,7 +1870,7 @@ components:
         topConfirmedParts:
           type: array
           items:
-            $ref: "#/components/schemas/PhotoStatsTopConfirmedPart"
+            $ref: '#/components/schemas/PhotoStatsTopConfirmedPart'
       required:
         - windowHours
         - totalScans

@@ -408,6 +408,14 @@ function ShelfView({
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const selectedPart = selectedIdx !== null ? (parts[selectedIdx] ?? null) : null;
 
+  const scrollRef = useRef<ScrollView>(null);
+
+  const sectionKey = crumbs.section?.label ?? null;
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ x: 0, y: 0, animated: false });
+    setSelectedIdx(null);
+  }, [sectionKey]);
+
   const locationLabel = [crumbs.aisle?.label, crumbs.section?.label, crumbs.shelf?.label]
     .filter(Boolean)
     .join(' › ');
@@ -429,6 +437,7 @@ function ShelfView({
       {/* ── Shelf diagram ── */}
       <View style={shelfStyles.diagramWrap}>
         <ScrollView
+          ref={scrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={shelfStyles.diagramScroll}
@@ -624,6 +633,13 @@ function SectionShelfView({
 }) {
   const [selected, setSelected] = useState<{ shelfIdx: number; partIdx: number } | null>(null);
 
+  const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+    setSelected(null);
+  }, [section]);
+
   // Render lowest hundreds at top, highest (e.g. 900) at bottom — mirrors
   // a physical shelf stack viewed straight-on from the front.
   const shelves = [...section.shelves].reverse();
@@ -647,7 +663,7 @@ function SectionShelfView({
         onNext={onNextSection}
         colors={colors}
       />
-      <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
+      <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 140 }}>
         {shelves.map((shelf, shelfIdx) => (
           <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
             {shelfIdx > 0 ? (
