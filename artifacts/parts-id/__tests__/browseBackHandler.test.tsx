@@ -235,7 +235,7 @@ jest.mock('@/hooks/useColors', () => ({
 }));
 
 jest.mock('@/contexts/AppContext', () => ({
-  useApp: () => ({ settings: { warehouseShelfView: false } }),
+  useApp: () => ({ settings: { shelfViewEnabled: false } }),
 }));
 
 // ── Imports under test (after all mocks) ────────────────────────────────────
