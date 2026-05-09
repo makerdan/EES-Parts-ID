@@ -45,7 +45,7 @@ import supertest from 'supertest';
 import { inArray, sql } from 'drizzle-orm';
 import app from '../src/app';
 import { signAdminToken } from '../src/routes/admin';
-import { db, inventoryTable, productSeriesTable } from '@workspace/db';
+import { db, pool, inventoryTable, productSeriesTable } from '@workspace/db';
 import { closePool } from './helpers/testDb';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -386,10 +386,22 @@ describe('GET /api/series/coverage — before/after auto-assign delta', () => {
 
 describe('POST /api/series/auto-assign — idempotency', () => {
   beforeAll(async () => {
-    // Release any stale session-level advisory lock that a previously-aborted
-    // test run may have left behind. pg_advisory_unlock is a no-op when the
-    // lock is not held, so this is always safe to call unconditionally.
-    await db.execute(sql`SELECT pg_advisory_unlock(20250001::bigint)`);
+    // Wait until the advisory lock is genuinely free before proceeding.
+    // We must use a raw pool.connect() client here — the route acquires the
+    // lock on a raw pool client (a separate PG session), so calling
+    // pg_advisory_unlock via a Drizzle session would be a no-op.
+    // pg_advisory_lock (blocking) waits until the prior run has released it;
+    // statement_timeout caps the wait so the suite doesn't hang indefinitely.
+    const client = await pool.connect();
+    try {
+      await client.query("SET statement_timeout = '10s'");
+      await client.query('SELECT pg_advisory_lock($1::bigint)', [20250001]);
+      await client.query('SELECT pg_advisory_unlock($1::bigint)', [20250001]);
+    } catch {
+      // Timed out or other error — proceed; the test will surface any real issue.
+    } finally {
+      client.release();
+    }
   });
 
   // Timeout raised to 30 s — auto-assign scans the full inventory table and
@@ -429,13 +441,25 @@ describe('POST /api/series/auto-assign — idempotency', () => {
 
 describe('POST /api/series/auto-assign — concurrency lock', () => {
   beforeAll(async () => {
-    // Same stale-lock guard as the idempotency block above.
-    await db.execute(sql`SELECT pg_advisory_unlock(20250001::bigint)`);
+    // Same fix as the idempotency block: block on the raw pool until the
+    // advisory lock is free rather than calling pg_advisory_unlock on a
+    // different Drizzle session (which would be a no-op).
+    const client = await pool.connect();
+    try {
+      await client.query("SET statement_timeout = '10s'");
+      await client.query('SELECT pg_advisory_lock($1::bigint)', [20250001]);
+      await client.query('SELECT pg_advisory_unlock($1::bigint)', [20250001]);
+    } catch {
+      // Timed out or other error — proceed; the test will surface any real issue.
+    } finally {
+      client.release();
+    }
   });
 
   // Timeout raised to 30 s — the first (SSE) request runs a full auto-assign
   // pass that can take well over the default 5 s on a populated dev database.
   it("returns 409 with 'already running' message when triggered concurrently", async () => {
+    // Start the first request immediately — it will acquire the advisory lock.
     const firstRequest = supertest(app)
       .post('/api/series/auto-assign')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -448,6 +472,12 @@ describe('POST /api/series/auto-assign — concurrency lock', () => {
         });
         res.on('end', () => callback(null, data));
       });
+
+    // Wait 150 ms before firing the second request so the first request has
+    // had time to call pg_try_advisory_lock and hold the lock. Firing both
+    // simultaneously races the lock acquisition, causing both to arrive before
+    // either holds it — producing two 409s instead of one 200 + one 409.
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
 
     const secondRequest = supertest(app)
       .post('/api/series/auto-assign')
