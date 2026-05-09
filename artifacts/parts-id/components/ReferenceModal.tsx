@@ -280,6 +280,8 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
     });
   };
 
+  const isEmpty = !history.length && !answer && !loading && !isError;
+
   return (
     <Modal
       visible={open}
@@ -322,125 +324,12 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
           </View>
         </View>
 
-        {/* History */}
-        <ScrollView
-          ref={scrollRef}
-          style={{ flex: 1 }}
-          contentContainerStyle={{ padding: 16 }}
-          keyboardShouldPersistTaps="handled"
-        >
-          {history.map((h, i) => (
-            <View key={i} style={{ marginBottom: 16 }}>
-              <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + '22' }]}>
-                <Text style={[msgStyles.qText, { color: colors.foreground }]}>Q: {h.q}</Text>
-              </View>
-              <Pressable
-                onPress={handleAnswerDoubleTap}
-                style={[
-                  msgStyles.aBubble,
-                  { backgroundColor: colors.card, borderColor: colors.border },
-                ]}
-              >
-                <Text style={{ fontSize: 14, lineHeight: 22 }}>{renderAnswer(h.a)}</Text>
-              </Pressable>
-            </View>
-          ))}
-
-          {answer || isError ? (
-            <View
-              style={{ marginBottom: 16 }}
-              onLayout={(e) => {
-                answerContainerYRef.current = e.nativeEvent.layout.y;
-              }}
-            >
-              <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + '22' }]}>
-                <Text style={[msgStyles.qText, { color: colors.foreground }]}>
-                  Q: {askedQuestionRef.current || question}
-                </Text>
-              </View>
-              {isError ? (
-                <View style={msgStyles.errorWrap}>
-                  <ErrorBanner message="No answer — check your connection and try again." />
-                  <Pressable
-                    onPress={() => askQuestion(askedQuestionRef.current)}
-                    style={[msgStyles.retryBtn, { borderColor: colors.primary }]}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 13,
-                        color: colors.primary,
-                        fontFamily: 'Inter_600SemiBold',
-                      }}
-                    >
-                      ↺ Retry
-                    </Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <Pressable
-                  onPress={handleAnswerDoubleTap}
-                  style={[
-                    msgStyles.aBubble,
-                    { backgroundColor: colors.card, borderColor: colors.border },
-                  ]}
-                >
-                  {/* Clear button — dismiss this answer without wiping history */}
-                  {!loading ? (
-                    <Pressable
-                      onPress={clearAnswer}
-                      style={[msgStyles.clearAnswerBtn, { backgroundColor: colors.muted }]}
-                      hitSlop={8}
-                    >
-                      <Text style={[msgStyles.clearAnswerText, { color: colors.mutedForeground }]}>
-                        ✕
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                  <Text style={{ fontSize: 14, lineHeight: 22, paddingRight: 28 }}>
-                    {renderAnswer(answer)}
-                  </Text>
-                  {loading ? (
-                    <ActivityIndicator
-                      size="small"
-                      color={colors.primary}
-                      style={{ marginTop: 4 }}
-                    />
-                  ) : null}
-                </Pressable>
-              )}
-            </View>
-          ) : null}
-
-          {!history.length && !answer && !isError ? (
-            <View style={emptyStyles.container}>
-              <Text style={emptyStyles.emoji}>🤖</Text>
-              <Text style={[emptyStyles.title, { color: colors.foreground }]}>Ask the AI</Text>
-              <Text style={[emptyStyles.hint, { color: colors.mutedForeground }]}>
-                This is an AI assistant — ask it about NEMA codes, wire gauges, breaker ratings,
-                conduit types, or any electrical term and it will generate an answer for you.
-              </Text>
-              <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>
-                QUICK LOOKUPS
-              </Text>
-              {QUICK_LOOKUP_CHIPS.map(({ label, question: q }) => (
-                <Pressable
-                  key={label}
-                  onPress={() => handleChipPress(q)}
-                  style={[
-                    emptyStyles.chip,
-                    { backgroundColor: colors.muted, borderColor: colors.border },
-                  ]}
-                >
-                  <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
-        </ScrollView>
-
-        {/* Input bar */}
+        {/* Input bar — sits above Quick Lookups */}
         <View
-          style={[inputStyles.bar, { backgroundColor: colors.card, borderTopColor: colors.border }]}
+          style={[
+            inputStyles.bar,
+            { backgroundColor: colors.card, borderBottomColor: colors.border },
+          ]}
         >
           <TextInput
             value={question}
@@ -478,6 +367,134 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
             )}
           </Pressable>
         </View>
+
+        {/* Scrollable content */}
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          contentContainerStyle={[{ padding: 16 }, isEmpty && { flexGrow: 1 }]}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* History */}
+          {history.map((h, i) => (
+            <View key={i} style={{ marginBottom: 16 }}>
+              <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + '22' }]}>
+                <Text style={[msgStyles.qText, { color: colors.foreground }]}>Q: {h.q}</Text>
+              </View>
+              <Pressable
+                onPress={handleAnswerDoubleTap}
+                style={[
+                  msgStyles.aBubble,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
+              >
+                <Text style={{ fontSize: 14, lineHeight: 22 }}>{renderAnswer(h.a)}</Text>
+              </Pressable>
+            </View>
+          ))}
+
+          {/* Active Q+A — visible as soon as loading starts so chip taps feel instant */}
+          {answer || loading || isError ? (
+            <View
+              style={{ marginBottom: 16 }}
+              onLayout={(e) => {
+                answerContainerYRef.current = e.nativeEvent.layout.y;
+              }}
+            >
+              <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + '22' }]}>
+                <Text style={[msgStyles.qText, { color: colors.foreground }]}>
+                  Q: {askedQuestionRef.current || question}
+                </Text>
+              </View>
+              {isError ? (
+                <View style={msgStyles.errorWrap}>
+                  <ErrorBanner message="No answer — check your connection and try again." />
+                  <Pressable
+                    onPress={() => askQuestion(askedQuestionRef.current)}
+                    style={[msgStyles.retryBtn, { borderColor: colors.primary }]}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 13,
+                        color: colors.primary,
+                        fontFamily: 'Inter_600SemiBold',
+                      }}
+                    >
+                      ↺ Retry
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={handleAnswerDoubleTap}
+                  style={[
+                    msgStyles.aBubble,
+                    { backgroundColor: colors.card, borderColor: colors.border },
+                  ]}
+                >
+                  {/* Clear button — only shown when answer is complete */}
+                  {!loading && answer ? (
+                    <Pressable
+                      onPress={clearAnswer}
+                      style={[msgStyles.clearAnswerBtn, { backgroundColor: colors.muted }]}
+                      hitSlop={8}
+                    >
+                      <Text
+                        style={[msgStyles.clearAnswerText, { color: colors.mutedForeground }]}
+                      >
+                        ✕
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  {answer ? (
+                    <Text style={{ fontSize: 14, lineHeight: 22, paddingRight: answer && !loading ? 28 : 0 }}>
+                      {renderAnswer(answer)}
+                    </Text>
+                  ) : null}
+                  {/* Spinner shown while loading (whether or not streaming has started) */}
+                  {loading ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={colors.primary}
+                      style={{ marginTop: answer ? 4 : 0, alignSelf: 'flex-start' }}
+                    />
+                  ) : null}
+                </Pressable>
+              )}
+            </View>
+          ) : null}
+
+          {/* Empty state — icon centered in available space with Quick Lookups below */}
+          {isEmpty ? (
+            <View style={emptyStyles.container}>
+              <Text style={emptyStyles.emoji}>🤖</Text>
+              <Text style={[emptyStyles.title, { color: colors.foreground }]}>Ask the AI</Text>
+              <Text style={[emptyStyles.hint, { color: colors.mutedForeground }]}>
+                Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any
+                electrical term and it will generate an answer for you.
+              </Text>
+              <View style={emptyStyles.chipsWrapper}>
+                <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>
+                  QUICK LOOKUPS
+                </Text>
+                {QUICK_LOOKUP_CHIPS.map(({ label, question: q }) => (
+                  <Pressable
+                    key={label}
+                    onPress={() => handleChipPress(q)}
+                    style={[
+                      emptyStyles.chip,
+                      { backgroundColor: colors.muted, borderColor: colors.border },
+                    ]}
+                  >
+                    <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+        </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -536,23 +553,29 @@ const msgStyles = StyleSheet.create({
 });
 
 const emptyStyles = StyleSheet.create({
-  container: { alignItems: 'center', padding: 24 },
-  emoji: { fontSize: 40, marginBottom: 12 },
-  title: { fontSize: 18, fontFamily: 'Inter_700Bold', marginBottom: 8 },
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 8,
+  },
+  emoji: { fontSize: 52, marginBottom: 14 },
+  title: { fontSize: 20, fontFamily: 'Inter_700Bold', marginBottom: 10 },
   hint: {
     fontSize: 14,
     fontFamily: 'Inter_400Regular',
     textAlign: 'center',
     lineHeight: 20,
-    marginBottom: 16,
+    marginBottom: 28,
   },
+  chipsWrapper: { width: '100%' },
   sectionLabel: {
     fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
     letterSpacing: 1,
     textTransform: 'uppercase',
     marginBottom: 10,
-    alignSelf: 'flex-start',
   },
   chip: { ...secondaryBtnBase, width: '100%', padding: 12, marginBottom: 8 },
   chipText: { fontSize: 13, fontFamily: 'Inter_400Regular' },
@@ -564,7 +587,7 @@ const inputStyles = StyleSheet.create({
     alignItems: 'flex-end',
     padding: 12,
     gap: 10,
-    borderTopWidth: 1,
+    borderBottomWidth: 1,
   },
   input: {
     flex: 1,
