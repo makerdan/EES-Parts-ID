@@ -12,6 +12,7 @@ import {
 
 describe('parseTradeSizeInches', () => {
   it.each([
+    // Fraction-code encoding (unchanged behavior)
     ['IMC12', 0.5],
     ['IMC34', 0.75],
     ['IMC212', 2.5],
@@ -20,6 +21,18 @@ describe('parseTradeSizeInches', () => {
     ['EMT100', 1],
     ['EMT400', 4],
     ['PVC2', 2],
+    // Decimal×100 encoding — 2-digit bare codes
+    ['EMT75', 0.75],
+    ['EMT50', 0.5],
+    ['EMT25', 0.25],
+    // Decimal×100 encoding — 3-digit codes (whole + fractional)
+    ['EMT150', 1.5],
+    ['EMT250', 2.5],
+    ['EMT350', 3.5],
+    ['EMT175', 1.75],
+    ['EMT125', 1.25],
+    ['EMT075', 0.75],
+    ['EMT050', 0.5],
   ])('parses %s → %s"', (code, inches) => {
     expect(parseTradeSizeInches(code)).toBeCloseTo(inches, 5);
   });
@@ -30,10 +43,24 @@ describe('parseTradeSizeInches', () => {
 });
 
 describe('isConduitOrPipe', () => {
-  it('flags conduit family items', () => {
+  it('flags conduit type abbreviations', () => {
     expect(isConduitOrPipe('IMC212')).toBe(true);
+    expect(isConduitOrPipe('EMT34')).toBe(true);
+    expect(isConduitOrPipe('FMC12')).toBe(true);
+    expect(isConduitOrPipe('LFMC34')).toBe(true);
+  });
+
+  it('flags conduit fittings and accessories', () => {
     expect(isConduitOrPipe('EMT34 Coupling')).toBe(true);
     expect(isConduitOrPipe(null, undefined, 'PVC sched 40 elbow')).toBe(true);
+    expect(isConduitOrPipe(null, null, '1/2 in EMT Fitting')).toBe(true);
+    expect(isConduitOrPipe(null, null, '3/4 in Conduit Locknut')).toBe(true);
+    expect(isConduitOrPipe(null, null, '1 in Conduit Bushing')).toBe(true);
+    expect(isConduitOrPipe(null, null, '2 in Conduit Reducer')).toBe(true);
+    expect(isConduitOrPipe(null, null, 'EMT Offset 1/2')).toBe(true);
+    expect(isConduitOrPipe(null, null, 'Conduit Clamp 3/4"')).toBe(true);
+    expect(isConduitOrPipe(null, null, 'EMT Hanger 1"')).toBe(true);
+    expect(isConduitOrPipe(null, null, 'Conduit Sweep 90 1/2"')).toBe(true);
   });
 
   it('flags items with FITTING in description (regression: FITTING was missing)', () => {

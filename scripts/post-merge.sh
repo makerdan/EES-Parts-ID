@@ -4,7 +4,7 @@
 set -e
 
 pnpm install --frozen-lockfile
-pnpm --filter db push
+pnpm --filter db push --force
 
 # Refresh the auto-generated sections of the root README from artifact
 # manifests, package.json scripts, and the curated features list. Idempotent.
