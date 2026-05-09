@@ -85,16 +85,19 @@ The Expo app is gated by a single password from `EXPO_PUBLIC_APP_PASSWORD`
 ## Artifacts
 
 <!-- AUTO:ARTIFACTS -->
-| Title | Kind | Directory | Preview path | Dev command |
-| --- | --- | --- | --- | --- |
-| API Server | `api` | `artifacts/api-server` | `/api` | `pnpm --filter @workspace/api-server run dev:supervised` |
-| Canvas | `design` | `artifacts/mockup-sandbox` | `/__mockup` | `pnpm --filter @workspace/mockup-sandbox run dev` |
-| Parts ID | `mobile` | `artifacts/parts-id` | `/` | `pnpm --filter @workspace/parts-id run dev` |
+
+| Title      | Kind     | Directory                  | Preview path | Dev command                                              |
+| ---------- | -------- | -------------------------- | ------------ | -------------------------------------------------------- |
+| API Server | `api`    | `artifacts/api-server`     | `/api`       | `pnpm --filter @workspace/api-server run dev:supervised` |
+| Canvas     | `design` | `artifacts/mockup-sandbox` | `/__mockup`  | `pnpm --filter @workspace/mockup-sandbox run dev`        |
+| Parts ID   | `mobile` | `artifacts/parts-id`       | `/`          | `pnpm --filter @workspace/parts-id run dev`              |
+
 <!-- /AUTO:ARTIFACTS -->
 
 ## Features
 
 <!-- AUTO:FEATURES -->
+
 **Search**
 
 - **Hybrid semantic + Fuse.js search** — Server-side trigram + AI-keyword search with an offline Fuse.js fallback so workers can still look up parts when the network drops.
@@ -130,25 +133,27 @@ The Expo app is gated by a single password from `EXPO_PUBLIC_APP_PASSWORD`
 ## Scripts
 
 <!-- AUTO:SCRIPTS -->
+
 **Workspace root** (`pnpm <name>`):
 
-| Script | Command |
-| --- | --- |
-| `build` | `pnpm run typecheck && pnpm -r --if-present run build` |
-| `format:check` | `prettier --check "**/*.{ts,tsx,js,cjs,mjs}" --ignore-path .prettierignore` |
-| `lint` | `eslint .` |
-| `readme` | `pnpm --filter @workspace/scripts exec tsx ./src/update-readme.ts` |
-| `test` | `pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run…` |
-| `typecheck` | `pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-…` |
-| `typecheck:libs` | `tsc --build` |
+| Script           | Command                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------ |
+| `build`          | `pnpm run typecheck && pnpm -r --if-present run build`                                     |
+| `format:check`   | `prettier --check "**/*.{ts,tsx,js,cjs,mjs}" --ignore-path .prettierignore`                |
+| `lint`           | `eslint .`                                                                                 |
+| `readme`         | `pnpm --filter @workspace/scripts exec tsx ./src/update-readme.ts`                         |
+| `test`           | `pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run…` |
+| `typecheck`      | `pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-…` |
+| `typecheck:libs` | `tsc --build`                                                                              |
 
 **Per-artifact** (run with `pnpm --filter <name> <script>`):
 
-| Package | Scripts |
-| --- | --- |
-| `@workspace/api-server` | `build`, `dev`, `dev:supervised`, `lint`, `start`, `test`, `typecheck` |
-| `@workspace/mockup-sandbox` | `build`, `dev`, `preview`, `typecheck` |
-| `@workspace/parts-id` | `build`, `dev`, `lint`, `serve`, `test`, `typecheck` |
+| Package                     | Scripts                                                                |
+| --------------------------- | ---------------------------------------------------------------------- |
+| `@workspace/api-server`     | `build`, `dev`, `dev:supervised`, `lint`, `start`, `test`, `typecheck` |
+| `@workspace/mockup-sandbox` | `build`, `dev`, `preview`, `typecheck`                                 |
+| `@workspace/parts-id`       | `build`, `dev`, `lint`, `serve`, `test`, `typecheck`                   |
+
 <!-- /AUTO:SCRIPTS -->
 
 ## Testing

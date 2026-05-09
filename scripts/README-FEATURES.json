@@ -1,18 +1,70 @@
 {
   "_comment": "Curated, hand-edited feature list rendered into README.md by scripts/src/update-readme.ts. Add new entries here as features ship. Order is preserved.",
   "features": [
-    { "area": "Search", "title": "Hybrid semantic + Fuse.js search", "detail": "Server-side trigram + AI-keyword search with an offline Fuse.js fallback so workers can still look up parts when the network drops." },
-    { "area": "Search", "title": "Browse by Category", "detail": "Three-level drill-down (category → subcategory → type) over the seeded EES taxonomy with a Search/Browse toggle on the main tab." },
-    { "area": "Search", "title": "Browse by Aisle", "detail": "Walk the warehouse in `Aisle → Section → Shelf → Parts` order, parsed from existing bin codes (`AA-SS-SHP`). Read-only and offline-capable." },
-    { "area": "Search", "title": "Result refinement", "detail": "Chip-based dim filters (manufacturer, amperage, etc.) plus a debounced 'Add keywords' input that narrows in-memory results without a server round-trip." },
-    { "area": "Search", "title": "Highlighted matched keywords", "detail": "Result cards bold the tokens that caused the match so workers can see why each part was kept." },
-    { "area": "Photo ID", "title": "AI photo identification", "detail": "Snap a part, OpenAI vision returns candidate matches with confidence; tap to drill into details." },
-    { "area": "Inventory", "title": "Spreadsheet upload with resumable progress", "detail": "Chunked batch upserts with on-device progress that survives an app restart." },
-    { "area": "Inventory", "title": "Per-item keyword editor", "detail": "Manual override of AI keywords directly from a result card." },
-    { "area": "Inventory", "title": "Bulk AI enrichment (SSE)", "detail": "Server-streamed progress while gpt-5-mini fills missing keywords across the catalog." },
-    { "area": "Reference", "title": "Floating Reference modal + AI chat", "detail": "Quick lookup of electrical abbreviations, vendors, synonyms, misspellings, and slang; SSE chat for free-form questions." },
-    { "area": "Shop", "title": "Elliott Electric shop tab", "detail": "In-app browser pinned to the Elliott Electric Supply storefront for ordering parts." },
-    { "area": "Platform", "title": "Password gate", "detail": "Single-password login for the warehouse-floor use case (`EXPO_PUBLIC_APP_PASSWORD`)." },
-    { "area": "Platform", "title": "Dark industrial amber theme", "detail": "Tuned for warehouse lighting and gloved hands." }
+    {
+      "area": "Search",
+      "title": "Hybrid semantic + Fuse.js search",
+      "detail": "Server-side trigram + AI-keyword search with an offline Fuse.js fallback so workers can still look up parts when the network drops."
+    },
+    {
+      "area": "Search",
+      "title": "Browse by Category",
+      "detail": "Three-level drill-down (category → subcategory → type) over the seeded EES taxonomy with a Search/Browse toggle on the main tab."
+    },
+    {
+      "area": "Search",
+      "title": "Browse by Aisle",
+      "detail": "Walk the warehouse in `Aisle → Section → Shelf → Parts` order, parsed from existing bin codes (`AA-SS-SHP`). Read-only and offline-capable."
+    },
+    {
+      "area": "Search",
+      "title": "Result refinement",
+      "detail": "Chip-based dim filters (manufacturer, amperage, etc.) plus a debounced 'Add keywords' input that narrows in-memory results without a server round-trip."
+    },
+    {
+      "area": "Search",
+      "title": "Highlighted matched keywords",
+      "detail": "Result cards bold the tokens that caused the match so workers can see why each part was kept."
+    },
+    {
+      "area": "Photo ID",
+      "title": "AI photo identification",
+      "detail": "Snap a part, OpenAI vision returns candidate matches with confidence; tap to drill into details."
+    },
+    {
+      "area": "Inventory",
+      "title": "Spreadsheet upload with resumable progress",
+      "detail": "Chunked batch upserts with on-device progress that survives an app restart."
+    },
+    {
+      "area": "Inventory",
+      "title": "Per-item keyword editor",
+      "detail": "Manual override of AI keywords directly from a result card."
+    },
+    {
+      "area": "Inventory",
+      "title": "Bulk AI enrichment (SSE)",
+      "detail": "Server-streamed progress while gpt-5-mini fills missing keywords across the catalog."
+    },
+    {
+      "area": "Reference",
+      "title": "Floating Reference modal + AI chat",
+      "detail": "Quick lookup of electrical abbreviations, vendors, synonyms, misspellings, and slang; SSE chat for free-form questions."
+    },
+    {
+      "area": "Shop",
+      "title": "Elliott Electric shop tab",
+      "detail": "In-app browser pinned to the Elliott Electric Supply storefront for ordering parts."
+    },
+    {
+      "area": "Platform",
+      "title": "Password gate",
+      "detail": "Single-password login for the warehouse-floor use case (`EXPO_PUBLIC_APP_PASSWORD`)."
+    },
+    {
+      "area": "Platform",
+      "title": "Dark industrial amber theme",
+      "detail": "Tuned for warehouse lighting and gloved hands."
+    }
   ]
 }
