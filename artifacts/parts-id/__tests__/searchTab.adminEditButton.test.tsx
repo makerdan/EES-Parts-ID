@@ -80,14 +80,12 @@ jest.mock('react-native', () => {
   const View = makeHost('div');
   const Text = makeHost('span');
 
-  const ScrollView = React.forwardRef(
-    (props: Record<string, unknown>, ref: React.Ref<unknown>) => {
-      const innerRef = React.useRef<unknown>(null);
-      React.useImperativeHandle(ref, () => ({ scrollTo: () => {}, scrollToOffset: () => {} }), []);
-      const Host = makeHost('div');
-      return React.createElement(Host, { ...props, ref: innerRef });
-    }
-  );
+  const ScrollView = React.forwardRef((props: Record<string, unknown>, ref: React.Ref<unknown>) => {
+    const innerRef = React.useRef<unknown>(null);
+    React.useImperativeHandle(ref, () => ({ scrollTo: () => {}, scrollToOffset: () => {} }), []);
+    const Host = makeHost('div');
+    return React.createElement(Host, { ...props, ref: innerRef });
+  });
 
   const Pressable = React.forwardRef(
     (
@@ -277,12 +275,9 @@ jest.mock('fuse.js', () => {
 });
 
 jest.mock('expo-router', () => ({
-  Stack: Object.assign(
-    ({ children }: { children: React.ReactNode }) => children,
-    {
-      Screen: () => null,
-    }
-  ),
+  Stack: Object.assign(({ children }: { children: React.ReactNode }) => children, {
+    Screen: () => null,
+  }),
   useNavigation: () => ({
     navigate: jest.fn(),
     goBack: jest.fn(),
@@ -466,9 +461,7 @@ describe('Search tab (index.tsx) — BrowseByAisle receives onEditKeywords based
 
     // Click the "Browse parts by aisle, section, and shelf" entry button
     await act(async () => {
-      fireEvent.click(
-        screen.getByRole('button', { name: /browse parts by aisle/i })
-      );
+      fireEvent.click(screen.getByRole('button', { name: /browse parts by aisle/i }));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -485,9 +478,7 @@ describe('Search tab (index.tsx) — BrowseByAisle receives onEditKeywords based
     });
 
     await act(async () => {
-      fireEvent.click(
-        screen.getByRole('button', { name: /browse parts by aisle/i })
-      );
+      fireEvent.click(screen.getByRole('button', { name: /browse parts by aisle/i }));
       await new Promise((r) => setTimeout(r, 0));
     });
 
