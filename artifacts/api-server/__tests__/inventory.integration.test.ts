@@ -504,3 +504,104 @@ describe('POST /api/inventory/upsert-batch', () => {
     expect(res.body.total).toBe(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/inventory/search — amperage chip filter (end-to-end)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('POST /api/inventory/search — amperage chip filter', () => {
+  // Four fixture rows that let us test both the structured-column path
+  // (amperage IS NOT NULL → matchesChipColumn) and the text-fallback path
+  // (amperage IS NULL → tokenMatch on description).
+  const AMP_CATALOGS = {
+    col20: 'JEST-ITG-AMP-20-COL', // amperage column = 20
+    col15: 'JEST-ITG-AMP-15-COL', // amperage column = 15
+    txt20: 'JEST-ITG-AMP-20-TXT', // amperage = NULL, description has "20A"
+    txt15: 'JEST-ITG-AMP-15-TXT', // amperage = NULL, description has "15A"
+  };
+
+  beforeAll(async () => {
+    const { db } = await import('@workspace/db');
+    const { sql: rawSql } = await import('drizzle-orm');
+
+    // Use raw SQL so we can control the `amperage` integer column directly.
+    // The `seedFixtures` helper only sets description / binLocations / aiKeywords.
+    await db.execute(rawSql`
+      INSERT INTO inventory (vendor, catalog, description, amperage)
+      VALUES
+        ('JEST-VENDOR', ${AMP_CATALOGS.col20}, '1-Pole Circuit Breaker', 20),
+        ('JEST-VENDOR', ${AMP_CATALOGS.col15}, '1-Pole Circuit Breaker', 15),
+        ('JEST-VENDOR', ${AMP_CATALOGS.txt20}, '20A 1-Pole Circuit Breaker', NULL),
+        ('JEST-VENDOR', ${AMP_CATALOGS.txt15}, '15A 1-Pole Circuit Breaker', NULL)
+      ON CONFLICT (vendor, catalog) DO NOTHING
+    `);
+  }, 15_000);
+
+  afterAll(async () => {
+    const { db } = await import('@workspace/db');
+    const { sql: rawSql } = await import('drizzle-orm');
+
+    // Clean up individually — avoids depending on drizzle's array-param handling.
+    for (const cat of Object.values(AMP_CATALOGS)) {
+      await db.execute(rawSql`DELETE FROM inventory WHERE catalog = ${cat}`);
+    }
+  }, 15_000);
+
+  const catalogsOf = (body: { results: Array<{ item: { catalog: string } }> }) =>
+    body.results.map((r) => r.item.catalog);
+
+  it('includes 20A items and excludes 15A items when amperage chip = "20A"', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-AMP', amperage: '20A' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+
+    // Structured-column path (amperage = 20): must be included
+    expect(catalogs).toContain(AMP_CATALOGS.col20);
+    // Text-fallback path (amperage IS NULL, description "20A …"): must be included
+    expect(catalogs).toContain(AMP_CATALOGS.txt20);
+
+    // 15A items (structured and text) must be excluded
+    expect(catalogs).not.toContain(AMP_CATALOGS.col15);
+    expect(catalogs).not.toContain(AMP_CATALOGS.txt15);
+  });
+
+  it('includes 15A items and excludes 20A items when amperage chip = "15A"', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-AMP', amperage: '15A' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+
+    expect(catalogs).toContain(AMP_CATALOGS.col15);
+    expect(catalogs).toContain(AMP_CATALOGS.txt15);
+    expect(catalogs).not.toContain(AMP_CATALOGS.col20);
+    expect(catalogs).not.toContain(AMP_CATALOGS.txt20);
+  });
+
+  it('returns all 4 seeded amperage items when no chip filter is active', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-AMP' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    for (const cat of Object.values(AMP_CATALOGS)) {
+      expect(catalogs).toContain(cat);
+    }
+  });
+
+  it('includes amperage key in dimensionCounts when chip filter is active', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-AMP', amperage: '20A' })
+      .expect(200);
+
+    expect(res.body).toHaveProperty('dimensionCounts');
+    expect(typeof res.body.dimensionCounts).toBe('object');
+    expect(res.body.dimensionCounts).toHaveProperty('amperage');
+  });
+});
