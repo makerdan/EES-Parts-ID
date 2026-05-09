@@ -1,37 +1,25 @@
 /**
  * @jest-environment jsdom
  *
- * Screen-level tests verifying that the "✏️ Edit Part Details" button shows
- * for admins and is hidden for non-admins across every surface that renders
- * ResultCard:
+ * BrowseByAisle — full drill-down test verifying that the "✏️ Edit Part Details"
+ * button shows for admins and is hidden for non-admins.
  *
- *   1. BrowseByAisle component — full drill-down (Aisle → Section → bin slot
- *      tap → ResultCard expand → button presence).
- *   2. Search tab — the `adminToken ? setEditItem : undefined` expression that
- *      the screen passes to both BrowseByAisle and ResultCard is exercised via
- *      a minimal harness that calls `useApp()` from the same mocked context.
- *   3. Photo tab — same expression pattern (`adminToken ? setEditItem : …`).
- *   4. Scan screen — same expression pattern (`isAdmin && adminToken ? …`).
+ * The full component is rendered and driven through its drill-down hierarchy
+ * (Aisle → Section → bin slot tap → ResultCard expand → button presence) so
+ * ResultCard actually renders in the DOM.
  *
- * For BrowseByAisle the real component is rendered and driven through its full
- * drill-down hierarchy so ResultCard actually renders in the DOM — this is the
- * deepest verification path.
- *
- * For the three screen files the screens themselves contain complex async
- * flows (camera, barcode scanner, AI mutation chains) that would require
- * hundreds of lines of flaky simulation to reach the ResultCard render point.
- * Instead, each screen's key conditional expression is extracted into a minimal
- * test harness that calls `useApp()` from the same mocked context; the harness
- * renders ResultCard with that prop and we assert button presence.  This is
- * equivalent to mounting the relevant portion of each screen and verifies the
- * only code path that can cause a regression: the `adminToken ?` guard.
+ * Screen-level coverage for Search tab, Photo tab, and Scan screen lives in the
+ * dedicated files that render those actual screen modules:
+ *   - searchTab.adminEditButton.test.tsx
+ *   - photo.adminEditButton.test.tsx
+ *   - scan.adminEditButton.test.tsx
  */
+/* eslint-disable react/display-name, import/first */
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
+import type { InventoryItem } from '@workspace/api-client-react';
 
 // ── Mutable per-test context flag ─────────────────────────────────────────────
-// Tests flip this to control what useApp() returns without re-registering mocks.
 let mockAdminToken: string | null = 'admin-token-123';
 let mockIsAdmin = true;
 
@@ -244,7 +232,6 @@ jest.mock('@/hooks/useColors', () => ({
   }),
 }));
 
-// mutable mockAdminToken / mockIsAdmin read on every call
 jest.mock('@/contexts/AppContext', () => ({
   useApp: () => ({
     adminToken: mockAdminToken,
@@ -271,10 +258,8 @@ jest.mock('@expo/vector-icons', () => {
 
 // ── Imports after mocks ────────────────────────────────────────────────────────
 import { BrowseByAisle } from '@/components/BrowseByAisle';
-import { ResultCard } from '@/components/ResultCard';
-import { useApp } from '@/contexts/AppContext';
 
-// ── Shared fixtures ────────────────────────────────────────────────────────────
+// ── Shared fixture ─────────────────────────────────────────────────────────────
 function makeItem(id: number, bin: string): InventoryItem {
   return {
     id,
@@ -293,38 +278,13 @@ function makeItem(id: number, bin: string): InventoryItem {
   } as unknown as InventoryItem;
 }
 
-function makeResult(overrides: Partial<InventoryItem> = {}): SearchResult {
-  return {
-    item: {
-      id: 1,
-      vendor: 'ETN',
-      catalog: 'BR120',
-      description: '20A Breaker',
-      binLocations: ['A-1'],
-      aiKeywords: ['breaker'],
-      vendorFullName: 'Eaton',
-      enrichedAt: '2024-01-01T00:00:00Z',
-      createdAt: '2024-01-01T00:00:00Z',
-      updatedAt: '2024-01-01T00:00:00Z',
-      seriesName: null,
-      tradeSize: null,
-      ...overrides,
-    },
-    confidence: 0.9,
-    matchReason: 'keyword',
-    seriesLabel: undefined,
-    variants: [],
-  };
-}
-
-// Reset admin state before each test.
 beforeEach(() => {
   mockAdminToken = 'admin-token-123';
   mockIsAdmin = true;
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1. BrowseByAisle — full drill-down test
+// BrowseByAisle — full drill-down test
 // ─────────────────────────────────────────────────────────────────────────────
 describe('BrowseByAisle — Edit Part Details button via onEditKeywords prop', () => {
   const INVENTORY = [makeItem(1, '17-01-100')];
@@ -355,19 +315,12 @@ describe('BrowseByAisle — Edit Part Details button via onEditKeywords prop', (
     });
 
     // ── Shelf view: tap the bin slot to select the part ──────────────────────
-    // The slot's accessibilityLabel is "Bin {bin}: {catalog}"
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: /Bin 17-01-100: ITEM-1/ }));
     });
 
     // ── Expand the ResultCard to reveal the edit button area ─────────────────
-    // After selecting a bin the ResultCard renders inside ShelfView's part-detail
-    // section.  Click the outer card Pressable (first role="button" that is NOT
-    // a navigation button) to toggle expansion.  getAllByRole('button') returns
-    // all buttons; the new card is the last one added to the tree.
     const buttons = screen.getAllByRole('button');
-    // The card wrapper Pressable is the last button rendered in the part-detail
-    // section (after the bin slot and SectionNavBar buttons).
     act(() => {
       fireEvent.click(buttons[buttons.length - 1]);
     });
@@ -380,137 +333,6 @@ describe('BrowseByAisle — Edit Part Details button via onEditKeywords prop', (
 
   it('hides the Edit button when onEditKeywords is omitted (non-admin)', () => {
     drillToResultCard(undefined);
-    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. Search tab — adminToken drives onEditKeywords passed to BrowseByAisle
-// ─────────────────────────────────────────────────────────────────────────────
-/**
- * The Search tab (app/(tabs)/index.tsx) passes:
- *   onEditKeywords={adminToken ? setEditItem : undefined}
- * to both BrowseByAisle and the search-results FlatList ResultCards.
- *
- * We extract that exact conditional into a minimal component that calls
- * useApp() from the same mocked context and renders a ResultCard — the same
- * hook + conditional the screen uses.  This verifies that changing adminToken
- * in the context flips the edit-button guard correctly.
- */
-function SearchTabEditGuard() {
-  const { adminToken } = useApp();
-  const setEditItem = React.useCallback((_item: InventoryItem) => {}, []);
-  const onEditKeywords = adminToken ? setEditItem : undefined;
-  return <ResultCard result={makeResult()} rank={0} onEditKeywords={onEditKeywords} />;
-}
-
-describe('Search tab — Edit button correlates with adminToken in context', () => {
-  function expandCard() {
-    const btns = screen.getAllByRole('button');
-    act(() => {
-      fireEvent.click(btns[0]);
-    });
-  }
-
-  it('shows the Edit button when adminToken is set in context', () => {
-    mockAdminToken = 'tok';
-    render(<SearchTabEditGuard />);
-    expandCard();
-    expect(screen.getByText('✏️ Edit Part Details')).toBeTruthy();
-  });
-
-  it('hides the Edit button when adminToken is null in context', () => {
-    mockAdminToken = null;
-    render(<SearchTabEditGuard />);
-    expandCard();
-    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 3. Photo tab — adminToken drives onEditKeywords passed to ResultCard
-// ─────────────────────────────────────────────────────────────────────────────
-/**
- * app/(tabs)/photo.tsx passes:
- *   onEditKeywords={adminToken ? setEditItem : undefined}
- * The guard component mirrors this exactly using the same useApp() hook.
- */
-function PhotoTabEditGuard() {
-  const { adminToken } = useApp();
-  const setEditItem = React.useCallback((_item: InventoryItem) => {}, []);
-  const onEditKeywords = adminToken ? setEditItem : undefined;
-  return <ResultCard result={makeResult()} rank={0} onEditKeywords={onEditKeywords} />;
-}
-
-describe('Photo tab — Edit button correlates with adminToken in context', () => {
-  function expandCard() {
-    const btns = screen.getAllByRole('button');
-    act(() => {
-      fireEvent.click(btns[0]);
-    });
-  }
-
-  it('shows the Edit button when adminToken is set in context', () => {
-    mockAdminToken = 'tok';
-    render(<PhotoTabEditGuard />);
-    expandCard();
-    expect(screen.getByText('✏️ Edit Part Details')).toBeTruthy();
-  });
-
-  it('hides the Edit button when adminToken is null in context', () => {
-    mockAdminToken = null;
-    render(<PhotoTabEditGuard />);
-    expandCard();
-    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. Scan screen — isAdmin && adminToken drives onEditKeywords
-// ─────────────────────────────────────────────────────────────────────────────
-/**
- * app/scan.tsx passes:
- *   onEditKeywords={isAdmin && adminToken ? setEditItem : undefined}
- * Note: scan.tsx requires BOTH isAdmin AND adminToken to show the button.
- * The guard component mirrors this exact two-condition check.
- */
-function ScanScreenEditGuard() {
-  const { adminToken, isAdmin } = useApp();
-  const setEditItem = React.useCallback((_item: InventoryItem) => {}, []);
-  const onEditKeywords = isAdmin && adminToken ? setEditItem : undefined;
-  return <ResultCard result={makeResult()} rank={0} onEditKeywords={onEditKeywords} />;
-}
-
-describe('Scan screen — Edit button correlates with isAdmin && adminToken in context', () => {
-  function expandCard() {
-    const btns = screen.getAllByRole('button');
-    act(() => {
-      fireEvent.click(btns[0]);
-    });
-  }
-
-  it('shows the Edit button when both isAdmin and adminToken are set', () => {
-    mockAdminToken = 'tok';
-    mockIsAdmin = true;
-    render(<ScanScreenEditGuard />);
-    expandCard();
-    expect(screen.getByText('✏️ Edit Part Details')).toBeTruthy();
-  });
-
-  it('hides the Edit button when adminToken is null (non-admin)', () => {
-    mockAdminToken = null;
-    mockIsAdmin = false;
-    render(<ScanScreenEditGuard />);
-    expandCard();
-    expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
-  });
-
-  it('hides the Edit button when isAdmin is false even if adminToken is present', () => {
-    // Edge case: token exists but isAdmin flag is off (e.g. token not yet validated)
-    mockAdminToken = 'tok';
-    mockIsAdmin = false;
-    render(<ScanScreenEditGuard />);
-    expandCard();
     expect(screen.queryByText('✏️ Edit Part Details')).toBeNull();
   });
 });

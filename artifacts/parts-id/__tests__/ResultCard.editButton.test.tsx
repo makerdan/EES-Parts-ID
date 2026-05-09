@@ -14,6 +14,7 @@
  *   • Modal renders children when visible so the detail-variant sheet doesn't
  *     throw during render.
  */
+/* eslint-disable react/display-name, import/first */
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
