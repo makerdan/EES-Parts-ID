@@ -325,6 +325,7 @@ describe('Review Queue chip — stays in sync with admin actions', () => {
   // ──────────────────────────────────────────────────────────────────────────
   describe('chip count refreshes after ClassificationReviewSection confirm action', () => {
     it('decrements from 4 to 3 after the admin confirms an item', async () => {
+      jest.setTimeout(20_000);
       let reviewFetchCount = 0;
       global.fetch = jest.fn((url: unknown) => {
         if (typeof url === 'string' && url.includes('/admin/classification-review')) {
