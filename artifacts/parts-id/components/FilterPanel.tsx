@@ -659,11 +659,6 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
                 </Text>
               </View>
             )}
-            {dimensionCounts && (
-              <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>
-                live counts
-              </Text>
-            )}
             <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
           </View>
         </Pressable>
