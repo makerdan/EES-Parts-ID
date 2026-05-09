@@ -68,6 +68,12 @@ interface VendorProfileBase {
   vendor: string;
   /** Human-readable display name (e.g. "Bridgeport Fittings"). */
   displayName: string;
+  /**
+   * Optional multi-word brand aliases (e.g. "bridgeport fittings") that must
+   * be preserved whole in the keyword list. Unlike `displayName` these are
+   * added verbatim and are not split further by the tokenisation pipeline.
+   */
+  compoundAliases?: string[];
   /** Page-range → dimension mapping derived from the catalog table of contents. */
   pageRanges: PageRangeRule[];
   /** Catalog-suffix → dimension mapping (color codes etc.). */
@@ -100,6 +106,7 @@ export type VendorProfile = IndexVendorProfile | VendorSectionProfile;
 export const BRIDGEPORT_PROFILE: IndexVendorProfile = {
   vendor: 'BRIDGEPORT',
   displayName: 'Bridgeport',
+  compoundAliases: ['bridgeport fittings'],
   strategy: 'index',
   sourceCatalog: 'Bridgeport Fittings 2026 Catalog',
   indexPages: { firstPage: 8, lastPage: 19 },
@@ -785,6 +792,7 @@ export async function parseCatalogPdf(
 
       const keywords = dedupeKeywords([
         profile.displayName.toLowerCase(),
+        ...(profile.compoundAliases?.map((a) => a.toLowerCase()) ?? []),
         ...(rangeRule?.keywords ?? []),
         ...suffixRules.flatMap((s) => s.keywords),
         ...Object.values(dimensions).map((v) => v.toLowerCase()),
