@@ -10,12 +10,37 @@ import { db, quickLookupCache } from '@workspace/db';
 
 const router = Router();
 
-// POST /reference/ask — SSE streaming reference Q&A
+const REFERENCE_SYSTEM_PROMPT =
+  'You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.';
+
+// POST /reference/ask — reference Q&A
+// Defaults to SSE streaming. Pass `?stream=false` or `Accept: application/json`
+// to receive a single JSON response `{ answer: string }` instead (required for
+// React Native iOS, which does not expose ReadableStream on fetch responses).
 router.post('/ask', async (req, res) => {
   try {
     const { question } = req.body as { question: string };
     if (!question?.trim()) {
       return void res.status(400).json({ error: 'question is required' });
+    }
+
+    const wantsJson =
+      req.query.stream === 'false' || (req.headers.accept ?? '').includes('application/json');
+
+    const messages = [
+      { role: 'system' as const, content: REFERENCE_SYSTEM_PROMPT },
+      { role: 'user' as const, content: question },
+    ];
+
+    if (wantsJson) {
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        max_completion_tokens: 512,
+        stream: false,
+        messages,
+      });
+      const answer = completion.choices[0]?.message?.content ?? '';
+      return void res.json({ answer });
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -26,14 +51,7 @@ router.post('/ask', async (req, res) => {
       model: 'gpt-4o-mini',
       max_completion_tokens: 512,
       stream: true,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.',
-        },
-        { role: 'user', content: question },
-      ],
+      messages,
     });
 
     for await (const chunk of stream) {
@@ -47,8 +65,12 @@ router.post('/ask', async (req, res) => {
     res.end();
   } catch (err) {
     console.error(err);
-    res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
-    res.end();
+    if (res.headersSent) {
+      res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+      res.end();
+    } else {
+      res.status(500).json({ error: String(err) });
+    }
   }
 });
 
