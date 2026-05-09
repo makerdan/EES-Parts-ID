@@ -25,6 +25,7 @@ import {
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 import type { InventoryItem } from '@workspace/api-client-react';
+import { useSuggestItemDescription } from '@workspace/api-client-react';
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -50,6 +51,11 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
 
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [suggestion, setSuggestion] = useState<string | null>(null);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+
+  const suggestMutation = useSuggestItemDescription();
+  const isSuggesting = suggestMutation.isPending;
 
   useEffect(() => {
     if (!item) return;
@@ -61,6 +67,8 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
     setTradeSize(item.tradeSize ?? '');
     setToast(null);
     setNewKeyword('');
+    setSuggestion(null);
+    setSuggestError(null);
   }, [item]);
 
   const addKeyword = () => {
@@ -75,6 +83,30 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
 
   const removeKeyword = (kw: string) => {
     setKeywords((prev) => prev.filter((k) => k !== kw));
+  };
+
+  const handleSuggest = async () => {
+    if (!item) return;
+    setSuggestError(null);
+    setSuggestion(null);
+    try {
+      const res = await suggestMutation.mutateAsync({ id: item.id });
+      setSuggestion(res.description);
+    } catch {
+      setSuggestError("Couldn't generate a suggestion. Please try again.");
+    }
+  };
+
+  const handleUseSuggestion = () => {
+    if (!suggestion) return;
+    setDescription(suggestion);
+    setSuggestion(null);
+    setSuggestError(null);
+  };
+
+  const handleDismissSuggestion = () => {
+    setSuggestion(null);
+    setSuggestError(null);
   };
 
   const handleSave = async () => {
@@ -246,6 +278,67 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
               ]}
               autoCorrect={false}
             />
+
+            {/* Suggest description */}
+            <Pressable
+              onPress={() => {
+                void handleSuggest();
+              }}
+              disabled={isSuggesting}
+              style={[
+                s.suggestBtn,
+                {
+                  borderColor: colors.primary + '55',
+                  backgroundColor: isSuggesting ? colors.muted : colors.accent,
+                  opacity: isSuggesting ? 0.7 : 1,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Suggest improved description"
+            >
+              {isSuggesting ? (
+                <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
+              ) : null}
+              <Text style={[s.suggestBtnText, { color: colors.primary }]}>
+                {isSuggesting ? 'Generating…' : '✨ Suggest improved description'}
+              </Text>
+            </Pressable>
+
+            {suggestError ? (
+              <Text style={[s.suggestError, { color: '#ef4444' }]}>{suggestError}</Text>
+            ) : null}
+
+            {suggestion ? (
+              <View
+                style={[
+                  s.suggestionBlock,
+                  { borderColor: colors.primary + '55', backgroundColor: colors.accent },
+                ]}
+              >
+                <Text style={[s.suggestionLabel, { color: colors.mutedForeground }]}>
+                  AI SUGGESTION
+                </Text>
+                <Text style={[s.suggestionText, { color: colors.foreground }]}>{suggestion}</Text>
+                <View style={s.suggestionActions}>
+                  <Pressable
+                    onPress={handleUseSuggestion}
+                    style={[s.suggestionUse, { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={[s.suggestionUseText, { color: colors.primaryForeground }]}>
+                      Use this
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleDismissSuggestion}
+                    style={[s.suggestionDismiss, { borderColor: colors.border }]}
+                  >
+                    <Text style={[s.suggestionDismissText, { color: colors.foreground }]}>
+                      Dismiss
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
 
             {/* Bin Locations */}
             <Text style={[s.label, { color: colors.mutedForeground }]}>BIN LOCATIONS</Text>
@@ -482,4 +575,50 @@ const s = StyleSheet.create({
     alignItems: 'center',
   },
   saveBtnText: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  suggestBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginTop: 10,
+  },
+  suggestBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  suggestError: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    marginTop: 8,
+    lineHeight: 18,
+  },
+  suggestionBlock: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+  },
+  suggestionLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  suggestionText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 19,
+    marginBottom: 10,
+  },
+  suggestionActions: { flexDirection: 'row', gap: 8 },
+  suggestionUse: { borderRadius: 6, paddingHorizontal: 14, paddingVertical: 8 },
+  suggestionUseText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  suggestionDismiss: {
+    borderRadius: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+  suggestionDismissText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
 });
