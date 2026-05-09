@@ -152,7 +152,12 @@ export default function PhotoEventsModal({
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_LIMIT)) : 1;
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
       <View style={[s.container, { backgroundColor: colors.background }]}>
         {/* Header */}
         <View style={[s.header, { borderBottomColor: colors.border }]}>
@@ -305,7 +310,9 @@ function EventRow({
         <Text style={[s.eventTime, { color: colors.mutedForeground }]}>
           {relativeTime(event.ts)}
         </Text>
-        <View style={[s.matchBadge, { backgroundColor: badgeColor + '22', borderColor: badgeColor }]}>
+        <View
+          style={[s.matchBadge, { backgroundColor: badgeColor + '22', borderColor: badgeColor }]}
+        >
           <Text style={[s.matchBadgeText, { color: badgeColor }]}>
             {matchTypeLabel(event.matchType)}
           </Text>
@@ -344,13 +351,23 @@ function EventRow({
       {event.confirmedResultCatalog ? (
         <View style={s.dataRow}>
           <Text style={[s.rowLabel, { color: colors.mutedForeground }]}>Confirmed</Text>
-          <Text
-            style={[s.rowValue, s.confirmedValue, { color: '#10b981' }]}
-            numberOfLines={1}
-          >
+          <Text style={[s.rowValue, s.confirmedValue, { color: '#10b981' }]} numberOfLines={1}>
             {[event.confirmedResultCatalog, event.confirmedResultVendor]
               .filter(Boolean)
               .join(' · ')}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Vision raw summary — especially useful for parse failures */}
+      {event.visionRawSummary ? (
+        <View style={s.dataRow}>
+          <Text style={[s.rowLabel, { color: colors.mutedForeground }]}>Vision</Text>
+          <Text
+            style={[s.rowValue, s.visionText, { color: colors.mutedForeground }]}
+            numberOfLines={2}
+          >
+            {event.visionRawSummary}
           </Text>
         </View>
       ) : null}
@@ -405,12 +422,7 @@ function FilterChip({
         },
       ]}
     >
-      <Text
-        style={[
-          s.chipText,
-          { color: active ? colors.primaryForeground : colors.foreground },
-        ]}
-      >
+      <Text style={[s.chipText, { color: active ? colors.primaryForeground : colors.foreground }]}>
         {label}
       </Text>
     </Pressable>
@@ -501,6 +513,8 @@ const s = StyleSheet.create({
   },
   rowValue: { flex: 1, fontSize: 13, fontFamily: 'Inter_500Medium' },
   confirmedValue: { fontFamily: 'Inter_700Bold' },
+
+  visionText: { fontSize: 11, fontFamily: 'Inter_400Regular', fontStyle: 'italic' },
 
   hashText: {
     fontSize: 10,

@@ -531,6 +531,11 @@ export interface PhotoEventItem {
   /** Vendor of the result the worker confirmed, if any. */
   confirmedResultVendor?: string | null;
   latencyMs?: number | null;
+  /** First 200 characters of the AI vision response for this scan.
+Contains the raw text when the parse failed; a JSON excerpt when it
+succeeded. Useful for diagnosing why a scan parsed badly.
+ */
+  visionRawSummary?: string | null;
 }
 
 /**

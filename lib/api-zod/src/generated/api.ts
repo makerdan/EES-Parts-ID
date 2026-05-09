@@ -730,6 +730,12 @@ export const ListPhotoEventsResponse = zod
             .nullish()
             .describe('Vendor of the result the worker confirmed, if any.'),
           latencyMs: zod.number().nullish(),
+          visionRawSummary: zod
+            .string()
+            .nullish()
+            .describe(
+              'First 200 characters of the AI vision response for this scan.\nContains the raw text when the parse failed; a JSON excerpt when it\nsucceeded. Useful for diagnosing why a scan parsed badly.\n'
+            ),
         })
         .describe('A single raw Photo ID scan event with joined inventory data.')
     ),
