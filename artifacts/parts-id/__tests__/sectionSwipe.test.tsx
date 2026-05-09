@@ -171,6 +171,18 @@ jest.mock('react-native', () => {
     absoluteFill: {},
   };
 
+  const Modal = ({
+    visible,
+    children,
+  }: {
+    visible: boolean;
+    children: React.ReactNode;
+    animationType?: string;
+    transparent?: boolean;
+    onRequestClose?: () => void;
+  }) => (visible ? React.createElement('div', { role: 'dialog' }, children) : null);
+  Modal.displayName = 'Modal';
+
   const BackHandler = {
     addEventListener: (_evt: string, _fn: () => boolean) => ({ remove: () => {} }),
   };
@@ -190,6 +202,7 @@ jest.mock('react-native', () => {
     ScrollView,
     Pressable,
     FlatList,
+    Modal,
     StyleSheet,
     ActivityIndicator: makeHost('div'),
     BackHandler,
@@ -236,6 +249,22 @@ jest.mock('@/contexts/AppContext', () => ({
   useApp: () => ({ settings: appSettings }),
 }));
 
+jest.mock('@/lib/refinement', () => ({
+  splitHighlightSegments: (text: string) => [{ text, match: false }],
+}));
+
+jest.mock('@/lib/tradeSize', () => ({
+  parseTradeSizeInches: () => null,
+  formatInchesAsFraction: () => '',
+}));
+
+jest.mock('@expo/vector-icons', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const React = require('react') as typeof import('react');
+  const Stub = ({ name }: { name: string }) => React.createElement('span', {}, name);
+  return { Feather: Stub, MaterialCommunityIcons: Stub };
+});
+
 import { BrowseByAisle } from '@/components/BrowseByAisle';
 
 // ── Inventory fixture ────────────────────────────────────────────────────────
@@ -260,11 +289,44 @@ function makeInventory(): InventoryItem[] {
   ] as unknown as InventoryItem[];
 }
 
+// Three parts all on the same shelf (17-04-1xx) for card-swipe navigation tests.
+function makeMultiPartInventory(): InventoryItem[] {
+  const base = {
+    vendor: 'ACME',
+    keywords: [],
+    aiKeywords: [],
+    tradeSize: null,
+    seriesId: null,
+    seriesName: null,
+    categoryId: null,
+    subcategoryId: null,
+    typeId: null,
+  };
+  return [
+    { ...base, id: 10, catalog: 'MULTI-A', description: 'Multi A', binLocations: ['17-04-101'] },
+    { ...base, id: 11, catalog: 'MULTI-B', description: 'Multi B', binLocations: ['17-04-103'] },
+    { ...base, id: 12, catalog: 'MULTI-C', description: 'Multi C', binLocations: ['17-04-105'] },
+  ] as unknown as InventoryItem[];
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 /** Fire onPanResponderRelease on the most-recently captured PanResponder config. */
 function swipe(dx: number, dy = 0): void {
   const config = panConfigs[panConfigs.length - 1];
   if (!config) throw new Error('No PanResponder config captured — did a visual shelf view mount?');
+  act(() => {
+    config.onPanResponderRelease?.({}, { dx, dy });
+  });
+}
+
+/**
+ * Fire onPanResponderRelease on the card-item swipe PanResponder config.
+ * The card-item hook is always created before useSectionSwipe in each shelf
+ * component, so its config is at panConfigs[panConfigs.length - 2].
+ */
+function cardSwipe(dx: number, dy = 0): void {
+  const config = panConfigs[panConfigs.length - 2];
+  if (!config) throw new Error('No card-swipe PanResponder config captured.');
   act(() => {
     config.onPanResponderRelease?.({}, { dx, dy });
   });
@@ -464,5 +526,189 @@ describe('ShelfView swipe navigation', () => {
     // Navigated to Section 04, shelf list shown ('Shelf 100' from 17-04-105).
     expect(screen.getByText(/Shelf 100/)).toBeTruthy();
     expect(screen.queryByLabelText('Previous section: Section 04')).toBeNull();
+  });
+});
+
+// ── SectionShelfView card swipe (iOS-only, part-to-part within same shelf) ────
+describe('SectionShelfView card swipe — navigates between parts on same shelf (iOS)', () => {
+  const multiProps = {
+    inventory: makeMultiPartInventory(),
+    cacheReady: true,
+    onClose: () => {},
+    fontScale: 1,
+  } as const;
+
+  it('swipe-left (dx = -60) advances to the next part on the shelf', () => {
+    render(<BrowseByAisle {...multiProps} />);
+    drillToSection('Section 04');
+
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Bin 17-04-101: MULTI-A'));
+    });
+    expect(screen.getByLabelText('Bin 17-04-101: MULTI-A').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+    expect(screen.getByLabelText('Bin 17-04-103: MULTI-B').getAttribute('aria-selected')).toBe(
+      'false'
+    );
+
+    cardSwipe(-60);
+
+    expect(screen.getByLabelText('Bin 17-04-101: MULTI-A').getAttribute('aria-selected')).toBe(
+      'false'
+    );
+    expect(screen.getByLabelText('Bin 17-04-103: MULTI-B').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+  });
+
+  it('swipe-right (dx = 60) goes back to the previous part', () => {
+    render(<BrowseByAisle {...multiProps} />);
+    drillToSection('Section 04');
+
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Bin 17-04-103: MULTI-B'));
+    });
+    expect(screen.getByLabelText('Bin 17-04-103: MULTI-B').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+
+    cardSwipe(60);
+
+    expect(screen.getByLabelText('Bin 17-04-101: MULTI-A').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+    expect(screen.getByLabelText('Bin 17-04-103: MULTI-B').getAttribute('aria-selected')).toBe(
+      'false'
+    );
+  });
+
+  it('sub-threshold (|dx| < 40) does NOT navigate', () => {
+    render(<BrowseByAisle {...multiProps} />);
+    drillToSection('Section 04');
+
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Bin 17-04-101: MULTI-A'));
+    });
+    cardSwipe(-30);
+
+    expect(screen.getByLabelText('Bin 17-04-101: MULTI-A').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+  });
+
+  it('at the last part, swipe-left is a no-op', () => {
+    render(<BrowseByAisle {...multiProps} />);
+    drillToSection('Section 04');
+
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Bin 17-04-105: MULTI-C'));
+    });
+    cardSwipe(-60);
+
+    expect(screen.getByLabelText('Bin 17-04-105: MULTI-C').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+  });
+
+  it('at the first part, swipe-right is a no-op', () => {
+    render(<BrowseByAisle {...multiProps} />);
+    drillToSection('Section 04');
+
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Bin 17-04-101: MULTI-A'));
+    });
+    cardSwipe(60);
+
+    expect(screen.getByLabelText('Bin 17-04-101: MULTI-A').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+  });
+
+  it('section swipe still works after card swipe hook is added', () => {
+    // All 3 parts are in one section — no adjacent sections exist in this
+    // fixture — so onSwipeLeft is null and a section swipe is a no-op.
+    // This test confirms the section-swipe PanResponder is still captured last
+    // and that the existing swipe() helper continues to target it.
+    render(<BrowseByAisle {...multiProps} />);
+    drillToSection('Section 04');
+
+    expect(screen.getByLabelText('No previous section')).toBeTruthy();
+    expect(screen.getByLabelText('No next section')).toBeTruthy();
+
+    swipe(-80); // section swipe — no-op (no next section)
+
+    expect(screen.getByLabelText('No previous section')).toBeTruthy();
+    expect(screen.getByLabelText('No next section')).toBeTruthy();
+  });
+});
+
+// ── ShelfView card swipe (iOS-only, part-to-part within same shelf) ───────────
+describe('ShelfView card swipe — navigates between parts on same shelf (iOS)', () => {
+  function drillToShelf(): void {
+    appSettings.shelfViewEnabled = false;
+    act(() => {
+      fireEvent.click(screen.getByText(/Aisle 17/));
+    });
+    act(() => {
+      fireEvent.click(screen.getByText('Section 04'));
+    });
+    act(() => {
+      fireEvent.click(screen.getByText(/Shelf 100/));
+    });
+  }
+
+  it('swipe-left advances to the next part', () => {
+    render(
+      <BrowseByAisle
+        inventory={makeMultiPartInventory()}
+        cacheReady={true}
+        onClose={() => {}}
+        fontScale={1}
+        shelfViewEnabled={true}
+      />
+    );
+    drillToShelf();
+
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Bin 17-04-101: MULTI-A'));
+    });
+    expect(screen.getByLabelText('Bin 17-04-101: MULTI-A').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+
+    cardSwipe(-60);
+
+    expect(screen.getByLabelText('Bin 17-04-101: MULTI-A').getAttribute('aria-selected')).toBe(
+      'false'
+    );
+    expect(screen.getByLabelText('Bin 17-04-103: MULTI-B').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+  });
+
+  it('swipe-right goes back to the previous part', () => {
+    render(
+      <BrowseByAisle
+        inventory={makeMultiPartInventory()}
+        cacheReady={true}
+        onClose={() => {}}
+        fontScale={1}
+        shelfViewEnabled={true}
+      />
+    );
+    drillToShelf();
+
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Bin 17-04-103: MULTI-B'));
+    });
+    cardSwipe(60);
+
+    expect(screen.getByLabelText('Bin 17-04-101: MULTI-A').getAttribute('aria-selected')).toBe(
+      'true'
+    );
+    expect(screen.getByLabelText('Bin 17-04-103: MULTI-B').getAttribute('aria-selected')).toBe(
+      'false'
+    );
   });
 });
