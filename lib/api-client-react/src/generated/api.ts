@@ -45,12 +45,14 @@ import type {
   ListCategoryPartsByIdParams,
   ListClassificationReviewParams,
   ListInventoryParams,
+  ListPhotoEventsParams,
   ListUncategorizedItemsParams,
   LookupDictionaryParams,
   MergeCategoryBody,
   MergeCategoryNodes200,
   PhotoConfirmBody,
   PhotoConfirmResponse,
+  PhotoEventsResponse,
   PhotoStatsResponse,
   PreviewUpsertBody,
   PreviewUpsertResponse,
@@ -1114,6 +1116,92 @@ export function useGetPhotoStats<
   }
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetPhotoStatsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns raw `photo_id_event` rows with optional filters. Each item
+includes the AI-guessed catalog/vendor, match type, top result and
+confirmed result (catalog + vendor from the inventory table), and
+latency. Admin Bearer required.
+
+ * @summary Paginated list of individual Photo ID scan events
+ */
+export const getListPhotoEventsUrl = (params?: ListPhotoEventsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/photo/events?${stringifiedParams}`
+    : `/api/photo/events`;
+};
+
+export const listPhotoEvents = async (
+  params?: ListPhotoEventsParams,
+  options?: RequestInit
+): Promise<PhotoEventsResponse> => {
+  return customFetch<PhotoEventsResponse>(getListPhotoEventsUrl(params), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export const getListPhotoEventsQueryKey = (params?: ListPhotoEventsParams) => {
+  return [`/api/photo/events`, ...(params ? [params] : [])] as const;
+};
+
+export const getListPhotoEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPhotoEvents>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListPhotoEventsParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listPhotoEvents>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  }
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListPhotoEventsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listPhotoEvents>>> = ({ signal }) =>
+    listPhotoEvents(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPhotoEvents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListPhotoEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listPhotoEvents>>>;
+export type ListPhotoEventsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Paginated list of individual Photo ID scan events
+ */
+
+export function useListPhotoEvents<
+  TData = Awaited<ReturnType<typeof listPhotoEvents>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListPhotoEventsParams,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof listPhotoEvents>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  }
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListPhotoEventsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

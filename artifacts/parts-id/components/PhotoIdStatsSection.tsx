@@ -11,6 +11,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { useColors } from '@/hooks/useColors';
 import { getPhotoStats, ApiError } from '@workspace/api-client-react';
 import type { PhotoStatsResponse } from '@workspace/api-client-react';
+import PhotoEventsModal from './PhotoEventsModal';
 
 interface Props {
   adminHeaders: Record<string, string>;
@@ -40,6 +41,7 @@ export default function PhotoIdStatsSection({ adminHeaders, onExpiredSession }: 
   const [stats, setStats] = useState<PhotoStatsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [eventsVisible, setEventsVisible] = useState(false);
 
   const fetchStats = useCallback(
     async (hours: number) => {
@@ -71,6 +73,13 @@ export default function PhotoIdStatsSection({ adminHeaders, onExpiredSession }: 
 
   return (
     <View style={[s.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <PhotoEventsModal
+        visible={eventsVisible}
+        onClose={() => setEventsVisible(false)}
+        adminHeaders={adminHeaders}
+        onExpiredSession={onExpiredSession}
+        windowHours={windowHours}
+      />
       <Pressable
         onPress={handleToggle}
         accessibilityRole="button"
@@ -213,6 +222,18 @@ export default function PhotoIdStatsSection({ adminHeaders, onExpiredSession }: 
                   </View>
                 ))
               )}
+
+              {/* Drill-down link */}
+              <Pressable
+                onPress={() => setEventsVisible(true)}
+                accessibilityRole="button"
+                accessibilityLabel="View individual scan events"
+                style={[s.viewEventsBtn, { borderColor: colors.border }]}
+              >
+                <Text style={[s.viewEventsBtnText, { color: colors.primary }]}>
+                  View individual events →
+                </Text>
+              </Pressable>
             </>
           )}
         </>
@@ -369,4 +390,13 @@ const s = StyleSheet.create({
   },
   countBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   countText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
+
+  viewEventsBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 9,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  viewEventsBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
 });

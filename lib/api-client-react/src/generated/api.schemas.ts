@@ -507,6 +507,44 @@ export interface ReviewActionResponse {
 }
 
 /**
+ * A single raw Photo ID scan event with joined inventory data.
+ */
+export interface PhotoEventItem {
+  id: number;
+  /** When the scan occurred. */
+  ts: string;
+  imageHash?: string | null;
+  /** Whether the vision response parsed cleanly. */
+  parseOk: boolean;
+  /** Catalog number extracted by the AI. */
+  catalogGuess?: string | null;
+  /** Vendor name extracted by the AI. */
+  vendorGuess?: string | null;
+  /** Match path used (catalog_exact | attribute_match | descriptive). */
+  matchType?: string | null;
+  /** Catalog of the */
+  topResultCatalog?: string | null;
+  /** Vendor of the */
+  topResultVendor?: string | null;
+  /** Catalog of the result the worker confirmed, if any. */
+  confirmedResultCatalog?: string | null;
+  /** Vendor of the result the worker confirmed, if any. */
+  confirmedResultVendor?: string | null;
+  latencyMs?: number | null;
+}
+
+/**
+ * Paginated list of individual Photo ID scan events.
+ */
+export interface PhotoEventsResponse {
+  items: PhotoEventItem[];
+  /** Total number of events matching the current filters. */
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/**
  * Counts per Photo ID match path (catalog / attribute / descriptive).
  */
 export interface PhotoStatsMatchTypeDistribution {
@@ -572,6 +610,36 @@ export type GetPhotoStatsParams = {
    * @maximum 720
    */
   windowHours?: number;
+};
+
+export type ListPhotoEventsParams = {
+  /**
+   * Lookback window in hours (default 24, max 720 = 30 days).
+   * @minimum 1
+   * @maximum 720
+   */
+  windowHours?: number;
+  /**
+   * Filter by whether the vision response parsed cleanly. Omit for all.
+   */
+  parseOk?: boolean;
+  /**
+   * Filter by match type (catalog_exact | attribute_match | descriptive). Omit for all.
+   */
+  matchType?: string;
+  /**
+   * 'yes' = must have a confirmed result, 'no' = no confirmed result, omit for all.
+   */
+  confirmed?: string;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
 };
 
 export type ListUncategorizedItemsParams = {

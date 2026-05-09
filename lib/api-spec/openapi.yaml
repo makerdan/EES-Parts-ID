@@ -327,6 +327,69 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /photo/events:
+    get:
+      operationId: listPhotoEvents
+      tags: [admin]
+      summary: Paginated list of individual Photo ID scan events
+      description: |
+        Returns raw `photo_id_event` rows with optional filters. Each item
+        includes the AI-guessed catalog/vendor, match type, top result and
+        confirmed result (catalog + vendor from the inventory table), and
+        latency. Admin Bearer required.
+      parameters:
+        - name: windowHours
+          in: query
+          description: Lookback window in hours (default 24, max 720 = 30 days).
+          schema:
+            type: integer
+            default: 24
+            minimum: 1
+            maximum: 720
+        - name: parseOk
+          in: query
+          description: Filter by whether the vision response parsed cleanly. Omit for all.
+          schema:
+            type: boolean
+        - name: matchType
+          in: query
+          description: Filter by match type (catalog_exact | attribute_match | descriptive). Omit for all.
+          schema:
+            type: string
+        - name: confirmed
+          in: query
+          description: "'yes' = must have a confirmed result, 'no' = no confirmed result, omit for all."
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      security:
+        - bearerAdmin: []
+      responses:
+        '200':
+          description: Paginated photo ID scan events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhotoEventsResponse'
+        '401':
+          description: Missing or invalid admin token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /reference/ask:
     post:
       operationId: askReference
@@ -1811,6 +1874,79 @@ components:
       required:
         - ok
         - inventoryId
+
+    PhotoEventItem:
+      type: object
+      description: A single raw Photo ID scan event with joined inventory data.
+      properties:
+        id:
+          type: integer
+        ts:
+          type: string
+          format: date-time
+          description: When the scan occurred.
+        imageHash:
+          type: string
+          nullable: true
+        parseOk:
+          type: boolean
+          description: Whether the vision response parsed cleanly.
+        catalogGuess:
+          type: string
+          nullable: true
+          description: Catalog number extracted by the AI.
+        vendorGuess:
+          type: string
+          nullable: true
+          description: Vendor name extracted by the AI.
+        matchType:
+          type: string
+          nullable: true
+          description: Match path used (catalog_exact | attribute_match | descriptive).
+        topResultCatalog:
+          type: string
+          nullable: true
+          description: Catalog of the #1 search result shown to the worker.
+        topResultVendor:
+          type: string
+          nullable: true
+          description: Vendor of the #1 search result shown to the worker.
+        confirmedResultCatalog:
+          type: string
+          nullable: true
+          description: Catalog of the result the worker confirmed, if any.
+        confirmedResultVendor:
+          type: string
+          nullable: true
+          description: Vendor of the result the worker confirmed, if any.
+        latencyMs:
+          type: integer
+          nullable: true
+      required:
+        - id
+        - ts
+        - parseOk
+
+    PhotoEventsResponse:
+      type: object
+      description: Paginated list of individual Photo ID scan events.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhotoEventItem'
+        total:
+          type: integer
+          description: Total number of events matching the current filters.
+        page:
+          type: integer
+        limit:
+          type: integer
+      required:
+        - items
+        - total
+        - page
+        - limit
 
     PhotoStatsMatchTypeDistribution:
       type: object
