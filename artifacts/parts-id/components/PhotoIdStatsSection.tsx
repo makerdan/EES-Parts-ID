@@ -42,6 +42,14 @@ export default function PhotoIdStatsSection({ adminHeaders, onExpiredSession }: 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [eventsVisible, setEventsVisible] = useState(false);
+  const [eventsMatchType, setEventsMatchType] = useState<
+    'catalog_exact' | 'attribute_match' | 'descriptive' | undefined
+  >(undefined);
+
+  const openEvents = (matchType?: 'catalog_exact' | 'attribute_match' | 'descriptive') => {
+    setEventsMatchType(matchType);
+    setEventsVisible(true);
+  };
 
   const fetchStats = useCallback(
     async (hours: number) => {
@@ -79,6 +87,7 @@ export default function PhotoIdStatsSection({ adminHeaders, onExpiredSession }: 
         adminHeaders={adminHeaders}
         onExpiredSession={onExpiredSession}
         windowHours={windowHours}
+        initialMatchType={eventsMatchType}
       />
       <Pressable
         onPress={handleToggle}
@@ -170,6 +179,7 @@ export default function PhotoIdStatsSection({ adminHeaders, onExpiredSession }: 
                   label="Total scans"
                   value={stats.totalScans.toLocaleString()}
                   colors={colors}
+                  onPress={() => openEvents(undefined)}
                 />
                 <Kpi label="Parse OK" value={pct(stats.parseSuccessRate)} colors={colors} />
                 <Kpi label="Confirmed" value={pct(stats.confirmationRate)} colors={colors} />
@@ -184,6 +194,7 @@ export default function PhotoIdStatsSection({ adminHeaders, onExpiredSession }: 
                 attribute={stats.matchTypeDistribution.attributeMatch}
                 descriptive={stats.matchTypeDistribution.descriptive}
                 colors={colors}
+                onSegmentPress={openEvents}
               />
 
               {/* Top confirmed parts */}
@@ -224,16 +235,42 @@ export default function PhotoIdStatsSection({ adminHeaders, onExpiredSession }: 
               )}
 
               {/* Drill-down link */}
-              <Pressable
-                onPress={() => setEventsVisible(true)}
-                accessibilityRole="button"
-                accessibilityLabel="View individual scan events"
-                style={[s.viewEventsBtn, { borderColor: colors.border }]}
-              >
-                <Text style={[s.viewEventsBtnText, { color: colors.primary }]}>
-                  View individual events →
-                </Text>
-              </Pressable>
+              {(() => {
+                const matchCount =
+                  eventsMatchType === 'catalog_exact'
+                    ? stats.matchTypeDistribution.catalogExact
+                    : eventsMatchType === 'attribute_match'
+                      ? stats.matchTypeDistribution.attributeMatch
+                      : eventsMatchType === 'descriptive'
+                        ? stats.matchTypeDistribution.descriptive
+                        : null;
+                const matchLabel =
+                  eventsMatchType === 'catalog_exact'
+                    ? 'catalog'
+                    : eventsMatchType === 'attribute_match'
+                      ? 'attribute'
+                      : eventsMatchType === 'descriptive'
+                        ? 'descriptive'
+                        : null;
+                const btnLabel =
+                  matchLabel != null && matchCount != null
+                    ? `View ${matchCount.toLocaleString()} ${matchLabel} scans →`
+                    : 'View individual events →';
+                const btnA11y =
+                  matchLabel != null
+                    ? `View ${matchLabel} scan events`
+                    : 'View individual scan events';
+                return (
+                  <Pressable
+                    onPress={() => openEvents(eventsMatchType)}
+                    accessibilityRole="button"
+                    accessibilityLabel={btnA11y}
+                    style={[s.viewEventsBtn, { borderColor: colors.border }]}
+                  >
+                    <Text style={[s.viewEventsBtnText, { color: colors.primary }]}>{btnLabel}</Text>
+                  </Pressable>
+                );
+              })()}
             </>
           )}
         </>
@@ -246,29 +283,46 @@ function Kpi({
   label,
   value,
   colors,
+  onPress,
 }: {
   label: string;
   value: string;
   colors: ReturnType<typeof useColors>;
+  onPress?: () => void;
 }) {
-  return (
+  const inner = (
     <View style={[s.kpi, { backgroundColor: colors.muted }]}>
       <Text style={[s.kpiValue, { color: colors.foreground }]}>{value}</Text>
       <Text style={[s.kpiLabel, { color: colors.mutedForeground }]}>{label}</Text>
     </View>
   );
+  if (!onPress) return inner;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`View events for ${label}`}
+      style={{ flexGrow: 1, flexBasis: '30%', minWidth: 96 }}
+    >
+      {inner}
+    </Pressable>
+  );
 }
+
+type MatchTypeKey = 'catalog_exact' | 'attribute_match' | 'descriptive';
 
 function MatchBar({
   catalog,
   attribute,
   descriptive,
   colors,
+  onSegmentPress,
 }: {
   catalog: number;
   attribute: number;
   descriptive: number;
   colors: ReturnType<typeof useColors>;
+  onSegmentPress: (mt: MatchTypeKey) => void;
 }) {
   const total = catalog + attribute + descriptive;
   if (total === 0) {
@@ -278,22 +332,45 @@ function MatchBar({
       </Text>
     );
   }
-  const seg = (n: number, color: string, key: string) => {
+  const seg = (n: number, color: string, key: string, mt: MatchTypeKey) => {
     const w = (n / total) * 100;
     if (w === 0) return null;
-    return <View key={key} style={{ width: `${w}%`, height: '100%', backgroundColor: color }} />;
+    return (
+      <Pressable
+        key={key}
+        onPress={() => onSegmentPress(mt)}
+        accessibilityRole="button"
+        accessibilityLabel={`Filter by ${key} match type`}
+        style={{ width: `${w}%`, height: '100%', backgroundColor: color }}
+      />
+    );
   };
   return (
     <>
       <View style={[s.barTrack, { backgroundColor: colors.muted }]}>
-        {seg(catalog, '#10b981', 'cat')}
-        {seg(attribute, '#3b82f6', 'attr')}
-        {seg(descriptive, '#f59e0b', 'desc')}
+        {seg(catalog, '#10b981', 'catalog', 'catalog_exact')}
+        {seg(attribute, '#3b82f6', 'attribute', 'attribute_match')}
+        {seg(descriptive, '#f59e0b', 'descriptive', 'descriptive')}
       </View>
       <View style={s.legendRow}>
-        <Legend color="#10b981" label={`Catalog ${catalog}`} colors={colors} />
-        <Legend color="#3b82f6" label={`Attribute ${attribute}`} colors={colors} />
-        <Legend color="#f59e0b" label={`Descriptive ${descriptive}`} colors={colors} />
+        <Legend
+          color="#10b981"
+          label={`Catalog ${catalog}`}
+          colors={colors}
+          onPress={() => onSegmentPress('catalog_exact')}
+        />
+        <Legend
+          color="#3b82f6"
+          label={`Attribute ${attribute}`}
+          colors={colors}
+          onPress={() => onSegmentPress('attribute_match')}
+        />
+        <Legend
+          color="#f59e0b"
+          label={`Descriptive ${descriptive}`}
+          colors={colors}
+          onPress={() => onSegmentPress('descriptive')}
+        />
       </View>
     </>
   );
@@ -303,16 +380,23 @@ function Legend({
   color,
   label,
   colors,
+  onPress,
 }: {
   color: string;
   label: string;
   colors: ReturnType<typeof useColors>;
+  onPress: () => void;
 }) {
   return (
-    <View style={s.legendItem}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Filter events by ${label}`}
+      style={s.legendItem}
+    >
       <View style={[s.legendSwatch, { backgroundColor: color }]} />
       <Text style={[s.legendText, { color: colors.mutedForeground }]}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 

@@ -34,6 +34,7 @@ interface Props {
   adminHeaders: Record<string, string>;
   onExpiredSession: () => void;
   windowHours: number;
+  initialMatchType?: MatchTypeFilter;
 }
 
 type MatchTypeFilter = 'catalog_exact' | 'attribute_match' | 'descriptive' | undefined;
@@ -92,16 +93,28 @@ export default function PhotoEventsModal({
   adminHeaders,
   onExpiredSession,
   windowHours,
+  initialMatchType,
 }: Props) {
   const colors = useColors();
 
-  const [matchType, setMatchType] = useState<MatchTypeFilter>(undefined);
+  const [matchType, setMatchType] = useState<MatchTypeFilter>(initialMatchType);
   const [confirmed, setConfirmed] = useState<ConfirmedFilter>(undefined);
   const [parseOk, setParseOk] = useState<ParseOkFilter>(undefined);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<PhotoEventsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Reset filters to the initial values each time the modal is opened.
+  useEffect(() => {
+    if (!visible) return;
+    setMatchType(initialMatchType);
+    setConfirmed(undefined);
+    setParseOk(undefined);
+    setPage(1);
+    setData(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   const fetchPage = useCallback(
     async (opts: {
