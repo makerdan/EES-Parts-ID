@@ -7,3 +7,4 @@ pnpm-lock.yaml
 lib/api-client-react/src/generated
 artifacts/mockup-sandbox/src/.generated/
 .local/
+artifacts/parts-id/expo-env.d.ts
