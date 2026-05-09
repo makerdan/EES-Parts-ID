@@ -650,7 +650,9 @@ function SectionShelfView({
       <ScrollView contentContainerStyle={{ paddingBottom: 140 }}>
         {shelves.map((shelf, shelfIdx) => (
           <View key={shelf.shelfHundreds} style={sectionStyles.shelfBlock}>
-            {shelfIdx > 0 ? <View style={sectionStyles.shelfPlank} /> : null}
+            {shelfIdx > 0 ? (
+              <View style={[sectionStyles.shelfPlank, { backgroundColor: colors.foreground }]} />
+            ) : null}
             <Text
               allowFontScaling={false}
               style={[sectionStyles.shelfLabel, { color: colors.foreground }]}
@@ -731,7 +733,7 @@ function SectionShelfView({
               />
             </ScrollView>
             {shelfIdx === shelves.length - 1 && shelf.partCount > 3 ? (
-              <View style={sectionStyles.shelfPlank} />
+              <View style={[sectionStyles.shelfPlank, { backgroundColor: colors.foreground }]} />
             ) : null}
           </View>
         ))}
