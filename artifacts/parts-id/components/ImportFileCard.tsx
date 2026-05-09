@@ -110,8 +110,27 @@ export function ImportFileCard({
 
       {/* ── Two import action buttons ───────────────────────────────────── */}
       <View style={styles.importBtnRow}>
-        <Pressable onPress={onPickFile} style={[styles.importBtn, { borderColor: colors.primary }]}>
-          <Text style={[styles.importBtnText, { color: colors.primary }]}>Choose File</Text>
+        <Pressable
+          onPress={() => {
+            setPasteOpen(false);
+            onPickFile();
+          }}
+          style={[
+            styles.importBtn,
+            {
+              borderColor: pasteOpen ? colors.border : colors.primary,
+              backgroundColor: pasteOpen ? 'transparent' : colors.primary + '18',
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.importBtnText,
+              { color: pasteOpen ? colors.foreground : colors.primary },
+            ]}
+          >
+            Choose File
+          </Text>
         </Pressable>
 
         <Pressable
