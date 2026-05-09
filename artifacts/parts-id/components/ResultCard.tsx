@@ -8,6 +8,7 @@
  */
 import React, { useCallback, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
 import { splitHighlightSegments } from '@/lib/refinement';
@@ -428,7 +429,7 @@ export function ResultCard({
               to before the multi-bin migration. */}
           {(item.binLocations ?? []).length > 0 ? (
             <View style={[cardStyles.binRow, { backgroundColor: colors.accent }]}>
-              <Text style={[cardStyles.binIcon, { color: colors.accentForeground }]}>📍</Text>
+              <Feather name="map-pin" size={14} color={colors.accentForeground} />
               <View style={cardStyles.binTextWrap}>
                 <Text style={[cardStyles.binText, { color: colors.accentForeground }]}>
                   {(item.binLocations ?? []).length === 1 ? 'Bin: ' : 'Bins: '}
@@ -740,7 +741,6 @@ const cardStyles = StyleSheet.create({
     marginBottom: 8,
     gap: 6,
   },
-  binIcon: { fontSize: 14 },
   binTextWrap: { flex: 1 },
   binText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', flexShrink: 1 },
   reason: { fontSize: 11, fontFamily: 'Inter_400Regular', fontStyle: 'italic', marginBottom: 4 },
