@@ -312,14 +312,18 @@ export function parseVoltage(text: string | null | undefined): number | null {
 
 // ── Fraction / decimal table for free-text trade-size parsing ───────────────
 
+// Use digit-negative lookahead/lookbehind instead of \b so that fractions
+// followed immediately by a letter (e.g. "3/4X90", "1/2EMT") are still
+// recognised.  A plain \b after the denominator fails when the next character
+// is a word character like "X" or "L".
 const FRAC_MAP: Array<[RegExp, number]> = [
-  [/\b7\/8\b/, 7 / 8],
-  [/\b3\/4\b/, 3 / 4],
-  [/\b5\/8\b/, 5 / 8],
-  [/\b1\/2\b/, 1 / 2],
-  [/\b3\/8\b/, 3 / 8],
-  [/\b1\/4\b/, 1 / 4],
-  [/\b1\/8\b/, 1 / 8],
+  [/(?<!\d)7\/8(?!\d)/, 7 / 8],
+  [/(?<!\d)3\/4(?!\d)/, 3 / 4],
+  [/(?<!\d)5\/8(?!\d)/, 5 / 8],
+  [/(?<!\d)1\/2(?!\d)/, 1 / 2],
+  [/(?<!\d)3\/8(?!\d)/, 3 / 8],
+  [/(?<!\d)1\/4(?!\d)/, 1 / 4],
+  [/(?<!\d)1\/8(?!\d)/, 1 / 8],
 ];
 
 /**
@@ -348,7 +352,9 @@ export function parseTradeSize(text: string | null | undefined): number | null {
   }
 
   // ── Mixed number: "1 1/2", "2-1/2", "1-1/4" ─────────────────────────────
-  const mixedMatch = t.match(/\b(\d+)[\s-](\d+)\/(\d+)\b/);
+  // Use (?!\d) instead of \b at the end so "1-1/2X90" is still matched
+  // (the trailing "X" is a word character, so \b would fail there).
+  const mixedMatch = t.match(/\b(\d+)[\s-](\d+)\/(\d+)(?!\d)/);
   if (mixedMatch) {
     const whole = parseInt(mixedMatch[1]!, 10);
     const num = parseInt(mixedMatch[2]!, 10);

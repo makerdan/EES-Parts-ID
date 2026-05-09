@@ -642,6 +642,28 @@ describe('parseTradeSize – mm conversion', () => {
   });
 });
 
+describe('parseTradeSize – fraction immediately followed by a letter (regression)', () => {
+  test('"3/4X90 AL STANDARD ELBOW" → 0.75 (Bug: \\b failed on 3/4X)', () => {
+    expect(parseTradeSize('3/4X90 AL STANDARD ELBOW')).toBeCloseTo(0.75, 5);
+  });
+
+  test('"1-1/2X90 AL STANDARD ELBOW" → 1.5 (Bug: \\b failed on 1-1/2X)', () => {
+    expect(parseTradeSize('1-1/2X90 AL STANDARD ELBOW')).toBeCloseTo(1.5, 5);
+  });
+
+  test('"3/4 AL FORM 7 LR FITTING" → 0.75', () => {
+    expect(parseTradeSize('3/4 AL FORM 7 LR FITTING')).toBeCloseTo(0.75, 5);
+  });
+
+  test('"1/2EMT CONNECTOR" → 0.5 (fraction before a word character)', () => {
+    expect(parseTradeSize('1/2EMT CONNECTOR')).toBeCloseTo(0.5, 5);
+  });
+
+  test('"13/4" does not match 3/4 (digit before fraction is suppressed)', () => {
+    expect(parseTradeSize('13/4')).toBeNull();
+  });
+});
+
 describe('parseTradeSize – null / out-of-range cases', () => {
   test('null → null', () => {
     expect(parseTradeSize(null)).toBeNull();
