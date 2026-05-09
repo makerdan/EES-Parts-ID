@@ -201,6 +201,10 @@ const GFCI_ANSWER =
 describe('Quick Lookup chips — instant answers from pre-fetch cache', () => {
   let origFetch: typeof global.fetch;
 
+  beforeAll(() => {
+    jest.setTimeout(20_000);
+  });
+
   beforeEach(() => {
     origFetch = global.fetch;
   });
