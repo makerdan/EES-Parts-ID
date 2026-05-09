@@ -941,7 +941,6 @@ const chipAreaStyles = StyleSheet.create({
   },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   badgeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
-  liveLabel: { fontSize: 10, fontFamily: 'Inter_400Regular', fontStyle: 'italic' },
 });
 
 const modalStyles = StyleSheet.create({
