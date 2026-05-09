@@ -52,7 +52,7 @@ import {
   type RefinementState,
 } from '@/components/ResultRefinementBar';
 import { ReferenceModal } from '@/components/ReferenceModal';
-import { KeywordEditor } from '@/components/KeywordEditor';
+import { RecordEditModal } from '@/components/RecordEditModal';
 import BrowseTaxonomy, { type CategoryTreeNode } from '@/components/BrowseTaxonomy';
 import { BrowseByAisle } from '@/components/BrowseByAisle';
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from '@/contexts/AppContext';
@@ -218,6 +218,7 @@ export default function SearchScreen() {
     settings,
     updateSetting,
     textFontScale,
+    adminToken,
     isLoading: settingsLoading,
   } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
@@ -914,50 +915,31 @@ export default function SearchScreen() {
     [navigation]
   );
 
-  // Called by KeywordEditor after debounced save — update local Fuse index
-  // immediately AND record an override so the currently-displayed result card
-  // reflects the new keywords without waiting for the next search.
-  const handleKeywordsChanged = useCallback(
-    (id: number, keywords: string[]) => {
+  // Called by RecordEditModal after a successful save — apply all updated
+  // fields to the in-memory result list and Fuse index so the card reflects
+  // the new data immediately without requiring a re-search.
+  const handleRecordSaved = useCallback(
+    (updated: InventoryItem) => {
+      setItemOverrides((prev) => {
+        const next = new Map(prev);
+        next.set(updated.id, {
+          vendor: updated.vendor,
+          catalog: updated.catalog,
+          description: updated.description,
+          binLocations: updated.binLocations,
+          aiKeywords: updated.aiKeywords,
+          tradeSize: updated.tradeSize,
+        });
+        return next;
+      });
       const items = fuseItemsRef.current.map((item) =>
-        item.id === id ? { ...item, aiKeywords: keywords } : item
+        item.id === updated.id ? { ...item, ...updated } : item
       );
       buildFuseIndex(items);
       AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
-      setItemOverrides((prev) => {
-        const next = new Map(prev);
-        next.set(id, { ...(next.get(id) ?? {}), aiKeywords: keywords });
-        return next;
-      });
     },
     [buildFuseIndex]
   );
-
-  // Same idea for descriptions edited via "Edit Part Details" — keeps the open
-  // card in sync with what was just saved on the server.
-  const handleDescriptionChanged = useCallback(
-    (id: number, description: string) => {
-      const items = fuseItemsRef.current.map((item) =>
-        item.id === id ? { ...item, description } : item
-      );
-      buildFuseIndex(items);
-      AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
-      setItemOverrides((prev) => {
-        const next = new Map(prev);
-        next.set(id, { ...(next.get(id) ?? {}), description });
-        return next;
-      });
-    },
-    [buildFuseIndex]
-  );
-
-  const handleSeriesChanged = useCallback((id: number, seriesName: string | null) => {
-    setItemOverrides((prev) => {
-      const next = new Map(prev);
-      next.set(id, { ...(next.get(id) ?? {}), seriesName });
-      return next;
-    });
-  }, []);
 
   // Use `displayedResults` (not `searchMutation.data?.results`) so prior cards
   // remain visible at reduced opacity during a re-search. TanStack mutation
@@ -1625,7 +1607,7 @@ export default function SearchScreen() {
             cacheReady={!isSyncing}
             onClose={() => setAisleBrowseOpen(false)}
             fontScale={textFontScale}
-            onEditKeywords={setEditItem}
+            onEditKeywords={adminToken ? setEditItem : undefined}
             shelfViewEnabled={settings.shelfViewEnabled}
           />
         ) : null}
@@ -1994,7 +1976,7 @@ export default function SearchScreen() {
                   <View style={styles.resultItem}>
                     <ResultCard
                       result={result}
-                      onEditKeywords={setEditItem}
+                      onEditKeywords={adminToken ? setEditItem : undefined}
                       rank={index}
                       showRank={mode !== 'browse'}
                       fontScale={textFontScale}
@@ -2038,12 +2020,11 @@ export default function SearchScreen() {
 
         <ReferenceModal open={showRefModal} onClose={() => setShowRefModal(false)} />
 
-        <KeywordEditor
+        <RecordEditModal
           item={editItem}
+          adminHeaders={adminToken ? { Authorization: `Bearer ${adminToken}` } : {}}
           onClose={() => setEditItem(null)}
-          onKeywordsChanged={handleKeywordsChanged}
-          onDescriptionChanged={handleDescriptionChanged}
-          onSeriesChanged={handleSeriesChanged}
+          onSaved={handleRecordSaved}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>

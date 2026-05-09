@@ -43,8 +43,9 @@ interface Props {
   onClose: () => void;
   /** Per-card font scale (matches Search tab). */
   fontScale: number;
-  /** Pass-through edit affordance so leaf cards behave the same as in Search. */
-  onEditKeywords: (item: InventoryItem) => void;
+  /** Pass-through edit affordance so leaf cards behave the same as in Search.
+   *  When omitted (non-admin) the "Edit Part Details" button is hidden. */
+  onEditKeywords?: (item: InventoryItem) => void;
   /** When true, the parts level shows a visual shelf diagram instead of a flat list. */
   shelfViewEnabled?: boolean;
 }
@@ -399,7 +400,7 @@ function ShelfView({
   crumbs: CrumbState;
   colors: ReturnType<typeof useColors>;
   fontScale: number;
-  onEditKeywords: (item: InventoryItem) => void;
+  onEditKeywords?: (item: InventoryItem) => void;
   prevSectionLabel: string | null;
   nextSectionLabel: string | null;
   onPrevSection: () => void;
@@ -625,7 +626,7 @@ function SectionShelfView({
   crumbs: CrumbState;
   colors: ReturnType<typeof useColors>;
   fontScale: number;
-  onEditKeywords: (item: InventoryItem) => void;
+  onEditKeywords?: (item: InventoryItem) => void;
   prevSectionLabel: string | null;
   nextSectionLabel: string | null;
   onPrevSection: () => void;

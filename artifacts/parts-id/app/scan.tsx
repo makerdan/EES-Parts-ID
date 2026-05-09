@@ -46,6 +46,7 @@ import { resizeImage } from '@/utils/resizeImage';
 import { useColors } from '@/hooks/useColors';
 import { useApp } from '@/contexts/AppContext';
 import { ResultCard } from '@/components/ResultCard';
+import { RecordEditModal } from '@/components/RecordEditModal';
 import { Toast } from '@/components/Toast';
 import { ErrorBanner } from '@/components/ErrorBanner';
 
@@ -129,6 +130,7 @@ export default function ScanScreen() {
 
   // Result panel state
   const [matchedItem, setMatchedItem] = useState<InventoryItem | null>(null);
+  const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
   const [recentItems, setRecentItems] = useState<InventoryItem[]>([]);
   const [pickerMode, setPickerMode] = useState<PickerMode>('menu');
@@ -605,6 +607,7 @@ export default function ScanScreen() {
                   }}
                   rank={0}
                   fontScale={textFontScale}
+                  onEditKeywords={isAdmin && adminToken ? setEditItem : undefined}
                 />
               ) : null}
             </ScrollView>
@@ -828,6 +831,17 @@ export default function ScanScreen() {
       </Modal>
 
       {renderCancelButton('onCamera')}
+      <RecordEditModal
+        item={editItem}
+        adminHeaders={adminToken ? { Authorization: `Bearer ${adminToken}` } : {}}
+        onClose={() => setEditItem(null)}
+        onSaved={(updated) => {
+          if (matchedItem && matchedItem.id === updated.id) {
+            setMatchedItem({ ...matchedItem, ...updated });
+          }
+          setEditItem(null);
+        }}
+      />
     </View>
   );
 }

@@ -29,17 +29,19 @@ import {
   useAiIdentifyPart,
   useConfirmPhotoId,
 } from '@workspace/api-client-react';
-import type { SearchResult } from '@workspace/api-client-react';
+import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
 import { useApp } from '@/contexts/AppContext';
 import { ResultCard } from '@/components/ResultCard';
 import { ReferenceModal } from '@/components/ReferenceModal';
+import { RecordEditModal } from '@/components/RecordEditModal';
 import { secondaryBtnBase } from '@/styles/shared';
 
 export default function PhotoScreen() {
   const colors = useColors();
-  const { textFontScale } = useApp();
+  const { textFontScale, adminToken } = useApp();
   const [showRefModal, setShowRefModal] = useState(false);
+  const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState('');
   const [vendor, setVendor] = useState('');
@@ -768,6 +770,7 @@ export default function PhotoScreen() {
                   result={result}
                   rank={index}
                   fontScale={textFontScale}
+                  onEditKeywords={adminToken ? setEditItem : undefined}
                   onConfirm={
                     photoEventId != null
                       ? () => {
@@ -853,6 +856,19 @@ export default function PhotoScreen() {
         </View>
       </ScrollView>
       <ReferenceModal open={showRefModal} onClose={() => setShowRefModal(false)} />
+      <RecordEditModal
+        item={editItem}
+        adminHeaders={adminToken ? { Authorization: `Bearer ${adminToken}` } : {}}
+        onClose={() => setEditItem(null)}
+        onSaved={(updated) => {
+          setResults((prev) =>
+            prev.map((r) =>
+              r.item.id === updated.id ? { ...r, item: { ...r.item, ...updated } } : r
+            )
+          );
+          setEditItem(null);
+        }}
+      />
     </SafeAreaView>
   );
 }
