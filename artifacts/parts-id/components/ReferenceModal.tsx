@@ -236,6 +236,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
       const cached = answerCacheRef.current.get(chipQuestion.trim());
       if (cached) {
         askedQuestionRef.current = chipQuestion.trim();
+        setQuestion('');
         setAnswer(cached);
         setIsError(false);
         // Scroll to the answer bubble after a short layout delay
