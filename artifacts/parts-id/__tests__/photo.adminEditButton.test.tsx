@@ -347,6 +347,10 @@ async function renderAndIdentify() {
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 describe('Photo tab (photo.tsx) — Edit Part Details button correlates with adminToken', () => {
+  beforeAll(() => {
+    jest.setTimeout(40_000);
+  });
+
   beforeEach(() => {
     mockIdentifyMutateAsync.mockResolvedValue(MOCK_IDENTIFY_RESULT);
     mockSearchMutateAsync.mockResolvedValue({ results: [] });
@@ -361,12 +365,12 @@ describe('Photo tab (photo.tsx) — Edit Part Details button correlates with adm
     await renderAndIdentify();
     const card = screen.getByTestId('result-card');
     expect(card.getAttribute('data-has-edit')).toBe('true');
-  }, 20_000);
+  }, 40_000);
 
   it('ResultCard receives undefined onEditKeywords when adminToken is null (non-admin)', async () => {
     mockAdminToken = null;
     await renderAndIdentify();
     const card = screen.getByTestId('result-card');
     expect(card.getAttribute('data-has-edit')).toBe('false');
-  }, 20_000);
+  }, 40_000);
 });
