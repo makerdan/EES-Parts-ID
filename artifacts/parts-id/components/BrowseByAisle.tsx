@@ -540,6 +540,7 @@ function ShelfView({
                   fontScale={fontScale}
                   onEditKeywords={onEditKeywords}
                   highlightBin={p.bin}
+                  initiallyExpanded
                 />
               </View>
             );
@@ -759,6 +760,7 @@ function SectionShelfView({
         {selectedPart ? (
           <View style={{ paddingHorizontal: 12, paddingTop: 4 }}>
             <ResultCard
+              key={`${selectedPart.item.id}-${selectedPart.bin}`}
               result={{
                 item: selectedPart.item,
                 confidence: 1,
@@ -771,6 +773,7 @@ function SectionShelfView({
               fontScale={fontScale}
               onEditKeywords={onEditKeywords}
               highlightBin={selectedPart.bin}
+              initiallyExpanded
             />
           </View>
         ) : (

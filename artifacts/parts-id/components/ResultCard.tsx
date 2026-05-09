@@ -46,6 +46,12 @@ interface ResultCardProps {
    * once per deliberate tap, not on expand.
    */
   onConfirm?: () => void;
+  /**
+   * When true the card renders in expanded state from the moment it mounts.
+   * Used by visual shelf views so the full detail (including "Edit Part Details")
+   * is immediately visible after the worker taps a bin — no second tap required.
+   */
+  initiallyExpanded?: boolean;
 }
 
 /**
@@ -246,6 +252,7 @@ export function ResultCard({
   highlightBin,
   onFirstExpand,
   onConfirm,
+  initiallyExpanded = false,
 }: ResultCardProps) {
   const colors = useColors();
   // Match style: a soft tint background + bold weight. Uses the theme's
@@ -259,7 +266,7 @@ export function ResultCard({
     [colors.primary, colors.foreground]
   );
   const hl = highlightTokens && highlightTokens.length > 0 ? highlightTokens : undefined;
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   // Related-sizes panel toggles independently of the main card expand/collapse
   // so workers can peek at alternate sizes without revealing the rest of the
   // card (keywords, enrichment date, etc.). When the card is collapsed by the
