@@ -565,18 +565,18 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
 
   const sheetY = useRef(new Animated.Value(SCREEN_H)).current;
 
-  // Animate sheet in whenever the modal opens.
-  useEffect(() => {
-    if (filtersOpen) {
-      sheetY.setValue(screenHRef.current);
-      Animated.spring(sheetY, {
-        toValue: 0,
-        tension: 60,
-        friction: 12,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [filtersOpen, sheetY]);
+  // Animate sheet in after the native Modal has fully presented.
+  // Using onShow (not useEffect) avoids the iOS race where the spring starts
+  // before the modal is on-screen, leaving the sheet stuck near the bottom.
+  const startOpenAnimation = useCallback(() => {
+    sheetY.setValue(screenHRef.current);
+    Animated.spring(sheetY, {
+      toValue: 0,
+      tension: 60,
+      friction: 12,
+      useNativeDriver: true,
+    }).start();
+  }, [sheetY]);
 
   // Animate sheet out, then close the modal.
   // `sheetY` is a stable ref value; `screenHRef` is updated on every render,
@@ -687,6 +687,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
         animationType="none"
         transparent={true}
         onRequestClose={dismissModal}
+        onShow={startOpenAnimation}
         statusBarTranslucent
       >
         {/* Full-screen container: backdrop + animated sheet */}
