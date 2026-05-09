@@ -323,7 +323,11 @@ export function ResultCard({
 
   return (
     <>
-      <Pressable onPress={toggleCard}>
+      <Pressable
+        onPress={toggleCard}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.vendor} ${item.catalog} — tap to expand`}
+      >
         <View
           style={[
             cardStyles.container,

@@ -183,10 +183,9 @@ function makeResult(overrides: Partial<InventoryItem> = {}): SearchResult {
 
 /** Click the outer card Pressable to toggle it open. */
 function expandCard() {
-  // The outer card Pressable is the first role="button" element in the tree
-  // (no accessibilityRole override → defaults to "button" in the mock above).
-  const buttons = screen.getAllByRole('button');
-  fireEvent.click(buttons[0]);
+  // Query explicitly by the accessibilityLabel added in Task #333 so this
+  // helper is not sensitive to button ordering in the tree.
+  fireEvent.click(screen.getByRole('button', { name: /— tap to expand$/i }));
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
