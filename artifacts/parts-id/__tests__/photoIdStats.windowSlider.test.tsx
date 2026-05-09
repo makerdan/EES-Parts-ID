@@ -388,6 +388,36 @@ describe('PhotoIdStatsSection — window selector triggers re-fetch', () => {
     );
   });
 
+  it('tapping the already-active chip does not clear stats or trigger a re-fetch', async () => {
+    mockGetPhotoStats.mockResolvedValueOnce(makeStats(42, 24));
+
+    render(<PhotoIdStatsSection adminHeaders={ADMIN_HEADERS} onExpiredSession={() => {}} />);
+
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Expand Photo ID stats'));
+    });
+    await flush();
+
+    // Initial stats visible
+    expect(screen.getByText('42')).toBeTruthy();
+    expect(mockGetPhotoStats).toHaveBeenCalledTimes(1);
+
+    // Tap the active 24h chip again
+    act(() => {
+      fireEvent.click(screen.getByLabelText('Show last 24h'));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Stats must still be visible — no blank state
+    expect(screen.getByText('42')).toBeTruthy();
+    // No extra fetch
+    expect(mockGetPhotoStats).toHaveBeenCalledTimes(1);
+    // No loading indicator
+    expect(screen.queryByLabelText('loading')).toBeNull();
+  });
+
   it('calls onExpiredSession and does not show an error banner on 401', async () => {
     const { ApiError } = jest.requireMock('@workspace/api-client-react') as {
       ApiError: new (msg: string, status: number) => Error & { status: number };
