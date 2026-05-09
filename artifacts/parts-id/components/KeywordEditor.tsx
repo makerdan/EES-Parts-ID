@@ -121,6 +121,10 @@ export function KeywordEditor({
   // item so undo never crosses items.
   const [descUndoStack, setDescUndoStack] = useState<string[]>([]);
 
+  // Session-scoped redo stack. Populated by undo operations; cleared by any
+  // normal (non-redo) edit so the redo branch stays consistent.
+  const [descRedoStack, setDescRedoStack] = useState<string[]>([]);
+
   // Tracks whether a mutateAsync call is currently in flight
   const isSavingRef = useRef(false);
 
@@ -128,6 +132,10 @@ export function KeywordEditor({
   // value we're rolling back FROM onto the undo stack (which would create
   // an A→B→A→B loop and never let the user reach earlier values).
   const isUndoingDescRef = useRef(false);
+
+  // Set while persist() is being driven by a redo so we don't clear the redo
+  // stack on the save that the redo itself triggers.
+  const isRedoingDescRef = useRef(false);
 
   // When a save is in flight at close-time, stash the latest snapshot here so
   // the in-flight save's finally block can fire one follow-up flush.
@@ -168,6 +176,7 @@ export function KeywordEditor({
     lastSavedTradeSizeRef.current = ts;
     lastSavedBinsRef.current = bins;
     setDescUndoStack([]);
+    setDescRedoStack([]);
     setSaveStatus('idle');
     setLocalSeriesName(item?.seriesName ?? null);
     setSeriesSearch('');
@@ -201,6 +210,7 @@ export function KeywordEditor({
       // save succeeds and the description actually changed.
       const prevDesc = lastSavedDescriptionRef.current;
       const undoingThisSave = isUndoingDescRef.current;
+      const redoingThisSave = isRedoingDescRef.current;
       try {
         await updateMutation.mutateAsync({ id, data: payload });
         if (payload.keywords !== undefined) {
@@ -210,6 +220,10 @@ export function KeywordEditor({
         if (payload.description !== undefined) {
           if (!undoingThisSave && payload.description !== prevDesc) {
             setDescUndoStack((stack) => [...stack, prevDesc]);
+            if (!redoingThisSave) {
+              // A normal (non-redo) edit invalidates the redo branch.
+              setDescRedoStack([]);
+            }
           }
           lastSavedDescriptionRef.current = payload.description;
           onDescriptionChanged?.(id, payload.description);
@@ -539,13 +553,19 @@ export function KeywordEditor({
   // Pop the most recent prior description value off the undo stack and
   // persist it. Cancels any pending debounced description save so the
   // undo round-trip isn't immediately overwritten by a stale autosave.
+  // The value we're rolling back FROM is pushed onto the redo stack so
+  // the user can reapply it with the Redo button.
   const handleUndoDescription = useCallback(() => {
     const current = itemRef.current;
     if (!current) return;
+    // Capture the currently-saved description before we modify any stacks.
+    const currentSavedDesc = lastSavedDescriptionRef.current;
     setDescUndoStack((stack) => {
       if (stack.length === 0) return stack;
       const next = stack.slice(0, -1);
       const prior = stack[stack.length - 1] ?? '';
+      // Push the value we're undoing FROM so the user can redo it.
+      setDescRedoStack((redoStack) => [...redoStack, currentSavedDesc]);
       // Cancel any pending debounce so the undone value isn't overwritten.
       if (descDebounceRef.current) {
         clearTimeout(descDebounceRef.current);
@@ -558,6 +578,31 @@ export function KeywordEditor({
       isUndoingDescRef.current = true;
       void persist(current.id, { description: prior }).finally(() => {
         isUndoingDescRef.current = false;
+      });
+      return next;
+    });
+  }, [persist]);
+
+  // Pop the most recent redo value and re-apply it. Mirrors handleUndoDescription
+  // but operates in the opposite direction; the undo stack is updated normally
+  // inside persist() (isRedoingDescRef prevents clearing the redo stack mid-flight).
+  const handleRedoDescription = useCallback(() => {
+    const current = itemRef.current;
+    if (!current) return;
+    setDescRedoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const next = stack.slice(0, -1);
+      const forward = stack[stack.length - 1] ?? '';
+      // Cancel any pending debounce so the redone value isn't overwritten.
+      if (descDebounceRef.current) {
+        clearTimeout(descDebounceRef.current);
+        descDebounceRef.current = null;
+      }
+      setDescription(forward);
+      latestDescriptionRef.current = forward;
+      isRedoingDescRef.current = true;
+      void persist(current.id, { description: forward }).finally(() => {
+        isRedoingDescRef.current = false;
       });
       return next;
     });
@@ -736,32 +781,60 @@ export function KeywordEditor({
             <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
               DESCRIPTION
             </Text>
-            <Pressable
-              onPress={handleUndoDescription}
-              disabled={descUndoStack.length === 0}
-              accessibilityRole="button"
-              accessibilityLabel="Undo last description change"
-              accessibilityState={{ disabled: descUndoStack.length === 0 }}
-              style={{
-                paddingHorizontal: 10,
-                paddingVertical: 4,
-                borderRadius: 6,
-                borderWidth: 1,
-                borderColor: colors.border,
-                opacity: descUndoStack.length === 0 ? 0.4 : 1,
-                marginBottom: 8,
-              }}
-            >
-              <Text
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              <Pressable
+                onPress={handleUndoDescription}
+                disabled={descUndoStack.length === 0}
+                accessibilityRole="button"
+                accessibilityLabel="Undo last description change"
+                accessibilityState={{ disabled: descUndoStack.length === 0 }}
                 style={{
-                  color: colors.foreground,
-                  fontSize: 11,
-                  fontFamily: 'Inter_600SemiBold',
+                  paddingHorizontal: 10,
+                  paddingVertical: 4,
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  opacity: descUndoStack.length === 0 ? 0.4 : 1,
+                  marginBottom: 8,
                 }}
               >
-                ↶ Undo
-              </Text>
-            </Pressable>
+                <Text
+                  style={{
+                    color: colors.foreground,
+                    fontSize: 11,
+                    fontFamily: 'Inter_600SemiBold',
+                  }}
+                >
+                  ↶ Undo
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={handleRedoDescription}
+                disabled={descRedoStack.length === 0}
+                accessibilityRole="button"
+                accessibilityLabel="Redo last description change"
+                accessibilityState={{ disabled: descRedoStack.length === 0 }}
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 4,
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  opacity: descRedoStack.length === 0 ? 0.4 : 1,
+                  marginBottom: 8,
+                }}
+              >
+                <Text
+                  style={{
+                    color: colors.foreground,
+                    fontSize: 11,
+                    fontFamily: 'Inter_600SemiBold',
+                  }}
+                >
+                  ↷ Redo
+                </Text>
+              </Pressable>
+            </View>
           </View>
           <TextInput
             value={description}
