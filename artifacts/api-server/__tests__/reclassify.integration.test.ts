@@ -46,7 +46,13 @@ import { closePool } from './helpers/testDb';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const ADMIN_SECRET = 'jest-reclassify-test-secret';
-const CATALOG_PREFIX = 'JEST-ITG-RECLS-';
+// NOTE: deliberately NOT 'JEST-ITG-RECLS-'. Other test files use testDb's
+// cleanupFixtures() which deletes all 'JEST-ITG-%' rows. Running in parallel
+// those sweeps would delete our fixtures mid-reclassify, causing the orphan-
+// cleanup step in the reclassify endpoint to remove the inventory_category
+// rows and produce null-assignment failures. See inventory.preview.test.ts for
+// the same rationale.
+const CATALOG_PREFIX = 'JEST-RECLS-';
 
 /** beforeAll / beforeEach timeout. The reclassify endpoint scans the full
  *  inventory table; allow up to 3 minutes on a populated database. */
