@@ -50,6 +50,10 @@ import type { InventoryItem } from '@workspace/api-client-react';
 import { secondaryBtnBase } from '@/styles/shared';
 import { ImportFileCard } from '@/components/ImportFileCard';
 import ClassificationReviewSection from '@/components/ClassificationReviewSection';
+import {
+  EnrichmentStatsChips,
+  type EnrichSummary,
+} from '@/components/EnrichmentStatsChips';
 import PhotoIdStatsSection from '@/components/PhotoIdStatsSection';
 import { RecordsBrowser } from '@/components/RecordsBrowser';
 
@@ -187,11 +191,6 @@ type RebuildTokensProgress = {
   error?: string;
 };
 
-type EnrichSummary = {
-  total: number;
-  enriched: number;
-  unenriched: number;
-};
 
 // ── Column header aliases ──────────────────────────────────────────────────
 const VENDOR_ALIASES = ['vendor', 'mfr', 'manufacturer', 'brand', 'make', 'supplier'];
@@ -2677,76 +2676,14 @@ export default function UploadScreen() {
                          * — when it lands first, the chip should be visible
                          * (and trustworthy) without waiting on coverage stats.
                          */}
-                        {enrichSummary || reviewCount != null ? (
-                          <View style={styles.enrichStats}>
-                            {enrichSummary ? (
-                              <>
-                                <View
-                                  style={[
-                                    styles.statChip,
-                                    { backgroundColor: colors.success + '11' },
-                                  ]}
-                                >
-                                  <Text style={[styles.statValue, { color: colors.success }]}>
-                                    {enrichSummary.enriched.toLocaleString()}
-                                  </Text>
-                                  <Text
-                                    style={[styles.statLabel, { color: colors.mutedForeground }]}
-                                  >
-                                    Enriched
-                                  </Text>
-                                </View>
-                                <View
-                                  style={[
-                                    styles.statChip,
-                                    { backgroundColor: colors.warning + '11' },
-                                  ]}
-                                >
-                                  <Text style={[styles.statValue, { color: colors.warning }]}>
-                                    {enrichSummary.unenriched.toLocaleString()}
-                                  </Text>
-                                  <Text
-                                    style={[styles.statLabel, { color: colors.mutedForeground }]}
-                                  >
-                                    Pending
-                                  </Text>
-                                </View>
-                                <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
-                                  <Text style={[styles.statValue, { color: colors.foreground }]}>
-                                    {enrichSummary.total > 0
-                                      ? `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`
-                                      : '—'}
-                                  </Text>
-                                  <Text
-                                    style={[styles.statLabel, { color: colors.mutedForeground }]}
-                                  >
-                                    Coverage
-                                  </Text>
-                                </View>
-                              </>
-                            ) : null}
-                            {reviewCount != null ? (
-                              <Pressable
-                                style={[
-                                  styles.statChip,
-                                  { backgroundColor: colors.primary + '18' },
-                                ]}
-                                onPress={() => {
-                                  setEnrichOpen(true);
-                                  setReviewExpandTrigger((n) => n + 1);
-                                }}
-                                accessibilityLabel="Open review queue"
-                              >
-                                <Text style={[styles.statValue, { color: colors.primary }]}>
-                                  {reviewCount.toLocaleString()}
-                                </Text>
-                                <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>
-                                  Review Queue
-                                </Text>
-                              </Pressable>
-                            ) : null}
-                          </View>
-                        ) : null}
+                        <EnrichmentStatsChips
+                          reviewCount={reviewCount}
+                          enrichSummary={enrichSummary}
+                          onReviewQueuePress={() => {
+                            setEnrichOpen(true);
+                            setReviewExpandTrigger((n) => n + 1);
+                          }}
+                        />
 
                         {!enrichSummary ? (
                           <ActivityIndicator size="small" color={colors.primary} />

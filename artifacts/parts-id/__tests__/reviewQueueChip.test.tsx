@@ -1,23 +1,24 @@
 /**
  * @jest-environment jsdom
  *
- * Verifies that the "Review Queue" stat chip stays in sync with admin actions in
- * ClassificationReviewSection.  Three assertions from the task spec:
+ * Verifies that the Review Queue stat chip stays in sync with admin actions
+ * in ClassificationReviewSection.  Three assertions from the task spec:
  *
- *   1. The chip renders with its count even while the enrichment-summary fetch is
- *      still pending (the two requests are independent).
- *   2. The Enriched / Pending / Coverage chips are absent until enrichSummary loads.
+ *   1. The chip renders with its count even while the enrichment-summary fetch
+ *      is still pending (the two requests are independent).
+ *   2. The Enriched / Pending / Coverage chips are absent until enrichSummary
+ *      resolves — production gating logic exercised via the real
+ *      EnrichmentStatsChips component.
  *   3. After a confirm action in ClassificationReviewSection the chip's count
  *      reflects the refreshed total (e.g. 4 → 3).
  *
- * Approach — a minimal `ReviewQueueHarness` component that:
- *   - Manages `reviewCount` and `enrichSummary` state exactly as upload.tsx does.
- *   - Renders the stat chips (mirrors upload.tsx lines 2680-2748).
- *   - Renders ClassificationReviewSection and wires onReviewAction → fetchReviewCount,
- *     exactly as the upload screen does (upload.tsx line 3661).
- *
- * This lets us exercise the real component wiring without mounting the full
- * 5 000-line UploadScreen.
+ * Approach — a small `ReviewQueueSyncFixture` component that:
+ *   - Manages `reviewCount` and `enrichSummary` state via mocked global.fetch,
+ *     mirroring upload.tsx's useEffect / fetchReviewCount / fetchEnrichSummary.
+ *   - Renders the real production EnrichmentStatsChips component so chip gating
+ *     logic regressions in that file are caught.
+ *   - Renders the real production ClassificationReviewSection and wires
+ *     onReviewAction → fetchReviewCount, exactly as upload.tsx does.
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';
@@ -190,29 +191,22 @@ jest.mock('@/hooks/useColors', () => ({
 
 // ── Imports after mocks ───────────────────────────────────────────────────────
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import {
+  EnrichmentStatsChips,
+  type EnrichSummary,
+} from '../components/EnrichmentStatsChips';
 import ClassificationReviewSection from '../components/ClassificationReviewSection';
 
-// ── Fixtures ──────────────────────────────────────────────────────────────────
-type EnrichSummary = { total: number; enriched: number; unenriched: number };
-
-const REVIEW_ITEM = {
-  inventoryId: 1,
-  catalog: 'BR120',
-  vendor: 'ETN',
-  description: '20A Breaker',
-  categoryPath: 'Wiring Devices › Breakers › Single Pole',
-  confidencePct: 55,
-};
-
-// ── Harness ───────────────────────────────────────────────────────────────────
+// ── Fixture ───────────────────────────────────────────────────────────────────
 /**
- * Mirrors the relevant slice of upload.tsx:
- *   - reviewCount  ← fetchReviewCount (independent of enrichSummary)
- *   - enrichSummary ← fetchEnrichSummary (may be slow / pending)
- *   - stat chips rendered exactly as in upload.tsx (lines 2680-2748)
- *   - ClassificationReviewSection wired with onReviewAction → fetchReviewCount
+ * Mirrors the upload screen wiring:
+ *   - reviewCount + fetchReviewCount   ← /admin/classification-review (fast)
+ *   - enrichSummary + fetchEnrichSummary ← /inventory/enrich-summary (may lag)
+ *   - <EnrichmentStatsChips> — real production component, chip gating tested here
+ *   - <ClassificationReviewSection onReviewAction={fetchReviewCount}>
+ *     wired exactly as upload.tsx line 3661
  */
-function ReviewQueueHarness() {
+function ReviewQueueSyncFixture() {
   const [enrichSummary, setEnrichSummary] = React.useState<EnrichSummary | null>(null);
   const [reviewCount, setReviewCount] = React.useState<number | null>(null);
 
@@ -246,61 +240,11 @@ function ReviewQueueHarness() {
   return (
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     React.createElement(require('react-native').View, null,
-      // ── Stat chips (mirrors upload.tsx lines 2680-2748) ──────────────────────
-      enrichSummary || reviewCount != null
-        ? React.createElement(
-            require('react-native').View,
-            { accessibilityLabel: 'enrichment stats row' },
-            enrichSummary
-              ? React.createElement(
-                  React.Fragment,
-                  null,
-                  React.createElement(
-                    require('react-native').View,
-                    null,
-                    React.createElement(require('react-native').Text, null, enrichSummary.enriched),
-                    React.createElement(require('react-native').Text, null, 'Enriched')
-                  ),
-                  React.createElement(
-                    require('react-native').View,
-                    null,
-                    React.createElement(
-                      require('react-native').Text,
-                      null,
-                      enrichSummary.unenriched
-                    ),
-                    React.createElement(require('react-native').Text, null, 'Pending')
-                  ),
-                  React.createElement(
-                    require('react-native').View,
-                    null,
-                    React.createElement(
-                      require('react-native').Text,
-                      null,
-                      enrichSummary.total > 0
-                        ? `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`
-                        : '—'
-                    ),
-                    React.createElement(require('react-native').Text, null, 'Coverage')
-                  )
-                )
-              : null,
-            reviewCount != null
-              ? React.createElement(
-                  require('react-native').View,
-                  { accessibilityLabel: 'review queue chip' },
-                  React.createElement(
-                    require('react-native').Text,
-                    { accessibilityLabel: 'review queue count' },
-                    reviewCount
-                  ),
-                  React.createElement(require('react-native').Text, null, 'Review Queue')
-                )
-              : null
-          )
-        : null,
-
-      // ── ClassificationReviewSection ──────────────────────────────────────────
+      React.createElement(EnrichmentStatsChips, {
+        reviewCount,
+        enrichSummary,
+        onReviewQueuePress: () => {},
+      }),
       React.createElement(ClassificationReviewSection, {
         apiBase: '',
         adminHeaders: { Authorization: 'Bearer test-token' },
@@ -312,8 +256,6 @@ function ReviewQueueHarness() {
 }
 
 // ── Flush helper ──────────────────────────────────────────────────────────────
-// Drains the microtask queue multiple times to let chained async/await
-// callbacks (fetch → json → setState) fully settle before asserting.
 async function flush() {
   await act(async () => {
     await Promise.resolve();
@@ -324,6 +266,15 @@ async function flush() {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+const REVIEW_ITEM = {
+  inventoryId: 1,
+  catalog: 'BR120',
+  vendor: 'ETN',
+  description: '20A Breaker',
+  categoryPath: 'Wiring Devices › Breakers › Single Pole',
+  confidencePct: 55,
+};
+
 describe('Review Queue chip — stays in sync with admin actions', () => {
   let origFetch: typeof global.fetch;
 
@@ -339,7 +290,7 @@ describe('Review Queue chip — stays in sync with admin actions', () => {
   // ──────────────────────────────────────────────────────────────────────────
   describe('chip renders independently of enrichSummary', () => {
     beforeEach(() => {
-      // reviewCount resolves immediately; enrichSummary never resolves (simulates slow request)
+      // reviewCount resolves immediately; enrichSummary never resolves
       global.fetch = jest.fn((url: unknown) => {
         if (typeof url === 'string' && url.includes('/admin/classification-review')) {
           return Promise.resolve({
@@ -348,28 +299,26 @@ describe('Review Queue chip — stays in sync with admin actions', () => {
             json: () => Promise.resolve({ total: 4 }),
           } as Response);
         }
-        // enrich-summary: never resolves
-        return new Promise<Response>(() => {});
+        return new Promise<Response>(() => {}); // enrich-summary hangs
       }) as typeof global.fetch;
 
-      // ClassificationReviewSection's count-only fetch on mount
       mockListClassificationReview.mockResolvedValue({ total: 4, items: [] });
     });
 
     it('shows the Review Queue chip count while enrichSummary is still pending', async () => {
-      render(<ReviewQueueHarness />);
+      render(<ReviewQueueSyncFixture />);
       await flush();
 
-      // Chip is visible with its count
-      expect(screen.getByLabelText('review queue count').textContent).toBe('4');
-      expect(screen.getByText('Review Queue')).toBeTruthy();
+      const chip = screen.getByLabelText('Open review queue');
+      expect(chip).toBeTruthy();
+      expect(chip.textContent).toContain('4');
+      expect(chip.textContent).toContain('Review Queue');
     });
 
     it('Enriched / Pending / Coverage chips are absent while enrichSummary is loading', async () => {
-      render(<ReviewQueueHarness />);
+      render(<ReviewQueueSyncFixture />);
       await flush();
 
-      // enrichSummary never resolved → its chips must not appear
       expect(screen.queryByText('Enriched')).toBeNull();
       expect(screen.queryByText('Pending')).toBeNull();
       expect(screen.queryByText('Coverage')).toBeNull();
@@ -379,7 +328,6 @@ describe('Review Queue chip — stays in sync with admin actions', () => {
   // ──────────────────────────────────────────────────────────────────────────
   describe('chip count refreshes after ClassificationReviewSection confirm action', () => {
     it('decrements from 4 to 3 after the admin confirms an item', async () => {
-      // First review-count fetch → 4; second (after confirm) → 3
       let reviewFetchCount = 0;
       global.fetch = jest.fn((url: unknown) => {
         if (typeof url === 'string' && url.includes('/admin/classification-review')) {
@@ -394,21 +342,20 @@ describe('Review Queue chip — stays in sync with admin actions', () => {
         return new Promise<Response>(() => {}); // enrich-summary never resolves
       }) as typeof global.fetch;
 
-      // Mount count-only fetch → 4 (no items needed for count badge)
-      // Expand fetch → 4 items for the queue list
+      // count badge on section mount; items for expand
       mockListClassificationReview
-        .mockResolvedValueOnce({ total: 4, items: [] }) // count badge on mount
-        .mockResolvedValueOnce({ total: 4, items: [REVIEW_ITEM] }); // expand fetch
+        .mockResolvedValueOnce({ total: 4, items: [] })
+        .mockResolvedValueOnce({ total: 4, items: [REVIEW_ITEM] });
 
       mockConfirmClassificationReview.mockResolvedValue(undefined);
 
-      render(<ReviewQueueHarness />);
+      render(<ReviewQueueSyncFixture />);
       await flush();
 
       // Chip starts at 4
-      expect(screen.getByLabelText('review queue count').textContent).toBe('4');
+      expect(screen.getByLabelText('Open review queue').textContent).toContain('4');
 
-      // Expand the review section so items render
+      // Expand the review section
       act(() => {
         fireEvent.click(screen.getByRole('button', { name: /expand classification review/i }));
       });
@@ -425,7 +372,7 @@ describe('Review Queue chip — stays in sync with admin actions', () => {
         REVIEW_ITEM.inventoryId,
         expect.objectContaining({ headers: expect.any(Object) })
       );
-      expect(screen.getByLabelText('review queue count').textContent).toBe('3');
+      expect(screen.getByLabelText('Open review queue').textContent).toContain('3');
     });
   });
 });
