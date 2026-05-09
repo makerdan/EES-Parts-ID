@@ -18,7 +18,7 @@ export const CURRENT_PROMPT_VERSION = 1;
  * script to re-parse all items that were previously parsed with an older
  * version of parseCatalog (i.e. whose catalog_parse.parser_version < this).
  */
-export const CURRENT_PARSER_VERSION = 3;
+export const CURRENT_PARSER_VERSION = 5;
 
 /**
  * Returns true when the item's AI keyword enrichment is stale and should

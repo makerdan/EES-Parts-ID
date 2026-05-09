@@ -36,6 +36,12 @@ describe('isConduitOrPipe', () => {
     expect(isConduitOrPipe(null, undefined, 'PVC sched 40 elbow')).toBe(true);
   });
 
+  it('flags items with FITTING in description (regression: FITTING was missing)', () => {
+    expect(isConduitOrPipe('PFA7LR075', 'NEC', '3/4 AL FORM 7 LR FITTING')).toBe(true);
+    expect(isConduitOrPipe('GUAB59', 'CRS', '1-1/2" GUAB FITTING')).toBe(true);
+    expect(isConduitOrPipe('CGE193', 'CRS', '1/2" NPT 90D MALE CORD/CABLE FITTING')).toBe(true);
+  });
+
   it('returns false for non-conduit items', () => {
     expect(isConduitOrPipe('BR120 20A breaker')).toBe(false);
     expect(isConduitOrPipe('Duplex receptacle')).toBe(false);
