@@ -697,3 +697,202 @@ describe('matchesChipFilters', () => {
     expect(result).toBe(true);
   });
 });
+
+// ── matchesChipFilters — text-only chip keys ───────────────────────────────────
+// tradeSize, colorChip, and conduitType have no structured column and always
+// rely on tokenMatch against the full-text representation of the item.
+
+describe('matchesChipFilters — tradeSize chip (text-only, no column)', () => {
+  const item = (description: string): ChipFilterItem => ({
+    vendor: 'Allied',
+    catalog: 'EMT34',
+    description,
+    aiKeywords: null,
+  });
+
+  it('token present in description → included', () => {
+    expect(
+      matchesChipFilters(item('3/4" EMT conduit'), [{ key: 'tradeSize', value: '3/4"' }])
+    ).toBe(true);
+  });
+
+  it('token absent from description → excluded', () => {
+    expect(
+      matchesChipFilters(item('1/2" EMT conduit'), [{ key: 'tradeSize', value: '3/4"' }])
+    ).toBe(false);
+  });
+
+  it('token appears as substring of a larger mixed-number size → excluded (regression)', () => {
+    // "1/2"" must NOT match inside "1-1/2"" — this was a known regression
+    // where the tokenMatch boundary logic could let smaller sizes leak through.
+    expect(
+      matchesChipFilters(item('1-1/2" EMT conduit fitting'), [{ key: 'tradeSize', value: '1/2"' }])
+    ).toBe(false);
+    expect(
+      matchesChipFilters(item('2-1/2" EMT conduit fitting'), [{ key: 'tradeSize', value: '1/2"' }])
+    ).toBe(false);
+    expect(
+      matchesChipFilters(item('1-1/4" EMT conduit fitting'), [{ key: 'tradeSize', value: '1/4"' }])
+    ).toBe(false);
+  });
+
+  it('exact-size description matches its own chip value', () => {
+    expect(
+      matchesChipFilters(item('1/2" EMT conduit'), [{ key: 'tradeSize', value: '1/2"' }])
+    ).toBe(true);
+    expect(
+      matchesChipFilters(item('1-1/2" EMT conduit'), [{ key: 'tradeSize', value: '1-1/2"' }])
+    ).toBe(true);
+  });
+
+  it('token present in aiKeywords → included', () => {
+    const withKw: ChipFilterItem = {
+      vendor: 'Allied',
+      catalog: 'EMT34',
+      description: 'EMT conduit',
+      aiKeywords: ['3/4"', 'trade size'],
+    };
+    expect(matchesChipFilters(withKw, [{ key: 'tradeSize', value: '3/4"' }])).toBe(true);
+  });
+});
+
+describe('matchesChipFilters — colorChip chip (text-only, no column)', () => {
+  const item = (description: string): ChipFilterItem => ({
+    vendor: 'Leviton',
+    catalog: 'DR15',
+    description,
+    aiKeywords: null,
+  });
+
+  it('color token present in description → included', () => {
+    expect(
+      matchesChipFilters(item('15A duplex receptacle white'), [
+        { key: 'colorChip', value: 'White' },
+      ])
+    ).toBe(true);
+  });
+
+  it('color token absent from description → excluded', () => {
+    expect(
+      matchesChipFilters(item('15A duplex receptacle black'), [
+        { key: 'colorChip', value: 'White' },
+      ])
+    ).toBe(false);
+  });
+
+  it('color match is case-insensitive', () => {
+    expect(
+      matchesChipFilters(item('15A duplex receptacle WHITE'), [
+        { key: 'colorChip', value: 'white' },
+      ])
+    ).toBe(true);
+    expect(
+      matchesChipFilters(item('15A duplex receptacle white'), [
+        { key: 'colorChip', value: 'WHITE' },
+      ])
+    ).toBe(true);
+  });
+
+  it('color token present in aiKeywords → included', () => {
+    const withKw: ChipFilterItem = {
+      vendor: 'Leviton',
+      catalog: 'DR15',
+      description: '15A receptacle',
+      aiKeywords: ['ivory', 'standard outlet'],
+    };
+    expect(matchesChipFilters(withKw, [{ key: 'colorChip', value: 'Ivory' }])).toBe(true);
+  });
+
+  it('color absent from both description and aiKeywords → excluded', () => {
+    const withKw: ChipFilterItem = {
+      vendor: 'Leviton',
+      catalog: 'DR15',
+      description: '15A receptacle',
+      aiKeywords: ['ivory', 'standard outlet'],
+    };
+    expect(matchesChipFilters(withKw, [{ key: 'colorChip', value: 'Red' }])).toBe(false);
+  });
+});
+
+describe('matchesChipFilters — conduitType chip (text-only, no column)', () => {
+  const item = (description: string): ChipFilterItem => ({
+    vendor: 'Cantex',
+    catalog: 'CONDUIT1',
+    description,
+    aiKeywords: null,
+  });
+
+  it('conduit type token present in description → included', () => {
+    expect(
+      matchesChipFilters(item('1" PVC Schedule 40 conduit'), [{ key: 'conduitType', value: 'PVC' }])
+    ).toBe(true);
+  });
+
+  it('conduit type token absent from description → excluded', () => {
+    expect(matchesChipFilters(item('1" EMT conduit'), [{ key: 'conduitType', value: 'PVC' }])).toBe(
+      false
+    );
+  });
+
+  it('multi-word conduit type token matches only when all words are present', () => {
+    expect(
+      matchesChipFilters(item('1/2" flexible metal conduit'), [
+        { key: 'conduitType', value: 'flexible metal conduit' },
+      ])
+    ).toBe(true);
+    expect(
+      matchesChipFilters(item('1/2" EMT conduit'), [
+        { key: 'conduitType', value: 'flexible metal conduit' },
+      ])
+    ).toBe(false);
+  });
+
+  it('conduit type match is case-insensitive', () => {
+    expect(matchesChipFilters(item('1" emt conduit'), [{ key: 'conduitType', value: 'EMT' }])).toBe(
+      true
+    );
+    expect(matchesChipFilters(item('1" EMT conduit'), [{ key: 'conduitType', value: 'emt' }])).toBe(
+      true
+    );
+  });
+
+  it('conduit type present in aiKeywords → included', () => {
+    const withKw: ChipFilterItem = {
+      vendor: 'Allied',
+      catalog: 'COND1',
+      description: '1" conduit',
+      aiKeywords: ['rigid metal conduit', 'RMC'],
+    };
+    expect(matchesChipFilters(withKw, [{ key: 'conduitType', value: 'rigid metal conduit' }])).toBe(
+      true
+    );
+  });
+
+  it('combining conduitType and tradeSize both required → AND logic', () => {
+    const matching: ChipFilterItem = {
+      vendor: 'Allied',
+      catalog: 'EMT12',
+      description: '1/2" EMT conduit',
+      aiKeywords: null,
+    };
+    const wrongSize: ChipFilterItem = {
+      vendor: 'Allied',
+      catalog: 'EMT34',
+      description: '3/4" EMT conduit',
+      aiKeywords: null,
+    };
+    const wrongType: ChipFilterItem = {
+      vendor: 'Cantex',
+      catalog: 'PVC12',
+      description: '1/2" PVC conduit',
+      aiKeywords: null,
+    };
+    const filters = [
+      { key: 'conduitType', value: 'EMT' },
+      { key: 'tradeSize', value: '1/2"' },
+    ];
+    expect(matchesChipFilters(matching, filters)).toBe(true);
+    expect(matchesChipFilters(wrongSize, filters)).toBe(false);
+    expect(matchesChipFilters(wrongType, filters)).toBe(false);
+  });
+});
