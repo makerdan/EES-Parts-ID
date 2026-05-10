@@ -2026,6 +2026,17 @@ export default function SearchScreen() {
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
                   keyboardDismissMode="none"
+                  // scrollEventThrottle={16} — REQUIRED for iOS trackpad and gesture
+                  // scroll reliability. Without this prop, React Native's default
+                  // throttle (~100 ms) causes onScroll to fire too infrequently.
+                  // The RNGH nativeScrollGesture loses its scroll reference, making
+                  // the list unscrollable with an Apple Magic Trackpad or hardware
+                  // keyboard arrow navigation on iOS/iPadOS.
+                  // 16 ms ≈ one frame at 60 Hz — the minimum needed for RNGH to
+                  // track scroll position accurately.
+                  // DO NOT REMOVE — this fixes a hard-to-reproduce iOS regression
+                  // (Task #351). If you see "scroll not working on trackpad", check
+                  // this value first.
                   scrollEventThrottle={16}
                 />
               </Animated.View>
