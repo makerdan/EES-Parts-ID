@@ -6,6 +6,8 @@
  *   1. Full undo/redo cycle  (edit → undo → redo)
  *   2. A normal edit after an undo clears the redo stack
  *   3. Opening the editor on a different item resets both stacks
+ *   4. Undo failure: persist() rejects → "Save failed" badge, consistent button states
+ *   5. Redo failure: persist() rejects → "Save failed" badge, consistent button states
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';
@@ -404,5 +406,91 @@ describe('KeywordEditor — Undo/Redo button sync', () => {
 
     expect(getUndoBtn().disabled).toBe(true);
     expect(getRedoBtn().disabled).toBe(true);
+  });
+});
+
+describe('KeywordEditor — Undo/Redo save failure', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockMutateAsync.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+    jest.clearAllMocks();
+  });
+
+  it('Undo failure: shows "Save failed" badge and leaves button states consistent', async () => {
+    const item = makeItem({ description: 'Original description' });
+    render(<KeywordEditor item={item} onClose={jest.fn()} />);
+
+    // First save succeeds — undo stack gains an entry.
+    await typeAndSave('Edited description');
+    expect(getUndoBtn().disabled).toBe(false);
+    expect(getRedoBtn().disabled).toBe(true);
+
+    // Subsequent saves (i.e. the undo persist call) will now reject.
+    mockMutateAsync.mockRejectedValue(new Error('Network error'));
+
+    // Click Undo — persist() rejects.
+    await act(async () => {
+      fireEvent.click(getUndoBtn());
+    });
+    // Flush the rejected promise chain so setSaveStatus('error') has been called.
+    await act(async () => {});
+
+    // The failure must NOT be silent — "Save failed" status badge appears.
+    expect(screen.getByText('Save failed')).toBeTruthy();
+
+    // The visual undo still happened: description reverted to the prior value.
+    // (Server and UI are diverged, but the user can see the error and retry.)
+    expect(getDescInput().value).toBe('Original description');
+
+    // Undo stack was popped before the async call, so it is now empty.
+    // The value we undid FROM was pushed to the redo stack before the call,
+    // so redo is available. Both states are consistent (no stuck/duplicate entries).
+    expect(getUndoBtn().disabled).toBe(true);
+    expect(getRedoBtn().disabled).toBe(false);
+  });
+
+  it('Redo failure: shows "Save failed" badge and leaves button states consistent', async () => {
+    const item = makeItem({ description: 'Original description' });
+    render(<KeywordEditor item={item} onClose={jest.fn()} />);
+
+    // Edit + successful undo so the redo stack is populated.
+    await typeAndSave('Edited description');
+    await act(async () => {
+      fireEvent.click(getUndoBtn());
+    });
+    await act(async () => {});
+
+    // Sanity: redo is enabled, description is back to original.
+    expect(getRedoBtn().disabled).toBe(false);
+    expect(getDescInput().value).toBe('Original description');
+
+    // Subsequent saves (i.e. the redo persist call) will now reject.
+    mockMutateAsync.mockRejectedValue(new Error('Network error'));
+
+    // Click Redo — persist() rejects.
+    await act(async () => {
+      fireEvent.click(getRedoBtn());
+    });
+    await act(async () => {});
+
+    // The failure must NOT be silent.
+    expect(screen.getByText('Save failed')).toBeTruthy();
+
+    // Visual redo happened: description advanced to the re-applied value.
+    expect(getDescInput().value).toBe('Edited description');
+
+    // Redo stack was popped before the async call → now empty.
+    // The persist catch block never reached the undo-stack push, so the undo
+    // stack is also empty (the server round-trip that would have confirmed the
+    // save never completed). Both buttons are disabled — no stuck/phantom entries.
+    expect(getRedoBtn().disabled).toBe(true);
+    expect(getUndoBtn().disabled).toBe(true);
   });
 });
