@@ -664,6 +664,35 @@ describe('parseTradeSize – fraction immediately followed by a letter (regressi
   });
 });
 
+describe('parseTradeSize – angle-spec fraction regression (EMTELB)', () => {
+  // EMTELB2X2212 description: '2",22-1/2D EMT ELB'
+  // The angle notation "22-1/2D" (meaning 22.5°) previously tricked FRAC_MAP
+  // into returning 0.5 instead of the correct 2" trade size from the inch mark.
+  test('"2\\",22-1/2D EMT ELB" → 2 (inch mark wins; angle-spec 1/2 suppressed)', () => {
+    expect(parseTradeSize('2",22-1/2D EMT ELB')).toBeCloseTo(2, 5);
+  });
+
+  // EMTELB3X2212 description: '3",22-1/2D EMT ELB'
+  test('"3\\",22-1/2D EMT ELB" → 3 (inch mark wins; angle-spec 1/2 suppressed)', () => {
+    expect(parseTradeSize('3",22-1/2D EMT ELB')).toBeCloseTo(3, 5);
+  });
+
+  // Verify that a legitimate "1/2" trade size at the start of a string still works.
+  test('"1/2\\" STL COND BODY CVR" → 0.5 (leading fraction is not suppressed)', () => {
+    expect(parseTradeSize('1/2" STL COND BODY CVR')).toBeCloseTo(0.5, 5);
+  });
+
+  // Verify that mixed-number "1-1/2" patterns are unaffected.
+  test('"1-1/2\\" ALU LB COND BODY" → 1.5 (mixedMatch fires before FRAC_MAP)', () => {
+    expect(parseTradeSize('1-1/2" ALU LB COND BODY')).toBeCloseTo(1.5, 5);
+  });
+
+  // Verify that "2-1/2" trade sizes are unaffected.
+  test('"2-1/2 in EMT COUPLING" → 2.5 (mixedMatch fires before FRAC_MAP)', () => {
+    expect(parseTradeSize('2-1/2 in EMT COUPLING')).toBeCloseTo(2.5, 5);
+  });
+});
+
 describe('parseTradeSize – null / out-of-range cases', () => {
   test('null → null', () => {
     expect(parseTradeSize(null)).toBeNull();
