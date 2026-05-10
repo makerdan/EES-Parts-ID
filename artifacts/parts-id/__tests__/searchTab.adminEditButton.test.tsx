@@ -132,6 +132,8 @@ jest.mock('react-native', () => {
 
   // FlatList renders its items so search results would be visible, but for
   // these tests no results are present.
+  // data-scroll-throttle is exposed so tests can assert scrollEventThrottle={16}
+  // is present (regression guard for the iOS trackpad fix — Task #351).
   function FlatList<T>(props: {
     data?: readonly T[] | null;
     renderItem?: (info: { item: T; index: number }) => React.ReactNode;
@@ -140,14 +142,14 @@ jest.mock('react-native', () => {
     ListHeaderComponent?: React.ReactNode;
     contentContainerStyle?: unknown;
     onScroll?: unknown;
-    scrollEventThrottle?: unknown;
+    scrollEventThrottle?: number;
     refreshControl?: React.ReactNode;
     [key: string]: unknown;
   }) {
     const items = props.data ?? [];
     return React.createElement(
       'div',
-      { 'data-flatlist': true },
+      { 'data-flatlist': true, 'data-scroll-throttle': props.scrollEventThrottle },
       props.ListHeaderComponent ?? null,
       ...items.map((item, idx) =>
         React.createElement(
@@ -468,6 +470,29 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import SearchScreen from '../app/(tabs)/index';
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
+
+describe('Search tab (index.tsx) — FlatList scrollEventThrottle regression guard', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('results FlatList has scrollEventThrottle={16} for iOS trackpad reliability (Task #351)', async () => {
+    mockAdminToken = 'admin-tok';
+    await act(async () => {
+      render(<SearchScreen />);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // The results FlatList is always rendered (aisleBrowseOpen defaults to
+    // false). data-scroll-throttle is set by the FlatList mock above so this
+    // assertion acts as a regression guard: if scrollEventThrottle is ever
+    // removed or changed from 16, this test will fail and alert the developer
+    // to the iOS trackpad regression risk.
+    const flatList = document.querySelector('[data-flatlist]');
+    expect(flatList).not.toBeNull();
+    expect(flatList?.getAttribute('data-scroll-throttle')).toBe('16');
+  });
+});
 
 describe('Search tab (index.tsx) — BrowseByAisle receives onEditKeywords based on adminToken', () => {
   afterEach(() => {
