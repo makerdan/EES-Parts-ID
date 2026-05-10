@@ -138,6 +138,179 @@ describe('applyRefinement', () => {
     expect(applyRefinement([r], { colorChip: 'Black' })).toHaveLength(0);
   });
 
+  describe('tradeSize chip', () => {
+    // Realistic conduit results as they arrive from Browse-by-Aisle.
+    const conduitResults: SearchResult[] = [
+      makeResult({
+        id: 101,
+        vendor: 'ALP',
+        catalog: 'EMT12',
+        description: 'Allied 1/2" EMT Conduit 10ft',
+        aiKeywords: ['emt', 'conduit', '1/2"'],
+      }),
+      makeResult({
+        id: 102,
+        vendor: 'ALP',
+        catalog: 'EMT34',
+        description: 'Allied 3/4" EMT Conduit 10ft',
+        aiKeywords: ['emt', 'conduit', '3/4"'],
+      }),
+      makeResult({
+        id: 103,
+        vendor: 'ALP',
+        catalog: 'IMC12',
+        description: 'Allied 1/2" IMC Conduit 10ft',
+        aiKeywords: ['imc', 'conduit', '1/2"'],
+      }),
+      makeResult({
+        id: 104,
+        vendor: 'ALP',
+        catalog: 'EMT112',
+        description: 'Allied 1-1/2" EMT Conduit 10ft',
+        aiKeywords: ['emt', 'conduit', '1-1/2"'],
+      }),
+    ];
+
+    it('passes only items whose full text contains the trade size as a whole word', () => {
+      const out = applyRefinement(conduitResults, { tradeSize: '1/2"' });
+      // ids 101 and 103 are 1/2" EMT and IMC; 102 is 3/4"; 104 is 1-1/2"
+      expect(out.map((r) => r.item.id)).toEqual([101, 103]);
+    });
+
+    it('does not match 1/2" inside a mixed-number like 1-1/2"', () => {
+      // tokenMatch treats `-` as an inner-word character so 1-1/2" is a
+      // distinct token that must not match a 1/2" filter.
+      const out = applyRefinement(conduitResults, { tradeSize: '1/2"' });
+      expect(out.map((r) => r.item.id)).not.toContain(104);
+    });
+
+    it('passes only 3/4" items when that size is selected', () => {
+      const out = applyRefinement(conduitResults, { tradeSize: '3/4"' });
+      expect(out.map((r) => r.item.id)).toEqual([102]);
+    });
+
+    it('returns an empty list when no item matches the chosen trade size', () => {
+      const out = applyRefinement(conduitResults, { tradeSize: '4"' });
+      expect(out).toEqual([]);
+    });
+
+    it('returns the full list unchanged when tradeSize is empty', () => {
+      expect(applyRefinement(conduitResults, { tradeSize: '' })).toBe(conduitResults);
+    });
+  });
+
+  describe('conduitType chip', () => {
+    const conduitResults: SearchResult[] = [
+      makeResult({
+        id: 201,
+        vendor: 'ALP',
+        catalog: 'EMT12',
+        description: 'Allied 1/2" EMT Conduit 10ft',
+        aiKeywords: ['emt', 'conduit', '1/2"'],
+      }),
+      makeResult({
+        id: 202,
+        vendor: 'ALP',
+        catalog: 'EMT34',
+        description: 'Allied 3/4" EMT Conduit 10ft',
+        aiKeywords: ['emt', 'conduit', '3/4"'],
+      }),
+      makeResult({
+        id: 203,
+        vendor: 'ALP',
+        catalog: 'IMC34',
+        description: 'Allied 3/4" IMC Conduit 10ft',
+        aiKeywords: ['imc', 'conduit', '3/4"'],
+      }),
+      makeResult({
+        id: 204,
+        vendor: 'OZ',
+        catalog: 'PVC12',
+        description: 'Ocal 1/2" PVC Conduit Schedule 40',
+        aiKeywords: ['pvc', 'conduit', '1/2"', 'schedule 40'],
+      }),
+    ];
+
+    it('passes only EMT items when EMT is selected', () => {
+      const out = applyRefinement(conduitResults, { conduitType: 'EMT' });
+      expect(out.map((r) => r.item.id)).toEqual([201, 202]);
+    });
+
+    it('passes only IMC items when IMC is selected', () => {
+      const out = applyRefinement(conduitResults, { conduitType: 'IMC' });
+      expect(out.map((r) => r.item.id)).toEqual([203]);
+    });
+
+    it('passes only PVC items when PVC is selected', () => {
+      const out = applyRefinement(conduitResults, { conduitType: 'PVC' });
+      expect(out.map((r) => r.item.id)).toEqual([204]);
+    });
+
+    it('returns an empty list when no item matches the chosen conduit type', () => {
+      const out = applyRefinement(conduitResults, { conduitType: 'RMC' });
+      expect(out).toEqual([]);
+    });
+
+    it('returns the full list unchanged when conduitType is empty', () => {
+      expect(applyRefinement(conduitResults, { conduitType: '' })).toBe(conduitResults);
+    });
+  });
+
+  describe('tradeSize + conduitType chips combined (AND logic)', () => {
+    const conduitResults: SearchResult[] = [
+      makeResult({
+        id: 301,
+        vendor: 'ALP',
+        catalog: 'EMT12',
+        description: 'Allied 1/2" EMT Conduit 10ft',
+        aiKeywords: ['emt', 'conduit', '1/2"'],
+      }),
+      makeResult({
+        id: 302,
+        vendor: 'ALP',
+        catalog: 'EMT34',
+        description: 'Allied 3/4" EMT Conduit 10ft',
+        aiKeywords: ['emt', 'conduit', '3/4"'],
+      }),
+      makeResult({
+        id: 303,
+        vendor: 'ALP',
+        catalog: 'IMC12',
+        description: 'Allied 1/2" IMC Conduit 10ft',
+        aiKeywords: ['imc', 'conduit', '1/2"'],
+      }),
+      makeResult({
+        id: 304,
+        vendor: 'ALP',
+        catalog: 'IMC34',
+        description: 'Allied 3/4" IMC Conduit 10ft',
+        aiKeywords: ['imc', 'conduit', '3/4"'],
+      }),
+    ];
+
+    it('ANDs tradeSize and conduitType — returns only the single matching item', () => {
+      const out = applyRefinement(conduitResults, { conduitType: 'EMT', tradeSize: '3/4"' });
+      expect(out.map((r) => r.item.id)).toEqual([302]);
+    });
+
+    it('excludes an item that matches conduitType but not tradeSize', () => {
+      // id 301 is EMT 1/2" — matches conduitType EMT but not tradeSize 3/4"
+      const out = applyRefinement(conduitResults, { conduitType: 'EMT', tradeSize: '3/4"' });
+      expect(out.map((r) => r.item.id)).not.toContain(301);
+    });
+
+    it('excludes an item that matches tradeSize but not conduitType', () => {
+      // id 303 is IMC 1/2" — matches tradeSize 1/2" but not conduitType EMT
+      const out = applyRefinement(conduitResults, { conduitType: 'EMT', tradeSize: '1/2"' });
+      expect(out.map((r) => r.item.id)).not.toContain(303);
+    });
+
+    it('returns an empty list when no item satisfies both filters', () => {
+      const out = applyRefinement(conduitResults, { conduitType: 'PVC', tradeSize: '1/2"' });
+      expect(out).toEqual([]);
+    });
+  });
+
   describe("extraKeywords (results-screen 'Add keywords' input)", () => {
     const baseResults: SearchResult[] = [
       makeResult({
