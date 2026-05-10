@@ -159,6 +159,7 @@ jest.mock('react-native', () => {
     StyleSheet,
     ActivityIndicator,
     Image: makeHost('img'),
+    KeyboardAvoidingView: makeHost('div'),
     SafeAreaView: makeHost('div'),
     Platform: { OS: 'ios', select: (o: Record<string, unknown>) => o['ios'] ?? o['default'] },
     Linking: { openURL: jest.fn() },
