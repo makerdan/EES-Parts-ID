@@ -26,6 +26,7 @@ import React from 'react';
 // ── Mutable mock fns (mock* prefix bypasses jest hoisting) ────────────────────
 const mockListClassificationReview = jest.fn();
 const mockConfirmClassificationReview = jest.fn();
+const mockReclassifyReviewItem = jest.fn();
 const mockSkipClassificationReview = jest.fn();
 
 // ── react-native mock ─────────────────────────────────────────────────────────
@@ -165,7 +166,7 @@ jest.mock('@workspace/api-client-react', () => {
   return {
     listClassificationReview: (...args: unknown[]) => mockListClassificationReview(...args),
     confirmClassificationReview: (...args: unknown[]) => mockConfirmClassificationReview(...args),
-    reclassifyReviewItem: jest.fn(async () => undefined),
+    reclassifyReviewItem: (...args: unknown[]) => mockReclassifyReviewItem(...args),
     skipClassificationReview: (...args: unknown[]) => mockSkipClassificationReview(...args),
     ApiError,
   };
@@ -429,6 +430,107 @@ describe('Review Queue chip — stays in sync with admin actions', () => {
         REVIEW_ITEM.inventoryId,
         expect.objectContaining({ headers: expect.any(Object) })
       );
+      expect(screen.getByLabelText('Open review queue').textContent).toContain('3');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('chip count refreshes after ClassificationReviewSection reclassify action', () => {
+    it('decrements from 4 to 3 after the admin reclassifies an item', async () => {
+      jest.setTimeout(20_000);
+
+      // Minimal category tree that openReclassify flattens into one TypeNode.
+      // The node will be accessible via: "Assign to Wiring Devices › Breakers › Single Pole"
+      const CATEGORY_TREE = {
+        tree: [
+          {
+            id: 10,
+            name: 'Wiring Devices',
+            children: [
+              {
+                id: 20,
+                name: 'Breakers',
+                children: [{ id: 31, name: 'Single Pole' }],
+              },
+            ],
+          },
+        ],
+      };
+
+      let reviewFetchCount = 0;
+      global.fetch = jest.fn((url: unknown) => {
+        if (typeof url === 'string' && url.includes('/admin/classification-review')) {
+          reviewFetchCount++;
+          // First fetch → 4 (initial chip load); subsequent → 3 (post-reclassify)
+          const total = reviewFetchCount === 1 ? 4 : 3;
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ total }),
+          } as Response);
+        }
+        if (typeof url === 'string' && url.includes('/categories/tree')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(CATEGORY_TREE),
+          } as Response);
+        }
+        return new Promise<Response>(() => {}); // enrich-summary never resolves
+      }) as typeof global.fetch;
+
+      // count badge on section mount; items for expand
+      mockListClassificationReview
+        .mockResolvedValueOnce({ total: 4, items: [] })
+        .mockResolvedValueOnce({ total: 4, items: [REVIEW_ITEM] });
+
+      mockReclassifyReviewItem.mockResolvedValue(undefined);
+
+      render(<ReviewQueueSyncFixture />);
+      await flush();
+
+      // Chip starts at 4
+      expect(screen.getByLabelText('Open review queue').textContent).toContain('4');
+
+      // Expand the review section
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: /expand classification review/i }));
+      });
+      await flush();
+
+      // Open the reclassify modal
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: /reclassify this item/i }));
+      });
+      await flush();
+
+      // Modal is visible and contains the flattened category node
+      expect(
+        screen.getByRole('button', {
+          name: /assign to wiring devices.*breakers.*single pole/i,
+        })
+      ).toBeTruthy();
+
+      // Pick the category — this fires handleReclassify(31)
+      act(() => {
+        fireEvent.click(
+          screen.getByRole('button', {
+            name: /assign to wiring devices.*breakers.*single pole/i,
+          })
+        );
+      });
+      await flush();
+
+      // reclassifyReviewItem was called with the correct inventoryId and categoryNodeId
+      expect(mockReclassifyReviewItem).toHaveBeenCalledTimes(1);
+      expect(mockReclassifyReviewItem).toHaveBeenCalledWith(
+        REVIEW_ITEM.inventoryId,
+        { categoryNodeId: 31 },
+        expect.objectContaining({ headers: expect.any(Object) })
+      );
+
+      // onReviewAction fired fetchReviewCount → count dropped from 4 to 3
+      expect(reviewFetchCount).toBeGreaterThanOrEqual(2);
       expect(screen.getByLabelText('Open review queue').textContent).toContain('3');
     });
   });
