@@ -6,8 +6,16 @@
  * the description) and `highlightBin` (which bin code to mark with
  * "← here" — used by Browse-by-Aisle to point to the exact shelf).
  */
-import React, { useCallback, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
@@ -293,7 +301,34 @@ export function ResultCard({
   // Browse-by-Aisle, and Photo ID even when the variant isn't already in
   // the visible result list.
   const [detailVariant, setDetailVariant] = useState<InventoryItem | null>(null);
+
+  // Edit-button loading state — disabled immediately on tap to prevent
+  // double-opens; visual indicator appears only after a 100 ms debounce so
+  // it is imperceptible on fast devices that open the modal instantly.
+  const [editLocked, setEditLocked] = useState(false);
+  const [editShowSpinner, setEditShowSpinner] = useState(false);
+  const editTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    const timers = editTimersRef.current;
+    return () => {
+      timers.forEach(clearTimeout);
+    };
+  }, []);
+
   const { item, confidence, matchReason, seriesLabel, variants } = result;
+
+  const handleEditPress = useCallback(() => {
+    if (!onEditKeywords) return;
+    setEditLocked(true);
+    onEditKeywords(item);
+    const showTimer = setTimeout(() => setEditShowSpinner(true), 100);
+    const clearTimer = setTimeout(() => {
+      setEditLocked(false);
+      setEditShowSpinner(false);
+    }, 500);
+    editTimersRef.current = [showTimer, clearTimer];
+  }, [onEditKeywords, item]);
   const fs = useCallback((base: number) => Math.round(base * fontScale), [fontScale]);
 
   // Exclude the current part from its own related-sizes list — a card
@@ -616,12 +651,26 @@ export function ResultCard({
           {/* Edit Part Details — always visible when admin prop is provided */}
           {onEditKeywords ? (
             <Pressable
-              onPress={() => onEditKeywords(item)}
-              style={[cardStyles.editBtn, { borderColor: colors.border }]}
+              onPress={handleEditPress}
+              disabled={editLocked}
+              style={[
+                cardStyles.editBtn,
+                { borderColor: colors.border },
+                editLocked && { opacity: 0.6 },
+              ]}
             >
-              <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
-                ✏️ Edit Part Details
-              </Text>
+              <View style={cardStyles.editBtnContent}>
+                {editShowSpinner ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.primary}
+                    style={cardStyles.editBtnSpinner}
+                  />
+                ) : null}
+                <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
+                  {editShowSpinner ? 'Opening…' : '✏️ Edit Part Details'}
+                </Text>
+              </View>
             </Pressable>
           ) : null}
 
@@ -811,6 +860,8 @@ const cardStyles = StyleSheet.create({
     alignSelf: 'flex-start',
     justifyContent: 'center',
   },
+  editBtnContent: { flexDirection: 'row', alignItems: 'center' },
+  editBtnSpinner: { marginRight: 6 },
   editBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   confirmBtn: {
     marginTop: 10,
