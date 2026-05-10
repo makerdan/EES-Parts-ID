@@ -43,12 +43,24 @@ export interface TradeSizeItem {
  *
  * Returns a 3-decimal numeric string (e.g. "0.500") or null.
  */
+/**
+ * Catalog-code size parsing is only trustworthy when the catalog begins with
+ * a recognised conduit type abbreviation (e.g. "EMT212", "PVC12").
+ * Plain numeric model numbers like CRS covers "250" or "650" coincidentally
+ * match the decimal×100 encoding (250 → 2.5", 650 → 6.5") but are just
+ * product numbers, not size-encoded catalog codes. For those items the
+ * description is the authoritative size source.
+ */
+const CATALOG_TYPE_PREFIX_RE = /^(IMC|EMT|RMC|GRC|RGS|PVC|ENT|FMC|LFMC|LFNC|RNC)/i;
+
 export function deriveTradeSizeIn(item: TradeSizeItem): string | null {
   const hasTradeSizeText = item.tradeSize != null && item.tradeSize.trim() !== '';
   const isConduit =
     isConduitOrPipe(item.catalog, item.vendor, item.description) || hasTradeSizeText;
 
-  const rawCatalogSize = isConduit ? parseTradeSizeInches(item.catalog) : null;
+  const hasCatalogTypePrefix = CATALOG_TYPE_PREFIX_RE.test(item.catalog ?? '');
+  const rawCatalogSize =
+    isConduit && hasCatalogTypePrefix ? parseTradeSizeInches(item.catalog) : null;
   const tradeSizeInches = isConduit
     ? rawCatalogSize !== null && rawCatalogSize <= 12
       ? rawCatalogSize

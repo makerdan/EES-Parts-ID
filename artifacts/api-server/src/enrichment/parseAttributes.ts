@@ -354,20 +354,39 @@ export function parseTradeSize(text: string | null | undefined): number | null {
   // ── Mixed number: "1 1/2", "2-1/2", "1-1/4" ─────────────────────────────
   // Use (?!\d) instead of \b at the end so "1-1/2X90" is still matched
   // (the trailing "X" is a word character, so \b would fail there).
+  // Guard: only use the match when the whole-number part is ≤ 12; otherwise
+  // the regex can misfire on schedule/gauge numbers preceding a fraction, e.g.
+  // "SCH 80 3/4"" → "80 3/4" → 80.75 (nonsensical), which would block the
+  // simpler FRAC_MAP from finding "3/4" → 0.75.
   const mixedMatch = t.match(/\b(\d+)[\s-](\d+)\/(\d+)(?!\d)/);
   if (mixedMatch) {
     const whole = parseInt(mixedMatch[1]!, 10);
     const num = parseInt(mixedMatch[2]!, 10);
     const den = parseInt(mixedMatch[3]!, 10);
-    if (den !== 0) {
+    if (den !== 0 && whole <= 12) {
       const val = whole + num / den;
-      return val > 0 && val <= 12 ? val : null;
+      if (val > 0 && val <= 12) return val;
     }
   }
 
   // ── Simple fraction: "1/2", "3/4" ────────────────────────────────────────
   for (const [re, val] of FRAC_MAP) {
     if (re.test(t)) return val;
+  }
+
+  // ── N×angle format: "1X90", "2 X 90", "4X45" ────────────────────────────
+  // Conduit elbows are often described as <size>X<bend-angle> (e.g. "2X90
+  // AL STANDARD ELBOW"). When the second number is a recognisable bend angle
+  // (≥ 15°), treat the first number as the trade size. Checked before the
+  // inch-suffix pattern so "2 X 90*D LRG 24" RADIUS ELBOW" returns 2 rather
+  // than failing on the out-of-range "24"" later in the string.
+  const nxAngleMatch = t.match(/\b(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+)/);
+  if (nxAngleMatch) {
+    const angle = parseInt(nxAngleMatch[2]!, 10);
+    if (angle >= 15) {
+      const val = parseFloat(nxAngleMatch[1]!);
+      if (val > 0 && val <= 12) return val;
+    }
   }
 
   // ── Decimal or whole number with inch suffix ─────────────────────────────
