@@ -19,7 +19,7 @@
  * in the database. Individual chip failures are retried up to MAX_RETRIES
  * times before the verification step runs.
  */
-import { db, quickLookupCache } from '@workspace/db';
+import { db, pool, quickLookupCache } from '@workspace/db';
 import { eq, inArray } from 'drizzle-orm';
 import { openai } from '@workspace/integrations-openai-ai-server';
 import { logger } from './logger';
@@ -242,5 +242,107 @@ export async function seedQuickLookups(): Promise<void> {
       { err },
       'Quick lookup cache verification query failed — server will remain at 503'
     );
+  }
+}
+
+// ── Background refresh scheduler ──────────────────────────────────────────────
+
+/**
+ * PostgreSQL session-level advisory lock key reserved for the quick-lookup
+ * refresh scheduler. Distinct from the series auto-assign key (20250001) to
+ * avoid cross-feature lock contention.
+ */
+const SCHEDULER_ADVISORY_LOCK_KEY = 20250002;
+
+const DEFAULT_SCHEDULE_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/** Prevents the same process from double-running if a tick fires before the
+ * previous refresh completes (e.g. very short interval in tests). */
+let _seederRunning = false;
+
+let _scheduleTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Attempts to run the provided seed function under a PostgreSQL advisory lock
+ * so that concurrent server processes (e.g. on a rolling deploy) don't
+ * double-seed.
+ *
+ * Uses `pg_try_advisory_lock` (non-blocking): if another process already holds
+ * the lock the refresh is skipped for this tick and retried on the next tick.
+ *
+ * @param seedFn - The function to call while the advisory lock is held.
+ *                 Defaults to `seedQuickLookups`. Overridable for testing.
+ */
+async function scheduledRefresh(seedFn: () => Promise<void>): Promise<void> {
+  if (_seederRunning) {
+    logger.debug('Quick lookup scheduled refresh skipped — previous run still in progress');
+    return;
+  }
+  _seederRunning = true;
+
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query<{ pg_try_advisory_lock: boolean }>(
+      'SELECT pg_try_advisory_lock($1::bigint)',
+      [SCHEDULER_ADVISORY_LOCK_KEY]
+    );
+    const lockAcquired = rows[0]?.pg_try_advisory_lock ?? false;
+
+    if (!lockAcquired) {
+      logger.info(
+        'Quick lookup scheduled refresh skipped — another process holds the advisory lock'
+      );
+      return;
+    }
+
+    try {
+      await seedFn();
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1::bigint)', [SCHEDULER_ADVISORY_LOCK_KEY]);
+    }
+  } catch (err) {
+    logger.error({ err }, 'Quick lookup scheduled refresh failed');
+  } finally {
+    client.release();
+    _seederRunning = false;
+  }
+}
+
+/**
+ * Start the background quick-lookup refresh scheduler.
+ *
+ * Fires `seedQuickLookups()` every `intervalMs` milliseconds (default: 24 h)
+ * under a PostgreSQL advisory lock so concurrent processes don't double-seed.
+ * The timer is `.unref()`-ed so it never prevents the process from exiting
+ * during tests or graceful shutdowns.
+ *
+ * @param intervalMs - How often to refresh (ms). Default: 24 hours.
+ * @param seedFn     - The seed function to run on each tick. Overridable for
+ *                     testing without needing to mock the entire module graph.
+ *
+ * Safe to call once at server startup; subsequent calls are no-ops.
+ */
+export function startQuickLookupScheduler(
+  intervalMs: number = DEFAULT_SCHEDULE_INTERVAL_MS,
+  seedFn: () => Promise<void> = seedQuickLookups
+): void {
+  if (_scheduleTimer) return;
+  const safeInterval = Math.max(1_000, Math.floor(intervalMs));
+  _scheduleTimer = setInterval(() => {
+    void scheduledRefresh(seedFn);
+  }, safeInterval);
+  _scheduleTimer.unref?.();
+  logger.info({ intervalMs: safeInterval }, 'Quick lookup refresh scheduler started');
+}
+
+/**
+ * Cancel the background refresh scheduler.
+ * Called from the graceful-shutdown path so the timer doesn't fire mid-drain.
+ */
+export function stopQuickLookupScheduler(): void {
+  if (_scheduleTimer) {
+    clearInterval(_scheduleTimer);
+    _scheduleTimer = null;
+    logger.info('Quick lookup refresh scheduler stopped');
   }
 }
