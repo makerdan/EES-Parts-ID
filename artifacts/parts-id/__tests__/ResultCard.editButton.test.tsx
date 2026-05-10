@@ -235,4 +235,17 @@ describe('ResultCard — Edit Part Details button visibility', () => {
     // Button remains — it lives outside the expanded block
     expect(screen.getByText('✏️ Edit Part Details')).toBeTruthy();
   });
+
+  it('tapping Edit on a collapsed card fires onEditKeywords with the correct item — no expand needed', () => {
+    const onEdit = jest.fn();
+    const result = makeResult({ catalog: 'QO130', id: 77 });
+    render(<ResultCard result={result} rank={1} onEditKeywords={onEdit} />);
+
+    // Card is in its default collapsed state — do NOT call expandCard().
+    // The always-visible footer button must be reachable and functional.
+    fireEvent.click(screen.getByText('✏️ Edit Part Details'));
+
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onEdit).toHaveBeenCalledWith(result.item);
+  });
 });
