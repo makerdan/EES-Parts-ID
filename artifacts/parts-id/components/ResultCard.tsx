@@ -11,6 +11,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { Feather } from '@expo/vector-icons';
 import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
+import rawColors from '@/constants/colors';
 import { splitHighlightSegments } from '@/lib/refinement';
 import { parseTradeSizeInches, formatInchesAsFraction } from '@/lib/tradeSize';
 
@@ -841,8 +842,8 @@ const cardStyles = StyleSheet.create({
   },
   detailSheet: {
     maxHeight: '92%',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: rawColors.sheetRadius,
+    borderTopRightRadius: rawColors.sheetRadius,
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,
