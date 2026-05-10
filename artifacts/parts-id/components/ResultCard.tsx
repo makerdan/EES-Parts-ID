@@ -25,7 +25,14 @@ import { parseTradeSizeInches, formatInchesAsFraction } from '@/lib/tradeSize';
 
 interface ResultCardProps {
   result: SearchResult;
-  onEditKeywords?: (item: InventoryItem) => void;
+  /**
+   * Called when the admin taps "Edit Part Details". An optional `onDone`
+   * callback is passed as the second argument — the parent should call it
+   * once the edit modal has visibly opened (or on close) so the button can
+   * be re-enabled immediately. If the parent does not call `onDone`, the
+   * button unlocks automatically after a 600 ms fallback.
+   */
+  onEditKeywords?: (item: InventoryItem, onDone?: () => void) => void;
   rank: number;
   /** When false, the rank badge (#1, #2, …) is not rendered. Defaults to true.
    *  Set to false in Browse by Aisle where ordering is by bin position, not relevance. */
@@ -310,9 +317,10 @@ export function ResultCard({
   const editTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
-    const timers = editTimersRef.current;
+    // Access the ref directly (not a captured snapshot) so the cleanup
+    // always clears the live timer IDs, not the empty array at mount time.
     return () => {
-      timers.forEach(clearTimeout);
+      editTimersRef.current.forEach(clearTimeout);
     };
   }, []);
 
@@ -320,14 +328,36 @@ export function ResultCard({
 
   const handleEditPress = useCallback(() => {
     if (!onEditKeywords) return;
+
+    // Clear any previous timers before scheduling new ones.
+    editTimersRef.current.forEach(clearTimeout);
+    editTimersRef.current = [];
+
     setEditLocked(true);
-    onEditKeywords(item);
+
+    // Show the visual indicator only after a 100 ms debounce — on fast
+    // devices the modal appears before this fires and the spinner is never
+    // visible to the user.
     const showTimer = setTimeout(() => setEditShowSpinner(true), 100);
-    const clearTimer = setTimeout(() => {
+    editTimersRef.current = [showTimer];
+
+    // `done` is the lifecycle signal. The parent may call it when the modal
+    // has opened (or closed). A 600 ms fallback fires automatically for
+    // existing callers that don't use the second argument (e.g. setEditItem).
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      editTimersRef.current.forEach(clearTimeout);
+      editTimersRef.current = [];
       setEditLocked(false);
       setEditShowSpinner(false);
-    }, 500);
-    editTimersRef.current = [showTimer, clearTimer];
+    };
+
+    onEditKeywords(item, done);
+
+    const fallbackTimer = setTimeout(done, 600);
+    editTimersRef.current = [...editTimersRef.current, fallbackTimer];
   }, [onEditKeywords, item]);
   const fs = useCallback((base: number) => Math.round(base * fontScale), [fontScale]);
 
