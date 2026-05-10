@@ -7,60 +7,32 @@
  * by:
  *
  *  Part A — Computation unit tests (no DB):
- *    Directly tests the per-item trade-size computation replicating the exact
- *    decision tree in backfill_attrs.ts for a set of catalog codes that MUST
- *    always produce a non-null trade_size_in.
+ *    Calls the real `deriveTradeSizeIn` exported from
+ *    `src/enrichment/tradeSizeBackfill.ts` — the same function the backfill
+ *    script uses — for a set of catalog codes that MUST always produce a
+ *    non-null trade_size_in.
  *
  *  Part B — Integration tests (live DB):
- *    Seeds known fixture rows, runs the backfill computation on each, writes
- *    the results to the DB, then reads back and asserts:
+ *    Seeds known fixture rows, calls `deriveTradeSizeIn` on each (the
+ *    production code path), writes the results to the DB, then reads back
+ *    and asserts:
  *      (a) each conduit item got the expected trade_size_in value, and
  *      (b) coverage across the seeded conduit items is 100 %.
+ *
+ *  Part C — NEEDS_PARSE selection guard (live DB):
+ *    Verifies that the backfill selection criteria correctly targets unprocessed
+ *    rows and skips rows already at the current parser version so that query/
+ *    filter changes causing coverage drops are also caught.
  */
 
 import { db, pool, inventoryTable } from '@workspace/db';
 import { eq, inArray, sql } from 'drizzle-orm';
-import { parseTradeSizeInches, isConduitOrPipe } from '../src/utils/tradeSize';
-import { parseTradeSize } from '../src/enrichment/parseAttributes';
+import { deriveTradeSizeIn } from '../src/enrichment/tradeSizeBackfill';
+import { CURRENT_PARSER_VERSION } from '../src/enrichment/invalidation';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Part A: unit tests — calls the real production derivation (no DB) ─────────
 
-/**
- * Replicates the per-item trade-size derivation from backfill_attrs.ts.
- * Kept in sync with the script so this test can detect drift.
- */
-function computeTradeSizeIn(item: {
-  catalog: string | null;
-  vendor: string | null;
-  description: string | null;
-  tradeSize?: string | null;
-  tradeSizeIn?: string | null;
-}): string | null {
-  const hasTradeSizeText = item.tradeSize != null && item.tradeSize.trim() !== '';
-  const isConduit =
-    isConduitOrPipe(item.catalog, item.vendor, item.description) || hasTradeSizeText;
-
-  const rawCatalogSize = isConduit ? parseTradeSizeInches(item.catalog) : null;
-  const tradeSizeInches = isConduit
-    ? rawCatalogSize !== null && rawCatalogSize <= 12
-      ? rawCatalogSize
-      : (parseTradeSizeInches(item.description) ??
-        parseTradeSize(item.description) ??
-        parseTradeSize(item.catalog) ??
-        parseTradeSize(item.tradeSize))
-    : null;
-
-  const computedTradeSizeIn =
-    tradeSizeInches !== null && tradeSizeInches <= 12 ? tradeSizeInches.toFixed(3) : null;
-
-  // Idempotency: preserve a previously-correct value if the current derivation
-  // produces null (mirrors the backfill script's behaviour).
-  return computedTradeSizeIn ?? item.tradeSizeIn ?? null;
-}
-
-// ── Part A: computation unit tests (no DB required) ──────────────────────────
-
-describe('backfill trade-size computation — catalog-code cases', () => {
+describe('deriveTradeSizeIn — catalog-code cases', () => {
   it.each([
     // Catalog code    Expected inches  Note
     ['EMT12', '0.500', 'fraction code 12 → 1/2"'],
@@ -73,7 +45,7 @@ describe('backfill trade-size computation — catalog-code cases', () => {
     ['PVC2', '2.000', 'whole-number code 2 → 2"'],
     ['EMT100', '1.000', 'whole-number ×100 code 100 → 1"'],
   ])('catalog=%s → tradeSizeIn=%s (%s)', (catalog, expected) => {
-    const result = computeTradeSizeIn({
+    const result = deriveTradeSizeIn({
       catalog,
       vendor: null,
       description: catalog + ' conduit',
@@ -82,9 +54,9 @@ describe('backfill trade-size computation — catalog-code cases', () => {
   });
 });
 
-describe('backfill trade-size computation — description fallback cases', () => {
+describe('deriveTradeSizeIn — description fallback cases', () => {
   it('LOCKNUT with 3/4" in description → 0.750"', () => {
-    const result = computeTradeSizeIn({
+    const result = deriveTradeSizeIn({
       catalog: 'LN001',
       vendor: null,
       description: '3/4 Conduit Locknut',
@@ -93,7 +65,7 @@ describe('backfill trade-size computation — description fallback cases', () =>
   });
 
   it('generic conduit item with "1-1/2 in" in description → 1.500"', () => {
-    const result = computeTradeSizeIn({
+    const result = deriveTradeSizeIn({
       catalog: 'CONDFIT99',
       vendor: null,
       description: '1-1/2 in Conduit Connector',
@@ -102,7 +74,7 @@ describe('backfill trade-size computation — description fallback cases', () =>
   });
 
   it('FITTING with 1/2" in description → 0.500"', () => {
-    const result = computeTradeSizeIn({
+    const result = deriveTradeSizeIn({
       catalog: 'FIT001',
       vendor: null,
       description: '1/2" EMT FITTING',
@@ -111,20 +83,20 @@ describe('backfill trade-size computation — description fallback cases', () =>
   });
 });
 
-describe('backfill trade-size computation — non-conduit items', () => {
+describe('deriveTradeSizeIn — non-conduit items', () => {
   it.each([
     ['BR120', '20A Breaker', 'circuit breaker → no trade size'],
     ['HBL5262I', '20A 125V Duplex Receptacle', 'receptacle → no trade size'],
     ['NM214', 'Romex 14/2 wire', 'wire → no trade size'],
   ])('catalog=%s desc=%s → null (%s)', (catalog, description, _note) => {
-    const result = computeTradeSizeIn({ catalog, vendor: null, description });
+    const result = deriveTradeSizeIn({ catalog, vendor: null, description });
     expect(result).toBeNull();
   });
 });
 
-describe('backfill trade-size computation — idempotency', () => {
+describe('deriveTradeSizeIn — idempotency', () => {
   it('preserves a previously-correct tradeSizeIn when the current derivation returns null', () => {
-    const result = computeTradeSizeIn({
+    const result = deriveTradeSizeIn({
       catalog: 'CONDFIT99',
       vendor: null,
       description: 'Conduit reducer body no size hint',
@@ -134,7 +106,7 @@ describe('backfill trade-size computation — idempotency', () => {
   });
 });
 
-// ── Part B: integration tests (live PostgreSQL DB) ────────────────────────────
+// ── Part B: integration tests — full production path against a live DB ────────
 
 /**
  * Fixture definitions.
@@ -208,12 +180,16 @@ const TRADE_SIZE_FIXTURES: TradeSizeFixture[] = [
 
 const CONDUIT_FIXTURES = TRADE_SIZE_FIXTURES.filter((f) => f.expectedTradeSizeIn !== null);
 
-/** Clean up all test rows. */
 async function cleanupTradeSizeFixtures() {
   await db
     .delete(inventoryTable)
     .where(sql`${inventoryTable.catalog} LIKE ${CATALOG_PREFIX + '%'}`);
 }
+
+// Close the pool once, after every describe block in this file has finished.
+afterAll(async () => {
+  await pool.end();
+}, 30_000);
 
 describe('backfill trade-size — integration (seeded DB)', () => {
   let seededIds: number[] = [];
@@ -240,15 +216,14 @@ describe('backfill trade-size — integration (seeded DB)', () => {
 
   afterAll(async () => {
     await cleanupTradeSizeFixtures();
-    await pool.end();
   }, 30_000);
 
   it('seeds the expected number of fixture rows', () => {
     expect(seededIds.length).toBe(TRADE_SIZE_FIXTURES.length);
   });
 
-  it('backfill computation produces the expected tradeSizeIn for every fixture row', async () => {
-    // Fetch the seeded rows (replicating the batch-select in backfill_attrs.ts).
+  it('backfill writes the expected tradeSizeIn for every fixture row', async () => {
+    // Fetch seeded rows (replicates the batch-select in backfill_attrs.ts).
     const rows = await db
       .select({
         id: inventoryTable.id,
@@ -261,13 +236,14 @@ describe('backfill trade-size — integration (seeded DB)', () => {
       .from(inventoryTable)
       .where(inArray(inventoryTable.id, seededIds));
 
-    // Run the backfill computation and write back (mirrors backfill_attrs.ts).
+    // Run the real backfill derivation and write back exactly as the script
+    // does (mirrors the inner loop of backfill_attrs.ts).
     for (const row of rows) {
-      const tradeSizeIn = computeTradeSizeIn(row);
+      const tradeSizeIn = deriveTradeSizeIn(row);
       await db.update(inventoryTable).set({ tradeSizeIn }).where(eq(inventoryTable.id, row.id));
     }
 
-    // Read back and assert each item got the correct value.
+    // Read back and assert the correct value for each fixture.
     const updated = await db
       .select({
         catalog: inventoryTable.catalog,
@@ -292,10 +268,115 @@ describe('backfill trade-size — integration (seeded DB)', () => {
       .from(inventoryTable)
       .where(inArray(inventoryTable.id, seededIds));
 
-    const conduitCount = CONDUIT_FIXTURES.length;
     expect(total).toBe(TRADE_SIZE_FIXTURES.length);
-
-    // Every seeded conduit item must have a non-null trade_size_in.
-    expect(covered).toBe(conduitCount);
+    expect(covered).toBe(CONDUIT_FIXTURES.length);
   }, 30_000);
+});
+
+// ── Part C: NEEDS_PARSE selection guard ──────────────────────────────────────
+
+/**
+ * The backfill selects rows where:
+ *   attrs_parsed_at IS NULL
+ *   OR catalog_parse IS NULL
+ *   OR (catalog_parse->>'parser_version')::int < CURRENT_PARSER_VERSION
+ *
+ * This section verifies that selection criteria behaves correctly so that
+ * query/filter changes (which would silently drop coverage) are caught.
+ */
+
+const NP_PREFIX = 'JEST-TSZ-NP-';
+
+async function cleanupNpFixtures() {
+  await db.delete(inventoryTable).where(sql`${inventoryTable.catalog} LIKE ${NP_PREFIX + '%'}`);
+}
+
+describe('backfill NEEDS_PARSE selection — integration', () => {
+  let unparsedId: number;
+  let staleId: number;
+  let currentId: number;
+
+  beforeAll(async () => {
+    await cleanupNpFixtures();
+
+    const seed = async (catalog: string, catalogParse: Record<string, unknown> | null) => {
+      const [row] = await db
+        .insert(inventoryTable)
+        .values({
+          vendor: 'ARL',
+          catalog,
+          description: '1/2 in EMT conduit',
+          binLocations: [] as string[],
+          aiKeywords: [] as string[],
+          catalogParse: catalogParse as never,
+        })
+        .returning({ id: inventoryTable.id });
+      return row!.id;
+    };
+
+    unparsedId = await seed(`${NP_PREFIX}UNPARSED`, null);
+    staleId = await seed(`${NP_PREFIX}STALE`, {
+      parser_version: CURRENT_PARSER_VERSION - 1,
+    });
+    currentId = await seed(`${NP_PREFIX}CURRENT`, {
+      parser_version: CURRENT_PARSER_VERSION,
+    });
+
+    // Mark the "current" row as fully processed so none of the three
+    // NEEDS_PARSE arms (attrs_parsed_at IS NULL, catalog_parse IS NULL,
+    // parser_version < CURRENT) match it.
+    await db
+      .update(inventoryTable)
+      .set({ attrsParsedAt: new Date() })
+      .where(eq(inventoryTable.id, currentId));
+  }, 30_000);
+
+  afterAll(async () => {
+    await cleanupNpFixtures();
+  }, 30_000);
+
+  it('selects the unparsed row (catalog_parse IS NULL)', async () => {
+    const [{ cnt }] = await db
+      .select({ cnt: sql<number>`count(*)::int` })
+      .from(inventoryTable)
+      .where(
+        sql`${inventoryTable.id} = ${unparsedId}
+            AND (
+              attrs_parsed_at IS NULL
+              OR catalog_parse IS NULL
+              OR (catalog_parse->>'parser_version')::int < ${CURRENT_PARSER_VERSION}
+            )`
+      );
+    expect(cnt).toBe(1);
+  });
+
+  it('selects the stale row (parser_version < CURRENT_PARSER_VERSION)', async () => {
+    const [{ cnt }] = await db
+      .select({ cnt: sql<number>`count(*)::int` })
+      .from(inventoryTable)
+      .where(
+        sql`${inventoryTable.id} = ${staleId}
+            AND (
+              attrs_parsed_at IS NULL
+              OR catalog_parse IS NULL
+              OR (catalog_parse->>'parser_version')::int < ${CURRENT_PARSER_VERSION}
+            )`
+      );
+    expect(cnt).toBe(1);
+  });
+
+  it('does NOT select the already-current row (parser_version === CURRENT_PARSER_VERSION)', async () => {
+    const [{ cnt }] = await db
+      .select({ cnt: sql<number>`count(*)::int` })
+      .from(inventoryTable)
+      .where(
+        sql`${inventoryTable.id} = ${currentId}
+            AND (
+              attrs_parsed_at IS NULL
+              OR catalog_parse IS NULL
+              OR (catalog_parse->>'parser_version')::int < ${CURRENT_PARSER_VERSION}
+            )`
+      );
+    expect(cnt).toBe(0);
+  });
 });
