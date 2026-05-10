@@ -34,7 +34,8 @@ import supertest from 'supertest';
 import { eq, sql, inArray } from 'drizzle-orm';
 import app from '../src/app';
 import { signAdminToken } from '../src/routes/admin';
-import { db, pool, inventoryTable, inventoryCategoryTable, categoryNodeTable } from '@workspace/db';
+import { db, inventoryTable, inventoryCategoryTable, categoryNodeTable } from '@workspace/db';
+import { closePool } from './helpers/testDb';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ADMIN_SECRET = 'jest-cr-test-secret';
@@ -193,7 +194,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanupTestData([inv1Id, inv2Id, inv3Id, inv4Id, inv5Id, inv6Id, inv7Id]);
-  await pool.end();
+  await closePool();
 }, 30_000);
 
 // ─────────────────────────────────────────────────────────────────────────────
