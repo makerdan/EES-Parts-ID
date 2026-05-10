@@ -185,21 +185,25 @@ beforeAll(async () => {
   // 4. Seed the fixture rows (all with series_id = NULL).
   await seedFixtures();
 
-  // 4a. Wait until the advisory lock is genuinely free before running
-  //     auto-assign.  Matches the same guard used in the "Idempotency" and
-  //     "Concurrency lock" describe blocks below.  Handles the rare case where
-  //     a previous test run was killed while holding lock 20250001 and the
-  //     PostgreSQL session has not yet been reaped by the server.
+  // 4a. Wait until advisory lock 20250001 is genuinely free before running
+  //     auto-assign.  Handles the rare case where a previous test run was
+  //     killed while holding the lock and the PostgreSQL session has not yet
+  //     been reaped by the server.  We use pg_advisory_lock (blocking) rather
+  //     than pg_try_advisory_lock so we wait rather than spin; statement_timeout
+  //     caps the wait so the suite does not hang indefinitely.
+  //
+  //     Unlike the inner describe blocks below, we deliberately let any error
+  //     propagate so Jest marks the beforeAll — and the whole suite — as
+  //     failed with a clear message rather than silently proceeding into a
+  //     certain 409.  If you see this failure, force-release the lock with:
+  //       SELECT pg_terminate_backend(pid) FROM pg_locks
+  //       WHERE locktype='advisory' AND objid=20250001 AND granted;
   {
     const client = await pool.connect();
     try {
-      await client.query("SET statement_timeout = '10s'");
+      await client.query("SET statement_timeout = '30s'");
       await client.query('SELECT pg_advisory_lock($1::bigint)', [20250001]);
       await client.query('SELECT pg_advisory_unlock($1::bigint)', [20250001]);
-    } catch {
-      // Lock wait timed out or other transient error.  Proceed — if the lock
-      // is genuinely stale the runAutoAssign() call below will fail with a
-      // clear 409, which is more actionable than a silent hang here.
     } finally {
       client.release();
     }
