@@ -11,7 +11,11 @@ import {
   start as startEnrichmentRunCleanup,
   stop as stopEnrichmentRunCleanup,
 } from './lib/enrichmentRunCleanup';
-import { seedQuickLookups } from './lib/seedQuickLookups';
+import {
+  seedQuickLookups,
+  startQuickLookupScheduler,
+  stopQuickLookupScheduler,
+} from './lib/seedQuickLookups';
 
 const rawPort = process.env['PORT'];
 
@@ -48,7 +52,11 @@ function startServer(retries: number): void {
     logger.info({ port }, 'Server listening');
     startEnrichmentRunCleanup();
     // Warm the quick lookup cache non-blocking — errors logged, not fatal.
-    seedQuickLookups().catch((err) => logger.error({ err }, 'Quick lookup seeder failed'));
+    // After the initial seed completes (or fails), start the daily background
+    // refresh scheduler so answers stay current without a server restart.
+    seedQuickLookups()
+      .catch((err) => logger.error({ err }, 'Quick lookup seeder failed'))
+      .finally(() => startQuickLookupScheduler());
   });
 
   // Defer the rest of server-startup wiring to a separate handler so
@@ -62,6 +70,7 @@ function startServer(retries: number): void {
 
       // Cancel background timers first so they can't fire mid-shutdown.
       stopEnrichmentRunCleanup();
+      stopQuickLookupScheduler();
 
       server.close(async () => {
         logger.info('HTTP server closed');
