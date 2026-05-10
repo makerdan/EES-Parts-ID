@@ -23,9 +23,9 @@
 import { db, pool } from '@workspace/db';
 import { inventoryTable } from '@workspace/db';
 import { sql, eq } from 'drizzle-orm';
-import { deriveAttrs, parseTradeSize } from '../enrichment/parseAttributes';
+import { deriveAttrs } from '../enrichment/parseAttributes';
 import { CURRENT_PARSER_VERSION } from '../enrichment/invalidation';
-import { parseTradeSizeInches, isConduitOrPipe } from '../utils/tradeSize';
+import { deriveTradeSizeIn } from '../enrichment/tradeSizeBackfill';
 
 const BATCH_SIZE = parseInt(process.env['BACKFILL_BATCH_SIZE'] ?? '500', 10);
 const DELAY_MS = parseInt(process.env['BACKFILL_DELAY_MS'] ?? '0', 10);
@@ -83,41 +83,10 @@ async function backfillAttrs() {
       try {
         const attrs = deriveAttrs(item);
 
-        // Derive trade_size_in only for conduit/pipe items and guard against
-        // bogus values: parseTradeSizeInches can fire on catalog digits that
-        // happen to look like a fraction suffix (e.g. N3034 → 30.75).
-        // Real trade sizes are ≤ 6" in practice; we cap at 12" to be safe.
-        //
-        // If the legacy trade_size TEXT column is populated we also treat the
-        // item as conduit-family (it was previously identified) and use it as
-        // a last-resort parse source. This recovers items whose descriptions use
-        // shorthand (e.g. "COND BODY", "REDUCING BUSHING") that parseTradeSize
-        // can't extract but that were correctly sized during the original import.
-        const hasTradeSizeText = item.tradeSize != null && item.tradeSize.trim() !== '';
-        const isConduit =
-          isConduitOrPipe(item.catalog, item.vendor, item.description) || hasTradeSizeText;
-        // parseTradeSizeInches handles catalog-code encoded sizes (e.g. "EMT212" → 2.5,
-        // "EMT150" → 1.5, "EMT250" → 2.5 via decimal×100 encoding).
-        // parseTradeSize handles richer free-text ("1/2 inch", "25mm", "1-1/2 in", etc.).
-        // IMPORTANT: only use the catalog-code result when it is in a plausible range (≤12");
-        // out-of-range catalog parses (e.g. N3034 → 30.75) must fall through to the
-        // description so the correct size can still be found.
-        const rawCatalogSize = isConduit ? parseTradeSizeInches(item.catalog) : null;
-        const tradeSizeInches = isConduit
-          ? rawCatalogSize !== null && rawCatalogSize <= 12
-            ? rawCatalogSize
-            : (parseTradeSizeInches(item.description) ??
-              parseTradeSize(item.description) ??
-              parseTradeSize(item.catalog) ??
-              parseTradeSize(item.tradeSize))
-          : null;
-        // Cap at 12" to guard against bogus matches (e.g. a catalog digit string that
-        // happens to look like a large fraction code).
-        const computedTradeSizeIn =
-          tradeSizeInches !== null && tradeSizeInches <= 12 ? tradeSizeInches.toFixed(3) : null;
-        // Idempotency: preserve a previously correct value if the current derivation
-        // produces null (e.g. the parser got more conservative between backfill runs).
-        const tradeSizeIn = computedTradeSizeIn ?? item.tradeSizeIn ?? null;
+        // Delegate to the exported deriveTradeSizeIn function so the backfill
+        // script and the regression test share one canonical implementation.
+        // See src/enrichment/tradeSizeBackfill.ts for the full decision tree.
+        const tradeSizeIn = deriveTradeSizeIn(item);
 
         // Always stamp parser_version with CURRENT_PARSER_VERSION when storing,
         // regardless of what parseCatalog() returns internally (parseCatalog
