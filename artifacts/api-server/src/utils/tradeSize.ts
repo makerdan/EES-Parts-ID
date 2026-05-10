@@ -104,6 +104,10 @@ const CONDUIT_TOKENS = [
   'BUSHING',
   'REDUCER',
   'KNOCKOUT',
+  // Conduit body abbreviation — "COND BODY" is a multi-word token checked
+  // via substring match, so it won't fire on "CONDUCTOR" or "SECONDARY".
+  'COND BODY',
+  'COND ROD',
 ];
 
 /** True when any text fragment looks like a conduit, pipe, or fitting. */
