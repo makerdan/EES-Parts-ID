@@ -322,13 +322,15 @@ describe('backfill NEEDS_PARSE selection — integration', () => {
       parser_version: CURRENT_PARSER_VERSION,
     });
 
-    // Mark the "current" row as fully processed so none of the three
-    // NEEDS_PARSE arms (attrs_parsed_at IS NULL, catalog_parse IS NULL,
-    // parser_version < CURRENT) match it.
+    // Stamp attrsParsedAt on the stale and current rows so that
+    // attrs_parsed_at IS NULL cannot satisfy NEEDS_PARSE for either.
+    // This isolates each test to exactly one arm of the OR condition:
+    //   • stale  → only (catalog_parse->>'parser_version')::int < CURRENT
+    //   • current → none of the three arms match
     await db
       .update(inventoryTable)
       .set({ attrsParsedAt: new Date() })
-      .where(eq(inventoryTable.id, currentId));
+      .where(sql`${inventoryTable.id} IN (${staleId}, ${currentId})`);
   }, 30_000);
 
   afterAll(async () => {
