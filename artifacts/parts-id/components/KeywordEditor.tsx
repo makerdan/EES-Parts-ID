@@ -126,6 +126,12 @@ export function KeywordEditor({
   // normal (non-redo) edit so the redo branch stays consistent.
   const [descRedoStack, setDescRedoStack] = useState<string[]>([]);
 
+  // Session-scoped undo stacks for keyword and trade-size edits.
+  // Each kwUndoStack entry is the keyword array that existed BEFORE the save.
+  // Each tsUndoStack entry is the trade-size string that existed BEFORE the save.
+  const [kwUndoStack, setKwUndoStack] = useState<string[][]>([]);
+  const [tsUndoStack, setTsUndoStack] = useState<string[]>([]);
+
   // Tracks whether a mutateAsync call is currently in flight
   const isSavingRef = useRef(false);
 
@@ -137,6 +143,10 @@ export function KeywordEditor({
   // Set while persist() is being driven by a redo so we don't clear the redo
   // stack on the save that the redo itself triggers.
   const isRedoingDescRef = useRef(false);
+
+  // Set while persist() is driven by a keyword or trade-size undo.
+  const isUndoingKwRef = useRef(false);
+  const isUndoingTsRef = useRef(false);
 
   // When a save is in flight at close-time, stash the latest snapshot here so
   // the in-flight save's finally block can fire one follow-up flush.
@@ -178,6 +188,8 @@ export function KeywordEditor({
     lastSavedBinsRef.current = bins;
     setDescUndoStack([]);
     setDescRedoStack([]);
+    setKwUndoStack([]);
+    setTsUndoStack([]);
     setSaveStatus('idle');
     setLocalSeriesName(item?.seriesName ?? null);
     setSeriesSearch('');
@@ -206,15 +218,24 @@ export function KeywordEditor({
         return;
       isSavingRef.current = true;
       setSaveStatus('saving');
-      // Snapshot the previous saved description BEFORE the network round-
-      // trip so we can push it onto the undo stack if (and only if) the
-      // save succeeds and the description actually changed.
+      // Snapshot the previous saved values BEFORE the network round-trip so
+      // we can push them onto the undo stacks if (and only if) the save
+      // succeeds and the value actually changed.
       const prevDesc = lastSavedDescriptionRef.current;
+      const prevKws = lastSavedKeywordsRef.current;
+      const prevTs = lastSavedTradeSizeRef.current;
       const undoingThisSave = isUndoingDescRef.current;
       const redoingThisSave = isRedoingDescRef.current;
+      const undoingKw = isUndoingKwRef.current;
+      const undoingTs = isUndoingTsRef.current;
       try {
         await updateMutation.mutateAsync({ id, data: payload });
         if (payload.keywords !== undefined) {
+          // Push the previous array onto the undo stack unless this save is
+          // itself the result of an undo (which would create an A→B→A loop).
+          if (!undoingKw) {
+            setKwUndoStack((stack) => [...stack, prevKws]);
+          }
           lastSavedKeywordsRef.current = payload.keywords;
           onKeywordsChanged?.(id, payload.keywords);
         }
@@ -230,6 +251,11 @@ export function KeywordEditor({
           onDescriptionChanged?.(id, payload.description);
         }
         if (payload.tradeSize !== undefined) {
+          // Push the previous trade-size string onto the undo stack unless
+          // this save is itself the result of an undo.
+          if (!undoingTs) {
+            setTsUndoStack((stack) => [...stack, prevTs]);
+          }
           const ts = payload.tradeSize ?? null;
           lastSavedTradeSizeRef.current = ts ?? '';
           onTradeSizeChanged?.(id, ts);
@@ -609,6 +635,54 @@ export function KeywordEditor({
     });
   }, [persist]);
 
+  // Pop the most recent prior keyword array and re-persist it.
+  const handleUndoKeywords = useCallback(() => {
+    const current = itemRef.current;
+    if (!current) return;
+    setKwUndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const next = stack.slice(0, -1);
+      const prior = stack[stack.length - 1] ?? [];
+      // Cancel any pending debounced keyword save so the undone value isn't overwritten.
+      if (kwDebounceRef.current) {
+        clearTimeout(kwDebounceRef.current);
+        kwDebounceRef.current = null;
+      }
+      setKeywords(prior);
+      latestKeywordsRef.current = prior;
+      isUndoingKwRef.current = true;
+      void persist(current.id, { keywords: prior }).finally(() => {
+        isUndoingKwRef.current = false;
+      });
+      return next;
+    });
+  }, [persist]);
+
+  // Pop the most recent prior trade-size value and re-persist it.
+  const handleUndoTradeSize = useCallback(() => {
+    const current = itemRef.current;
+    if (!current) return;
+    setTsUndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const next = stack.slice(0, -1);
+      const prior = stack[stack.length - 1] ?? '';
+      // Cancel any pending debounced trade-size save so the undone value isn't overwritten.
+      if (tradeSizeDebounceRef.current) {
+        clearTimeout(tradeSizeDebounceRef.current);
+        tradeSizeDebounceRef.current = null;
+      }
+      setTradeSize(prior);
+      latestTradeSizeRef.current = prior;
+      isUndoingTsRef.current = true;
+      void persist(current.id, { tradeSize: prior.trim() === '' ? null : prior.trim() }).finally(
+        () => {
+          isUndoingTsRef.current = false;
+        }
+      );
+      return next;
+    });
+  }, [persist]);
+
   const handleDismissSuggestion = () => {
     setSuggestion(null);
     setSuggestError(null);
@@ -914,9 +988,37 @@ export function KeywordEditor({
           ) : null}
 
           {/* ── Trade Size ────────────────────────────────────────────── */}
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-            TRADE SIZE
-          </Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginTop: 24,
+            }}
+          >
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>TRADE SIZE</Text>
+            <Pressable
+              onPress={handleUndoTradeSize}
+              disabled={tsUndoStack.length === 0}
+              accessibilityRole="button"
+              accessibilityLabel="Undo last trade size change"
+              accessibilityState={{ disabled: tsUndoStack.length === 0 }}
+              style={{
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 6,
+                borderWidth: 1,
+                borderColor: colors.border,
+                opacity: tsUndoStack.length === 0 ? 0.4 : 1,
+              }}
+            >
+              <Text
+                style={{ color: colors.foreground, fontSize: 11, fontFamily: 'Inter_600SemiBold' }}
+              >
+                ↶ Undo
+              </Text>
+            </Pressable>
+          </View>
           <Text style={[styles.subHint, { color: colors.mutedForeground }]}>
             Groups this part with others of the same product in different sizes.
           </Text>
@@ -939,9 +1041,39 @@ export function KeywordEditor({
           />
 
           {/* ── Keywords ──────────────────────────────────────────────── */}
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-            KEYWORDS ({keywords.length})
-          </Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginTop: 24,
+            }}
+          >
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+              KEYWORDS ({keywords.length})
+            </Text>
+            <Pressable
+              onPress={handleUndoKeywords}
+              disabled={kwUndoStack.length === 0}
+              accessibilityRole="button"
+              accessibilityLabel="Undo last keyword change"
+              accessibilityState={{ disabled: kwUndoStack.length === 0 }}
+              style={{
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 6,
+                borderWidth: 1,
+                borderColor: colors.border,
+                opacity: kwUndoStack.length === 0 ? 0.4 : 1,
+              }}
+            >
+              <Text
+                style={{ color: colors.foreground, fontSize: 11, fontFamily: 'Inter_600SemiBold' }}
+              >
+                ↶ Undo
+              </Text>
+            </Pressable>
+          </View>
           <Text style={[styles.subHint, { color: colors.mutedForeground }]}>
             Tap a keyword to remove it.
           </Text>
@@ -994,6 +1126,8 @@ export function KeywordEditor({
             />
             <Pressable
               onPress={addKeyword}
+              accessibilityRole="button"
+              accessibilityLabel="Add keyword"
               style={[styles.addBtn, { backgroundColor: colors.primary }]}
             >
               <Text style={[styles.addBtnText, { color: colors.primaryForeground }]}>+ Add</Text>

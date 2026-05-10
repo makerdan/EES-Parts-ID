@@ -8,6 +8,9 @@
  *   3. Opening the editor on a different item resets both stacks
  *   4. Undo failure: persist() rejects → "Save failed" badge, consistent button states
  *   5. Redo failure: persist() rejects → "Save failed" badge, consistent button states
+ *   6. Keyword Undo: remove/add keyword → undo restores previous list
+ *   7. Trade-size Undo: change trade size → undo restores previous value
+ *   8. Both stacks reset when the editor opens on a different item
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';
@@ -492,5 +495,237 @@ describe('KeywordEditor — Undo/Redo save failure', () => {
     // save never completed). Both buttons are disabled — no stuck/phantom entries.
     expect(getRedoBtn().disabled).toBe(true);
     expect(getUndoBtn().disabled).toBe(true);
+  });
+});
+
+// ── Keyword Undo ─────────────────────────────────────────────────────────────
+
+function getKwUndoBtn() {
+  return screen.getByLabelText('Undo last keyword change') as HTMLButtonElement;
+}
+
+describe('KeywordEditor — Keyword Undo', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockMutateAsync.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+    jest.clearAllMocks();
+  });
+
+  it('Undo keyword button is disabled when no keyword edits have been made', () => {
+    render(<KeywordEditor item={makeItem()} onClose={jest.fn()} />);
+    expect(getKwUndoBtn().disabled).toBe(true);
+  });
+
+  it('removing a keyword enables Undo, which restores the keyword', async () => {
+    const item = makeItem({ aiKeywords: ['breaker'] });
+    render(<KeywordEditor item={item} onClose={jest.fn()} />);
+
+    expect(getKwUndoBtn().disabled).toBe(true);
+
+    // Click the chip text to remove 'breaker' — the click bubbles to the button.
+    fireEvent.click(screen.getByText('breaker'));
+
+    // Advance past the debounce so persist fires and the undo stack is populated.
+    await act(async () => {
+      jest.advanceTimersByTime(DEBOUNCE_MS);
+    });
+    await act(async () => {});
+
+    // Undo should now be enabled; chip should be gone.
+    expect(getKwUndoBtn().disabled).toBe(false);
+    expect(screen.queryByText('breaker')).toBeNull();
+
+    // Click Undo → restores ['breaker'].
+    await act(async () => {
+      fireEvent.click(getKwUndoBtn());
+    });
+    await act(async () => {});
+
+    expect(screen.queryByText('breaker')).toBeTruthy();
+    // Stack exhausted → button disabled again.
+    expect(getKwUndoBtn().disabled).toBe(true);
+  });
+
+  it('adding a keyword enables Undo, which removes the added keyword', async () => {
+    const item = makeItem({ aiKeywords: [] });
+    render(<KeywordEditor item={item} onClose={jest.fn()} />);
+
+    // Type 'fuse' into the new-keyword input, then click the "+ Add" button.
+    act(() => {
+      fireEvent.change(screen.getByPlaceholderText('Type keyword and press Add…'), {
+        target: { value: 'fuse' },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Add keyword'));
+    });
+
+    // Advance past the debounce.
+    await act(async () => {
+      jest.advanceTimersByTime(DEBOUNCE_MS);
+    });
+    await act(async () => {});
+
+    expect(getKwUndoBtn().disabled).toBe(false);
+    expect(screen.queryByText('fuse')).toBeTruthy();
+
+    // Click Undo → removes 'fuse', reverts to empty list.
+    await act(async () => {
+      fireEvent.click(getKwUndoBtn());
+    });
+    await act(async () => {});
+
+    expect(screen.queryByText('fuse')).toBeNull();
+    expect(getKwUndoBtn().disabled).toBe(true);
+  });
+
+  it('keyword undo stack resets when editor opens on a different item', async () => {
+    const itemA = makeItem({ id: 1, aiKeywords: ['breaker'] });
+    const itemB = makeItem({ id: 2, aiKeywords: ['fuse'] });
+    const { rerender } = render(<KeywordEditor item={itemA} onClose={jest.fn()} />);
+
+    // Remove a keyword to populate the undo stack.
+    fireEvent.click(screen.getByText('breaker'));
+    await act(async () => {
+      jest.advanceTimersByTime(DEBOUNCE_MS);
+    });
+    await act(async () => {});
+    expect(getKwUndoBtn().disabled).toBe(false);
+
+    // Switch to item B — the useEffect on [item?.id] should clear the stack.
+    act(() => {
+      rerender(<KeywordEditor item={itemB} onClose={jest.fn()} />);
+    });
+
+    expect(getKwUndoBtn().disabled).toBe(true);
+  });
+});
+
+// ── Trade-Size Undo ──────────────────────────────────────────────────────────
+
+function getTsUndoBtn() {
+  return screen.getByLabelText('Undo last trade size change') as HTMLButtonElement;
+}
+
+function getTsInput() {
+  return screen.getByPlaceholderText('e.g. 1/2", 3/4", 1"…') as HTMLInputElement;
+}
+
+describe('KeywordEditor — Trade-Size Undo', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockMutateAsync.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+    jest.clearAllMocks();
+  });
+
+  it('Undo trade-size button is disabled when no trade-size edits have been made', () => {
+    render(<KeywordEditor item={makeItem()} onClose={jest.fn()} />);
+    expect(getTsUndoBtn().disabled).toBe(true);
+  });
+
+  it('changing trade size enables Undo, which restores the previous value', async () => {
+    const item = makeItem({ tradeSize: null });
+    render(<KeywordEditor item={item} onClose={jest.fn()} />);
+
+    expect(getTsUndoBtn().disabled).toBe(true);
+
+    // Type a trade size and let the debounce fire.
+    act(() => {
+      fireEvent.change(getTsInput(), { target: { value: '1/2"' } });
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(DEBOUNCE_MS);
+    });
+    await act(async () => {});
+
+    expect(getTsInput().value).toBe('1/2"');
+    expect(getTsUndoBtn().disabled).toBe(false);
+
+    // Click Undo → restores '' (empty / null trade size).
+    await act(async () => {
+      fireEvent.click(getTsUndoBtn());
+    });
+    await act(async () => {});
+
+    expect(getTsInput().value).toBe('');
+    expect(getTsUndoBtn().disabled).toBe(true);
+  });
+
+  it('multiple trade-size changes produce multiple undo steps', async () => {
+    const item = makeItem({ tradeSize: null });
+    render(<KeywordEditor item={item} onClose={jest.fn()} />);
+
+    // First change.
+    act(() => {
+      fireEvent.change(getTsInput(), { target: { value: '1/2"' } });
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(DEBOUNCE_MS);
+    });
+    await act(async () => {});
+
+    // Second change.
+    act(() => {
+      fireEvent.change(getTsInput(), { target: { value: '3/4"' } });
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(DEBOUNCE_MS);
+    });
+    await act(async () => {});
+
+    expect(getTsInput().value).toBe('3/4"');
+
+    // First Undo → back to '1/2"'.
+    await act(async () => {
+      fireEvent.click(getTsUndoBtn());
+    });
+    await act(async () => {});
+    expect(getTsInput().value).toBe('1/2"');
+    expect(getTsUndoBtn().disabled).toBe(false);
+
+    // Second Undo → back to '' (original null).
+    await act(async () => {
+      fireEvent.click(getTsUndoBtn());
+    });
+    await act(async () => {});
+    expect(getTsInput().value).toBe('');
+    expect(getTsUndoBtn().disabled).toBe(true);
+  });
+
+  it('trade-size undo stack resets when editor opens on a different item', async () => {
+    const itemA = makeItem({ id: 1, tradeSize: null });
+    const itemB = makeItem({ id: 2, tradeSize: '3/4"' });
+    const { rerender } = render(<KeywordEditor item={itemA} onClose={jest.fn()} />);
+
+    // Change trade size to populate the undo stack.
+    act(() => {
+      fireEvent.change(getTsInput(), { target: { value: '1/2"' } });
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(DEBOUNCE_MS);
+    });
+    await act(async () => {});
+    expect(getTsUndoBtn().disabled).toBe(false);
+
+    // Switch to item B — stack must clear.
+    act(() => {
+      rerender(<KeywordEditor item={itemB} onClose={jest.fn()} />);
+    });
+
+    expect(getTsUndoBtn().disabled).toBe(true);
   });
 });
