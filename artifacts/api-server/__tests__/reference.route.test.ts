@@ -65,10 +65,7 @@ afterEach(() => {
 
 describe('POST /api/reference/ask — input validation', () => {
   it('returns 400 when question is missing', async () => {
-    const res = await supertest(app)
-      .post('/api/reference/ask?stream=false')
-      .send({})
-      .expect(400);
+    const res = await supertest(app).post('/api/reference/ask?stream=false').send({}).expect(400);
 
     expect(res.body).toHaveProperty('error');
   });
