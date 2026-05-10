@@ -657,7 +657,11 @@ describe('POST /api/inventory/search — combined amperage + poleCount chip filt
 
     const catalogs = catalogsOf(res.body);
 
-    expect(catalogs).toContain(COMBO_CATALOGS.amp20pole2);
+    // Exactly one of the four seeded combo items should be in the results.
+    const comboMatches = catalogs.filter((c) => Object.values(COMBO_CATALOGS).includes(c));
+    expect(comboMatches).toHaveLength(1);
+    expect(comboMatches[0]).toBe(COMBO_CATALOGS.amp20pole2);
+
     expect(catalogs).not.toContain(COMBO_CATALOGS.amp20pole1); // wrong pole count
     expect(catalogs).not.toContain(COMBO_CATALOGS.amp15pole2); // wrong amperage
     expect(catalogs).not.toContain(COMBO_CATALOGS.amp15pole1); // wrong on both
