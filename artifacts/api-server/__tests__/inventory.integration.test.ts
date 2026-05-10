@@ -605,3 +605,88 @@ describe('POST /api/inventory/search — amperage chip filter', () => {
     expect(res.body.dimensionCounts).toHaveProperty('amperage');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/inventory/search — combined amperage + poleCount AND logic
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('POST /api/inventory/search — combined amperage + poleCount chip filter (AND logic)', () => {
+  // Four fixture rows covering every combination of {15A, 20A} × {1-pole, 2-pole}.
+  // Both structured columns are populated so matchesChipColumn is exercised for
+  // both dimensions — a bug in the AND loop that drops the second filter would
+  // return more than one result instead of exactly one.
+  const COMBO_CATALOGS = {
+    amp20pole1: 'JEST-ITG-COMBO-20-1P', // 20A, 1-pole
+    amp20pole2: 'JEST-ITG-COMBO-20-2P', // 20A, 2-pole  ← the only match
+    amp15pole2: 'JEST-ITG-COMBO-15-2P', // 15A, 2-pole
+    amp15pole1: 'JEST-ITG-COMBO-15-1P', // 15A, 1-pole
+  };
+
+  beforeAll(async () => {
+    const { db } = await import('@workspace/db');
+    const { sql: rawSql } = await import('drizzle-orm');
+
+    await db.execute(rawSql`
+      INSERT INTO inventory (vendor, catalog, description, amperage, pole_count)
+      VALUES
+        ('JEST-VENDOR', ${COMBO_CATALOGS.amp20pole1}, 'JEST-ITG-COMBO 20A 1-Pole Breaker', 20, 1),
+        ('JEST-VENDOR', ${COMBO_CATALOGS.amp20pole2}, 'JEST-ITG-COMBO 20A 2-Pole Breaker', 20, 2),
+        ('JEST-VENDOR', ${COMBO_CATALOGS.amp15pole2}, 'JEST-ITG-COMBO 15A 2-Pole Breaker', 15, 2),
+        ('JEST-VENDOR', ${COMBO_CATALOGS.amp15pole1}, 'JEST-ITG-COMBO 15A 1-Pole Breaker', 15, 1)
+      ON CONFLICT (vendor, catalog) DO NOTHING
+    `);
+  }, 15_000);
+
+  afterAll(async () => {
+    const { db } = await import('@workspace/db');
+    const { sql: rawSql } = await import('drizzle-orm');
+
+    for (const cat of Object.values(COMBO_CATALOGS)) {
+      await db.execute(rawSql`DELETE FROM inventory WHERE catalog = ${cat}`);
+    }
+  }, 15_000);
+
+  const catalogsOf = (body: { results: Array<{ item: { catalog: string } }> }) =>
+    body.results.map((r) => r.item.catalog);
+
+  it('returns exactly the 20A 2-pole item when both chips are active', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-COMBO', amperage: '20A', poleCount: '2' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+
+    expect(catalogs).toContain(COMBO_CATALOGS.amp20pole2);
+    expect(catalogs).not.toContain(COMBO_CATALOGS.amp20pole1); // wrong pole count
+    expect(catalogs).not.toContain(COMBO_CATALOGS.amp15pole2); // wrong amperage
+    expect(catalogs).not.toContain(COMBO_CATALOGS.amp15pole1); // wrong on both
+  });
+
+  it('returns all 4 items when neither chip is active', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-COMBO' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+
+    for (const cat of Object.values(COMBO_CATALOGS)) {
+      expect(catalogs).toContain(cat);
+    }
+  });
+
+  it('returns only the 2-pole items when only poleCount chip is active', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-ITG-COMBO', poleCount: '2' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+
+    expect(catalogs).toContain(COMBO_CATALOGS.amp20pole2);
+    expect(catalogs).toContain(COMBO_CATALOGS.amp15pole2);
+    expect(catalogs).not.toContain(COMBO_CATALOGS.amp20pole1);
+    expect(catalogs).not.toContain(COMBO_CATALOGS.amp15pole1);
+  });
+});
