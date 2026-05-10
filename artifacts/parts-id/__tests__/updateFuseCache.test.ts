@@ -9,6 +9,8 @@
  *  2. Fast path: when knownItems is supplied, getItem is never called.
  *  3. Early-exit: when getItem returns null (no cache yet), setItem is skipped.
  *  4. Resilience: AsyncStorage errors are swallowed (cache failures are non-fatal).
+ *  5. ID-miss: when updated.id is not in the cache the item is appended so
+ *     edits to recently-added parts are not silently lost.
  */
 
 import type { InventoryItem } from '@workspace/api-client-react';
@@ -88,6 +90,31 @@ describe('updateFuseCache', () => {
       expect(writtenItems[1]!.description).toBe('Unrelated item');
     });
 
+    it('appends the item when its id is not found in the cache', async () => {
+      const cachedItems: InventoryItem[] = [
+        makeItem({ id: 1, description: 'Existing item A' }),
+        makeItem({ id: 2, description: 'Existing item B' }),
+      ];
+      mockGetItem.mockResolvedValue(JSON.stringify(cachedItems));
+      mockSetItem.mockResolvedValue(undefined);
+
+      const newItem = makeItem({ id: 99, description: 'Newly added part' });
+      await updateFuseCache(newItem);
+
+      expect(mockSetItem).toHaveBeenCalledTimes(1);
+      const [writtenKey, writtenJson] = mockSetItem.mock.calls[0]!;
+      expect(writtenKey).toBe(FUSE_CACHE_KEY);
+
+      const writtenItems = JSON.parse(writtenJson) as InventoryItem[];
+      // Original items must be unchanged.
+      expect(writtenItems).toHaveLength(3);
+      expect(writtenItems[0]!.id).toBe(1);
+      expect(writtenItems[1]!.id).toBe(2);
+      // New item must be appended so the edit is not silently lost.
+      expect(writtenItems[2]!.id).toBe(99);
+      expect(writtenItems[2]!.description).toBe('Newly added part');
+    });
+
     it('does nothing when AsyncStorage returns null (cache is empty)', async () => {
       mockGetItem.mockResolvedValue(null);
 
@@ -138,6 +165,26 @@ describe('updateFuseCache', () => {
       const writtenItems = JSON.parse(writtenJson) as InventoryItem[];
       expect(writtenItems[0]!.description).toBe('Updated description');
       expect(writtenItems[1]!.description).toBe('Another item');
+    });
+
+    it('appends the item when its id is not found in knownItems', async () => {
+      mockSetItem.mockResolvedValue(undefined);
+
+      const knownItems: InventoryItem[] = [
+        makeItem({ id: 1, description: 'Existing item A' }),
+        makeItem({ id: 2, description: 'Existing item B' }),
+      ];
+      const newItem = makeItem({ id: 99, description: 'Newly added part' });
+
+      await updateFuseCache(newItem, knownItems);
+
+      expect(mockGetItem).not.toHaveBeenCalled();
+      expect(mockSetItem).toHaveBeenCalledTimes(1);
+      const [, writtenJson] = mockSetItem.mock.calls[0]!;
+      const writtenItems = JSON.parse(writtenJson) as InventoryItem[];
+      expect(writtenItems).toHaveLength(3);
+      expect(writtenItems[2]!.id).toBe(99);
+      expect(writtenItems[2]!.description).toBe('Newly added part');
     });
 
     it('does not mutate the original knownItems array', async () => {
