@@ -185,6 +185,26 @@ beforeAll(async () => {
   // 4. Seed the fixture rows (all with series_id = NULL).
   await seedFixtures();
 
+  // 4a. Wait until the advisory lock is genuinely free before running
+  //     auto-assign.  Matches the same guard used in the "Idempotency" and
+  //     "Concurrency lock" describe blocks below.  Handles the rare case where
+  //     a previous test run was killed while holding lock 20250001 and the
+  //     PostgreSQL session has not yet been reaped by the server.
+  {
+    const client = await pool.connect();
+    try {
+      await client.query("SET statement_timeout = '10s'");
+      await client.query('SELECT pg_advisory_lock($1::bigint)', [20250001]);
+      await client.query('SELECT pg_advisory_unlock($1::bigint)', [20250001]);
+    } catch {
+      // Lock wait timed out or other transient error.  Proceed — if the lock
+      // is genuinely stale the runAutoAssign() call below will fail with a
+      // clear 409, which is more actionable than a silent hang here.
+    } finally {
+      client.release();
+    }
+  }
+
   // 5. Run auto-assign and capture SSE events.
   sseEvents = await runAutoAssign();
 
