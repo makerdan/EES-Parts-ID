@@ -68,18 +68,12 @@ jest.mock('react-native', () => {
   const View = makeHost('div');
   const Text = makeHost('span');
 
-  const ScrollView = React.forwardRef(
-    (props: Record<string, unknown>, ref: React.Ref<unknown>) => {
-      const innerRef = React.useRef<unknown>(null);
-      React.useImperativeHandle(
-        ref,
-        () => ({ scrollTo: () => {}, scrollToOffset: () => {} }),
-        []
-      );
-      const Host = makeHost('div');
-      return React.createElement(Host, { ...props, ref: innerRef });
-    }
-  );
+  const ScrollView = React.forwardRef((props: Record<string, unknown>, ref: React.Ref<unknown>) => {
+    const innerRef = React.useRef<unknown>(null);
+    React.useImperativeHandle(ref, () => ({ scrollTo: () => {}, scrollToOffset: () => {} }), []);
+    const Host = makeHost('div');
+    return React.createElement(Host, { ...props, ref: innerRef });
+  });
 
   const Pressable = React.forwardRef(
     (
