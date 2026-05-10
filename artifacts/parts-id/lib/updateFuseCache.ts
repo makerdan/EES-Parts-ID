@@ -24,6 +24,12 @@ export const FUSE_CACHE_KEY = 'parts_id_fuse_cache_v3';
  *   array (e.g. the Search tab's `fuseItemsRef.current`), pass it here to
  *   skip the AsyncStorage read.  If omitted the cache is read from
  *   AsyncStorage, patched in place, and written back.
+ *
+ * **ID-match semantics:** items are matched by `id`, not by catalog number.
+ * When no cached item has `updated.id` (e.g. the part was added after the
+ * last full sync), `updated` is appended to the cache so the edit is
+ * immediately visible in offline Search and Browse-by-Aisle without waiting
+ * for the next sync.
  */
 export async function updateFuseCache(
   updated: InventoryItem,
@@ -37,7 +43,10 @@ export async function updateFuseCache(
       items = JSON.parse(raw) as InventoryItem[];
     }
     const patched = items.map((it) => (it.id === updated.id ? { ...it, ...updated } : it));
-    await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(patched));
+    // If no existing item matched (part added after last sync), append it so
+    // the edit is not silently lost from the offline index.
+    const written = patched.some((it) => it.id === updated.id) ? patched : [...patched, updated];
+    await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(written));
   } catch {
     // Cache write failures are non-fatal — the next full sync will repair the state.
   }
