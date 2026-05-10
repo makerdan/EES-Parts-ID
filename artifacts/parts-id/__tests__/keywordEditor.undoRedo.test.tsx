@@ -308,7 +308,7 @@ describe('KeywordEditor — Undo/Redo button sync', () => {
     expect(getRedoBtn().disabled).toBe(true);
   });
 
-  it('full undo/redo cycle: edit → undo → redo restores the edited value', async () => {
+  it('full undo/redo cycle: edit → undo → redo → undo returns to original', async () => {
     const item = makeItem({ description: 'Original description' });
     render(<KeywordEditor item={item} onClose={jest.fn()} />);
 
@@ -344,6 +344,16 @@ describe('KeywordEditor — Undo/Redo button sync', () => {
     // Redo stack is empty again; Undo stack has the prior value.
     expect(getRedoBtn().disabled).toBe(true);
     expect(getUndoBtn().disabled).toBe(false);
+
+    // Click Undo again → back to "Original description", completing the full cycle.
+    await act(async () => {
+      fireEvent.click(getUndoBtn());
+    });
+    await act(async () => {});
+
+    expect(getDescInput().value).toBe('Original description');
+    expect(getUndoBtn().disabled).toBe(true);
+    expect(getRedoBtn().disabled).toBe(false);
   });
 
   it('a normal edit after an undo clears the redo stack', async () => {
@@ -372,15 +382,19 @@ describe('KeywordEditor — Undo/Redo button sync', () => {
 
     const { rerender } = render(<KeywordEditor item={itemA} onClose={jest.fn()} />);
 
-    // Build up some undo/redo state on item A.
-    await typeAndSave('Item A edited');
+    // Make two separate saves so the undo stack has two entries.
+    await typeAndSave('Item A first edit');
+    await typeAndSave('Item A second edit');
+
+    // Undo once: undo stack loses one entry but still has one left;
+    // redo stack gains one entry.  Both stacks are now non-empty.
     await act(async () => {
       fireEvent.click(getUndoBtn());
     });
     await act(async () => {});
 
-    // Confirm both stacks are non-empty before switching items.
-    expect(getUndoBtn().disabled).toBe(true);
+    // Confirm BOTH stacks are non-empty before switching items.
+    expect(getUndoBtn().disabled).toBe(false);
     expect(getRedoBtn().disabled).toBe(false);
 
     // Switch to item B — the useEffect on [item?.id] should clear both stacks.
