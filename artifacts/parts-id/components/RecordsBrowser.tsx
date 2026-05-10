@@ -24,6 +24,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import type { InventoryItem } from '@workspace/api-client-react';
 import { RecordEditModal } from './RecordEditModal';
@@ -223,7 +224,12 @@ export function RecordsBrowser({ adminHeaders }: Props) {
     <View style={[s.container, { backgroundColor: colors.background }]}>
       {/* Search bar */}
       <View style={[s.searchBar, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-        <Text style={{ color: colors.mutedForeground, marginRight: 6, fontSize: 14 }}>🔍</Text>
+        <Feather
+          name="search"
+          size={14}
+          color={colors.mutedForeground}
+          style={{ marginRight: 6 }}
+        />
         <TextInput
           value={search}
           onChangeText={handleSearchChange}

@@ -307,7 +307,7 @@ function Kpi({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`View events for ${label}`}
-      style={{ flexGrow: 1, flexBasis: '30%', minWidth: 96 }}
+      style={{ flexGrow: 1, flexBasis: '45%', minWidth: 96 }}
     >
       {inner}
     </Pressable>
@@ -434,7 +434,7 @@ const s = StyleSheet.create({
   kpi: {
     minWidth: 96,
     flexGrow: 1,
-    flexBasis: '30%',
+    flexBasis: '45%',
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 8,

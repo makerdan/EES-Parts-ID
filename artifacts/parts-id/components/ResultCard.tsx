@@ -798,9 +798,11 @@ const cardStyles = StyleSheet.create({
     marginTop: 10,
     borderWidth: 1,
     borderRadius: 6,
-    paddingVertical: 6,
+    paddingVertical: 10,
     paddingHorizontal: 12,
+    minHeight: 44,
     alignSelf: 'flex-start',
+    justifyContent: 'center',
   },
   editBtnText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   confirmBtn: {

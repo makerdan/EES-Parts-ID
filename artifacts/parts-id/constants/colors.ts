@@ -90,6 +90,8 @@ const colors = {
   },
 
   radius: 8,
+  chipRadius: 16,
+  sheetRadius: 16,
 };
 
 export default colors;

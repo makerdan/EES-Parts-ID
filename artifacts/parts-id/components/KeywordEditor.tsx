@@ -19,6 +19,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import type { InventoryItem } from '@workspace/api-client-react';
 import { useUpdateInventoryItem, useSuggestItemDescription } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -868,9 +869,11 @@ export function KeywordEditor({
           >
             {isSuggesting ? (
               <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
-            ) : null}
+            ) : (
+              <Feather name="zap" size={14} color={colors.primary} style={{ marginRight: 6 }} />
+            )}
             <Text style={[styles.suggestBtnText, { color: colors.primary }]}>
-              {isSuggesting ? 'Generating…' : '✨ Suggest improved description'}
+              {isSuggesting ? 'Generating…' : 'Suggest improved description'}
             </Text>
           </Pressable>
 
