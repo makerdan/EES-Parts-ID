@@ -262,6 +262,12 @@ let _seederRunning = false;
 
 let _scheduleTimer: NodeJS.Timeout | null = null;
 
+/** Minimal interface for the pg PoolClient used by the advisory lock. */
+interface PgPoolClient {
+  query<T extends Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: T[] }>;
+  release(): void;
+}
+
 /**
  * Attempts to run the provided seed function under a PostgreSQL advisory lock
  * so that concurrent server processes (e.g. on a rolling deploy) don't
@@ -269,6 +275,9 @@ let _scheduleTimer: NodeJS.Timeout | null = null;
  *
  * Uses `pg_try_advisory_lock` (non-blocking): if another process already holds
  * the lock the refresh is skipped for this tick and retried on the next tick.
+ *
+ * `_seederRunning` is reset in the outermost `finally` block so that a
+ * transient `pool.connect()` failure never permanently disables future ticks.
  *
  * @param seedFn - The function to call while the advisory lock is held.
  *                 Defaults to `seedQuickLookups`. Overridable for testing.
@@ -280,8 +289,12 @@ async function scheduledRefresh(seedFn: () => Promise<void>): Promise<void> {
   }
   _seederRunning = true;
 
-  const client = await pool.connect();
+  // Declare client outside try so the finally block can release it even if
+  // pool.connect() throws (transient DB outage, pool exhaustion, etc.).
+  let client: PgPoolClient | null = null;
   try {
+    client = await pool.connect();
+
     const { rows } = await client.query<{ pg_try_advisory_lock: boolean }>(
       'SELECT pg_try_advisory_lock($1::bigint)',
       [SCHEDULER_ADVISORY_LOCK_KEY]
@@ -303,7 +316,7 @@ async function scheduledRefresh(seedFn: () => Promise<void>): Promise<void> {
   } catch (err) {
     logger.error({ err }, 'Quick lookup scheduled refresh failed');
   } finally {
-    client.release();
+    client?.release();
     _seederRunning = false;
   }
 }

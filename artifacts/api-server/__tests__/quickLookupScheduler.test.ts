@@ -85,13 +85,11 @@ describe('Quick Lookup background refresh scheduler', () => {
   });
 
   afterEach(() => {
-    // Always stop the scheduler so module-level state is reset for the next test.
+    // Stop the scheduler to clear the module-level timer between tests.
+    // stopQuickLookupScheduler() only clears the timer (does not set a permanent
+    // stopped flag), so the next test can call startQuickLookupScheduler() freely.
     stopQuickLookupScheduler();
     jest.clearAllMocks();
-    // Reset the _schedulerStopped flag between tests by calling start then stop.
-    // Achieved by the module re-importing behaviour — each test suite re-uses
-    // the same module instance, so we rely on stopQuickLookupScheduler to clear
-    // the timer and the _schedulerStopped reset is handled via the afterEach below.
   });
 
   it('fires seedFn after the configured interval elapses', async () => {
@@ -217,5 +215,30 @@ describe('Quick Lookup background refresh scheduler', () => {
     await flush();
 
     expect(mockClientRelease).toHaveBeenCalled();
+  });
+
+  it('resets _seederRunning and retries on the next tick when pool.connect() rejects', async () => {
+    // Simulate a transient DB outage on the first tick.
+    mockPoolConnect.mockRejectedValueOnce(new Error('connection refused'));
+    // Restore normal pool behaviour for the second tick.
+    mockPoolConnect.mockResolvedValue({
+      query: mockClientQuery,
+      release: mockClientRelease,
+    });
+
+    const seedFn = jest.fn<Promise<void>, []>().mockResolvedValue(undefined);
+
+    startQuickLookupScheduler(5_000, seedFn);
+
+    // First tick — pool.connect() throws; seedFn must not be called.
+    jest.advanceTimersByTime(5_000);
+    await flush();
+    expect(seedFn).not.toHaveBeenCalled();
+
+    // Second tick — connection succeeds; seedFn must be called, proving
+    // that _seederRunning was reset and the scheduler can retry.
+    jest.advanceTimersByTime(5_000);
+    await flush();
+    expect(seedFn).toHaveBeenCalledTimes(1);
   });
 });
