@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import { Feather } from '@expo/vector-icons';
 import type { SearchResult } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
+import rawColors from '@/constants/colors';
 import { CHIP_DIMS, type ChipDim } from '@/components/FilterPanel';
 import {
   applyRefinement,
@@ -259,10 +260,11 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   chip: {
-    borderRadius: 16,
+    borderRadius: rawColors.chipRadius,
     borderWidth: 1,
     paddingHorizontal: 10,
     paddingVertical: 8,
+    minHeight: 36,
   },
   chipText: {
     fontSize: 12,

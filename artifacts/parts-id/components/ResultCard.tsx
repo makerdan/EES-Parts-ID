@@ -237,7 +237,13 @@ const varStyles = StyleSheet.create({
   // Catalog and size both shrink under pressure so a long catalog won't
   // squeeze the bin off-screen and a long size suffix won't either. Bin
   // stays flex-fixed and right-aligned so workers always see it.
-  catalog: { fontFamily: 'Inter_600SemiBold', flexShrink: 1, flexGrow: 1, flexBasis: 0 },
+  catalog: {
+    fontFamily: 'Inter_600SemiBold',
+    flexShrink: 1,
+    flexGrow: 1,
+    flexBasis: 0,
+    minWidth: 80,
+  },
   size: { fontFamily: 'Inter_600SemiBold', textAlign: 'center', flexShrink: 1, maxWidth: 96 },
   sizeEmpty: { fontFamily: 'Inter_400Regular', textAlign: 'center', flexShrink: 0 },
   bin: { fontFamily: 'Inter_500Medium', textAlign: 'right', flexShrink: 0 },
