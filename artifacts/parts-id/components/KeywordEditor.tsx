@@ -232,8 +232,12 @@ export function KeywordEditor({
         await updateMutation.mutateAsync({ id, data: payload });
         if (payload.keywords !== undefined) {
           // Push the previous array onto the undo stack unless this save is
-          // itself the result of an undo (which would create an A→B→A loop).
-          if (!undoingKw) {
+          // itself the result of an undo (which would create an A→B→A loop),
+          // or the keyword list is identical after normalization (no-op save).
+          const kwsActuallyChanged =
+            payload.keywords.length !== prevKws.length ||
+            payload.keywords.some((k, i) => k !== prevKws[i]);
+          if (!undoingKw && kwsActuallyChanged) {
             setKwUndoStack((stack) => [...stack, prevKws]);
           }
           lastSavedKeywordsRef.current = payload.keywords;
@@ -252,8 +256,11 @@ export function KeywordEditor({
         }
         if (payload.tradeSize !== undefined) {
           // Push the previous trade-size string onto the undo stack unless
-          // this save is itself the result of an undo.
-          if (!undoingTs) {
+          // this save is itself the result of an undo, or the normalized value
+          // is unchanged (no-op save that shouldn't produce a phantom undo entry).
+          const newTs = payload.tradeSize ?? '';
+          const tsActuallyChanged = newTs !== prevTs;
+          if (!undoingTs && tsActuallyChanged) {
             setTsUndoStack((stack) => [...stack, prevTs]);
           }
           const ts = payload.tradeSize ?? null;
