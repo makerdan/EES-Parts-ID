@@ -316,14 +316,19 @@ export function parseVoltage(text: string | null | undefined): number | null {
 // followed immediately by a letter (e.g. "3/4X90", "1/2EMT") are still
 // recognised.  A plain \b after the denominator fails when the next character
 // is a word character like "X" or "L".
+//
+// The lookbehind also excludes a preceding dash so that degree-angle
+// specifications like "22-1/2D" (meaning 22.5°, not the trade size 1/2")
+// are not misinterpreted.  The mixed-number branch above already handles
+// legitimate "1-1/2"" patterns before this FRAC_MAP is reached.
 const FRAC_MAP: Array<[RegExp, number]> = [
-  [/(?<!\d)7\/8(?!\d)/, 7 / 8],
-  [/(?<!\d)3\/4(?!\d)/, 3 / 4],
-  [/(?<!\d)5\/8(?!\d)/, 5 / 8],
-  [/(?<!\d)1\/2(?!\d)/, 1 / 2],
-  [/(?<!\d)3\/8(?!\d)/, 3 / 8],
-  [/(?<!\d)1\/4(?!\d)/, 1 / 4],
-  [/(?<!\d)1\/8(?!\d)/, 1 / 8],
+  [/(?<![\d-])7\/8(?!\d)/, 7 / 8],
+  [/(?<![\d-])3\/4(?!\d)/, 3 / 4],
+  [/(?<![\d-])5\/8(?!\d)/, 5 / 8],
+  [/(?<![\d-])1\/2(?!\d)/, 1 / 2],
+  [/(?<![\d-])3\/8(?!\d)/, 3 / 8],
+  [/(?<![\d-])1\/4(?!\d)/, 1 / 4],
+  [/(?<![\d-])1\/8(?!\d)/, 1 / 8],
 ];
 
 /**
