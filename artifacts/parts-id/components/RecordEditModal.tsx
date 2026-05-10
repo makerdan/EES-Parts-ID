@@ -88,9 +88,7 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
     setNewKeyword('');
     setSuggestion(null);
     setSuggestError(null);
-    // Series — seriesId is present in API responses but not in the generated TS type
-    const rawId = (item as unknown as Record<string, unknown>).seriesId;
-    const initSeriesId = typeof rawId === 'number' ? rawId : null;
+    const initSeriesId = item.seriesId ?? null;
     const initSeriesName = item.seriesName ?? '';
     setSeriesEnabled(!!initSeriesName);
     setSeriesId(initSeriesId);
