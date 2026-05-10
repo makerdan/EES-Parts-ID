@@ -1016,6 +1016,12 @@ components:
             (e.g. "Eaton BR Breakers"), resolved from the `product_series`
             table when `series_id` is set. `null` when the item has no
             explicit series assignment.
+        seriesId:
+          type: integer
+          nullable: true
+          description: |
+            Numeric primary key of the product series this item belongs to,
+            or `null` when the item has no series assignment.
         createdAt:
           type: string
           format: date-time
