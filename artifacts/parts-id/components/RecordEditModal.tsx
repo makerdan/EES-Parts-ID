@@ -26,6 +26,7 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
+import rawColors from '@/constants/colors';
 import type { InventoryItem } from '@workspace/api-client-react';
 import { useSuggestItemDescription } from '@workspace/api-client-react';
 
@@ -754,8 +755,8 @@ const s = StyleSheet.create({
   },
   sheet: {
     maxHeight: '92%',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderTopLeftRadius: rawColors.sheetRadius,
+    borderTopRightRadius: rawColors.sheetRadius,
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,

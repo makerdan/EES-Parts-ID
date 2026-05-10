@@ -25,6 +25,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
+import rawColors from '@/constants/colors';
 
 export interface FilterValues {
   // ── 7 text / numeric search fields ───────────────────────────────────────
@@ -900,9 +901,10 @@ const chipStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: rawColors.chipRadius,
     paddingHorizontal: 11,
     paddingVertical: 8,
+    minHeight: 36,
   },
   chipText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
   countBadge: { fontSize: 10, fontFamily: 'Inter_400Regular' },
@@ -952,8 +954,8 @@ const modalStyles = StyleSheet.create({
   },
   sheet: {
     maxHeight: '96%',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: rawColors.sheetRadius,
+    borderTopRightRadius: rawColors.sheetRadius,
     overflow: 'hidden',
   },
   dragHandleArea: {
@@ -997,7 +999,7 @@ const modalStyles = StyleSheet.create({
 const sliderStyles = StyleSheet.create({
   pctBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   pctLabel: { fontSize: 14, fontFamily: 'Inter_700Bold' },
-  trackContainer: { height: 36, justifyContent: 'center' },
+  trackContainer: { height: 44, justifyContent: 'center' },
   trackBg: {
     height: 8,
     borderRadius: 4,
