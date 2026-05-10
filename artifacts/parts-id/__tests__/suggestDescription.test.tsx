@@ -363,6 +363,17 @@ describe('KeywordEditor — Suggest Description button', () => {
     const banner = screen.getByTestId('error-banner');
     expect(banner.textContent).toContain("Couldn't generate a suggestion");
   });
+
+  it('shows "Generating…" and disables the button while isPending is true', () => {
+    mockIsSuggesting = true;
+
+    render(<KeywordEditor item={item} onClose={jest.fn()} />);
+
+    const btn = screen.getByText('Generating…').closest('button');
+    expect(btn).toBeTruthy();
+    expect(btn!.disabled).toBe(true);
+    expect(screen.queryByText('Suggest improved description')).toBeNull();
+  });
 });
 
 // ── RecordEditModal tests ──────────────────────────────────────────────────
@@ -508,5 +519,23 @@ describe('RecordEditModal — Suggest Description button', () => {
 
     expect(screen.queryByText('AI SUGGESTION')).toBeNull();
     expect(screen.getByText("Couldn't generate a suggestion. Please try again.")).toBeTruthy();
+  });
+
+  it('shows "Generating…" and disables the button while isPending is true', () => {
+    mockIsSuggesting = true;
+
+    render(
+      <RecordEditModal
+        item={item}
+        adminHeaders={adminHeaders}
+        onClose={jest.fn()}
+        onSaved={jest.fn()}
+      />
+    );
+
+    const btn = screen.getByText('Generating…').closest('button');
+    expect(btn).toBeTruthy();
+    expect(btn!.disabled).toBe(true);
+    expect(screen.queryByText('Suggest improved description')).toBeNull();
   });
 });
