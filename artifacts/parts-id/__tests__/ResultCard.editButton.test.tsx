@@ -216,7 +216,7 @@ describe('ResultCard — Edit Part Details button visibility', () => {
     expandCard();
     fireEvent.click(screen.getByText('✏️ Edit Part Details'));
     expect(onEdit).toHaveBeenCalledTimes(1);
-    expect(onEdit).toHaveBeenCalledWith(result.item);
+    expect(onEdit).toHaveBeenCalledWith(result.item, expect.any(Function));
   });
 
   it('Edit button is visible before the card is expanded', () => {
@@ -246,6 +246,6 @@ describe('ResultCard — Edit Part Details button visibility', () => {
     fireEvent.click(screen.getByText('✏️ Edit Part Details'));
 
     expect(onEdit).toHaveBeenCalledTimes(1);
-    expect(onEdit).toHaveBeenCalledWith(result.item);
+    expect(onEdit).toHaveBeenCalledWith(result.item, expect.any(Function));
   });
 });
