@@ -378,7 +378,7 @@ function Field({
 }) {
   return (
     <View style={{ marginBottom: 12 }}>
-      <Text style={[fieldStyles.label, { color: 'rgba(0,0,0,0.9)' }]}>{label}</Text>
+      <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>{label}</Text>
       <TextInput
         value={value}
         onChangeText={onChange}
@@ -902,7 +902,7 @@ const chipStyles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 16,
     paddingHorizontal: 11,
-    paddingVertical: 5,
+    paddingVertical: 8,
   },
   chipText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
   countBadge: { fontSize: 10, fontFamily: 'Inter_400Regular' },

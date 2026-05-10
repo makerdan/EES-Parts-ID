@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  *
- * Verifies that the "✨ Suggest improved description" button renders in both
+ * Verifies that the "Suggest improved description" button renders in both
  * KeywordEditor and RecordEditModal, and that the AI suggestion flow works
  * correctly: success shows the AI SUGGESTION block with "Use this", and
  * failure shows an inline error message.
@@ -270,7 +270,7 @@ describe('KeywordEditor — Suggest Description button', () => {
 
   it('renders the Suggest improved description button below the DESCRIPTION field', () => {
     render(<KeywordEditor item={item} onClose={jest.fn()} />);
-    expect(screen.getByText('✨ Suggest improved description')).toBeTruthy();
+    expect(screen.getByText('Suggest improved description')).toBeTruthy();
   });
 
   it('calls useSuggestItemDescription when the Suggest button is pressed', async () => {
@@ -279,7 +279,7 @@ describe('KeywordEditor — Suggest Description button', () => {
     render(<KeywordEditor item={item} onClose={jest.fn()} />);
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -293,7 +293,7 @@ describe('KeywordEditor — Suggest Description button', () => {
     render(<KeywordEditor item={item} onClose={jest.fn()} />);
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -310,7 +310,7 @@ describe('KeywordEditor — Suggest Description button', () => {
     render(<KeywordEditor item={item} onClose={jest.fn()} />);
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -336,7 +336,7 @@ describe('KeywordEditor — Suggest Description button', () => {
     render(<KeywordEditor item={item} onClose={jest.fn()} />);
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -355,7 +355,7 @@ describe('KeywordEditor — Suggest Description button', () => {
     render(<KeywordEditor item={item} onClose={jest.fn()} />);
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -384,7 +384,7 @@ describe('RecordEditModal — Suggest Description button', () => {
         onSaved={jest.fn()}
       />
     );
-    expect(screen.getByText('✨ Suggest improved description')).toBeTruthy();
+    expect(screen.getByText('Suggest improved description')).toBeTruthy();
   });
 
   it('calls useSuggestItemDescription when the Suggest button is pressed', async () => {
@@ -400,7 +400,7 @@ describe('RecordEditModal — Suggest Description button', () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -421,7 +421,7 @@ describe('RecordEditModal — Suggest Description button', () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -445,7 +445,7 @@ describe('RecordEditModal — Suggest Description button', () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -476,7 +476,7 @@ describe('RecordEditModal — Suggest Description button', () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -502,7 +502,7 @@ describe('RecordEditModal — Suggest Description button', () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByText('✨ Suggest improved description'));
+      fireEvent.click(screen.getByText('Suggest improved description'));
       await new Promise((r) => setTimeout(r, 0));
     });
 

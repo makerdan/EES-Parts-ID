@@ -259,10 +259,10 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   chip: {
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 8,
   },
   chipText: {
     fontSize: 12,

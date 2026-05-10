@@ -16,6 +16,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import {
   listClassificationReview,
@@ -429,7 +430,12 @@ export default function ClassificationReviewSection({
             <View
               style={[s.searchBox, { borderColor: colors.border, backgroundColor: colors.muted }]}
             >
-              <Text style={{ color: colors.mutedForeground, marginRight: 6 }}>🔍</Text>
+              <Feather
+                name="search"
+                size={14}
+                color={colors.mutedForeground}
+                style={{ marginRight: 6 }}
+              />
               <TextInput
                 value={reclassifySearch}
                 onChangeText={setReclassifySearch}
@@ -573,8 +579,8 @@ const s = StyleSheet.create({
   },
   modalTitle: { fontSize: 16, fontFamily: 'Inter_700Bold' },
   modalClose: {
-    width: 32,
-    height: 32,
+    width: 44,
+    height: 44,
     borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center',

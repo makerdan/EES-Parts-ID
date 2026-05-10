@@ -24,6 +24,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import type { InventoryItem } from '@workspace/api-client-react';
 import { useSuggestItemDescription } from '@workspace/api-client-react';
@@ -438,9 +439,11 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
             >
               {isSuggesting ? (
                 <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
-              ) : null}
+              ) : (
+                <Feather name="zap" size={14} color={colors.primary} style={{ marginRight: 6 }} />
+              )}
               <Text style={[s.suggestBtnText, { color: colors.primary }]}>
-                {isSuggesting ? 'Generating…' : '✨ Suggest improved description'}
+                {isSuggesting ? 'Generating…' : 'Suggest improved description'}
               </Text>
             </Pressable>
 
@@ -769,8 +772,8 @@ const s = StyleSheet.create({
   headerTitle: { fontSize: 16, fontFamily: 'Inter_700Bold' },
   headerSub: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 1 },
   closeBtn: {
-    width: 32,
-    height: 32,
+    width: 44,
+    height: 44,
     borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center',
