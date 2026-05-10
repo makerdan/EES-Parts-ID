@@ -71,6 +71,12 @@ export const ListInventoryResponse = zod.object({
         .describe(
           'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
         ),
+      seriesId: zod
+        .number()
+        .nullish()
+        .describe(
+          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     })
@@ -152,6 +158,12 @@ export const SearchInventoryResponse = zod.object({
           .describe(
             'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
           ),
+        seriesId: zod
+          .number()
+          .nullish()
+          .describe(
+            'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
+          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -189,6 +201,12 @@ export const SearchInventoryResponse = zod.object({
             .nullish()
             .describe(
               'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
+            ),
+          seriesId: zod
+            .number()
+            .nullish()
+            .describe(
+              'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
             ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
@@ -377,6 +395,12 @@ export const GetInventoryItemResponse = zod.object({
     .describe(
       'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
     ),
+  seriesId: zod
+    .number()
+    .nullish()
+    .describe(
+      'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -450,6 +474,12 @@ export const UpdateInventoryItemResponse = zod.object({
     .nullish()
     .describe(
       'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
+    ),
+  seriesId: zod
+    .number()
+    .nullish()
+    .describe(
+      'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
     ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
@@ -542,6 +572,12 @@ export const AiIdentifyPartResponse = zod.object({
           .describe(
             'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
           ),
+        seriesId: zod
+          .number()
+          .nullish()
+          .describe(
+            'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
+          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -579,6 +615,12 @@ export const AiIdentifyPartResponse = zod.object({
             .nullish()
             .describe(
               'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
+            ),
+          seriesId: zod
+            .number()
+            .nullish()
+            .describe(
+              'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
             ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
@@ -826,6 +868,12 @@ export const ListUncategorizedItemsResponse = zod.object({
         .describe(
           'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
         ),
+      seriesId: zod
+        .number()
+        .nullish()
+        .describe(
+          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     })
@@ -906,6 +954,12 @@ export const ListCategoryItemsResponse = zod.object({
         .nullish()
         .describe(
           'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
+        ),
+      seriesId: zod
+        .number()
+        .nullish()
+        .describe(
+          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
         ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
@@ -992,6 +1046,12 @@ export const ListCategoryPartsByIdResponse = zod.object({
         .nullish()
         .describe(
           'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
+        ),
+      seriesId: zod
+        .number()
+        .nullish()
+        .describe(
+          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
         ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
@@ -1183,6 +1243,12 @@ export const BarcodeLookupResponse = zod.object({
         .describe(
           'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
         ),
+      seriesId: zod
+        .number()
+        .nullish()
+        .describe(
+          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     })
@@ -1226,6 +1292,12 @@ export const BarcodeLookupResponse = zod.object({
           .nullish()
           .describe(
             'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
+          ),
+        seriesId: zod
+          .number()
+          .nullish()
+          .describe(
+            'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
           ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
@@ -1287,6 +1359,12 @@ export const BarcodeLinkResponse = zod.object({
       .describe(
         'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
       ),
+    seriesId: zod
+      .number()
+      .nullish()
+      .describe(
+        'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
+      ),
     createdAt: zod.coerce.date(),
     updatedAt: zod.coerce.date(),
   }),
@@ -1332,6 +1410,12 @@ export const BarcodeRecentResponse = zod.object({
         .nullish()
         .describe(
           'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
+        ),
+      seriesId: zod
+        .number()
+        .nullish()
+        .describe(
+          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
         ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),

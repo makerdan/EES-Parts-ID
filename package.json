@@ -5,8 +5,10 @@
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "codegen": "pnpm --filter @workspace/api-spec run codegen",
+    "codegen:check": "pnpm --filter @workspace/api-spec exec node ./codegen-hash.mjs check",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
+    "typecheck": "pnpm run codegen:check && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "test": "pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run test && pnpm --filter ./lib/api-client-react run test",
     "lint": "eslint .",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,cjs,mjs}\" --ignore-path .prettierignore",

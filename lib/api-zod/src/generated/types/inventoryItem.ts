@@ -31,6 +31,10 @@ table when `series_id` is set. `null` when the item has no
 explicit series assignment.
  */
   seriesName?: string | null;
+  /** Numeric primary key of the product series this item belongs to,
+or `null` when the item has no series assignment.
+ */
+  seriesId?: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
