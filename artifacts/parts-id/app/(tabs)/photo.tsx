@@ -12,7 +12,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   ActivityIndicator,
   Image,
+  KeyboardAvoidingView,
   Linking,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -305,573 +307,583 @@ export default function PhotoScreen() {
           : null;
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
-        {/* Header */}
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          {/* Tapping the app title from any tab jumps back to the Search
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={{ flex: 1 }}
+    >
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
+          {/* Header */}
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            {/* Tapping the app title from any tab jumps back to the Search
               tab's empty welcome state (handled there by tabPress). */}
-          <Pressable onPress={() => router.replace('/(tabs)')} hitSlop={8}>
-            <Text
-              allowFontScaling={false}
-              style={[styles.headerTitle, { color: colors.foreground }]}
-            >
-              Photo ID
-            </Text>
-            <Text
-              allowFontScaling={false}
-              style={[styles.headerSub, { color: colors.mutedForeground }]}
-            >
-              Identify parts from photos
-            </Text>
-          </Pressable>
-        </View>
+            <Pressable onPress={() => router.replace('/(tabs)')} hitSlop={8}>
+              <Text
+                allowFontScaling={false}
+                style={[styles.headerTitle, { color: colors.foreground }]}
+              >
+                Photo ID
+              </Text>
+              <Text
+                allowFontScaling={false}
+                style={[styles.headerSub, { color: colors.mutedForeground }]}
+              >
+                Identify parts from photos
+              </Text>
+            </Pressable>
+          </View>
 
-        <View style={styles.content}>
-          {/* Image capture */}
-          <View style={styles.imageSection}>
-            <View style={styles.imageRow}>
-              {images.map((img, index) => (
-                <View key={index} style={styles.imageWrapper}>
-                  <Image
-                    source={{ uri: img.uri }}
-                    style={[styles.thumbnail, { borderColor: colors.primary }]}
-                    resizeMode="cover"
-                  />
-                  <Pressable
-                    onPress={() => removeImage(index)}
-                    style={[styles.removeBtn, { backgroundColor: colors.destructive }]}
-                  >
-                    <Text allowFontScaling={false} style={styles.removeBtnText}>
-                      ✕
-                    </Text>
-                  </Pressable>
-                </View>
-              ))}
-
-              {images.length < 2 ? (
-                isProcessing ? (
-                  <View
-                    style={[
-                      styles.processingRow,
-                      { borderColor: colors.border, backgroundColor: colors.card },
-                    ]}
-                  >
-                    <ActivityIndicator size="small" color={colors.primary} />
-                    <Text
-                      allowFontScaling={false}
-                      style={[styles.processingLabel, { color: colors.mutedForeground }]}
-                    >
-                      Processing…
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.addImageButtons}>
+          <View style={styles.content}>
+            {/* Image capture */}
+            <View style={styles.imageSection}>
+              <View style={styles.imageRow}>
+                {images.map((img, index) => (
+                  <View key={index} style={styles.imageWrapper}>
+                    <Image
+                      source={{ uri: img.uri }}
+                      style={[styles.thumbnail, { borderColor: colors.primary }]}
+                      resizeMode="cover"
+                    />
                     <Pressable
-                      onPress={() => pickImage('camera')}
-                      disabled={isProcessing}
-                      style={[
-                        styles.addImageBtn,
-                        { backgroundColor: colors.card, borderColor: colors.foreground },
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Take photo with camera"
+                      onPress={() => removeImage(index)}
+                      style={[styles.removeBtn, { backgroundColor: colors.destructive }]}
                     >
-                      <MaterialCommunityIcons name="camera" size={28} color={colors.foreground} />
-                      <Text
-                        allowFontScaling={false}
-                        style={[styles.addImageLabel, { color: colors.foreground }]}
-                      >
-                        Camera
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => pickImage('library')}
-                      disabled={isProcessing}
-                      style={[
-                        styles.addImageBtn,
-                        { backgroundColor: colors.card, borderColor: colors.foreground },
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Pick from photo library"
-                    >
-                      <MaterialCommunityIcons
-                        name="image-multiple"
-                        size={28}
-                        color={colors.foreground}
-                      />
-                      <Text
-                        allowFontScaling={false}
-                        style={[styles.addImageLabel, { color: colors.foreground }]}
-                      >
-                        Photo Library
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => router.push('/scan')}
-                      disabled={isProcessing}
-                      style={[
-                        styles.addImageBtn,
-                        { backgroundColor: colors.card, borderColor: colors.foreground },
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Scan barcode"
-                    >
-                      <MaterialCommunityIcons
-                        name="barcode-scan"
-                        size={28}
-                        color={colors.foreground}
-                      />
-                      <Text
-                        allowFontScaling={false}
-                        style={[styles.addImageLabel, { color: colors.foreground }]}
-                      >
-                        Barcode
+                      <Text allowFontScaling={false} style={styles.removeBtnText}>
+                        ✕
                       </Text>
                     </Pressable>
                   </View>
-                )
-              ) : null}
-            </View>
+                ))}
 
-            {images.length === 0 ? (
-              <Text
-                allowFontScaling={false}
-                style={[styles.imageHint, { color: colors.mutedForeground }]}
-              >
-                Add up to 2 photos — front and label work best
-              </Text>
-            ) : (
-              <Text
-                allowFontScaling={false}
-                style={[styles.photoCounter, { color: colors.mutedForeground }]}
-              >
-                {images.length} / 2 photos
-              </Text>
-            )}
-          </View>
-
-          {/* Optional context */}
-          <View
-            style={[
-              styles.contextCard,
-              { backgroundColor: colors.card, borderColor: colors.border },
-            ]}
-          >
-            <Text
-              allowFontScaling={false}
-              style={[styles.contextTitle, { color: colors.foreground }]}
-            >
-              Optional Context
-            </Text>
-            {[
-              {
-                label: 'Visible Text / Numbers',
-                value: textNumbers,
-                key: 'textNumbers',
-                ph: 'e.g. BR120, 20A, 125V...',
-              },
-              {
-                label: 'Keywords',
-                value: keywords,
-                key: 'keywords',
-                ph: 'e.g. breaker, outlet...',
-              },
-              { label: 'Vendor', value: vendor, key: 'vendor', ph: 'e.g. Eaton, Square D...' },
-              { label: 'Color', value: color, key: 'color', ph: 'e.g. white, gray...' },
-              { label: 'Size', value: size, key: 'size', ph: 'e.g. 20A, 3/4 inch...' },
-            ].map(({ label, value, key, ph }) => (
-              <View key={key} style={{ marginBottom: 10 }}>
-                <Text
-                  allowFontScaling={false}
-                  style={[styles.fieldLabel, { color: colors.foreground }]}
-                >
-                  {label}:
-                </Text>
-                <TextInput
-                  value={value}
-                  onChangeText={(v) => {
-                    if (key === 'textNumbers') setTextNumbers(v);
-                    else if (key === 'keywords') setKeywords(v);
-                    else if (key === 'vendor') setVendor(v);
-                    else if (key === 'color') setColor(v);
-                    else if (key === 'size') setSize(v);
-                  }}
-                  placeholder={ph}
-                  placeholderTextColor={colors.mutedForeground}
-                  style={[
-                    styles.fieldInput,
-                    {
-                      backgroundColor: colors.muted,
-                      borderColor: colors.border,
-                      color: colors.foreground,
-                    },
-                  ]}
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  returnKeyType="done"
-                />
-              </View>
-            ))}
-          </View>
-
-          {/* Identify button */}
-          <Pressable
-            onPress={handleIdentify}
-            disabled={isLoading || images.length === 0}
-            style={[
-              styles.identifyBtn,
-              { backgroundColor: isLoading || images.length === 0 ? colors.muted : colors.primary },
-            ]}
-          >
-            {isLoading ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <ActivityIndicator color={colors.primaryForeground} />
-                <Text
-                  allowFontScaling={false}
-                  style={[styles.identifyBtnText, { color: colors.primaryForeground }]}
-                >
-                  {progressLabel ?? 'Working…'}
-                </Text>
-              </View>
-            ) : (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <MaterialCommunityIcons
-                  name="magnify"
-                  size={20}
-                  color={images.length === 0 ? colors.mutedForeground : colors.primaryForeground}
-                />
-                <Text
-                  allowFontScaling={false}
-                  style={[
-                    styles.identifyBtnText,
-                    {
-                      color:
-                        images.length === 0 ? colors.mutedForeground : colors.primaryForeground,
-                    },
-                  ]}
-                >
-                  Identify Part
-                </Text>
-              </View>
-            )}
-          </Pressable>
-
-          {/* Step indicator — visible only while a request is in progress */}
-          {isLoading && progressPhase ? (
-            <View style={styles.stepRow}>
-              {(['uploading', 'analysing', 'searching'] as const).map((phase, idx) => {
-                const phaseOrder = { uploading: 0, analysing: 1, searching: 2 };
-                const currentIdx = phaseOrder[progressPhase];
-                const isDone = phaseOrder[phase] < currentIdx;
-                const isActive = phase === progressPhase;
-                return (
-                  <React.Fragment key={phase}>
-                    <View style={styles.stepItem}>
-                      <View
-                        style={[
-                          styles.stepDot,
-                          {
-                            backgroundColor: isDone
-                              ? colors.primary
-                              : isActive
-                                ? colors.primary
-                                : colors.border,
-                            opacity: isDone ? 0.5 : 1,
-                          },
-                        ]}
-                      >
-                        {isDone ? (
-                          <Text allowFontScaling={false} style={styles.stepDotCheck}>
-                            ✓
-                          </Text>
-                        ) : isActive ? (
-                          <ActivityIndicator
-                            size="small"
-                            color={colors.primaryForeground}
-                            style={{ transform: [{ scale: 0.55 }] }}
-                          />
-                        ) : null}
-                      </View>
+                {images.length < 2 ? (
+                  isProcessing ? (
+                    <View
+                      style={[
+                        styles.processingRow,
+                        { borderColor: colors.border, backgroundColor: colors.card },
+                      ]}
+                    >
+                      <ActivityIndicator size="small" color={colors.primary} />
                       <Text
                         allowFontScaling={false}
-                        style={[
-                          styles.stepLabel,
-                          {
-                            color: isActive ? colors.foreground : colors.mutedForeground,
-                            fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_400Regular',
-                          },
-                        ]}
+                        style={[styles.processingLabel, { color: colors.mutedForeground }]}
                       >
-                        {phase === 'uploading'
-                          ? 'Upload'
-                          : phase === 'analysing'
-                            ? 'Analyse'
-                            : 'Search'}
+                        Processing…
                       </Text>
                     </View>
-                    {idx < 2 ? (
-                      <View
+                  ) : (
+                    <View style={styles.addImageButtons}>
+                      <Pressable
+                        onPress={() => pickImage('camera')}
+                        disabled={isProcessing}
                         style={[
-                          styles.stepConnector,
-                          {
-                            backgroundColor:
-                              phaseOrder[phase] < currentIdx ? colors.primary : colors.border,
-                            opacity: phaseOrder[phase] < currentIdx ? 0.5 : 0.3,
-                          },
+                          styles.addImageBtn,
+                          { backgroundColor: colors.card, borderColor: colors.foreground },
                         ]}
-                      />
-                    ) : null}
-                  </React.Fragment>
-                );
-              })}
-            </View>
-          ) : null}
-
-          {/* Camera permission denied card */}
-          {cameraPermissionDenied ? (
-            <View
-              style={[
-                styles.permissionCard,
-                { backgroundColor: colors.card, borderColor: colors.border },
-              ]}
-            >
-              <Text
-                allowFontScaling={false}
-                style={[styles.permissionTitle, { color: colors.foreground }]}
-              >
-                Camera access is off
-              </Text>
-              <Text
-                allowFontScaling={false}
-                style={[styles.permissionBody, { color: colors.mutedForeground }]}
-              >
-                Open Settings to allow camera access for Photo ID.
-              </Text>
-              <Pressable
-                style={[styles.permissionPrimaryBtn, { backgroundColor: colors.primary }]}
-                onPress={() => {
-                  setCameraPermissionDenied(false);
-                  Linking.openSettings();
-                }}
-              >
-                <Text
-                  allowFontScaling={false}
-                  style={[styles.permissionPrimaryBtnText, { color: colors.primaryForeground }]}
-                >
-                  Open Settings
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setCameraPermissionDenied(false)}
-                style={styles.permissionSecondaryBtn}
-              >
-                <Text
-                  allowFontScaling={false}
-                  style={{ color: colors.primary, fontFamily: 'Inter_500Medium' }}
-                >
-                  Dismiss
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
-
-          {/* Inline error banner */}
-          {inlineError ? (
-            <View
-              style={[
-                styles.inlineBanner,
-                {
-                  backgroundColor: colors.destructive + '15',
-                  borderColor: colors.destructive + '55',
-                },
-              ]}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-                <MaterialCommunityIcons
-                  name="alert-circle-outline"
-                  size={14}
-                  color={colors.destructive}
-                />
-                <Text
-                  allowFontScaling={false}
-                  style={[styles.inlineBannerText, { color: colors.destructive, flex: 1 }]}
-                >
-                  {inlineError}
-                </Text>
-              </View>
-              <Pressable onPress={() => setInlineError(null)} style={styles.inlineBannerClose}>
-                <Text allowFontScaling={false} style={{ color: colors.destructive, fontSize: 14 }}>
-                  ✕
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
-
-          {/* AI summary */}
-          {aiSummary ? (
-            <View
-              style={[
-                styles.summaryCard,
-                { backgroundColor: colors.accent, borderColor: colors.primary + '44' },
-              ]}
-            >
-              <Text
-                allowFontScaling={false}
-                style={[styles.summaryTitle, { color: colors.accentForeground }]}
-              >
-                AI Identification
-              </Text>
-              <Text
-                allowFontScaling={false}
-                style={[styles.summaryText, { color: colors.foreground }]}
-              >
-                {aiSummary}
-              </Text>
-              {aiTerms.length > 0 ? (
-                <View style={{ marginTop: 10 }}>
-                  <Text
-                    allowFontScaling={false}
-                    style={[styles.termLabel, { color: colors.accentForeground }]}
-                  >
-                    SEARCH TERMS USED
-                  </Text>
-                  <View style={styles.termRow}>
-                    {aiTerms.map((term, i) => (
-                      <View
-                        key={i}
-                        style={[styles.termChip, { backgroundColor: colors.primary + '22' }]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Take photo with camera"
                       >
+                        <MaterialCommunityIcons name="camera" size={28} color={colors.foreground} />
                         <Text
                           allowFontScaling={false}
-                          style={[styles.termText, { color: colors.primary }]}
+                          style={[styles.addImageLabel, { color: colors.foreground }]}
                         >
-                          {term}
+                          Camera
                         </Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              ) : null}
-            </View>
-          ) : null}
+                      </Pressable>
+                      <Pressable
+                        onPress={() => pickImage('library')}
+                        disabled={isProcessing}
+                        style={[
+                          styles.addImageBtn,
+                          { backgroundColor: colors.card, borderColor: colors.foreground },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Pick from photo library"
+                      >
+                        <MaterialCommunityIcons
+                          name="image-multiple"
+                          size={28}
+                          color={colors.foreground}
+                        />
+                        <Text
+                          allowFontScaling={false}
+                          style={[styles.addImageLabel, { color: colors.foreground }]}
+                        >
+                          Photo Library
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => router.push('/scan')}
+                        disabled={isProcessing}
+                        style={[
+                          styles.addImageBtn,
+                          { backgroundColor: colors.card, borderColor: colors.foreground },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Scan barcode"
+                      >
+                        <MaterialCommunityIcons
+                          name="barcode-scan"
+                          size={28}
+                          color={colors.foreground}
+                        />
+                        <Text
+                          allowFontScaling={false}
+                          style={[styles.addImageLabel, { color: colors.foreground }]}
+                        >
+                          Barcode
+                        </Text>
+                      </Pressable>
+                    </View>
+                  )
+                ) : null}
+              </View>
 
-          {/* Results */}
-          {results.length > 0 ? (
-            <View>
-              <Text
-                allowFontScaling={false}
-                style={[styles.resultsTitle, { color: colors.foreground }]}
-              >
-                {results.length} Matching Parts
-              </Text>
-              {results.map((result, index) => (
-                <ResultCard
-                  key={result.item.id}
-                  result={result}
-                  rank={index}
-                  fontScale={textFontScale}
-                  onEditKeywords={adminToken ? setEditItem : undefined}
-                  onConfirm={
-                    photoEventId != null
-                      ? () => {
-                          confirmMutation.mutate({
-                            data: { photoEventId: photoEventId, resultId: result.item.id },
-                          });
-                        }
-                      : undefined
-                  }
-                />
-              ))}
+              {images.length === 0 ? (
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.imageHint, { color: colors.mutedForeground }]}
+                >
+                  Add up to 2 photos — front and label work best
+                </Text>
+              ) : (
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.photoCounter, { color: colors.mutedForeground }]}
+                >
+                  {images.length} / 2 photos
+                </Text>
+              )}
             </View>
-          ) : null}
 
-          {/* No results */}
-          {searchMutation.isSuccess && results.length === 0 && aiSummary ? (
+            {/* Optional context */}
             <View
               style={[
-                styles.noResultsCard,
+                styles.contextCard,
                 { backgroundColor: colors.card, borderColor: colors.border },
               ]}
             >
               <Text
                 allowFontScaling={false}
-                style={[styles.noResultsText, { color: colors.mutedForeground }]}
+                style={[styles.contextTitle, { color: colors.foreground }]}
               >
-                No inventory matches found for this part. Try adding it to inventory via the Upload
-                tab.
+                Optional Context
               </Text>
-            </View>
-          ) : null}
-
-          {/* Error */}
-          {identifyMutation.isError ? (
-            <View
-              style={[
-                styles.errorCard,
+              {[
                 {
-                  backgroundColor: colors.destructive + '11',
-                  borderColor: colors.destructive + '44',
+                  label: 'Visible Text / Numbers',
+                  value: textNumbers,
+                  key: 'textNumbers',
+                  ph: 'e.g. BR120, 20A, 125V...',
+                },
+                {
+                  label: 'Keywords',
+                  value: keywords,
+                  key: 'keywords',
+                  ph: 'e.g. breaker, outlet...',
+                },
+                { label: 'Vendor', value: vendor, key: 'vendor', ph: 'e.g. Eaton, Square D...' },
+                { label: 'Color', value: color, key: 'color', ph: 'e.g. white, gray...' },
+                { label: 'Size', value: size, key: 'size', ph: 'e.g. 20A, 3/4 inch...' },
+              ].map(({ label, value, key, ph }) => (
+                <View key={key} style={{ marginBottom: 10 }}>
+                  <Text
+                    allowFontScaling={false}
+                    style={[styles.fieldLabel, { color: colors.foreground }]}
+                  >
+                    {label}:
+                  </Text>
+                  <TextInput
+                    value={value}
+                    onChangeText={(v) => {
+                      if (key === 'textNumbers') setTextNumbers(v);
+                      else if (key === 'keywords') setKeywords(v);
+                      else if (key === 'vendor') setVendor(v);
+                      else if (key === 'color') setColor(v);
+                      else if (key === 'size') setSize(v);
+                    }}
+                    placeholder={ph}
+                    placeholderTextColor={colors.mutedForeground}
+                    style={[
+                      styles.fieldInput,
+                      {
+                        backgroundColor: colors.muted,
+                        borderColor: colors.border,
+                        color: colors.foreground,
+                      },
+                    ]}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                    returnKeyType="done"
+                  />
+                </View>
+              ))}
+            </View>
+
+            {/* Identify button */}
+            <Pressable
+              onPress={handleIdentify}
+              disabled={isLoading || images.length === 0}
+              style={[
+                styles.identifyBtn,
+                {
+                  backgroundColor: isLoading || images.length === 0 ? colors.muted : colors.primary,
                 },
               ]}
             >
-              <Text
-                allowFontScaling={false}
-                style={[styles.errorText, { color: colors.destructive }]}
-              >
-                AI identification failed. Check your connection.
-              </Text>
-            </View>
-          ) : null}
+              {isLoading ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <ActivityIndicator color={colors.primaryForeground} />
+                  <Text
+                    allowFontScaling={false}
+                    style={[styles.identifyBtnText, { color: colors.primaryForeground }]}
+                  >
+                    {progressLabel ?? 'Working…'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <MaterialCommunityIcons
+                    name="magnify"
+                    size={20}
+                    color={images.length === 0 ? colors.mutedForeground : colors.primaryForeground}
+                  />
+                  <Text
+                    allowFontScaling={false}
+                    style={[
+                      styles.identifyBtnText,
+                      {
+                        color:
+                          images.length === 0 ? colors.mutedForeground : colors.primaryForeground,
+                      },
+                    ]}
+                  >
+                    Identify Part
+                  </Text>
+                </View>
+              )}
+            </Pressable>
 
-          {/* Welcome state */}
-          {!identifyMutation.isSuccess && !identifyMutation.isPending && images.length === 0 ? (
-            <View
-              style={[
-                styles.welcomeCard,
-                { backgroundColor: colors.card, borderColor: colors.border },
-              ]}
-            >
-              <Text
-                allowFontScaling={false}
-                style={[styles.welcomeTitle, { color: colors.foreground }]}
+            {/* Step indicator — visible only while a request is in progress */}
+            {isLoading && progressPhase ? (
+              <View style={styles.stepRow}>
+                {(['uploading', 'analysing', 'searching'] as const).map((phase, idx) => {
+                  const phaseOrder = { uploading: 0, analysing: 1, searching: 2 };
+                  const currentIdx = phaseOrder[progressPhase];
+                  const isDone = phaseOrder[phase] < currentIdx;
+                  const isActive = phase === progressPhase;
+                  return (
+                    <React.Fragment key={phase}>
+                      <View style={styles.stepItem}>
+                        <View
+                          style={[
+                            styles.stepDot,
+                            {
+                              backgroundColor: isDone
+                                ? colors.primary
+                                : isActive
+                                  ? colors.primary
+                                  : colors.border,
+                              opacity: isDone ? 0.5 : 1,
+                            },
+                          ]}
+                        >
+                          {isDone ? (
+                            <Text allowFontScaling={false} style={styles.stepDotCheck}>
+                              ✓
+                            </Text>
+                          ) : isActive ? (
+                            <ActivityIndicator
+                              size="small"
+                              color={colors.primaryForeground}
+                              style={{ transform: [{ scale: 0.55 }] }}
+                            />
+                          ) : null}
+                        </View>
+                        <Text
+                          allowFontScaling={false}
+                          style={[
+                            styles.stepLabel,
+                            {
+                              color: isActive ? colors.foreground : colors.mutedForeground,
+                              fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                            },
+                          ]}
+                        >
+                          {phase === 'uploading'
+                            ? 'Upload'
+                            : phase === 'analysing'
+                              ? 'Analyse'
+                              : 'Search'}
+                        </Text>
+                      </View>
+                      {idx < 2 ? (
+                        <View
+                          style={[
+                            styles.stepConnector,
+                            {
+                              backgroundColor:
+                                phaseOrder[phase] < currentIdx ? colors.primary : colors.border,
+                              opacity: phaseOrder[phase] < currentIdx ? 0.5 : 0.3,
+                            },
+                          ]}
+                        />
+                      ) : null}
+                    </React.Fragment>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            {/* Camera permission denied card */}
+            {cameraPermissionDenied ? (
+              <View
+                style={[
+                  styles.permissionCard,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
               >
-                How it works
-              </Text>
-              {[
-                '📷 Take or select up to 2 photos of the part',
-                '📝 Add any visible text, numbers, or labels',
-                '🤖 AI identifies the part type and specifications',
-                '📦 Matching items from inventory are shown',
-              ].map((step, i) => (
                 <Text
                   allowFontScaling={false}
-                  key={i}
-                  style={[styles.welcomeStep, { color: colors.mutedForeground }]}
+                  style={[styles.permissionTitle, { color: colors.foreground }]}
                 >
-                  {step}
+                  Camera access is off
                 </Text>
-              ))}
-            </View>
-          ) : null}
-        </View>
-      </ScrollView>
-      <ReferenceModal open={showRefModal} onClose={() => setShowRefModal(false)} />
-      <RecordEditModal
-        item={editItem}
-        adminHeaders={adminToken ? { Authorization: `Bearer ${adminToken}` } : {}}
-        onClose={() => setEditItem(null)}
-        onSaved={(updated) => {
-          setResults((prev) =>
-            prev.map((r) =>
-              r.item.id === updated.id ? { ...r, item: { ...r.item, ...updated } } : r
-            )
-          );
-          updateFuseCache(updated).catch(() => {});
-          setEditItem(null);
-        }}
-      />
-    </SafeAreaView>
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.permissionBody, { color: colors.mutedForeground }]}
+                >
+                  Open Settings to allow camera access for Photo ID.
+                </Text>
+                <Pressable
+                  style={[styles.permissionPrimaryBtn, { backgroundColor: colors.primary }]}
+                  onPress={() => {
+                    setCameraPermissionDenied(false);
+                    Linking.openSettings();
+                  }}
+                >
+                  <Text
+                    allowFontScaling={false}
+                    style={[styles.permissionPrimaryBtnText, { color: colors.primaryForeground }]}
+                  >
+                    Open Settings
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setCameraPermissionDenied(false)}
+                  style={styles.permissionSecondaryBtn}
+                >
+                  <Text
+                    allowFontScaling={false}
+                    style={{ color: colors.primary, fontFamily: 'Inter_500Medium' }}
+                  >
+                    Dismiss
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {/* Inline error banner */}
+            {inlineError ? (
+              <View
+                style={[
+                  styles.inlineBanner,
+                  {
+                    backgroundColor: colors.destructive + '15',
+                    borderColor: colors.destructive + '55',
+                  },
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                  <MaterialCommunityIcons
+                    name="alert-circle-outline"
+                    size={14}
+                    color={colors.destructive}
+                  />
+                  <Text
+                    allowFontScaling={false}
+                    style={[styles.inlineBannerText, { color: colors.destructive, flex: 1 }]}
+                  >
+                    {inlineError}
+                  </Text>
+                </View>
+                <Pressable onPress={() => setInlineError(null)} style={styles.inlineBannerClose}>
+                  <Text
+                    allowFontScaling={false}
+                    style={{ color: colors.destructive, fontSize: 14 }}
+                  >
+                    ✕
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {/* AI summary */}
+            {aiSummary ? (
+              <View
+                style={[
+                  styles.summaryCard,
+                  { backgroundColor: colors.accent, borderColor: colors.primary + '44' },
+                ]}
+              >
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.summaryTitle, { color: colors.accentForeground }]}
+                >
+                  AI Identification
+                </Text>
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.summaryText, { color: colors.foreground }]}
+                >
+                  {aiSummary}
+                </Text>
+                {aiTerms.length > 0 ? (
+                  <View style={{ marginTop: 10 }}>
+                    <Text
+                      allowFontScaling={false}
+                      style={[styles.termLabel, { color: colors.accentForeground }]}
+                    >
+                      SEARCH TERMS USED
+                    </Text>
+                    <View style={styles.termRow}>
+                      {aiTerms.map((term, i) => (
+                        <View
+                          key={i}
+                          style={[styles.termChip, { backgroundColor: colors.primary + '22' }]}
+                        >
+                          <Text
+                            allowFontScaling={false}
+                            style={[styles.termText, { color: colors.primary }]}
+                          >
+                            {term}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
+            {/* Results */}
+            {results.length > 0 ? (
+              <View>
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.resultsTitle, { color: colors.foreground }]}
+                >
+                  {results.length} Matching Parts
+                </Text>
+                {results.map((result, index) => (
+                  <ResultCard
+                    key={result.item.id}
+                    result={result}
+                    rank={index}
+                    fontScale={textFontScale}
+                    onEditKeywords={adminToken ? setEditItem : undefined}
+                    onConfirm={
+                      photoEventId != null
+                        ? () => {
+                            confirmMutation.mutate({
+                              data: { photoEventId: photoEventId, resultId: result.item.id },
+                            });
+                          }
+                        : undefined
+                    }
+                  />
+                ))}
+              </View>
+            ) : null}
+
+            {/* No results */}
+            {searchMutation.isSuccess && results.length === 0 && aiSummary ? (
+              <View
+                style={[
+                  styles.noResultsCard,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
+              >
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.noResultsText, { color: colors.mutedForeground }]}
+                >
+                  No inventory matches found for this part. Try adding it to inventory via the
+                  Upload tab.
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Error */}
+            {identifyMutation.isError ? (
+              <View
+                style={[
+                  styles.errorCard,
+                  {
+                    backgroundColor: colors.destructive + '11',
+                    borderColor: colors.destructive + '44',
+                  },
+                ]}
+              >
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.errorText, { color: colors.destructive }]}
+                >
+                  AI identification failed. Check your connection.
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Welcome state */}
+            {!identifyMutation.isSuccess && !identifyMutation.isPending && images.length === 0 ? (
+              <View
+                style={[
+                  styles.welcomeCard,
+                  { backgroundColor: colors.card, borderColor: colors.border },
+                ]}
+              >
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.welcomeTitle, { color: colors.foreground }]}
+                >
+                  How it works
+                </Text>
+                {[
+                  '📷 Take or select up to 2 photos of the part',
+                  '📝 Add any visible text, numbers, or labels',
+                  '🤖 AI identifies the part type and specifications',
+                  '📦 Matching items from inventory are shown',
+                ].map((step, i) => (
+                  <Text
+                    allowFontScaling={false}
+                    key={i}
+                    style={[styles.welcomeStep, { color: colors.mutedForeground }]}
+                  >
+                    {step}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        </ScrollView>
+        <ReferenceModal open={showRefModal} onClose={() => setShowRefModal(false)} />
+        <RecordEditModal
+          item={editItem}
+          adminHeaders={adminToken ? { Authorization: `Bearer ${adminToken}` } : {}}
+          onClose={() => setEditItem(null)}
+          onSaved={(updated) => {
+            setResults((prev) =>
+              prev.map((r) =>
+                r.item.id === updated.id ? { ...r, item: { ...r.item, ...updated } } : r
+              )
+            );
+            updateFuseCache(updated).catch(() => {});
+            setEditItem(null);
+          }}
+        />
+      </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 }
 

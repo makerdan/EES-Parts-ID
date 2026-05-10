@@ -13,6 +13,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -421,7 +422,10 @@ export default function ScanScreen() {
   }
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.background }]}>
+    <KeyboardAvoidingView
+      style={[styles.root, { backgroundColor: colors.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       {/*
         Cancel overlay sits above the viewfinder/controls. It's the
         last child below so it paints on top of the camera, reticle,
@@ -844,7 +848,7 @@ export default function ScanScreen() {
           setEditItem(null);
         }}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
