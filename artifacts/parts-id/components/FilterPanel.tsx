@@ -537,7 +537,12 @@ export function ConfidenceSlider({
   );
 }
 
-export function FilterPanel({ values, onChange, dimensionCounts, activeCategoryName }: FilterPanelProps) {
+export function FilterPanel({
+  values,
+  onChange,
+  dimensionCounts,
+  activeCategoryName,
+}: FilterPanelProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
 

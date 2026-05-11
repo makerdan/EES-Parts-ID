@@ -25,11 +25,7 @@ import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
 import rawColors from '@/constants/colors';
 import { splitHighlightSegments } from '@/lib/refinement';
-import {
-  parseTradeSizeInches,
-  formatInchesAsFraction,
-  parseBreakerCatalog,
-} from '@/lib/tradeSize';
+import { parseTradeSizeInches, formatInchesAsFraction, parseBreakerCatalog } from '@/lib/tradeSize';
 
 interface ResultCardProps {
   result: SearchResult;
@@ -691,7 +687,7 @@ export function ResultCard({
                     </Text>
                   </View>
                 </View>
-              ) : item.tradeSize ? (
+              ) : !isBreaker && item.tradeSize ? (
                 <Text style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}>
                   {item.tradeSize}
                 </Text>

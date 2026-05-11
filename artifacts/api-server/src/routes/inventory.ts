@@ -1433,17 +1433,27 @@ router.post('/preview-upsert', requireAdminAuth, async (req, res) => {
 // the same as items whose catalog passes isBreakerCatalog().
 async function fetchBreakerItemIds(candidateIds: number[]): Promise<Set<number>> {
   if (candidateIds.length === 0) return new Set();
-  const rows = await db
-    .select({ inventoryId: inventoryCategoryTable.inventoryId })
-    .from(inventoryCategoryTable)
-    .innerJoin(categoryNodeTable, eq(inventoryCategoryTable.categoryNodeId, categoryNodeTable.id))
-    .where(
-      and(
-        sql`${inventoryCategoryTable.inventoryId} = ANY(${candidateIds})`,
-        ilike(categoryNodeTable.name, '%breaker%')
-      )
-    );
-  return new Set(rows.map((r) => r.inventoryId));
+  // Walk the full taxonomy ancestry with a recursive CTE so items with
+  // atypical catalog numbers are still caught when any ancestor node
+  // (type / subcategory / category) carries a "breaker" name. The
+  // taxonomy is 3 levels deep so the recursion terminates quickly.
+  const result = await db.execute<{ inventory_id: number }>(sql`
+    WITH RECURSIVE ancestors (inventory_id, node_id, node_name, parent_id) AS (
+      SELECT ic.inventory_id, cn.id, cn.name, cn.parent_id
+      FROM inventory_category ic
+      JOIN category_node cn ON cn.id = ic.category_node_id
+      WHERE ic.inventory_id = ANY(${candidateIds})
+      UNION ALL
+      SELECT a.inventory_id, cn.id, cn.name, cn.parent_id
+      FROM category_node cn
+      JOIN ancestors a ON cn.id = a.parent_id
+    )
+    SELECT DISTINCT inventory_id
+    FROM ancestors
+    WHERE node_name ILIKE '%breaker%'
+  `);
+  const rows = (result as unknown as { rows: Array<{ inventory_id: number }> }).rows;
+  return new Set(rows.map((r) => r.inventory_id));
 }
 
 // ── POST /inventory/enrich ────────────────────────────────────────────────────
