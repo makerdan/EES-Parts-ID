@@ -793,6 +793,81 @@ describe('matchesChipFilters — tradeSize chip (text-only, no column)', () => {
   });
 });
 
+// ── matchesChipFilters — tradeSize boundary (mixed descriptions) ───────────────
+// Real warehouse items often have messy descriptions where the trade size
+// appears without the inch mark (e.g. "EMT12 10ft 1/2 conduit") or is
+// only implied by the catalog-code digits (e.g. catalog="EMT12").
+// These cases guard against regressions in the tokenMatch boundary logic at
+// the server filter layer.  They mirror the equivalent block added to the
+// client-side resultRefinement.test.ts in Task #398 so that a regression
+// anywhere in the pipeline is caught before reaching the user.
+
+describe('tradeSize boundary — mixed descriptions', () => {
+  it('does not match when description has size fraction without the inch mark', () => {
+    // "1/2" without the trailing " is a different token from "1/2"".
+    // A regression that strips punctuation from the chip value would cause
+    // this item to slip through a 1/2" trade-size filter.
+    const item: ChipFilterItem = {
+      vendor: 'ALP',
+      catalog: 'EMT12',
+      description: 'EMT 10ft 1/2 conduit', // bare fraction, no inch mark
+      aiKeywords: ['emt', 'conduit'],
+    };
+    expect(matchesChipFilters(item, [{ key: 'tradeSize', value: '1/2"' }])).toBe(false);
+  });
+
+  it('does not match when the trade size is only encoded in the catalog number digits', () => {
+    // Catalog "EMT12" lowercases to "emt12" in itemFullText — the digits
+    // "12" encode the 1/2-inch size by industry convention but must NOT be
+    // mistaken for an explicit "1/2"" token.  Only an actual "1/2"" string
+    // in the text (description / aiKeywords / vendor) should pass the filter.
+    const item: ChipFilterItem = {
+      vendor: 'ALP',
+      catalog: 'EMT12',
+      description: 'Allied EMT conduit 10-foot length', // no size token in text
+      aiKeywords: ['emt', 'conduit'],
+    };
+    expect(matchesChipFilters(item, [{ key: 'tradeSize', value: '1/2"' }])).toBe(false);
+  });
+
+  it('still matches correctly when inch mark IS present in a messy catalog-code description', () => {
+    // Positive control: same "catalog code in description" format but with
+    // the inch mark present.  The filter must NOT over-reject these items.
+    const item: ChipFilterItem = {
+      vendor: 'ALP',
+      catalog: 'EMT12',
+      description: 'EMT12 10ft 1/2" conduit', // inch mark present
+      aiKeywords: ['emt', 'conduit'],
+    };
+    expect(matchesChipFilters(item, [{ key: 'tradeSize', value: '1/2"' }])).toBe(true);
+  });
+
+  it('does not match 1/2" chip when 1/2 appears only in aiKeywords without the inch mark', () => {
+    // Guards against a looser match path that might check aiKeywords
+    // independently of tokenMatch, stripping punctuation in the process.
+    const item: ChipFilterItem = {
+      vendor: 'ALP',
+      catalog: 'EMT12',
+      description: 'EMT conduit',
+      aiKeywords: ['emt', 'conduit', '1/2'], // no inch mark in keyword
+    };
+    expect(matchesChipFilters(item, [{ key: 'tradeSize', value: '1/2"' }])).toBe(false);
+  });
+
+  it('does not match 1/2" chip against a 2-1/2" item (the /2" suffix shares characters)', () => {
+    // Regression guard for the `-` boundary: "2-1/2"" contains "/2"" as a
+    // suffix, but the `-` before "1/2"" is treated as an inner-word char so
+    // the token "2-1/2"" must NOT satisfy a "1/2"" filter.
+    const item: ChipFilterItem = {
+      vendor: 'ALP',
+      catalog: 'EMT212',
+      description: 'Allied 2-1/2" EMT Conduit 10ft',
+      aiKeywords: ['emt', 'conduit', '2-1/2"'],
+    };
+    expect(matchesChipFilters(item, [{ key: 'tradeSize', value: '1/2"' }])).toBe(false);
+  });
+});
+
 describe('matchesChipFilters — colorChip chip (text-only, no column)', () => {
   const item = (description: string): ChipFilterItem => ({
     vendor: 'Leviton',
