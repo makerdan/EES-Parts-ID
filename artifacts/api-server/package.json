@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand --config jest.unit.config.cjs",
+    "test:smoke": "jest --runInBand --config jest.smoke.config.cjs",
     "lint": "eslint ."
   },
   "dependencies": {
