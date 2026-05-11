@@ -479,6 +479,55 @@ router.post('/search', async (req, res) => {
 
     const vendorFilter = vendorInput.trim().toUpperCase();
     const allTermsArr = Array.from(expandedTerms).filter((t) => t.length >= 2);
+
+    // ── Fractional trade-size tokens (e.g. "1/2", "3/4", "1-1/4", "2-1/2") ──
+    // These must be detected BEFORE the tsquery builder strips non-word
+    // characters. The tsquery path turns "1/2" into "1" and "2" (then drops
+    // both via the leading-letter filter), so without this branch a search
+    // for `1/2"` produces an empty tsquery and bleeds into unrelated results
+    // via the trigram fallback. We extract these tokens here, exclude them
+    // from FTS, and route them to a regex match (with a word-boundary guard
+    // mirroring the mobile `tokenMatch` helper) against `description` and
+    // `search_tokens` — both of which contain the canonical trade-size
+    // forms emitted by `tradeSizeKeywordTokens` at enrichment time.
+    const FRACTIONAL_SIZE_RE = /\d+(?:-\d+)?\/\d+/g;
+    // First, harvest fractional tokens directly from the raw user inputs so
+    // we preserve their provenance: anything the user actually typed counts
+    // as explicit intent and must not be pruned by the substring filter
+    // below. This lets a query like `"1/4 1-1/4"` keep BOTH tokens, while
+    // still dropping the `"1/4"` that `parseCatalogNumber("1-1/4")`
+    // synthesizes as a wire-gauge expansion.
+    const rawUserSizeTokens = new Set<string>();
+    for (const raw of [keywords, catalogInput]) {
+      if (!raw) continue;
+      const matches = raw.replace(/["']/g, '').match(FRACTIONAL_SIZE_RE);
+      if (matches) for (const m of matches) rawUserSizeTokens.add(m);
+    }
+    const fractionalSizeTokens = new Set<string>(rawUserSizeTokens);
+    const ftsCandidateTerms: string[] = [];
+    for (const term of allTermsArr) {
+      // Strip inch marks / quotes before testing so e.g. `1/2"` is recognized.
+      const stripped = term.replace(/["']/g, '');
+      const match = stripped.match(FRACTIONAL_SIZE_RE);
+      if (match) {
+        for (const m of match) fractionalSizeTokens.add(m);
+      } else {
+        ftsCandidateTerms.push(term);
+      }
+    }
+    // Drop expansion-sourced fractions that are substrings of any
+    // user-typed fraction (e.g. drop the synthesized `"1/4"` when the
+    // user actually typed `"1-1/4"`). User-typed tokens are always
+    // preserved, even if they happen to be substrings of another
+    // user-typed token — explicit multi-size intent wins.
+    const uniqueSizeTokens = Array.from(fractionalSizeTokens).filter((tok) => {
+      if (rawUserSizeTokens.has(tok)) return true;
+      for (const other of rawUserSizeTokens) {
+        if (other !== tok && other.includes(tok)) return false;
+      }
+      return true;
+    });
+
     // Build the FTS tsquery: strip non-word/non-space chars, split on whitespace so
     // multi-word terms become separate OR tokens, then filter out tokens that would
     // cause to_tsquery to fail:
@@ -486,7 +535,7 @@ router.post('/search', async (req, res) => {
     //   • tokens starting with a digit (e.g. "7mm" from "12.7mm" after dot-strip)
     //   • common English stopwords that to_tsquery rejects when they appear alone
     const FTS_STOPWORDS = new Set(['in', 'at', 'on', 'of', 'to', 'by', 'as', 'an', 'or', 'it']);
-    const tsQuery = allTermsArr
+    const tsQuery = ftsCandidateTerms
       .flatMap((t) =>
         t
           .replace(/[^\w\s]/g, ' ')
@@ -496,6 +545,16 @@ router.post('/search', async (req, res) => {
       )
       .filter((t) => t.length >= 2 && /^[a-zA-Z]/.test(t) && !FTS_STOPWORDS.has(t.toLowerCase()))
       .join(' | ');
+
+    // POSIX-regex patterns for each fractional size token. The
+    // `(^|[^[:alnum:]_/-])` … `($|[^[:alnum:]_/-])` boundary mirrors the
+    // `tokenMatch` lookarounds in searchHelpers.ts: it treats `/` and `-` as
+    // intra-token characters so `1/2` does NOT match inside `1-1/2` or
+    // `2-1/2`. Each token is regex-escaped before interpolation.
+    const sizeTokenRegexes = uniqueSizeTokens.map((tok) => {
+      const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return `(^|[^[:alnum:]_/-])${escaped}($|[^[:alnum:]_/-])`;
+    });
 
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
@@ -533,7 +592,7 @@ router.post('/search', async (req, res) => {
 
     let pgResults: RawRow[] = [];
     try {
-      if (tsQuery.trim() || kwLike || catalogLike || vendorFilter) {
+      if (tsQuery.trim() || kwLike || catalogLike || vendorFilter || sizeTokenRegexes.length > 0) {
         // Token string used for trigram similarity against the pre-expanded
         // search_tokens column. Concatenating abbreviation-expanded terms with
         // the raw keyword gives the best coverage.
@@ -618,6 +677,17 @@ router.post('/search', async (req, res) => {
                 ${catalogLike ? sql`OR i.catalog ILIKE ${catalogLike}` : sql``}
                 ${trgmQuery ? sql`OR (i.catalog % ${trgmQuery})` : sql``}
                 ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
+                ${
+                  sizeTokenRegexes.length > 0
+                    ? sql`OR (${sql.join(
+                        sizeTokenRegexes.map(
+                          (r) =>
+                            sql`(i.description ~* ${r} OR (i.search_tokens IS NOT NULL AND i.search_tokens ~* ${r}))`
+                        ),
+                        sql` OR `
+                      )})`
+                    : sql``
+                }
 
               ${
                 trgmQuery
@@ -820,10 +890,42 @@ router.post('/search', async (req, res) => {
       }
     }
 
+    // ── Fractional size-token post-filter ─────────────────────────────────
+    // When the query contains fractional/hyphenated trade-size tokens (e.g.
+    // "1/2", "1-1/4"), require every result to actually contain the token —
+    // boundary-matched the same way `tokenMatch` does — so other layers
+    // (catalog ILIKE on "EMT", trigram on the full keyword string) can't
+    // bleed wrong-size rows into the result set. Without this filter, a
+    // search like `1/2 EMT` returns every EMT item in the database via
+    // the trigram and ILIKE branches, defeating the boundary-guarded SQL
+    // regex match added above.
+    // For non-mixed fractions ("1/2", "3/4") we extend the lookbehind/lookahead
+    // to also reject a digit+space or digit+dash neighbor, so "1/2" does NOT
+    // match inside the mixed-number forms "1 1/2" or "2-1/2" that
+    // `tradeSizeKeywordTokens` emits into search_tokens. Mixed-number tokens
+    // ("1-1/4", "2-1/2") use only the standard \w / - boundary because they
+    // are already self-anchored by their own dash/digit structure.
+    const sizeTokenJsRegexes = uniqueSizeTokens.map((tok) => {
+      const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const isMixed = /^\d+-\d+\/\d+$/.test(tok);
+      const pattern = isMixed
+        ? `(?<![\\w/-])${escaped}(?![\\w/-])`
+        : `(?<![\\w/-])(?<!\\d[ \\-])${escaped}(?![ \\-]\\d)(?![\\w/-])`;
+      return new RegExp(pattern, 'i');
+    });
+    const passesSizeTokenFilter = (item: typeof inventoryTable.$inferSelect): boolean => {
+      if (sizeTokenJsRegexes.length === 0) return true;
+      const haystack = `${item.description} ${(item.aiKeywords ?? []).join(' ')} ${
+        item.searchTokens ?? ''
+      }`;
+      return sizeTokenJsRegexes.every((re) => re.test(haystack));
+    };
+
     // Apply vendor boost/penalty
     const results: ScoredItem[] = [];
     let vendorBoosted = false;
     for (const entry of scoreMap.values()) {
+      if (!passesSizeTokenFilter(entry.item)) continue;
       const conf = applyVendorBoost(entry.confidence, vendorFilter, entry.item.vendor);
       if (vendorFilter && entry.item.vendor.toUpperCase() === vendorFilter.toUpperCase())
         vendorBoosted = true;
