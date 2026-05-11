@@ -1,3 +1,30 @@
+/**
+ * Unit tests for the attribute-parsing module (src/enrichment/parseAttributes.ts).
+ *
+ * Every function under test is a pure parser that extracts structured
+ * electrical-parts metadata from raw catalog numbers and free-text
+ * descriptions.  No database connection is needed.
+ *
+ * Functions under test:
+ *   parseCatalog    — decodes a catalog number into series / poles / amps /
+ *                     variant across breaker, device, cable, transformer,
+ *                     numeric-device (5xxx/6xxx Hubbell-style), fuse, and
+ *                     generic alpha-numeric fallback families.
+ *   parseAmperage   — extracts amperage from a description string with
+ *                     range validation (rejects 0 A and ≥ 9 999 A).
+ *   parsePoles      — extracts pole count using numeric, word, and
+ *                     abbreviation patterns (1P, SINGLE POLE, DP, …).
+ *   parseVoltage    — extracts voltage from common electrical values;
+ *                     rejects non-standard voltages like 999 V.
+ *   parseMountType  — maps description phrases to canonical mount-type
+ *                     slugs (bolt-on, plug-in, din-rail, surface, flush).
+ *   parseTradeSize  — converts conduit-size notation (simple fractions,
+ *                     mixed numbers, decimals, mm) to a decimal inch value;
+ *                     includes regression cases for angle-spec fractions
+ *                     and fractions immediately followed by a letter.
+ *   deriveAttrs     — orchestrates all parsers for a single inventory row
+ *                     and returns a merged attribute bag with a timestamp.
+ */
 import {
   parseCatalog,
   parseAmperage,

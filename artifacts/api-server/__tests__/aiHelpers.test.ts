@@ -1,3 +1,22 @@
+/**
+ * Unit tests for the AI helper utilities (src/utils/aiHelpers.ts).
+ *
+ * Three pure utility functions are exercised in isolation (no network calls):
+ *
+ *   buildImageContent   — wraps raw base64 strings in the JPEG data-URI
+ *                         prefix expected by the OpenAI Vision API, caps
+ *                         output at 2 images, and leaves existing data URIs
+ *                         unchanged to prevent double-prefixing.
+ *
+ *   extractJsonFromText — locates and parses the first JSON object embedded
+ *                         in a free-text string (e.g. a raw AI response),
+ *                         returning null when no valid object is found.
+ *
+ *   normalizeAnalysis   — coerces a parsed AI response object (or null on
+ *                         parse failure) into a well-typed AnalysisResult
+ *                         with safe defaults for every field, including a
+ *                         raw-text word-split fallback when parsing fails.
+ */
 import { buildImageContent, extractJsonFromText, normalizeAnalysis } from '../src/utils/aiHelpers';
 
 // ── buildImageContent ─────────────────────────────────────────────────────────
