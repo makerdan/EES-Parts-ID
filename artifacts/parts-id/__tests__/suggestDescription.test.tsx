@@ -184,6 +184,18 @@ jest.mock('react-native', () => {
     Switch,
     StyleSheet,
     ActivityIndicator,
+    useWindowDimensions: () => ({ width: 375, height: 812, scale: 2, fontScale: 1 }),
+    Animated: {
+      Value: class { constructor(_v: number) {} setValue(_v: number) {} interpolate() { return this as unknown; } },
+      View: makeHost('div'),
+      Text: makeHost('span'),
+      spring: () => ({ start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }), stop: () => {}, reset: () => {} }),
+      timing: () => ({ start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }), stop: () => {}, reset: () => {} }),
+      createAnimatedComponent: (C: unknown) => C,
+      event: () => () => {},
+      parallel: () => ({ start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }), stop: () => {}, reset: () => {} }),
+    },
+    PanResponder: { create: () => ({ panHandlers: {} }) },
     Platform: { OS: 'ios', select: (o: Record<string, unknown>) => o['ios'] ?? o['default'] },
   };
 });
