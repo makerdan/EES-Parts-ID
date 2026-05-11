@@ -184,7 +184,10 @@ describe('extractSizeValue', () => {
   });
 
   it('extracts AWG gauge as inverted sort key', () => {
-    // #14 AWG → 88 - 14 = 74; thicker wire (#12) → 76 (sorts higher)
+    // AWG is backwards — lower gauge numbers mean thicker wire. To sort
+    // smallest-to-largest with a single ascending comparator, the sort key
+    // is 88 - gauge (88 is above the highest practical gauge of 40+).
+    // #14 AWG → 88 - 14 = 74; thicker wire (#12) → 76 (sorts higher).
     expect(extractSizeValue(item('THHN', '14 AWG wire'))).toBe(74);
     expect(extractSizeValue(item('THHN', '12 AWG wire'))).toBe(76);
   });
@@ -461,6 +464,10 @@ describe('matchesChipColumn', () => {
   // ── unknown key ───────────────────────────────────────────────────────────
 
   it('returns null for unrecognised chip keys (no column path)', () => {
+    // Chips like colorChip and tradeSize have no dedicated DB column yet, so
+    // matchesChipColumn must return null (= "no column opinion") and let the
+    // caller fall back to full-text matching rather than silently excluding
+    // every item.
     const item: ChipFilterItem = { ...base, amperage: 20 };
     expect(matchesChipColumn(item, 'colorChip', 'White')).toBeNull();
     expect(matchesChipColumn(item, 'tradeSize', '1/2"')).toBeNull();
