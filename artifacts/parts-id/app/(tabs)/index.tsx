@@ -1995,6 +1995,7 @@ export default function SearchScreen() {
                         fontScale={textFontScale}
                         highlightTokens={highlightTokens}
                         onFirstExpand={() => logResultClick(result.item.id, index)}
+                        categorySlug={filters.category || undefined}
                       />
                     </View>
                   )}

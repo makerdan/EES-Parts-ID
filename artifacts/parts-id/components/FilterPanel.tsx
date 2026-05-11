@@ -98,8 +98,8 @@ export const CHIP_DIMS: ChipDim[] = [
   },
   {
     key: 'amperage',
-    label: 'Amperage',
-    options: ['15A', '20A', '30A', '40A', '50A', '60A', '100A', '150A', '200A', '400A'],
+    label: 'Amp Rating',
+    options: ['15A', '20A', '30A', '40A', '50A', '60A', '100A', '150A', '200A', '400A', '600A'],
   },
   {
     key: 'colorChip',

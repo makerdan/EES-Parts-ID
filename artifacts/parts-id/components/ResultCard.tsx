@@ -84,6 +84,12 @@ interface ResultCardProps {
    * the badge adds no information.
    */
   showConfidence?: boolean;
+  /**
+   * Optional category slug from the active filter/browse context (e.g. "Breaker").
+   * When provided, breaker detection is authoritative (category wins over catalog regex).
+   * Falls back to catalog-regex detection when omitted.
+   */
+  categorySlug?: string;
 }
 
 /**
@@ -300,6 +306,7 @@ export function ResultCard({
   onConfirm,
   initiallyExpanded = false,
   showConfidence = true,
+  categorySlug,
 }: ResultCardProps) {
   const colors = useColors();
   // Match style: a soft tint background + bold weight. Uses the theme's
@@ -403,12 +410,13 @@ export function ResultCard({
   const { item, confidence, matchReason, seriesLabel, variants } = result;
 
   // ── Breaker detection ─────────────────────────────────────────────────────
-  // Detect breaker items from the catalog number client-side so we can render
-  // amp/pole chips instead of a meaningless "trade size" label. The server
-  // also sends amperage, poleCount, voltage, and mountType but those fields
-  // are not in the generated InventoryItem type, so we access them via a cast.
+  // Primary signal: category slug passed down from the active filter/browse
+  // context (e.g. filterValues.category === "Breaker"). When available this is
+  // authoritative and we skip the catalog-regex fallback. The server also sends
+  // amperage, poleCount, voltage, and mountType but those fields are not in the
+  // generated InventoryItem type, so we access them via a cast.
   const breakerParse = parseBreakerCatalog(item.catalog);
-  const isBreaker = breakerParse !== null;
+  const isBreaker = categorySlug?.toLowerCase() === 'breaker' || breakerParse !== null;
   type BreakerExtras = { voltage?: number | null; mountType?: string | null };
   const bx = item as unknown as BreakerExtras;
 
