@@ -12,6 +12,7 @@
     "typecheck": "pnpm run codegen:check && pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "test": "pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run test && pnpm --filter ./lib/api-client-react run test",
     "test:unit": "pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run test:unit && pnpm --filter ./lib/api-client-react run test",
+    "test:smoke": "pnpm --filter ./artifacts/api-server run test:smoke",
     "lint": "eslint .",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,cjs,mjs}\" --ignore-path .prettierignore",
     "readme": "pnpm --filter @workspace/scripts exec tsx ./src/update-readme.ts"

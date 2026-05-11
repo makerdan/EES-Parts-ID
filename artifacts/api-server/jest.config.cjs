@@ -17,6 +17,10 @@ module.exports = {
     ],
   },
   testMatch: ['**/__tests__/**/*.test.ts'],
+  // Exclude smoke tests from the default run — they load multi-MB PDF assets
+  // and can take 60 s+ per suite. Use `pnpm run test:smoke` to run them
+  // explicitly when catalog-parsing logic changes.
+  testPathIgnorePatterns: ['/node_modules/', '\\.smoke\\.test\\.ts$'],
   // Run test suites serially to prevent concurrent DB mutations (advisory locks,
   // row-count drift) from breaking integration tests that share a live database.
   maxWorkers: 1,
