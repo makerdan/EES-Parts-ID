@@ -696,3 +696,148 @@ describe('POST /api/inventory/search — combined amperage + poleCount chip filt
     expect(catalogs).not.toContain(COMBO_CATALOGS.amp15pole1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/inventory/search — fractional trade-size tokenization (Task #440)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Regression coverage for the bug where the FTS tsquery builder stripped `/`
+// and `-`, turning a search like `1/2"` into the unrelated tokens `1` and `2`
+// (which were then dropped entirely by the leading-letter filter). Without the
+// fix the server fell through to broad trigram matches and could return e.g.
+// 1-1/2" conduit when the user searched for 1/2".
+
+describe('POST /api/inventory/search — fractional trade-size tokenization', () => {
+  const SIZE_CATALOGS = {
+    half: 'JEST-ITG-EMT050',
+    threeQuarter: 'JEST-ITG-EMT075',
+    one: 'JEST-ITG-EMT100',
+    oneAndQuarter: 'JEST-ITG-EMT125',
+    oneAndHalf: 'JEST-ITG-EMT150',
+    twoAndHalf: 'JEST-ITG-EMT250',
+  };
+
+  beforeAll(async () => {
+    const adminSecret = process.env.ADMIN_PASSWORD as string;
+    const token = signAdminToken(Date.now(), adminSecret);
+    await supertest(app)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          { vendor: 'JEST-VENDOR', catalog: SIZE_CATALOGS.half, description: 'EMT 1/2" conduit' },
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: SIZE_CATALOGS.threeQuarter,
+            description: 'EMT 3/4" conduit',
+          },
+          { vendor: 'JEST-VENDOR', catalog: SIZE_CATALOGS.one, description: 'EMT 1" conduit' },
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: SIZE_CATALOGS.oneAndQuarter,
+            description: 'EMT 1-1/4" conduit',
+          },
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: SIZE_CATALOGS.oneAndHalf,
+            description: 'EMT 1-1/2" conduit',
+          },
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: SIZE_CATALOGS.twoAndHalf,
+            description: 'EMT 2-1/2" conduit',
+          },
+        ],
+      })
+      .expect(200);
+  }, 30_000);
+
+  afterAll(async () => {
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { inArray } = await import('drizzle-orm');
+    await db
+      .delete(inventoryTable)
+      .where(inArray(inventoryTable.catalog, Object.values(SIZE_CATALOGS)));
+  }, 30_000);
+
+  const catalogsOf = (body: { results?: Array<{ item: { catalog: string } }> }) =>
+    (body.results ?? []).map((r) => r.item.catalog);
+
+  it('returns the 1/2" conduit for a `1/2` keyword search and does NOT bleed into 1-1/2"', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: '1/2 EMT JEST-ITG' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    expect(catalogs).toContain(SIZE_CATALOGS.half);
+    // The boundary guard must keep 1/2 from matching inside 1-1/2 or 2-1/2.
+    expect(catalogs).not.toContain(SIZE_CATALOGS.oneAndHalf);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.twoAndHalf);
+  });
+
+  it('returns the 3/4" conduit for a `3/4` keyword search', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: '3/4 EMT JEST-ITG' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    expect(catalogs).toContain(SIZE_CATALOGS.threeQuarter);
+  });
+
+  it('returns the 1-1/4" conduit for a `1-1/4` keyword search and does NOT bleed into 1/4 or 1"', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: '1-1/4 EMT JEST-ITG' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    expect(catalogs).toContain(SIZE_CATALOGS.oneAndQuarter);
+    // Boundary guard: the bare `1` fragment must not pull in the 1" item.
+    expect(catalogs).not.toContain(SIZE_CATALOGS.one);
+  });
+
+  it('returns the 2-1/2" conduit for a `2-1/2` keyword search', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: '2-1/2 EMT JEST-ITG' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    expect(catalogs).toContain(SIZE_CATALOGS.twoAndHalf);
+    // 2-1/2 must not match inside 1-1/2.
+    expect(catalogs).not.toContain(SIZE_CATALOGS.oneAndHalf);
+  });
+
+  it('honors explicit multi-size intent: `1/4 1-1/4` requires both tokens to match', async () => {
+    // The substring-pruning filter must not collapse user-typed `1/4` into
+    // the larger `1-1/4` — both are explicit intent. No seeded EMT row
+    // contains BOTH a standalone `1/4` and a `1-1/4`, so the result set
+    // for these EMT catalogs should be empty (the filter correctly
+    // rejects every candidate).
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: '1/4 1-1/4 EMT JEST-ITG' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    // None of the conduit rows have both sizes, so none should match.
+    expect(catalogs).not.toContain(SIZE_CATALOGS.oneAndQuarter);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.half);
+    expect(catalogs).not.toContain(SIZE_CATALOGS.one);
+  });
+
+  it('still returns plain-text matches for non-fractional searches (regression guard)', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'EMT conduit JEST-ITG' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    // All seeded EMT rows should appear when no size token is present.
+    expect(catalogs).toContain(SIZE_CATALOGS.half);
+    expect(catalogs).toContain(SIZE_CATALOGS.one);
+    expect(catalogs).toContain(SIZE_CATALOGS.twoAndHalf);
+  });
+});
