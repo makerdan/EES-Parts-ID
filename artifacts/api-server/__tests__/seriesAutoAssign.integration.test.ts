@@ -101,7 +101,14 @@ async function seedFixtures() {
         aiKeywords: [] as string[],
         catalogParse: f.series !== null ? { series: f.series } : null,
       })
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: [inventoryTable.vendor, inventoryTable.catalog],
+        set: {
+          catalogParse: f.series !== null ? { series: f.series } : null,
+          seriesId: null,
+          description: `Test fixture ${f.catalog}`,
+        },
+      });
   }
 }
 
@@ -163,41 +170,23 @@ beforeAll(async () => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
 
-  // 1. Record which product_series rows already exist for our fixture pairs
-  //    so we can safely delete only rows this suite creates.
-  const existing = await db
-    .select({ id: productSeriesTable.id })
-    .from(productSeriesTable)
-    .where(
-      sql`(vendor, name) IN (
-        ('EATON','BR'), ('EATON','CH'), ('SIEMENS','QP')
-      )`
-    );
-  preExistingSeriesIds = new Set(existing.map((r) => r.id));
-
-  // 2. Start with clean fixture rows, then seed fresh ones.
-  await cleanupInventory();
-
-  // 3. Snapshot coverage BEFORE seeding — this is the baseline.
-  //    Our fixture rows don't exist yet, so they won't skew the baseline.
-  coverageBefore = await fetchCoverage();
-
-  // 4. Seed the fixture rows (all with series_id = NULL).
-  await seedFixtures();
-
-  // 4a. Wait until advisory lock 20250001 is genuinely free before running
-  //     auto-assign.  Handles the rare case where a previous test run was
-  //     killed while holding the lock and the PostgreSQL session has not yet
-  //     been reaped by the server.  We use pg_advisory_lock (blocking) rather
-  //     than pg_try_advisory_lock so we wait rather than spin; statement_timeout
-  //     caps the wait so the suite does not hang indefinitely.
+  // 1. Wait until advisory lock 20250001 is genuinely free BEFORE touching
+  //    the database.  This must come first so that any external auto-assign
+  //    (e.g. the API-server workflow running in the same environment) finishes
+  //    completely before we clean up and seed fixture rows.  If the lock were
+  //    acquired after seeding, the external process could have already seen
+  //    and processed our fixtures, leaving series_id set before our own
+  //    auto-assign runs — producing a silent no-op and broken coverage deltas.
   //
-  //     Unlike the inner describe blocks below, we deliberately let any error
-  //     propagate so Jest marks the beforeAll — and the whole suite — as
-  //     failed with a clear message rather than silently proceeding into a
-  //     certain 409.  If you see this failure, force-release the lock with:
-  //       SELECT pg_terminate_backend(pid) FROM pg_locks
-  //       WHERE locktype='advisory' AND objid=20250001 AND granted;
+  //    We use pg_advisory_lock (blocking) rather than pg_try_advisory_lock so
+  //    we wait rather than spin; statement_timeout caps the wait at 30 s so
+  //    the suite does not hang indefinitely.  Any error propagates so Jest
+  //    marks the beforeAll — and the whole suite — as failed with a clear
+  //    message rather than silently proceeding into a certain 409.
+  //
+  //    If you see this failure, force-release the lock with:
+  //      SELECT pg_terminate_backend(pid) FROM pg_locks
+  //      WHERE locktype='advisory' AND objid=20250001 AND granted;
   {
     const client = await pool.connect();
     try {
@@ -209,13 +198,37 @@ beforeAll(async () => {
     }
   }
 
-  // 5. Run auto-assign and capture SSE events.
+  // 2. Record which product_series rows already exist for our fixture pairs
+  //    so we can safely delete only rows this suite creates.
+  const existing = await db
+    .select({ id: productSeriesTable.id })
+    .from(productSeriesTable)
+    .where(
+      sql`(vendor, name) IN (
+        ('EATON','BR'), ('EATON','CH'), ('SIEMENS','QP')
+      )`
+    );
+  preExistingSeriesIds = new Set(existing.map((r) => r.id));
+
+  // 3. Start with clean fixture rows.
+  await cleanupInventory();
+
+  // 4. Snapshot coverage BEFORE seeding — this is the baseline.
+  //    Our fixture rows don't exist yet, so they won't skew the baseline.
+  coverageBefore = await fetchCoverage();
+
+  // 5. Seed the fixture rows (all with series_id = NULL).
+  //    onConflictDoUpdate resets any stale row left by a previous killed run
+  //    to the correct initial state rather than silently skipping it.
+  await seedFixtures();
+
+  // 6. Run auto-assign and capture SSE events.
   sseEvents = await runAutoAssign();
 
-  // 6. Snapshot coverage AFTER auto-assign completes.
+  // 7. Snapshot coverage AFTER auto-assign completes.
   coverageAfter = await fetchCoverage();
 
-  // 7. Capture the product_series IDs for our fixture pairs (for ID-scoped cleanup).
+  // 8. Capture the product_series IDs for our fixture pairs (for ID-scoped cleanup).
   const created = await db
     .select({ id: productSeriesTable.id })
     .from(productSeriesTable)
