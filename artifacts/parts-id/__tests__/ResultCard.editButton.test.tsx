@@ -328,4 +328,64 @@ describe('ResultCard — Edit button inside related-sizes modal', () => {
     expect(onEdit).toHaveBeenCalledWith(variantItem, expect.any(Function));
     expect(onEdit).not.toHaveBeenCalledWith(parentResult.item, expect.any(Function));
   });
+
+  // ── Task #429: dismissing the modal must NOT trigger Edit ─────────────────
+  // The modal contains a full-overlay backdrop Pressable and a "✕ Close"
+  // Pressable, both of which call dismissDetail (and never onEditKeywords).
+  // A regression where event propagation or button-overlap leaks a press into
+  // the nested card's Edit handler would silently call onEditKeywords with
+  // the wrong item. These tests guard that boundary.
+
+  /** Open the variant detail modal. Returns the variant item used. */
+  function openVariantModal(onEdit: jest.Mock): {
+    parentItem: InventoryItem;
+    variantItem: InventoryItem;
+  } {
+    const parentResult = makeResult({ id: 42, catalog: 'QO120' });
+    const variantItem: InventoryItem = {
+      id: 55,
+      vendor: 'SQD',
+      catalog: 'QO240',
+      description: '40A 2-Pole QO Breaker',
+      binLocations: [],
+      aiKeywords: [],
+      vendorFullName: 'Schneider Electric',
+      enrichedAt: '2024-01-01T00:00:00Z',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+      seriesName: null,
+      tradeSize: null,
+    };
+    const resultWithVariant: SearchResult = { ...parentResult, variants: [variantItem] };
+
+    render(<ResultCard result={resultWithVariant} rank={1} onEditKeywords={onEdit} />);
+    fireEvent.click(screen.getByRole('button', { name: /related sizes/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Open SQD QO240/i }));
+
+    // Sanity check: modal is open before we exercise the dismiss path.
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    return { parentItem: parentResult.item, variantItem };
+  }
+
+  it('does NOT call onEditKeywords when the backdrop is tapped to dismiss the modal', () => {
+    const onEdit = jest.fn();
+    openVariantModal(onEdit);
+
+    // Backdrop Pressable has accessibilityLabel "Dismiss related size".
+    fireEvent.click(screen.getByRole('button', { name: /Dismiss related size/i }));
+
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call onEditKeywords when the ✕ Close button is tapped to close the modal', () => {
+    const onEdit = jest.fn();
+    openVariantModal(onEdit);
+
+    // The close button has accessibilityLabel "Close related size" (its
+    // inner text is "✕ Close" — query by the a11y label so this is robust
+    // to glyph changes).
+    fireEvent.click(screen.getByRole('button', { name: /Close related size/i }));
+
+    expect(onEdit).not.toHaveBeenCalled();
+  });
 });
