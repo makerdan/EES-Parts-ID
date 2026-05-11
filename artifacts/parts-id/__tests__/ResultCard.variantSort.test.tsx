@@ -250,10 +250,7 @@ describe('ResultCard — breaker variant sort by amperage (Task #428)', () => {
     const variantParsed60 = makeVariant(3, 'BR160', 60);
 
     render(
-      <ResultCard
-        result={makeResult(primaryItem, [variantParsed60, variantDb40])}
-        rank={0}
-      />
+      <ResultCard result={makeResult(primaryItem, [variantParsed60, variantDb40])} rank={0} />
     );
 
     const toggle = screen.getByRole('button', { name: /other ratings/i });
