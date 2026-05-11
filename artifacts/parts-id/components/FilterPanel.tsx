@@ -895,7 +895,7 @@ export function FilterPanel({
                     !(
                       dim.key === 'conduitSize' &&
                       (values.category === 'Breaker' ||
-                        activeCategoryName?.toLowerCase() === 'breaker')
+                        (activeCategoryName?.toLowerCase().includes('breaker') ?? false))
                     )
                 ).map((dim) => (
                   <ChipRow

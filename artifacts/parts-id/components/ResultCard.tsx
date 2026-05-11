@@ -421,7 +421,8 @@ export function ResultCard({
   // amperage, poleCount, voltage, and mountType but those fields are not in the
   // generated InventoryItem type, so we access them via a cast.
   const breakerParse = parseBreakerCatalog(item.catalog);
-  const isBreaker = categorySlug?.toLowerCase() === 'breaker' || breakerParse !== null;
+  const isBreaker =
+    (categorySlug?.toLowerCase().includes('breaker') ?? false) || breakerParse !== null;
   type BreakerExtras = { voltage?: number | null; mountType?: string | null };
   const bx = item as unknown as BreakerExtras;
 

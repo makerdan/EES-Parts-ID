@@ -61,17 +61,17 @@ async function clearBreakerTradeSize() {
       sql`${inventoryCategoryTable.categoryNodeId} = ${categoryNodeTable.id}`
     )
     .where(
-      sql`${categoryNodeTable.name} ILIKE 'Breaker'
+      sql`${categoryNodeTable.name} ILIKE '%breaker%'
           OR EXISTS (
             SELECT 1 FROM category_node parent
             WHERE parent.id = ${categoryNodeTable.parentId}
-            AND parent.name ILIKE 'Breaker'
+            AND parent.name ILIKE '%breaker%'
           )
           OR EXISTS (
             SELECT 1 FROM category_node grandparent
             JOIN category_node sub ON sub.parent_id = grandparent.id
             WHERE sub.id = ${categoryNodeTable.parentId}
-            AND grandparent.name ILIKE 'Breaker'
+            AND grandparent.name ILIKE '%breaker%'
           )`
     );
 
