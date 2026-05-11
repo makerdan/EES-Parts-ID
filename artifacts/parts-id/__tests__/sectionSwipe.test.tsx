@@ -214,14 +214,32 @@ jest.mock('react-native', () => {
     useColorScheme: () => 'light',
     useWindowDimensions: () => ({ width: 375, height: 812, scale: 2, fontScale: 1 }),
     Animated: {
-      Value: class { constructor(_v: number) {} setValue(_v: number) {} interpolate() { return this as unknown; } },
+      Value: class {
+        constructor(_v: number) {}
+        setValue(_v: number) {}
+        interpolate() {
+          return this as unknown;
+        }
+      },
       View: makeHost('div'),
       Text: makeHost('span'),
-      spring: () => ({ start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }), stop: () => {}, reset: () => {} }),
-      timing: () => ({ start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }), stop: () => {}, reset: () => {} }),
+      spring: () => ({
+        start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }),
+        stop: () => {},
+        reset: () => {},
+      }),
+      timing: () => ({
+        start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }),
+        stop: () => {},
+        reset: () => {},
+      }),
       createAnimatedComponent: (C: unknown) => C,
       event: () => () => {},
-      parallel: () => ({ start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }), stop: () => {}, reset: () => {} }),
+      parallel: () => ({
+        start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }),
+        stop: () => {},
+        reset: () => {},
+      }),
     },
   };
 });
