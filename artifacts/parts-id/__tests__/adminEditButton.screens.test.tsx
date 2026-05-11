@@ -8,11 +8,10 @@
  * (Aisle → Section → bin slot tap → ResultCard expand → button presence) so
  * ResultCard actually renders in the DOM.
  *
- * Screen-level coverage for Search tab, Photo tab, and Scan screen lives in the
- * dedicated files that render those actual screen modules:
- *   - searchTab.adminEditButton.test.tsx
- *   - photo.adminEditButton.test.tsx
- *   - scan.adminEditButton.test.tsx
+ * Screen-level admin-button coverage (full screen render) lives in:
+ *   - searchTab.adminEditButton.test.tsx  (Search tab → BrowseByAisle)
+ *   - photo.adminEditButton.test.tsx      (Photo tab → ResultCard)
+ *   - scan.adminEditButton.test.tsx       (Scan screen → ResultCard)
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';

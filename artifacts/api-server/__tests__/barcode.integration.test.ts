@@ -3,9 +3,8 @@
  *
  * Backed by the same PostgreSQL database the other integration tests
  * use (DATABASE_URL). Fixture rows are namespaced under JEST-ITG-BC-
- * and cleaned up after the suite; the inventory_barcode rows we create
- * cascade-delete with their inventory rows so we don't need a separate
- * cleanup pass.
+ * and cleaned up after the suite. inventory_barcode rows cascade-delete
+ * with their parent inventory rows, so no separate barcode cleanup is needed.
  */
 jest.mock('@workspace/integrations-openai-ai-server', () => ({
   openai: {

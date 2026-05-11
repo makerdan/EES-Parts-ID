@@ -5,7 +5,8 @@
  *
  * Isolation:
  *   - Inventory rows use the JEST-SA- catalog prefix and are cleaned up by prefix.
- *   - product_series rows created here are deleted by name prefix in afterAll.
+ *   - product_series rows created here are deleted by name prefix in afterAll
+ *     so pre-existing production series rows are never touched.
  */
 
 jest.mock('@workspace/integrations-openai-ai-server', () => ({

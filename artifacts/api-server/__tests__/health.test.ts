@@ -54,6 +54,9 @@ afterEach(() => {
 
 describe('GET /healthz — seeder readiness gate', () => {
   it('returns 503 with { status: "seeding" } while the seeder is not ready', async () => {
+    // The Replit proxy polls /healthz before routing traffic; a 503 here
+    // ensures the first real user request does not arrive before the chip
+    // cache is warm, which would cause every lookup to miss.
     mockIsReady.mockReturnValue(false);
 
     const res = await supertest(app).get('/api/healthz').expect(503);

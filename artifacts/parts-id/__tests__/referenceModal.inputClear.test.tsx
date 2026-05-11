@@ -5,7 +5,8 @@
  *
  *  1. After the user submits a question the input value is '' immediately —
  *     `setQuestion('')` is called at the very start of `askQuestion()`, before
- *     the network request is even fired.
+ *     the network request is even fired.  Clearing before the await means the
+ *     user sees the blank input even while the answer is loading.
  *
  *  2. Tapping a quick-lookup chip never pre-fills the input with the chip's
  *     question text — `handleChipPress()` calls `setQuestion('')` and then

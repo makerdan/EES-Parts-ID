@@ -44,7 +44,9 @@ const SLUG_PREFIX = 'jest-itg-cr-';
 
 let adminToken: string;
 
-// IDs populated during beforeAll
+// IDs populated during beforeAll.
+// Fixture confidence values are chosen to straddle the queue threshold so
+// we can confirm the boundary is enforced precisely.
 let inv1Id: number; // ai, confidence=0.55, unreviewed → IN queue
 let inv2Id: number; // ai, confidence=0.80, unreviewed → NOT in queue (above threshold)
 let inv3Id: number; // ai, confidence=0.45, reviewed   → NOT in queue (already reviewed)

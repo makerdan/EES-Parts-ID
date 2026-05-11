@@ -46,7 +46,12 @@ import { startQuickLookupScheduler, stopQuickLookupScheduler } from '../src/lib/
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Configures the pool mock to grant (or deny) the advisory lock. */
+/**
+ * Configures the pool mock to grant (or deny) the advisory lock.
+ * Lock acquisition is the gate that prevents duplicate seeding across
+ * concurrent server processes — tests verify both the happy path and the
+ * "lock already held" skip path.
+ */
 function setupPoolMock(lockAcquired: boolean): void {
   mockClientQuery.mockImplementation((sql: string) => {
     if (sql.includes('pg_try_advisory_lock')) {

@@ -41,6 +41,9 @@ function makeResult(overrides: Partial<SearchResult['item']> & { id: number }): 
 
 describe('itemFullText', () => {
   it('concatenates vendor, catalog, description and aiKeywords lower-cased', () => {
+    // The full-text string is what client-side tokenMatch runs against; all
+    // fields are included so a chip like "20A" can match any occurrence
+    // regardless of whether it came from the description or aiKeywords.
     const text = itemFullText({
       vendor: 'ETN',
       catalog: 'BR120',

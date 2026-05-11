@@ -10,7 +10,7 @@
  *   2. Tapping "Filter events by Catalog N" legend item sets
  *      initialMatchType="catalog_exact".
  *   3. Tapping the "Total scans" KPI clears the filter (initialMatchType
- *      becomes undefined) and still shows the modal.
+ *      becomes undefined) and still shows the modal — all events visible.
  *   4. Drill-down button label reads "View N descriptive scans →" while the
  *      descriptive filter is active and "View individual events →" when no
  *      filter is selected.

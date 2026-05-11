@@ -13,8 +13,8 @@
  * after), then asserts:
  *
  *   1. /unrevert on the older run returns 409 + a clear error code, and
- *      neither the inventory rows nor the run's reverted_at marker is
- *      mutated.
+ *      neither the inventory rows nor the run's reverted_at marker is mutated
+ *      (idempotent rejection — calling twice is safe).
  *   2. After the newer run is removed, the same /unrevert call succeeds
  *      and clears reverted_at.
  *

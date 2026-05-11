@@ -33,6 +33,8 @@ import { CURRENT_PARSER_VERSION } from '../src/enrichment/invalidation';
 // ── Part A: unit tests — calls the real production derivation (no DB) ─────────
 
 describe('deriveTradeSizeIn — catalog-code cases', () => {
+  // Uses the real production function so any refactor that silently breaks
+  // the fraction/decimal×100/whole-number encoding is caught here first.
   it.each([
     // Catalog code    Expected inches  Note
     ['EMT12', '0.500', 'fraction code 12 → 1/2"'],

@@ -11,9 +11,9 @@
  *   • The Unsorted synthetic section shows BOTH buttons disabled because the
  *     fake aisle that wraps it contains only a single section.
  *
- * We use a mutable `mockShelfViewEnabled` flag so individual tests can flip
+ * A mutable `mockShelfViewEnabled` flag lets individual tests flip
  * `settings.shelfViewEnabled` (= `warehouseShelfView`) without re-hoisting the
- * entire jest.mock block.
+ * entire jest.mock block — hoisting would lose the closure over the flag.
  *
  * Two distinct navigation surfaces are exercised:
  *   • SectionShelfView  – rendered at the "shelves" level when

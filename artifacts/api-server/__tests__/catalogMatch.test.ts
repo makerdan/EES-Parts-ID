@@ -106,6 +106,9 @@ describe('classifyEntries', () => {
   });
 
   it('downgrades to uncertain when multiple stem siblings exist', () => {
+    // If the inventory has two rows that share the same stem (239-DC, 239-DCI2)
+    // the importer cannot pick one without human review; uncertain keeps both
+    // candidates visible in the apply UI rather than silently merging them.
     const results = classifyEntries(
       [entry('239-DC2')],
       [inv(1, '239-DC'), inv(2, '239-DCI2'), inv(3, '239-SBLK')]

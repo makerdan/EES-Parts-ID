@@ -45,6 +45,8 @@ describe('parseBin', () => {
   });
 
   it('treats leading-zero shelf hundreds (0xx) as Shelf 0', () => {
+    // "042" → shelfHundreds = 0 (floor(042/100) = 0), position = 42.
+    // Bins below 100 still live on Shelf 0, which is the lowest physical shelf.
     expect(parseBin('00-00-042')).toEqual({
       raw: '00-00-042',
       aisle: '00',

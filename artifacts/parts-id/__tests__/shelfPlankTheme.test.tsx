@@ -12,8 +12,8 @@
  *
  * Fixture: two items with different shelf-hundreds in the same aisle+section
  * (bins '01-01-100' and '01-01-200') produce two shelves in Section 01.
- * After shelves are reversed to ascending order, shelfIdx 1 (shelf 200) satisfies
- * `shelfIdx > 0` and triggers the between-shelf shelfPlank divider.
+ * After shelves are sorted, shelfIdx 1 (shelf 200) satisfies `shelfIdx > 0`
+ * and triggers the between-shelf shelfPlank divider — the case we care about.
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';

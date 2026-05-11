@@ -7,7 +7,7 @@
  * The photo_id_event table is telemetry / analytics only — no FKs
  * constrain it from the outside — so beforeAll truncates it to give
  * the aggregation SQL a clean, deterministic baseline.  afterAll
- * re-deletes the fixture rows inserted during the suite.
+ * re-deletes the suite's fixture rows so later suites start clean.
  */
 
 // ── Mock OpenAI BEFORE app is imported ───────────────────────────────────────

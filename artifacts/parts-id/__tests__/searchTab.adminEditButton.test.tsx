@@ -11,7 +11,8 @@
  *      (no search results yet, browse overlay not open).
  *   3. Click it → `setAisleBrowseOpen(true)` → the BrowseByAisle component
  *      renders with the screen's `onEditKeywords={adminToken ? setEditItem : undefined}`.
- *   4. The BrowseByAisle spy exposes the prop via `data-has-edit`.
+ *   4. The BrowseByAisle spy exposes the prop via `data-has-edit` so the test
+ *      can assert admin wiring without rendering the full browse tree.
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';

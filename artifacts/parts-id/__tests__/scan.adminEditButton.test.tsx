@@ -10,8 +10,8 @@
  *   1. CameraView mock renders a clickable trigger button.
  *   2. Test clicks the trigger → `onBarcodeScanned` fires → `handleBarcodeScanned`
  *      sets `pendingBarcodeRef` and starts the 1500ms lock-on timer.
- *   3. `jest.advanceTimersByTime(1600)` advances past the timer synchronously →
- *      `performLookup` is called.
+ *   3. `jest.advanceTimersByTime(1600)` advances past the 1500ms lock-on timer
+ *      synchronously → `performLookup` is called.
  *   4. Mocked `lookupMutation.mutateAsync` resolves with `{ match: item }` →
  *      `setMatchedItem(item)` → Modal becomes visible → ResultCard spy renders.
  *   5. Assert `data-has-edit` attribute reflects the admin state.
