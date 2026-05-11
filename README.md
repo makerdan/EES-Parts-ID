@@ -135,18 +135,23 @@ The Expo app is gated by a single password from `EXPO_PUBLIC_APP_PASSWORD`
 | Script | Command |
 | --- | --- |
 | `build` | `pnpm run typecheck && pnpm -r --if-present run build` |
+| `codegen` | `pnpm --filter @workspace/api-spec run codegen` |
+| `codegen:check` | `pnpm --filter @workspace/api-spec exec node ./codegen-hash.mjs check` |
 | `format:check` | `prettier --check "**/*.{ts,tsx,js,cjs,mjs}" --ignore-path .prettierignore` |
 | `lint` | `eslint .` |
+| `postinstall` | `simple-git-hooks` |
 | `readme` | `pnpm --filter @workspace/scripts exec tsx ./src/update-readme.ts` |
 | `test` | `pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run…` |
-| `typecheck` | `pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-…` |
+| `test:smoke` | `pnpm --filter ./artifacts/api-server run test:smoke` |
+| `test:unit` | `pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run…` |
+| `typecheck` | `pnpm run codegen:check && pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" …` |
 | `typecheck:libs` | `tsc --build` |
 
 **Per-artifact** (run with `pnpm --filter <name> <script>`):
 
 | Package | Scripts |
 | --- | --- |
-| `@workspace/api-server` | `build`, `dev`, `dev:supervised`, `lint`, `start`, `test`, `typecheck` |
+| `@workspace/api-server` | `build`, `dev`, `dev:supervised`, `lint`, `start`, `test`, `test:smoke`, `test:unit`, `typecheck` |
 | `@workspace/mockup-sandbox` | `build`, `dev`, `preview`, `typecheck` |
 | `@workspace/parts-id` | `build`, `dev`, `lint`, `serve`, `test`, `typecheck` |
 <!-- /AUTO:SCRIPTS -->
