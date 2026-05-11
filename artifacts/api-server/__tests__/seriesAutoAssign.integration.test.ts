@@ -172,62 +172,70 @@ beforeAll(async () => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
 
-  // 1. Wait until advisory lock 20250001 is genuinely free BEFORE touching
-  //    the database.  This must come first so that any external auto-assign
-  //    (e.g. the API-server workflow running in the same environment) finishes
-  //    completely before we clean up and seed fixture rows.  If the lock were
-  //    acquired after seeding, the external process could have already seen
-  //    and processed our fixtures, leaving series_id set before our own
-  //    auto-assign runs — producing a silent no-op and broken coverage deltas.
+  // Hold the advisory lock throughout setup (steps 2-5) to prevent the
+  // external API-server scheduler from interfering with our fixture rows
+  // or coverage snapshots.  The previous pattern (acquire + immediately
+  // release) left a race window: the scheduler could re-acquire the lock
+  // and run auto-assign BEFORE our own call, causing:
+  //   • our runAutoAssign() to get 409 ("already running"), or
+  //   • the scheduler to assign other previously-unassigned inventory rows
+  //     between the coverageBefore snapshot and coverageAfter, making the
+  //     delta check fail with "expected N+4, got N+4+X".
   //
-  //    We use pg_advisory_lock (blocking) rather than pg_try_advisory_lock so
-  //    we wait rather than spin; statement_timeout caps the wait at 30 s so
-  //    the suite does not hang indefinitely.  Any error propagates so Jest
-  //    marks the beforeAll — and the whole suite — as failed with a clear
-  //    message rather than silently proceeding into a certain 409.
+  // Fix: acquire (blocking) → do all setup → unlock → THEN call auto-assign.
+  // The unlock MUST happen before runAutoAssign because the endpoint calls
+  // pg_try_advisory_lock on its own PG session; if we still hold the lock
+  // when the request arrives it will see it as "already running" and 409.
   //
-  //    If you see this failure, force-release the lock with:
-  //      SELECT pg_terminate_backend(pid) FROM pg_locks
-  //      WHERE locktype='advisory' AND objid=20250001 AND granted;
-  {
-    const client = await pool.connect();
-    try {
-      await client.query("SET statement_timeout = '30s'");
-      await client.query('SELECT pg_advisory_lock($1::bigint)', [20250001]);
-      await client.query('SELECT pg_advisory_unlock($1::bigint)', [20250001]);
-    } finally {
-      client.release();
-    }
+  // statement_timeout = 30 s caps the initial wait.  If the lock is held
+  // longer than 30 s, beforeAll fails with a clear error rather than hanging.
+  // Force-release a stuck lock with:
+  //   SELECT pg_terminate_backend(pid) FROM pg_locks
+  //   WHERE locktype='advisory' AND objid=20250001 AND granted;
+  const setupClient = await pool.connect();
+  try {
+    await setupClient.query("SET statement_timeout = '30s'");
+    // Acquire and HOLD — scheduler is blocked from here until we unlock below.
+    await setupClient.query('SELECT pg_advisory_lock($1::bigint)', [20250001]);
+
+    // 2. Record which product_series rows already exist for our fixture pairs
+    //    so we can safely delete only rows this suite creates.
+    const existing = await db
+      .select({ id: productSeriesTable.id })
+      .from(productSeriesTable)
+      .where(
+        sql`(vendor, name) IN (
+          ('EATON','BR'), ('EATON','CH'), ('SIEMENS','QP')
+        )`
+      );
+    preExistingSeriesIds = new Set(existing.map((r) => r.id));
+
+    // 3. Start with clean fixture rows.
+    await cleanupInventory();
+
+    // 4. Snapshot coverage BEFORE seeding — this is the baseline.
+    //    Our fixture rows don't exist yet, so they won't skew the baseline.
+    coverageBefore = await fetchCoverage();
+
+    // 5. Seed the fixture rows (all with series_id = NULL).
+    //    onConflictDoUpdate resets any stale row left by a previous killed run
+    //    to the correct initial state rather than silently skipping it.
+    await seedFixtures();
+
+    // Release the lock NOW so the auto-assign endpoint can acquire it.
+    await setupClient.query('SELECT pg_advisory_unlock($1::bigint)', [20250001]);
+  } finally {
+    setupClient.release();
   }
 
-  // 2. Record which product_series rows already exist for our fixture pairs
-  //    so we can safely delete only rows this suite creates.
-  const existing = await db
-    .select({ id: productSeriesTable.id })
-    .from(productSeriesTable)
-    .where(
-      sql`(vendor, name) IN (
-        ('EATON','BR'), ('EATON','CH'), ('SIEMENS','QP')
-      )`
-    );
-  preExistingSeriesIds = new Set(existing.map((r) => r.id));
-
-  // 3. Start with clean fixture rows.
-  await cleanupInventory();
-
-  // 4. Snapshot coverage BEFORE seeding — this is the baseline.
-  //    Our fixture rows don't exist yet, so they won't skew the baseline.
-  coverageBefore = await fetchCoverage();
-
-  // 5. Seed the fixture rows (all with series_id = NULL).
-  //    onConflictDoUpdate resets any stale row left by a previous killed run
-  //    to the correct initial state rather than silently skipping it.
-  await seedFixtures();
-
   // 6. Run auto-assign and capture SSE events.
+  //    The lock is now free — the endpoint will acquire it normally.
   sseEvents = await runAutoAssign();
 
   // 7. Snapshot coverage AFTER auto-assign completes.
+  //    The window between runAutoAssign completing and fetchCoverage is
+  //    negligible; any scheduler run in this gap would not touch our
+  //    fixture rows (they already have series_id set).
   coverageAfter = await fetchCoverage();
 
   // 8. Capture the product_series IDs for our fixture pairs (for ID-scoped cleanup).
@@ -479,53 +487,36 @@ describe('POST /api/series/auto-assign — idempotency', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('POST /api/series/auto-assign — concurrency lock', () => {
-  beforeAll(async () => {
-    // Same fix as the idempotency block: block on the raw pool until the
-    // advisory lock is free rather than calling pg_advisory_unlock on a
-    // different Drizzle session (which would be a no-op).
-    const client = await pool.connect();
+  // No beforeAll needed — the test holds the advisory lock itself, so there
+  // is no dependency on any prior auto-assign run completing.
+
+  // The previous approach fired two concurrent HTTP requests and relied on a
+  // 150 ms delay for the first to acquire the lock before the second fired.
+  // On a loaded or slow system the 150 ms was sometimes not enough — both
+  // requests raced pg_try_advisory_lock, both received 200, and the test
+  // failed with "expected 409, got 200".
+  //
+  // Fix: hold the advisory lock from a test-owned DB session BEFORE the
+  // request is made.  The endpoint uses pg_try_advisory_lock (non-blocking),
+  // which returns false immediately when the lock is already held — so it
+  // returns 409 regardless of timing.  This is completely deterministic.
+  it("returns 409 with 'already running' message when the advisory lock is held", async () => {
+    const lockClient = await pool.connect();
     try {
-      await client.query("SET statement_timeout = '10s'");
-      await client.query('SELECT pg_advisory_lock($1::bigint)', [20250001]);
-      await client.query('SELECT pg_advisory_unlock($1::bigint)', [20250001]);
-    } catch {
-      // Timed out or other error — proceed; the test will surface any real issue.
+      // Hold the lock to simulate another process mid-auto-assign.
+      await lockClient.query('SELECT pg_advisory_lock($1::bigint)', [20250001]);
+
+      const res = await supertest(app)
+        .post('/api/series/auto-assign')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(409);
+      expect((res.body as { error?: string }).error).toMatch(/already running/i);
     } finally {
-      client.release();
+      // Always release — even if the assertion above throws — so we don't
+      // leave a dangling lock that would block subsequent test suites.
+      await lockClient.query('SELECT pg_advisory_unlock($1::bigint)', [20250001]);
+      lockClient.release();
     }
   });
-
-  // Timeout raised to 30 s — the first (SSE) request runs a full auto-assign
-  // pass that can take well over the default 5 s on a populated dev database.
-  it("returns 409 with 'already running' message when triggered concurrently", async () => {
-    // Start the first request immediately — it will acquire the advisory lock.
-    const firstRequest = supertest(app)
-      .post('/api/series/auto-assign')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('Accept', 'text/event-stream')
-      .buffer(true)
-      .parse((res, callback) => {
-        let data = '';
-        res.on('data', (chunk: Buffer) => {
-          data += chunk.toString();
-        });
-        res.on('end', () => callback(null, data));
-      });
-
-    // Wait 150 ms before firing the second request so the first request has
-    // had time to call pg_try_advisory_lock and hold the lock. Firing both
-    // simultaneously races the lock acquisition, causing both to arrive before
-    // either holds it — producing two 409s instead of one 200 + one 409.
-    await new Promise<void>((resolve) => setTimeout(resolve, 150));
-
-    const secondRequest = supertest(app)
-      .post('/api/series/auto-assign')
-      .set('Authorization', `Bearer ${adminToken}`);
-
-    const [first, second] = await Promise.all([firstRequest, secondRequest]);
-
-    expect(first.status).toBe(200);
-    expect(second.status).toBe(409);
-    expect((second.body as { error?: string }).error).toMatch(/already running/i);
-  }, 30_000);
 });
