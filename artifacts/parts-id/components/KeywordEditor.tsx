@@ -275,6 +275,27 @@ export function KeywordEditor({
         setTimeout(() => setSaveStatus('idle'), 1800);
       } catch {
         setSaveStatus('error');
+        // Roll back the undo/redo stack mutations so the user is not stuck with
+        // a diverged description. Both handleUndoDescription and
+        // handleRedoDescription mutate the stacks synchronously before the async
+        // persist call. On failure we reverse those mutations so the description
+        // and stacks match the server state and the user can retry.
+        if (undoingThisSave && payload.description !== undefined) {
+          // Restore the description to the pre-undo value (= last server value).
+          setDescription(prevDesc);
+          latestDescriptionRef.current = prevDesc;
+          // Push the undone-to value back so the user can retry undo.
+          setDescUndoStack((stack) => [...stack, payload.description!]);
+          // Undo the redo-stack push that handleUndoDescription made before
+          // the async call.
+          setDescRedoStack((stack) => stack.slice(0, -1));
+        } else if (redoingThisSave && payload.description !== undefined) {
+          // Restore the description to the pre-redo value (= last server value).
+          setDescription(prevDesc);
+          latestDescriptionRef.current = prevDesc;
+          // Push the redone-to value back so the user can retry redo.
+          setDescRedoStack((stack) => [...stack, payload.description!]);
+        }
       } finally {
         isSavingRef.current = false;
         // Fire any post-close flush that was queued while this save was in flight
