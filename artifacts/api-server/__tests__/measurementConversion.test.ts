@@ -79,6 +79,8 @@ describe('expandMeasurements', () => {
 
   describe('edge cases', () => {
     it('returns an array for empty input', () => {
+      // Callers spread the result directly into a search query; an empty array
+      // is the safe no-op rather than null/undefined.
       expect(Array.isArray(expandMeasurements(''))).toBe(true);
     });
 

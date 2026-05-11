@@ -79,6 +79,9 @@ describe('GET /api/categories/tree', () => {
 
 describe('GET /api/categories/coverage', () => {
   it('returns numeric counts', async () => {
+    // Only verifies the shape (numbers present), not exact values, because
+    // other integration test suites may have modified inventory rows in the
+    // shared database, making absolute totals non-deterministic.
     const res = await supertest(app).get('/api/categories/coverage').expect(200);
     expect(typeof res.body.total).toBe('number');
     expect(typeof res.body.classified).toBe('number');
@@ -119,6 +122,8 @@ describe('PATCH /api/categories/:nodeId — level invariants', () => {
   });
 
   it('requires admin auth', async () => {
+    // Verifies the route is guarded — unauthenticated PATCH must be rejected
+    // before any DB mutation is attempted.
     const [t] = await db
       .select()
       .from(categoryNodeTable)

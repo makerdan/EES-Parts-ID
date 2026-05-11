@@ -127,6 +127,8 @@ describe('parseCatalog – breaker family', () => {
   });
 
   test('lowercase br120 is accepted', () => {
+    // Barcode scanners and manual entry often produce lowercase; the parser
+    // must normalise before matching so catalog lookup is case-insensitive.
     const r = parseCatalog('br120');
     expect(r?.series).toBe('BR');
     expect(r?.poles).toBe(1);
@@ -328,6 +330,9 @@ describe('parseMountType', () => {
   test('BOLT-ON', () => expect(parseMountType('BOLT-ON')).toBe('bolt-on'));
   test('bolt on (lowercase)', () => expect(parseMountType('bolt on breaker')).toBe('bolt-on'));
   test('BOLTON (no separator) → null (requires explicit separator)', () =>
+    // Without a separator, "BOLTON" could be a brand name (Bolton Industries)
+    // rather than a mounting style. The parser requires an explicit word
+    // boundary or separator to avoid false positives.
     expect(parseMountType('BOLTON')).toBeNull());
   test('PLUG-IN', () => expect(parseMountType('PLUG-IN')).toBe('plug-in'));
   test('plug in (space)', () => expect(parseMountType('plug in breaker')).toBe('plug-in'));
@@ -471,8 +476,9 @@ describe('parseCatalog – numeric device family', () => {
   });
 
   test('catalog not starting with 5 or 6 falls through to ALPHA_DEVICE_RE', () => {
-    // 4262WHI no longer matches the strict 5/6-prefix numeric device rule,
-    // but the generic alpha-numeric fallback still extracts series + variant.
+    // The strict 5xxx/6xxx Hubbell pattern deliberately excludes other digit
+    // prefixes to avoid false matches. 4262WHI still resolves via the generic
+    // alpha-numeric fallback so non-Hubbell numeric catalogs aren't lost.
     const r = parseCatalog('4262WHI');
     expect(r?.series).toBe('4262');
     expect(r?.variant).toBe('WHI');
@@ -695,6 +701,8 @@ describe('parseTradeSize – angle-spec fraction regression (EMTELB)', () => {
   // EMTELB2X2212 description: '2",22-1/2D EMT ELB'
   // The angle notation "22-1/2D" (meaning 22.5°) previously tricked FRAC_MAP
   // into returning 0.5 instead of the correct 2" trade size from the inch mark.
+  // Priority rule: an explicit inch-mark measurement always wins over an
+  // embedded angle-spec fraction later in the string.
   test('"2\\",22-1/2D EMT ELB" → 2 (inch mark wins; angle-spec 1/2 suppressed)', () => {
     expect(parseTradeSize('2",22-1/2D EMT ELB')).toBeCloseTo(2, 5);
   });

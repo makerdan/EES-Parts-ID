@@ -28,6 +28,8 @@ beforeEach(() => {
 describe('resizeImage', () => {
   const TEST_URI = 'file:///test/image.jpg';
 
+  // The 800–1920 px range matches the OpenAI Vision API's recommended input
+  // window: large enough for detail, small enough not to waste tokens.
   describe('width within range (800–1920) — pass through without resize', () => {
     it('passes through an image exactly at 800px', async () => {
       const result = await resizeImage(TEST_URI, 800);
@@ -114,6 +116,10 @@ describe('resizeImage', () => {
   });
 
   describe('unknown / zero width — fall back gracefully without resize', () => {
+    // expo-image-manipulator returns width=0 when the image dimensions cannot
+    // be determined (e.g. very early in the load lifecycle). Treating 0 as
+    // "within range" would silently pass a broken image; we pass it through
+    // unchanged and let the API decide whether to accept it.
     it('skips resize and reads raw file when width is 0', async () => {
       const result = await resizeImage(TEST_URI, 0);
 
@@ -134,6 +140,9 @@ describe('resizeImage', () => {
 
   describe('base64 fallback when manipulateAsync returns no base64', () => {
     it('falls back to result.uri when base64 is undefined', async () => {
+      // manipulateAsync can omit base64 on some platforms even when requested
+      // (observed on older Expo SDK versions). Falling back to the URI keeps
+      // the photo-ID flow working rather than crashing with a null reference.
       manipulateAsync.mockResolvedValueOnce({
         uri: 'resized://fallback.jpg',
         base64: undefined,
@@ -147,6 +156,9 @@ describe('resizeImage', () => {
   });
 
   describe('error handling — corrupt or unreadable images', () => {
+    // Raw expo errors contain platform-specific stack traces that are confusing
+    // to users. ImageReadError normalises them into a single human-readable
+    // message while preserving the original cause for developer debugging.
     it('throws ImageReadError with readable message when readAsStringAsync fails (pass-through path)', async () => {
       readAsStringAsync.mockRejectedValueOnce(new Error('File not found'));
 

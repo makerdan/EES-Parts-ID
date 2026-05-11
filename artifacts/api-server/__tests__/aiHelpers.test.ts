@@ -39,6 +39,8 @@ describe('buildImageContent', () => {
   });
 
   it('limits output to the first 2 images', () => {
+    // The OpenAI Vision API accepts at most 2 images per request; silently
+    // dropping extras here prevents an API error at call time.
     const result = buildImageContent(['a', 'b', 'c', 'd']);
     expect(result).toHaveLength(2);
   });
@@ -54,6 +56,9 @@ describe('buildImageContent', () => {
   });
 
   it('preserves existing data:image/jpeg;base64, prefix without doubling it', () => {
+    // Regression guard: if a caller already prefixes the base64 string with the
+    // JPEG data-URI header, a naïve implementation would prepend it a second
+    // time, producing an invalid URL like "data:image/jpeg;base64,data:…".
     const uri = 'data:image/jpeg;base64,abc';
     const result = buildImageContent([uri]);
     expect(result[0].image_url.url).toBe(uri);
@@ -142,38 +147,53 @@ describe('normalizeAnalysis', () => {
   });
 
   it('limits raw text fallback searchTerms to 10 words', () => {
+    // Caps the term list so a wall-of-text response doesn't flood the search
+    // index with hundreds of low-quality keywords.
     const longText = Array.from({ length: 20 }, (_, i) => `word${i}`).join(' ');
     const result = normalizeAnalysis(null, longText);
     expect(result.searchTerms).toHaveLength(10);
   });
 
   it('truncates the raw text fallback summary to 200 characters', () => {
+    // The UI displays the summary in a compact card; a hard 200-char limit
+    // prevents layout overflow when the AI returns a lengthy paragraph.
     const longText = 'a'.repeat(300);
     const result = normalizeAnalysis(null, longText);
     expect(result.summary.length).toBeLessThanOrEqual(200);
   });
 
   it('defaults non-array searchTerms to an empty array', () => {
+    // Guards against the AI returning a comma-separated string instead of an
+    // array — a common schema-drift failure mode.
     const result = normalizeAnalysis({ searchTerms: 'not an array' }, '');
     expect(result.searchTerms).toEqual([]);
   });
 
   it('defaults non-boolean manufacturerVerified to false', () => {
+    // The AI sometimes returns "yes"/"no" strings instead of booleans; any
+    // non-boolean value must be treated as unverified (false) to be safe.
     const result = normalizeAnalysis({ manufacturerVerified: 'yes' }, '');
     expect(result.manufacturerVerified).toBe(false);
   });
 
   it('defaults non-string detectedVendor to null', () => {
+    // Ensures a numeric or object vendor value doesn't leak into downstream
+    // vendor-boost logic that expects a string or null.
     const result = normalizeAnalysis({ detectedVendor: 42 }, '');
     expect(result.detectedVendor).toBeNull();
   });
 
   it('defaults non-string summary to empty string', () => {
+    // Arrays from hallucinated responses must not be joined or stringified;
+    // an empty string is the safest fallback for display.
     const result = normalizeAnalysis({ summary: ['not', 'a', 'string'] }, '');
     expect(result.summary).toBe('');
   });
 
   it('accepts manufacturerVerified: false explicitly', () => {
+    // Verifies that the boolean guard uses typeof === 'boolean' rather than
+    // a truthiness check, which would incorrectly default false → false (ok)
+    // but the test documents the contract explicitly.
     const result = normalizeAnalysis({ manufacturerVerified: false }, '');
     expect(result.manufacturerVerified).toBe(false);
   });
