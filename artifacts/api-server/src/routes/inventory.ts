@@ -52,7 +52,12 @@ import {
   tradeSizeChipLabel,
   isConduitOrPipe,
 } from '../utils/tradeSize';
-import { parseCatalog, deriveAttrs, parseTradeSize, isBreakerCatalog } from '../enrichment/parseAttributes';
+import {
+  parseCatalog,
+  deriveAttrs,
+  parseTradeSize,
+  isBreakerCatalog,
+} from '../enrichment/parseAttributes';
 import { buildSearchTokens } from '../enrichment/buildSearchTokens';
 import { refreshSearchTokensForIds } from '../enrichment/refreshSearchTokens';
 import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from '../enrichment/invalidation';

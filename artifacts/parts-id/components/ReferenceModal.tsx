@@ -121,7 +121,7 @@ const BREAKER_HELP_CHIPS: { label: string; answer: string }[] = [
   {
     label: 'AIC Rating',
     answer:
-      '**AIC Rating (Ampere Interrupting Capacity)** is the maximum fault current the breaker can safely clear without failing or causing a hazard.\n\nIf a fault occurs and the available fault current exceeds the breaker\'s AIC rating, the breaker may arc, explode, or fail to interrupt — a serious fire and shock hazard.\n\nCommon ratings:\n• **10 kAIC** — standard residential (most homes have < 10 kA available)\n• **22 kAIC** — commercial panels near large utility transformers\n• **65 kAIC** — industrial switchgear\n• **200 kAIC** — high-fault industrial breakers\n\nAlways verify available fault current at the panel before selecting a breaker.',
+      "**AIC Rating (Ampere Interrupting Capacity)** is the maximum fault current the breaker can safely clear without failing or causing a hazard.\n\nIf a fault occurs and the available fault current exceeds the breaker's AIC rating, the breaker may arc, explode, or fail to interrupt — a serious fire and shock hazard.\n\nCommon ratings:\n• **10 kAIC** — standard residential (most homes have < 10 kA available)\n• **22 kAIC** — commercial panels near large utility transformers\n• **65 kAIC** — industrial switchgear\n• **200 kAIC** — high-fault industrial breakers\n\nAlways verify available fault current at the panel before selecting a breaker.",
   },
   {
     label: 'Mount Type',
@@ -131,7 +131,7 @@ const BREAKER_HELP_CHIPS: { label: string; answer: string }[] = [
   {
     label: 'Physical Footprint',
     answer:
-      '**Physical Footprint** refers to the width and slot count a breaker occupies in the panel.\n\n• **Standard (full-size)** — 1 inch wide; occupies 1 panel slot (1-pole) or 2 slots (2-pole). The most common residential format.\n• **Tandem / Duplex** — two 1-pole circuits in a single 1-inch slot (e.g., Eaton BD/BRD, Square D QO-T). Used when the panel is full and you need an extra circuit. Not all panels accept tandems — check the panel\'s approved breaker list.\n• **3/4-inch slim** — slightly narrower than standard; some manufacturers offer these for density.\n• **Commercial full-size** — wider frames (CH, I-Line) that do not fit residential load centers.',
+      "**Physical Footprint** refers to the width and slot count a breaker occupies in the panel.\n\n• **Standard (full-size)** — 1 inch wide; occupies 1 panel slot (1-pole) or 2 slots (2-pole). The most common residential format.\n• **Tandem / Duplex** — two 1-pole circuits in a single 1-inch slot (e.g., Eaton BD/BRD, Square D QO-T). Used when the panel is full and you need an extra circuit. Not all panels accept tandems — check the panel's approved breaker list.\n• **3/4-inch slim** — slightly narrower than standard; some manufacturers offer these for density.\n• **Commercial full-size** — wider frames (CH, I-Line) that do not fit residential load centers.",
   },
   {
     label: 'Series Codes',
@@ -576,12 +576,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                 <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>
                   BREAKER ATTRIBUTES
                 </Text>
-                <Text
-                  style={[
-                    emptyStyles.sectionHint,
-                    { color: colors.mutedForeground },
-                  ]}
-                >
+                <Text style={[emptyStyles.sectionHint, { color: colors.mutedForeground }]}>
                   Tap a term to see its definition and catalog-number examples — no internet
                   required.
                 </Text>
@@ -594,9 +589,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                         style={[
                           breakerChipStyles.chip,
                           {
-                            backgroundColor: isActive
-                              ? colors.primary + '18'
-                              : colors.muted,
+                            backgroundColor: isActive ? colors.primary + '18' : colors.muted,
                             borderColor: isActive ? colors.primary : colors.border,
                           },
                         ]}
