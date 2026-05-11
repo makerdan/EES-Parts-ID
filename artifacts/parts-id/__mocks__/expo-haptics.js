@@ -16,4 +16,10 @@ const impactAsync = jest.fn(async () => {});
 const notificationAsync = jest.fn(async () => {});
 const selectionAsync = jest.fn(async () => {});
 
-module.exports = { ImpactFeedbackStyle, NotificationFeedbackType, impactAsync, notificationAsync, selectionAsync };
+module.exports = {
+  ImpactFeedbackStyle,
+  NotificationFeedbackType,
+  impactAsync,
+  notificationAsync,
+  selectionAsync,
+};
