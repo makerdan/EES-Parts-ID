@@ -2,6 +2,7 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
+  testSequencer: './alphabetical-sequencer.cjs',
   transform: {
     '^.+\\.tsx?$': [
       'ts-jest',
