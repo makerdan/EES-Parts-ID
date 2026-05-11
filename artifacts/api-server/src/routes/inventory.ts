@@ -2444,7 +2444,11 @@ router.patch('/:id', async (req, res) => {
     const vendorFullName = await lookupVendorFullName(updated.vendor);
     res.json(
       withVendorFullName(
-        updated,
+        {
+          ...updated,
+          binLocations: updated.binLocations ?? [],
+          aiKeywords: updated.aiKeywords ?? [],
+        },
         new Map(vendorFullName ? [[updated.vendor.toUpperCase(), vendorFullName]] : [])
       )
     );

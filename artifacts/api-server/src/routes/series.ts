@@ -187,17 +187,25 @@ router.get('/:id/items', requireAdmin, async (req, res) => {
       res.status(400).json({ error: 'Invalid id' });
       return;
     }
-    const items = await db
+    const rows = await db
       .select({
         id: inventoryTable.id,
         vendor: inventoryTable.vendor,
         catalog: inventoryTable.catalog,
         description: inventoryTable.description,
+        binLocations: inventoryTable.binLocations,
+        aiKeywords: inventoryTable.aiKeywords,
       })
       .from(inventoryTable)
       .where(eq(inventoryTable.seriesId, id))
       .orderBy(inventoryTable.vendor, inventoryTable.catalog);
-    res.json({ items });
+    res.json({
+      items: rows.map((item) => ({
+        ...item,
+        binLocations: item.binLocations ?? [],
+        aiKeywords: item.aiKeywords ?? [],
+      })),
+    });
   } catch (err) {
     console.error('[series/items]', err);
     res.status(500).json({ error: 'Failed to list series members' });
@@ -217,13 +225,15 @@ router.get('/:id/search', requireAdmin, async (req, res) => {
       res.json({ items: [] });
       return;
     }
-    const items = await db
+    const rows = await db
       .select({
         id: inventoryTable.id,
         vendor: inventoryTable.vendor,
         catalog: inventoryTable.catalog,
         description: inventoryTable.description,
         seriesId: inventoryTable.seriesId,
+        binLocations: inventoryTable.binLocations,
+        aiKeywords: inventoryTable.aiKeywords,
       })
       .from(inventoryTable)
       .where(
@@ -234,7 +244,13 @@ router.get('/:id/search', requireAdmin, async (req, res) => {
       )
       .orderBy(inventoryTable.vendor, inventoryTable.catalog)
       .limit(30);
-    res.json({ items });
+    res.json({
+      items: rows.map((item) => ({
+        ...item,
+        binLocations: item.binLocations ?? [],
+        aiKeywords: item.aiKeywords ?? [],
+      })),
+    });
   } catch (err) {
     console.error('[series/search]', err);
     res.status(500).json({ error: 'Failed to search inventory' });
