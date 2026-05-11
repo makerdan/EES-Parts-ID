@@ -3,6 +3,7 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   moduleNameMapper: {
+    '^expo-haptics$': '<rootDir>/__mocks__/expo-haptics.js',
     '^expo-image-manipulator$': '<rootDir>/__mocks__/expo-image-manipulator.js',
     '^expo-file-system/legacy$': '<rootDir>/__mocks__/expo-file-system-legacy.js',
     '^react-native$': '<rootDir>/__mocks__/react-native.js',
