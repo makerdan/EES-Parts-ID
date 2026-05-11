@@ -10,7 +10,8 @@
  *  3. Early-exit: when getItem returns null (no cache yet), setItem is skipped.
  *  4. Resilience: AsyncStorage errors are swallowed (cache failures are non-fatal).
  *  5. ID-miss: when updated.id is not in the cache the item is appended so
- *     edits to recently-added parts are not silently lost.
+ *     edits to recently-added parts (inserted after the last full sync) are
+ *     not silently lost.
  */
 
 import type { InventoryItem } from '@workspace/api-client-react';

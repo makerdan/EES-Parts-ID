@@ -10,7 +10,8 @@
  *   4. After each window switch the updated stats are displayed and the stale
  *      total from the previous window is no longer shown.
  *   5. While a new request is in-flight (stats not yet replaced) the loading
- *      indicator appears when switching from the collapsed initial state.
+ *      indicator appears — verifies the UI is never in a "stale-and-no-spinner"
+ *      state that could make old stats look like fresh ones.
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';

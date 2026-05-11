@@ -169,7 +169,9 @@ describe('syncAllInventory — in-flight guard', () => {
       storage,
     });
 
-    // Give the first call time to start and set syncInFlightRef.current = true.
+    // Yield to the microtask queue so the first call advances past its
+    // synchronous guard and sets syncInFlightRef.current = true before the
+    // second call is issued.
     await new Promise<void>((r) => setTimeout(r, 0));
 
     expect(syncInFlightRef.current).toBe(true);

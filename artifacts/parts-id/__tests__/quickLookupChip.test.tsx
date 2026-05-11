@@ -7,7 +7,7 @@
  *
  *   1. GET /reference/quick-lookups is called when the modal opens.
  *   2. After the pre-fetch settles, tapping a chip renders the cached answer
- *      immediately.
+ *      immediately (no round-trip latency visible to the user).
  *   3. No ActivityIndicator is shown (loading state never entered).
  *   4. POST /reference/ask (and every other write) is never called.
  */

@@ -3,8 +3,8 @@
  *
  * Verifies that the "Suggest improved description" button renders in both
  * KeywordEditor and RecordEditModal, and that the AI suggestion flow works
- * correctly: success shows the AI SUGGESTION block with "Use this", and
- * failure shows an inline error message.
+ * correctly: success shows the AI SUGGESTION block with "Use this" so the
+ * admin can one-tap apply it, and failure shows an inline error message.
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';

@@ -55,6 +55,8 @@ afterAll(async () => {
 
 describe('POST /api/inventory/search', () => {
   it('returns 200 with matching results for a seeded catalog number', async () => {
+    // Uses a JEST-ITG- prefixed catalog to isolate from production rows;
+    // the prefix is matched as a keyword so the search hits the fixture row.
     const res = await supertest(app)
       .post('/api/inventory/search')
       .send({ keywords: 'JEST-ITG-BR120' })

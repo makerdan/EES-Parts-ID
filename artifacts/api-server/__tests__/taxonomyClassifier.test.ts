@@ -53,6 +53,8 @@ describe('taxonomyClassifier', () => {
   });
 
   it('prefers GFCI over generic breaker when GFCI keyword present', () => {
+    // Rule specificity: GFCI keyword must win over the generic BR-series rule
+    // so that GFCI breakers land in the dedicated sub-type, not "standard".
     const r = classifyItem(
       {
         vendor: 'ETN',

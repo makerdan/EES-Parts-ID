@@ -58,6 +58,8 @@ let adminToken: string;
  * Fixture definitions.
  * vendor + catalog are unique identifiers; series is what goes into
  * catalog_parse->>'series'. null means the row has no series field.
+ * Two fixtures deliberately share the same series name but differ in vendor
+ * to exercise the vendor-scoped uniqueness constraint on product_series.
  * 4 rows have a series (expected to get assigned); 1 does not.
  */
 const FIXTURES = [

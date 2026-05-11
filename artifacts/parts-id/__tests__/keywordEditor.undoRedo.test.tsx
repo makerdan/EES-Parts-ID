@@ -4,7 +4,7 @@
  * Verifies that the Undo and Redo buttons in KeywordEditor stay in sync with
  * description edits:
  *   1. Full undo/redo cycle  (edit → undo → redo)
- *   2. A normal edit after an undo clears the redo stack
+ *   2. A normal edit after an undo clears the redo stack  (standard undo semantics)
  *   3. Opening the editor on a different item resets both stacks
  *   4. Undo failure: persist() rejects → "Save failed" badge, consistent button states
  *   5. Redo failure: persist() rejects → "Save failed" badge, consistent button states

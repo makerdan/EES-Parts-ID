@@ -4,6 +4,7 @@
  * Verifies that every scaled Text element in ResultCard carries
  * `allowFontScaling={false}` so system font-size preferences can't
  * overflow the card layout at large fontScale values (e.g. 1.18×).
+ * Discovered via a regression on iOS 17 with Larger Text accessibility setting.
  *
  * Strategy: override the react-native Text mock for this file to render
  * a `data-allow-font-scaling` attribute into the DOM.  This lets us

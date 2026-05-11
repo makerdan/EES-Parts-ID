@@ -26,6 +26,8 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 // Resolve all pending microtasks so that useEffect / setState chains settle.
+// AsyncStorage.getItem is async; without this flush, assertions run before
+// the hydrated value has been applied to the hook state.
 const flushPromises = () =>
   act(async () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));

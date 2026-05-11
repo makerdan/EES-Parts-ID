@@ -4,6 +4,9 @@
  * Drill-down state-machine tests for BrowseTaxonomy. We exercise the pure
  * helpers (`nodeAtPath`, `visibleChildren`) directly so we don't need a
  * React Native renderer or AsyncStorage shim.
+ *
+ * The tree fixture mirrors the real seed taxonomy (category → subcategory →
+ * type) so path-based navigation tests stay realistic.
  */
 import { nodeAtPath, visibleChildren, type CategoryTreeNode } from '../lib/taxonomy';
 

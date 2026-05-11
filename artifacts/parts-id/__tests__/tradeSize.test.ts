@@ -80,6 +80,8 @@ describe('formatInchesAsFraction', () => {
   });
 
   it('returns empty string for null/undefined/zero/negative', () => {
+    // 0 and negatives are not valid trade sizes — returning '' rather than
+    // "0"" or throwing ensures callers can safely show an empty label.
     expect(formatInchesAsFraction(null)).toBe('');
     expect(formatInchesAsFraction(undefined)).toBe('');
     expect(formatInchesAsFraction(0)).toBe('');
@@ -95,6 +97,9 @@ describe('catalogSuffix', () => {
   });
 
   it('stops at the first digit even if both share more chars', () => {
+    // The split point is always the first digit in the child catalog, not
+    // the character position where the two strings first diverge. This keeps
+    // ampere suffixes like "2120" together as one token.
     expect(catalogSuffix('BR2120', 'BR120')).toBe('2120');
   });
 

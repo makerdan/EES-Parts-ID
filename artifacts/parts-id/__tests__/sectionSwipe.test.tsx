@@ -8,7 +8,7 @@
  *   SectionShelfView (level = 'shelves', settings.shelfViewEnabled = true):
  *     • swipe-left  (dx ≤ -75) → navigates to the next section   [iOS threshold]
  *     • swipe-right (dx ≥  75) → navigates to the prev section   [iOS threshold]
- *     • sub-threshold (|dx| < 75) → no navigation on iOS (threshold = 60 × 1.25)
+ *     • sub-threshold (|dx| < 75) → no navigation on iOS (threshold = 60 × 1.25 pixel-ratio scale)
  *     • at the last section: swipe-left callback is null → no navigation
  *     • at the first section: swipe-right callback is null → no navigation
  *

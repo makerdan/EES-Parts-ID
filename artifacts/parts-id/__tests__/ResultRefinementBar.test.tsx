@@ -8,7 +8,7 @@
  *   • typing fires a single debounced onChange with the trimmed value
  *   • the × clear button removes extraKeywords from upstream state
  *   • when the parent resets refinement to {}, the input clears visually
- *   • chip rows still render alongside the input when there's variation
+ *   • chip rows still render alongside the input when variation chips exist
  */
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';

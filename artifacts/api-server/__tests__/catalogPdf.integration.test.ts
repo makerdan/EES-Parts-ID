@@ -7,7 +7,7 @@
  * database. Seeds a small set of inventory rows, asserts the classifier
  * produces sane tier counts, applies the report, and verifies enrichment
  * landed correctly — including that color-suffixed siblings (e.g. -SBLU vs
- * the seeded -SBLK) are NOT collapsed into a single inventory row.
+ * the seeded -SBLK) are NOT collapsed, which would cause wrong page links.
  */
 
 // ── Mock OpenAI BEFORE app is imported (matches sibling integration tests) ──

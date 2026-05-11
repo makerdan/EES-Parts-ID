@@ -6,8 +6,9 @@
  * and correctly set the answer state from the returned { answer } JSON body.
  *
  * React Native's fetch does not expose ReadableStream on response bodies on
- * iOS, so the component switched from SSE streaming to a plain JSON round-trip.
- * A regression here would silently break all AI answers on iOS.
+ * iOS, so the component switched from SSE streaming to a plain JSON round-trip
+ * (stream=false). A regression here would silently break all AI answers on iOS
+ * while appearing fine in Android and web environments.
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';

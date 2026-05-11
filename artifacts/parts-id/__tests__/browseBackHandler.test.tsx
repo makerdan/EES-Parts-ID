@@ -4,7 +4,7 @@
  * Tests for the Android hardware-back behavior of the Browse-mode UI:
  *   • BrowseTaxonomy: pop one level when drilled in; invoke onExitBrowse
  *     at root (Browse → Search); legacy bubble-through when the prop is
- *     omitted; iOS no-op.
+ *     omitted; iOS no-op (BackHandler is Android-only).
  *   • BrowseByAisle: close the overlay at root, otherwise pop one level;
  *     and the BackHandler effect should NOT re-register on a no-op
  *     parent re-render (memoization guard for goBack/goHome).

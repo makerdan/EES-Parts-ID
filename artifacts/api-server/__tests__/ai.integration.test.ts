@@ -36,7 +36,9 @@ import supertest from 'supertest';
 import app from '../src/app';
 import { closePool } from './helpers/testDb';
 
-// Minimal valid base64 string (1×1 white pixel JPEG)
+// Minimal valid base64 string (1×1 white pixel JPEG). The API validates that
+// the payload is a non-empty base64-encoded image; this is the smallest
+// possible input that passes that check without making a real OpenAI call.
 const TINY_BASE64_JPEG =
   '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAABgUEB//EAB4QAAEEAgMAAAAAAAAAAAAAAAEAAgMREiExQf/EABUBAQEAAAAAAAAAAAAAAAAAAAID/8QAFxEBAQEBAAAAAAAAAAAAAAAAAQACEf/aAAwDAQACEQMRAD8AoN1tq+bNT5e1C7RERFk//9k=';
 

@@ -10,7 +10,8 @@
  *      ImagePicker resolves with a fake image → `images` state populated.
  *   2. Press "Identify Part" text button → mocked `mutateAsync` resolves with
  *      results containing one item → `setResults([...])` called.
- *   3. ResultCard spy renders → assert `data-has-edit` attribute.
+ *   3. ResultCard spy renders → assert `data-has-edit` attribute reflects
+ *      whether `adminToken` is set in AppContext.
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';

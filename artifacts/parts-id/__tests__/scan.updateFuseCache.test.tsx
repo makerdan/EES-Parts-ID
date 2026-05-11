@@ -6,6 +6,7 @@
  *
  * The RecordEditModal mock captures its `onSaved` prop so the test can fire
  * it directly without simulating the full scan / lock-on / lookup flow.
+ * This keeps the test focused on cache invalidation rather than UI flow.
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';

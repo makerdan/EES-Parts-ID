@@ -6,7 +6,8 @@
  *
  * The photo_id_event table is telemetry / analytics only — no FKs
  * constrain it from the outside — so beforeAll truncates it to give
- * the paginated query a clean, deterministic baseline.
+ * the paginated query a clean, deterministic baseline without needing
+ * per-row cleanup logic.
  *
  * Dataset (8 rows total):
  *   Rows 1-7 are "recent" (ts ≈ now).

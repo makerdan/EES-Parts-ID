@@ -47,11 +47,16 @@ describe('uploadProgress persistence', () => {
   });
 
   it('returns null when only the seed is saved (no checkpoint)', async () => {
+    // Both keys must be present to resume a session: the seed describes what
+    // rows to upload; the checkpoint says how far we got. Without both, the
+    // upload cannot be safely continued, so we start fresh.
     store[SEED_KEY] = JSON.stringify(seed);
     expect(await loadUploadProgress()).toBeNull();
   });
 
   it('returns null when only the checkpoint is saved (no seed)', async () => {
+    // Same invariant from the opposite direction: a checkpoint without the
+    // original parsed rows is useless — we wouldn't know what to re-send.
     store[CHECKPOINT_KEY] = JSON.stringify({
       processedIndex: 0,
       totals: { inserted: 0, updated: 0, skipped: 0 },

@@ -2,9 +2,10 @@
  * Integration tests for POST /api/categories/reclassify.
  *
  * Critical correctness guarantee: the job must NEVER overwrite rows where
- * classified_by = 'manual'. A single reclassify run is shared across all
- * pipeline-correctness tests to avoid paying the full-table-scan cost
- * multiple times.
+ * classified_by = 'manual' — warehouse staff expect their manual overrides
+ * to survive re-classification runs.  A single reclassify run is shared
+ * across all pipeline-correctness tests to avoid paying the full-table-scan
+ * cost multiple times.
  *
  * Test matrix (all checked in ONE shared reclassify run):
  *   MANUAL item   → assignment node + classifiedBy untouched

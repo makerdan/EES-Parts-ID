@@ -5,7 +5,8 @@
  * in ClassificationReviewSection.  Three assertions from the task spec:
  *
  *   1. The chip renders with its count even while the enrichment-summary fetch
- *      is still pending (the two requests are independent).
+ *      is still pending — the two API calls are made independently so neither
+ *      blocks the other's UI update.
  *   2. The Enriched / Pending / Coverage chips are absent until enrichSummary
  *      resolves — production gating logic exercised via the real
  *      EnrichmentStatsChips component.
