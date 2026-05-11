@@ -184,7 +184,11 @@ function VariantRow({
   let combinedBreakerLabel: string | null = null;
   if (isBreaker) {
     const bp = parseBreakerCatalog(item.catalog);
-    const ratingStr = bp ? `${bp.amps}A ${bp.poles}-Pole` : '';
+    type VarExtras = { amperage?: number | null; poleCount?: number | null };
+    const vx = item as unknown as VarExtras;
+    const amps = bp?.amps ?? vx.amperage;
+    const poles = bp?.poles ?? vx.poleCount;
+    const ratingStr = amps != null && poles != null ? `${amps}A ${poles}-Pole` : '';
     if (ratingStr) {
       combinedBreakerLabel = `${label} — ${ratingStr}`;
     }
@@ -423,8 +427,17 @@ export function ResultCard({
   const breakerParse = parseBreakerCatalog(item.catalog);
   const isBreaker =
     (categorySlug?.toLowerCase().includes('breaker') ?? false) || breakerParse !== null;
-  type BreakerExtras = { voltage?: number | null; mountType?: string | null };
+  type BreakerExtras = {
+    amperage?: number | null;
+    poleCount?: number | null;
+    voltage?: number | null;
+    mountType?: string | null;
+  };
   const bx = item as unknown as BreakerExtras;
+  // Materialized DB fields take precedence over catalog-regex parse so atypical
+  // catalog numbers (no "BR"/"QO" prefix) still show correct attribute chips.
+  const breakerAmps = bx.amperage ?? breakerParse?.amps;
+  const breakerPoles = bx.poleCount ?? breakerParse?.poles;
 
   const handleEditPress = useCallback(() => {
     if (!onEditKeywords) return;
@@ -585,47 +598,58 @@ export function ResultCard({
             </View>
             <View style={[cardStyles.headerRight, { alignItems: 'flex-end' }]}>
               {showConfidence !== false ? <ConfidenceBadge confidence={confidence} /> : null}
-              {/* Breaker items: show labeled attribute chips instead of a trade-size label */}
-              {isBreaker && breakerParse ? (
+              {/* Breaker items: attribute chips from materialized DB fields (amperage,
+                  poleCount, voltage, mountType) with catalog-parse fallback for series.
+                  Gate on isBreaker only — atypical-catalog breakers (breakerParse===null)
+                  still render chips from the materialized columns. */}
+              {isBreaker &&
+              (breakerAmps != null ||
+                breakerPoles != null ||
+                bx.voltage != null ||
+                bx.mountType != null) ? (
                 <View style={cardStyles.breakerChipsRow}>
-                  <View
-                    style={[
-                      cardStyles.breakerChip,
-                      { backgroundColor: colors.muted, borderColor: colors.border },
-                    ]}
-                  >
-                    <Text
-                      style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
-                      allowFontScaling={false}
+                  {breakerAmps != null ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
                     >
-                      Amp Rating
-                    </Text>
-                    <Text
-                      style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
-                      allowFontScaling={false}
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        Amp Rating
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {breakerAmps}A
+                      </Text>
+                    </View>
+                  ) : null}
+                  {breakerPoles != null ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
                     >
-                      {breakerParse.amps}A
-                    </Text>
-                  </View>
-                  <View
-                    style={[
-                      cardStyles.breakerChip,
-                      { backgroundColor: colors.muted, borderColor: colors.border },
-                    ]}
-                  >
-                    <Text
-                      style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
-                      allowFontScaling={false}
-                    >
-                      Poles
-                    </Text>
-                    <Text
-                      style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
-                      allowFontScaling={false}
-                    >
-                      {breakerParse.poles}
-                    </Text>
-                  </View>
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        Poles
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {breakerPoles}
+                      </Text>
+                    </View>
+                  ) : null}
                   {bx.voltage ? (
                     <View
                       style={[
@@ -668,25 +692,27 @@ export function ResultCard({
                       </Text>
                     </View>
                   ) : null}
-                  <View
-                    style={[
-                      cardStyles.breakerChip,
-                      { backgroundColor: colors.muted, borderColor: colors.border },
-                    ]}
-                  >
-                    <Text
-                      style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
-                      allowFontScaling={false}
+                  {breakerParse?.series ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
                     >
-                      Series
-                    </Text>
-                    <Text
-                      style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
-                      allowFontScaling={false}
-                    >
-                      {breakerParse.series}
-                    </Text>
-                  </View>
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        Series
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {breakerParse.series}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
               ) : !isBreaker && item.tradeSize ? (
                 <Text style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}>

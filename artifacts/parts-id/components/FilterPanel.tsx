@@ -897,17 +897,35 @@ export function FilterPanel({
                       (values.category === 'Breaker' ||
                         (activeCategoryName?.toLowerCase().includes('breaker') ?? false))
                     )
-                ).map((dim) => (
-                  <ChipRow
-                    key={dim.key}
-                    label={dim.label}
-                    options={dim.options}
-                    value={String(values[dim.key] ?? '')}
-                    onChange={(v) => onChange(dim.key, v)}
-                    colors={colors}
-                    counts={dimensionCounts?.[dim.key]}
-                  />
-                ))}
+                ).map((dim) => {
+                  // For the Amp Rating row in breaker context, derive options
+                  // dynamically from dimensionCounts keys (options that actually
+                  // exist in the current result set) so the chip list reflects
+                  // real available amperage values rather than a static list.
+                  const isInBreakerCtx =
+                    values.category === 'Breaker' ||
+                    (activeCategoryName?.toLowerCase().includes('breaker') ?? false);
+                  const ampCounts = dimensionCounts?.['amperage'];
+                  const dynOptions =
+                    dim.key === 'amperage' && isInBreakerCtx && ampCounts
+                      ? Object.keys(ampCounts)
+                          .filter(
+                            (k) => (ampCounts[k] ?? 0) > 0 || String(values[dim.key] ?? '') === k
+                          )
+                          .sort((a, b) => (parseInt(a, 10) || 9999) - (parseInt(b, 10) || 9999))
+                      : dim.options;
+                  return (
+                    <ChipRow
+                      key={dim.key}
+                      label={dim.label}
+                      options={dynOptions}
+                      value={String(values[dim.key] ?? '')}
+                      onChange={(v) => onChange(dim.key, v)}
+                      colors={colors}
+                      counts={dimensionCounts?.[dim.key]}
+                    />
+                  );
+                })}
                 <ConfidenceSlider
                   value={values.confidenceThreshold}
                   onChange={(v) => onChange('confidenceThreshold', v)}
