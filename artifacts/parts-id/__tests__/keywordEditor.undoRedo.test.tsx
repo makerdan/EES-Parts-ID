@@ -448,15 +448,14 @@ describe('KeywordEditor — Undo/Redo save failure', () => {
     // The failure must NOT be silent — "Save failed" status badge appears.
     expect(screen.getByText('Save failed')).toBeTruthy();
 
-    // The visual undo still happened: description reverted to the prior value.
-    // (Server and UI are diverged, but the user can see the error and retry.)
-    expect(getDescInput().value).toBe('Original description');
+    // The catch block rolls back the undo: description is restored to the
+    // pre-undo value so UI and server remain in sync.
+    expect(getDescInput().value).toBe('Edited description');
 
-    // Undo stack was popped before the async call, so it is now empty.
-    // The value we undid FROM was pushed to the redo stack before the call,
-    // so redo is available. Both states are consistent (no stuck/duplicate entries).
-    expect(getUndoBtn().disabled).toBe(true);
-    expect(getRedoBtn().disabled).toBe(false);
+    // Undo stack entry pushed back → user can retry the undo.
+    // Redo stack push reversed → no dangling redo entry.
+    expect(getUndoBtn().disabled).toBe(false);
+    expect(getRedoBtn().disabled).toBe(true);
   });
 
   it('Redo failure: shows "Save failed" badge and leaves button states consistent', async () => {
@@ -486,14 +485,13 @@ describe('KeywordEditor — Undo/Redo save failure', () => {
     // The failure must NOT be silent.
     expect(screen.getByText('Save failed')).toBeTruthy();
 
-    // Visual redo happened: description advanced to the re-applied value.
-    expect(getDescInput().value).toBe('Edited description');
+    // The catch block rolls back the redo: description is restored to the
+    // pre-redo value so UI and server remain in sync.
+    expect(getDescInput().value).toBe('Original description');
 
-    // Redo stack was popped before the async call → now empty.
-    // The persist catch block never reached the undo-stack push, so the undo
-    // stack is also empty (the server round-trip that would have confirmed the
-    // save never completed). Both buttons are disabled — no stuck/phantom entries.
-    expect(getRedoBtn().disabled).toBe(true);
+    // Redo stack entry pushed back → user can retry the redo.
+    // Undo stack was never pushed (persist never completed) → disabled.
+    expect(getRedoBtn().disabled).toBe(false);
     expect(getUndoBtn().disabled).toBe(true);
   });
 });
