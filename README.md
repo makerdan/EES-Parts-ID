@@ -178,6 +178,13 @@ This regenerates React Query hooks (`@workspace/api-client-react`) and
 Zod schemas (`@workspace/api-zod`) used by both the mobile app and the
 API server.
 
+A **pre-commit git hook** (installed automatically by `pnpm install` via
+[simple-git-hooks](https://github.com/toplenboren/simple-git-hooks)) runs
+`pnpm codegen:check` before every commit. If `openapi.yaml` has changed
+since the last `pnpm codegen` run the commit is aborted with a clear
+message — run `pnpm codegen` and stage the regenerated files, then commit
+again. To bypass the check in an emergency use `git commit --no-verify`.
+
 ## Contributing
 
 - Comments prefer **why over what** — explain non-obvious tradeoffs and
