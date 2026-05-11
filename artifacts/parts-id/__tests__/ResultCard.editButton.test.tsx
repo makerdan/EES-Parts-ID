@@ -16,7 +16,7 @@
  */
 /* eslint-disable react/display-name, import/first */
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 
 // ── react-native mock ──────────────────────────────────────────────────────
@@ -279,5 +279,53 @@ describe('ResultCard — Edit Part Details button visibility', () => {
 
     expect(onEdit).toHaveBeenCalledTimes(1);
     expect(onEdit).toHaveBeenCalledWith(result.item, expect.any(Function));
+  });
+});
+
+describe('ResultCard — Edit button inside related-sizes modal', () => {
+  it('calls onEditKeywords with the variant item (not the parent item) when Edit is tapped inside the modal', () => {
+    const onEdit = jest.fn();
+
+    const parentResult = makeResult({ id: 42, catalog: 'QO120' });
+
+    const variantItem: InventoryItem = {
+      id: 55,
+      vendor: 'SQD',
+      catalog: 'QO240',
+      description: '40A 2-Pole QO Breaker',
+      binLocations: [],
+      aiKeywords: [],
+      vendorFullName: 'Schneider Electric',
+      enrichedAt: '2024-01-01T00:00:00Z',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+      seriesName: null,
+      tradeSize: null,
+    };
+
+    const resultWithVariant: SearchResult = {
+      ...parentResult,
+      variants: [variantItem],
+    };
+
+    render(<ResultCard result={resultWithVariant} rank={1} onEditKeywords={onEdit} />);
+
+    // Open the related-sizes variants panel (always-visible toggle).
+    fireEvent.click(screen.getByRole('button', { name: /related sizes/i }));
+
+    // Tap the variant row to open the detail modal. The VariantRow accessibilityLabel
+    // is "Open <vendor> <catalog>[, size …][, bin …]" (see ResultCard.tsx ~line 212).
+    fireEvent.click(screen.getByRole('button', { name: /Open SQD QO240/i }));
+
+    // The modal is now open. Both the parent card footer and the nested card inside
+    // the modal render "✏️ Edit Part Details". Scope to the dialog to target the
+    // nested card's button so we verify the correct item is forwarded.
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByText('✏️ Edit Part Details'));
+
+    // Must have been called with the variant's InventoryItem, not the parent's.
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onEdit).toHaveBeenCalledWith(variantItem, expect.any(Function));
+    expect(onEdit).not.toHaveBeenCalledWith(parentResult.item, expect.any(Function));
   });
 });
