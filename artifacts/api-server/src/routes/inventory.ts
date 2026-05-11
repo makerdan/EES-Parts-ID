@@ -52,7 +52,7 @@ import {
   tradeSizeChipLabel,
   isConduitOrPipe,
 } from '../utils/tradeSize';
-import { parseCatalog, deriveAttrs, parseTradeSize } from '../enrichment/parseAttributes';
+import { parseCatalog, deriveAttrs, parseTradeSize, isBreakerCatalog } from '../enrichment/parseAttributes';
 import { buildSearchTokens } from '../enrichment/buildSearchTokens';
 import { refreshSearchTokensForIds } from '../enrichment/refreshSearchTokens';
 import { CURRENT_PROMPT_VERSION, CURRENT_PARSER_VERSION } from '../enrichment/invalidation';
@@ -1471,8 +1471,11 @@ router.post('/enrich', requireAdminAuth, async (req, res) => {
       itemsToEnrich,
       async (item) => {
         // Derive trade size before AI call so it can be passed as context.
-        const tradeSizeInches =
-          parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description);
+        // Skip trade size entirely for breaker items — their catalog suffixes
+        // encode amperage/poles, not a conduit trade size.
+        const tradeSizeInches = isBreakerCatalog(item.catalog)
+          ? null
+          : (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description));
         const tradeSize = tradeSizeInches !== null ? tradeSizeChipLabel(tradeSizeInches) : null;
 
         const keywords = await generateKeywords(item, undefined, tradeSize ?? undefined);
@@ -1656,8 +1659,9 @@ async function runBulkEnrich() {
       const wave = batch.slice(i, i + BULK_ENRICH_CONCUR);
       const results = await Promise.allSettled(
         wave.map((item) => {
-          const tradeSizeInches =
-            parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description);
+          const tradeSizeInches = isBreakerCatalog(item.catalog)
+            ? null
+            : (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description));
           const tradeSize =
             tradeSizeInches !== null
               ? (tradeSizeChipLabel(tradeSizeInches) ?? undefined)
@@ -1670,8 +1674,9 @@ async function runBulkEnrich() {
         const r = results[j]!;
         const item = wave[j]!;
         if (r.status === 'fulfilled') {
-          const tradeSizeInches =
-            parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description);
+          const tradeSizeInches = isBreakerCatalog(item.catalog)
+            ? null
+            : (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description));
           const tradeSize = tradeSizeInches !== null ? tradeSizeChipLabel(tradeSizeInches) : null;
           const tradeTokens = deriveTradeSizeTokens(item);
           const existing = new Set(r.value.map((k: string) => k.toLowerCase()));

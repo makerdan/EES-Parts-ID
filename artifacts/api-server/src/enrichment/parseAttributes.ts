@@ -59,6 +59,24 @@ const BREAKER_RE =
   /^(BR|BRN|BAB|BJ|BJH|GHB|GHQ|CLCAF|GFCB|GFTCB|CHF|QO|CH|HOM|THQL|MP|SWD|FH|HH|Q1)(1|2|3|4)(\d{2,3})(.*)?$/i;
 
 /**
+ * Returns true when the catalog string matches a known circuit-breaker pattern.
+ * Used in the enrichment pipeline to prevent writing an amperage-derived value
+ * into the `trade_size` column for breaker items.
+ *
+ * One-time migration — run after deploying this guard to clear any breaker
+ * rows that were previously assigned an amperage string as trade_size:
+ *
+ *   UPDATE inventory
+ *   SET trade_size = NULL, trade_size_in = NULL
+ *   WHERE trade_size ~ '^\d+\s*[Aa]'
+ *     AND catalog ~* '^(BR|BRN|BAB|BJ|BJH|GHB|GHQ|CLCAF|GFCB|GFTCB|CHF|QO|CH|HOM|THQL|MP|SWD|FH|HH|Q1)[1-4][0-9]{2,3}';
+ */
+export function isBreakerCatalog(catalog: string | null | undefined): boolean {
+  if (!catalog) return false;
+  return BREAKER_RE.test(catalog.trim().toUpperCase());
+}
+
+/**
  * Receptacle / device family: SERIES + AMPS(2-3 digits) + VARIANT(color etc.)
  *
  * Examples:

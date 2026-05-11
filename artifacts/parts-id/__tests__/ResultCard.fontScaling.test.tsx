@@ -202,6 +202,8 @@ jest.mock('@/lib/refinement', () => ({
 jest.mock('@/lib/tradeSize', () => ({
   parseTradeSizeInches: () => null,
   formatInchesAsFraction: () => '',
+  parseBreakerCatalog: () => null,
+  isBreakerCatalog: () => false,
 }));
 
 // ── Import after mocks are registered ─────────────────────────────────────

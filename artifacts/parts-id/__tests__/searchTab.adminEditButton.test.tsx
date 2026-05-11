@@ -427,6 +427,8 @@ jest.mock('@/lib/tradeSize', () => ({
   parseTradeSizeInches: () => null,
   isConduitOrPipe: () => false,
   formatInchesAsFraction: () => '',
+  parseBreakerCatalog: () => null,
+  isBreakerCatalog: () => false,
 }));
 
 jest.mock('@/lib/syncInventory', () => ({

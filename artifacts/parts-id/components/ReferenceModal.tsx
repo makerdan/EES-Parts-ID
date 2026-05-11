@@ -94,6 +94,57 @@ const QUICK_LOOKUP_CHIPS = [
   },
 ] as const;
 
+// ── Breaker Attributes — static inline answers (no AI call) ──────────────────
+// Each entry has a label shown on the chip and a static answer that expands
+// inline when the chip is tapped. No server round-trip is needed.
+const BREAKER_HELP_CHIPS: { label: string; answer: string }[] = [
+  {
+    label: 'Amp Rating',
+    answer:
+      '**Amp Rating** is the trip current of the breaker — the maximum continuous load before it trips to protect the circuit.\n\nFor example, a 20 A breaker trips at 20 amperes. The amp rating is encoded as the 2–3-digit suffix after the pole digit in most catalog numbers:\n• `BR120` → 20 A (BR series, 1-pole, 20 A)\n• `QO220` → 20 A (QO series, 2-pole, 20 A)\n• `CH3100` → 100 A (CH series, 3-pole, 100 A)\n\nCommon residential ratings: **15 A** (lighting/general), **20 A** (kitchen/bath), **30 A** (dryer/HVAC), **50 A** (range/EV charger).',
+  },
+  {
+    label: 'Poles',
+    answer:
+      '**Poles** is the number of circuits the breaker controls simultaneously.\n\n• **1-Pole** — controls one hot wire; used for 120 V branch circuits (lights, outlets). The first digit after the series code in most catalog numbers, e.g. `BR**1**20` = 1-pole.\n• **2-Pole** — controls two hot wires; used for 240 V loads (dryers, water heaters, A/C, EV chargers). e.g. `QO**2**30`.\n• **3-Pole** — controls three hot wires; used for 480 V / 3-phase industrial equipment. e.g. `CH**3**60`.\n\nA 2-pole breaker takes two adjacent slots in the panel and protects both legs of a 240 V circuit.',
+  },
+  {
+    label: 'Voltage Rating',
+    answer:
+      '**Voltage Rating** is the maximum system voltage the breaker is certified to interrupt safely.\n\nCommon ratings:\n• **120/240 V** — standard North American residential single-phase\n• **277 V** — commercial lighting circuits (common in office buildings)\n• **480 V** — industrial 3-phase systems\n• **600 V** — heavy industrial and Canadian systems\n\nThe voltage rating must equal or exceed the system voltage. Using a 120 V–rated breaker on a 240 V circuit is a safety violation.',
+  },
+  {
+    label: 'Frame Size (AF)',
+    answer:
+      '**Frame Size (AF — Ampere Frame)** is the maximum ampere capacity of the physical breaker body, regardless of the installed trip setting.\n\nA 100 AF frame can hold trip units from 15 A up to 100 A. You can swap the trip setting without replacing the physical frame.\n\nCommon frame sizes:\n• **100 AF** — residential and light commercial (15–100 A trips)\n• **225 AF** — commercial feeders (70–225 A trips)\n• **400 AF** — large commercial/industrial feeders\n• **800 AF / 1200 AF** — main service breakers\n\nThe frame size determines the physical slot size required in the panel.',
+  },
+  {
+    label: 'AIC Rating',
+    answer:
+      '**AIC Rating (Ampere Interrupting Capacity)** is the maximum fault current the breaker can safely clear without failing or causing a hazard.\n\nIf a fault occurs and the available fault current exceeds the breaker\'s AIC rating, the breaker may arc, explode, or fail to interrupt — a serious fire and shock hazard.\n\nCommon ratings:\n• **10 kAIC** — standard residential (most homes have < 10 kA available)\n• **22 kAIC** — commercial panels near large utility transformers\n• **65 kAIC** — industrial switchgear\n• **200 kAIC** — high-fault industrial breakers\n\nAlways verify available fault current at the panel before selecting a breaker.',
+  },
+  {
+    label: 'Mount Type',
+    answer:
+      '**Mount Type** describes how the breaker physically attaches to the panel bus bar.\n\n• **Plug-in** — the breaker snaps onto a stab-type bus bar. Used in most residential and light commercial load centers (Eaton BR/BRN, Square D QO/HOM, GE THQL). Quick to install and remove.\n• **Bolt-on** — the breaker is bolted directly to the bus bar with a screw or bolt. Used in commercial and industrial panels (Eaton CH, Square D I-Line, Siemens). More secure; required in many commercial specs.\n• **DIN Rail** — the breaker clips onto a standard 35 mm DIN rail. Used in control panels, machine enclosures, and European-style distribution boards. Not interchangeable with load center buses.',
+  },
+  {
+    label: 'Physical Footprint',
+    answer:
+      '**Physical Footprint** refers to the width and slot count a breaker occupies in the panel.\n\n• **Standard (full-size)** — 1 inch wide; occupies 1 panel slot (1-pole) or 2 slots (2-pole). The most common residential format.\n• **Tandem / Duplex** — two 1-pole circuits in a single 1-inch slot (e.g., Eaton BD/BRD, Square D QO-T). Used when the panel is full and you need an extra circuit. Not all panels accept tandems — check the panel\'s approved breaker list.\n• **3/4-inch slim** — slightly narrower than standard; some manufacturers offer these for density.\n• **Commercial full-size** — wider frames (CH, I-Line) that do not fit residential load centers.',
+  },
+  {
+    label: 'Series Codes',
+    answer:
+      '**Common Breaker Series Codes** decoded by manufacturer:\n\n**Eaton:** `BR` / `BRN` = BR residential plug-in · `CH` / `CHF` = CH commercial · `BAB` = bolt-on · `GFCB` / `GFTCB` = GFCI/AFCI variant\n**Square D:** `QO` = QO residential plug-in · `HOM` = Homeline economy · `I-Line` = commercial bolt-on\n**Siemens/GE:** `GHB` / `GHQ` = Siemens residential · `THQL` = GE residential · `BJ` / `BJH` = Siemens commercial\n**Other:** `MP` = Murray (Siemens-compatible) · `SWD` = switching duty\n\n**Common variant suffixes:**\n`GF` = GFCI protection · `AF` = AFCI protection · `PC` = plug-on neutral · `WHI` = white handle · `H` = high-interrupt · `SP` = surge protection',
+  },
+  {
+    label: 'Trade Size (N/A)',
+    answer:
+      '**"Trade Size" does not apply to circuit breakers.**\n\n"Trade size" is the nominal designation used for **conduit and fittings** — for example, ½″ EMT, ¾″ rigid conduit, or 1″ PVC. It refers to the inside diameter category of a pipe or tube.\n\nBreakers are rated by **amperage, poles, voltage, and frame size** — none of which are trade sizes.\n\nIf you see "trade size" displayed on a breaker result, the value was likely derived incorrectly from the catalog number\'s amp/pole digits. The correct attributes to reference are Amp Rating, Poles, and Voltage Rating.',
+  },
+];
+
 interface ReferenceModalProps {
   open: boolean;
   onClose: () => void;
@@ -117,6 +168,8 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
   const answerContainerYRef = useRef<number>(0);
   // Timestamp of the last tap on any answer bubble, used for double-tap detection
   const lastAnswerTapRef = useRef<number>(0);
+  // Breaker Attributes section: tracks which chip is currently expanded (label or null)
+  const [activeBreakerChip, setActiveBreakerChip] = useState<string | null>(null);
 
   // Pre-fetch all cached quick-lookup answers from the server when the modal
   // opens so every chip tap is instant. Falls back silently if this fails.
@@ -497,6 +550,7 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                 </Pressable>
               </View>
 
+              {/* ── Quick Lookups section ── */}
               <View style={emptyStyles.chipsWrapper}>
                 <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>
                   QUICK LOOKUPS
@@ -515,6 +569,76 @@ export function ReferenceModal({ open, onClose }: ReferenceModalProps) {
                     </Text>
                   </Pressable>
                 ))}
+              </View>
+
+              {/* ── Breaker Attributes section ── */}
+              <View style={[emptyStyles.chipsWrapper, { marginTop: 20 }]}>
+                <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>
+                  BREAKER ATTRIBUTES
+                </Text>
+                <Text
+                  style={[
+                    emptyStyles.sectionHint,
+                    { color: colors.mutedForeground },
+                  ]}
+                >
+                  Tap a term to see its definition and catalog-number examples — no internet
+                  required.
+                </Text>
+                {BREAKER_HELP_CHIPS.map(({ label, answer: staticAnswer }) => {
+                  const isActive = activeBreakerChip === label;
+                  return (
+                    <View key={label} style={{ marginBottom: 6 }}>
+                      <Pressable
+                        onPress={() => setActiveBreakerChip(isActive ? null : label)}
+                        style={[
+                          breakerChipStyles.chip,
+                          {
+                            backgroundColor: isActive
+                              ? colors.primary + '18'
+                              : colors.muted,
+                            borderColor: isActive ? colors.primary : colors.border,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            breakerChipStyles.chipText,
+                            {
+                              color: isActive ? colors.primary : colors.foreground,
+                              fontFamily: isActive ? 'Inter_600SemiBold' : 'Inter_400Regular',
+                            },
+                          ]}
+                        >
+                          {label}
+                        </Text>
+                        <Text
+                          style={[
+                            breakerChipStyles.chevron,
+                            { color: isActive ? colors.primary : colors.mutedForeground },
+                          ]}
+                        >
+                          {isActive ? '▲' : '▼'}
+                        </Text>
+                      </Pressable>
+                      {isActive ? (
+                        <View
+                          style={[
+                            breakerChipStyles.answerBox,
+                            {
+                              backgroundColor: colors.card,
+                              borderColor: colors.border,
+                            },
+                          ]}
+                        >
+                          <Text style={{ fontSize: 13, lineHeight: 20 }}>
+                            {renderAnswer(staticAnswer)}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  );
+                })}
               </View>
             </View>
           ) : null}
@@ -660,8 +784,36 @@ const emptyStyles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 10,
   },
+  sectionHint: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 18,
+    marginBottom: 10,
+    marginTop: -4,
+  },
   chip: { ...secondaryBtnBase, width: '100%', padding: 12, marginBottom: 8 },
   chipText: { fontSize: 13, fontFamily: 'Inter_400Regular' },
+});
+
+const breakerChipStyles = StyleSheet.create({
+  chip: {
+    ...secondaryBtnBase,
+    width: '100%',
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  chipText: { fontSize: 13, flex: 1 },
+  chevron: { fontSize: 10, marginLeft: 8 },
+  answerBox: {
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: 8,
+    borderBottomRightRadius: 8,
+    padding: 12,
+    marginTop: -1,
+  },
 });
 
 const inputStyles = StyleSheet.create({

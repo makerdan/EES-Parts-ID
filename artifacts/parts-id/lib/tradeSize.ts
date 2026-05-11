@@ -184,6 +184,45 @@ export function formatInchesAsFraction(inches: number | null | undefined): strin
   return `${fracStr}"`;
 }
 
+// ── Breaker catalog detection ────────────────────────────────────────────────
+// Mirrors BREAKER_RE in api-server/src/enrichment/parseAttributes.ts so the
+// client can detect breaker items and display proper attribute chips rather
+// than misinterpreting the pole/amp suffix as a conduit trade size.
+
+const BREAKER_RE_CLIENT =
+  /^(BR|BRN|BAB|BJ|BJH|GHB|GHQ|CLCAF|GFCB|GFTCB|CHF|QO|CH|HOM|THQL|MP|SWD|FH|HH|Q1)(1|2|3|4)(\d{2,3})(.*)$/i;
+
+export interface BreakerParse {
+  series: string;
+  poles: number;
+  amps: number;
+  variant: string | null;
+}
+
+/**
+ * Parse a breaker catalog number into structured components.
+ * Returns null when the catalog does not match a known breaker pattern.
+ */
+export function parseBreakerCatalog(catalog: string | null | undefined): BreakerParse | null {
+  if (!catalog) return null;
+  const m = BREAKER_RE_CLIENT.exec(catalog.trim());
+  if (!m) return null;
+  return {
+    series: m[1]!.toUpperCase(),
+    poles: parseInt(m[2]!, 10),
+    amps: parseInt(m[3]!, 10),
+    variant: m[4] || null,
+  };
+}
+
+/**
+ * Returns true when the catalog string matches a known circuit-breaker pattern.
+ * Use this to guard against displaying "Trade Size" on breaker result cards.
+ */
+export function isBreakerCatalog(catalog: string | null | undefined): boolean {
+  return parseBreakerCatalog(catalog) !== null;
+}
+
 /**
  * Compute the variant's "differentiator suffix" relative to the parent
  * catalog by stripping the longest shared leading alpha prefix. Used as
