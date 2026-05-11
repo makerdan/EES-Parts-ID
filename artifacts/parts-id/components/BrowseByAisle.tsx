@@ -30,6 +30,7 @@ import {
   type ShelfNode,
   type PartOnShelf,
 } from '@/lib/aisleHierarchy';
+import { parseBreakerCatalog } from '@/lib/tradeSize';
 
 interface Props {
   /** All inventory items currently cached locally (from the Search tab's
@@ -537,22 +538,29 @@ function ShelfView({
                     >
                       {p.item.catalog ?? p.item.description ?? '—'}
                     </Text>
-                    {p.item.vendor ? (
-                      <Text
-                        allowFontScaling={false}
-                        numberOfLines={1}
-                        style={[
-                          shelfStyles.slotVendor,
-                          {
-                            color: isSelected
-                              ? colors.primaryForeground + 'aa'
-                              : colors.mutedForeground,
-                          },
-                        ]}
-                      >
-                        {p.item.vendor}
-                      </Text>
-                    ) : null}
+                    {(() => {
+                      const bp = parseBreakerCatalog(p.item.catalog);
+                      const sub =
+                        bp != null
+                          ? `${bp.amps}A ${bp.poles}-Pole`
+                          : (p.item.vendor ?? null);
+                      return sub ? (
+                        <Text
+                          allowFontScaling={false}
+                          numberOfLines={1}
+                          style={[
+                            shelfStyles.slotVendor,
+                            {
+                              color: isSelected
+                                ? colors.primaryForeground + 'aa'
+                                : colors.mutedForeground,
+                            },
+                          ]}
+                        >
+                          {sub}
+                        </Text>
+                      ) : null;
+                    })()}
                   </Pressable>
                 </React.Fragment>
               );
@@ -800,22 +808,29 @@ function SectionShelfView({
                         >
                           {p.item.catalog ?? p.item.description ?? '—'}
                         </Text>
-                        {p.item.vendor ? (
-                          <Text
-                            allowFontScaling={false}
-                            numberOfLines={1}
-                            style={[
-                              shelfStyles.slotVendor,
-                              {
-                                color: isSelected
-                                  ? colors.primaryForeground + 'aa'
-                                  : colors.mutedForeground,
-                              },
-                            ]}
-                          >
-                            {p.item.vendor}
-                          </Text>
-                        ) : null}
+                        {(() => {
+                          const bp = parseBreakerCatalog(p.item.catalog);
+                          const sub =
+                            bp != null
+                              ? `${bp.amps}A ${bp.poles}-Pole`
+                              : (p.item.vendor ?? null);
+                          return sub ? (
+                            <Text
+                              allowFontScaling={false}
+                              numberOfLines={1}
+                              style={[
+                                shelfStyles.slotVendor,
+                                {
+                                  color: isSelected
+                                    ? colors.primaryForeground + 'aa'
+                                    : colors.mutedForeground,
+                                },
+                              ]}
+                            >
+                              {sub}
+                            </Text>
+                          ) : null;
+                        })()}
                       </Pressable>
                     </React.Fragment>
                   );

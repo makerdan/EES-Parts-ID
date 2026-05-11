@@ -438,6 +438,19 @@ export function ResultCard({
   // catalog numbers (no "BR"/"QO" prefix) still show correct attribute chips.
   const breakerAmps = bx.amperage ?? breakerParse?.amps;
   const breakerPoles = bx.poleCount ?? breakerParse?.poles;
+  // Compact "20A 1-Pole" summary shown in the collapsed card header and in the
+  // BrowseByAisle shelf slot. The full attribute chips are deferred to the
+  // expanded section so the collapsed row stays as lean as the conduit trade-size
+  // label it mirrors. Null when neither value is available (no-op render).
+  const breakerRatingLabel =
+    isBreaker && (breakerAmps != null || breakerPoles != null)
+      ? [
+          breakerAmps != null ? `${breakerAmps}A` : null,
+          breakerPoles != null ? `${breakerPoles}-Pole` : null,
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : null;
 
   const handleEditPress = useCallback(() => {
     if (!onEditKeywords) return;
@@ -598,124 +611,24 @@ export function ResultCard({
             </View>
             <View style={[cardStyles.headerRight, { alignItems: 'flex-end' }]}>
               {showConfidence !== false ? <ConfidenceBadge confidence={confidence} /> : null}
-              {/* Breaker items: attribute chips from materialized DB fields (amperage,
-                  poleCount, voltage, mountType) with catalog-parse fallback for series.
-                  Gate on isBreaker only — atypical-catalog breakers (breakerParse===null)
-                  still render chips from the materialized columns. */}
-              {isBreaker &&
-              (breakerAmps != null ||
-                breakerPoles != null ||
-                bx.voltage != null ||
-                bx.mountType != null) ? (
-                <View style={cardStyles.breakerChipsRow}>
-                  {breakerAmps != null ? (
-                    <View
-                      style={[
-                        cardStyles.breakerChip,
-                        { backgroundColor: colors.muted, borderColor: colors.border },
-                      ]}
-                    >
-                      <Text
-                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
-                        allowFontScaling={false}
-                      >
-                        Amp Rating
-                      </Text>
-                      <Text
-                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
-                        allowFontScaling={false}
-                      >
-                        {breakerAmps}A
-                      </Text>
-                    </View>
-                  ) : null}
-                  {breakerPoles != null ? (
-                    <View
-                      style={[
-                        cardStyles.breakerChip,
-                        { backgroundColor: colors.muted, borderColor: colors.border },
-                      ]}
-                    >
-                      <Text
-                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
-                        allowFontScaling={false}
-                      >
-                        Poles
-                      </Text>
-                      <Text
-                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
-                        allowFontScaling={false}
-                      >
-                        {breakerPoles}
-                      </Text>
-                    </View>
-                  ) : null}
-                  {bx.voltage ? (
-                    <View
-                      style={[
-                        cardStyles.breakerChip,
-                        { backgroundColor: colors.muted, borderColor: colors.border },
-                      ]}
-                    >
-                      <Text
-                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
-                        allowFontScaling={false}
-                      >
-                        Voltage
-                      </Text>
-                      <Text
-                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
-                        allowFontScaling={false}
-                      >
-                        {bx.voltage}V
-                      </Text>
-                    </View>
-                  ) : null}
-                  {bx.mountType ? (
-                    <View
-                      style={[
-                        cardStyles.breakerChip,
-                        { backgroundColor: colors.muted, borderColor: colors.border },
-                      ]}
-                    >
-                      <Text
-                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
-                        allowFontScaling={false}
-                      >
-                        Mount Type
-                      </Text>
-                      <Text
-                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
-                        allowFontScaling={false}
-                      >
-                        {bx.mountType.replace(/-/g, ' ')}
-                      </Text>
-                    </View>
-                  ) : null}
-                  {breakerParse?.series ? (
-                    <View
-                      style={[
-                        cardStyles.breakerChip,
-                        { backgroundColor: colors.muted, borderColor: colors.border },
-                      ]}
-                    >
-                      <Text
-                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
-                        allowFontScaling={false}
-                      >
-                        Series
-                      </Text>
-                      <Text
-                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
-                        allowFontScaling={false}
-                      >
-                        {breakerParse.series}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
+              {/* Compact secondary line — "20A 1-Pole" for breakers, trade-size
+                  label for conduit/fitting items. Matches the visual weight of
+                  the trade-size label (fontSize 22 bold) so both categories get
+                  an at-a-glance spec without opening the card. Full attribute
+                  chips (voltage, mount type, series) appear in the expanded
+                  section below. */}
+              {breakerRatingLabel != null ? (
+                <Text
+                  style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}
+                  allowFontScaling={false}
+                >
+                  {breakerRatingLabel}
+                </Text>
               ) : !isBreaker && item.tradeSize ? (
-                <Text style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}>
+                <Text
+                  style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}
+                  allowFontScaling={false}
+                >
                   {item.tradeSize}
                 </Text>
               ) : null}
@@ -842,6 +755,125 @@ export function ResultCard({
           {/* Expanded content */}
           {expanded ? (
             <>
+              {/* Breaker attribute detail chips — amp rating, poles, voltage,
+                  mount type, series. Shown only when expanded so the collapsed
+                  card stays compact. The "20A 1-Pole" summary in the header
+                  already covers the essential at-a-glance spec. */}
+              {isBreaker &&
+              (breakerAmps != null ||
+                breakerPoles != null ||
+                bx.voltage != null ||
+                bx.mountType != null ||
+                breakerParse?.series != null) ? (
+                <View style={cardStyles.breakerChipsExpandedRow}>
+                  {breakerAmps != null ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
+                    >
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        Amp Rating
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {breakerAmps}A
+                      </Text>
+                    </View>
+                  ) : null}
+                  {breakerPoles != null ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
+                    >
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        Poles
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {breakerPoles}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {bx.voltage != null ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
+                    >
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        Voltage
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {bx.voltage}V
+                      </Text>
+                    </View>
+                  ) : null}
+                  {bx.mountType != null ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
+                    >
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        Mount Type
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {bx.mountType.replace(/-/g, ' ')}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {breakerParse?.series != null ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
+                    >
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        Series
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {breakerParse.series}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+
               {/* Keywords — always shown when expanded; edit button always accessible */}
               <View style={cardStyles.section}>
                 <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
@@ -1091,11 +1123,21 @@ const cardStyles = StyleSheet.create({
   reason: { fontSize: 11, fontFamily: 'Inter_400Regular', fontStyle: 'italic', marginBottom: 4 },
   tradeSizeLabel: { fontSize: 22, fontFamily: 'Inter_700Bold', marginTop: 3 },
   // ── Breaker attribute chips ───────────────────────────────────────────────
+  // breakerChipsRow was the header variant (column, right-aligned); the header
+  // now uses the compact tradeSizeLabel text instead. The expanded-section row
+  // uses breakerChipsExpandedRow (horizontal wrap) for the full attribute set.
   breakerChipsRow: {
     flexDirection: 'column',
     alignItems: 'flex-end',
     gap: 4,
     marginTop: 3,
+  },
+  breakerChipsExpandedRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 2,
   },
   breakerChip: {
     flexDirection: 'row',
