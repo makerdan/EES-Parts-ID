@@ -16,7 +16,7 @@
     "readme": "pnpm --filter @workspace/scripts exec tsx ./src/update-readme.ts"
   },
   "simple-git-hooks": {
-    "pre-commit": "pnpm codegen:check"
+    "pre-commit": "if git diff --cached --name-only | grep -qE '^lib/api-spec/openapi\\.yaml|^lib/api-client-react/src/generated/|^lib/api-zod/src/generated/'; then pnpm codegen:check; fi"
   },
   "private": true,
   "devDependencies": {
