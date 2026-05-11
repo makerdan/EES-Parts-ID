@@ -10,6 +10,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --runInBand",
+    "test:unit": "jest --runInBand --config jest.unit.config.cjs",
     "lint": "eslint ."
   },
   "dependencies": {

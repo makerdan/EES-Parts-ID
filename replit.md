@@ -81,3 +81,14 @@ Seed: `node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## Testing
+
+Two test commands are available at the root:
+
+| Command | What it runs | When to use |
+|---|---|---|
+| `pnpm test:unit` | All parts-id tests + API server unit tests (excludes `*.integration.test.ts` and `*.smoke.test.ts`) + api-client-react tests | **Default** — use for most tasks (mobile changes, UI, type fixes, lib changes) |
+| `pnpm test` | Full suite including integration tests (live PostgreSQL required) and PDF smoke tests | Only when the task touches API server routes, database queries, or schema migrations |
+
+**Rule:** run `test:unit` during commit validation by default. Only upgrade to `test` (full suite) when the task modifies API server code, database queries, or schema migrations.
