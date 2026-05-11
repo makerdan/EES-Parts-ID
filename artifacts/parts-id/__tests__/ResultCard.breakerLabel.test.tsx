@@ -32,7 +32,14 @@ jest.mock('react-native', () => {
 
   const Text = React.forwardRef(
     (
-      { children, style, numberOfLines: _nl, ellipsizeMode: _em, allowFontScaling: _afs, ...rest }: Record<string, unknown>,
+      {
+        children,
+        style,
+        numberOfLines: _nl,
+        ellipsizeMode: _em,
+        allowFontScaling: _afs,
+        ...rest
+      }: Record<string, unknown>,
       ref: React.Ref<unknown>
     ) => React.createElement('span', { ref, style: flatStyle(style), ...rest }, children)
   );
@@ -52,7 +59,17 @@ jest.mock('react-native', () => {
 
   const Pressable = React.forwardRef(
     (
-      { onPress, children, accessibilityLabel, accessibilityRole, accessibilityState, style, hitSlop: _hs, android_ripple: _ar, ...rest }: Record<string, unknown>,
+      {
+        onPress,
+        children,
+        accessibilityLabel,
+        accessibilityRole,
+        accessibilityState,
+        style,
+        hitSlop: _hs,
+        android_ripple: _ar,
+        ...rest
+      }: Record<string, unknown>,
       ref: React.Ref<unknown>
     ) => {
       const resolvedStyle =
@@ -106,15 +123,29 @@ jest.mock('react-native', () => {
       Value: class {
         constructor(_v: number) {}
         setValue(_v: number) {}
-        interpolate() { return this as unknown; }
+        interpolate() {
+          return this as unknown;
+        }
       },
       View,
       Text,
-      spring: () => ({ start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }), stop: () => {}, reset: () => {} }),
-      timing: () => ({ start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }), stop: () => {}, reset: () => {} }),
+      spring: () => ({
+        start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }),
+        stop: () => {},
+        reset: () => {},
+      }),
+      timing: () => ({
+        start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }),
+        stop: () => {},
+        reset: () => {},
+      }),
       createAnimatedComponent: (C: unknown) => C,
       event: () => () => {},
-      parallel: () => ({ start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }), stop: () => {}, reset: () => {} }),
+      parallel: () => ({
+        start: (cb?: (r: { finished: boolean }) => void) => cb?.({ finished: true }),
+        stop: () => {},
+        reset: () => {},
+      }),
     },
     PanResponder: { create: () => ({ panHandlers: {} }) },
     Platform: { OS: 'web', select: (o: Record<string, unknown>) => o['web'] ?? o['default'] },

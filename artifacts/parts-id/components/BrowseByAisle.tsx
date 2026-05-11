@@ -541,9 +541,7 @@ function ShelfView({
                     {(() => {
                       const bp = parseBreakerCatalog(p.item.catalog);
                       const sub =
-                        bp != null
-                          ? `${bp.amps}A ${bp.poles}-Pole`
-                          : (p.item.vendor ?? null);
+                        bp != null ? `${bp.amps}A ${bp.poles}-Pole` : (p.item.vendor ?? null);
                       return sub ? (
                         <Text
                           allowFontScaling={false}
@@ -811,9 +809,7 @@ function SectionShelfView({
                         {(() => {
                           const bp = parseBreakerCatalog(p.item.catalog);
                           const sub =
-                            bp != null
-                              ? `${bp.amps}A ${bp.poles}-Pole`
-                              : (p.item.vendor ?? null);
+                            bp != null ? `${bp.amps}A ${bp.poles}-Pole` : (p.item.vendor ?? null);
                           return sub ? (
                             <Text
                               allowFontScaling={false}
