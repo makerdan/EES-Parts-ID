@@ -370,4 +370,95 @@ describe('ReferenceModal — iOS JSON mode (askQuestion)', () => {
     // An error banner should be shown when the answer is empty
     expect(screen.getByRole('alert')).toBeTruthy();
   });
+
+  it('shows the retry banner when the /reference/ask fetch throws a network error', async () => {
+    const fetchMock = jest.fn((url: unknown) => {
+      const urlStr = String(url ?? '');
+      if (urlStr.includes('/reference/quick-lookups') && !urlStr.includes('/quick-lookups/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([]),
+        } as Response);
+      }
+      if (urlStr.includes('/reference/ask')) {
+        return Promise.reject(new Error('Network request failed'));
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${urlStr}`));
+    }) as typeof global.fetch;
+    global.fetch = fetchMock;
+
+    render(<ReferenceModal open={true} onClose={() => {}} />);
+    await flush();
+
+    const input = screen.getByPlaceholderText(PLACEHOLDER) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'What is EMT conduit?' } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('→'));
+    });
+    await flush();
+
+    // ErrorBanner with role="alert" must be visible
+    expect(screen.getByRole('alert')).toBeTruthy();
+
+    // ↺ Retry button must also be visible
+    expect(screen.getByText('↺ Retry')).toBeTruthy();
+  });
+
+  it('clicking ↺ Retry re-fires the fetch and clears the error on success', async () => {
+    const AI_ANSWER = 'EMT stands for Electrical Metallic Tubing.';
+    let askCallCount = 0;
+
+    const fetchMock = jest.fn((url: unknown) => {
+      const urlStr = String(url ?? '');
+      if (urlStr.includes('/reference/quick-lookups') && !urlStr.includes('/quick-lookups/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([]),
+        } as Response);
+      }
+      if (urlStr.includes('/reference/ask')) {
+        askCallCount += 1;
+        if (askCallCount === 1) {
+          // First attempt: simulate network failure
+          return Promise.reject(new Error('Network request failed'));
+        }
+        // Retry attempt: succeed with an answer
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ answer: AI_ANSWER }),
+        } as Response);
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${urlStr}`));
+    }) as typeof global.fetch;
+    global.fetch = fetchMock;
+
+    render(<ReferenceModal open={true} onClose={() => {}} />);
+    await flush();
+
+    // Submit initial question — this will fail with a network error
+    const input = screen.getByPlaceholderText(PLACEHOLDER) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'What is EMT conduit?' } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('→'));
+    });
+    await flush();
+
+    // Error banner is shown after the first (failing) attempt
+    expect(screen.getByRole('alert')).toBeTruthy();
+
+    // Click ↺ Retry — this should trigger a second fetch call
+    await act(async () => {
+      fireEvent.click(screen.getByText('↺ Retry'));
+    });
+    await flush();
+
+    // The retry fetch must have been fired (askCallCount is now 2)
+    expect(askCallCount).toBe(2);
+
+    // Error banner clears and the answer appears
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.body.textContent).toContain('Electrical Metallic Tubing');
+  });
 });
