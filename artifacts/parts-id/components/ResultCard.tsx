@@ -584,7 +584,7 @@ export function ResultCard({
                       style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
                       allowFontScaling={false}
                     >
-                      AMP
+                      Amp Rating
                     </Text>
                     <Text
                       style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
@@ -603,7 +603,7 @@ export function ResultCard({
                       style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
                       allowFontScaling={false}
                     >
-                      POLES
+                      Poles
                     </Text>
                     <Text
                       style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
@@ -623,7 +623,7 @@ export function ResultCard({
                         style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
                         allowFontScaling={false}
                       >
-                        VOLT
+                        Voltage
                       </Text>
                       <Text
                         style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
@@ -644,7 +644,7 @@ export function ResultCard({
                         style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
                         allowFontScaling={false}
                       >
-                        MNT
+                        Mount Type
                       </Text>
                       <Text
                         style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
@@ -664,7 +664,7 @@ export function ResultCard({
                       style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
                       allowFontScaling={false}
                     >
-                      SER
+                      Series
                     </Text>
                     <Text
                       style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
