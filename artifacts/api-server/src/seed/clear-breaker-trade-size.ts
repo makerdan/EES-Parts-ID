@@ -5,15 +5,17 @@
  * Background: before Task #410, the trade-size parser mis-read the
  * amp/pole digits in breaker catalog numbers as conduit trade sizes
  * (e.g. "BR120" → trade_size="1/2 inch", trade_size_in=0.5). This
- * migration nulls those fields for every row that:
- *   (a) has its category set to "Breaker" in the inventory_category table, OR
- *   (b) whose catalog matches the known breaker catalog regex.
+ * migration nulls those fields for rows that meet ALL of:
+ *   (a) trade_size currently matches an amperage pattern (^\d+\s*[Aa]) —
+ *       i.e. the stored value looks like "20A", "100 A", etc., not a real
+ *       conduit trade size like '1/2"'.
+ *   (b) the amperage column is already populated (so we are not discarding
+ *       the only copy of the value).
+ *   (c) the row is classified as a Breaker category OR its catalog matches
+ *       the known breaker catalog regex — so we do not touch non-breaker rows
+ *       that happen to have numeric trade_size strings.
  *
- * The two conditions are combined so the migration covers rows regardless
- * of whether they have been through classification yet.
- *
- * Idempotent — running it multiple times is safe; rows that already have
- * NULL trade_size are untouched by the update condition.
+ * Idempotent — rows already null are skipped by the WHERE clause.
  *
  * Usage (from workspace root):
  *   DATABASE_URL="$DATABASE_URL" \
@@ -25,16 +27,29 @@ import { isNotNull, inArray, sql } from 'drizzle-orm';
 import { isBreakerCatalog } from '../enrichment/parseAttributes';
 
 async function clearBreakerTradeSize() {
-  // Fetch all rows with a non-NULL trade_size — the full set we need to inspect.
+  // Pull rows where trade_size looks like an amperage string (e.g. "20A",
+  // "100 A") AND the amperage column already holds the parsed value.
+  // This is the narrowest safe predicate: we only clear data that is
+  // already captured elsewhere.
   const rows = await db
     .select({
       id: inventoryTable.id,
       catalog: inventoryTable.catalog,
+      tradeSize: inventoryTable.tradeSize,
     })
     .from(inventoryTable)
-    .where(isNotNull(inventoryTable.tradeSize));
+    .where(
+      sql`${inventoryTable.tradeSize} ~ E'^\\d+\\s*[Aa]'
+          AND ${inventoryTable.amperage} IS NOT NULL`
+    );
 
-  console.log(`Found ${rows.length} rows with non-NULL trade_size.`);
+  console.log(`Found ${rows.length} rows with amperage-pattern trade_size and non-NULL amperage.`);
+
+  if (rows.length === 0) {
+    console.log('Nothing to do.');
+    await pool.end();
+    return;
+  }
 
   // Also pull the set of inventory IDs already classified as Breaker (any node
   // whose top-level parent name is "Breaker", or node name is "Breaker").
@@ -63,15 +78,18 @@ async function clearBreakerTradeSize() {
   const breakerCategoryIds = new Set(breakerCategoryRows.map((r) => r.inventoryId));
   console.log(`Found ${breakerCategoryIds.size} items classified as Breaker category.`);
 
-  // Collect IDs to clear: items in the breaker category OR matching the catalog regex.
+  // Only clear rows that are confirmed breakers (category or catalog regex).
   const toClear = rows
     .filter((row) => breakerCategoryIds.has(row.id) || isBreakerCatalog(row.catalog ?? ''))
     .map((row) => row.id);
 
   console.log(`Targeting ${toClear.length} breaker rows for trade_size cleanup.`);
+  console.log(
+    `  (Skipping ${rows.length - toClear.length} rows whose catalog did not match breaker detection.)`
+  );
 
   if (toClear.length === 0) {
-    console.log('Nothing to do — no breaker rows with non-NULL trade_size found.');
+    console.log('Nothing to do — no matching breaker rows found.');
     await pool.end();
     return;
   }
