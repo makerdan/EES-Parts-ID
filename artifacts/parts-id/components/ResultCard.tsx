@@ -8,14 +8,18 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   ActivityIndicator,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Feather } from '@expo/vector-icons';
 import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
@@ -308,6 +312,65 @@ export function ResultCard({
   // Browse-by-Aisle, and Photo ID even when the variant isn't already in
   // the visible result list.
   const [detailVariant, setDetailVariant] = useState<InventoryItem | null>(null);
+
+  // ── Variant detail sheet: swipe-to-dismiss animated sheet ────────────────
+  const { height: DETAIL_SCREEN_H } = useWindowDimensions();
+  const detailScreenHRef = useRef(DETAIL_SCREEN_H);
+  detailScreenHRef.current = DETAIL_SCREEN_H;
+  const detailSheetY = useRef(new Animated.Value(DETAIL_SCREEN_H)).current;
+
+  const startDetailOpenAnimation = useCallback(() => {
+    detailSheetY.setValue(detailScreenHRef.current);
+    Animated.spring(detailSheetY, {
+      toValue: 0,
+      tension: 60,
+      friction: 12,
+      useNativeDriver: true,
+    }).start();
+  }, [detailSheetY]);
+
+  const dismissDetail = useCallback(() => {
+    Animated.timing(detailSheetY, {
+      toValue: detailScreenHRef.current,
+      duration: 260,
+      useNativeDriver: true,
+    }).start(() => setDetailVariant(null));
+  }, [detailSheetY]);
+
+  const dismissDetailRef = useRef(dismissDetail);
+  useEffect(() => {
+    dismissDetailRef.current = dismissDetail;
+  }, [dismissDetail]);
+
+  const detailDragPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderMove: (_, gs) => {
+        detailSheetY.setValue(Math.max(0, gs.dy));
+      },
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dy > 80 || gs.vy > 0.5) {
+          dismissDetailRef.current();
+        } else {
+          Animated.spring(detailSheetY, {
+            toValue: 0,
+            tension: 60,
+            friction: 12,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(detailSheetY, {
+          toValue: 0,
+          tension: 60,
+          friction: 12,
+          useNativeDriver: true,
+        }).start();
+      },
+    })
+  ).current;
 
   // Edit-button loading state — disabled immediately on tap to prevent
   // double-opens; visual indicator appears only after a 100 ms debounce so
@@ -713,34 +776,48 @@ export function ResultCard({
       {/* Variant detail modal — lives outside the outer card Pressable so the
         slide animation's touch-up event cannot leak into toggleCard. The
         inner ResultCard gets an empty variants array so we never recurse
-        into a nested related-sizes panel. */}
+        into a nested related-sizes panel. Uses custom animated sheet with
+        swipe-to-dismiss via the drag handle. */}
       <Modal
         visible={detailVariant !== null}
-        animationType="slide"
+        animationType="none"
         transparent
-        onRequestClose={() => setDetailVariant(null)}
+        onShow={startDetailOpenAnimation}
+        onRequestClose={dismissDetail}
       >
-        <Pressable
-          style={[cardStyles.detailOverlay, { backgroundColor: '#00000088' }]}
-          onPress={() => setDetailVariant(null)}
-          accessibilityRole="button"
-          accessibilityLabel="Dismiss related size"
-        >
-          {/* Inner Pressable absorbs taps inside the sheet so they don't
-              bubble to the backdrop dismiss handler. */}
+        <View style={[cardStyles.detailOverlay, { backgroundColor: '#00000088' }]}>
+          {/* Backdrop tap dismisses the sheet */}
           <Pressable
-            onPress={() => undefined}
+            style={StyleSheet.absoluteFillObject}
+            onPress={dismissDetail}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss related size"
+          />
+          <Animated.View
             style={[
               cardStyles.detailSheet,
               { backgroundColor: colors.background, borderColor: colors.border },
+              { transform: [{ translateY: detailSheetY }] },
             ]}
           >
+            {/* Drag handle */}
+            <View
+              {...detailDragPan.panHandlers}
+              style={cardStyles.detailDragHandleArea}
+              accessibilityRole="adjustable"
+              accessibilityLabel="Drag down to close"
+            >
+              <View style={[cardStyles.detailDragPill, { backgroundColor: colors.border }]} />
+            </View>
             <View style={[cardStyles.detailHeader, { borderColor: colors.border }]}>
               <Text style={[cardStyles.detailTitle, { color: colors.foreground }]}>
                 Related Size
               </Text>
               <Pressable
-                onPress={() => setDetailVariant(null)}
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  dismissDetail();
+                }}
                 hitSlop={10}
                 accessibilityRole="button"
                 accessibilityLabel="Close related size"
@@ -770,8 +847,8 @@ export function ResultCard({
                 />
               ) : null}
             </ScrollView>
-          </Pressable>
-        </Pressable>
+          </Animated.View>
+        </View>
       </Modal>
     </>
   );
@@ -956,6 +1033,17 @@ const cardStyles = StyleSheet.create({
   detailCloseText: {
     fontSize: 13,
     fontFamily: 'Inter_600SemiBold',
+  },
+  detailDragHandleArea: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  detailDragPill: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    opacity: 0.5,
   },
   detailScroll: {
     padding: 14,

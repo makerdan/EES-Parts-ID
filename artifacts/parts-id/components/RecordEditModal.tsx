@@ -15,15 +15,19 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import rawColors from '@/constants/colors';
@@ -77,6 +81,65 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
 
   const suggestMutation = useSuggestItemDescription();
   const isSuggesting = suggestMutation.isPending;
+
+  // ── Swipe-to-dismiss animated sheet ──────────────────────────────────────
+  const { height: SCREEN_H } = useWindowDimensions();
+  const screenHRef = useRef(SCREEN_H);
+  screenHRef.current = SCREEN_H;
+  const sheetY = useRef(new Animated.Value(SCREEN_H)).current;
+
+  const startOpenAnimation = useCallback(() => {
+    sheetY.setValue(screenHRef.current);
+    Animated.spring(sheetY, {
+      toValue: 0,
+      tension: 60,
+      friction: 12,
+      useNativeDriver: true,
+    }).start();
+  }, [sheetY]);
+
+  const dismissSheet = useCallback(() => {
+    Animated.timing(sheetY, {
+      toValue: screenHRef.current,
+      duration: 260,
+      useNativeDriver: true,
+    }).start(() => onClose());
+  }, [sheetY, onClose]);
+
+  const dismissSheetRef = useRef(dismissSheet);
+  useEffect(() => {
+    dismissSheetRef.current = dismissSheet;
+  }, [dismissSheet]);
+
+  const dragPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderMove: (_, gs) => {
+        sheetY.setValue(Math.max(0, gs.dy));
+      },
+      onPanResponderRelease: (_, gs) => {
+        if (gs.dy > 80 || gs.vy > 0.5) {
+          dismissSheetRef.current();
+        } else {
+          Animated.spring(sheetY, {
+            toValue: 0,
+            tension: 60,
+            friction: 12,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(sheetY, {
+          toValue: 0,
+          tension: 60,
+          friction: 12,
+          useNativeDriver: true,
+        }).start();
+      },
+    })
+  ).current;
 
   useEffect(() => {
     if (!item) return;
@@ -300,7 +363,7 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
       onSaved(updated);
       setTimeout(() => {
         setToast(null);
-        onClose();
+        dismissSheetRef.current();
       }, 900);
     } catch (err) {
       setToast({
@@ -315,12 +378,38 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
   if (!item) return null;
 
   return (
-    <Modal visible={item !== null} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={s.overlay} onPress={onClose}>
+    <Modal
+      visible={item !== null}
+      transparent
+      animationType="none"
+      onShow={startOpenAnimation}
+      onRequestClose={dismissSheet}
+    >
+      <View style={s.overlay}>
+        {/* Backdrop tap dismisses the sheet */}
         <Pressable
-          style={[s.sheet, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={() => {}}
+          style={StyleSheet.absoluteFillObject}
+          onPress={dismissSheet}
+          accessibilityRole="button"
+          accessibilityLabel="Close edit form"
+        />
+        <Animated.View
+          style={[
+            s.sheet,
+            { backgroundColor: colors.card, borderColor: colors.border },
+            { transform: [{ translateY: sheetY }] },
+          ]}
         >
+          {/* Drag handle */}
+          <View
+            {...dragPan.panHandlers}
+            style={s.dragHandleArea}
+            accessibilityRole="adjustable"
+            accessibilityLabel="Drag down to close"
+          >
+            <View style={[s.dragPill, { backgroundColor: colors.border }]} />
+          </View>
+
           {/* Header */}
           <View style={[s.header, { borderBottomColor: colors.border }]}>
             <View style={{ flex: 1 }}>
@@ -332,7 +421,10 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
               </Text>
             </View>
             <Pressable
-              onPress={onClose}
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                dismissSheet();
+              }}
               style={[s.closeBtn, { borderColor: colors.border }]}
               accessibilityRole="button"
               accessibilityLabel="Close"
@@ -722,11 +814,18 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
 
           {/* Footer */}
           <View style={[s.footer, { borderTopColor: colors.border }]}>
-            <Pressable onPress={onClose} style={[s.cancelBtn, { borderColor: colors.border }]}>
+            <Pressable
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                dismissSheet();
+              }}
+              style={[s.cancelBtn, { borderColor: colors.border }]}
+            >
               <Text style={[s.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
             </Pressable>
             <Pressable
               onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 void handleSave();
               }}
               disabled={saving}
@@ -741,8 +840,8 @@ export function RecordEditModal({ item, adminHeaders, onClose, onSaved }: Props)
               )}
             </Pressable>
           </View>
-        </Pressable>
-      </Pressable>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -761,6 +860,17 @@ const s = StyleSheet.create({
     borderLeftWidth: 1,
     borderRightWidth: 1,
     overflow: 'hidden',
+  },
+  dragHandleArea: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  dragPill: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    opacity: 0.5,
   },
   header: {
     flexDirection: 'row',
