@@ -250,11 +250,7 @@ function expandAndGetCatalogs(): string[] {
 describe('ResultCard — breaker variant sort order (Task #428)', () => {
   it('sorts standard catalog variants by amperage ascending (regex-resolved)', () => {
     // BR150=50A, BR120=20A, BR130=30A → sorted: 20, 30, 50
-    const variants = [
-      makeVariant(1, 'BR150'),
-      makeVariant(2, 'BR120'),
-      makeVariant(3, 'BR130'),
-    ];
+    const variants = [makeVariant(1, 'BR150'), makeVariant(2, 'BR120'), makeVariant(3, 'BR130')];
     render(<ResultCard result={makeResult('BR115', variants)} rank={0} />);
     expect(expandAndGetCatalogs()).toEqual(['BR120', 'BR130', 'BR150']);
   });
@@ -300,11 +296,7 @@ describe('ResultCard — breaker variant sort order (Task #428)', () => {
 
   it('falls back to catalog alpha when neither amps nor poles can be resolved', () => {
     // ZZZ999, AAA001, MMM500 — no regex match, no DB fields
-    const variants = [
-      makeVariant(1, 'ZZZ999'),
-      makeVariant(2, 'AAA001'),
-      makeVariant(3, 'MMM500'),
-    ];
+    const variants = [makeVariant(1, 'ZZZ999'), makeVariant(2, 'AAA001'), makeVariant(3, 'MMM500')];
     render(
       <ResultCard
         result={makeResult('CUSTOM', variants, { amperage: 20 })}
