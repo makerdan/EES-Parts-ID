@@ -25,7 +25,12 @@ import type { InventoryItem, SearchResult } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
 import rawColors from '@/constants/colors';
 import { splitHighlightSegments } from '@/lib/refinement';
-import { parseTradeSizeInches, formatInchesAsFraction } from '@/lib/tradeSize';
+import {
+  parseTradeSizeInches,
+  formatInchesAsFraction,
+  parseBreakerCatalog,
+  isBreakerCatalog,
+} from '@/lib/tradeSize';
 
 interface ResultCardProps {
   result: SearchResult;
@@ -138,22 +143,21 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
 }
 
 /**
- * One row in the related-sizes dropdown list.
+ * One row in the related-sizes / other-ratings dropdown list.
  *
- * Lays out three columns: catalog name on the left, parsed trade size in
- * the middle, and the part's primary bin (first entry of `binLocations`)
- * on the right. The size is derived client-side via `parseTradeSizeInches`
- * with a fallback to the catalog suffix relative to the parent so workers
- * can scan a series at a glance without reading the catalog code itself.
- * When the variant shares the parent's vendor we drop the vendor prefix
- * to keep the row tight, otherwise we show "VENDOR · CATALOG" so workers
- * can disambiguate. Parts with no bin show a muted "No bin" placeholder
- * so the right column still aligns vertically down the list.
+ * For conduit and fitting items (non-breaker): lays out three columns —
+ * catalog on the left, parsed trade size in the middle, and the primary bin
+ * on the right.
+ *
+ * For breaker items: the middle column shows the amp/pole rating
+ * (`[N]A [P]-Pole`) derived from the variant's catalog number so workers
+ * can scan a series at a glance without reading the full catalog code.
  */
 function VariantRow({
   item,
   parentVendor,
   parentCatalog,
+  isBreaker,
   colors,
   fontScale,
   onPress,
@@ -161,6 +165,7 @@ function VariantRow({
   item: InventoryItem;
   parentVendor: string;
   parentCatalog: string;
+  isBreaker: boolean;
   colors: ReturnType<typeof useColors>;
   fontScale: number;
   onPress: () => void;
@@ -171,24 +176,32 @@ function VariantRow({
   const sameVendor = item.vendor.toUpperCase() === parentVendor.toUpperCase();
   const label = sameVendor ? item.catalog : `${item.vendor} · ${item.catalog}`;
 
-  // Size column: use the stored tradeSize first; fall back to parsing the
-  // catalog code / description so parts without a manual trade size still
-  // show a useful label.
-  const sizeLabel: string = item.tradeSize
-    ? item.tradeSize
-    : formatInchesAsFraction(
-        parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description)
-      );
+  // Middle column — breakers show amp/pole rating; conduit items show trade size.
+  let sizeLabel: string;
+  if (isBreaker) {
+    const bp = parseBreakerCatalog(item.catalog);
+    sizeLabel = bp ? `${bp.amps}A ${bp.poles}-Pole` : '';
+  } else {
+    sizeLabel = item.tradeSize
+      ? item.tradeSize
+      : formatInchesAsFraction(
+          parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description)
+        );
+  }
   const hasSize = sizeLabel.length > 0;
-  // Speech-friendly size: strip the inch-mark glyph and append "inches".
-  const a11ySize = hasSize ? `, size ${sizeLabel.replace(/"/g, '')} inches` : '';
+  // Speech-friendly label: strip special chars.
+  const a11ySuffix = hasSize
+    ? isBreaker
+      ? `, ${sizeLabel}`
+      : `, size ${sizeLabel.replace(/"/g, '')} inches`
+    : '';
   return (
     <Pressable
       onPress={onPress}
       android_ripple={{ color: colors.muted }}
       hitSlop={4}
       accessibilityRole="button"
-      accessibilityLabel={`Open ${item.vendor} ${item.catalog}${a11ySize}${primaryBin ? `, bin ${primaryBin}` : ', no bin'}`}
+      accessibilityLabel={`Open ${item.vendor} ${item.catalog}${a11ySuffix}${primaryBin ? `, bin ${primaryBin}` : ', no bin'}`}
       style={({ pressed }) => [
         varStyles.row,
         {
@@ -389,6 +402,16 @@ export function ResultCard({
 
   const { item, confidence, matchReason, seriesLabel, variants } = result;
 
+  // ── Breaker detection ─────────────────────────────────────────────────────
+  // Detect breaker items from the catalog number client-side so we can render
+  // amp/pole chips instead of a meaningless "trade size" label. The server
+  // also sends amperage, poleCount, voltage, and mountType but those fields
+  // are not in the generated InventoryItem type, so we access them via a cast.
+  const breakerParse = parseBreakerCatalog(item.catalog);
+  const isBreaker = breakerParse !== null;
+  type BreakerExtras = { voltage?: number | null; mountType?: string | null };
+  const bx = item as unknown as BreakerExtras;
+
   const handleEditPress = useCallback(() => {
     if (!onEditKeywords) return;
 
@@ -430,6 +453,15 @@ export function ResultCard({
   // here in case a variant rolls into the current item via id collision.
   const filteredVariants = React.useMemo(() => {
     const list = (variants ?? []).filter((v) => v.id !== item.id);
+    if (isBreaker) {
+      // Breaker variants sorted by amperage ascending; fall back to catalog alpha.
+      return [...list].sort((a, b) => {
+        const aa = parseBreakerCatalog(a.catalog)?.amps ?? Infinity;
+        const ba = parseBreakerCatalog(b.catalog)?.amps ?? Infinity;
+        if (aa !== ba) return aa - ba;
+        return a.catalog.localeCompare(b.catalog);
+      });
+    }
     const sizeOf = (v: InventoryItem): number | null =>
       parseTradeSizeInches(v.tradeSize) ??
       parseTradeSizeInches(v.catalog) ??
@@ -442,7 +474,7 @@ export function ResultCard({
       if (sb === null) return -1;
       return sa - sb;
     });
-  }, [variants, item.id]);
+  }, [variants, item.id, isBreaker]);
   const hasVariants = filteredVariants.length > 0;
   const variantCount = filteredVariants.length;
   const hasKeywords = item.aiKeywords && item.aiKeywords.length > 0;
@@ -539,7 +571,110 @@ export function ResultCard({
             </View>
             <View style={[cardStyles.headerRight, { alignItems: 'flex-end' }]}>
               {showConfidence !== false ? <ConfidenceBadge confidence={confidence} /> : null}
-              {item.tradeSize ? (
+              {/* Breaker items: show labeled attribute chips instead of a trade-size label */}
+              {isBreaker && breakerParse ? (
+                <View style={cardStyles.breakerChipsRow}>
+                  <View
+                    style={[
+                      cardStyles.breakerChip,
+                      { backgroundColor: colors.muted, borderColor: colors.border },
+                    ]}
+                  >
+                    <Text
+                      style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                      allowFontScaling={false}
+                    >
+                      AMP
+                    </Text>
+                    <Text
+                      style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                      allowFontScaling={false}
+                    >
+                      {breakerParse.amps}A
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      cardStyles.breakerChip,
+                      { backgroundColor: colors.muted, borderColor: colors.border },
+                    ]}
+                  >
+                    <Text
+                      style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                      allowFontScaling={false}
+                    >
+                      POLES
+                    </Text>
+                    <Text
+                      style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                      allowFontScaling={false}
+                    >
+                      {breakerParse.poles}
+                    </Text>
+                  </View>
+                  {bx.voltage ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
+                    >
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        VOLT
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {bx.voltage}V
+                      </Text>
+                    </View>
+                  ) : null}
+                  {bx.mountType ? (
+                    <View
+                      style={[
+                        cardStyles.breakerChip,
+                        { backgroundColor: colors.muted, borderColor: colors.border },
+                      ]}
+                    >
+                      <Text
+                        style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                        allowFontScaling={false}
+                      >
+                        MNT
+                      </Text>
+                      <Text
+                        style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                        allowFontScaling={false}
+                      >
+                        {bx.mountType.replace(/-/g, ' ')}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <View
+                    style={[
+                      cardStyles.breakerChip,
+                      { backgroundColor: colors.muted, borderColor: colors.border },
+                    ]}
+                  >
+                    <Text
+                      style={[cardStyles.breakerChipLabel, { color: colors.mutedForeground }]}
+                      allowFontScaling={false}
+                    >
+                      SER
+                    </Text>
+                    <Text
+                      style={[cardStyles.breakerChipValue, { color: colors.foreground }]}
+                      allowFontScaling={false}
+                    >
+                      {breakerParse.series}
+                    </Text>
+                  </View>
+                </View>
+              ) : item.tradeSize ? (
                 <Text style={[cardStyles.tradeSizeLabel, { color: colors.mutedForeground }]}>
                   {item.tradeSize}
                 </Text>
@@ -596,8 +731,8 @@ export function ResultCard({
             </View>
           ) : null}
 
-          {/* Dedicated related-sizes control
-            ────────────────────────────────
+          {/* Dedicated related-sizes / other-ratings control
+            ────────────────────────────────────────────────
             Always visible (when the part has variants) so workers can find
             other sizes / amperages / lengths without expanding the whole card.
             Toggles a panel directly underneath; tapping the inner Pressable
@@ -616,7 +751,7 @@ export function ResultCard({
               ]}
               accessibilityRole="button"
               accessibilityState={{ expanded: variantsExpanded }}
-              accessibilityLabel={`${seriesLabel ?? 'Related sizes'}, ${variantCount} ${variantCount === 1 ? 'item' : 'items'}`}
+              accessibilityLabel={`${isBreaker ? 'Other ratings' : (seriesLabel ?? 'Related sizes')}, ${variantCount} ${variantCount === 1 ? 'item' : 'items'}`}
             >
               <Text
                 style={[
@@ -625,7 +760,7 @@ export function ResultCard({
                 ]}
                 allowFontScaling={false}
               >
-                {seriesLabel ?? 'RELATED SIZES'} ({variantCount})
+                {isBreaker ? 'OTHER RATINGS' : (seriesLabel ?? 'RELATED SIZES')} ({variantCount})
               </Text>
               <Text style={[cardStyles.variantsToggleChevron, { color: colors.mutedForeground }]}>
                 {variantsExpanded ? '▲' : '▼'}
@@ -633,7 +768,7 @@ export function ResultCard({
             </Pressable>
           ) : null}
 
-          {/* Related-sizes panel (independent of card expand state) */}
+          {/* Related-sizes / other-ratings panel (independent of card expand state) */}
           {hasVariants && variantsExpanded ? (
             <View
               style={[
@@ -647,6 +782,7 @@ export function ResultCard({
                   item={v}
                   parentVendor={item.vendor}
                   parentCatalog={item.catalog}
+                  isBreaker={isBreaker}
                   colors={colors}
                   fontScale={fontScale}
                   onPress={() => {
@@ -811,7 +947,7 @@ export function ResultCard({
             </View>
             <View style={[cardStyles.detailHeader, { borderColor: colors.border }]}>
               <Text style={[cardStyles.detailTitle, { color: colors.foreground }]}>
-                Related Size
+                {isBreaker ? 'Other Rating' : 'Related Size'}
               </Text>
               <Pressable
                 onPress={() => {
@@ -914,6 +1050,33 @@ const cardStyles = StyleSheet.create({
   binText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', flexShrink: 1 },
   reason: { fontSize: 11, fontFamily: 'Inter_400Regular', fontStyle: 'italic', marginBottom: 4 },
   tradeSizeLabel: { fontSize: 22, fontFamily: 'Inter_700Bold', marginTop: 3 },
+  // ── Breaker attribute chips ───────────────────────────────────────────────
+  breakerChipsRow: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: 4,
+    marginTop: 3,
+  },
+  breakerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    gap: 4,
+  },
+  breakerChipLabel: {
+    fontSize: 9,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  breakerChipValue: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+  },
+  // ─────────────────────────────────────────────────────────────────────────
   section: { marginTop: 12 },
   sectionTitle: {
     fontSize: 11,

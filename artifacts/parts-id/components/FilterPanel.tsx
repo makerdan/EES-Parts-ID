@@ -875,7 +875,12 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
                 </View>
 
                 {/* ── Chip dimensions ── */}
-                {CHIP_DIMS.map((dim) => (
+                {/* When the active category is Breaker, hide the conduit Trade Size
+                    chip — it doesn't apply to breakers. The Amperage, Voltage, and
+                    Pole Count chips (already in CHIP_DIMS) provide the correct filters. */}
+                {CHIP_DIMS.filter(
+                  (dim) => !(dim.key === 'conduitSize' && values.category === 'Breaker')
+                ).map((dim) => (
                   <ChipRow
                     key={dim.key}
                     label={dim.label}
