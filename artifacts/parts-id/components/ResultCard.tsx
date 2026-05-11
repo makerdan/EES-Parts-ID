@@ -494,11 +494,23 @@ export function ResultCard({
   const filteredVariants = React.useMemo(() => {
     const list = (variants ?? []).filter((v) => v.id !== item.id);
     if (isBreaker) {
-      // Breaker variants sorted by amperage ascending; fall back to catalog alpha.
+      // Breaker variants sorted by amperage ascending, then pole count ascending,
+      // then catalog alpha. Prefer the materialized DB fields (amperage, poleCount)
+      // over catalog-regex parse so unusual catalog numbers (e.g. CHOM115DF) that
+      // don't match BREAKER_RE still sort by their resolved amp rating instead of
+      // floating to the end (Infinity).
+      type VarExtras = { amperage?: number | null; poleCount?: number | null };
       return [...list].sort((a, b) => {
-        const aa = parseBreakerCatalog(a.catalog)?.amps ?? Infinity;
-        const ba = parseBreakerCatalog(b.catalog)?.amps ?? Infinity;
+        const ax = a as unknown as VarExtras;
+        const bx = b as unknown as VarExtras;
+        const pa = parseBreakerCatalog(a.catalog);
+        const pb = parseBreakerCatalog(b.catalog);
+        const aa = ax.amperage ?? pa?.amps ?? Infinity;
+        const ba = bx.amperage ?? pb?.amps ?? Infinity;
         if (aa !== ba) return aa - ba;
+        const ap = ax.poleCount ?? pa?.poles ?? Infinity;
+        const bp = bx.poleCount ?? pb?.poles ?? Infinity;
+        if (ap !== bp) return ap - bp;
         return a.catalog.localeCompare(b.catalog);
       });
     }
