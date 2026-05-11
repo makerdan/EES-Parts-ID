@@ -1,3 +1,27 @@
+/**
+ * Unit tests for the scoring helper functions (src/utils/scoreHelpers.ts).
+ *
+ * All helpers are pure functions over numeric inputs; no database or network
+ * connection is required.
+ *
+ * Functions under test:
+ *   blendPgScore      — blends a PostgreSQL full-text rank (ftsRaw) and a
+ *                       trigram similarity score (trgmSim) using the
+ *                       normalised formula introduced in Task #186, which
+ *                       replaced an additive 0.4 floor that was inflating
+ *                       weak matches.
+ *   catalogScore      — elevates the blended PG score when the user's query
+ *                       contains an exact (1.0), prefix (≥ 0.93), or
+ *                       substring (≥ 0.85) match against the item's catalog
+ *                       number or keywords field; also handles multi-token
+ *                       rawKeywords strings from the Photo-ID path.
+ *   applyVendorBoost  — boosts (+0.15, capped at 1.0) or penalises (×0.5)
+ *                       a confidence score based on an active vendor filter.
+ *   shouldUpdateScore — returns true only when the new confidence strictly
+ *                       improves the stored score (deduplication guard).
+ *   fuseConfidence    — converts a Fuse.js match score (0 = perfect,
+ *                       1 = no match) to a weighted confidence in [0, weight].
+ */
 import {
   blendPgScore,
   catalogScore,

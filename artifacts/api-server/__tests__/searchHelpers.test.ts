@@ -1,3 +1,33 @@
+/**
+ * Unit tests for the search helper utilities (src/utils/searchHelpers.ts).
+ *
+ * All helpers are pure functions; no database or network access is required.
+ *
+ * Functions under test:
+ *   normalizeMeasurement  — rewrites written or decimal inch measurements in
+ *                           a search query to canonical notation (e.g.
+ *                           "one-half inch" → "1/2") for consistent matching.
+ *   parseCatalogNumber    — expands a catalog number into human-readable
+ *                           search terms (pole count, amperage, color, …).
+ *   correctMisspelling    — performs a case-insensitive lookup in a
+ *                           caller-supplied correction map.
+ *   extractSizeValue      — returns a numeric sort key from catalog + description
+ *                           (amperage, AWG, trade size, length, wattage, …).
+ *   getSeriesBase         — identifies the "series group" an item belongs to
+ *                           so the UI can surface sibling items.
+ *   itemFullText          — builds a lowercased concatenated blob of all
+ *                           searchable text fields for client-side Fuse.js.
+ *   tokenMatch            — tests whether every token in a chip filter value
+ *                           appears as a whole word in the haystack, with
+ *                           special handling for trade-size fractions that
+ *                           must not leak into mixed-number larger sizes.
+ *   matchesChipColumn     — resolves a chip filter against a typed DB column,
+ *                           returning null when the column is absent/NULL
+ *                           so the caller can fall back to text matching.
+ *   matchesChipFilters    — applies a list of chip filters to one item using
+ *                           column values when populated and text matching
+ *                           as a fallback.
+ */
 import {
   normalizeMeasurement,
   parseCatalogNumber,

@@ -1,5 +1,22 @@
-// Integration tests for /api/categories: tree shape, level invariants,
-// leaf-only assignment, cross-level merge guard, coverage counts.
+/**
+ * Integration tests for the /api/categories endpoints.
+ *
+ * Uses the real PostgreSQL database (DATABASE_URL) with the seeded taxonomy;
+ * OpenAI is mocked so no live API key is required.
+ *
+ * Scenarios covered:
+ *   GET  /api/categories/tree     — verifies the three-level tree shape and
+ *                                   level invariants (category → subcategory
+ *                                   → type).
+ *   GET  /api/categories/coverage — returns numeric item counts (total,
+ *                                   classified, uncategorized).
+ *   PATCH /api/categories/:nodeId — enforces level invariants: rejects
+ *                                   re-parenting a type under another type;
+ *                                   allows only leaf (type) nodes to receive
+ *                                   inventory item assignments; prevents
+ *                                   merging nodes that belong to different
+ *                                   hierarchy levels.
+ */
 
 jest.mock('@workspace/integrations-openai-ai-server', () => ({
   openai: {

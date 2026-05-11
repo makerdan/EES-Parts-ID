@@ -1,3 +1,19 @@
+/**
+ * Unit tests for the resizeImage utility (utils/resizeImage.ts).
+ *
+ * Covers all three resize branches:
+ *   • Pass-through  — width is already within the 800–1920 px sweet spot;
+ *                     the original URI is returned unchanged.
+ *   • Upscale       — width < 800 px; the image is resized up to 800 px.
+ *   • Downscale     — width > 1920 px; the image is resized down to 1920 px.
+ *
+ * Also verifies the graceful fallback when width is unknown/zero, the
+ * base64 fallback when manipulateAsync returns no base64 data, and the
+ * ImageReadError wrapping for corrupt or unreadable files.
+ *
+ * expo-image-manipulator and expo-file-system/legacy are mocked via the
+ * moduleNameMapper configured in parts-id/jest.config.js.
+ */
 import { resizeImage, ImageReadError } from '../utils/resizeImage';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';

@@ -1,3 +1,19 @@
+/**
+ * Unit tests for expandMeasurements (src/utils/measurementConversion.ts).
+ *
+ * expandMeasurements takes a free-text search string that may contain
+ * metric or imperial measurements and returns an array of equivalent
+ * terms in the opposite unit system.  The expanded terms are injected
+ * into the full-text search query so a user who types "25mm conduit"
+ * also hits catalog items described in inches, and vice-versa.
+ *
+ * Test groups:
+ *   • metric → imperial  (mm / cm / m → inch / ft equivalents)
+ *   • imperial → metric  (fraction, mixed, decimal, and whole inches; feet)
+ *   • edge cases         (empty string, zero/out-of-range mm, wire-gauge
+ *                         fractions like "12/2" that must NOT be treated
+ *                         as an inch measurement)
+ */
 import { expandMeasurements } from '../src/utils/measurementConversion';
 
 describe('expandMeasurements', () => {
