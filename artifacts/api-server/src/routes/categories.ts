@@ -1134,12 +1134,15 @@ function rowToInventoryItem(row: Record<string, unknown>): typeof inventoryTable
     enrichedAt: row['enriched_at'] instanceof Date ? (row['enriched_at'] as Date) : null,
     createdAt: row['created_at'] instanceof Date ? (row['created_at'] as Date) : new Date(0),
     updatedAt: row['updated_at'] instanceof Date ? (row['updated_at'] as Date) : new Date(0),
-    catalogParse: null,
-    amperage: null,
-    poleCount: null,
-    voltage: null,
+    catalogParse:
+      row['catalog_parse'] != null
+        ? (row['catalog_parse'] as (typeof inventoryTable.$inferSelect)['catalogParse'])
+        : null,
+    amperage: row['amperage'] != null ? Number(row['amperage']) : null,
+    poleCount: row['pole_count'] != null ? Number(row['pole_count']) : null,
+    voltage: row['voltage'] != null ? Number(row['voltage']) : null,
     tradeSizeIn: null,
-    mountType: null,
+    mountType: typeof row['mount_type'] === 'string' ? row['mount_type'] : null,
     attrsParsedAt: null,
     promptVersion: null,
     searchTokens: null,
