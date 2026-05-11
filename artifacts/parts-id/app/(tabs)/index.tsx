@@ -1723,7 +1723,9 @@ export default function SearchScreen() {
                   values={filters}
                   onChange={handleChange}
                   dimensionCounts={dimensionCounts}
-                  activeCategoryName={browseCategoryName ?? undefined}
+                  activeCategoryName={
+                    mode === 'browse' ? (browseCategoryName ?? undefined) : undefined
+                  }
                 />
               </View>
               {mode !== 'browse' && !hasResults ? (
