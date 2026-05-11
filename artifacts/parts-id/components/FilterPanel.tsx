@@ -22,6 +22,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
@@ -307,7 +308,12 @@ function ChipRow({
             return (
               <Pressable
                 key={opt}
-                onPress={() => !disabled && onChange(active ? '' : opt)}
+                onPress={() => {
+                  if (!disabled) {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    onChange(active ? '' : opt);
+                  }
+                }}
                 style={[
                   chipStyles.chip,
                   {
@@ -498,7 +504,10 @@ export function ConfidenceSlider({
         {presets.map((s) => (
           <Pressable
             key={s}
-            onPress={() => onChange(s)}
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              onChange(s);
+            }}
             style={[
               sliderStyles.presetChip,
               {
@@ -750,7 +759,10 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
                   )}
                 </View>
                 <Pressable
-                  onPress={dismissModal}
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    dismissModal();
+                  }}
                   style={[modalStyles.doneBtn, { backgroundColor: colors.primary }]}
                   accessibilityRole="button"
                   accessibilityLabel="Close advanced filters"
