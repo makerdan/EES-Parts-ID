@@ -84,7 +84,7 @@ function ClassicTabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Search',
+          title: 'Parts ID',
           tabBarLabel: 'Search',
           // Show the native iOS large-collapsible-title header on this tab.
           // `headerLargeTitle` is a valid React Navigation / expo-router header

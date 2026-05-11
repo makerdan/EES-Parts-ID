@@ -1084,7 +1084,7 @@ export default function SearchScreen() {
       {isLiquidGlassAvailable() && (
         <Stack.Screen
           options={{
-            title: 'Search',
+            title: 'Parts ID',
             headerShown: true,
             headerLargeTitle: true,
             headerLargeTitleStyle: { fontFamily: 'Inter_700Bold' },
@@ -1105,7 +1105,7 @@ export default function SearchScreen() {
         keyboardVerticalOffset={0}
       >
         {/* Header — hidden on iOS because the native large-title header
-          (configured in (tabs)/_layout.tsx) already shows the "PartsID" title.
+          (configured in (tabs)/_layout.tsx) shows the "Parts ID" title.
           The sync badge and action buttons are still rendered below so
           workers can access them. */}
         {/* Header */}
