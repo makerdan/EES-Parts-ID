@@ -64,6 +64,12 @@ interface FilterPanelProps {
   onChange: (key: keyof FilterValues, value: string | number) => void;
   /** Per-chip counts returned from the last search (key → option → count) */
   dimensionCounts?: DimensionCounts;
+  /**
+   * Top-level category name from the active browse taxonomy path (e.g. "Breaker").
+   * When provided, drives category-specific chip visibility regardless of the
+   * `values.category` chip value. Falls back to `values.category` when omitted.
+   */
+  activeCategoryName?: string;
 }
 
 // ── 16 required chip dimensions (must mirror CHIP_DIMS_SERVER in inventory.ts) ─
@@ -531,7 +537,7 @@ export function ConfidenceSlider({
   );
 }
 
-export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelProps) {
+export function FilterPanel({ values, onChange, dimensionCounts, activeCategoryName }: FilterPanelProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
 
@@ -875,11 +881,17 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
                 </View>
 
                 {/* ── Chip dimensions ── */}
-                {/* When the active category is Breaker, hide the conduit Trade Size
-                    chip — it doesn't apply to breakers. The Amperage, Voltage, and
-                    Pole Count chips (already in CHIP_DIMS) provide the correct filters. */}
+                {/* When the active category is Breaker — either from the chip or
+                    from the browse taxonomy path — hide the conduit Trade Size chip.
+                    It doesn't apply to breakers; Amperage, Voltage, and Pole Count
+                    chips already in CHIP_DIMS provide the correct filters. */}
                 {CHIP_DIMS.filter(
-                  (dim) => !(dim.key === 'conduitSize' && values.category === 'Breaker')
+                  (dim) =>
+                    !(
+                      dim.key === 'conduitSize' &&
+                      (values.category === 'Breaker' ||
+                        activeCategoryName?.toLowerCase() === 'breaker')
+                    )
                 ).map((dim) => (
                   <ChipRow
                     key={dim.key}

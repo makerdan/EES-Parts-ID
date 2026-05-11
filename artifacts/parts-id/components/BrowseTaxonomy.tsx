@@ -41,6 +41,13 @@ export { nodeAtPath, visibleChildren } from '@/lib/taxonomy';
 interface BrowseTaxonomyProps {
   /** Called whenever the active drill path changes (e.g. user taps a leaf type). */
   onSelectNode: (node: CategoryTreeNode | null) => void;
+  /**
+   * Called whenever the top-level category in the drill path changes.
+   * Receives the category name (e.g. "Breaker") or null when at the root.
+   * Use this to drive category-aware UI outside the taxonomy (e.g. hiding
+   * irrelevant filter chips when browsing a specific category).
+   */
+  onBrowseCategoryChange?: (categoryName: string | null) => void;
   /** Optional pre-supplied tree (e.g. for tests). */
   initialTree?: CategoryTreeNode[];
   /** Increment this to pop the current path up one level (e.g. Back from results). */
@@ -55,6 +62,7 @@ interface BrowseTaxonomyProps {
 
 export default function BrowseTaxonomy({
   onSelectNode,
+  onBrowseCategoryChange,
   initialTree,
   popTrigger = 0,
   onExitBrowse,
@@ -153,6 +161,12 @@ export default function BrowseTaxonomy({
     }
     return out;
   }, [tree, path]);
+
+  // Notify the parent whenever the top-level category in the drill path
+  // changes so it can drive category-aware UI (e.g. hiding irrelevant chips).
+  useEffect(() => {
+    onBrowseCategoryChange?.(breadcrumbs[0]?.name ?? null);
+  }, [breadcrumbs, onBrowseCategoryChange]);
 
   const drillInto = useCallback((slug: string) => {
     userHasNavigated.current = true;

@@ -29,7 +29,6 @@ import {
   parseTradeSizeInches,
   formatInchesAsFraction,
   parseBreakerCatalog,
-  isBreakerCatalog,
 } from '@/lib/tradeSize';
 
 interface ResultCardProps {
@@ -182,11 +181,18 @@ function VariantRow({
   const sameVendor = item.vendor.toUpperCase() === parentVendor.toUpperCase();
   const label = sameVendor ? item.catalog : `${item.vendor} · ${item.catalog}`;
 
-  // Middle column — breakers show amp/pole rating; conduit items show trade size.
+  // Label column — for breakers: combined "BR120 — 20A 1-Pole" format so the
+  // spec-required [Catalog] — [N]A [P]-Pole string appears as a single cell.
+  // For conduit items: catalog in left column, trade size in middle column.
   let sizeLabel: string;
+  let combinedBreakerLabel: string | null = null;
   if (isBreaker) {
     const bp = parseBreakerCatalog(item.catalog);
-    sizeLabel = bp ? `${bp.amps}A ${bp.poles}-Pole` : '';
+    const ratingStr = bp ? `${bp.amps}A ${bp.poles}-Pole` : '';
+    if (ratingStr) {
+      combinedBreakerLabel = `${label} — ${ratingStr}`;
+    }
+    sizeLabel = ''; // middle column not used for breakers
   } else {
     sizeLabel = item.tradeSize
       ? item.tradeSize
@@ -196,11 +202,11 @@ function VariantRow({
   }
   const hasSize = sizeLabel.length > 0;
   // Speech-friendly label: strip special chars.
-  const a11ySuffix = hasSize
-    ? isBreaker
-      ? `, ${sizeLabel}`
-      : `, size ${sizeLabel.replace(/"/g, '')} inches`
-    : '';
+  const a11ySuffix = combinedBreakerLabel
+    ? `, ${combinedBreakerLabel.split(' — ')[1] ?? ''}`
+    : hasSize
+      ? `, size ${sizeLabel.replace(/"/g, '')} inches`
+      : '';
   return (
     <Pressable
       onPress={onPress}
@@ -222,26 +228,29 @@ function VariantRow({
         numberOfLines={1}
         allowFontScaling={false}
       >
-        {label}
+        {combinedBreakerLabel ?? label}
       </Text>
-      {hasSize ? (
-        <Text
-          style={[varStyles.size, { color: colors.foreground, fontSize: fs(13) }]}
-          numberOfLines={1}
-          ellipsizeMode="tail"
-          allowFontScaling={false}
-        >
-          {sizeLabel}
-        </Text>
-      ) : (
-        <Text
-          style={[varStyles.sizeEmpty, { color: colors.mutedForeground, fontSize: fs(13) }]}
-          numberOfLines={1}
-          allowFontScaling={false}
-        >
-          —
-        </Text>
-      )}
+      {/* Breaker rows: combined label already contains the rating, so the
+          middle size column is omitted. Conduit rows keep the size column. */}
+      {!combinedBreakerLabel &&
+        (hasSize ? (
+          <Text
+            style={[varStyles.size, { color: colors.foreground, fontSize: fs(13) }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            allowFontScaling={false}
+          >
+            {sizeLabel}
+          </Text>
+        ) : (
+          <Text
+            style={[varStyles.sizeEmpty, { color: colors.mutedForeground, fontSize: fs(13) }]}
+            numberOfLines={1}
+            allowFontScaling={false}
+          >
+            —
+          </Text>
+        ))}
       {primaryBin ? (
         <Text
           style={[varStyles.bin, { color: colors.foreground, fontSize: fs(13) }]}

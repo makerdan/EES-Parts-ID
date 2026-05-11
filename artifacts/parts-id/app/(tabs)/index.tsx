@@ -270,6 +270,7 @@ export default function SearchScreen() {
   const [mode, setMode] = useState<Mode>('search');
   const [browseResults, setBrowseResults] = useState<SearchResult[] | null>(null);
   const [browseSelectedNode, setBrowseSelectedNode] = useState<CategoryTreeNode | null>(null);
+  const [browseCategoryName, setBrowseCategoryName] = useState<string | null>(null);
   const [browsePop, setBrowsePop] = useState(0);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
@@ -1722,6 +1723,7 @@ export default function SearchScreen() {
                   values={filters}
                   onChange={handleChange}
                   dimensionCounts={dimensionCounts}
+                  activeCategoryName={browseCategoryName ?? undefined}
                 />
               </View>
               {mode !== 'browse' && !hasResults ? (
@@ -1749,6 +1751,7 @@ export default function SearchScreen() {
                 <View>
                   <BrowseTaxonomy
                     onSelectNode={handleBrowseNodeChange}
+                    onBrowseCategoryChange={(name) => setBrowseCategoryName(name)}
                     popTrigger={browsePop}
                     onExitBrowse={() => switchMode('search')}
                   />
@@ -1995,7 +1998,9 @@ export default function SearchScreen() {
                         fontScale={textFontScale}
                         highlightTokens={highlightTokens}
                         onFirstExpand={() => logResultClick(result.item.id, index)}
-                        categorySlug={filters.category || undefined}
+                        categorySlug={
+                          (mode === 'browse' ? browseCategoryName : filters.category) || undefined
+                        }
                       />
                     </View>
                   )}

@@ -1427,6 +1427,25 @@ router.post('/preview-upsert', requireAdminAuth, async (req, res) => {
   }
 });
 
+// ── Helper: fetch IDs of items assigned to any Breaker category node ─────────
+// Used by enrichment paths to augment regex-only catalog detection with
+// database-verified category membership. Items in the Breaker tree are treated
+// the same as items whose catalog passes isBreakerCatalog().
+async function fetchBreakerItemIds(candidateIds: number[]): Promise<Set<number>> {
+  if (candidateIds.length === 0) return new Set();
+  const rows = await db
+    .select({ inventoryId: inventoryCategoryTable.inventoryId })
+    .from(inventoryCategoryTable)
+    .innerJoin(categoryNodeTable, eq(inventoryCategoryTable.categoryNodeId, categoryNodeTable.id))
+    .where(
+      and(
+        sql`${inventoryCategoryTable.inventoryId} = ANY(${candidateIds})`,
+        ilike(categoryNodeTable.name, '%breaker%')
+      )
+    );
+  return new Set(rows.map((r) => r.inventoryId));
+}
+
 // ── POST /inventory/enrich ────────────────────────────────────────────────────
 router.post('/enrich', requireAdminAuth, async (req, res) => {
   try {
@@ -1472,15 +1491,21 @@ router.post('/enrich', requireAdminAuth, async (req, res) => {
     const total = itemsToEnrich.length;
     const startTime = Date.now();
 
+    // Pre-fetch which items belong to a Breaker category so catalog-atypical
+    // breaker SKUs (e.g. house-brand numbers) are also protected from getting
+    // a trade-size interpretation, not just regex-matched catalog numbers.
+    const enrichBreakerIds = await fetchBreakerItemIds(itemsToEnrich.map((i) => i.id));
+
     await batchProcessWithSSE(
       itemsToEnrich,
       async (item) => {
         // Derive trade size before AI call so it can be passed as context.
         // Skip trade size entirely for breaker items — their catalog suffixes
         // encode amperage/poles, not a conduit trade size.
-        const tradeSizeInches = isBreakerCatalog(item.catalog)
-          ? null
-          : (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description));
+        const tradeSizeInches =
+          enrichBreakerIds.has(item.id) || isBreakerCatalog(item.catalog)
+            ? null
+            : (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description));
         const tradeSize = tradeSizeInches !== null ? tradeSizeChipLabel(tradeSizeInches) : null;
 
         const keywords = await generateKeywords(item, undefined, tradeSize ?? undefined);
@@ -1660,13 +1685,18 @@ async function runBulkEnrich() {
 
     if (batch.length === 0) break;
 
+    // Pre-fetch which batch items are in a Breaker category node so atypical
+    // catalog numbers aren't mistakenly given a trade-size interpretation.
+    const batchBreakerIds = await fetchBreakerItemIds(batch.map((i) => i.id));
+
     for (let i = 0; i < batch.length; i += BULK_ENRICH_CONCUR) {
       const wave = batch.slice(i, i + BULK_ENRICH_CONCUR);
       const results = await Promise.allSettled(
         wave.map((item) => {
-          const tradeSizeInches = isBreakerCatalog(item.catalog)
-            ? null
-            : (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description));
+          const tradeSizeInches =
+            batchBreakerIds.has(item.id) || isBreakerCatalog(item.catalog)
+              ? null
+              : (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description));
           const tradeSize =
             tradeSizeInches !== null
               ? (tradeSizeChipLabel(tradeSizeInches) ?? undefined)
@@ -1679,9 +1709,10 @@ async function runBulkEnrich() {
         const r = results[j]!;
         const item = wave[j]!;
         if (r.status === 'fulfilled') {
-          const tradeSizeInches = isBreakerCatalog(item.catalog)
-            ? null
-            : (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description));
+          const tradeSizeInches =
+            batchBreakerIds.has(item.id) || isBreakerCatalog(item.catalog)
+              ? null
+              : (parseTradeSizeInches(item.catalog) ?? parseTradeSizeInches(item.description));
           const tradeSize = tradeSizeInches !== null ? tradeSizeChipLabel(tradeSizeInches) : null;
           const tradeTokens = deriveTradeSizeTokens(item);
           const existing = new Set(r.value.map((k: string) => k.toLowerCase()));
