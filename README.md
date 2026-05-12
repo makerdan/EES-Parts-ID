@@ -141,7 +141,11 @@ The Expo app is gated by a single password from `EXPO_PUBLIC_APP_PASSWORD`
 | `lint` | `eslint .` |
 | `postinstall` | `simple-git-hooks` |
 | `readme` | `pnpm --filter @workspace/scripts exec tsx ./src/update-readme.ts` |
-| `test` | `pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run…` |
+| `test` | `pnpm --parallel --filter ./artifacts/parts-id --filter ./lib/api-client-react run test …` |
+| `test:api` | `pnpm --filter ./artifacts/api-server run test` |
+| `test:api:unit` | `pnpm --filter ./artifacts/api-server run test:unit` |
+| `test:lib` | `pnpm --filter ./lib/api-client-react run test` |
+| `test:mobile` | `pnpm --filter ./artifacts/parts-id run test` |
 | `test:smoke` | `pnpm --filter ./artifacts/api-server run test:smoke` |
 | `test:unit` | `pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run…` |
 | `typecheck` | `pnpm run codegen:check && pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" …` |
