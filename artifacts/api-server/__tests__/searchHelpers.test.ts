@@ -868,6 +868,82 @@ describe('tradeSize boundary — mixed descriptions', () => {
   });
 });
 
+// ── matchesChipFilters — tradeSize boundary (3/4" and larger sizes) ───────────
+// Task #423 added five boundary tests for 1/2". The same tokenMatch boundary
+// logic applies to every other common conduit trade size. A parametrized loop
+// ensures each size gets the same three checks: (a) bare fraction without an
+// inch mark is excluded, (b) a larger mixed-number description is excluded, and
+// (c) the exact size still matches its own chip value (positive control).
+
+describe('tradeSize boundary — 3/4" and larger sizes', () => {
+  const cases: Array<{
+    size: string;
+    bareDescription: string;
+    largerDescription: string;
+    exactDescription: string;
+  }> = [
+    {
+      size: '3/4"',
+      bareDescription: '3/4 emt conduit',
+      largerDescription: '1-3/4" emt conduit',
+      exactDescription: '3/4" emt conduit',
+    },
+    {
+      size: '1-1/4"',
+      bareDescription: '1-1/4 emt conduit',
+      largerDescription: '2-1/4" emt conduit',
+      exactDescription: '1-1/4" emt conduit',
+    },
+    {
+      size: '1-1/2"',
+      bareDescription: '1-1/2 emt conduit',
+      largerDescription: '2-1/2" emt conduit',
+      exactDescription: '1-1/2" emt conduit',
+    },
+    {
+      size: '2"',
+      bareDescription: '2 emt conduit',
+      largerDescription: '2-1/2" emt conduit',
+      exactDescription: '2" emt conduit',
+    },
+    {
+      size: '2-1/2"',
+      bareDescription: '2-1/2 emt conduit',
+      largerDescription: '3-1/2" emt conduit',
+      exactDescription: '2-1/2" emt conduit',
+    },
+  ];
+
+  const mkItem = (description: string): ChipFilterItem => ({
+    vendor: 'Allied',
+    catalog: 'EMT',
+    description,
+    aiKeywords: null,
+  });
+
+  for (const { size, bareDescription, largerDescription, exactDescription } of cases) {
+    describe(`${size}`, () => {
+      it('bare fraction without inch mark is excluded', () => {
+        expect(
+          matchesChipFilters(mkItem(bareDescription), [{ key: 'tradeSize', value: size }])
+        ).toBe(false);
+      });
+
+      it('larger mixed-number description is excluded', () => {
+        expect(
+          matchesChipFilters(mkItem(largerDescription), [{ key: 'tradeSize', value: size }])
+        ).toBe(false);
+      });
+
+      it('exact-size description is included (positive control)', () => {
+        expect(
+          matchesChipFilters(mkItem(exactDescription), [{ key: 'tradeSize', value: size }])
+        ).toBe(true);
+      });
+    });
+  }
+});
+
 describe('matchesChipFilters — colorChip chip (text-only, no column)', () => {
   const item = (description: string): ChipFilterItem => ({
     vendor: 'Leviton',

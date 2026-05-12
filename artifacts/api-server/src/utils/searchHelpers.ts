@@ -188,12 +188,20 @@ export function tokenMatch(text: string, filterValue: string): boolean {
     // The base guard `(?<![\w/-])` catches the dash form "1-1/2" because `-` is
     // in the class, but space is NOT — so without this extra guard `1/2"` would
     // incorrectly match inside `1 1/2"` (written into aiKeywords by
-    // tradeSizeKeywordTokens). `(?<!\d[ -])` is a 2-char lookbehind: it checks
-    // that the TWO chars before the token are NOT digit+space or digit+dash.
-    // It is intentionally limited to fraction tokens so non-fractional chips
-    // like "20A" remain unaffected (e.g. "1 20A" correctly matches "20A").
+    // tradeSizeKeywordTokens).
+    //
+    // `(?<![^\d]\d[ -])` is a 3-char lookbehind: it checks that the THREE
+    // chars before the token are NOT non-digit + digit + space/dash.  This
+    // pattern fires for a space-form whole number like `1 ` in `1 1/2"` (where
+    // ` 1 ` matches [^\d]\d[ -]) but does NOT fire for a multi-digit catalog
+    // suffix like `34 ` in `emt34 3/4"` (where `3` IS a digit, so [^\d] fails).
+    // A 2-char lookbehind `(?<!\d[ -])` was too broad: it blocked `3/4"` from
+    // matching in `emt34 3/4"` because the `4 ` at the end of the catalog
+    // number triggered it even though `4` is not a standalone whole number.
+    // This 3-char form is intentionally limited to fraction tokens so non-
+    // fractional chips like "20A" remain unaffected.
     const pattern = tok.includes('/')
-      ? `(?<![\\w/-])(?<!\\d[ -])${escaped}(?![\\w/-])`
+      ? `(?<![\\w/-])(?<![^\\d]\\d[ -])${escaped}(?![\\w/-])`
       : `(?<![\\w/-])${escaped}(?![\\w/-])`;
     return new RegExp(pattern, 'i').test(text);
   });
