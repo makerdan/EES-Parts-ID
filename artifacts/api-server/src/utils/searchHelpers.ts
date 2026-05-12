@@ -183,7 +183,19 @@ export function tokenMatch(text: string, filterValue: string): boolean {
   if (tokens.length === 0) return true;
   return tokens.every((tok) => {
     const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?<![\\w/-])${escaped}(?![\\w/-])`, 'i').test(text);
+    // For fraction tokens (e.g. "1/2", "3/4") add an extra lookbehind that
+    // blocks matching inside the space-form of a mixed number (e.g. "1 1/2").
+    // The base guard `(?<![\w/-])` catches the dash form "1-1/2" because `-` is
+    // in the class, but space is NOT — so without this extra guard `1/2"` would
+    // incorrectly match inside `1 1/2"` (written into aiKeywords by
+    // tradeSizeKeywordTokens). `(?<!\d[ -])` is a 2-char lookbehind: it checks
+    // that the TWO chars before the token are NOT digit+space or digit+dash.
+    // It is intentionally limited to fraction tokens so non-fractional chips
+    // like "20A" remain unaffected (e.g. "1 20A" correctly matches "20A").
+    const pattern = tok.includes('/')
+      ? `(?<![\\w/-])(?<!\\d[ -])${escaped}(?![\\w/-])`
+      : `(?<![\\w/-])${escaped}(?![\\w/-])`;
+    return new RegExp(pattern, 'i').test(text);
   });
 }
 

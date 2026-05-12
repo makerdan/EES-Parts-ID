@@ -841,3 +841,129 @@ describe('POST /api/inventory/search — fractional trade-size tokenization', ()
     expect(catalogs).toContain(SIZE_CATALOGS.twoAndHalf);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/inventory/search — conduitSize chip filter (Task #435)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Guards the full pipeline: SQL candidate retrieval → in-memory
+// matchesChipFilters post-filter. Each test seeds four conduit rows at
+// different trade sizes and asserts that activating the `conduitSize` chip
+// includes the matching size and excludes all others. This catches any future
+// regression where the boundary guard in tokenMatch stops working (e.g. `1/2"`
+// matching inside `1-1/2"` or `2-1/2"`).
+
+describe('POST /api/inventory/search — conduitSize chip filter', () => {
+  const CS_CATALOGS = {
+    half: 'JEST-CS-EMT050', // 1/2"
+    oneAndQuarter: 'JEST-CS-EMT125', // 1-1/4"
+    oneAndHalf: 'JEST-CS-EMT150', // 1-1/2"
+    twoAndHalf: 'JEST-CS-EMT250', // 2-1/2"
+  };
+
+  beforeAll(async () => {
+    const adminSecret = process.env.ADMIN_PASSWORD as string;
+    const token = signAdminToken(Date.now(), adminSecret);
+    await supertest(app)
+      .post('/api/inventory/upsert-batch')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          { vendor: 'JEST-VENDOR', catalog: CS_CATALOGS.half, description: 'EMT 1/2" conduit' },
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: CS_CATALOGS.oneAndQuarter,
+            description: 'EMT 1-1/4" conduit',
+          },
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: CS_CATALOGS.oneAndHalf,
+            description: 'EMT 1-1/2" conduit',
+          },
+          {
+            vendor: 'JEST-VENDOR',
+            catalog: CS_CATALOGS.twoAndHalf,
+            description: 'EMT 2-1/2" conduit',
+          },
+        ],
+      })
+      .expect(200);
+  }, 30_000);
+
+  afterAll(async () => {
+    const { db, inventoryTable } = await import('@workspace/db');
+    const { inArray } = await import('drizzle-orm');
+    await db
+      .delete(inventoryTable)
+      .where(inArray(inventoryTable.catalog, Object.values(CS_CATALOGS)));
+  }, 30_000);
+
+  const catalogsOf = (body: { results?: Array<{ item: { catalog: string } }> }) =>
+    (body.results ?? []).map((r) => r.item.catalog);
+
+  it('conduitSize "1/2"" includes the 1/2" item and excludes 1-1/2" and 2-1/2"', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-CS EMT', conduitSize: '1/2"' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    expect(catalogs).toContain(CS_CATALOGS.half);
+    // Boundary guard: 1/2 must not bleed into 1-1/2" or 2-1/2".
+    expect(catalogs).not.toContain(CS_CATALOGS.oneAndHalf);
+    expect(catalogs).not.toContain(CS_CATALOGS.twoAndHalf);
+  });
+
+  it('conduitSize "1-1/4"" includes the 1-1/4" item and excludes all others', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-CS EMT', conduitSize: '1-1/4"' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    expect(catalogs).toContain(CS_CATALOGS.oneAndQuarter);
+    // 1-1/4 must not bleed into 1/2", 1-1/2", or 2-1/2".
+    expect(catalogs).not.toContain(CS_CATALOGS.half);
+    expect(catalogs).not.toContain(CS_CATALOGS.oneAndHalf);
+    expect(catalogs).not.toContain(CS_CATALOGS.twoAndHalf);
+  });
+
+  it('conduitSize "1-1/2"" includes the 1-1/2" item and excludes 1/2" and 2-1/2"', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-CS EMT', conduitSize: '1-1/2"' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    expect(catalogs).toContain(CS_CATALOGS.oneAndHalf);
+    // 1-1/2 must not bleed into 1/2" or 2-1/2".
+    expect(catalogs).not.toContain(CS_CATALOGS.half);
+    expect(catalogs).not.toContain(CS_CATALOGS.twoAndHalf);
+  });
+
+  it('conduitSize "2-1/2"" includes the 2-1/2" item and excludes 1/2" and 1-1/2"', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-CS EMT', conduitSize: '2-1/2"' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    expect(catalogs).toContain(CS_CATALOGS.twoAndHalf);
+    // 2-1/2 must not bleed into 1/2" or 1-1/2".
+    expect(catalogs).not.toContain(CS_CATALOGS.half);
+    expect(catalogs).not.toContain(CS_CATALOGS.oneAndHalf);
+  });
+
+  it('no conduitSize chip returns all four seeded items', async () => {
+    const res = await supertest(app)
+      .post('/api/inventory/search')
+      .send({ keywords: 'JEST-CS EMT' })
+      .expect(200);
+
+    const catalogs = catalogsOf(res.body);
+    expect(catalogs).toContain(CS_CATALOGS.half);
+    expect(catalogs).toContain(CS_CATALOGS.oneAndQuarter);
+    expect(catalogs).toContain(CS_CATALOGS.oneAndHalf);
+    expect(catalogs).toContain(CS_CATALOGS.twoAndHalf);
+  });
+});
