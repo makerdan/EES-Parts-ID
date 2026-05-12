@@ -49,7 +49,15 @@ export function tokenMatch(text: string, value: string): boolean {
   if (tokens.length === 0) return true;
   return tokens.every((tok) => {
     const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?<![\\w/-])${escaped}(?![\\w/-])`, 'i').test(text);
+    // For fraction tokens add an extra lookbehind to block matching inside
+    // the space-form of a mixed number (e.g. "1 1/2"). The base guard
+    // `(?<![\w/-])` catches dash-form "1-1/2" but space is not in [\w/-],
+    // so without this extra guard "1/2" would match inside "1 1/2".
+    // Limited to fraction tokens so non-fraction chips like "20A" are unaffected.
+    const pattern = tok.includes('/')
+      ? `(?<![\\w/-])(?<!\\d[ -])${escaped}(?![\\w/-])`
+      : `(?<![\\w/-])${escaped}(?![\\w/-])`;
+    return new RegExp(pattern, 'i').test(text);
   });
 }
 
