@@ -84,12 +84,12 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 ## Testing
 
-Two test commands are available at the root:
+Run `pnpm test` for all validation. It runs serially and includes everything — unit tests, integration tests (live PostgreSQL), and smoke tests (PDF parsing).
 
-| Command | What it runs | When to use |
-|---|---|---|
-| `pnpm test:unit` | All parts-id tests + API server unit tests (excludes `*.integration.test.ts` and `*.smoke.test.ts`) + api-client-react tests | **Default** — use for most tasks (mobile changes, UI, type fixes, lib changes) |
-| `pnpm test` | Full suite: integration tests (live PostgreSQL) + unit tests; smoke tests excluded | Only when the task touches API server routes, database queries, or schema migrations |
-| `pnpm test:smoke` | API server smoke tests only (`*.smoke.test.ts` — parses real vendor PDF catalogs) | Only when catalog-parsing logic (`catalogPdfParser.ts`) changes |
-
-**Rule:** run `test:unit` during commit validation by default. Only upgrade to `test` (full suite) when the task modifies API server code, database queries, or schema migrations. Run `test:smoke` only when `catalogPdfParser.ts` or its profiles change.
+| Command | What it runs |
+|---|---|
+| `pnpm test` | **Full suite** — parts-id, api-server (unit + integration + smoke), api-client-react; serial, all-inclusive |
+| `pnpm test:smoke` | API server smoke tests only — use when targeting `catalogPdfParser.ts` changes in isolation |
+| `pnpm test:mobile` | parts-id tests only |
+| `pnpm test:api` | api-server tests only (unit + integration + smoke) |
+| `pnpm test:lib` | api-client-react tests only |
