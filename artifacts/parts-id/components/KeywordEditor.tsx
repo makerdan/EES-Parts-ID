@@ -17,6 +17,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { arraysEqual } from "@/utils/arraysEqual";
 import { drainSave } from "@/utils/drainSave";
+import { useApp } from "@/contexts/AppContext";
 
 interface KeywordEditorProps {
   item: InventoryItem | null;
@@ -30,6 +31,7 @@ const DEBOUNCE_MS = 900;
 export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEditorProps) {
   const colors = useColors();
   const queryClient = useQueryClient();
+  const { showToast } = useApp();
   const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -112,10 +114,19 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
     } catch (err) {
       console.warn("KeywordEditor: save failed:", err);
       if (itemRef.current?.id === id) setSaveStatus("error");
+      showToast("Couldn't save keyword changes. Tap Retry in the editor.");
     } finally {
       s.saving = false;
     }
-  }, [updateMutation, queryClient, onKeywordsChanged]);
+  }, [updateMutation, queryClient, onKeywordsChanged, showToast]);
+
+  // Manual retry — re-runs the drain loop for the currently open item.
+  // Used by the Retry button that appears when saveStatus === "error".
+  const retrySave = useCallback(() => {
+    const id = itemRef.current?.id;
+    if (id == null) return;
+    void performSaveForId(id);
+  }, [performSaveForId]);
 
   // Auto-save with debounce whenever keywords change. Captures the *current*
   // item id so the eventual save always targets the item that was being
@@ -224,6 +235,16 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
                   <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
                 </View>
               )}
+              {saveStatus === "error" && (
+                <Pressable
+                  onPress={retrySave}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry saving keywords"
+                  style={[styles.retryBtn, { borderColor: "#ef4444" }]}
+                >
+                  <Text style={[styles.retryText, { color: "#ef4444" }]}>Retry</Text>
+                </Pressable>
+              )}
             </View>
             <Text style={[styles.sub, { color: colors.mutedForeground }]} numberOfLines={1}>
               {item.vendor} · {item.catalog}
@@ -331,6 +352,13 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   statusText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  retryBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  retryText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   hint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 16, lineHeight: 18 },
   desc: { fontSize: 13, fontFamily: "Inter_400Regular", marginBottom: 10, lineHeight: 19 },
   sectionLabel: {
