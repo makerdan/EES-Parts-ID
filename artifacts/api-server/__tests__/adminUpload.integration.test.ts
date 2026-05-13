@@ -25,7 +25,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "../src/routes/admin";
-import { cleanupFixtures, closePool } from "./helpers/testDb";
+import { closePool } from "./helpers/testDb";
 import { db, inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
@@ -49,7 +49,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanupUploads();
-  await cleanupFixtures(); // belt-and-suspenders
+  // NOTE: do NOT call cleanupFixtures() here. It deletes JEST-ITG-% rows
+  // which belong to inventory.integration.test.ts. When jest runs test
+  // files in parallel workers, that cleanup races with inventory's
+  // seedFixtures and silently wipes its fixtures, producing flaky failures
+  // ("seeded item not in search results") in the parallel run only.
   await closePool();
 }, 30_000);
 

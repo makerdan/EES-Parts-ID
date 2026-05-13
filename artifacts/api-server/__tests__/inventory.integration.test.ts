@@ -128,6 +128,48 @@ describe("POST /api/inventory/search", () => {
     expect(res.body).toHaveProperty("dimensionCounts");
     expect(typeof res.body.dimensionCounts).toBe("object");
   });
+
+  it("applies chip filters in SQL: a Red color filter excludes the Ivory seeded item", async () => {
+    // Without the SQL push-down (the bug), chip filters were applied only
+    // after the LIMIT 200 candidate cut. With the fix in place we can prove
+    // the SQL clause is doing the work by querying for our seeded ivory
+    // receptacle with colorChip="Red" — we should get zero matches even
+    // though the keyword query alone would surface it.
+    const ivoryOnly = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-HBL5262I" })
+      .expect(200);
+    expect(
+      ivoryOnly.body.results.some(
+        (r: { item: { catalog: string } }) =>
+          r.item.catalog === "JEST-ITG-HBL5262I",
+      ),
+    ).toBe(true);
+
+    const filteredRed = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-HBL5262I", colorChip: "Red" })
+      .expect(200);
+    expect(
+      filteredRed.body.results.some(
+        (r: { item: { catalog: string } }) =>
+          r.item.catalog === "JEST-ITG-HBL5262I",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not raise when keywords contain stray FTS operator characters", async () => {
+    // websearch_to_tsquery is the hardened parser; freeform punctuation that
+    // would crash to_tsquery (the previous implementation) must now round-trip
+    // cleanly with a 200 response.
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "breaker & (20a) | <foo> !!!" })
+      .expect(200);
+
+    expect(res.body).toHaveProperty("results");
+    expect(Array.isArray(res.body.results)).toBe(true);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

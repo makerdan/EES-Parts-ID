@@ -56,3 +56,15 @@ Seed: `node --import tsx/esm --no-warnings src/seed/run.ts` from `artifacts/api-
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## User preferences
+
+- **Tasks must never silently wait for user input.** If a task agent (or any
+  agent) determines it needs information from the user mid-task, it must post
+  the explicit question in the user-visible chat (e.g. via `user_query` or a
+  plain main-chat message) before parking the task in an awaiting-input state.
+  Do not pause on an internal-only prompt that the user cannot see — the user
+  should always know exactly what is being asked of them and why.
+- Terse, plain-language responses. No emojis, no flattery. Say what was done
+  or what is blocked.
+- Theme-aware colors in mobile UI; respect dark amber industrial theme.

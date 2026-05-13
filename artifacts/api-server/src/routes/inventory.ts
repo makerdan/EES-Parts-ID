@@ -17,11 +17,12 @@ import {
   normalizeMeasurement,
   parseCatalogNumber,
   correctMisspelling,
-  extractSizeValue,
+  compareBySize,
   getSeriesBase,
   itemFullText,
   tokenMatch,
   matchesChipFilters,
+  buildChipFilterRegexes,
 } from "../utils/searchHelpers";
 import { generateKeywords } from "../utils/generateKeywords";
 import {
@@ -199,21 +200,23 @@ router.post("/search", async (req, res) => {
 
     const vendorFilter = vendorInput.trim().toUpperCase();
     const allTermsArr = Array.from(expandedTerms).filter(t => t.length >= 2);
-    // Build the FTS tsquery: strip non-word/non-space chars, split on whitespace so
-    // multi-word terms become separate OR tokens, then filter out tokens that would
-    // cause to_tsquery to fail:
-    //   • pure numeric strings (e.g. "12", "394") — useless for full-text search
-    //   • tokens starting with a digit (e.g. "7mm" from "12.7mm" after dot-strip)
-    //   • common English stopwords that to_tsquery rejects when they appear alone
+    // Build a websearch_to_tsquery input string. websearch_to_tsquery is the
+    // hardened parser that never raises on stray operator characters and
+    // accepts an explicit "OR" connector, so we no longer need to hand-build
+    // a tsquery string with `|` (which was only safe by virtue of the strip
+    // regex below). We still pre-strip non-word characters and drop tokens
+    // that would degrade ranking (pure numbers, lone stopwords) but the
+    // resulting query is parsed safely by Postgres regardless.
     const FTS_STOPWORDS = new Set(["in", "at", "on", "of", "to", "by", "as", "an", "or", "it"]);
-    const tsQuery = allTermsArr
+    const ftsTokens = allTermsArr
       .flatMap(t => t.replace(/[^\w\s]/g, " ").trim().split(/\s+/).filter(Boolean))
       .filter(t =>
         t.length >= 2 &&
         /^[a-zA-Z]/.test(t) &&
         !FTS_STOPWORDS.has(t.toLowerCase()),
-      )
-      .join(" | ");
+      );
+    // websearch_to_tsquery: "term1 OR term2 OR term3" → (term1 | term2 | term3)
+    const tsQuery = ftsTokens.join(" OR ");
 
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
@@ -226,6 +229,12 @@ router.post("/search", async (req, res) => {
     const rawKeywords = keywords.trim();
     const kwLike = rawKeywords ? `%${rawKeywords}%` : null;
 
+    // Push chip-filter predicates into SQL so the LIMIT 200 cap applies
+    // AFTER chip filtering, not before. Without this, a less-common
+    // attribute filter (e.g. colorChip="Red") could silently drop matching
+    // items that ranked outside the top 200 candidates.
+    const chipRegexes = buildChipFilterRegexes(activeChipFilters);
+
     let pgResults: RawRow[] = [];
     try {
       if (tsQuery.trim() || kwLike) {
@@ -234,6 +243,18 @@ router.post("/search", async (req, res) => {
           rawKeywords,
           ...allTermsArr.slice(0, 3),
         ].filter(Boolean).join(" ").trim() || allTermsArr.slice(0, 3).join(" ");
+
+        const chipText = sql`lower(
+          coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
+          coalesce(i.description,'') || ' ' ||
+          coalesce(array_to_string(i.ai_keywords, ' '), '')
+        )`;
+        const chipClauses = chipRegexes.length
+          ? sql`AND ${sql.join(
+              chipRegexes.map(rx => sql`${chipText} ~* ${rx}`),
+              sql` AND `,
+            )}`
+          : sql``;
 
         // Wrap in a subquery so ORDER BY can reference the computed column aliases.
         // PostgreSQL only resolves aliases in ORDER BY when used as direct references
@@ -249,24 +270,26 @@ router.post("/search", async (req, res) => {
                   coalesce(i.description,'') || ' ' ||
                   coalesce(array_to_string(i.ai_keywords, ' '), '')
                 ),
-                to_tsquery('english', ${tsQuery})
+                websearch_to_tsquery('english', ${tsQuery})
               )` : sql`0`} AS fts_rank,
               greatest(
                 similarity(i.catalog, ${catalogTrgmTerms}),
                 similarity(i.description, ${allTermsArr.slice(0,5).join(" ")})
               ) AS trgm_sim
             FROM inventory i
-            WHERE
+            WHERE (
               ${tsQuery.trim() ? sql`to_tsvector('english',
                 coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
                 coalesce(i.description,'') || ' ' ||
                 coalesce(array_to_string(i.ai_keywords, ' '), '')
-              ) @@ to_tsquery('english', ${tsQuery})
+              ) @@ websearch_to_tsquery('english', ${tsQuery})
               OR` : sql``}
               similarity(i.catalog, ${catalogTrgmTerms}) > 0.1
               OR similarity(i.description, ${allTermsArr.slice(0,5).join(" ")}) > 0.1
               ${kwLike ? sql`OR i.catalog ILIKE ${kwLike}` : sql``}
               ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
+            )
+            ${chipClauses}
           ) AS __ranked
           ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
           LIMIT 200
@@ -453,7 +476,8 @@ router.post("/search", async (req, res) => {
     aboveThreshold.sort((a, b) => {
       const diff = b.confidence - a.confidence;
       if (Math.abs(diff) > 0.05) return diff;
-      return extractSizeValue(a.item) - extractSizeValue(b.item);
+      // Untyped items (no detectable size) sort to the end via compareBySize.
+      return compareBySize(a.item, b.item);
     });
 
     const finalResults = aboveThreshold.map(r => ({
