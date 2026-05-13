@@ -33,7 +33,11 @@ export const ListInventoryResponse = zod.object({
       vendor: zod.string(),
       catalog: zod.string(),
       description: zod.string(),
-      binLocation: zod.string(),
+      binLocations: zod
+        .array(zod.string())
+        .describe(
+          "Bin locations where this part is stored (a part may live in multiple bins)",
+        ),
       aiKeywords: zod.array(zod.string()),
       enrichedAt: zod.coerce.date().nullish(),
       createdAt: zod.coerce.date(),
@@ -119,7 +123,11 @@ export const SearchInventoryResponse = zod.object({
         vendor: zod.string(),
         catalog: zod.string(),
         description: zod.string(),
-        binLocation: zod.string(),
+        binLocations: zod
+          .array(zod.string())
+          .describe(
+            "Bin locations where this part is stored (a part may live in multiple bins)",
+          ),
         aiKeywords: zod.array(zod.string()),
         enrichedAt: zod.coerce.date().nullish(),
         createdAt: zod.coerce.date(),
@@ -135,7 +143,11 @@ export const SearchInventoryResponse = zod.object({
           vendor: zod.string(),
           catalog: zod.string(),
           description: zod.string(),
-          binLocation: zod.string(),
+          binLocations: zod
+            .array(zod.string())
+            .describe(
+              "Bin locations where this part is stored (a part may live in multiple bins)",
+            ),
           aiKeywords: zod.array(zod.string()),
           enrichedAt: zod.coerce.date().nullish(),
           createdAt: zod.coerce.date(),
@@ -163,7 +175,12 @@ export const UpsertInventoryBatchBody = zod.object({
       vendor: zod.string(),
       catalog: zod.string(),
       description: zod.string().optional(),
-      binLocation: zod.string().optional(),
+      binLocations: zod
+        .array(zod.string())
+        .optional()
+        .describe(
+          "Bin locations for this part (omit or pass empty array to clear)",
+        ),
     }),
   ),
 });
@@ -202,7 +219,11 @@ export const UpdateItemKeywordsResponse = zod.object({
   vendor: zod.string(),
   catalog: zod.string(),
   description: zod.string(),
-  binLocation: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Bin locations where this part is stored (a part may live in multiple bins)",
+    ),
   aiKeywords: zod.array(zod.string()),
   enrichedAt: zod.coerce.date().nullish(),
   createdAt: zod.coerce.date(),
@@ -255,7 +276,11 @@ export const AiIdentifyPartResponse = zod.object({
         vendor: zod.string(),
         catalog: zod.string(),
         description: zod.string(),
-        binLocation: zod.string(),
+        binLocations: zod
+          .array(zod.string())
+          .describe(
+            "Bin locations where this part is stored (a part may live in multiple bins)",
+          ),
         aiKeywords: zod.array(zod.string()),
         enrichedAt: zod.coerce.date().nullish(),
         createdAt: zod.coerce.date(),
@@ -271,7 +296,11 @@ export const AiIdentifyPartResponse = zod.object({
           vendor: zod.string(),
           catalog: zod.string(),
           description: zod.string(),
-          binLocation: zod.string(),
+          binLocations: zod
+            .array(zod.string())
+            .describe(
+              "Bin locations where this part is stored (a part may live in multiple bins)",
+            ),
           aiKeywords: zod.array(zod.string()),
           enrichedAt: zod.coerce.date().nullish(),
           createdAt: zod.coerce.date(),

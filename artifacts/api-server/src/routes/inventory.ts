@@ -49,7 +49,7 @@ router.get("/", async (req, res) => {
     res.json({
       items: items.map(item => ({
         ...item,
-        binLocation: item.binLocation,
+        binLocations: item.binLocations,
         aiKeywords: item.aiKeywords,
       })),
       total: Number(countResult[0]?.count ?? 0),
@@ -218,7 +218,7 @@ router.post("/search", async (req, res) => {
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
-      bin_location: string; ai_keywords: string[]; enriched_at: Date | null;
+      bin_locations: string[]; ai_keywords: string[]; enriched_at: Date | null;
       created_at: Date; updated_at: Date;
       fts_rank: number; trgm_sim: number;
     };
@@ -242,7 +242,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_location, i.ai_keywords, i.enriched_at, i.created_at, i.updated_at,
+              i.bin_locations, i.ai_keywords, i.enriched_at, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 to_tsvector('english',
                   coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
@@ -323,7 +323,7 @@ router.post("/search", async (req, res) => {
         catalog: row.catalog,
         description: row.description,
         // Safe fallbacks for fields not included in the runtime shape-validation filter
-        binLocation: typeof row.bin_location === "string" ? row.bin_location : "",
+        binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as string[] : [],
         aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
@@ -506,7 +506,7 @@ function requireAdminAuth(
 router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
   try {
     const { items } = req.body as {
-      items: Array<{ vendor: string; catalog: string; description?: string; binLocation?: string }>;
+      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: string[] }>;
     };
 
     if (!items?.length) {
@@ -533,7 +533,13 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
           .update(inventoryTable)
           .set({
             description: item.description ?? existing[0]?.description,
-            binLocation: item.binLocation ?? existing[0]?.binLocation,
+            // Treat empty/omitted binLocations as "no change" to avoid
+            // accidentally wiping bins during bulk re-uploads where the source
+            // file lacks a bin column. To explicitly clear, edit per-item.
+            binLocations:
+              item.binLocations && item.binLocations.length > 0
+                ? item.binLocations
+                : existing[0]?.binLocations,
             updatedAt: new Date(),
           })
           .where(eq(inventoryTable.id, existing[0]!.id));
@@ -543,7 +549,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
           vendor: item.vendor.toUpperCase(),
           catalog: item.catalog,
           description: item.description ?? "",
-          binLocation: item.binLocation ?? "",
+          binLocations: item.binLocations ?? [],
           aiKeywords: [],
         });
         inserted++;

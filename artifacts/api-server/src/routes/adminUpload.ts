@@ -80,7 +80,7 @@ interface ParsedRow {
   vendor: string;
   catalog: string;
   description: string;
-  binLocation: string;
+  binLocations: string[];
 }
 
 /**
@@ -105,11 +105,16 @@ function parseCsv(csvText: string): ParsedRow[] | null {
     const vendor = fields[vendorIdx]?.trim() ?? "";
     const catalog = fields[catalogIdx]?.trim() ?? "";
     if (!vendor || !catalog) continue; // skip blank/invalid rows
+    const binCell = (binIdx >= 0 ? fields[binIdx]?.trim() : "") ?? "";
+    // CSV may pack multiple bins separated by ; or | — split, trim, drop blanks
+    const binLocations = binCell
+      ? binCell.split(/[;|]/).map(b => b.trim()).filter(b => b.length > 0)
+      : [];
     rows.push({
       vendor,
       catalog,
       description: (descIdx >= 0 ? fields[descIdx]?.trim() : "") ?? "",
-      binLocation: (binIdx >= 0 ? fields[binIdx]?.trim() : "") ?? "",
+      binLocations,
     });
   }
   return rows;
@@ -154,7 +159,10 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
           .update(inventoryTable)
           .set({
             description: row.description || (existing[0]?.description ?? ""),
-            binLocation: row.binLocation || (existing[0]?.binLocation ?? ""),
+            binLocations:
+              row.binLocations.length > 0
+                ? row.binLocations
+                : existing[0]?.binLocations ?? [],
             updatedAt: new Date(),
           })
           .where(sql`${inventoryTable.id} = ${existing[0]!.id}`);
@@ -164,7 +172,7 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
           vendor: row.vendor.toUpperCase(),
           catalog: row.catalog,
           description: row.description,
-          binLocation: row.binLocation,
+          binLocations: row.binLocations,
           aiKeywords: [],
         });
         inserted++;

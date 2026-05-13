@@ -50,9 +50,9 @@ function VariantChip({
   return (
     <View style={[varStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
       <Text style={[varStyles.catalog, { color: colors.primary }]}>{item.catalog}</Text>
-      {item.binLocation ? (
+      {item.binLocations && item.binLocations.length > 0 ? (
         <Text style={[varStyles.bin, { color: colors.mutedForeground }]}>
-          {item.binLocation}
+          {item.binLocations.join(", ")}
         </Text>
       ) : null}
     </View>
@@ -120,12 +120,13 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: Re
           {item.description || "No description"}
         </Text>
 
-        {/* Bin location */}
-        {item.binLocation ? (
+        {/* Bin location(s) — a single part can live in multiple bins */}
+        {item.binLocations && item.binLocations.length > 0 ? (
           <View style={[cardStyles.binRow, { backgroundColor: colors.accent }]}>
             <Text style={[cardStyles.binIcon, { color: colors.accentForeground }]}>📍</Text>
             <Text style={[cardStyles.binText, { color: colors.accentForeground }]}>
-              Bin: {item.binLocation}
+              {item.binLocations.length === 1 ? "Bin: " : "Bins: "}
+              {item.binLocations.join(", ")}
             </Text>
           </View>
         ) : null}

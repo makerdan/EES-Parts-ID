@@ -30,8 +30,15 @@ type ParsedRow = {
   vendor: string;
   catalog: string;
   description: string;
-  binLocation: string;
+  binLocations: string[];
 };
+
+// CSV/XLSX cell may pack multiple bins separated by ; or | — split, trim, drop blanks.
+function parseBinCell(cell: string): string[] {
+  const trimmed = cell.trim();
+  if (!trimmed) return [];
+  return trimmed.split(/[;|]/).map(b => b.trim()).filter(b => b.length > 0);
+}
 
 type EnrichProgress = {
   progress: number;
@@ -101,7 +108,7 @@ function parseCSV(text: string): ParsedRow[] {
       vendor: vendor || "UNKNOWN",
       catalog: catalog || "UNKNOWN",
       description: descCol >= 0 ? cells[descCol]?.trim() ?? "" : "",
-      binLocation: binCol >= 0 ? cells[binCol]?.trim() ?? "" : "",
+      binLocations: binCol >= 0 ? parseBinCell(cells[binCol] ?? "") : [],
     });
   }
   return rows;
@@ -174,7 +181,7 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
       vendor: vendor || "UNKNOWN",
       catalog: catalog || "UNKNOWN",
       description: descCol >= 0 ? cells[descCol] ?? "" : "",
-      binLocation: binCol >= 0 ? cells[binCol] ?? "" : "",
+      binLocations: binCol >= 0 ? parseBinCell(cells[binCol] ?? "") : [],
     });
   }
   return rows;
@@ -195,8 +202,10 @@ function InventoryRow({ item, colors }: { item: InventoryItem; colors: ReturnTyp
         ) : null}
       </View>
       <View style={rowStyles.right}>
-        {item.binLocation ? (
-          <Text style={[rowStyles.bin, { color: colors.primary }]}>{item.binLocation}</Text>
+        {item.binLocations && item.binLocations.length > 0 ? (
+          <Text style={[rowStyles.bin, { color: colors.primary }]}>
+            {item.binLocations.join(", ")}
+          </Text>
         ) : null}
         <View style={[rowStyles.enrichBadge, { backgroundColor: isEnriched ? colors.success + "22" : colors.muted }]}>
           <Text style={[rowStyles.enrichText, { color: isEnriched ? colors.success : colors.mutedForeground }]}>
@@ -613,7 +622,16 @@ export default function UploadScreen() {
           "Content-Type": "application/json",
           ...adminHeaders,
         },
-        body: JSON.stringify({ items: parsedRows }),
+        // Omit binLocations when empty so the server treats it as "no change"
+        // and does not wipe existing bins on rows whose source row had no bin
+        // value (e.g. file with no bin column, or blank cell).
+        body: JSON.stringify({
+          items: parsedRows.map(({ vendor, catalog, description, binLocations }) =>
+            binLocations.length > 0
+              ? { vendor, catalog, description, binLocations }
+              : { vendor, catalog, description }
+          ),
+        }),
       });
 
       if (!response.ok) {
@@ -774,7 +792,8 @@ export default function UploadScreen() {
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Accepts: CSV, Excel (.xlsx/.xls), ODS{"\n"}
                   Required columns: vendor, catalog{"\n"}
-                  Optional: description, bin (or binLocation)
+                  Optional: description, bin (or binLocation){"\n"}
+                  Multiple bins per row: separate with ; or |
                 </Text>
 
                 <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
@@ -822,7 +841,7 @@ export default function UploadScreen() {
                         {row.description}
                       </Text>
                       <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
-                        {row.binLocation}
+                        {row.binLocations.join(", ")}
                       </Text>
                     </View>
                   ))}

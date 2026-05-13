@@ -187,7 +187,7 @@ describe("POST /api/inventory/upsert-batch", () => {
             vendor: "JEST-VENDOR",
             catalog: NEW_CATALOG,
             description: "Jest integration test item",
-            binLocation: "TEST-BIN",
+            binLocations: ["TEST-BIN"],
           },
         ],
       })

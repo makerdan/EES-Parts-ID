@@ -11,7 +11,8 @@ export interface InventoryItem {
   vendor: string;
   catalog: string;
   description: string;
-  binLocation: string;
+  /** Bin locations where this part is stored (a part may live in multiple bins) */
+  binLocations: string[];
   aiKeywords: string[];
   enrichedAt?: Date | null;
   createdAt: Date;

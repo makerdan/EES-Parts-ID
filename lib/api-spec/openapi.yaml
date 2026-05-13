@@ -227,8 +227,11 @@ components:
           type: string
         description:
           type: string
-        binLocation:
-          type: string
+        binLocations:
+          type: array
+          items:
+            type: string
+          description: Bin locations where this part is stored (a part may live in multiple bins)
         aiKeywords:
           type: array
           items:
@@ -248,7 +251,7 @@ components:
         - vendor
         - catalog
         - description
-        - binLocation
+        - binLocations
         - aiKeywords
         - createdAt
         - updatedAt
@@ -407,8 +410,11 @@ components:
                 type: string
               description:
                 type: string
-              binLocation:
-                type: string
+              binLocations:
+                type: array
+                items:
+                  type: string
+                description: Bin locations for this part (omit or pass empty array to clear)
             required:
               - vendor
               - catalog
