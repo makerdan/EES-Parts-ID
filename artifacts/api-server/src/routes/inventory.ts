@@ -503,8 +503,25 @@ function requireAdminAuth(
 }
 
 // ── POST /inventory/upsert-batch ──────────────────────────────────────────────
+// Cap the number of rows accepted in a single upsert-batch call. Higher than
+// any legitimate UI flow (per-item bin edits send 1; bulk uploads use the
+// /admin/upload route). Prevents a single oversized request from OOMing the
+// server during DB processing.
+const UPSERT_BATCH_MAX_ITEMS = 5000;
+// Reject the request before doing any DB work if the body is unreasonably
+// large. The global JSON parser is set to 25mb (for AI image payloads); these
+// upsert routes have no business sending anything close to that.
+const UPSERT_BATCH_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+
 router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
   try {
+    const contentLength = Number(req.headers["content-length"] ?? 0);
+    if (contentLength > UPSERT_BATCH_MAX_BYTES) {
+      return void res.status(413).json({
+        error: `Request body too large (limit ${UPSERT_BATCH_MAX_BYTES} bytes)`,
+      });
+    }
+
     const { items } = req.body as {
       items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: string[] }>;
     };
@@ -513,47 +530,45 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
       return void res.status(400).json({ error: "No items provided" });
     }
 
+    if (items.length > UPSERT_BATCH_MAX_ITEMS) {
+      return void res.status(413).json({
+        error: `Too many items in batch (max ${UPSERT_BATCH_MAX_ITEMS})`,
+      });
+    }
+
     let inserted = 0;
     let updated = 0;
 
     for (const item of items) {
-      const existing = await db
-        .select()
-        .from(inventoryTable)
-        .where(
-          and(
-            sql`UPPER(${inventoryTable.vendor}) = UPPER(${item.vendor})`,
-            sql`UPPER(${inventoryTable.catalog}) = UPPER(${item.catalog})`,
-          ),
-        )
-        .limit(1);
-
-      if (existing.length > 0) {
-        await db
-          .update(inventoryTable)
-          .set({
-            description: item.description ?? existing[0]?.description,
-            // Treat empty/omitted binLocations as "no change" to avoid
-            // accidentally wiping bins during bulk re-uploads where the source
-            // file lacks a bin column. To explicitly clear, edit per-item.
-            binLocations:
-              item.binLocations && item.binLocations.length > 0
-                ? item.binLocations
-                : existing[0]?.binLocations,
-            updatedAt: new Date(),
-          })
-          .where(eq(inventoryTable.id, existing[0]!.id));
-        updated++;
-      } else {
-        await db.insert(inventoryTable).values({
+      // Atomic upsert via the (vendor, catalog) unique index. Mirrors the seed
+      // importer pattern so that two concurrent writers for the same key can't
+      // both miss-then-insert and race on the unique constraint.
+      const result = await db
+        .insert(inventoryTable)
+        .values({
           vendor: item.vendor.toUpperCase(),
           catalog: item.catalog,
           description: item.description ?? "",
           binLocations: item.binLocations ?? [],
           aiKeywords: [],
-        });
-        inserted++;
-      }
+        })
+        .onConflictDoUpdate({
+          target: [inventoryTable.vendor, inventoryTable.catalog],
+          set: {
+            // Preserve existing description when the incoming value is empty
+            // (matches /admin/upload semantics — re-uploads lacking a
+            // description column shouldn't blank out enriched descriptions).
+            description: sql`CASE WHEN length(EXCLUDED.description) > 0 THEN EXCLUDED.description ELSE ${inventoryTable.description} END`,
+            // Preserve existing bins when no bin data is supplied — guards
+            // multi-bin assignments during bulk re-uploads (Task #455).
+            binLocations: sql`CASE WHEN coalesce(array_length(EXCLUDED.bin_locations, 1), 0) > 0 THEN EXCLUDED.bin_locations ELSE ${inventoryTable.binLocations} END`,
+            updatedAt: sql`now()`,
+          },
+        })
+        .returning({ isNew: sql<boolean>`(xmax = 0)` });
+
+      if (result[0]?.isNew) inserted++;
+      else updated++;
     }
 
     res.json({ inserted, updated, total: items.length });

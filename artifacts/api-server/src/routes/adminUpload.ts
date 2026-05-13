@@ -20,11 +20,18 @@
  */
 
 import { Router } from "express";
-import { and, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
 
 const router = Router();
+
+// Reject uploads larger than this before doing any parsing or DB work. The
+// global JSON parser is set to 25mb (for AI image payloads); CSV uploads
+// shouldn't approach that.
+const UPLOAD_MAX_BYTES = 15 * 1024 * 1024; // 15 MB
+// Defense-in-depth cap on the parsed CSV string length itself.
+const UPLOAD_MAX_CSV_CHARS = 15 * 1024 * 1024; // ~15M chars
 
 // ── Admin auth middleware (same contract as inventory.ts) ─────────────────────
 function requireAdminAuth(
@@ -123,10 +130,23 @@ function parseCsv(csvText: string): ParsedRow[] | null {
 // ── POST /admin/upload ────────────────────────────────────────────────────────
 router.post("/upload", requireAdminAuth, async (req, res) => {
   try {
+    const contentLength = Number(req.headers["content-length"] ?? 0);
+    if (contentLength > UPLOAD_MAX_BYTES) {
+      return void res.status(413).json({
+        error: `Request body too large (limit ${UPLOAD_MAX_BYTES} bytes)`,
+      });
+    }
+
     const { csv } = req.body as { csv?: string };
 
     if (!csv || typeof csv !== "string" || !csv.trim()) {
       return void res.status(400).json({ error: "Missing or empty csv field" });
+    }
+
+    if (csv.length > UPLOAD_MAX_CSV_CHARS) {
+      return void res.status(413).json({
+        error: `CSV payload too large (limit ${UPLOAD_MAX_CSV_CHARS} characters)`,
+      });
     }
 
     const rows = parseCsv(csv);
@@ -143,40 +163,32 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
     let updated = 0;
 
     for (const row of rows) {
-      const existing = await db
-        .select()
-        .from(inventoryTable)
-        .where(
-          and(
-            sql`UPPER(${inventoryTable.vendor}) = UPPER(${row.vendor})`,
-            sql`UPPER(${inventoryTable.catalog}) = UPPER(${row.catalog})`,
-          ),
-        )
-        .limit(1);
-
-      if (existing.length > 0) {
-        await db
-          .update(inventoryTable)
-          .set({
-            description: row.description || (existing[0]?.description ?? ""),
-            binLocations:
-              row.binLocations.length > 0
-                ? row.binLocations
-                : existing[0]?.binLocations ?? [],
-            updatedAt: new Date(),
-          })
-          .where(sql`${inventoryTable.id} = ${existing[0]!.id}`);
-        updated++;
-      } else {
-        await db.insert(inventoryTable).values({
+      // Atomic upsert via the (vendor, catalog) unique index. Mirrors the seed
+      // importer pattern so concurrent uploads of the same key can't race on
+      // the unique constraint.
+      const result = await db
+        .insert(inventoryTable)
+        .values({
           vendor: row.vendor.toUpperCase(),
           catalog: row.catalog,
           description: row.description,
           binLocations: row.binLocations,
           aiKeywords: [],
-        });
-        inserted++;
-      }
+        })
+        .onConflictDoUpdate({
+          target: [inventoryTable.vendor, inventoryTable.catalog],
+          set: {
+            description: sql`CASE WHEN length(EXCLUDED.description) > 0 THEN EXCLUDED.description ELSE ${inventoryTable.description} END`,
+            // Preserve existing bins when no bin data is supplied — guards
+            // multi-bin assignments during partial re-uploads (Task #455).
+            binLocations: sql`CASE WHEN coalesce(array_length(EXCLUDED.bin_locations, 1), 0) > 0 THEN EXCLUDED.bin_locations ELSE ${inventoryTable.binLocations} END`,
+            updatedAt: sql`now()`,
+          },
+        })
+        .returning({ isNew: sql<boolean>`(xmax = 0)` });
+
+      if (result[0]?.isNew) inserted++;
+      else updated++;
     }
 
     res.json({ inserted, updated, total: rows.length });

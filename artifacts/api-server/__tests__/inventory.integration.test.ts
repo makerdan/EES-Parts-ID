@@ -198,6 +198,83 @@ describe("POST /api/inventory/upsert-batch", () => {
     expect(res.body.total).toBe(1);
   });
 
+  it("handles two concurrent upserts of the same (vendor, catalog) without unique-constraint failure", async () => {
+    const CONCURRENT_CATALOG = "JEST-ITG-UPSERT-CONCURRENT-001";
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { and: andOp, sql: sqlOp } = await import("drizzle-orm");
+    // Make sure the row does not pre-exist so both writers race on insert.
+    await db
+      .delete(inventoryTable)
+      .where(
+        andOp(
+          sqlOp`UPPER(${inventoryTable.vendor}) = ${"JEST-VENDOR"}`,
+          sqlOp`${inventoryTable.catalog} = ${CONCURRENT_CATALOG}`,
+        ),
+      );
+
+    const send = (description: string) =>
+      supertest(app)
+        .post("/api/inventory/upsert-batch")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({
+          items: [
+            {
+              vendor: "JEST-VENDOR",
+              catalog: CONCURRENT_CATALOG,
+              description,
+              binLocations: ["RACE-BIN"],
+            },
+          ],
+        });
+
+    const [a, b] = await Promise.all([send("writer-a"), send("writer-b")]);
+
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    // Together they touched exactly one row: one insert, one update.
+    expect(a.body.inserted + b.body.inserted).toBe(1);
+    expect(a.body.updated + b.body.updated).toBe(1);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(
+        andOp(
+          sqlOp`UPPER(${inventoryTable.vendor}) = ${"JEST-VENDOR"}`,
+          sqlOp`${inventoryTable.catalog} = ${CONCURRENT_CATALOG}`,
+        ),
+      );
+    expect(rows.length).toBe(1);
+    expect(["writer-a", "writer-b"]).toContain(rows[0]!.description);
+
+    // Cleanup.
+    await db
+      .delete(inventoryTable)
+      .where(
+        andOp(
+          sqlOp`UPPER(${inventoryTable.vendor}) = ${"JEST-VENDOR"}`,
+          sqlOp`${inventoryTable.catalog} = ${CONCURRENT_CATALOG}`,
+        ),
+      );
+  });
+
+  it("returns 413 when the items array exceeds the per-batch cap", async () => {
+    const oversized = Array.from({ length: 5001 }, (_, i) => ({
+      vendor: "JEST-VENDOR",
+      catalog: `JEST-ITG-OVERSIZED-${i}`,
+      description: "x",
+    }));
+
+    const res = await supertest(app)
+      .post("/api/inventory/upsert-batch")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ items: oversized })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/too many|max/i);
+  });
+
   it("updates an existing item and returns inserted=0, updated=1", async () => {
     // First insert
     await supertest(app)
