@@ -11,30 +11,9 @@ export interface InventoryItem {
   vendor: string;
   catalog: string;
   description: string;
-  /** Every bin this part is currently stocked in. Empty array means no bin assigned. */
-  binLocations: string[];
+  binLocation: string;
   aiKeywords: string[];
   enrichedAt?: Date | null;
-  /** User-set trade size that groups this part with others of the same
-product type but different physical sizes (e.g. `1/2"`, `3/4"`,
-`1"`). `null` when not assigned.
- */
-  tradeSize?: string | null;
-  /** Canonical full name for the vendor (e.g. "Eaton" for `ETN`),
-resolved from the `vendor_map` table by case-insensitive match
-on `vendor_map.code`. `null` when no mapping exists.
- */
-  vendorFullName?: string | null;
-  /** Human-readable name of the product series this item belongs to
-(e.g. "Eaton BR Breakers"), resolved from the `product_series`
-table when `series_id` is set. `null` when the item has no
-explicit series assignment.
- */
-  seriesName?: string | null;
-  /** Numeric primary key of the product series this item belongs to,
-or `null` when the item has no series assignment.
- */
-  seriesId?: number | null;
   createdAt: Date;
   updatedAt: Date;
 }

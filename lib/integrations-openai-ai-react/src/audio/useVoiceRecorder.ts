@@ -2,11 +2,16 @@
  * React hook for voice recording using MediaRecorder API.
  * Negotiates a supported MIME type across browsers (Chrome, Firefox, Safari).
  */
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useState } from "react";
 
-export type RecordingState = 'idle' | 'recording' | 'stopped';
+export type RecordingState = "idle" | "recording" | "stopped";
 
-const PREFERRED_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac'];
+const PREFERRED_MIME_TYPES = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/mp4",
+  "audio/aac",
+];
 
 function getSupportedMimeType(): string | undefined {
   for (const mimeType of PREFERRED_MIME_TYPES) {
@@ -18,7 +23,7 @@ function getSupportedMimeType(): string | undefined {
 }
 
 export function useVoiceRecorder() {
-  const [state, setState] = useState<RecordingState>('idle');
+  const [state, setState] = useState<RecordingState>("idle");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const mimeTypeRef = useRef<string | undefined>(undefined);
@@ -28,7 +33,9 @@ export function useVoiceRecorder() {
     const mimeType = getSupportedMimeType();
     mimeTypeRef.current = mimeType;
 
-    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    const recorder = mimeType
+      ? new MediaRecorder(stream, { mimeType })
+      : new MediaRecorder(stream);
 
     mediaRecorderRef.current = recorder;
     chunksRef.current = [];
@@ -38,22 +45,22 @@ export function useVoiceRecorder() {
     };
 
     recorder.start(100);
-    setState('recording');
+    setState("recording");
   }, []);
 
   const stopRecording = useCallback((): Promise<Blob> => {
     return new Promise((resolve) => {
       const recorder = mediaRecorderRef.current;
-      if (!recorder || recorder.state !== 'recording') {
+      if (!recorder || recorder.state !== "recording") {
         resolve(new Blob());
         return;
       }
 
       recorder.onstop = () => {
-        const blobType = mimeTypeRef.current ?? recorder.mimeType ?? 'audio/webm';
+        const blobType = mimeTypeRef.current ?? recorder.mimeType ?? "audio/webm";
         const blob = new Blob(chunksRef.current, { type: blobType });
         recorder.stream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
-        setState('stopped');
+        setState("stopped");
         resolve(blob);
       };
 

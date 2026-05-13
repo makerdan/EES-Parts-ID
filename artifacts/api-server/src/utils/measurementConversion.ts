@@ -26,21 +26,21 @@ const FT_PER_METER = 3.28084;
  * American electrical catalogues.
  */
 const TRADE_SIZES: ReadonlyArray<{ inches: number; label: string }> = [
-  { inches: 0.125, label: '1/8' },
-  { inches: 0.25, label: '1/4' },
-  { inches: 0.375, label: '3/8' },
-  { inches: 0.5, label: '1/2' },
-  { inches: 0.75, label: '3/4' },
-  { inches: 1.0, label: '1' },
-  { inches: 1.25, label: '1-1/4' },
-  { inches: 1.5, label: '1-1/2' },
-  { inches: 2.0, label: '2' },
-  { inches: 2.5, label: '2-1/2' },
-  { inches: 3.0, label: '3' },
-  { inches: 3.5, label: '3-1/2' },
-  { inches: 4.0, label: '4' },
-  { inches: 5.0, label: '5' },
-  { inches: 6.0, label: '6' },
+  { inches: 0.125, label: "1/8" },
+  { inches: 0.25,  label: "1/4" },
+  { inches: 0.375, label: "3/8" },
+  { inches: 0.5,   label: "1/2" },
+  { inches: 0.75,  label: "3/4" },
+  { inches: 1.0,   label: "1" },
+  { inches: 1.25,  label: "1-1/4" },
+  { inches: 1.5,   label: "1-1/2" },
+  { inches: 2.0,   label: "2" },
+  { inches: 2.5,   label: "2-1/2" },
+  { inches: 3.0,   label: "3" },
+  { inches: 3.5,   label: "3-1/2" },
+  { inches: 4.0,   label: "4" },
+  { inches: 5.0,   label: "5" },
+  { inches: 6.0,   label: "6" },
 ];
 
 /**
@@ -79,7 +79,7 @@ const WRITTEN_INCH_FORMS: ReadonlyArray<[RegExp, number]> = [
 function fmt(n: number, dp: number): string {
   const factor = Math.pow(10, dp);
   const rounded = Math.round((n + Number.EPSILON) * factor) / factor;
-  return rounded.toFixed(dp).replace(/\.?0+$/, '');
+  return rounded.toFixed(dp).replace(/\.?0+$/, "");
 }
 
 /**

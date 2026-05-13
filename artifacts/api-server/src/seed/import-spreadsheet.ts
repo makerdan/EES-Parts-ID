@@ -9,13 +9,6 @@
  * upsert-batch route semantics. Catalog is stored as-is (trimmed), consistent
  * with the unique index in lib/db/src/schema/inventory.ts.
  *
- * Multi-bin behavior:
- *   - A single bin cell may contain several bins separated by `,` `;` `/` or newlines.
- *   - Multiple rows for the same (vendor, catalog) accumulate their bins.
- *   - On upsert, new bins are MERGED ADDITIVELY into the part's existing list
- *     (case-insensitive de-dupe). Re-importing a sheet never removes a bin —
- *     bin removal is intentionally out of scope of the importer.
- *
  * Execution results (2026-05-01):
  *   Total rows read:   7397
  *   Valid rows:        7397
@@ -23,23 +16,17 @@
  *   Final DB count:    7397
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import * as XLSX from 'xlsx';
-import { db, pool } from '@workspace/db';
-import { inventoryTable } from '@workspace/db';
-import { sql } from 'drizzle-orm';
-import { aggregateRowsByPart } from '../utils/binLocations';
-import { deriveTradeSizeTokens } from '../utils/tradeSize';
-import { refreshSearchTokensForIds } from '../enrichment/refreshSearchTokens';
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import * as XLSX from "xlsx";
+import { db, pool } from "@workspace/db";
+import { inventoryTable } from "@workspace/db";
+import { sql } from "drizzle-orm";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const XLSX_PATH = resolve(
-  __dirname,
-  '../../../../attached_assets/Master_INC_Report_(04.29.2026)_-_For_PartsID_Database_1777605533561.xlsx'
-);
+const XLSX_PATH = resolve(__dirname, "../../../../attached_assets/Master_INC_Report_(04.29.2026)_-_For_PartsID_Database_1777605533561.xlsx");
 const BATCH_SIZE = 250;
 
 interface SpreadsheetRow {
@@ -51,77 +38,61 @@ interface SpreadsheetRow {
 }
 
 async function importSpreadsheet() {
-  console.log('Reading spreadsheet:', XLSX_PATH);
+  console.log("Reading spreadsheet:", XLSX_PATH);
   const buffer = readFileSync(XLSX_PATH);
-  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  const workbook = XLSX.read(buffer, { type: "buffer" });
 
   const sheetName = workbook.SheetNames[0];
   console.log(`Using sheet: ${sheetName}`);
 
   const sheet = workbook.Sheets[sheetName!]!;
   const rawRows: SpreadsheetRow[] = XLSX.utils.sheet_to_json(sheet, {
-    defval: '',
+    defval: "",
     raw: false,
   });
 
   console.log(`Total rows read: ${rawRows.length}`);
 
   if (rawRows.length === 0) {
-    console.error('No rows found in spreadsheet');
+    console.error("No rows found in spreadsheet");
     process.exit(1);
   }
 
   // Inspect column names
   const firstRow = rawRows[0]!;
-  console.log('Columns found:', Object.keys(firstRow));
+  console.log("Columns found:", Object.keys(firstRow));
 
   // Normalize column names (lowercase, strip spaces)
   function normalizeKey(row: SpreadsheetRow, ...candidates: string[]): string {
     for (const key of Object.keys(row)) {
-      const normalized = key.toLowerCase().replace(/\s+/g, '');
-      if (candidates.some((c) => normalized === c || normalized.includes(c))) {
-        return (row[key] as string) ?? '';
+      const normalized = key.toLowerCase().replace(/\s+/g, "");
+      if (candidates.some(c => normalized === c || normalized.includes(c))) {
+        return row[key] as string ?? "";
       }
     }
-    return '';
+    return "";
   }
 
-  // Map raw rows → flat shape, preserving the bin cell un-split so the
-  // aggregator can split-and-merge once across the whole sheet.
-  const flatRows = rawRows
+  // Map rows to inventory schema
+  const items = rawRows
     .map((row) => ({
-      vendor: (normalizeKey(row, 'vendor') || '').toString().trim(),
-      catalog: (normalizeKey(row, 'catalog', 'catalognumber', 'part', 'partnumber', 'item') || '')
-        .toString()
-        .trim(),
-      description: (normalizeKey(row, 'description', 'desc') || '').toString().trim(),
-      binCell: (normalizeKey(row, 'binlocation', 'bin', 'location', 'binloc') || '')
-        .toString()
-        .trim(),
+      vendor: (normalizeKey(row, "vendor") || "").toString().trim().toUpperCase(),
+      catalog: (normalizeKey(row, "catalog", "catalognumber", "part", "partnumber", "item") || "").toString().trim(),
+      description: (normalizeKey(row, "description", "desc") || "").toString().trim(),
+      binLocation: (normalizeKey(row, "binlocation", "bin", "location", "binloc") || "").toString().trim(),
     }))
-    .filter((r) => r.vendor && r.catalog);
+    .filter((item) => item.vendor && item.catalog);
 
-  // Collapse duplicate (vendor, catalog) rows into one part with merged bins.
-  const items = aggregateRowsByPart(flatRows);
-
-  console.log(`Valid rows after filtering: ${flatRows.length}`);
-  console.log(`Unique parts after bin-merge: ${items.length}`);
+  console.log(`Valid rows after filtering: ${items.length}`);
 
   let inserted = 0;
   let updated = 0;
   let errors = 0;
-  // Collect every id we touch so we can refresh search_tokens (and merge
-  // derived trade-size keyword tokens) once the import finishes — without
-  // this step the index would silently lag the spreadsheet for up to the
-  // next enrichment / rebuild-tokens pass.
-  const touchedIds: number[] = [];
 
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
     const batch = items.slice(i, i + BATCH_SIZE);
 
     try {
-      // ON CONFLICT merges bin_locations additively (case-insensitively
-      // de-duplicated) so re-imports never lose a bin.
       const result = await db
         .insert(inventoryTable)
         .values(
@@ -129,30 +100,15 @@ async function importSpreadsheet() {
             vendor: item.vendor,
             catalog: item.catalog,
             description: item.description,
-            binLocations: item.binLocations,
-            // Pre-seed conduit / pipe rows with their derived trade-size
-            // tokens so the Trade Size filter chip works immediately,
-            // before any AI enrichment runs.
-            aiKeywords: deriveTradeSizeTokens(item),
+            binLocation: item.binLocation,
+            aiKeywords: [],
           }))
         )
         .onConflictDoUpdate({
           target: [inventoryTable.vendor, inventoryTable.catalog],
           set: {
             description: sql`EXCLUDED.description`,
-            // COALESCE guards against ARRAY_AGG returning NULL when both the
-            // existing and incoming arrays are empty (after filtering blanks),
-            // since bin_locations is NOT NULL.
-            binLocations: sql`COALESCE((
-              SELECT ARRAY_AGG(b)
-              FROM (
-                SELECT DISTINCT ON (UPPER(b)) b
-                FROM unnest(${inventoryTable.binLocations} || EXCLUDED.bin_locations)
-                  WITH ORDINALITY AS t(b, ord)
-                WHERE TRIM(b) <> ''
-                ORDER BY UPPER(b), ord
-              ) AS deduped
-            ), ARRAY[]::text[])`,
+            binLocation: sql`EXCLUDED.bin_location`,
             updatedAt: sql`now()`,
           },
         })
@@ -161,7 +117,6 @@ async function importSpreadsheet() {
       for (const row of result) {
         if (row.isNew) inserted++;
         else updated++;
-        touchedIds.push(row.id);
       }
     } catch (err) {
       console.error(`Batch ${i}–${i + batch.length} failed:`, err);
@@ -174,22 +129,16 @@ async function importSpreadsheet() {
     }
   }
 
-  console.log('\n=== Import Complete ===');
+  console.log("\n=== Import Complete ===");
   console.log(`Inserted: ${inserted}`);
   console.log(`Updated:  ${updated}`);
   console.log(`Errors:   ${errors}`);
   console.log(`Total:    ${inserted + updated + errors}`);
 
-  if (touchedIds.length > 0) {
-    console.log(`\nRefreshing search_tokens for ${touchedIds.length} rows…`);
-    await refreshSearchTokensForIds(touchedIds);
-    console.log('search_tokens refresh complete.');
-  }
-
   await pool.end();
 }
 
 importSpreadsheet().catch((err) => {
-  console.error('Import failed:', err);
+  console.error("Import failed:", err);
   process.exit(1);
 });

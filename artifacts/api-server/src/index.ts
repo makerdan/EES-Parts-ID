@@ -1,26 +1,12 @@
-/**
- * API server entry point. Reads PORT from the environment (assigned per
- * artifact by the Replit proxy), starts the Express app, and wires up a
- * graceful shutdown that drains the Postgres pool before exit so
- * in-flight queries complete cleanly.
- */
-import app from './app';
-import { logger } from './lib/logger';
-import { pool } from '@workspace/db';
-import {
-  start as startEnrichmentRunCleanup,
-  stop as stopEnrichmentRunCleanup,
-} from './lib/enrichmentRunCleanup';
-import {
-  seedQuickLookups,
-  startQuickLookupScheduler,
-  stopQuickLookupScheduler,
-} from './lib/seedQuickLookups';
+import app from "./app";
+import { logger } from "./lib/logger";
 
-const rawPort = process.env['PORT'];
+const rawPort = process.env["PORT"];
 
 if (!rawPort) {
-  throw new Error('PORT environment variable is required but was not provided.');
+  throw new Error(
+    "PORT environment variable is required but was not provided.",
+  );
 }
 
 const port = Number(rawPort);
@@ -29,77 +15,24 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-// ── Global error safety net ────────────────────────────────────────────────────
-// Catch async errors that escaped every try/catch. Log them but don't crash
-// the process — the request will time out rather than taking the whole server down.
-process.on('unhandledRejection', (reason) => {
-  logger.error({ reason }, 'Unhandled promise rejection');
-});
-
-// Uncaught synchronous exceptions are unrecoverable — log and exit so the
-// workflow manager can restart the process cleanly.
-process.on('uncaughtException', (err) => {
-  logger.error({ err }, 'Uncaught exception — exiting');
-  process.exit(1);
-});
-
-// ── Port-conflict retry ────────────────────────────────────────────────────────
 const MAX_RETRIES = 5;
-const RETRY_DELAY_MS = 1_000;
+const RETRY_DELAY_MS = 1000;
 
 function startServer(retries: number): void {
   const server = app.listen(port, () => {
-    logger.info({ port }, 'Server listening');
-    startEnrichmentRunCleanup();
-    // Warm the quick lookup cache non-blocking — errors logged, not fatal.
-    // After the initial seed completes (or fails), start the daily background
-    // refresh scheduler so answers stay current without a server restart.
-    seedQuickLookups()
-      .catch((err) => logger.error({ err }, 'Quick lookup seeder failed'))
-      .finally(() => startQuickLookupScheduler());
+    logger.info({ port }, "Server listening");
   });
 
-  // Defer the rest of server-startup wiring to a separate handler so
-  // it isn't gated on the startup above.
-  server.on('listening', () => {
-    // ── Graceful shutdown ──────────────────────────────────────────────────────
-    // Stop accepting new connections, drain in-flight requests, then close the
-    // DB pool. Forced exit after 10 s if drain takes too long (e.g. hung SSE).
-    const shutdown = (signal: string) => {
-      logger.info({ signal }, 'Shutdown signal — draining connections…');
-
-      // Cancel background timers first so they can't fire mid-shutdown.
-      stopEnrichmentRunCleanup();
-      stopQuickLookupScheduler();
-
-      server.close(async () => {
-        logger.info('HTTP server closed');
-        try {
-          await pool.end();
-          logger.info('Database pool closed');
-        } catch (err) {
-          logger.error({ err }, 'Error closing database pool');
-        }
-        process.exit(0);
-      });
-
-      setTimeout(() => {
-        logger.warn('Graceful shutdown timed out after 10 s — forcing exit');
-        process.exit(1);
-      }, 10_000).unref();
-    };
-
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
-  });
-
-  server.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE' && retries > 0) {
-      logger.warn({ port, retriesLeft: retries - 1 }, 'Port in use — retrying in 1s…');
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE" && retries > 0) {
+      logger.warn(
+        { port, retriesLeft: retries - 1 },
+        "Port in use — retrying in 1s…",
+      );
       server.close();
       setTimeout(() => startServer(retries - 1), RETRY_DELAY_MS);
     } else {
-      logger.error({ err }, 'Error listening on port');
+      logger.error({ err }, "Error listening on port");
       process.exit(1);
     }
   });

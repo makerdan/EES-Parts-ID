@@ -6,6 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type BarcodeRecentParams = {
-  limit?: number;
+export type UpsertInventoryBodyItemsItem = {
+  vendor: string;
+  catalog: string;
+  description?: string;
+  binLocation?: string;
 };

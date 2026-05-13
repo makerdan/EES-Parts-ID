@@ -1,40 +1,32 @@
-/**
- * Orval codegen config. Reads `openapi.yaml`, emits the React Query
- * hooks into `lib/api-client-react/src/generated/` and the matching
- * Zod schemas into `lib/api-zod/src/generated/`.
- *
- * Run with: `pnpm --filter @workspace/api-spec run codegen`.
- * The generated output is committed — CI does not regenerate.
- */
-import { defineConfig, InputTransformerFn } from 'orval';
-import path from 'path';
+import { defineConfig, InputTransformerFn } from "orval";
+import path from "path";
 
-const root = path.resolve(__dirname, '..', '..');
-const apiClientReactSrc = path.resolve(root, 'lib', 'api-client-react', 'src');
-const apiZodSrc = path.resolve(root, 'lib', 'api-zod', 'src');
+const root = path.resolve(__dirname, "..", "..");
+const apiClientReactSrc = path.resolve(root, "lib", "api-client-react", "src");
+const apiZodSrc = path.resolve(root, "lib", "api-zod", "src");
 
 // Our exports make assumptions about the title of the API being "Api" (i.e. generated output is `api.ts`).
 const titleTransformer: InputTransformerFn = (config) => {
   config.info ??= {};
-  config.info.title = 'Api';
+  config.info.title = "Api";
 
   return config;
 };
 
 export default defineConfig({
-  'api-client-react': {
+  "api-client-react": {
     input: {
-      target: './openapi.yaml',
+      target: "./openapi.yaml",
       override: {
         transformer: titleTransformer,
       },
     },
     output: {
       workspace: apiClientReactSrc,
-      target: 'generated',
-      client: 'react-query',
-      mode: 'split',
-      baseUrl: '/api',
+      target: "generated",
+      client: "react-query",
+      mode: "split",
+      baseUrl: "/api",
       clean: true,
       prettier: true,
       override: {
@@ -42,25 +34,25 @@ export default defineConfig({
           includeHttpResponseReturnType: false,
         },
         mutator: {
-          path: path.resolve(apiClientReactSrc, 'custom-fetch.ts'),
-          name: 'customFetch',
+          path: path.resolve(apiClientReactSrc, "custom-fetch.ts"),
+          name: "customFetch",
         },
       },
     },
   },
   zod: {
     input: {
-      target: './openapi.yaml',
+      target: "./openapi.yaml",
       override: {
         transformer: titleTransformer,
       },
     },
     output: {
       workspace: apiZodSrc,
-      client: 'zod',
-      target: 'generated',
-      schemas: { path: 'generated/types', type: 'typescript' },
-      mode: 'split',
+      client: "zod",
+      target: "generated",
+      schemas: { path: "generated/types", type: "typescript" },
+      mode: "split",
       clean: true,
       prettier: true,
       override: {

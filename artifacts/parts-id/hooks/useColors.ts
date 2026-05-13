@@ -1,13 +1,7 @@
-/**
- * Theme color hook. Returns the active palette (dark amber industrial by
- * default; light fallback for daylight loading docks) keyed by semantic
- * names — components never reference hex codes directly so a theme swap
- * is a one-file change.
- */
-import { useColorScheme } from 'react-native';
+import { useColorScheme } from "react-native";
 
-import colors from '@/constants/colors';
-import { useApp } from '@/contexts/AppContext';
+import colors from "@/constants/colors";
+import { useApp } from "@/contexts/AppContext";
 
 /**
  * Returns the design tokens for the current effective color scheme.
@@ -24,10 +18,11 @@ export function useColors() {
   const systemScheme = useColorScheme();
   const { settings } = useApp();
 
-  const themeMode = settings.themeMode ?? 'system';
-  const effectiveScheme = themeMode === 'system' ? systemScheme : themeMode;
+  const themeMode = settings.themeMode ?? "system";
+  const effectiveScheme =
+    themeMode === "system" ? systemScheme : themeMode;
 
-  const palette = effectiveScheme === 'dark' ? colors.dark : colors.light;
+  const palette = effectiveScheme === "dark" ? colors.dark : colors.light;
   return { ...palette, radius: colors.radius };
 }
 
@@ -38,6 +33,6 @@ export function useColors() {
 export function useIsDark(): boolean {
   const systemScheme = useColorScheme();
   const { settings } = useApp();
-  const themeMode = settings.themeMode ?? 'system';
-  return themeMode === 'system' ? systemScheme === 'dark' : themeMode === 'dark';
+  const themeMode = settings.themeMode ?? "system";
+  return themeMode === "system" ? systemScheme === "dark" : themeMode === "dark";
 }

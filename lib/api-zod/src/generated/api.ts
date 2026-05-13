@@ -5,7 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import * as zod from 'zod';
+import * as zod from "zod";
 
 /**
  * Returns server health status
@@ -20,23 +20,10 @@ export const HealthCheckResponse = zod.object({
  */
 export const listInventoryQueryPageDefault = 1;
 export const listInventoryQueryLimitDefault = 50;
-export const listInventoryQueryUnenrichedOnlyDefault = false;
 
 export const ListInventoryQueryParams = zod.object({
   page: zod.coerce.number().default(listInventoryQueryPageDefault),
   limit: zod.coerce.number().default(listInventoryQueryLimitDefault),
-  unenrichedOnly: zod.coerce
-    .boolean()
-    .default(listInventoryQueryUnenrichedOnlyDefault)
-    .describe(
-      'When true, restricts both `items` and `total` to inventory rows that have not been AI-enriched (`enrichedAt IS NULL`). Default false preserves the global list.'
-    ),
-  q: zod.coerce
-    .string()
-    .optional()
-    .describe(
-      'Case-insensitive substring search across vendor, catalog, and description. When provided, only matching rows are returned and `total` reflects the filtered count.'
-    ),
 });
 
 export const ListInventoryResponse = zod.object({
@@ -46,40 +33,12 @@ export const ListInventoryResponse = zod.object({
       vendor: zod.string(),
       catalog: zod.string(),
       description: zod.string(),
-      binLocations: zod
-        .array(zod.string())
-        .describe(
-          'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-        ),
+      binLocation: zod.string(),
       aiKeywords: zod.array(zod.string()),
       enrichedAt: zod.coerce.date().nullish(),
-      tradeSize: zod
-        .string()
-        .nullish()
-        .describe(
-          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-        ),
-      vendorFullName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-        ),
-      seriesName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-        ),
-      seriesId: zod
-        .number()
-        .nullish()
-        .describe(
-          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
-    })
+    }),
   ),
   total: zod.number(),
   page: zod.number(),
@@ -106,23 +65,50 @@ export const SearchInventoryBody = zod.object({
     .min(searchInventoryBodyConfidenceThresholdMin)
     .max(searchInventoryBodyConfidenceThresholdMax)
     .default(searchInventoryBodyConfidenceThresholdDefault)
-    .describe('Minimum confidence percentage (0–100); default 50'),
-  category: zod.string().optional().describe('Part category \/ type chip filter'),
-  amperage: zod.string().optional().describe('Current rating chip filter'),
-  colorChip: zod.string().optional().describe('Color quick-pick chip filter'),
-  manufacturer: zod.string().optional().describe('Major manufacturer chip filter'),
-  sizeChip: zod.string().optional().describe('Trade size quick-pick chip filter'),
-  rating: zod.string().optional().describe('NEMA \/ IP \/ UL rating chip filter'),
-  wireType: zod.string().optional().describe('Wire insulation type chip filter'),
-  wireGauge: zod.string().optional().describe('AWG gauge chip filter'),
-  conduitType: zod.string().optional().describe('Conduit material\/type chip filter'),
-  conduitSize: zod.string().optional().describe('Conduit trade size chip filter'),
-  boxType: zod.string().optional().describe('Electrical box type chip filter'),
-  boxGangCount: zod.string().optional().describe('Box gang count chip filter'),
-  mountingType: zod.string().optional().describe('Mounting method chip filter'),
-  environment: zod.string().optional().describe('Installation environment chip filter'),
-  voltage: zod.string().optional().describe('Voltage rating chip filter'),
-  poleCount: zod.string().optional().describe('Pole count chip filter (breakers\/switches)'),
+    .describe("Minimum confidence percentage (0–100); default 50"),
+  category: zod
+    .string()
+    .optional()
+    .describe("Part category \/ type chip filter"),
+  amperage: zod.string().optional().describe("Current rating chip filter"),
+  colorChip: zod.string().optional().describe("Color quick-pick chip filter"),
+  manufacturer: zod
+    .string()
+    .optional()
+    .describe("Major manufacturer chip filter"),
+  sizeChip: zod
+    .string()
+    .optional()
+    .describe("Trade size quick-pick chip filter"),
+  rating: zod
+    .string()
+    .optional()
+    .describe("NEMA \/ IP \/ UL rating chip filter"),
+  wireType: zod
+    .string()
+    .optional()
+    .describe("Wire insulation type chip filter"),
+  wireGauge: zod.string().optional().describe("AWG gauge chip filter"),
+  conduitType: zod
+    .string()
+    .optional()
+    .describe("Conduit material\/type chip filter"),
+  conduitSize: zod
+    .string()
+    .optional()
+    .describe("Conduit trade size chip filter"),
+  boxType: zod.string().optional().describe("Electrical box type chip filter"),
+  boxGangCount: zod.string().optional().describe("Box gang count chip filter"),
+  mountingType: zod.string().optional().describe("Mounting method chip filter"),
+  environment: zod
+    .string()
+    .optional()
+    .describe("Installation environment chip filter"),
+  voltage: zod.string().optional().describe("Voltage rating chip filter"),
+  poleCount: zod
+    .string()
+    .optional()
+    .describe("Pole count chip filter (breakers\/switches)"),
 });
 
 export const SearchInventoryResponse = zod.object({
@@ -133,37 +119,9 @@ export const SearchInventoryResponse = zod.object({
         vendor: zod.string(),
         catalog: zod.string(),
         description: zod.string(),
-        binLocations: zod
-          .array(zod.string())
-          .describe(
-            'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-          ),
+        binLocation: zod.string(),
         aiKeywords: zod.array(zod.string()),
         enrichedAt: zod.coerce.date().nullish(),
-        tradeSize: zod
-          .string()
-          .nullish()
-          .describe(
-            'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-          ),
-        vendorFullName: zod
-          .string()
-          .nullish()
-          .describe(
-            'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-          ),
-        seriesName: zod
-          .string()
-          .nullish()
-          .describe(
-            'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-          ),
-        seriesId: zod
-          .number()
-          .nullish()
-          .describe(
-            'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -177,174 +135,43 @@ export const SearchInventoryResponse = zod.object({
           vendor: zod.string(),
           catalog: zod.string(),
           description: zod.string(),
-          binLocations: zod
-            .array(zod.string())
-            .describe(
-              'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-            ),
+          binLocation: zod.string(),
           aiKeywords: zod.array(zod.string()),
           enrichedAt: zod.coerce.date().nullish(),
-          tradeSize: zod
-            .string()
-            .nullish()
-            .describe(
-              'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-            ),
-          vendorFullName: zod
-            .string()
-            .nullish()
-            .describe(
-              'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-            ),
-          seriesName: zod
-            .string()
-            .nullish()
-            .describe(
-              'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-            ),
-          seriesId: zod
-            .number()
-            .nullish()
-            .describe(
-              'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-            ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
-        })
+        }),
       ),
-    })
+    }),
   ),
   totalMatches: zod.number(),
   belowThreshold: zod.number(),
   dimensionCounts: zod
     .record(zod.string(), zod.record(zod.string(), zod.number()))
     .optional()
-    .describe('Per-chip-dimension live match counts (dimKey → optionLabel → count)'),
+    .describe(
+      "Per-chip-dimension live match counts (dimKey → optionLabel → count)",
+    ),
 });
 
 /**
  * @summary Add or update inventory items (upsert by vendor+catalog)
  */
-export const upsertInventoryBatchBodyModeDefault = `overwrite-all`;
-
 export const UpsertInventoryBatchBody = zod.object({
   items: zod.array(
     zod.object({
       vendor: zod.string(),
       catalog: zod.string(),
-      description: zod
-        .string()
-        .optional()
-        .describe(
-          'Proposed description. Blank\/missing values never overwrite an existing description.'
-        ),
-      binLocations: zod
-        .array(zod.string())
-        .optional()
-        .describe(
-          "Bins to merge into the part's bin list (additive — existing bins are preserved)."
-        ),
-    })
+      description: zod.string().optional(),
+      binLocation: zod.string().optional(),
+    }),
   ),
-  mode: zod
-    .enum(['add-new-only', 'overwrite-all', 'selected'])
-    .default(upsertInventoryBatchBodyModeDefault)
-    .describe(
-      'Controls how existing matches are handled:\n- `add-new-only`: only insert rows whose (vendor, catalog) does not exist; never modify existing rows.\n- `overwrite-all`: insert new rows; for matches, additively merge bins and replace description (when proposed description is non-empty). Vendor\/catalog text on existing rows is never modified.\n- `selected`: insert new rows; only update existing matches whose (vendor, catalog) appears in `selectedKeys`.\n'
-    ),
-  selectedKeys: zod
-    .array(
-      zod
-        .object({
-          vendor: zod.string(),
-          catalog: zod.string(),
-        })
-        .describe(
-          'Identifies a single existing-item update to apply when mode is `selected`. Match is case-insensitive.'
-        )
-    )
-    .optional()
-    .describe('Required when `mode = selected`. Existing matches NOT in this list are skipped.'),
 });
 
 export const UpsertInventoryBatchResponse = zod.object({
   inserted: zod.number(),
   updated: zod.number(),
-  skipped: zod
-    .number()
-    .describe(
-      'Existing matches that were intentionally not updated (e.g. mode=add-new-only or not in selectedKeys).'
-    ),
   total: zod.number(),
-});
-
-/**
- * Classifies each (vendor, catalog) row as `new` (no match), `binChanged`
-(match exists and the merged bin set differs), `descChanged` (match
-exists and the proposed description differs), or `unchanged`. A row may
-be tagged with both `binChanged` and `descChanged`. No database writes
-are performed.
-
- * @summary Classify a batch of rows against existing inventory without writing
- */
-export const PreviewUpsertInventoryBody = zod.object({
-  items: zod.array(
-    zod.object({
-      vendor: zod.string(),
-      catalog: zod.string(),
-      description: zod
-        .string()
-        .optional()
-        .describe(
-          'Proposed description. Blank\/missing values never overwrite an existing description.'
-        ),
-      binLocations: zod
-        .array(zod.string())
-        .optional()
-        .describe(
-          "Bins to merge into the part's bin list (additive — existing bins are preserved)."
-        ),
-    })
-  ),
-});
-
-export const PreviewUpsertInventoryResponse = zod.object({
-  newCount: zod.number().describe('Rows whose (vendor, catalog) does not exist in the DB.'),
-  changedCount: zod
-    .number()
-    .describe('Existing matches where bin and\/or description would change.'),
-  unchangedCount: zod.number().describe('Existing matches where nothing would change.'),
-  totalIncoming: zod
-    .number()
-    .describe('Number of distinct (vendor, catalog) rows after de-duplication.'),
-  changes: zod
-    .array(
-      zod
-        .object({
-          vendor: zod
-            .string()
-            .describe('Vendor as stored in the DB (its original casing is preserved).'),
-          catalog: zod.string().describe('Catalog as stored in the DB.'),
-          existingDescription: zod.string(),
-          proposedDescription: zod
-            .string()
-            .describe(
-              'Description that will be written if this row is included in an `overwrite-all`\/`selected` apply. Empty proposed description means description will not change.'
-            ),
-          existingBinLocations: zod.array(zod.string()),
-          proposedBinLocations: zod
-            .array(zod.string())
-            .describe('Bin list after additive merge of incoming bins into the existing list.'),
-          binChanged: zod.boolean(),
-          descChanged: zod.boolean(),
-        })
-        .describe(
-          'An incoming row that matched an existing inventory item. Includes the current stored values and the proposed merged values.'
-        )
-    )
-    .describe(
-      'Per-row details for every existing match that would change. Unchanged matches are NOT included.'
-    ),
 });
 
 /**
@@ -354,151 +181,32 @@ export const EnrichInventoryBody = zod.object({
   ids: zod
     .array(zod.number())
     .optional()
-    .describe('Inventory IDs to enrich. If empty, enriches all un-enriched items.'),
+    .describe(
+      "Inventory IDs to enrich. If empty, enriches all un-enriched items.",
+    ),
 });
 
 /**
- * Returns a single inventory item with all fields, including
-`seriesName` when the item belongs to a named product series.
-
- * @summary Fetch a single inventory item by ID
+ * @summary Manually update keywords for an inventory item
  */
-export const GetInventoryItemParams = zod.object({
+export const UpdateItemKeywordsParams = zod.object({
   id: zod.coerce.number(),
 });
 
-export const GetInventoryItemResponse = zod.object({
+export const UpdateItemKeywordsBody = zod.object({
+  keywords: zod.array(zod.string()),
+});
+
+export const UpdateItemKeywordsResponse = zod.object({
   id: zod.number(),
   vendor: zod.string(),
   catalog: zod.string(),
   description: zod.string(),
-  binLocations: zod
-    .array(zod.string())
-    .describe('Every bin this part is currently stocked in. Empty array means no bin assigned.'),
+  binLocation: zod.string(),
   aiKeywords: zod.array(zod.string()),
   enrichedAt: zod.coerce.date().nullish(),
-  tradeSize: zod
-    .string()
-    .nullish()
-    .describe(
-      'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-    ),
-  vendorFullName: zod
-    .string()
-    .nullish()
-    .describe(
-      'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-    ),
-  seriesName: zod
-    .string()
-    .nullish()
-    .describe(
-      'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-    ),
-  seriesId: zod
-    .number()
-    .nullish()
-    .describe(
-      'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
-});
-
-/**
- * Updates only the fields provided in the request body. A blank
-description string is treated as a real edit (the worker explicitly
-cleared it); only `undefined` / missing means "do not change". At
-least one of `description` or `keywords` must be supplied.
-
- * @summary Update an inventory item's description and/or AI keywords
- */
-export const UpdateInventoryItemParams = zod.object({
-  id: zod.coerce.number(),
-});
-
-export const UpdateInventoryItemBody = zod
-  .object({
-    vendor: zod
-      .string()
-      .optional()
-      .describe('Replacement vendor code (trimmed and uppercased). Must be non-empty.'),
-    catalog: zod
-      .string()
-      .optional()
-      .describe('Replacement catalog number (trimmed). Must be non-empty.'),
-    description: zod
-      .string()
-      .optional()
-      .describe('New description text. Empty string clears the description.'),
-    keywords: zod.array(zod.string()).optional().describe('Replacement AI keywords array.'),
-    tradeSize: zod
-      .string()
-      .nullish()
-      .describe(
-        'Trade size to assign (e.g. `1\/2\"`, `3\/4\"`). Null clears the value. Omit to leave unchanged.'
-      ),
-    binLocations: zod
-      .array(zod.string())
-      .optional()
-      .describe('Replacement bin locations array. Duplicates are deduplicated case-insensitively.'),
-  })
-  .describe(
-    'Partial update for an inventory item. Only the fields explicitly\nprovided are touched. Sending `description: \"\"` is a real edit\n(clears the description); omit the field entirely to leave it\nuntouched. At least one field must be supplied.\n'
-  );
-
-export const UpdateInventoryItemResponse = zod.object({
-  id: zod.number(),
-  vendor: zod.string(),
-  catalog: zod.string(),
-  description: zod.string(),
-  binLocations: zod
-    .array(zod.string())
-    .describe('Every bin this part is currently stocked in. Empty array means no bin assigned.'),
-  aiKeywords: zod.array(zod.string()),
-  enrichedAt: zod.coerce.date().nullish(),
-  tradeSize: zod
-    .string()
-    .nullish()
-    .describe(
-      'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-    ),
-  vendorFullName: zod
-    .string()
-    .nullish()
-    .describe(
-      'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-    ),
-  seriesName: zod
-    .string()
-    .nullish()
-    .describe(
-      'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-    ),
-  seriesId: zod
-    .number()
-    .nullish()
-    .describe(
-      'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-    ),
-  createdAt: zod.coerce.date(),
-  updatedAt: zod.coerce.date(),
-});
-
-/**
- * Returns a single 1–2 sentence improved description that folds the
-most important AI keywords into natural prose, preserving any
-specifics already in the existing description. Nothing is saved —
-the caller decides whether to apply the suggestion.
-
- * @summary Generate an AI-recommended improved description for a part
- */
-export const SuggestItemDescriptionParams = zod.object({
-  id: zod.coerce.number(),
-});
-
-export const SuggestItemDescriptionResponse = zod.object({
-  description: zod.string().describe('AI-suggested description (1–2 sentences).'),
 });
 
 /**
@@ -523,7 +231,7 @@ export const aiIdentifyPartBodyImagesMax = 2;
 
 export const AiIdentifyPartBody = zod.object({
   images: zod
-    .array(zod.string().describe('Base64-encoded image data (data URI)'))
+    .array(zod.string().describe("Base64-encoded image data (data URI)"))
     .max(aiIdentifyPartBodyImagesMax),
   keywords: zod.string().optional(),
   vendor: zod.string().optional(),
@@ -547,37 +255,9 @@ export const AiIdentifyPartResponse = zod.object({
         vendor: zod.string(),
         catalog: zod.string(),
         description: zod.string(),
-        binLocations: zod
-          .array(zod.string())
-          .describe(
-            'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-          ),
+        binLocation: zod.string(),
         aiKeywords: zod.array(zod.string()),
         enrichedAt: zod.coerce.date().nullish(),
-        tradeSize: zod
-          .string()
-          .nullish()
-          .describe(
-            'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-          ),
-        vendorFullName: zod
-          .string()
-          .nullish()
-          .describe(
-            'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-          ),
-        seriesName: zod
-          .string()
-          .nullish()
-          .describe(
-            'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-          ),
-        seriesId: zod
-          .number()
-          .nullish()
-          .describe(
-            'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -591,201 +271,16 @@ export const AiIdentifyPartResponse = zod.object({
           vendor: zod.string(),
           catalog: zod.string(),
           description: zod.string(),
-          binLocations: zod
-            .array(zod.string())
-            .describe(
-              'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-            ),
+          binLocation: zod.string(),
           aiKeywords: zod.array(zod.string()),
           enrichedAt: zod.coerce.date().nullish(),
-          tradeSize: zod
-            .string()
-            .nullish()
-            .describe(
-              'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-            ),
-          vendorFullName: zod
-            .string()
-            .nullish()
-            .describe(
-              'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-            ),
-          seriesName: zod
-            .string()
-            .nullish()
-            .describe(
-              'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-            ),
-          seriesId: zod
-            .number()
-            .nullish()
-            .describe(
-              'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-            ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
-        })
+        }),
       ),
-    })
+    }),
   ),
-  match_type: zod
-    .enum(['catalog_exact', 'attribute_match', 'descriptive'])
-    .describe('Which routing path produced the results'),
-  _telemetry: zod.object({
-    photoEventId: zod.number().nullable(),
-  }),
 });
-
-/**
- * @summary Record which result the worker confirmed matched the photo
- */
-export const ConfirmPhotoIdBody = zod.object({
-  photoEventId: zod.number(),
-  resultId: zod.number(),
-});
-
-export const ConfirmPhotoIdResponse = zod.object({
-  ok: zod.boolean(),
-  photoEventId: zod.number(),
-  confirmedResultId: zod.number(),
-});
-
-/**
- * Server-side aggregation of `photo_id_event` rows: total scans, parse
-success rate, match-type distribution, confirmation rate, latency
-(avg + p95), and the top confirmed parts. Admin Bearer required.
-
- * @summary Aggregated Photo ID telemetry over a configurable window
- */
-export const getPhotoStatsQueryWindowHoursDefault = 24;
-export const getPhotoStatsQueryWindowHoursMax = 720;
-
-export const GetPhotoStatsQueryParams = zod.object({
-  windowHours: zod.coerce
-    .number()
-    .min(1)
-    .max(getPhotoStatsQueryWindowHoursMax)
-    .default(getPhotoStatsQueryWindowHoursDefault)
-    .describe('Lookback window in hours (default 24, max 720 = 30 days).'),
-});
-
-export const GetPhotoStatsResponse = zod
-  .object({
-    windowHours: zod.number(),
-    totalScans: zod.number(),
-    parseSuccessRate: zod
-      .number()
-      .describe('Fraction (0–1) of scans whose vision response parsed cleanly.'),
-    confirmationRate: zod
-      .number()
-      .describe('Of scans that returned a top result, the fraction the worker confirmed.'),
-    matchTypeDistribution: zod
-      .object({
-        catalogExact: zod.number(),
-        attributeMatch: zod.number(),
-        descriptive: zod.number(),
-      })
-      .describe('Counts per Photo ID match path (catalog \/ attribute \/ descriptive).'),
-    avgLatencyMs: zod.number().nullable(),
-    p95LatencyMs: zod.number().nullable(),
-    topConfirmedParts: zod.array(
-      zod
-        .object({
-          inventoryId: zod.number(),
-          catalog: zod.string(),
-          vendor: zod.string(),
-          confirmedCount: zod.number(),
-        })
-        .describe('A part the worker confirmed at least once in the window.')
-    ),
-  })
-  .describe('Aggregated Photo ID telemetry over the requested window.');
-
-/**
- * Returns raw `photo_id_event` rows with optional filters. Each item
-includes the AI-guessed catalog/vendor, match type, top result and
-confirmed result (catalog + vendor from the inventory table), and
-latency. Admin Bearer required.
-
- * @summary Paginated list of individual Photo ID scan events
- */
-export const listPhotoEventsQueryWindowHoursDefault = 24;
-export const listPhotoEventsQueryWindowHoursMax = 720;
-
-export const listPhotoEventsQueryPageDefault = 1;
-
-export const listPhotoEventsQueryLimitDefault = 20;
-export const listPhotoEventsQueryLimitMax = 100;
-
-export const ListPhotoEventsQueryParams = zod.object({
-  windowHours: zod.coerce
-    .number()
-    .min(1)
-    .max(listPhotoEventsQueryWindowHoursMax)
-    .default(listPhotoEventsQueryWindowHoursDefault)
-    .describe('Lookback window in hours (default 24, max 720 = 30 days).'),
-  parseOk: zod.coerce
-    .boolean()
-    .optional()
-    .describe('Filter by whether the vision response parsed cleanly. Omit for all.'),
-  matchType: zod.coerce
-    .string()
-    .optional()
-    .describe(
-      'Filter by match type (catalog_exact | attribute_match | descriptive). Omit for all.'
-    ),
-  confirmed: zod.coerce
-    .string()
-    .optional()
-    .describe("'yes' = must have a confirmed result, 'no' = no confirmed result, omit for all."),
-  page: zod.coerce.number().min(1).default(listPhotoEventsQueryPageDefault),
-  limit: zod.coerce
-    .number()
-    .min(1)
-    .max(listPhotoEventsQueryLimitMax)
-    .default(listPhotoEventsQueryLimitDefault),
-});
-
-export const ListPhotoEventsResponse = zod
-  .object({
-    items: zod.array(
-      zod
-        .object({
-          id: zod.number(),
-          ts: zod.coerce.date().describe('When the scan occurred.'),
-          imageHash: zod.string().nullish(),
-          parseOk: zod.boolean().describe('Whether the vision response parsed cleanly.'),
-          catalogGuess: zod.string().nullish().describe('Catalog number extracted by the AI.'),
-          vendorGuess: zod.string().nullish().describe('Vendor name extracted by the AI.'),
-          matchType: zod
-            .string()
-            .nullish()
-            .describe('Match path used (catalog_exact | attribute_match | descriptive).'),
-          topResultCatalog: zod.string().nullish().describe('Catalog of the'),
-          topResultVendor: zod.string().nullish().describe('Vendor of the'),
-          confirmedResultCatalog: zod
-            .string()
-            .nullish()
-            .describe('Catalog of the result the worker confirmed, if any.'),
-          confirmedResultVendor: zod
-            .string()
-            .nullish()
-            .describe('Vendor of the result the worker confirmed, if any.'),
-          latencyMs: zod.number().nullish(),
-          visionRawSummary: zod
-            .string()
-            .nullish()
-            .describe(
-              'First 200 characters of the AI vision response for this scan.\nContains the raw text when the parse failed; a JSON excerpt when it\nsucceeded. Useful for diagnosing why a scan parsed badly.\n'
-            ),
-        })
-        .describe('A single raw Photo ID scan event with joined inventory data.')
-    ),
-    total: zod.number().describe('Total number of events matching the current filters.'),
-    page: zod.number(),
-    limit: zod.number(),
-  })
-  .describe('Paginated list of individual Photo ID scan events.');
 
 /**
  * @summary Ask a question about electrical terms (SSE streaming)
@@ -795,754 +290,9 @@ export const AskReferenceBody = zod.object({
 });
 
 /**
- * @summary Get the full three-level taxonomy with item counts
- */
-export const GetCategoryTreeResponse = zod.object({
-  tree: zod.array(
-    zod.object({
-      id: zod.number(),
-      slug: zod.string(),
-      name: zod.string(),
-      level: zod.string().describe('category | subcategory | type'),
-      sortOrder: zod.number(),
-      itemCount: zod
-        .number()
-        .describe('Total inventory items assigned at this node OR any descendant.'),
-      children: zod.array(zod.unknown()),
-    })
-  ),
-});
-
-/**
- * @summary Classification coverage stats (total / classified / by source)
- */
-export const GetCategoryCoverageResponse = zod.object({
-  total: zod.number(),
-  classified: zod.number(),
-  uncategorized: zod.number(),
-  bySource: zod
-    .record(zod.string(), zod.number())
-    .describe('Count of distinct items classified by each method (rule\/ai\/manual).'),
-});
-
-/**
- * @summary List inventory items not yet placed in any category
- */
-export const listUncategorizedItemsQueryPageDefault = 1;
-export const listUncategorizedItemsQueryLimitDefault = 50;
-
-export const ListUncategorizedItemsQueryParams = zod.object({
-  page: zod.coerce.number().default(listUncategorizedItemsQueryPageDefault),
-  limit: zod.coerce.number().default(listUncategorizedItemsQueryLimitDefault),
-});
-
-export const ListUncategorizedItemsResponse = zod.object({
-  items: zod.array(
-    zod.object({
-      id: zod.number(),
-      vendor: zod.string(),
-      catalog: zod.string(),
-      description: zod.string(),
-      binLocations: zod
-        .array(zod.string())
-        .describe(
-          'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-        ),
-      aiKeywords: zod.array(zod.string()),
-      enrichedAt: zod.coerce.date().nullish(),
-      tradeSize: zod
-        .string()
-        .nullish()
-        .describe(
-          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-        ),
-      vendorFullName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-        ),
-      seriesName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-        ),
-      seriesId: zod
-        .number()
-        .nullish()
-        .describe(
-          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-        ),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    })
-  ),
-  total: zod.number(),
-  page: zod.number(),
-  limit: zod.number(),
-});
-
-/**
- * Items assigned to the node identified by `slug` (or numeric node id)
-OR to any of its descendants are returned. Accepts the same 16 chip
-filter dimensions as POST /inventory/search and an optional
-`confidenceThreshold` so Browse can be narrowed exactly like Search.
-
- * @summary List inventory items under a category, subcategory, or type
- */
-export const ListCategoryItemsParams = zod.object({
-  slug: zod.coerce.string(),
-});
-
-export const listCategoryItemsQueryPageDefault = 1;
-export const listCategoryItemsQueryLimitDefault = 50;
-export const listCategoryItemsQueryConfidenceThresholdDefault = 0;
-
-export const ListCategoryItemsQueryParams = zod.object({
-  page: zod.coerce.number().default(listCategoryItemsQueryPageDefault),
-  limit: zod.coerce.number().default(listCategoryItemsQueryLimitDefault),
-  confidenceThreshold: zod.coerce
-    .number()
-    .default(listCategoryItemsQueryConfidenceThresholdDefault),
-  category: zod.coerce.string().optional(),
-  amperage: zod.coerce.string().optional(),
-  colorChip: zod.coerce.string().optional(),
-  manufacturer: zod.coerce.string().optional(),
-  sizeChip: zod.coerce.string().optional(),
-  rating: zod.coerce.string().optional(),
-  wireType: zod.coerce.string().optional(),
-  wireGauge: zod.coerce.string().optional(),
-  conduitType: zod.coerce.string().optional(),
-  conduitSize: zod.coerce.string().optional(),
-  boxType: zod.coerce.string().optional(),
-  boxGangCount: zod.coerce.string().optional(),
-  mountingType: zod.coerce.string().optional(),
-  environment: zod.coerce.string().optional(),
-  voltage: zod.coerce.string().optional(),
-  poleCount: zod.coerce.string().optional(),
-});
-
-export const ListCategoryItemsResponse = zod.object({
-  items: zod.array(
-    zod.object({
-      id: zod.number(),
-      vendor: zod.string(),
-      catalog: zod.string(),
-      description: zod.string(),
-      binLocations: zod
-        .array(zod.string())
-        .describe(
-          'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-        ),
-      aiKeywords: zod.array(zod.string()),
-      enrichedAt: zod.coerce.date().nullish(),
-      tradeSize: zod
-        .string()
-        .nullish()
-        .describe(
-          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-        ),
-      vendorFullName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-        ),
-      seriesName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-        ),
-      seriesId: zod
-        .number()
-        .nullish()
-        .describe(
-          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-        ),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    })
-  ),
-  total: zod.number(),
-  page: zod.number(),
-  limit: zod.number(),
-  node: zod.object({
-    slug: zod.string(),
-    name: zod.string(),
-    level: zod.string(),
-  }),
-});
-
-/**
- * Same behavior as GET /categories/{slug}/items but keyed by numeric
-node id. Accepts the same 16 chip-filter dimensions and
-confidenceThreshold so the mobile client can drill in by id without
-losing filter parity.
-
- * @summary List inventory items under a node by numeric id (alias of /:slug/items)
- */
-export const ListCategoryPartsByIdParams = zod.object({
-  nodeId: zod.coerce.number(),
-});
-
-export const listCategoryPartsByIdQueryPageDefault = 1;
-export const listCategoryPartsByIdQueryLimitDefault = 50;
-export const listCategoryPartsByIdQueryConfidenceThresholdDefault = 0;
-
-export const ListCategoryPartsByIdQueryParams = zod.object({
-  page: zod.coerce.number().default(listCategoryPartsByIdQueryPageDefault),
-  limit: zod.coerce.number().default(listCategoryPartsByIdQueryLimitDefault),
-  confidenceThreshold: zod.coerce
-    .number()
-    .default(listCategoryPartsByIdQueryConfidenceThresholdDefault),
-  category: zod.coerce.string().optional(),
-  amperage: zod.coerce.string().optional(),
-  colorChip: zod.coerce.string().optional(),
-  manufacturer: zod.coerce.string().optional(),
-  sizeChip: zod.coerce.string().optional(),
-  rating: zod.coerce.string().optional(),
-  wireType: zod.coerce.string().optional(),
-  wireGauge: zod.coerce.string().optional(),
-  conduitType: zod.coerce.string().optional(),
-  conduitSize: zod.coerce.string().optional(),
-  boxType: zod.coerce.string().optional(),
-  boxGangCount: zod.coerce.string().optional(),
-  mountingType: zod.coerce.string().optional(),
-  environment: zod.coerce.string().optional(),
-  voltage: zod.coerce.string().optional(),
-  poleCount: zod.coerce.string().optional(),
-});
-
-export const ListCategoryPartsByIdResponse = zod.object({
-  items: zod.array(
-    zod.object({
-      id: zod.number(),
-      vendor: zod.string(),
-      catalog: zod.string(),
-      description: zod.string(),
-      binLocations: zod
-        .array(zod.string())
-        .describe(
-          'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-        ),
-      aiKeywords: zod.array(zod.string()),
-      enrichedAt: zod.coerce.date().nullish(),
-      tradeSize: zod
-        .string()
-        .nullish()
-        .describe(
-          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-        ),
-      vendorFullName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-        ),
-      seriesName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-        ),
-      seriesId: zod
-        .number()
-        .nullish()
-        .describe(
-          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-        ),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    })
-  ),
-  total: zod.number(),
-  page: zod.number(),
-  limit: zod.number(),
-  node: zod.object({
-    slug: zod.string(),
-    name: zod.string(),
-    level: zod.string(),
-  }),
-});
-
-/**
- * @summary Flat list of every part's current taxonomy node (offline cache)
- */
-export const ListCategoryAssignmentsResponse = zod.object({
-  assignments: zod.array(
-    zod.object({
-      inventoryId: zod.number(),
-      categoryNodeId: zod.number(),
-      typeSlug: zod.string(),
-      confidence: zod.string().optional(),
-      classifiedBy: zod.string(),
-    })
-  ),
-  updatedAt: zod.string(),
-});
-
-/**
- * @summary Run the classifier across inventory (SSE streaming)
- */
-export const classifyInventoryBodyModeDefault = `unclassified`;
-export const classifyInventoryBodyUseAiDefault = true;
-
-export const ClassifyInventoryBody = zod.object({
-  mode: zod
-    .enum(['all', 'unclassified', 'specific-ids'])
-    .default(classifyInventoryBodyModeDefault)
-    .describe(
-      '\"all\" re-classifies every inventory row (overwrites manual overrides).\n\"unclassified\" only touches rows with no current assignment (manual rows preserved).\n\"specific-ids\" classifies only the rows in `ids`.\n'
-    ),
-  ids: zod.array(zod.number()).optional().describe("Required when mode is 'specific-ids'."),
-  useAi: zod
-    .boolean()
-    .default(classifyInventoryBodyUseAiDefault)
-    .describe(
-      'When true (default), fall back to AI (gpt-4o-mini) for items the rule classifier could not place. Pass false to skip AI and route rule-misses straight to Uncategorized.'
-    ),
-});
-
-/**
- * @summary Spec-compliant alias of POST /categories/classify
- */
-export const classifyInventoryAliasBodyModeDefault = `unclassified`;
-export const classifyInventoryAliasBodyUseAiDefault = true;
-
-export const ClassifyInventoryAliasBody = zod.object({
-  mode: zod
-    .enum(['all', 'unclassified', 'specific-ids'])
-    .default(classifyInventoryAliasBodyModeDefault)
-    .describe(
-      '\"all\" re-classifies every inventory row (overwrites manual overrides).\n\"unclassified\" only touches rows with no current assignment (manual rows preserved).\n\"specific-ids\" classifies only the rows in `ids`.\n'
-    ),
-  ids: zod.array(zod.number()).optional().describe("Required when mode is 'specific-ids'."),
-  useAi: zod
-    .boolean()
-    .default(classifyInventoryAliasBodyUseAiDefault)
-    .describe(
-      'When true (default), fall back to AI (gpt-4o-mini) for items the rule classifier could not place. Pass false to skip AI and route rule-misses straight to Uncategorized.'
-    ),
-});
-
-/**
- * @summary Manually set a part's category node (admin)
- */
-export const SetInventoryCategoryParams = zod.object({
-  id: zod.coerce.number(),
-});
-
-export const SetInventoryCategoryBody = zod.object({
-  categoryNodeId: zod.number(),
-});
-
-export const SetInventoryCategoryResponse = zod.object({
-  ok: zod.boolean(),
-  inventoryId: zod.number(),
-  nodeId: zod.number().optional(),
-});
-
-/**
- * @summary Rename, re-parent, or reorder a category node (admin)
- */
-export const UpdateCategoryNodeParams = zod.object({
-  nodeId: zod.coerce.number(),
-});
-
-export const UpdateCategoryNodeBody = zod.object({
-  name: zod.string().optional(),
-  parentId: zod.number().nullish(),
-  sortOrder: zod.number().optional(),
-});
-
-export const UpdateCategoryNodeResponse = zod.object({
-  node: zod.object({}).passthrough().optional(),
-});
-
-/**
- * @summary Merge two category nodes; parts and children move to target (admin)
- */
-export const MergeCategoryNodesBody = zod.object({
-  sourceId: zod.number(),
-  targetId: zod.number(),
-});
-
-export const MergeCategoryNodesResponse = zod.object({
-  ok: zod.boolean().optional(),
-  sourceId: zod.number().optional(),
-  targetId: zod.number().optional(),
-  moved: zod.number().optional(),
-  dropped: zod.number().optional(),
-});
-
-/**
- * @summary Manually assign one inventory item to a taxonomy node
- */
-export const AssignInventoryToCategoryParams = zod.object({
-  nodeId: zod.coerce.number(),
-});
-
-export const AssignInventoryToCategoryBody = zod.object({
-  inventoryId: zod.number(),
-});
-
-export const AssignInventoryToCategoryResponse = zod.object({
-  ok: zod.boolean(),
-  inventoryId: zod.number(),
-  nodeId: zod.number().optional(),
-});
-
-/**
- * Two-stage lookup. First the server compares the scanned string
-(case-insensitive) against `inventory.catalog`; on a hit it
-records the binding in `inventory_barcode` with
-`source = catalog-auto` and returns the part. If no catalog row
-matches, the `inventory_barcode` mapping table is consulted.
-When neither stage matches, the response carries
-`match: null` plus a `recentlyViewed` list so the client can
-offer the no-match scan-to-link picker without a second
-round-trip.
-
- * @summary Look up an inventory item by scanned barcode / QR string
- */
-export const BarcodeLookupBody = zod.object({
-  barcode: zod.string().describe('Raw scanned string (server normalizes case + whitespace).'),
-});
-
-export const BarcodeLookupResponse = zod.object({
-  match: zod
-    .object({
-      id: zod.number(),
-      vendor: zod.string(),
-      catalog: zod.string(),
-      description: zod.string(),
-      binLocations: zod
-        .array(zod.string())
-        .describe(
-          'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-        ),
-      aiKeywords: zod.array(zod.string()),
-      enrichedAt: zod.coerce.date().nullish(),
-      tradeSize: zod
-        .string()
-        .nullish()
-        .describe(
-          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-        ),
-      vendorFullName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-        ),
-      seriesName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-        ),
-      seriesId: zod
-        .number()
-        .nullish()
-        .describe(
-          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-        ),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    })
-    .nullable()
-    .describe('Matched inventory item, or null when nothing was found.'),
-  source: zod
-    .enum(['catalog-auto', 'upc-linked', 'manual'])
-    .describe(
-      'Where the binding came from:\n- `catalog-auto`: server matched the scan to inventory.catalog\n- `upc-linked`: warehouse worker linked an unknown barcode\n- `manual`: admin imported the binding directly\n'
-    )
-    .nullable()
-    .describe('How the binding was found, or null on no-match.'),
-  recentlyViewed: zod
-    .array(
-      zod.object({
-        id: zod.number(),
-        vendor: zod.string(),
-        catalog: zod.string(),
-        description: zod.string(),
-        binLocations: zod
-          .array(zod.string())
-          .describe(
-            'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-          ),
-        aiKeywords: zod.array(zod.string()),
-        enrichedAt: zod.coerce.date().nullish(),
-        tradeSize: zod
-          .string()
-          .nullish()
-          .describe(
-            'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-          ),
-        vendorFullName: zod
-          .string()
-          .nullish()
-          .describe(
-            'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-          ),
-        seriesName: zod
-          .string()
-          .nullish()
-          .describe(
-            'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-          ),
-        seriesId: zod
-          .number()
-          .nullish()
-          .describe(
-            'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-          ),
-        createdAt: zod.coerce.date(),
-        updatedAt: zod.coerce.date(),
-      })
-    )
-    .describe('Recently scanned\/linked items, used for the no-match picker.'),
-});
-
-/**
- * Idempotent for the same `(barcode, inventoryId)` pair. Re-linking
-a barcode that is already bound to a *different* inventory row
-returns 409 unless the request includes `force: true`, in which
-case the binding is overwritten.
-
- * @summary Bind a scanned barcode to an inventory item
- */
-export const barcodeLinkBodyForceDefault = false;
-
-export const BarcodeLinkBody = zod.object({
-  barcode: zod.string(),
-  inventoryId: zod.number(),
-  force: zod
-    .boolean()
-    .default(barcodeLinkBodyForceDefault)
-    .describe('Overwrite an existing binding for this barcode.'),
-  createdBy: zod
-    .string()
-    .nullish()
-    .describe('Optional opaque identifier for the worker performing the link.'),
-});
-
-export const BarcodeLinkResponse = zod.object({
-  ok: zod.boolean(),
-  item: zod.object({
-    id: zod.number(),
-    vendor: zod.string(),
-    catalog: zod.string(),
-    description: zod.string(),
-    binLocations: zod
-      .array(zod.string())
-      .describe('Every bin this part is currently stocked in. Empty array means no bin assigned.'),
-    aiKeywords: zod.array(zod.string()),
-    enrichedAt: zod.coerce.date().nullish(),
-    tradeSize: zod
-      .string()
-      .nullish()
-      .describe(
-        'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-      ),
-    vendorFullName: zod
-      .string()
-      .nullish()
-      .describe(
-        'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-      ),
-    seriesName: zod
-      .string()
-      .nullish()
-      .describe(
-        'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-      ),
-    seriesId: zod
-      .number()
-      .nullish()
-      .describe(
-        'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-      ),
-    createdAt: zod.coerce.date(),
-    updatedAt: zod.coerce.date(),
-  }),
-});
-
-/**
- * @summary Recently scanned / linked inventory items (no-match panel state)
- */
-export const barcodeRecentQueryLimitDefault = 20;
-
-export const BarcodeRecentQueryParams = zod.object({
-  limit: zod.coerce.number().default(barcodeRecentQueryLimitDefault),
-});
-
-export const BarcodeRecentResponse = zod.object({
-  items: zod.array(
-    zod.object({
-      id: zod.number(),
-      vendor: zod.string(),
-      catalog: zod.string(),
-      description: zod.string(),
-      binLocations: zod
-        .array(zod.string())
-        .describe(
-          'Every bin this part is currently stocked in. Empty array means no bin assigned.'
-        ),
-      aiKeywords: zod.array(zod.string()),
-      enrichedAt: zod.coerce.date().nullish(),
-      tradeSize: zod
-        .string()
-        .nullish()
-        .describe(
-          'User-set trade size that groups this part with others of the same\nproduct type but different physical sizes (e.g. `1\/2\"`, `3\/4\"`,\n`1\"`). `null` when not assigned.\n'
-        ),
-      vendorFullName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Canonical full name for the vendor (e.g. \"Eaton\" for `ETN`),\nresolved from the `vendor_map` table by case-insensitive match\non `vendor_map.code`. `null` when no mapping exists.\n'
-        ),
-      seriesName: zod
-        .string()
-        .nullish()
-        .describe(
-          'Human-readable name of the product series this item belongs to\n(e.g. \"Eaton BR Breakers\"), resolved from the `product_series`\ntable when `series_id` is set. `null` when the item has no\nexplicit series assignment.\n'
-        ),
-      seriesId: zod
-        .number()
-        .nullish()
-        .describe(
-          'Numeric primary key of the product series this item belongs to,\nor `null` when the item has no series assignment.\n'
-        ),
-      createdAt: zod.coerce.date(),
-      updatedAt: zod.coerce.date(),
-    })
-  ),
-});
-
-/**
  * @deprecated
  * @summary [Deprecated] Use /reference/ask instead
  */
 export const AiReferenceBody = zod.object({
   question: zod.string(),
 });
-
-/**
- * Returns AI-classified inventory rows whose confidence is below 70%
-and have not yet been reviewed. Ordered oldest-first (classified_at ASC,
-confidence ASC). Requires Bearer admin token.
-
- * @summary List low-confidence AI classification items pending admin review
- */
-export const listClassificationReviewQueryPageDefault = 1;
-
-export const listClassificationReviewQueryLimitDefault = 50;
-export const listClassificationReviewQueryLimitMax = 100;
-
-export const ListClassificationReviewQueryParams = zod.object({
-  page: zod.coerce.number().min(1).default(listClassificationReviewQueryPageDefault),
-  limit: zod.coerce
-    .number()
-    .min(1)
-    .max(listClassificationReviewQueryLimitMax)
-    .default(listClassificationReviewQueryLimitDefault),
-});
-
-export const ListClassificationReviewResponse = zod
-  .object({
-    items: zod.array(
-      zod
-        .object({
-          inventoryId: zod.number().describe('Primary key of the inventory row.'),
-          vendor: zod.string(),
-          catalog: zod.string(),
-          description: zod.string(),
-          confidencePct: zod.number().describe('AI confidence expressed as a percentage (0–100).'),
-          classifiedAt: zod.coerce.date().describe('When the AI classification was recorded.'),
-          categoryNodeId: zod.number().describe('Current leaf category node assigned by AI.'),
-          categoryPath: zod
-            .string()
-            .describe('Human-readable breadcrumb: Category › Subcategory › Type.'),
-        })
-        .describe('A single inventory item in the AI classification review queue.')
-    ),
-    total: zod.number().describe('Total number of items currently in the review queue.'),
-    page: zod.number(),
-    limit: zod.number(),
-  })
-  .describe('Paginated list of items pending classification review.');
-
-/**
- * Marks the item as reviewed without changing its assigned category.
-Sets `reviewed_at` and `reviewed_by = 'admin'`. Requires Bearer admin token.
-
- * @summary Confirm the existing AI classification for a queued item
- */
-export const ConfirmClassificationReviewParams = zod.object({
-  id: zod.coerce.number().describe('inventory_id of the item to confirm'),
-});
-
-export const ConfirmClassificationReviewResponse = zod
-  .object({
-    ok: zod.boolean(),
-    inventoryId: zod.number(),
-    categoryNodeId: zod
-      .number()
-      .nullish()
-      .describe('Present only on reclassify — the newly assigned node ID.'),
-  })
-  .describe('Confirmation returned by confirm \/ reclassify \/ skip actions.');
-
-/**
- * Updates the item's category to the supplied `categoryNodeId` (which must
-be a leaf `type` node), sets `classified_by = 'manual'`, confidence to
-1.0, and marks the review complete. Requires Bearer admin token.
-
- * @summary Reassign a queued item to a different leaf category node
- */
-export const ReclassifyReviewItemParams = zod.object({
-  id: zod.coerce.number().describe('inventory_id of the item to reclassify'),
-});
-
-export const ReclassifyReviewItemBody = zod
-  .object({
-    categoryNodeId: zod.number().describe('ID of the target leaf (type) category node.'),
-  })
-  .describe('Body for reclassifying an item to a different leaf category node.');
-
-export const ReclassifyReviewItemResponse = zod
-  .object({
-    ok: zod.boolean(),
-    inventoryId: zod.number(),
-    categoryNodeId: zod
-      .number()
-      .nullish()
-      .describe('Present only on reclassify — the newly assigned node ID.'),
-  })
-  .describe('Confirmation returned by confirm \/ reclassify \/ skip actions.');
-
-/**
- * Bumps `classified_at` to now() so the item sorts after all current
-queue items (oldest-first ordering). The item remains unreviewed.
-Requires Bearer admin token.
-
- * @summary Defer a queued item to the end of the review queue
- */
-export const SkipClassificationReviewParams = zod.object({
-  id: zod.coerce.number().describe('inventory_id of the item to skip'),
-});
-
-export const SkipClassificationReviewResponse = zod
-  .object({
-    ok: zod.boolean(),
-    inventoryId: zod.number(),
-    categoryNodeId: zod
-      .number()
-      .nullish()
-      .describe('Present only on reclassify — the newly assigned node ID.'),
-  })
-  .describe('Confirmation returned by confirm \/ reclassify \/ skip actions.');

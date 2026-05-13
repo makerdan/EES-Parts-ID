@@ -14,30 +14,9 @@ export interface InventoryItem {
   vendor: string;
   catalog: string;
   description: string;
-  /** Every bin this part is currently stocked in. Empty array means no bin assigned. */
-  binLocations: string[];
+  binLocation: string;
   aiKeywords: string[];
   enrichedAt?: string | null;
-  /** User-set trade size that groups this part with others of the same
-product type but different physical sizes (e.g. `1/2"`, `3/4"`,
-`1"`). `null` when not assigned.
- */
-  tradeSize?: string | null;
-  /** Canonical full name for the vendor (e.g. "Eaton" for `ETN`),
-resolved from the `vendor_map` table by case-insensitive match
-on `vendor_map.code`. `null` when no mapping exists.
- */
-  vendorFullName?: string | null;
-  /** Human-readable name of the product series this item belongs to
-(e.g. "Eaton BR Breakers"), resolved from the `product_series`
-table when `series_id` is set. `null` when the item has no
-explicit series assignment.
- */
-  seriesName?: string | null;
-  /** Numeric primary key of the product series this item belongs to,
-or `null` when the item has no series assignment.
- */
-  seriesId?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -109,7 +88,9 @@ export interface SearchResult {
 /**
  * Per-chip-dimension live match counts (dimKey → optionLabel → count)
  */
-export type SearchInventoryResponseDimensionCounts = { [key: string]: { [key: string]: number } };
+export type SearchInventoryResponseDimensionCounts = {
+  [key: string]: { [key: string]: number };
+};
 
 export interface SearchInventoryResponse {
   results: SearchResult[];
@@ -119,92 +100,21 @@ export interface SearchInventoryResponse {
   dimensionCounts?: SearchInventoryResponseDimensionCounts;
 }
 
-export interface UpsertInventoryItem {
+export type UpsertInventoryBodyItemsItem = {
   vendor: string;
   catalog: string;
-  /** Proposed description. Blank/missing values never overwrite an existing description. */
   description?: string;
-  /** Bins to merge into the part's bin list (additive — existing bins are preserved). */
-  binLocations?: string[];
-}
-
-/**
- * Identifies a single existing-item update to apply when mode is `selected`. Match is case-insensitive.
- */
-export interface SelectedKey {
-  vendor: string;
-  catalog: string;
-}
-
-/**
- * Controls how existing matches are handled:
-- `add-new-only`: only insert rows whose (vendor, catalog) does not exist; never modify existing rows.
-- `overwrite-all`: insert new rows; for matches, additively merge bins and replace description (when proposed description is non-empty). Vendor/catalog text on existing rows is never modified.
-- `selected`: insert new rows; only update existing matches whose (vendor, catalog) appears in `selectedKeys`.
-
- */
-export type UpsertInventoryBodyMode =
-  (typeof UpsertInventoryBodyMode)[keyof typeof UpsertInventoryBodyMode];
-
-export const UpsertInventoryBodyMode = {
-  'add-new-only': 'add-new-only',
-  'overwrite-all': 'overwrite-all',
-  selected: 'selected',
-} as const;
+  binLocation?: string;
+};
 
 export interface UpsertInventoryBody {
-  items: UpsertInventoryItem[];
-  /** Controls how existing matches are handled:
-- `add-new-only`: only insert rows whose (vendor, catalog) does not exist; never modify existing rows.
-- `overwrite-all`: insert new rows; for matches, additively merge bins and replace description (when proposed description is non-empty). Vendor/catalog text on existing rows is never modified.
-- `selected`: insert new rows; only update existing matches whose (vendor, catalog) appears in `selectedKeys`.
- */
-  mode?: UpsertInventoryBodyMode;
-  /** Required when `mode = selected`. Existing matches NOT in this list are skipped. */
-  selectedKeys?: SelectedKey[];
+  items: UpsertInventoryBodyItemsItem[];
 }
 
 export interface UpsertInventoryResponse {
   inserted: number;
   updated: number;
-  /** Existing matches that were intentionally not updated (e.g. mode=add-new-only or not in selectedKeys). */
-  skipped: number;
   total: number;
-}
-
-export interface PreviewUpsertBody {
-  items: UpsertInventoryItem[];
-}
-
-/**
- * An incoming row that matched an existing inventory item. Includes the current stored values and the proposed merged values.
- */
-export interface PreviewMatchRow {
-  /** Vendor as stored in the DB (its original casing is preserved). */
-  vendor: string;
-  /** Catalog as stored in the DB. */
-  catalog: string;
-  existingDescription: string;
-  /** Description that will be written if this row is included in an `overwrite-all`/`selected` apply. Empty proposed description means description will not change. */
-  proposedDescription: string;
-  existingBinLocations: string[];
-  /** Bin list after additive merge of incoming bins into the existing list. */
-  proposedBinLocations: string[];
-  binChanged: boolean;
-  descChanged: boolean;
-}
-
-export interface PreviewUpsertResponse {
-  /** Rows whose (vendor, catalog) does not exist in the DB. */
-  newCount: number;
-  /** Existing matches where bin and/or description would change. */
-  changedCount: number;
-  /** Existing matches where nothing would change. */
-  unchangedCount: number;
-  /** Number of distinct (vendor, catalog) rows after de-duplication. */
-  totalIncoming: number;
-  /** Per-row details for every existing match that would change. Unchanged matches are NOT included. */
-  changes: PreviewMatchRow[];
 }
 
 export interface EnrichInventoryBody {
@@ -212,31 +122,8 @@ export interface EnrichInventoryBody {
   ids?: number[];
 }
 
-/**
- * Partial update for an inventory item. Only the fields explicitly
-provided are touched. Sending `description: ""` is a real edit
-(clears the description); omit the field entirely to leave it
-untouched. At least one field must be supplied.
-
- */
-export interface UpdateInventoryItemBody {
-  /** Replacement vendor code (trimmed and uppercased). Must be non-empty. */
-  vendor?: string;
-  /** Replacement catalog number (trimmed). Must be non-empty. */
-  catalog?: string;
-  /** New description text. Empty string clears the description. */
-  description?: string;
-  /** Replacement AI keywords array. */
-  keywords?: string[];
-  /** Trade size to assign (e.g. `1/2"`, `3/4"`). Null clears the value. Omit to leave unchanged. */
-  tradeSize?: string | null;
-  /** Replacement bin locations array. Duplicates are deduplicated case-insensitively. */
-  binLocations?: string[];
-}
-
-export interface SuggestDescriptionResponse {
-  /** AI-suggested description (1–2 sentences). */
-  description: string;
+export interface UpdateKeywordsBody {
+  keywords: string[];
 }
 
 export interface DictionaryLookupResponse {
@@ -258,22 +145,6 @@ export interface AiIdentifyBody {
   textNumbers?: string;
 }
 
-/**
- * Which routing path produced the results
- */
-export type AiIdentifyResponseMatchType =
-  (typeof AiIdentifyResponseMatchType)[keyof typeof AiIdentifyResponseMatchType];
-
-export const AiIdentifyResponseMatchType = {
-  catalog_exact: 'catalog_exact',
-  attribute_match: 'attribute_match',
-  descriptive: 'descriptive',
-} as const;
-
-export type _AiIdentifyResponseTelemetry = {
-  photoEventId: number | null;
-};
-
 export interface AiIdentifyResponse {
   searchTerms: string[];
   synonyms: string[];
@@ -282,450 +153,17 @@ export interface AiIdentifyResponse {
   detectedVendor?: string | null;
   summary: string;
   results: SearchResult[];
-  /** Which routing path produced the results */
-  match_type: AiIdentifyResponseMatchType;
-  _telemetry: _AiIdentifyResponseTelemetry;
-}
-
-export interface PhotoConfirmBody {
-  photoEventId: number;
-  resultId: number;
-}
-
-export interface PhotoConfirmResponse {
-  ok: boolean;
-  photoEventId: number;
-  confirmedResultId: number;
 }
 
 export interface AiReferenceBody {
   question: string;
 }
 
-export interface CategoryNode {
-  id: number;
-  slug: string;
-  name: string;
-  /** category | subcategory | type */
-  level: string;
-  sortOrder: number;
-  /** Total inventory items assigned at this node OR any descendant. */
-  itemCount: number;
-  children: CategoryNode[];
-}
-
-export interface CategoryTreeResponse {
-  tree: CategoryNode[];
-}
-
-/**
- * Count of distinct items classified by each method (rule/ai/manual).
- */
-export type CategoryCoverageResponseBySource = { [key: string]: number };
-
-export interface CategoryCoverageResponse {
-  total: number;
-  classified: number;
-  uncategorized: number;
-  /** Count of distinct items classified by each method (rule/ai/manual). */
-  bySource: CategoryCoverageResponseBySource;
-}
-
-export type CategoryItemsResponseNode = {
-  slug: string;
-  name: string;
-  level: string;
-};
-
-export interface CategoryItemsResponse {
-  items: InventoryItem[];
-  total: number;
-  page: number;
-  limit: number;
-  node: CategoryItemsResponseNode;
-}
-
-export type CategoryAssignmentsResponseAssignmentsItem = {
-  inventoryId: number;
-  categoryNodeId: number;
-  typeSlug: string;
-  confidence?: string;
-  classifiedBy: string;
-};
-
-export interface CategoryAssignmentsResponse {
-  assignments: CategoryAssignmentsResponseAssignmentsItem[];
-  updatedAt: string;
-}
-
-/**
- * "all" re-classifies every inventory row (overwrites manual overrides).
-"unclassified" only touches rows with no current assignment (manual rows preserved).
-"specific-ids" classifies only the rows in `ids`.
-
- */
-export type ClassifyInventoryBodyMode =
-  (typeof ClassifyInventoryBodyMode)[keyof typeof ClassifyInventoryBodyMode];
-
-export const ClassifyInventoryBodyMode = {
-  all: 'all',
-  unclassified: 'unclassified',
-  'specific-ids': 'specific-ids',
-} as const;
-
-export interface ClassifyInventoryBody {
-  /** "all" re-classifies every inventory row (overwrites manual overrides).
-"unclassified" only touches rows with no current assignment (manual rows preserved).
-"specific-ids" classifies only the rows in `ids`.
- */
-  mode?: ClassifyInventoryBodyMode;
-  /** Required when mode is 'specific-ids'. */
-  ids?: number[];
-  /** When true (default), fall back to AI (gpt-4o-mini) for items the rule classifier could not place. Pass false to skip AI and route rule-misses straight to Uncategorized. */
-  useAi?: boolean;
-}
-
-export interface AssignCategoryBody {
-  inventoryId: number;
-}
-
-export interface AssignCategoryResponse {
-  ok: boolean;
-  inventoryId: number;
-  nodeId?: number;
-}
-
-export interface SetInventoryCategoryBody {
-  categoryNodeId: number;
-}
-
-export interface UpdateCategoryNodeBody {
-  name?: string;
-  parentId?: number | null;
-  sortOrder?: number;
-}
-
-export interface BarcodeLookupBody {
-  /** Raw scanned string (server normalizes case + whitespace). */
-  barcode: string;
-}
-
-/**
- * Where the binding came from:
-- `catalog-auto`: server matched the scan to inventory.catalog
-- `upc-linked`: warehouse worker linked an unknown barcode
-- `manual`: admin imported the binding directly
-
- */
-export type BarcodeSource = (typeof BarcodeSource)[keyof typeof BarcodeSource];
-
-export const BarcodeSource = {
-  'catalog-auto': 'catalog-auto',
-  'upc-linked': 'upc-linked',
-  manual: 'manual',
-} as const;
-
-export interface BarcodeLookupResponse {
-  /** Matched inventory item, or null when nothing was found. */
-  match: InventoryItem | null;
-  /** How the binding was found, or null on no-match. */
-  source: BarcodeSource | null;
-  /** Recently scanned/linked items, used for the no-match picker. */
-  recentlyViewed: InventoryItem[];
-}
-
-export interface BarcodeLinkBody {
-  barcode: string;
-  inventoryId: number;
-  /** Overwrite an existing binding for this barcode. */
-  force?: boolean;
-  /** Optional opaque identifier for the worker performing the link. */
-  createdBy?: string | null;
-}
-
-export interface BarcodeLinkResponse {
-  ok: boolean;
-  item: InventoryItem;
-}
-
-export interface BarcodeLinkConflict {
-  error: string;
-  currentInventoryId: number;
-}
-
-export interface BarcodeRecentResponse {
-  items: InventoryItem[];
-}
-
-export interface MergeCategoryBody {
-  sourceId: number;
-  targetId: number;
-}
-
-/**
- * A single inventory item in the AI classification review queue.
- */
-export interface ReviewQueueItem {
-  /** Primary key of the inventory row. */
-  inventoryId: number;
-  vendor: string;
-  catalog: string;
-  description: string;
-  /** AI confidence expressed as a percentage (0–100). */
-  confidencePct: number;
-  /** When the AI classification was recorded. */
-  classifiedAt: string;
-  /** Current leaf category node assigned by AI. */
-  categoryNodeId: number;
-  /** Human-readable breadcrumb: Category › Subcategory › Type. */
-  categoryPath: string;
-}
-
-/**
- * Paginated list of items pending classification review.
- */
-export interface ReviewQueueResponse {
-  items: ReviewQueueItem[];
-  /** Total number of items currently in the review queue. */
-  total: number;
-  page: number;
-  limit: number;
-}
-
-/**
- * Body for reclassifying an item to a different leaf category node.
- */
-export interface ReclassifyBody {
-  /** ID of the target leaf (type) category node. */
-  categoryNodeId: number;
-}
-
-/**
- * Confirmation returned by confirm / reclassify / skip actions.
- */
-export interface ReviewActionResponse {
-  ok: boolean;
-  inventoryId: number;
-  /** Present only on reclassify — the newly assigned node ID. */
-  categoryNodeId?: number | null;
-}
-
-/**
- * A single raw Photo ID scan event with joined inventory data.
- */
-export interface PhotoEventItem {
-  id: number;
-  /** When the scan occurred. */
-  ts: string;
-  imageHash?: string | null;
-  /** Whether the vision response parsed cleanly. */
-  parseOk: boolean;
-  /** Catalog number extracted by the AI. */
-  catalogGuess?: string | null;
-  /** Vendor name extracted by the AI. */
-  vendorGuess?: string | null;
-  /** Match path used (catalog_exact | attribute_match | descriptive). */
-  matchType?: string | null;
-  /** Catalog of the */
-  topResultCatalog?: string | null;
-  /** Vendor of the */
-  topResultVendor?: string | null;
-  /** Catalog of the result the worker confirmed, if any. */
-  confirmedResultCatalog?: string | null;
-  /** Vendor of the result the worker confirmed, if any. */
-  confirmedResultVendor?: string | null;
-  latencyMs?: number | null;
-  /** First 200 characters of the AI vision response for this scan.
-Contains the raw text when the parse failed; a JSON excerpt when it
-succeeded. Useful for diagnosing why a scan parsed badly.
- */
-  visionRawSummary?: string | null;
-}
-
-/**
- * Paginated list of individual Photo ID scan events.
- */
-export interface PhotoEventsResponse {
-  items: PhotoEventItem[];
-  /** Total number of events matching the current filters. */
-  total: number;
-  page: number;
-  limit: number;
-}
-
-/**
- * Counts per Photo ID match path (catalog / attribute / descriptive).
- */
-export interface PhotoStatsMatchTypeDistribution {
-  catalogExact: number;
-  attributeMatch: number;
-  descriptive: number;
-}
-
-/**
- * A part the worker confirmed at least once in the window.
- */
-export interface PhotoStatsTopConfirmedPart {
-  inventoryId: number;
-  catalog: string;
-  vendor: string;
-  confirmedCount: number;
-}
-
-/**
- * Aggregated Photo ID telemetry over the requested window.
- */
-export interface PhotoStatsResponse {
-  windowHours: number;
-  totalScans: number;
-  /** Fraction (0–1) of scans whose vision response parsed cleanly. */
-  parseSuccessRate: number;
-  /** Of scans that returned a top result, the fraction the worker confirmed. */
-  confirmationRate: number;
-  matchTypeDistribution: PhotoStatsMatchTypeDistribution;
-  avgLatencyMs: number | null;
-  p95LatencyMs: number | null;
-  topConfirmedParts: PhotoStatsTopConfirmedPart[];
-}
-
-/**
- * Generic error envelope returned on 4xx/5xx responses.
- */
-export interface ErrorResponse {
-  error: string;
-}
-
 export type ListInventoryParams = {
   page?: number;
   limit?: number;
-  /**
-   * When true, restricts both `items` and `total` to inventory rows that have not been AI-enriched (`enrichedAt IS NULL`). Default false preserves the global list.
-   */
-  unenrichedOnly?: boolean;
-  /**
-   * Case-insensitive substring search across vendor, catalog, and description. When provided, only matching rows are returned and `total` reflects the filtered count.
-   */
-  q?: string;
 };
 
 export type LookupDictionaryParams = {
   term: string;
-};
-
-export type GetPhotoStatsParams = {
-  /**
-   * Lookback window in hours (default 24, max 720 = 30 days).
-   * @minimum 1
-   * @maximum 720
-   */
-  windowHours?: number;
-};
-
-export type ListPhotoEventsParams = {
-  /**
-   * Lookback window in hours (default 24, max 720 = 30 days).
-   * @minimum 1
-   * @maximum 720
-   */
-  windowHours?: number;
-  /**
-   * Filter by whether the vision response parsed cleanly. Omit for all.
-   */
-  parseOk?: boolean;
-  /**
-   * Filter by match type (catalog_exact | attribute_match | descriptive). Omit for all.
-   */
-  matchType?: string;
-  /**
-   * 'yes' = must have a confirmed result, 'no' = no confirmed result, omit for all.
-   */
-  confirmed?: string;
-  /**
-   * @minimum 1
-   */
-  page?: number;
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  limit?: number;
-};
-
-export type ListUncategorizedItemsParams = {
-  page?: number;
-  limit?: number;
-};
-
-export type ListCategoryItemsParams = {
-  page?: number;
-  limit?: number;
-  confidenceThreshold?: number;
-  category?: string;
-  amperage?: string;
-  colorChip?: string;
-  manufacturer?: string;
-  sizeChip?: string;
-  rating?: string;
-  wireType?: string;
-  wireGauge?: string;
-  conduitType?: string;
-  conduitSize?: string;
-  boxType?: string;
-  boxGangCount?: string;
-  mountingType?: string;
-  environment?: string;
-  voltage?: string;
-  poleCount?: string;
-};
-
-export type ListCategoryPartsByIdParams = {
-  page?: number;
-  limit?: number;
-  confidenceThreshold?: number;
-  category?: string;
-  amperage?: string;
-  colorChip?: string;
-  manufacturer?: string;
-  sizeChip?: string;
-  rating?: string;
-  wireType?: string;
-  wireGauge?: string;
-  conduitType?: string;
-  conduitSize?: string;
-  boxType?: string;
-  boxGangCount?: string;
-  mountingType?: string;
-  environment?: string;
-  voltage?: string;
-  poleCount?: string;
-};
-
-export type UpdateCategoryNode200Node = { [key: string]: unknown };
-
-export type UpdateCategoryNode200 = {
-  node?: UpdateCategoryNode200Node;
-};
-
-export type MergeCategoryNodes200 = {
-  ok?: boolean;
-  sourceId?: number;
-  targetId?: number;
-  moved?: number;
-  dropped?: number;
-};
-
-export type BarcodeRecentParams = {
-  limit?: number;
-};
-
-export type ListClassificationReviewParams = {
-  /**
-   * @minimum 1
-   */
-  page?: number;
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  limit?: number;
 };
