@@ -212,12 +212,22 @@ export function matchesChipFilters(
  * not before.
  *
  * Each filter value is split into whitespace tokens; every token becomes a
- * separate `\m<token>\M` (PostgreSQL word-boundary) regex. The caller ANDs
- * these together against the lowercased concat of vendor/catalog/description/
- * ai_keywords using the case-insensitive `~*` operator.
+ * regex of the form `(^|[^[:alnum:]_])<escaped>($|[^[:alnum:]_])`. The caller
+ * ANDs these together against the lowercased concat of vendor/catalog/
+ * description/ai_keywords using the case-insensitive `~*` operator.
  *
- * Regex metacharacters in the token are escaped so values like `1/2"` or
- * `#14` are matched literally.
+ * Why not Postgres `\m` / `\M` word anchors? Those only match at a transition
+ * between a word and a non-word character, so a token whose first or last
+ * character is non-word (`#14`, `1/2"`, `2-1/2`) can never be matched by
+ * `\m...\M` even when surrounded by whitespace in the haystack. Several real
+ * chip values (wireGauge `#14`, sizeChip `1/2"`, etc.) hit exactly that case,
+ * so we use explicit non-alphanumeric/underscore boundary alternations
+ * instead. Mirrors the JS `tokenMatch` semantics: a separator character or
+ * the string boundary on each side, regardless of whether the token starts
+ * with a letter, digit, or punctuation.
+ *
+ * Regex metacharacters inside the token are escaped so the value is matched
+ * literally.
  */
 export function buildChipFilterRegexes(
   filters: Array<{ key: string; value: string }>,
@@ -228,7 +238,7 @@ export function buildChipFilterRegexes(
     if (!value) continue;
     for (const tok of value.split(/\s+/).filter(Boolean)) {
       const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      regexes.push(`\\m${escaped}\\M`);
+      regexes.push(`(^|[^[:alnum:]_])${escaped}($|[^[:alnum:]_])`);
     }
   }
   return regexes;

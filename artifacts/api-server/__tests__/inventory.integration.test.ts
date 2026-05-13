@@ -158,6 +158,134 @@ describe("POST /api/inventory/search", () => {
     ).toBe(false);
   });
 
+  it("chip filter with a punctuation-leading token (#14 wireGauge) matches via SQL", async () => {
+    // Real wireGauge chip values include "#14", "#12" etc. The first
+    // pushdown implementation used Postgres `\m...\M` boundaries, which
+    // silently never match tokens whose first/last char is non-word — a
+    // regression that would break exactly these chip values. Seed a needle
+    // whose ai_keywords contain "#14" and confirm the SQL pushdown finds it,
+    // then confirm a non-matching gauge filter excludes it.
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { eq } = await import("drizzle-orm");
+    // Opaque catalog so trgm_sim dominates and the needle is guaranteed
+    // to be inside the LIMIT 200 candidate window regardless of the real
+    // 7k-row corpus surrounding it.
+    const NEEDLE = "JESTPUNCT9Q1";
+    await db.delete(inventoryTable).where(eq(inventoryTable.catalog, NEEDLE));
+    await db.insert(inventoryTable).values({
+      vendor: "JEST-PUNCT-VENDOR",
+      catalog: NEEDLE,
+      description: "JESTPUNCT9Q1 wire fixture",
+      binLocations: [],
+      aiKeywords: ["#14"],
+    });
+
+    try {
+      const res = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: NEEDLE, wireGauge: "#14" })
+        .expect(200);
+      expect(
+        res.body.results.some(
+          (r: { item: { catalog: string } }) => r.item.catalog === NEEDLE,
+        ),
+      ).toBe(true);
+
+      // Negative control: same query with a non-matching wireGauge filter
+      // should exclude the needle.
+      const negative = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: NEEDLE, wireGauge: "#12" })
+        .expect(200);
+      expect(
+        negative.body.results.some(
+          (r: { item: { catalog: string } }) => r.item.catalog === NEEDLE,
+        ),
+      ).toBe(false);
+    } finally {
+      await db.delete(inventoryTable).where(eq(inventoryTable.catalog, NEEDLE));
+    }
+  });
+
+  it("chip filter with a punctuation-bordered token (sizeChip 1/2\") matches via SQL", async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { eq } = await import("drizzle-orm");
+    const NEEDLE = "JESTHALF9Q2";
+    await db.delete(inventoryTable).where(eq(inventoryTable.catalog, NEEDLE));
+    await db.insert(inventoryTable).values({
+      vendor: "JEST-HALF-VENDOR",
+      catalog: NEEDLE,
+      description: "JESTHALF9Q2 conduit fitting",
+      binLocations: [],
+      aiKeywords: ['1/2"'],
+    });
+
+    try {
+      const res = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: NEEDLE, sizeChip: '1/2"' })
+        .expect(200);
+      expect(
+        res.body.results.some(
+          (r: { item: { catalog: string } }) => r.item.catalog === NEEDLE,
+        ),
+      ).toBe(true);
+    } finally {
+      await db.delete(inventoryTable).where(eq(inventoryTable.catalog, NEEDLE));
+    }
+  });
+
+  it("chip-filter pushdown surfaces a match that ranks below the 200-row candidate cap", async () => {
+    // Reproduces the original bug: without SQL pushdown, a needle that
+    // ranks below the LIMIT 200 candidates is silently dropped after
+    // in-memory filtering, even though it satisfies the chip filter.
+    // Seed 250 dummy rows that share trigrams with the search term and a
+    // single needle whose ai_keywords contain the rare chip value "Orange".
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { sql: sqlOp } = await import("drizzle-orm");
+    const PREFIX = "JEST-ITG-CAP-";
+    const NEEDLE = `${PREFIX}NEEDLE-ORANGE`;
+
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} LIKE ${`${PREFIX}%`}`);
+
+    const dummies = Array.from({ length: 250 }, (_, i) => ({
+      vendor: "JEST-CAP-VENDOR",
+      catalog: `${PREFIX}DUMMY-${String(i).padStart(4, "0")}`,
+      description: "JEST-CAP shared description token bundle",
+      binLocations: [] as string[],
+      aiKeywords: [] as string[],
+    }));
+    // Insert in chunks to stay under the parameter ceiling.
+    for (let i = 0; i < dummies.length; i += 100) {
+      await db.insert(inventoryTable).values(dummies.slice(i, i + 100));
+    }
+    await db.insert(inventoryTable).values({
+      vendor: "JEST-CAP-VENDOR",
+      catalog: NEEDLE,
+      description: "JEST-CAP shared description token bundle",
+      binLocations: [] as string[],
+      aiKeywords: ["orange"],
+    });
+
+    try {
+      const res = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: "JEST-CAP shared description token bundle", colorChip: "Orange" })
+        .expect(200);
+      expect(
+        res.body.results.some(
+          (r: { item: { catalog: string } }) => r.item.catalog === NEEDLE,
+        ),
+      ).toBe(true);
+    } finally {
+      await db
+        .delete(inventoryTable)
+        .where(sqlOp`${inventoryTable.catalog} LIKE ${`${PREFIX}%`}`);
+    }
+  }, 30_000);
+
   it("does not raise when keywords contain stray FTS operator characters", async () => {
     // websearch_to_tsquery is the hardened parser; freeform punctuation that
     // would crash to_tsquery (the previous implementation) must now round-trip
