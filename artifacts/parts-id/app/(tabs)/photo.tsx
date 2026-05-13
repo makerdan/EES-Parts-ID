@@ -17,12 +17,15 @@ import type { SearchResult } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
+import { BinEditor } from "@/components/BinEditor";
 import { ReferenceModal } from "@/components/ReferenceModal";
+import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 
 export default function PhotoScreen() {
   const colors = useColors();
-  const { textFontScale } = useApp();
+  const { textFontScale, isAdmin } = useApp();
+  const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");
@@ -423,7 +426,13 @@ export default function PhotoScreen() {
                 {results.length} Matching Parts
               </Text>
               {results.map((result, index) => (
-                <ResultCard key={result.item.id} result={result} rank={index} fontScale={textFontScale} />
+                <ResultCard
+                  key={result.item.id}
+                  result={result}
+                  onEditBins={isAdmin ? setBinEditItem : undefined}
+                  rank={index}
+                  fontScale={textFontScale}
+                />
               ))}
             </View>
           ) : null}
@@ -465,6 +474,11 @@ export default function PhotoScreen() {
         </View>
       </ScrollView>
       <ReferenceModal />
+
+      <BinEditor
+        item={binEditItem}
+        onClose={() => setBinEditItem(null)}
+      />
     </SafeAreaView>
   );
 }

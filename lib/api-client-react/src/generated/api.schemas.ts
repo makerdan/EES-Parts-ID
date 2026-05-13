@@ -124,6 +124,11 @@ export interface EnrichInventoryBody {
   ids?: number[];
 }
 
+export interface UpdateBinsBody {
+  /** Replacement bin-location list. Pass [] to clear all bins. */
+  binLocations: string[];
+}
+
 export interface UpdateKeywordsBody {
   keywords: string[];
 }

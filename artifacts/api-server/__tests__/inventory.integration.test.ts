@@ -481,3 +481,88 @@ describe("POST /api/inventory/upsert-batch", () => {
     expect(res.body.total).toBe(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /api/inventory/:id/bins  (Task #454 — per-part bin editing)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PATCH /api/inventory/:id/bins", () => {
+  // Look up a seeded item id by catalog so we don't depend on insertion order.
+  async function seededItemId(catalog: string): Promise<number> {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: catalog })
+      .expect(200);
+    const match = res.body.results.find(
+      (r: { item: { catalog: string; id: number } }) => r.item.catalog === catalog,
+    );
+    if (!match) throw new Error(`fixture ${catalog} not found`);
+    return match.item.id as number;
+  }
+
+  it("replaces the bin array on an existing item and returns the updated row", async () => {
+    const id = await seededItemId("JEST-ITG-BR120");
+    const res = await supertest(app)
+      .patch(`/api/inventory/${id}/bins`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ binLocations: ["X-99", "Y-12"] })
+      .expect(200);
+
+    expect(res.body.id).toBe(id);
+    expect(res.body.binLocations).toEqual(["X-99", "Y-12"]);
+  });
+
+  it("trims, drops blanks, and de-duplicates case-insensitively", async () => {
+    const id = await seededItemId("JEST-ITG-BR120");
+    const res = await supertest(app)
+      .patch(`/api/inventory/${id}/bins`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ binLocations: ["  A-1  ", "", "a-1", "B-2"] })
+      .expect(200);
+    expect(res.body.binLocations).toEqual(["A-1", "B-2"]);
+  });
+
+  it("accepts an empty array to clear all bins", async () => {
+    const id = await seededItemId("JEST-ITG-BR120");
+    const res = await supertest(app)
+      .patch(`/api/inventory/${id}/bins`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ binLocations: [] })
+      .expect(200);
+    expect(res.body.binLocations).toEqual([]);
+  });
+
+  it("rejects requests without an admin token (401)", async () => {
+    const id = await seededItemId("JEST-ITG-BR120");
+    await supertest(app)
+      .patch(`/api/inventory/${id}/bins`)
+      .send({ binLocations: ["Z-1"] })
+      .expect(401);
+  });
+
+  it("rejects non-array binLocations (400)", async () => {
+    const id = await seededItemId("JEST-ITG-BR120");
+    await supertest(app)
+      .patch(`/api/inventory/${id}/bins`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ binLocations: "A-1" })
+      .expect(400);
+  });
+
+  it("rejects array containing non-string entries (400)", async () => {
+    const id = await seededItemId("JEST-ITG-BR120");
+    await supertest(app)
+      .patch(`/api/inventory/${id}/bins`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ binLocations: ["A-1", 42] })
+      .expect(400);
+  });
+
+  it("returns 404 for an unknown id", async () => {
+    await supertest(app)
+      .patch(`/api/inventory/9999999/bins`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ binLocations: ["A-1"] })
+      .expect(404);
+  });
+});

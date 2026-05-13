@@ -20,6 +20,7 @@ import { FilterPanel, ConfidenceSlider, type FilterValues } from "@/components/F
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
+import { BinEditor } from "@/components/BinEditor";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
@@ -147,9 +148,10 @@ function buildSearchBody(f: FilterValues) {
 
 export default function SearchScreen() {
   const colors = useColors();
-  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading } = useApp();
+  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
+  const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
@@ -826,7 +828,13 @@ export default function SearchScreen() {
         )}
         renderItem={({ item: result, index }) => (
           <View style={styles.resultItem}>
-            <ResultCard result={result} onEditKeywords={setEditItem} rank={index} fontScale={textFontScale} />
+            <ResultCard
+              result={result}
+              onEditKeywords={setEditItem}
+              onEditBins={isAdmin ? setBinEditItem : undefined}
+              rank={index}
+              fontScale={textFontScale}
+            />
           </View>
         )}
         contentContainerStyle={styles.listContent}
@@ -841,6 +849,11 @@ export default function SearchScreen() {
         item={editItem}
         onClose={() => setEditItem(null)}
         onKeywordsChanged={handleKeywordsChanged}
+      />
+
+      <BinEditor
+        item={binEditItem}
+        onClose={() => setBinEditItem(null)}
       />
     </SafeAreaView>
   );

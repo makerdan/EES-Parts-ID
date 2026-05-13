@@ -3,11 +3,13 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Appearance, Platform } from "react-native";
+import { setAuthTokenGetter } from "@workspace/api-client-react";
 
 const SEARCH_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
 
@@ -120,6 +122,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [adminToken, setAdminToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+
+  // Keep adminToken accessible to the generated API client (which calls a
+  // module-level getter on every request). Without this, admin-protected
+  // mutations like useUpdateItemBins would send no Authorization header
+  // and 401, even when the user is logged in as admin.
+  const adminTokenRef = useRef<string | null>(null);
+  useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+  useEffect(() => {
+    setAuthTokenGetter(() => adminTokenRef.current);
+    return () => setAuthTokenGetter(null);
+  }, []);
 
   useEffect(() => {
     Promise.all([

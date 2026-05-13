@@ -204,6 +204,35 @@ export const EnrichInventoryBody = zod.object({
 });
 
 /**
+ * @summary Replace the bin-locations array on a single inventory item (admin)
+ */
+export const UpdateItemBinsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateItemBinsBody = zod.object({
+  binLocations: zod
+    .array(zod.string())
+    .describe("Replacement bin-location list. Pass [] to clear all bins."),
+});
+
+export const UpdateItemBinsResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  description: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Bin locations where this part is stored (a part may live in multiple bins)",
+    ),
+  aiKeywords: zod.array(zod.string()),
+  enrichedAt: zod.coerce.date().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
  * @summary Manually update keywords for an inventory item
  */
 export const UpdateItemKeywordsParams = zod.object({

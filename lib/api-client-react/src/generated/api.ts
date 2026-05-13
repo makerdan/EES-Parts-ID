@@ -29,6 +29,7 @@ import type {
   LookupDictionaryParams,
   SearchInventoryBody,
   SearchInventoryResponse,
+  UpdateBinsBody,
   UpdateKeywordsBody,
   UpsertInventoryBody,
   UpsertInventoryResponse,
@@ -469,6 +470,93 @@ export const useEnrichInventory = <
   TContext
 > => {
   return useMutation(getEnrichInventoryMutationOptions(options));
+};
+
+/**
+ * @summary Replace the bin-locations array on a single inventory item (admin)
+ */
+export const getUpdateItemBinsUrl = (id: number) => {
+  return `/api/inventory/${id}/bins`;
+};
+
+export const updateItemBins = async (
+  id: number,
+  updateBinsBody: UpdateBinsBody,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getUpdateItemBinsUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateBinsBody),
+  });
+};
+
+export const getUpdateItemBinsMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemBins>>,
+    TError,
+    { id: number; data: BodyType<UpdateBinsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateItemBins>>,
+  TError,
+  { id: number; data: BodyType<UpdateBinsBody> },
+  TContext
+> => {
+  const mutationKey = ["updateItemBins"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateItemBins>>,
+    { id: number; data: BodyType<UpdateBinsBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateItemBins(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateItemBinsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateItemBins>>
+>;
+export type UpdateItemBinsMutationBody = BodyType<UpdateBinsBody>;
+export type UpdateItemBinsMutationError = ErrorType<void>;
+
+/**
+ * @summary Replace the bin-locations array on a single inventory item (admin)
+ */
+export const useUpdateItemBins = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemBins>>,
+    TError,
+    { id: number; data: BodyType<UpdateBinsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateItemBins>>,
+  TError,
+  { id: number; data: BodyType<UpdateBinsBody> },
+  TContext
+> => {
+  return useMutation(getUpdateItemBinsMutationOptions(options));
 };
 
 /**

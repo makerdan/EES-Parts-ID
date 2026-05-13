@@ -13,9 +13,11 @@ import {
 import * as DocumentPicker from "expo-document-picker";
 import * as XLSX from "xlsx";
 import { useListInventory } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useColors } from "@/hooks/useColors";
 import { ReferenceModal } from "@/components/ReferenceModal";
+import { BinEditor } from "@/components/BinEditor";
 import { useApp } from "@/contexts/AppContext";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
@@ -188,10 +190,22 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
 }
 
 // ── Inventory row component ───────────────────────────────────────────────
-function InventoryRow({ item, colors }: { item: InventoryItem; colors: ReturnType<typeof useColors> }) {
+function InventoryRow({
+  item,
+  colors,
+  onEditBins,
+}: {
+  item: InventoryItem;
+  colors: ReturnType<typeof useColors>;
+  onEditBins?: (item: InventoryItem) => void;
+}) {
   const isEnriched = !!item.enrichedAt;
+  const hasBins = !!item.binLocations && item.binLocations.length > 0;
   return (
-    <View style={[rowStyles.row, { backgroundColor: colors.card, borderColor: colors.border }]}>
+    <Pressable
+      onPress={onEditBins ? () => onEditBins(item) : undefined}
+      style={[rowStyles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
+    >
       <View style={rowStyles.left}>
         <Text style={[rowStyles.catalog, { color: colors.foreground }]}>{item.catalog}</Text>
         <Text style={[rowStyles.vendor, { color: colors.mutedForeground }]}>{item.vendor}</Text>
@@ -202,9 +216,13 @@ function InventoryRow({ item, colors }: { item: InventoryItem; colors: ReturnTyp
         ) : null}
       </View>
       <View style={rowStyles.right}>
-        {item.binLocations && item.binLocations.length > 0 ? (
+        {hasBins ? (
           <Text style={[rowStyles.bin, { color: colors.primary }]}>
             {item.binLocations.join(", ")}
+          </Text>
+        ) : onEditBins ? (
+          <Text style={[rowStyles.bin, { color: colors.mutedForeground, fontStyle: "italic" }]}>
+            + add bin
           </Text>
         ) : null}
         <View style={[rowStyles.enrichBadge, { backgroundColor: isEnriched ? colors.success + "22" : colors.muted }]}>
@@ -213,7 +231,7 @@ function InventoryRow({ item, colors }: { item: InventoryItem; colors: ReturnTyp
           </Text>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -321,6 +339,8 @@ export default function UploadScreen() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadPending, setUploadPending] = useState(false);
   const [inventoryPage, setInventoryPage] = useState(1);
+  const [binEditorItem, setBinEditorItem] = useState<InventoryItem | null>(null);
+  const queryClient = useQueryClient();
 
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
@@ -1163,7 +1183,9 @@ export default function UploadScreen() {
                 <FlatList
                   data={inventory}
                   keyExtractor={item => String(item.id)}
-                  renderItem={({ item }) => <InventoryRow item={item} colors={colors} />}
+                  renderItem={({ item }) => (
+                    <InventoryRow item={item} colors={colors} onEditBins={setBinEditorItem} />
+                  )}
                   contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
                   ListHeaderComponent={() => (
                     <View style={styles.inventoryHeader}>
@@ -1196,6 +1218,15 @@ export default function UploadScreen() {
       )}
 
       <ReferenceModal />
+
+      <BinEditor
+        item={binEditorItem}
+        onClose={() => setBinEditorItem(null)}
+        onBinsChanged={() => {
+          // Force a refetch so the visible inventory rows pick up the new bins.
+          void queryClient.invalidateQueries({ queryKey: ["listInventory"] });
+        }}
+      />
     </SafeAreaView>
   );
 }

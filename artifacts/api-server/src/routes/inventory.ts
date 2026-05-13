@@ -975,6 +975,45 @@ router.get("/enrich-measurements/status", requireAdminAuth, (_req, res) => {
   res.json(measureEnrichJob);
 });
 
+// ── PATCH /inventory/:id/bins ─────────────────────────────────────────────────
+// Admin-only: replace the bin-locations array on a single part. Lets warehouse
+// staff fix bins in place without re-uploading the whole spreadsheet (Task #454).
+router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    const { binLocations } = req.body as { binLocations: unknown };
+
+    if (!Array.isArray(binLocations) || !binLocations.every((b) => typeof b === "string")) {
+      return void res.status(400).json({ error: "binLocations must be an array of strings" });
+    }
+
+    // Normalise: trim, drop empties, de-duplicate (case-insensitive). Preserves
+    // the user-typed casing of the first occurrence so display stays predictable.
+    const seen = new Set<string>();
+    const normalised: string[] = [];
+    for (const raw of binLocations as string[]) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      normalised.push(trimmed);
+    }
+
+    const [updated] = await db
+      .update(inventoryTable)
+      .set({ binLocations: normalised, updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning();
+
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update bins" });
+  }
+});
+
 // ── PATCH /inventory/:id/keywords ─────────────────────────────────────────────
 router.patch("/:id/keywords", async (req, res) => {
   try {
