@@ -1222,10 +1222,8 @@ export default function UploadScreen() {
       <BinEditor
         item={binEditorItem}
         onClose={() => setBinEditorItem(null)}
-        onBinsChanged={() => {
-          // Force a refetch so the visible inventory rows pick up the new bins.
-          void queryClient.invalidateQueries({ queryKey: ["listInventory"] });
-        }}
+        // BinEditor already invalidates the listInventory query by URL prefix,
+        // so we don't need to do anything else to refresh the visible rows.
       />
     </SafeAreaView>
   );

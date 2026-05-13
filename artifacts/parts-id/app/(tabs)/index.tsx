@@ -312,6 +312,10 @@ export default function SearchScreen() {
         setIsOffline(false);
         setOfflineResults(null);
         setOfflineCacheType(null);
+        // Server response is the new source of truth — drop any local
+        // bin overlays so we don't keep showing stale local edits when the
+        // backend returns fresh data for the same items.
+        setBinOverrides({});
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
 
         // Cache all returned items for offline Fuse use
