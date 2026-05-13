@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useUpdateItemBins } from "@workspace/api-client-react";
+import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 
@@ -79,11 +80,12 @@ export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
         data: { binLocations: bins },
       });
       onBinsChanged?.(current.id, updated.binLocations);
-      // Refresh inventory list + any cached search results
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["listInventory"] }),
-        queryClient.invalidateQueries({ queryKey: ["searchInventory"] }),
-      ]);
+      // Invalidate every cached useListInventory page (the generated query key
+      // is `['/api/inventory', params]`, so we match by the URL prefix).
+      const listKeyPrefix = getListInventoryQueryKey()[0];
+      await queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+      });
       setSaveStatus("saved");
       setTimeout(() => onClose(), 400);
     } catch (err) {

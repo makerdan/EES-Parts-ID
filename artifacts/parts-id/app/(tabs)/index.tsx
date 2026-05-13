@@ -152,6 +152,10 @@ export default function SearchScreen() {
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
+  // Local override of bin lists keyed by item.id, applied on top of whatever
+  // results are currently displayed (online searchMutation.data, offlineResults,
+  // or Fuse fallback). Lets bin edits show up immediately without a re-search.
+  const [binOverrides, setBinOverrides] = useState<Record<number, string[]>>({});
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
@@ -382,7 +386,23 @@ export default function SearchScreen() {
     AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
   }, [buildFuseIndex]);
 
-  const results: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
+  // Called by BinEditor after a successful save — apply override to currently
+  // visible results AND update the offline Fuse cache so the change persists.
+  const handleBinsChanged = useCallback((id: number, binLocations: string[]) => {
+    setBinOverrides(prev => ({ ...prev, [id]: binLocations }));
+    const items = fuseItemsRef.current.map(it =>
+      it.id === id ? { ...it, binLocations } : it,
+    );
+    buildFuseIndex(items);
+    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
+  }, [buildFuseIndex]);
+
+  const rawResults: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
+  const results: SearchResult[] = rawResults.map(r =>
+    binOverrides[r.item.id]
+      ? { ...r, item: { ...r.item, binLocations: binOverrides[r.item.id]! } }
+      : r,
+  );
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
   return (
@@ -854,6 +874,7 @@ export default function SearchScreen() {
       <BinEditor
         item={binEditItem}
         onClose={() => setBinEditItem(null)}
+        onBinsChanged={handleBinsChanged}
       />
     </SafeAreaView>
   );
