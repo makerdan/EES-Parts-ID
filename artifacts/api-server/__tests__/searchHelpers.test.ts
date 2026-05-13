@@ -277,23 +277,42 @@ describe("getSeriesBase", () => {
 // ── buildChipFilterRegexes ───────────────────────────────────────────────────
 
 describe("buildChipFilterRegexes", () => {
-  it("returns one word-boundary regex per token in each filter value", () => {
+  it("returns one boundary regex per token in each filter value", () => {
     const out = buildChipFilterRegexes([
       { key: "amperage", value: "20a" },
       { key: "poleCount", value: "single pole" },
     ]);
-    expect(out).toEqual(["\\m20a\\M", "\\msingle\\M", "\\mpole\\M"]);
+    expect(out).toEqual([
+      "(^|[^[:alnum:]_])20a($|[^[:alnum:]_])",
+      "(^|[^[:alnum:]_])single($|[^[:alnum:]_])",
+      "(^|[^[:alnum:]_])pole($|[^[:alnum:]_])",
+    ]);
   });
 
-  it("escapes regex metacharacters in filter values (e.g. 1/2\")", () => {
-    const out = buildChipFilterRegexes([{ key: "sizeChip", value: '1/2"' }]);
-    // `/` and `"` are not POSIX regex metachars and should pass through.
-    expect(out).toEqual(['\\m1/2"\\M']);
+  it("uses non-alphanumeric boundaries (not Postgres \\m/\\M) so punctuation-leading tokens work", () => {
+    // `\m` / `\M` only fire at word-character transitions. Tokens that start
+    // or end with non-word chars (`#14`, `1/2"`) would never match `\m`/`\M`
+    // even when surrounded by whitespace; the boundary alternation here does.
+    const out = buildChipFilterRegexes([
+      { key: "wireGauge", value: "#14" },
+      { key: "sizeChip", value: '1/2"' },
+    ]);
+    expect(out).toEqual([
+      "(^|[^[:alnum:]_])#14($|[^[:alnum:]_])",
+      '(^|[^[:alnum:]_])1/2"($|[^[:alnum:]_])',
+    ]);
   });
 
   it("escapes a literal dot inside a filter value", () => {
     const out = buildChipFilterRegexes([{ key: "size", value: "1.5" }]);
-    expect(out).toEqual(["\\m1\\.5\\M"]);
+    expect(out).toEqual(["(^|[^[:alnum:]_])1\\.5($|[^[:alnum:]_])"]);
+  });
+
+  it("escapes regex metacharacters that would otherwise alter matching", () => {
+    const out = buildChipFilterRegexes([{ key: "k", value: "a+b*c?(d)" }]);
+    expect(out).toEqual([
+      "(^|[^[:alnum:]_])a\\+b\\*c\\?\\(d\\)($|[^[:alnum:]_])",
+    ]);
   });
 
   it("skips empty values and trims whitespace", () => {
@@ -302,7 +321,7 @@ describe("buildChipFilterRegexes", () => {
       { key: "b", value: "  " },
       { key: "c", value: "  red  " },
     ]);
-    expect(out).toEqual(["\\mred\\M"]);
+    expect(out).toEqual(["(^|[^[:alnum:]_])red($|[^[:alnum:]_])"]);
   });
 
   it("returns an empty array when given no filters", () => {
