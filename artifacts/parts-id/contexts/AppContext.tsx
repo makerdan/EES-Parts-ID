@@ -8,8 +8,13 @@ import React, {
 } from "react";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Appearance, Platform } from "react-native";
+import { Appearance, Platform, StyleSheet, Text, View } from "react-native";
 import { setAuthTokenGetter } from "@workspace/api-client-react";
+import {
+  reportStorageError,
+  setStorageErrorHandler,
+} from "@/utils/storageErrorReporter";
+import { LogoutRegistry, type LogoutHandler } from "@/utils/logoutRegistry";
 
 const SEARCH_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
 
@@ -53,7 +58,11 @@ export async function loadSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(s: AppSettings): Promise<void> {
-  try { await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+  try {
+    await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  } catch (err) {
+    reportStorageError("Could not save settings", err);
+  }
 }
 
 /**
@@ -76,6 +85,8 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "";
 
+export type { LogoutHandler };
+
 interface AppContextValue {
   isAuthenticated: boolean;
   isAdmin: boolean;
@@ -90,6 +101,10 @@ interface AppContextValue {
   settings: AppSettings;
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
   textFontScale: number;
+  // Non-blocking toast surface (used by storage error reporter + callers)
+  showToast: (message: string) => void;
+  // Allow screens to register an in-memory reset that fires on logout
+  registerLogoutHandler: (handler: LogoutHandler) => () => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -103,7 +118,11 @@ async function secureGet(key: string): Promise<string | null> {
 
 async function secureSet(key: string, value: string): Promise<void> {
   if (Platform.OS === "web") {
-    try { localStorage.setItem(key, value); } catch { }
+    try {
+      localStorage.setItem(key, value);
+    } catch (err) {
+      reportStorageError("Could not save to local storage", err);
+    }
     return;
   }
   return SecureStore.setItemAsync(key, value);
@@ -111,7 +130,11 @@ async function secureSet(key: string, value: string): Promise<void> {
 
 async function secureDelete(key: string): Promise<void> {
   if (Platform.OS === "web") {
-    try { localStorage.removeItem(key); } catch { }
+    try {
+      localStorage.removeItem(key);
+    } catch (err) {
+      reportStorageError("Could not clear local storage", err);
+    }
     return;
   }
   return SecureStore.deleteItemAsync(key);
@@ -122,6 +145,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [adminToken, setAdminToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep adminToken accessible to the generated API client (which calls a
   // module-level getter on every request). Without this, admin-protected
@@ -132,6 +157,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setAuthTokenGetter(() => adminTokenRef.current);
     return () => setAuthTokenGetter(null);
+  }, []);
+
+  // Registry of in-memory reset handlers fired on logout (e.g. SearchScreen
+  // clears its filters/results so a new login doesn't see the prior session).
+  const logoutRegistryRef = useRef(new LogoutRegistry());
+  const registerLogoutHandler = useCallback((handler: LogoutHandler) => {
+    return logoutRegistryRef.current.register(handler);
+  }, []);
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, 4000);
+  }, []);
+
+  // Wire the storage-error reporter to the toast surface so silent write
+  // failures (full disk, locked keychain, web localStorage quota) become
+  // visible to the user instead of being swallowed.
+  useEffect(() => {
+    setStorageErrorHandler((label, err) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[storage] ${label}:`, err);
+      showToast(label);
+    });
+    return () => { setStorageErrorHandler(null); };
+  }, [showToast]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -178,7 +237,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     await secureDelete(SESSION_KEY);
     await secureDelete(ADMIN_TOKEN_KEY);
-    await AsyncStorage.multiRemove(SEARCH_CACHE_KEYS).catch(() => {});
+    try {
+      await AsyncStorage.multiRemove(SEARCH_CACHE_KEYS);
+    } catch (err) {
+      reportStorageError("Could not clear search cache on logout", err);
+    }
+    // Fire in-memory reset handlers so screens drop the prior session's state
+    logoutRegistryRef.current.fire();
     setIsAuthenticated(false);
     setAdminToken(null);
   }, []);
@@ -217,7 +282,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const clearCache = useCallback(async () => {
-    await AsyncStorage.multiRemove(SEARCH_CACHE_KEYS).catch(() => {});
+    try {
+      await AsyncStorage.multiRemove(SEARCH_CACHE_KEYS);
+    } catch (err) {
+      reportStorageError("Could not clear search cache", err);
+    }
   }, []);
 
   return (
@@ -234,11 +303,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       settings,
       updateSetting,
       textFontScale,
+      showToast,
+      registerLogoutHandler,
     }}>
       {children}
+      {toastMessage ? (
+        <View pointerEvents="none" style={toastStyles.wrap}>
+          <View style={toastStyles.toast}>
+            <Text style={toastStyles.text} numberOfLines={3}>{toastMessage}</Text>
+          </View>
+        </View>
+      ) : null}
     </AppContext.Provider>
   );
 }
+
+const toastStyles = StyleSheet.create({
+  wrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 32,
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  toast: {
+    backgroundColor: "rgba(20, 20, 20, 0.92)",
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    maxWidth: 480,
+  },
+  text: {
+    color: "#fff",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+});
 
 export function useApp() {
   const ctx = useContext(AppContext);

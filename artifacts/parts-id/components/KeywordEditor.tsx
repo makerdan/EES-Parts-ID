@@ -15,6 +15,8 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { useUpdateItemKeywords } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
+import { arraysEqual } from "@/utils/arraysEqual";
+import { drainSave } from "@/utils/drainSave";
 
 interface KeywordEditorProps {
   item: InventoryItem | null;
@@ -33,73 +35,78 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const updateMutation = useUpdateItemKeywords();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Always reflects the most recent edit (even ones still in the debounce window).
   const latestKeywordsRef = useRef<string[]>(keywords);
-  // The keywords that were last successfully persisted to the server
+  // The keywords that were last successfully persisted to the server.
   const lastSavedKeywordsRef = useRef<string[]>(item?.aiKeywords ?? []);
-  // Tracks whether a mutateAsync call is currently in flight to prevent concurrent saves
+  // Tracks whether a mutateAsync call is currently in flight.
   const isSavingRef = useRef(false);
-  // When a save is in flight at close-time, stash the latest keywords here so
-  // the in-flight save's finally block can fire one follow-up flush.
-  const postFlushRef = useRef<{ id: number; keywords: string[] } | null>(null);
   // Keep item in a ref so callbacks always see the latest value without stale closure issues
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
 
-  // Sync keywords when item changes (e.g. different item opened)
+  // Sync keywords when a *new* item is opened. Critically, we DO NOT reset
+  // when `item` becomes null on close — an in-flight drainSave still reads
+  // these refs to finish persisting the user's last edits, and clobbering
+  // them with `[]` would cause the drain loop to write empty keywords to
+  // the just-closed item.
   useEffect(() => {
-    const kws = item?.aiKeywords ?? [];
+    if (!item) return;
+    const kws = item.aiKeywords ?? [];
     setKeywords(kws);
     latestKeywordsRef.current = kws;
     lastSavedKeywordsRef.current = kws;
     setSaveStatus("idle");
   }, [item?.id]);
 
-  // Auto-save with debounce whenever keywords change
+  // Drains pending edits in a loop: after each save, if `latestKeywordsRef`
+  // has moved on (because the user kept typing while we were saving), it
+  // immediately saves again. This guarantees the last edit always lands
+  // without ever dropping intermediate state. See utils/drainSave.ts.
+  const performSave = useCallback(async () => {
+    const current = itemRef.current;
+    if (!current) return;
+    if (isSavingRef.current) return;
+    if (arraysEqual(latestKeywordsRef.current, lastSavedKeywordsRef.current)) return;
+    setSaveStatus("saving");
+    try {
+      await drainSave<string[]>({
+        getLatest: () => latestKeywordsRef.current,
+        getLastSaved: () => lastSavedKeywordsRef.current,
+        setLastSaved: v => {
+          lastSavedKeywordsRef.current = v;
+          onKeywordsChanged?.(current.id, v);
+        },
+        save: async kws => {
+          await updateMutation.mutateAsync({ id: current.id, data: { keywords: kws } });
+        },
+        equal: arraysEqual,
+        isRunningRef: isSavingRef,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 1800);
+    } catch (err) {
+      console.warn("KeywordEditor: save failed:", err);
+      setSaveStatus("error");
+    }
+  }, [updateMutation, queryClient, onKeywordsChanged]);
+
+  // Auto-save with debounce whenever keywords change.
   const triggerSave = useCallback(
     (kws: string[]) => {
-      const current = itemRef.current;
-      if (!current) return;
       latestKeywordsRef.current = kws;
       if (debounceRef.current) clearTimeout(debounceRef.current);
       setSaveStatus("idle");
-      debounceRef.current = setTimeout(async () => {
+      debounceRef.current = setTimeout(() => {
         debounceRef.current = null;
-        if (isSavingRef.current) return; // skip if a mutation is already in flight
-        isSavingRef.current = true;
-        setSaveStatus("saving");
-        try {
-          await updateMutation.mutateAsync({ id: current.id, data: { keywords: kws } });
-          lastSavedKeywordsRef.current = kws;
-          onKeywordsChanged?.(current.id, kws);
-          await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-          setSaveStatus("saved");
-          setTimeout(() => setSaveStatus("idle"), 1800);
-        } catch {
-          setSaveStatus("error");
-        } finally {
-          isSavingRef.current = false;
-          // Fire any post-close flush that was queued while this save was in flight
-          const pending = postFlushRef.current;
-          if (pending) {
-            postFlushRef.current = null;
-            updateMutation
-              .mutateAsync({ id: pending.id, data: { keywords: pending.keywords } })
-              .then(() => {
-                lastSavedKeywordsRef.current = pending.keywords;
-                onKeywordsChanged?.(pending.id, pending.keywords);
-                queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-              })
-              .catch((err) => {
-                console.warn("KeywordEditor: post-close flush failed:", err);
-              });
-          }
-        }
+        void performSave();
       }, DEBOUNCE_MS);
     },
-    [updateMutation, queryClient, onKeywordsChanged],
+    [performSave],
   );
 
-  // Flush pending save on unmount
+  // Cancel any pending debounce on unmount.
   useEffect(() => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -127,45 +134,14 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   };
 
   const handleClose = () => {
-    const current = itemRef.current;
-    // Cancel any pending debounce timer
+    // Cancel any pending debounce timer and flush immediately. `performSave`
+    // is a no-op when nothing has changed and queues correctly when a save
+    // is already in flight (its drain loop will pick up the latest edits).
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-
-    if (current) {
-      const latestKws = latestKeywordsRef.current;
-      const hasUnsaved =
-        JSON.stringify(latestKws) !== JSON.stringify(lastSavedKeywordsRef.current);
-
-      if (hasUnsaved) {
-        if (!isSavingRef.current) {
-          // No save in flight — flush immediately with the latest keywords
-          isSavingRef.current = true;
-          const kws = [...latestKws];
-          updateMutation
-            .mutateAsync({ id: current.id, data: { keywords: kws } })
-            .then(() => {
-              lastSavedKeywordsRef.current = kws;
-              onKeywordsChanged?.(current.id, kws);
-              queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-            })
-            .catch((err) => {
-              console.warn("KeywordEditor: background save on close failed:", err);
-            })
-            .finally(() => {
-              isSavingRef.current = false;
-            });
-        } else {
-          // A save is in flight (with older data) — queue the latest keywords so the
-          // in-flight save's finally block can fire one follow-up flush.
-          postFlushRef.current = { id: current.id, keywords: [...latestKws] };
-        }
-      }
-      // else: nothing changed since last save — no action needed
-    }
-
+    void performSave();
     onClose();
   };
 
