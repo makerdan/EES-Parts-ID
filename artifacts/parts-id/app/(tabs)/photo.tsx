@@ -478,6 +478,13 @@ export default function PhotoScreen() {
       <BinEditor
         item={binEditItem}
         onClose={() => setBinEditItem(null)}
+        onBinsChanged={(id, binLocations) => {
+          // Patch the displayed result row in place so the new bin list is
+          // visible immediately, without re-running AI identification.
+          setResults(prev => prev.map(r =>
+            r.item.id === id ? { ...r, item: { ...r.item, binLocations } } : r,
+          ));
+        }}
       />
     </SafeAreaView>
   );
