@@ -16,12 +16,6 @@ tags:
     description: Dictionary lookups
   - name: ai
     description: AI identification and reference
-  - name: categories
-    description: Three-level taxonomy browse and classification
-  - name: barcode
-    description: Barcode / QR scanning lookup and linking
-  - name: admin
-    description: Admin-only operations (require Bearer admin token)
 paths:
   /healthz:
     get:
@@ -30,12 +24,12 @@ paths:
       summary: Health check
       description: Returns server health status
       responses:
-        '200':
+        "200":
           description: Healthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthStatus'
+                $ref: "#/components/schemas/HealthStatus"
 
   /inventory:
     get:
@@ -53,24 +47,13 @@ paths:
           schema:
             type: integer
             default: 50
-        - name: unenrichedOnly
-          in: query
-          description: When true, restricts both `items` and `total` to inventory rows that have not been AI-enriched (`enrichedAt IS NULL`). Default false preserves the global list.
-          schema:
-            type: boolean
-            default: false
-        - name: q
-          in: query
-          description: Case-insensitive substring search across vendor, catalog, and description. When provided, only matching rows are returned and `total` reflects the filtered count.
-          schema:
-            type: string
       responses:
-        '200':
+        "200":
           description: Paginated inventory
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InventoryListResponse'
+                $ref: "#/components/schemas/InventoryListResponse"
 
   /inventory/search:
     post:
@@ -82,14 +65,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SearchInventoryBody'
+              $ref: "#/components/schemas/SearchInventoryBody"
       responses:
-        '200':
+        "200":
           description: Search results with confidence scores
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SearchInventoryResponse'
+                $ref: "#/components/schemas/SearchInventoryResponse"
 
   /inventory/upsert-batch:
     post:
@@ -101,39 +84,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpsertInventoryBody'
+              $ref: "#/components/schemas/UpsertInventoryBody"
       responses:
-        '200':
+        "200":
           description: Upsert summary
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UpsertInventoryResponse'
-
-  /inventory/preview-upsert:
-    post:
-      operationId: previewUpsertInventory
-      tags: [inventory]
-      summary: Classify a batch of rows against existing inventory without writing
-      description: |
-        Classifies each (vendor, catalog) row as `new` (no match), `binChanged`
-        (match exists and the merged bin set differs), `descChanged` (match
-        exists and the proposed description differs), or `unchanged`. A row may
-        be tagged with both `binChanged` and `descChanged`. No database writes
-        are performed.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PreviewUpsertBody'
-      responses:
-        '200':
-          description: Classification summary plus per-match details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreviewUpsertResponse'
+                $ref: "#/components/schemas/UpsertInventoryResponse"
 
   /inventory/enrich:
     post:
@@ -145,49 +103,18 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/EnrichInventoryBody'
+              $ref: "#/components/schemas/EnrichInventoryBody"
       responses:
-        '200':
+        "200":
           description: SSE stream of enrichment progress
           content:
             text/event-stream: {}
 
-  /inventory/{id}:
-    get:
-      operationId: getInventoryItem
-      tags: [inventory]
-      summary: Fetch a single inventory item by ID
-      description: |
-        Returns a single inventory item with all fields, including
-        `seriesName` when the item belongs to a named product series.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Inventory item
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/InventoryItem'
-        '404':
-          description: Item not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+  /inventory/{id}/keywords:
     patch:
-      operationId: updateInventoryItem
+      operationId: updateItemKeywords
       tags: [inventory]
-      summary: Update an inventory item's description and/or AI keywords
-      description: |
-        Updates only the fields provided in the request body. A blank
-        description string is treated as a real edit (the worker explicitly
-        cleared it); only `undefined` / missing means "do not change". At
-        least one of `description` or `keywords` must be supplied.
+      summary: Manually update keywords for an inventory item
       parameters:
         - name: id
           in: path
@@ -199,38 +126,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateInventoryItemBody'
+              $ref: "#/components/schemas/UpdateKeywordsBody"
       responses:
-        '200':
+        "200":
           description: Updated inventory item
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InventoryItem'
-
-  /inventory/{id}/suggest-description:
-    post:
-      operationId: suggestItemDescription
-      tags: [inventory]
-      summary: Generate an AI-recommended improved description for a part
-      description: |
-        Returns a single 1–2 sentence improved description that folds the
-        most important AI keywords into natural prose, preserving any
-        specifics already in the existing description. Nothing is saved —
-        the caller decides whether to apply the suggestion.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Suggested description
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SuggestDescriptionResponse'
+                $ref: "#/components/schemas/InventoryItem"
 
   /dictionaries/lookup:
     get:
@@ -244,12 +147,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Dictionary lookup results
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DictionaryLookupResponse'
+                $ref: "#/components/schemas/DictionaryLookupResponse"
 
   /ai/identify:
     post:
@@ -261,134 +164,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AiIdentifyBody'
+              $ref: "#/components/schemas/AiIdentifyBody"
       responses:
-        '200':
+        "200":
           description: AI identification result
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AiIdentifyResponse'
-        '422':
-          description: Vision response could not be parsed into the expected contract
-
-  /photo/confirm:
-    post:
-      operationId: confirmPhotoId
-      tags: [ai]
-      summary: Record which result the worker confirmed matched the photo
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PhotoConfirmBody'
-      responses:
-        '200':
-          description: Confirmation recorded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PhotoConfirmResponse'
-        '404':
-          description: Photo ID event not found
-
-  /photo/stats:
-    get:
-      operationId: getPhotoStats
-      tags: [admin]
-      summary: Aggregated Photo ID telemetry over a configurable window
-      description: |
-        Server-side aggregation of `photo_id_event` rows: total scans, parse
-        success rate, match-type distribution, confirmation rate, latency
-        (avg + p95), and the top confirmed parts. Admin Bearer required.
-      parameters:
-        - name: windowHours
-          in: query
-          description: Lookback window in hours (default 24, max 720 = 30 days).
-          schema:
-            type: integer
-            default: 24
-            minimum: 1
-            maximum: 720
-      security:
-        - bearerAdmin: []
-      responses:
-        '200':
-          description: Aggregated photo ID stats
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PhotoStatsResponse'
-        '401':
-          description: Missing or invalid admin token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /photo/events:
-    get:
-      operationId: listPhotoEvents
-      tags: [admin]
-      summary: Paginated list of individual Photo ID scan events
-      description: |
-        Returns raw `photo_id_event` rows with optional filters. Each item
-        includes the AI-guessed catalog/vendor, match type, top result and
-        confirmed result (catalog + vendor from the inventory table), and
-        latency. Admin Bearer required.
-      parameters:
-        - name: windowHours
-          in: query
-          description: Lookback window in hours (default 24, max 720 = 30 days).
-          schema:
-            type: integer
-            default: 24
-            minimum: 1
-            maximum: 720
-        - name: parseOk
-          in: query
-          description: Filter by whether the vision response parsed cleanly. Omit for all.
-          schema:
-            type: boolean
-        - name: matchType
-          in: query
-          description: Filter by match type (catalog_exact | attribute_match | descriptive). Omit for all.
-          schema:
-            type: string
-        - name: confirmed
-          in: query
-          description: "'yes' = must have a confirmed result, 'no' = no confirmed result, omit for all."
-          schema:
-            type: string
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-            minimum: 1
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 20
-            minimum: 1
-            maximum: 100
-      security:
-        - bearerAdmin: []
-      responses:
-        '200':
-          description: Paginated photo ID scan events
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PhotoEventsResponse'
-        '401':
-          description: Missing or invalid admin token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/AiIdentifyResponse"
 
   /reference/ask:
     post:
@@ -400,565 +183,28 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AiReferenceBody'
+              $ref: "#/components/schemas/AiReferenceBody"
       responses:
-        '200':
+        "200":
           description: SSE stream of answer chunks
           content:
             text/event-stream: {}
-
-  /categories/tree:
-    get:
-      operationId: getCategoryTree
-      tags: [categories]
-      summary: Get the full three-level taxonomy with item counts
-      responses:
-        '200':
-          description: Nested taxonomy tree
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CategoryTreeResponse'
-
-  /categories/coverage:
-    get:
-      operationId: getCategoryCoverage
-      tags: [categories]
-      summary: Classification coverage stats (total / classified / by source)
-      responses:
-        '200':
-          description: Coverage summary
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CategoryCoverageResponse'
-
-  /categories/uncategorized:
-    get:
-      operationId: listUncategorizedItems
-      tags: [categories]
-      summary: List inventory items not yet placed in any category
-      parameters:
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-      responses:
-        '200':
-          description: Paginated uncategorized items
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/InventoryListResponse'
-
-  /categories/{slug}/items:
-    get:
-      operationId: listCategoryItems
-      tags: [categories]
-      summary: List inventory items under a category, subcategory, or type
-      description: |
-        Items assigned to the node identified by `slug` (or numeric node id)
-        OR to any of its descendants are returned. Accepts the same 16 chip
-        filter dimensions as POST /inventory/search and an optional
-        `confidenceThreshold` so Browse can be narrowed exactly like Search.
-      parameters:
-        - name: slug
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: page
-          in: query
-          schema: { type: integer, default: 1 }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 50 }
-        - name: confidenceThreshold
-          in: query
-          schema: { type: integer, default: 0 }
-        - { name: category, in: query, schema: { type: string } }
-        - { name: amperage, in: query, schema: { type: string } }
-        - { name: colorChip, in: query, schema: { type: string } }
-        - { name: manufacturer, in: query, schema: { type: string } }
-        - { name: sizeChip, in: query, schema: { type: string } }
-        - { name: rating, in: query, schema: { type: string } }
-        - { name: wireType, in: query, schema: { type: string } }
-        - { name: wireGauge, in: query, schema: { type: string } }
-        - { name: conduitType, in: query, schema: { type: string } }
-        - { name: conduitSize, in: query, schema: { type: string } }
-        - { name: boxType, in: query, schema: { type: string } }
-        - { name: boxGangCount, in: query, schema: { type: string } }
-        - { name: mountingType, in: query, schema: { type: string } }
-        - { name: environment, in: query, schema: { type: string } }
-        - { name: voltage, in: query, schema: { type: string } }
-        - { name: poleCount, in: query, schema: { type: string } }
-      responses:
-        '200':
-          description: Paginated items under the node
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CategoryItemsResponse'
-
-  /categories/{nodeId}/parts:
-    get:
-      operationId: listCategoryPartsById
-      tags: [categories]
-      summary: List inventory items under a node by numeric id (alias of /:slug/items)
-      description: |
-        Same behavior as GET /categories/{slug}/items but keyed by numeric
-        node id. Accepts the same 16 chip-filter dimensions and
-        confidenceThreshold so the mobile client can drill in by id without
-        losing filter parity.
-      parameters:
-        - name: nodeId
-          in: path
-          required: true
-          schema: { type: integer }
-        - name: page
-          in: query
-          schema: { type: integer, default: 1 }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 50 }
-        - name: confidenceThreshold
-          in: query
-          schema: { type: integer, default: 0 }
-        - { name: category, in: query, schema: { type: string } }
-        - { name: amperage, in: query, schema: { type: string } }
-        - { name: colorChip, in: query, schema: { type: string } }
-        - { name: manufacturer, in: query, schema: { type: string } }
-        - { name: sizeChip, in: query, schema: { type: string } }
-        - { name: rating, in: query, schema: { type: string } }
-        - { name: wireType, in: query, schema: { type: string } }
-        - { name: wireGauge, in: query, schema: { type: string } }
-        - { name: conduitType, in: query, schema: { type: string } }
-        - { name: conduitSize, in: query, schema: { type: string } }
-        - { name: boxType, in: query, schema: { type: string } }
-        - { name: boxGangCount, in: query, schema: { type: string } }
-        - { name: mountingType, in: query, schema: { type: string } }
-        - { name: environment, in: query, schema: { type: string } }
-        - { name: voltage, in: query, schema: { type: string } }
-        - { name: poleCount, in: query, schema: { type: string } }
-      responses:
-        '200':
-          description: Paginated items under the node
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CategoryItemsResponse'
-
-  /categories/assignments:
-    get:
-      operationId: listCategoryAssignments
-      tags: [categories]
-      summary: Flat list of every part's current taxonomy node (offline cache)
-      responses:
-        '200':
-          description: Assignment list
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CategoryAssignmentsResponse'
-
-  /categories/classify:
-    post:
-      operationId: classifyInventory
-      tags: [categories]
-      summary: Run the classifier across inventory (SSE streaming)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ClassifyInventoryBody'
-      responses:
-        '200':
-          description: SSE stream of classification progress
-          content:
-            text/event-stream: {}
-
-  /inventory/classify:
-    post:
-      operationId: classifyInventoryAlias
-      tags: [inventory]
-      summary: Spec-compliant alias of POST /categories/classify
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ClassifyInventoryBody'
-      responses:
-        '200':
-          description: SSE stream of classification progress
-          content:
-            text/event-stream: {}
-
-  /inventory/{id}/category:
-    patch:
-      operationId: setInventoryCategory
-      tags: [inventory]
-      summary: Manually set a part's category node (admin)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SetInventoryCategoryBody'
-      responses:
-        '200':
-          description: Assignment recorded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AssignCategoryResponse'
-
-  /categories/{nodeId}:
-    patch:
-      operationId: updateCategoryNode
-      tags: [categories]
-      summary: Rename, re-parent, or reorder a category node (admin)
-      parameters:
-        - name: nodeId
-          in: path
-          required: true
-          schema: { type: integer }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateCategoryNodeBody'
-      responses:
-        '200':
-          description: Updated node
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  node:
-                    type: object
-
-  /categories/merge:
-    post:
-      operationId: mergeCategoryNodes
-      tags: [categories]
-      summary: Merge two category nodes; parts and children move to target (admin)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MergeCategoryBody'
-      responses:
-        '200':
-          description: Merge summary
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-                  sourceId: { type: integer }
-                  targetId: { type: integer }
-                  moved: { type: integer }
-                  dropped: { type: integer }
-
-  /categories/{nodeId}/assign:
-    post:
-      operationId: assignInventoryToCategory
-      tags: [categories]
-      summary: Manually assign one inventory item to a taxonomy node
-      parameters:
-        - name: nodeId
-          in: path
-          required: true
-          schema:
-            type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AssignCategoryBody'
-      responses:
-        '200':
-          description: Assignment recorded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AssignCategoryResponse'
-
-  /barcode/lookup:
-    post:
-      operationId: barcodeLookup
-      tags: [barcode]
-      summary: Look up an inventory item by scanned barcode / QR string
-      description: |
-        Two-stage lookup. First the server compares the scanned string
-        (case-insensitive) against `inventory.catalog`; on a hit it
-        records the binding in `inventory_barcode` with
-        `source = catalog-auto` and returns the part. If no catalog row
-        matches, the `inventory_barcode` mapping table is consulted.
-        When neither stage matches, the response carries
-        `match: null` plus a `recentlyViewed` list so the client can
-        offer the no-match scan-to-link picker without a second
-        round-trip.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/BarcodeLookupBody'
-      responses:
-        '200':
-          description: Lookup result (match or no-match with recently viewed)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BarcodeLookupResponse'
-
-  /barcode/link:
-    post:
-      operationId: barcodeLink
-      tags: [barcode]
-      summary: Bind a scanned barcode to an inventory item
-      description: |
-        Idempotent for the same `(barcode, inventoryId)` pair. Re-linking
-        a barcode that is already bound to a *different* inventory row
-        returns 409 unless the request includes `force: true`, in which
-        case the binding is overwritten.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/BarcodeLinkBody'
-      responses:
-        '200':
-          description: Barcode linked to part
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BarcodeLinkResponse'
-        '409':
-          description: Barcode already linked to a different part (omit `force` to keep)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BarcodeLinkConflict'
-
-  /barcode/recent:
-    get:
-      operationId: barcodeRecent
-      tags: [barcode]
-      summary: Recently scanned / linked inventory items (no-match panel state)
-      parameters:
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 20
-      responses:
-        '200':
-          description: Recent inventory items
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BarcodeRecentResponse'
 
   /ai/reference:
     post:
       operationId: aiReference
       tags: [ai]
       deprecated: true
-      summary: '[Deprecated] Use /reference/ask instead'
+      summary: "[Deprecated] Use /reference/ask instead"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AiReferenceBody'
+              $ref: "#/components/schemas/AiReferenceBody"
       responses:
-        '308':
+        "308":
           description: Redirect to /reference/ask
-
-  /admin/classification-review:
-    get:
-      operationId: listClassificationReview
-      tags: [admin]
-      summary: List low-confidence AI classification items pending admin review
-      description: |
-        Returns AI-classified inventory rows whose confidence is below 70%
-        and have not yet been reviewed. Ordered oldest-first (classified_at ASC,
-        confidence ASC). Requires Bearer admin token.
-      parameters:
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-            minimum: 1
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-            minimum: 1
-            maximum: 100
-      security:
-        - bearerAdmin: []
-      responses:
-        '200':
-          description: Paginated review queue
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReviewQueueResponse'
-        '401':
-          description: Missing or invalid admin token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /admin/classification-review/{id}/confirm:
-    post:
-      operationId: confirmClassificationReview
-      tags: [admin]
-      summary: Confirm the existing AI classification for a queued item
-      description: |
-        Marks the item as reviewed without changing its assigned category.
-        Sets `reviewed_at` and `reviewed_by = 'admin'`. Requires Bearer admin token.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          description: inventory_id of the item to confirm
-          schema:
-            type: integer
-      security:
-        - bearerAdmin: []
-      responses:
-        '200':
-          description: Item confirmed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReviewActionResponse'
-        '401':
-          description: Missing or invalid admin token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Item not found or already reviewed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /admin/classification-review/{id}/reclassify:
-    post:
-      operationId: reclassifyReviewItem
-      tags: [admin]
-      summary: Reassign a queued item to a different leaf category node
-      description: |
-        Updates the item's category to the supplied `categoryNodeId` (which must
-        be a leaf `type` node), sets `classified_by = 'manual'`, confidence to
-        1.0, and marks the review complete. Requires Bearer admin token.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          description: inventory_id of the item to reclassify
-          schema:
-            type: integer
-      security:
-        - bearerAdmin: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReclassifyBody'
-      responses:
-        '200':
-          description: Item reclassified
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReviewActionResponse'
-        '400':
-          description: Invalid categoryNodeId or not a leaf type node
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          description: Missing or invalid admin token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Item or target node not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /admin/classification-review/{id}/skip:
-    post:
-      operationId: skipClassificationReview
-      tags: [admin]
-      summary: Defer a queued item to the end of the review queue
-      description: |
-        Bumps `classified_at` to now() so the item sorts after all current
-        queue items (oldest-first ordering). The item remains unreviewed.
-        Requires Bearer admin token.
-      parameters:
-        - name: id
-          in: path
-          required: true
-          description: inventory_id of the item to skip
-          schema:
-            type: integer
-      security:
-        - bearerAdmin: []
-      responses:
-        '200':
-          description: Item deferred
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReviewActionResponse'
-        '401':
-          description: Missing or invalid admin token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Item not found or already reviewed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   schemas:
@@ -981,11 +227,8 @@ components:
           type: string
         description:
           type: string
-        binLocations:
-          type: array
-          items:
-            type: string
-          description: 'Every bin this part is currently stocked in. Empty array means no bin assigned.'
+        binLocation:
+          type: string
         aiKeywords:
           type: array
           items:
@@ -994,34 +237,6 @@ components:
           type: string
           format: date-time
           nullable: true
-        tradeSize:
-          type: string
-          nullable: true
-          description: |
-            User-set trade size that groups this part with others of the same
-            product type but different physical sizes (e.g. `1/2"`, `3/4"`,
-            `1"`). `null` when not assigned.
-        vendorFullName:
-          type: string
-          nullable: true
-          description: |
-            Canonical full name for the vendor (e.g. "Eaton" for `ETN`),
-            resolved from the `vendor_map` table by case-insensitive match
-            on `vendor_map.code`. `null` when no mapping exists.
-        seriesName:
-          type: string
-          nullable: true
-          description: |
-            Human-readable name of the product series this item belongs to
-            (e.g. "Eaton BR Breakers"), resolved from the `product_series`
-            table when `series_id` is set. `null` when the item has no
-            explicit series assignment.
-        seriesId:
-          type: integer
-          nullable: true
-          description: |
-            Numeric primary key of the product series this item belongs to,
-            or `null` when the item has no series assignment.
         createdAt:
           type: string
           format: date-time
@@ -1033,7 +248,7 @@ components:
         - vendor
         - catalog
         - description
-        - binLocations
+        - binLocation
         - aiKeywords
         - createdAt
         - updatedAt
@@ -1044,7 +259,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/InventoryItem'
+            $ref: "#/components/schemas/InventoryItem"
         total:
           type: integer
         page:
@@ -1134,7 +349,7 @@ components:
       type: object
       properties:
         item:
-          $ref: '#/components/schemas/InventoryItem'
+          $ref: "#/components/schemas/InventoryItem"
         confidence:
           type: number
         matchReason:
@@ -1148,7 +363,7 @@ components:
         variants:
           type: array
           items:
-            $ref: '#/components/schemas/InventoryItem'
+            $ref: "#/components/schemas/InventoryItem"
       required:
         - item
         - confidence
@@ -1161,7 +376,7 @@ components:
         results:
           type: array
           items:
-            $ref: '#/components/schemas/SearchResult'
+            $ref: "#/components/schemas/SearchResult"
         totalMatches:
           type: integer
         belowThreshold:
@@ -1178,67 +393,28 @@ components:
         - totalMatches
         - belowThreshold
 
-    UpsertInventoryItem:
-      type: object
-      properties:
-        vendor:
-          type: string
-        catalog:
-          type: string
-        description:
-          type: string
-          description: 'Proposed description. Blank/missing values never overwrite an existing description.'
-        binLocations:
-          type: array
-          items:
-            type: string
-          description: "Bins to merge into the part's bin list (additive — existing bins are preserved)."
-      required:
-        - vendor
-        - catalog
-
-    SelectedKey:
-      type: object
-      description: 'Identifies a single existing-item update to apply when mode is `selected`. Match is case-insensitive.'
-      properties:
-        vendor:
-          type: string
-        catalog:
-          type: string
-      required:
-        - vendor
-        - catalog
-
     UpsertInventoryBody:
       type: object
       properties:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/UpsertInventoryItem'
-        mode:
-          type: string
-          enum:
-            - add-new-only
-            - overwrite-all
-            - selected
-          default: overwrite-all
-          description: |
-            Controls how existing matches are handled:
-            - `add-new-only`: only insert rows whose (vendor, catalog) does not exist; never modify existing rows.
-            - `overwrite-all`: insert new rows; for matches, additively merge bins and replace description (when proposed description is non-empty). Vendor/catalog text on existing rows is never modified.
-            - `selected`: insert new rows; only update existing matches whose (vendor, catalog) appears in `selectedKeys`.
-        selectedKeys:
-          type: array
-          items:
-            $ref: '#/components/schemas/SelectedKey'
-          description: 'Required when `mode = selected`. Existing matches NOT in this list are skipped.'
+            type: object
+            properties:
+              vendor:
+                type: string
+              catalog:
+                type: string
+              description:
+                type: string
+              binLocation:
+                type: string
+            required:
+              - vendor
+              - catalog
       required:
         - items
 
-    # NOTE on counts: `total` is the number of distinct (vendor, catalog) rows
-    # processed AFTER server-side de-duplication (case-insensitive on both
-    # vendor and catalog). `inserted + updated + skipped === total`.
     UpsertInventoryResponse:
       type: object
       properties:
@@ -1246,91 +422,12 @@ components:
           type: integer
         updated:
           type: integer
-        skipped:
-          type: integer
-          description: 'Existing matches that were intentionally not updated (e.g. mode=add-new-only or not in selectedKeys).'
         total:
           type: integer
       required:
         - inserted
         - updated
-        - skipped
         - total
-
-    PreviewUpsertBody:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/UpsertInventoryItem'
-      required:
-        - items
-
-    PreviewMatchRow:
-      type: object
-      description: 'An incoming row that matched an existing inventory item. Includes the current stored values and the proposed merged values.'
-      properties:
-        vendor:
-          type: string
-          description: 'Vendor as stored in the DB (its original casing is preserved).'
-        catalog:
-          type: string
-          description: 'Catalog as stored in the DB.'
-        existingDescription:
-          type: string
-        proposedDescription:
-          type: string
-          description: 'Description that will be written if this row is included in an `overwrite-all`/`selected` apply. Empty proposed description means description will not change.'
-        existingBinLocations:
-          type: array
-          items:
-            type: string
-        proposedBinLocations:
-          type: array
-          items:
-            type: string
-          description: 'Bin list after additive merge of incoming bins into the existing list.'
-        binChanged:
-          type: boolean
-        descChanged:
-          type: boolean
-      required:
-        - vendor
-        - catalog
-        - existingDescription
-        - proposedDescription
-        - existingBinLocations
-        - proposedBinLocations
-        - binChanged
-        - descChanged
-
-    PreviewUpsertResponse:
-      type: object
-      properties:
-        newCount:
-          type: integer
-          description: 'Rows whose (vendor, catalog) does not exist in the DB.'
-        changedCount:
-          type: integer
-          description: 'Existing matches where bin and/or description would change.'
-        unchangedCount:
-          type: integer
-          description: 'Existing matches where nothing would change.'
-        totalIncoming:
-          type: integer
-          description: 'Number of distinct (vendor, catalog) rows after de-duplication.'
-        changes:
-          type: array
-          items:
-            $ref: '#/components/schemas/PreviewMatchRow'
-          description: 'Per-row details for every existing match that would change. Unchanged matches are NOT included.'
-      required:
-        - newCount
-        - changedCount
-        - unchangedCount
-        - totalIncoming
-        - changes
 
     EnrichInventoryBody:
       type: object
@@ -1342,47 +439,15 @@ components:
           description: Inventory IDs to enrich. If empty, enriches all un-enriched items.
       required: []
 
-    UpdateInventoryItemBody:
+    UpdateKeywordsBody:
       type: object
-      description: |
-        Partial update for an inventory item. Only the fields explicitly
-        provided are touched. Sending `description: ""` is a real edit
-        (clears the description); omit the field entirely to leave it
-        untouched. At least one field must be supplied.
       properties:
-        vendor:
-          type: string
-          description: Replacement vendor code (trimmed and uppercased). Must be non-empty.
-        catalog:
-          type: string
-          description: Replacement catalog number (trimmed). Must be non-empty.
-        description:
-          type: string
-          description: New description text. Empty string clears the description.
         keywords:
           type: array
           items:
             type: string
-          description: Replacement AI keywords array.
-        tradeSize:
-          type: string
-          nullable: true
-          description: Trade size to assign (e.g. `1/2"`, `3/4"`). Null clears the value. Omit to leave unchanged.
-        binLocations:
-          type: array
-          items:
-            type: string
-          description: Replacement bin locations array. Duplicates are deduplicated case-insensitively.
-      required: []
-
-    SuggestDescriptionResponse:
-      type: object
-      properties:
-        description:
-          type: string
-          description: AI-suggested description (1–2 sentences).
       required:
-        - description
+        - keywords
 
     DictionaryLookupResponse:
       type: object
@@ -1461,19 +526,7 @@ components:
         results:
           type: array
           items:
-            $ref: '#/components/schemas/SearchResult'
-        match_type:
-          type: string
-          enum: [catalog_exact, attribute_match, descriptive]
-          description: Which routing path produced the results
-        _telemetry:
-          type: object
-          properties:
-            photoEventId:
-              type: integer
-              nullable: true
-          required:
-            - photoEventId
+            $ref: "#/components/schemas/SearchResult"
       required:
         - searchTerms
         - synonyms
@@ -1481,33 +534,6 @@ components:
         - manufacturerVerified
         - summary
         - results
-        - match_type
-        - _telemetry
-
-    PhotoConfirmBody:
-      type: object
-      properties:
-        photoEventId:
-          type: integer
-        resultId:
-          type: integer
-      required:
-        - photoEventId
-        - resultId
-
-    PhotoConfirmResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        photoEventId:
-          type: integer
-        confirmedResultId:
-          type: integer
-      required:
-        - ok
-        - photoEventId
-        - confirmedResultId
 
     AiReferenceBody:
       type: object
@@ -1516,531 +542,3 @@ components:
           type: string
       required:
         - question
-
-    CategoryNode:
-      type: object
-      properties:
-        id:
-          type: integer
-        slug:
-          type: string
-        name:
-          type: string
-        level:
-          type: string
-          description: 'category | subcategory | type'
-        sortOrder:
-          type: integer
-        itemCount:
-          type: integer
-          description: 'Total inventory items assigned at this node OR any descendant.'
-        children:
-          type: array
-          items:
-            $ref: '#/components/schemas/CategoryNode'
-      required:
-        - id
-        - slug
-        - name
-        - level
-        - sortOrder
-        - itemCount
-        - children
-
-    CategoryTreeResponse:
-      type: object
-      properties:
-        tree:
-          type: array
-          items:
-            $ref: '#/components/schemas/CategoryNode'
-      required:
-        - tree
-
-    CategoryCoverageResponse:
-      type: object
-      properties:
-        total:
-          type: integer
-        classified:
-          type: integer
-        uncategorized:
-          type: integer
-        bySource:
-          type: object
-          additionalProperties:
-            type: integer
-          description: 'Count of distinct items classified by each method (rule/ai/manual).'
-      required:
-        - total
-        - classified
-        - uncategorized
-        - bySource
-
-    CategoryItemsResponse:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/InventoryItem'
-        total:
-          type: integer
-        page:
-          type: integer
-        limit:
-          type: integer
-        node:
-          type: object
-          properties:
-            slug:
-              type: string
-            name:
-              type: string
-            level:
-              type: string
-          required:
-            - slug
-            - name
-            - level
-      required:
-        - items
-        - total
-        - page
-        - limit
-        - node
-
-    CategoryAssignmentsResponse:
-      type: object
-      properties:
-        assignments:
-          type: array
-          items:
-            type: object
-            properties:
-              inventoryId: { type: integer }
-              categoryNodeId: { type: integer }
-              typeSlug: { type: string }
-              confidence: { type: string }
-              classifiedBy: { type: string }
-            required:
-              - inventoryId
-              - categoryNodeId
-              - typeSlug
-              - classifiedBy
-        updatedAt:
-          type: string
-      required:
-        - assignments
-        - updatedAt
-
-    ClassifyInventoryBody:
-      type: object
-      properties:
-        mode:
-          type: string
-          enum: [all, unclassified, 'specific-ids']
-          default: unclassified
-          description: |
-            "all" re-classifies every inventory row (overwrites manual overrides).
-            "unclassified" only touches rows with no current assignment (manual rows preserved).
-            "specific-ids" classifies only the rows in `ids`.
-        ids:
-          type: array
-          items:
-            type: integer
-          description: "Required when mode is 'specific-ids'."
-        useAi:
-          type: boolean
-          default: true
-          description: 'When true (default), fall back to AI (gpt-4o-mini) for items the rule classifier could not place. Pass false to skip AI and route rule-misses straight to Uncategorized.'
-
-    AssignCategoryBody:
-      type: object
-      properties:
-        inventoryId:
-          type: integer
-      required:
-        - inventoryId
-
-    AssignCategoryResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        inventoryId:
-          type: integer
-        nodeId:
-          type: integer
-      required:
-        - ok
-        - inventoryId
-
-    SetInventoryCategoryBody:
-      type: object
-      properties:
-        categoryNodeId:
-          type: integer
-      required:
-        - categoryNodeId
-
-    UpdateCategoryNodeBody:
-      type: object
-      properties:
-        name:
-          type: string
-        parentId:
-          type: integer
-          nullable: true
-        sortOrder:
-          type: integer
-
-    BarcodeLookupBody:
-      type: object
-      properties:
-        barcode:
-          type: string
-          description: Raw scanned string (server normalizes case + whitespace).
-      required:
-        - barcode
-
-    BarcodeSource:
-      type: string
-      enum: [catalog-auto, upc-linked, manual]
-      description: |
-        Where the binding came from:
-        - `catalog-auto`: server matched the scan to inventory.catalog
-        - `upc-linked`: warehouse worker linked an unknown barcode
-        - `manual`: admin imported the binding directly
-
-    BarcodeLookupResponse:
-      type: object
-      properties:
-        match:
-          allOf:
-            - $ref: '#/components/schemas/InventoryItem'
-          nullable: true
-          description: Matched inventory item, or null when nothing was found.
-        source:
-          allOf:
-            - $ref: '#/components/schemas/BarcodeSource'
-          nullable: true
-          description: How the binding was found, or null on no-match.
-        recentlyViewed:
-          type: array
-          items:
-            $ref: '#/components/schemas/InventoryItem'
-          description: Recently scanned/linked items, used for the no-match picker.
-      required:
-        - match
-        - source
-        - recentlyViewed
-
-    BarcodeLinkBody:
-      type: object
-      properties:
-        barcode:
-          type: string
-        inventoryId:
-          type: integer
-        force:
-          type: boolean
-          default: false
-          description: Overwrite an existing binding for this barcode.
-        createdBy:
-          type: string
-          nullable: true
-          description: Optional opaque identifier for the worker performing the link.
-      required:
-        - barcode
-        - inventoryId
-
-    BarcodeLinkResponse:
-      type: object
-      properties:
-        ok:
-          type: boolean
-        item:
-          $ref: '#/components/schemas/InventoryItem'
-      required:
-        - ok
-        - item
-
-    BarcodeLinkConflict:
-      type: object
-      properties:
-        error:
-          type: string
-        currentInventoryId:
-          type: integer
-      required:
-        - error
-        - currentInventoryId
-
-    BarcodeRecentResponse:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/InventoryItem'
-      required:
-        - items
-
-    MergeCategoryBody:
-      type: object
-      properties:
-        sourceId:
-          type: integer
-        targetId:
-          type: integer
-      required:
-        - sourceId
-        - targetId
-
-    ReviewQueueItem:
-      type: object
-      description: A single inventory item in the AI classification review queue.
-      properties:
-        inventoryId:
-          type: integer
-          description: Primary key of the inventory row.
-        vendor:
-          type: string
-        catalog:
-          type: string
-        description:
-          type: string
-        confidencePct:
-          type: number
-          description: AI confidence expressed as a percentage (0–100).
-        classifiedAt:
-          type: string
-          format: date-time
-          description: When the AI classification was recorded.
-        categoryNodeId:
-          type: integer
-          description: Current leaf category node assigned by AI.
-        categoryPath:
-          type: string
-          description: 'Human-readable breadcrumb: Category › Subcategory › Type.'
-      required:
-        - inventoryId
-        - vendor
-        - catalog
-        - description
-        - confidencePct
-        - classifiedAt
-        - categoryNodeId
-        - categoryPath
-
-    ReviewQueueResponse:
-      type: object
-      description: Paginated list of items pending classification review.
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReviewQueueItem'
-        total:
-          type: integer
-          description: Total number of items currently in the review queue.
-        page:
-          type: integer
-        limit:
-          type: integer
-      required:
-        - items
-        - total
-        - page
-        - limit
-
-    ReclassifyBody:
-      type: object
-      description: Body for reclassifying an item to a different leaf category node.
-      properties:
-        categoryNodeId:
-          type: integer
-          description: ID of the target leaf (type) category node.
-      required:
-        - categoryNodeId
-
-    ReviewActionResponse:
-      type: object
-      description: Confirmation returned by confirm / reclassify / skip actions.
-      properties:
-        ok:
-          type: boolean
-        inventoryId:
-          type: integer
-        categoryNodeId:
-          type: integer
-          description: Present only on reclassify — the newly assigned node ID.
-          nullable: true
-      required:
-        - ok
-        - inventoryId
-
-    PhotoEventItem:
-      type: object
-      description: A single raw Photo ID scan event with joined inventory data.
-      properties:
-        id:
-          type: integer
-        ts:
-          type: string
-          format: date-time
-          description: When the scan occurred.
-        imageHash:
-          type: string
-          nullable: true
-        parseOk:
-          type: boolean
-          description: Whether the vision response parsed cleanly.
-        catalogGuess:
-          type: string
-          nullable: true
-          description: Catalog number extracted by the AI.
-        vendorGuess:
-          type: string
-          nullable: true
-          description: Vendor name extracted by the AI.
-        matchType:
-          type: string
-          nullable: true
-          description: Match path used (catalog_exact | attribute_match | descriptive).
-        topResultCatalog:
-          type: string
-          nullable: true
-          description: Catalog of the #1 search result shown to the worker.
-        topResultVendor:
-          type: string
-          nullable: true
-          description: Vendor of the #1 search result shown to the worker.
-        confirmedResultCatalog:
-          type: string
-          nullable: true
-          description: Catalog of the result the worker confirmed, if any.
-        confirmedResultVendor:
-          type: string
-          nullable: true
-          description: Vendor of the result the worker confirmed, if any.
-        latencyMs:
-          type: integer
-          nullable: true
-        visionRawSummary:
-          type: string
-          nullable: true
-          description: |
-            First 200 characters of the AI vision response for this scan.
-            Contains the raw text when the parse failed; a JSON excerpt when it
-            succeeded. Useful for diagnosing why a scan parsed badly.
-      required:
-        - id
-        - ts
-        - parseOk
-
-    PhotoEventsResponse:
-      type: object
-      description: Paginated list of individual Photo ID scan events.
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/PhotoEventItem'
-        total:
-          type: integer
-          description: Total number of events matching the current filters.
-        page:
-          type: integer
-        limit:
-          type: integer
-      required:
-        - items
-        - total
-        - page
-        - limit
-
-    PhotoStatsMatchTypeDistribution:
-      type: object
-      description: Counts per Photo ID match path (catalog / attribute / descriptive).
-      properties:
-        catalogExact:
-          type: integer
-        attributeMatch:
-          type: integer
-        descriptive:
-          type: integer
-      required:
-        - catalogExact
-        - attributeMatch
-        - descriptive
-
-    PhotoStatsTopConfirmedPart:
-      type: object
-      description: A part the worker confirmed at least once in the window.
-      properties:
-        inventoryId:
-          type: integer
-        catalog:
-          type: string
-        vendor:
-          type: string
-        confirmedCount:
-          type: integer
-      required:
-        - inventoryId
-        - catalog
-        - vendor
-        - confirmedCount
-
-    PhotoStatsResponse:
-      type: object
-      description: Aggregated Photo ID telemetry over the requested window.
-      properties:
-        windowHours:
-          type: integer
-        totalScans:
-          type: integer
-        parseSuccessRate:
-          type: number
-          description: Fraction (0–1) of scans whose vision response parsed cleanly.
-        confirmationRate:
-          type: number
-          description: Of scans that returned a top result, the fraction the worker confirmed.
-        matchTypeDistribution:
-          $ref: '#/components/schemas/PhotoStatsMatchTypeDistribution'
-        avgLatencyMs:
-          type: integer
-          nullable: true
-        p95LatencyMs:
-          type: integer
-          nullable: true
-        topConfirmedParts:
-          type: array
-          items:
-            $ref: '#/components/schemas/PhotoStatsTopConfirmedPart'
-      required:
-        - windowHours
-        - totalScans
-        - parseSuccessRate
-        - confirmationRate
-        - matchTypeDistribution
-        - avgLatencyMs
-        - p95LatencyMs
-        - topConfirmedParts
-
-    ErrorResponse:
-      type: object
-      description: Generic error envelope returned on 4xx/5xx responses.
-      properties:
-        error:
-          type: string
-      required:
-        - error
-
-  securitySchemes:
-    bearerAdmin:
-      type: http
-      scheme: bearer
-      description: Admin Bearer token (set via ADMIN_PASSWORD env var on the server).

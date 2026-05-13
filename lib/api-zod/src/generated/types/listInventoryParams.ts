@@ -9,12 +9,4 @@
 export type ListInventoryParams = {
   page?: number;
   limit?: number;
-  /**
-   * When true, restricts both `items` and `total` to inventory rows that have not been AI-enriched (`enrichedAt IS NULL`). Default false preserves the global list.
-   */
-  unenrichedOnly?: boolean;
-  /**
-   * Case-insensitive substring search across vendor, catalog, and description. When provided, only matching rows are returned and `total` reflects the filtered count.
-   */
-  q?: string;
 };

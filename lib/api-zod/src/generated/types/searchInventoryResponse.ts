@@ -5,8 +5,8 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { SearchInventoryResponseDimensionCounts } from './searchInventoryResponseDimensionCounts';
-import type { SearchResult } from './searchResult';
+import type { SearchInventoryResponseDimensionCounts } from "./searchInventoryResponseDimensionCounts";
+import type { SearchResult } from "./searchResult";
 
 export interface SearchInventoryResponse {
   results: SearchResult[];

@@ -3,8 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "codegen:only": "orval --config ./orval.config.ts && node ./codegen-hash.mjs write",
-    "codegen": "orval --config ./orval.config.ts && node ./codegen-hash.mjs write && pnpm -w run typecheck:libs"
+    "codegen": "orval --config ./orval.config.ts && pnpm -w run typecheck:libs"
   },
   "devDependencies": {
     "orval": "^8.5.2"

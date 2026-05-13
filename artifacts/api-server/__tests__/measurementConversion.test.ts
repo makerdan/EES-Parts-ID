@@ -1,100 +1,82 @@
-/**
- * Unit tests for expandMeasurements (src/utils/measurementConversion.ts).
- *
- * expandMeasurements takes a free-text search string that may contain
- * metric or imperial measurements and returns an array of equivalent
- * terms in the opposite unit system.  The expanded terms are injected
- * into the full-text search query so a user who types "25mm conduit"
- * also hits catalog items described in inches, and vice-versa.
- *
- * Test groups:
- *   • metric → imperial  (mm / cm / m → inch / ft equivalents)
- *   • imperial → metric  (fraction, mixed, decimal, and whole inches; feet)
- *   • edge cases         (empty string, zero/out-of-range mm, wire-gauge
- *                         fractions like "12/2" that must NOT be treated
- *                         as an inch measurement)
- */
-import { expandMeasurements } from '../src/utils/measurementConversion';
+import { expandMeasurements } from "../src/utils/measurementConversion";
 
-describe('expandMeasurements', () => {
-  describe('metric → imperial', () => {
-    it('converts mm to inch terms', () => {
-      const terms = expandMeasurements('25mm conduit');
-      const joined = terms.join(' ');
+describe("expandMeasurements", () => {
+  describe("metric → imperial", () => {
+    it("converts mm to inch terms", () => {
+      const terms = expandMeasurements("25mm conduit");
+      const joined = terms.join(" ");
       // 25mm ≈ 0.984 inch (nearest trade size = 1 inch)
-      expect(terms.some((t) => /inch/i.test(t) || t.includes('"'))).toBe(true);
+      expect(terms.some(t => /inch/i.test(t) || t.includes('"'))).toBe(true);
     });
 
-    it('converts cm to inch terms', () => {
-      const terms = expandMeasurements('2.54cm');
+    it("converts cm to inch terms", () => {
+      const terms = expandMeasurements("2.54cm");
       // 2.54cm = 25.4mm = 1 inch
-      expect(terms.some((t) => /1(\s*inch|")/i.test(t))).toBe(true);
+      expect(terms.some(t => /1(\s*inch|")/i.test(t))).toBe(true);
     });
 
-    it('converts meters to feet', () => {
-      const terms = expandMeasurements('3m conduit');
-      expect(terms.some((t) => /ft|feet/i.test(t))).toBe(true);
+    it("converts meters to feet", () => {
+      const terms = expandMeasurements("3m conduit");
+      expect(terms.some(t => /ft|feet/i.test(t))).toBe(true);
     });
 
-    it('does not convert a bare number with no unit', () => {
-      const terms = expandMeasurements('20 breaker');
+    it("does not convert a bare number with no unit", () => {
+      const terms = expandMeasurements("20 breaker");
       expect(terms).toHaveLength(0);
     });
   });
 
-  describe('imperial → metric', () => {
-    it('converts fractional inch to mm terms', () => {
+  describe("imperial → metric", () => {
+    it("converts fractional inch to mm terms", () => {
       const terms = expandMeasurements('1/2" conduit');
       // 0.5 inch = 12.7mm
-      expect(terms.some((t) => /mm/i.test(t))).toBe(true);
+      expect(terms.some(t => /mm/i.test(t))).toBe(true);
     });
 
-    it('converts mixed fraction inch to mm terms', () => {
-      const terms = expandMeasurements('1-1/2 inch conduit');
+    it("converts mixed fraction inch to mm terms", () => {
+      const terms = expandMeasurements("1-1/2 inch conduit");
       // 1.5 inch = 38.1mm
-      expect(terms.some((t) => /mm/i.test(t))).toBe(true);
+      expect(terms.some(t => /mm/i.test(t))).toBe(true);
     });
 
     it("converts written 'half inch' to mm terms", () => {
-      const terms = expandMeasurements('half inch conduit');
-      expect(terms.some((t) => /mm/i.test(t))).toBe(true);
+      const terms = expandMeasurements("half inch conduit");
+      expect(terms.some(t => /mm/i.test(t))).toBe(true);
     });
 
-    it('converts decimal inch to mm terms', () => {
-      const terms = expandMeasurements('0.75 inch conduit');
-      expect(terms.some((t) => /mm/i.test(t))).toBe(true);
+    it("converts decimal inch to mm terms", () => {
+      const terms = expandMeasurements("0.75 inch conduit");
+      expect(terms.some(t => /mm/i.test(t))).toBe(true);
     });
 
-    it('converts whole-number inch to mm terms', () => {
+    it("converts whole-number inch to mm terms", () => {
       const terms = expandMeasurements('2" conduit');
       // 2 inch = 50.8mm
-      expect(terms.some((t) => /mm/i.test(t))).toBe(true);
+      expect(terms.some(t => /mm/i.test(t))).toBe(true);
     });
 
-    it('converts feet to meters', () => {
-      const terms = expandMeasurements('250ft cable');
-      expect(terms.some((t) => /\d+m\b/i.test(t))).toBe(true);
+    it("converts feet to meters", () => {
+      const terms = expandMeasurements("250ft cable");
+      expect(terms.some(t => /\d+m\b/i.test(t))).toBe(true);
     });
   });
 
-  describe('edge cases', () => {
-    it('returns an array for empty input', () => {
-      // Callers spread the result directly into a search query; an empty array
-      // is the safe no-op rather than null/undefined.
-      expect(Array.isArray(expandMeasurements(''))).toBe(true);
+  describe("edge cases", () => {
+    it("returns an array for empty input", () => {
+      expect(Array.isArray(expandMeasurements(""))).toBe(true);
     });
 
-    it('does not produce terms for out-of-range mm values', () => {
+    it("does not produce terms for out-of-range mm values", () => {
       // 0mm and very large values should be ignored
-      const zero = expandMeasurements('0mm conduit');
+      const zero = expandMeasurements("0mm conduit");
       expect(zero).toHaveLength(0);
     });
 
-    it('does not match wire-gauge fractions (14/2) as inch measurements', () => {
+    it("does not match wire-gauge fractions (14/2) as inch measurements", () => {
       // 14/2 has no explicit inch unit, so it must NOT be treated as 7 inches
-      const terms = expandMeasurements('12/2 NM-B cable');
+      const terms = expandMeasurements("12/2 NM-B cable");
       // No inch-to-metric conversion should happen for bare wire gauge fractions
-      expect(terms.filter((t) => /\d+mm/i.test(t))).toHaveLength(0);
+      expect(terms.filter(t => /\d+mm/i.test(t))).toHaveLength(0);
     });
   });
 });

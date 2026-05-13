@@ -6,7 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface MergeCategoryBody {
-  sourceId: number;
-  targetId: number;
+export interface UpdateKeywordsBody {
+  keywords: string[];
 }

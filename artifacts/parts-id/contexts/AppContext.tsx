@@ -1,47 +1,42 @@
-/**
- * Global app state container.
- *
- * Holds the auth flag (post-password login), the inventory cache used by the
- * Fuse.js offline fallback, and a few cross-tab UI prefs. Backed by
- * AsyncStorage so the worker's state survives app relaunches.
- */
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Appearance, Platform } from 'react-native';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import * as SecureStore from "expo-secure-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Appearance, Platform } from "react-native";
 
-const SEARCH_CACHE_KEYS = ['parts_id_fuse_cache_v2', 'parts_id_query_cache_v1'];
+const SEARCH_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
 
-const SESSION_KEY = 'parts_id_session';
-const ADMIN_TOKEN_KEY = 'parts_id_admin_token';
+const SESSION_KEY = "parts_id_session";
+const ADMIN_TOKEN_KEY = "parts_id_admin_token";
 
 // ── App Settings ─────────────────────────────────────────────────────────────
-export const SETTINGS_KEY = 'parts_id_settings_v1';
-export type TextSize = 'small' | 'normal' | 'large';
-export type ThemeMode = 'light' | 'dark' | 'system';
+export const SETTINGS_KEY = "parts_id_settings_v1";
+export type TextSize = "small" | "normal" | "large";
+export type ThemeMode = "light" | "dark" | "system";
 export type AppSettings = {
   textSize: TextSize;
   defaultConfidenceThreshold: number;
   themeMode: ThemeMode;
-  shelfViewEnabled: boolean;
 };
 export const DEFAULT_SETTINGS: AppSettings = {
-  textSize: 'normal',
+  textSize: "normal",
   defaultConfidenceThreshold: 50,
-  themeMode: 'system',
-  shelfViewEnabled: true,
+  themeMode: "system",
 };
 
-const VALID_TEXT_SIZES: TextSize[] = ['small', 'normal', 'large'];
-const VALID_THEME_MODES: ThemeMode[] = ['light', 'dark', 'system'];
+const VALID_TEXT_SIZES: TextSize[] = ["small", "normal", "large"];
+const VALID_THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
 
 export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await AsyncStorage.getItem(SETTINGS_KEY);
     if (!raw) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(raw) as Partial<AppSettings> & { warehouseShelfView?: boolean };
-    // Migration: if either of the old keys was explicitly false, keep shelf view off.
-    const legacyOff = parsed.shelfViewEnabled === false || parsed.warehouseShelfView === false;
+    const parsed = JSON.parse(raw) as Partial<AppSettings>;
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
@@ -51,17 +46,12 @@ export async function loadSettings(): Promise<AppSettings> {
       themeMode: VALID_THEME_MODES.includes(parsed.themeMode as ThemeMode)
         ? (parsed.themeMode as ThemeMode)
         : DEFAULT_SETTINGS.themeMode,
-      shelfViewEnabled: legacyOff ? false : DEFAULT_SETTINGS.shelfViewEnabled,
     };
-  } catch {
-    return DEFAULT_SETTINGS;
-  }
+  } catch { return DEFAULT_SETTINGS; }
 }
 
 export async function saveSettings(s: AppSettings): Promise<void> {
-  try {
-    await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-  } catch {}
+  try { await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
 }
 
 /**
@@ -73,16 +63,16 @@ export async function saveSettings(s: AppSettings): Promise<void> {
  */
 function applyThemeMode(mode: ThemeMode) {
   try {
-    Appearance.setColorScheme(mode === 'system' ? null : mode);
+    Appearance.setColorScheme(mode === "system" ? null : mode);
   } catch {
     // `setColorScheme` is a no-op on platforms that don't support it (old RN, some web runtimes).
   }
 }
-const APP_PASSWORD = process.env.EXPO_PUBLIC_APP_PASSWORD ?? '';
+const APP_PASSWORD = process.env.EXPO_PUBLIC_APP_PASSWORD ?? "";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : '';
+  : "";
 
 interface AppContextValue {
   isAuthenticated: boolean;
@@ -103,31 +93,23 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null);
 
 async function secureGet(key: string): Promise<string | null> {
-  if (Platform.OS === 'web') {
-    try {
-      return localStorage.getItem(key);
-    } catch {
-      return null;
-    }
+  if (Platform.OS === "web") {
+    try { return localStorage.getItem(key); } catch { return null; }
   }
   return SecureStore.getItemAsync(key);
 }
 
 async function secureSet(key: string, value: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    try {
-      localStorage.setItem(key, value);
-    } catch {}
+  if (Platform.OS === "web") {
+    try { localStorage.setItem(key, value); } catch { }
     return;
   }
   return SecureStore.setItemAsync(key, value);
 }
 
 async function secureDelete(key: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    try {
-      localStorage.removeItem(key);
-    } catch {}
+  if (Platform.OS === "web") {
+    try { localStorage.removeItem(key); } catch { }
     return;
   }
   return SecureStore.deleteItemAsync(key);
@@ -140,45 +122,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
-    Promise.all([secureGet(SESSION_KEY), secureGet(ADMIN_TOKEN_KEY), loadSettings()])
-      .then(([session, token, s]) => {
-        if (session === 'authenticated') setIsAuthenticated(true);
-        if (token) setAdminToken(token);
-        setSettings(s);
-        applyThemeMode(s.themeMode);
-        setIsLoading(false);
-      })
-      .catch(() => {
-        // SecureStore failure (e.g. keychain unavailable) — start in clean logged-out state
-        setIsLoading(false);
-      });
+    Promise.all([
+      secureGet(SESSION_KEY),
+      secureGet(ADMIN_TOKEN_KEY),
+      loadSettings(),
+    ]).then(([session, token, s]) => {
+      if (session === "authenticated") setIsAuthenticated(true);
+      if (token) setAdminToken(token);
+      setSettings(s);
+      applyThemeMode(s.themeMode);
+      setIsLoading(false);
+    }).catch(() => {
+      // SecureStore failure (e.g. keychain unavailable) — start in clean logged-out state
+      setIsLoading(false);
+    });
   }, []);
 
-  const updateSetting = useCallback(
-    <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-      setSettings((prev) => {
-        const next = { ...prev, [key]: value };
-        saveSettings(next);
-        if (key === 'themeMode') applyThemeMode(value as ThemeMode);
-        return next;
-      });
-    },
-    []
-  );
+  const updateSetting = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    setSettings(prev => {
+      const next = { ...prev, [key]: value };
+      saveSettings(next);
+      if (key === "themeMode") applyThemeMode(value as ThemeMode);
+      return next;
+    });
+  }, []);
 
   const textFontScale =
-    settings.textSize === 'small' ? 0.85 : settings.textSize === 'large' ? 1.18 : 1.0;
+    settings.textSize === "small" ? 0.85 : settings.textSize === "large" ? 1.18 : 1.0;
 
   const login = useCallback(async (password: string) => {
     if (!APP_PASSWORD) {
-      return { success: false, error: 'App password not configured. Contact your administrator.' };
+      return { success: false, error: "App password not configured. Contact your administrator." };
     }
     if (password === APP_PASSWORD) {
-      await secureSet(SESSION_KEY, 'authenticated');
+      await secureSet(SESSION_KEY, "authenticated");
       setIsAuthenticated(true);
       return { success: true };
     }
-    return { success: false, error: 'Incorrect password' };
+    return { success: false, error: "Incorrect password" };
   }, []);
 
   const logout = useCallback(async () => {
@@ -192,31 +173,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const loginAdmin = useCallback(async (password: string) => {
     try {
       const resp = await fetch(`${API_BASE}/admin/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
       });
-      const body = (await resp.json()) as { token?: string; error?: string };
+      const body = await resp.json() as { token?: string; error?: string };
 
       if (!resp.ok) {
         if (resp.status === 503) {
-          return {
-            success: false,
-            error: body.error ?? 'Admin access is not configured on the server',
-          };
+          return { success: false, error: body.error ?? "Admin access is not configured on the server" };
         }
-        return { success: false, error: body.error ?? 'Incorrect admin password' };
+        return { success: false, error: body.error ?? "Incorrect admin password" };
       }
 
       if (!body.token) {
-        return { success: false, error: 'Server did not return a token' };
+        return { success: false, error: "Server did not return a token" };
       }
 
       await secureSet(ADMIN_TOKEN_KEY, body.token);
       setAdminToken(body.token);
       return { success: true };
     } catch {
-      return { success: false, error: 'Could not reach the server. Check your connection.' };
+      return { success: false, error: "Could not reach the server. Check your connection." };
     }
   }, []);
 
@@ -230,22 +208,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AppContext.Provider
-      value={{
-        isAuthenticated,
-        isAdmin: !!adminToken,
-        adminToken,
-        login,
-        logout,
-        loginAdmin,
-        logoutAdmin,
-        clearCache,
-        isLoading,
-        settings,
-        updateSetting,
-        textFontScale,
-      }}
-    >
+    <AppContext.Provider value={{
+      isAuthenticated,
+      isAdmin: !!adminToken,
+      adminToken,
+      login,
+      logout,
+      loginAdmin,
+      logoutAdmin,
+      clearCache,
+      isLoading,
+      settings,
+      updateSetting,
+      textFontScale,
+    }}>
       {children}
     </AppContext.Provider>
   );
@@ -253,6 +229,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
 export function useApp() {
   const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useApp must be used inside AppProvider');
+  if (!ctx) throw new Error("useApp must be used inside AppProvider");
   return ctx;
 }

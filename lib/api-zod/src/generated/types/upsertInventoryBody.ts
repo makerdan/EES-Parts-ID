@@ -5,18 +5,8 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { SelectedKey } from './selectedKey';
-import type { UpsertInventoryBodyMode } from './upsertInventoryBodyMode';
-import type { UpsertInventoryItem } from './upsertInventoryItem';
+import type { UpsertInventoryBodyItemsItem } from "./upsertInventoryBodyItemsItem";
 
 export interface UpsertInventoryBody {
-  items: UpsertInventoryItem[];
-  /** Controls how existing matches are handled:
-- `add-new-only`: only insert rows whose (vendor, catalog) does not exist; never modify existing rows.
-- `overwrite-all`: insert new rows; for matches, additively merge bins and replace description (when proposed description is non-empty). Vendor/catalog text on existing rows is never modified.
-- `selected`: insert new rows; only update existing matches whose (vendor, catalog) appears in `selectedKeys`.
- */
-  mode?: UpsertInventoryBodyMode;
-  /** Required when `mode = selected`. Existing matches NOT in this list are skipped. */
-  selectedKeys?: SelectedKey[];
+  items: UpsertInventoryBodyItemsItem[];
 }

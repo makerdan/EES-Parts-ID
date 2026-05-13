@@ -1,11 +1,5 @@
-/**
- * `useState`-shaped hook that persists a collapsed/expanded boolean to
- * AsyncStorage so settings sections remember their open state across app
- * relaunches. Async-loaded — the initial render uses `defaultCollapsed`
- * and re-renders once storage resolves.
- */
-import { useCallback, useEffect, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useCallback, useEffect, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 /**
  * Persists a boolean collapsed/expanded state in AsyncStorage.
@@ -21,7 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  */
 export function usePersistedCollapse(
   key: string,
-  defaultValue: boolean = true
+  defaultValue: boolean = true,
 ): [boolean, () => void, (v: boolean) => void, boolean] {
   const [collapsed, setCollapsedState] = useState<boolean>(defaultValue);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -29,9 +23,9 @@ export function usePersistedCollapse(
   useEffect(() => {
     setIsLoaded(false);
     AsyncStorage.getItem(key)
-      .then((stored) => {
+      .then(stored => {
         if (stored !== null) {
-          setCollapsedState(stored === '1');
+          setCollapsedState(stored === "1");
         }
         setIsLoaded(true);
       })
@@ -43,15 +37,15 @@ export function usePersistedCollapse(
   const setCollapsed = useCallback(
     (v: boolean) => {
       setCollapsedState(v);
-      AsyncStorage.setItem(key, v ? '1' : '0').catch(() => {});
+      AsyncStorage.setItem(key, v ? "1" : "0").catch(() => {});
     },
-    [key]
+    [key],
   );
 
   const toggleCollapsed = useCallback(() => {
-    setCollapsedState((prev) => {
+    setCollapsedState(prev => {
       const next = !prev;
-      AsyncStorage.setItem(key, next ? '1' : '0').catch(() => {});
+      AsyncStorage.setItem(key, next ? "1" : "0").catch(() => {});
       return next;
     });
   }, [key]);

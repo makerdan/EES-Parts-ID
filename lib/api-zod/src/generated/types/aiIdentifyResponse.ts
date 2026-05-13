@@ -5,9 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { _AiIdentifyResponseTelemetry } from './_aiIdentifyResponseTelemetry';
-import type { AiIdentifyResponseMatchType } from './aiIdentifyResponseMatchType';
-import type { SearchResult } from './searchResult';
+import type { SearchResult } from "./searchResult";
 
 export interface AiIdentifyResponse {
   searchTerms: string[];
@@ -17,7 +15,4 @@ export interface AiIdentifyResponse {
   detectedVendor?: string | null;
   summary: string;
   results: SearchResult[];
-  /** Which routing path produced the results */
-  match_type: AiIdentifyResponseMatchType;
-  _telemetry: _AiIdentifyResponseTelemetry;
 }

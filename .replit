@@ -24,18 +24,6 @@ args = "typecheck"
 task = "workflow.run"
 args = "test"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "lint"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "format"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "test:unit"
-
 [[workflows.workflow]]
 name = "typecheck"
 author = "agent"
@@ -56,40 +44,7 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm test"
-
-[[workflows.workflow]]
-name = "lint"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm lint"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
-name = "format"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm format:check"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
-name = "test:unit"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm test:unit"
-
-[workflows.workflow.metadata]
-isValidation = true
+args = "pnpm --filter @workspace/parts-id run test"
 
 [agent]
 stack = "PNPM_WORKSPACE"

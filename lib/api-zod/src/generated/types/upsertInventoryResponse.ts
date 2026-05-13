@@ -9,7 +9,5 @@
 export interface UpsertInventoryResponse {
   inserted: number;
   updated: number;
-  /** Existing matches that were intentionally not updated (e.g. mode=add-new-only or not in selectedKeys). */
-  skipped: number;
   total: number;
 }
