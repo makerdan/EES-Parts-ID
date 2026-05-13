@@ -14,7 +14,8 @@ export interface InventoryItem {
   vendor: string;
   catalog: string;
   description: string;
-  binLocation: string;
+  /** Bin locations where this part is stored (a part may live in multiple bins) */
+  binLocations: string[];
   aiKeywords: string[];
   enrichedAt?: string | null;
   createdAt: string;
@@ -104,7 +105,8 @@ export type UpsertInventoryBodyItemsItem = {
   vendor: string;
   catalog: string;
   description?: string;
-  binLocation?: string;
+  /** Bin locations for this part (omit or pass empty array to clear) */
+  binLocations?: string[];
 };
 
 export interface UpsertInventoryBody {

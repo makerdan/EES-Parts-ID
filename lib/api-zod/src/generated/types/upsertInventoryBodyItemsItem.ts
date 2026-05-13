@@ -10,5 +10,6 @@ export type UpsertInventoryBodyItemsItem = {
   vendor: string;
   catalog: string;
   description?: string;
-  binLocation?: string;
+  /** Bin locations for this part (omit or pass empty array to clear) */
+  binLocations?: string[];
 };

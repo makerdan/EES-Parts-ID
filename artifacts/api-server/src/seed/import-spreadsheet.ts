@@ -75,12 +75,18 @@ async function importSpreadsheet() {
 
   // Map rows to inventory schema
   const items = rawRows
-    .map((row) => ({
-      vendor: (normalizeKey(row, "vendor") || "").toString().trim().toUpperCase(),
-      catalog: (normalizeKey(row, "catalog", "catalognumber", "part", "partnumber", "item") || "").toString().trim(),
-      description: (normalizeKey(row, "description", "desc") || "").toString().trim(),
-      binLocation: (normalizeKey(row, "binlocation", "bin", "location", "binloc") || "").toString().trim(),
-    }))
+    .map((row) => {
+      const binCell = (normalizeKey(row, "binlocation", "bin", "location", "binloc") || "").toString().trim();
+      const binLocations = binCell
+        ? binCell.split(/[;|]/).map(b => b.trim()).filter(b => b.length > 0)
+        : [];
+      return {
+        vendor: (normalizeKey(row, "vendor") || "").toString().trim().toUpperCase(),
+        catalog: (normalizeKey(row, "catalog", "catalognumber", "part", "partnumber", "item") || "").toString().trim(),
+        description: (normalizeKey(row, "description", "desc") || "").toString().trim(),
+        binLocations,
+      };
+    })
     .filter((item) => item.vendor && item.catalog);
 
   console.log(`Valid rows after filtering: ${items.length}`);
@@ -100,7 +106,7 @@ async function importSpreadsheet() {
             vendor: item.vendor,
             catalog: item.catalog,
             description: item.description,
-            binLocation: item.binLocation,
+            binLocations: item.binLocations,
             aiKeywords: [],
           }))
         )
@@ -108,7 +114,9 @@ async function importSpreadsheet() {
           target: [inventoryTable.vendor, inventoryTable.catalog],
           set: {
             description: sql`EXCLUDED.description`,
-            binLocation: sql`EXCLUDED.bin_location`,
+            // Preserve existing bins when the import row carries no bin data —
+            // avoids wiping multi-bin assignments during partial re-imports.
+            binLocations: sql`CASE WHEN coalesce(array_length(EXCLUDED.bin_locations, 1), 0) > 0 THEN EXCLUDED.bin_locations ELSE ${inventoryTable.binLocations} END`,
             updatedAt: sql`now()`,
           },
         })

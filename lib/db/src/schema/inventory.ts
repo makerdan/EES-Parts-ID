@@ -16,7 +16,10 @@ export const inventoryTable = pgTable(
     vendor: text("vendor").notNull(),
     catalog: text("catalog").notNull(),
     description: text("description").notNull().default(""),
-    binLocation: text("bin_location").notNull().default(""),
+    binLocations: text("bin_locations")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::text[]`),
     aiKeywords: text("ai_keywords")
       .array()
       .notNull()
