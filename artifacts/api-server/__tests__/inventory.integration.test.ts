@@ -480,6 +480,125 @@ describe("POST /api/inventory/upsert-batch", () => {
     expect(res.body.updated).toBe(1);
     expect(res.body.total).toBe(1);
   });
+
+  // ── Bin-preservation guards (Task #455) ──
+  // The upsert SET clause uses CASE WHEN array_length(EXCLUDED.bin_locations) > 0
+  // so empty/omitted incoming bin arrays must NOT clear existing bins.
+  describe("bin preservation on conflict", () => {
+    async function readBinsFor(catalog: string): Promise<string[]> {
+      const { db, inventoryTable } = await import("@workspace/db");
+      const { sql: sqlOp } = await import("drizzle-orm");
+      const rows = await db
+        .select()
+        .from(inventoryTable)
+        .where(sqlOp`${inventoryTable.catalog} = ${catalog}`);
+      const raw = rows[0]?.binLocations ?? [];
+      return Array.isArray(raw) ? (raw as string[]) : [];
+    }
+
+    it("preserves existing bins when binLocations is omitted on re-upload", async () => {
+      // Seed with bins.
+      await supertest(app)
+        .post("/api/inventory/upsert-batch")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({
+          items: [
+            {
+              vendor: "JEST-VENDOR",
+              catalog: NEW_CATALOG,
+              description: "Original",
+              binLocations: ["KEEP-A", "KEEP-B"],
+            },
+          ],
+        })
+        .expect(200);
+
+      // Re-upload WITHOUT a binLocations field at all.
+      await supertest(app)
+        .post("/api/inventory/upsert-batch")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({
+          items: [
+            {
+              vendor: "JEST-VENDOR",
+              catalog: NEW_CATALOG,
+              description: "Updated",
+            },
+          ],
+        })
+        .expect(200);
+
+      expect(await readBinsFor(NEW_CATALOG)).toEqual(["KEEP-A", "KEEP-B"]);
+    });
+
+    it("preserves existing bins when binLocations is an empty array on re-upload", async () => {
+      await supertest(app)
+        .post("/api/inventory/upsert-batch")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({
+          items: [
+            {
+              vendor: "JEST-VENDOR",
+              catalog: NEW_CATALOG,
+              description: "Original",
+              binLocations: ["KEEP-A", "KEEP-B"],
+            },
+          ],
+        })
+        .expect(200);
+
+      await supertest(app)
+        .post("/api/inventory/upsert-batch")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({
+          items: [
+            {
+              vendor: "JEST-VENDOR",
+              catalog: NEW_CATALOG,
+              description: "Updated",
+              binLocations: [],
+            },
+          ],
+        })
+        .expect(200);
+
+      expect(await readBinsFor(NEW_CATALOG)).toEqual(["KEEP-A", "KEEP-B"]);
+    });
+
+    it("replaces existing bins when binLocations contains values on re-upload", async () => {
+      await supertest(app)
+        .post("/api/inventory/upsert-batch")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({
+          items: [
+            {
+              vendor: "JEST-VENDOR",
+              catalog: NEW_CATALOG,
+              description: "Original",
+              binLocations: ["OLD-A", "OLD-B"],
+            },
+          ],
+        })
+        .expect(200);
+
+      await supertest(app)
+        .post("/api/inventory/upsert-batch")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({
+          items: [
+            {
+              vendor: "JEST-VENDOR",
+              catalog: NEW_CATALOG,
+              description: "Updated",
+              binLocations: ["NEW-BIN"],
+            },
+          ],
+        })
+        .expect(200);
+
+      expect(await readBinsFor(NEW_CATALOG)).toEqual(["NEW-BIN"]);
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

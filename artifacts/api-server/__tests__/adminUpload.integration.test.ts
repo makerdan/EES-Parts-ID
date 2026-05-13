@@ -246,6 +246,43 @@ describe("POST /api/admin/upload", () => {
     expect(rows.length).toBe(1);
   });
 
+  // ── Bin-preservation guard (Task #455) ──
+  // A re-upload whose CSV omits the bin column must NOT clear bins that were
+  // previously assigned to the same (vendor, catalog) row.
+  it("preserves existing bins when a re-upload CSV omits the bin column", async () => {
+    const catalog = `${UPLOAD_PREFIX}KEEP-BINS-001`;
+
+    // Initial upload includes bins.
+    const firstCsv = buildCsv([
+      ["JEST-VENDOR", catalog, "Original description", "KEEP-A"],
+    ]);
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv: firstCsv })
+      .expect(200);
+
+    // Re-upload uses a header WITHOUT a BinLocation column at all.
+    const secondCsv = [
+      "Vendor,Catalog,Description",
+      `JEST-VENDOR,${catalog},Updated description`,
+    ].join("\n");
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv: secondCsv })
+      .expect(200);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(rows.length).toBe(1);
+    const bins = rows[0]!.binLocations;
+    expect(Array.isArray(bins) ? bins : []).toEqual(["KEEP-A"]);
+    expect(rows[0]!.description).toBe("Updated description");
+  });
+
   it("handles quoted fields with commas inside correctly", async () => {
     const csv = [
       "Vendor,Catalog,Description,BinLocation",
