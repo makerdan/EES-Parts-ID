@@ -13,7 +13,6 @@ import {
 import * as DocumentPicker from "expo-document-picker";
 import * as XLSX from "xlsx";
 import { useListInventory } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
 
 import { useColors } from "@/hooks/useColors";
 import { ReferenceModal } from "@/components/ReferenceModal";
@@ -340,7 +339,6 @@ export default function UploadScreen() {
   const [uploadPending, setUploadPending] = useState(false);
   const [inventoryPage, setInventoryPage] = useState(1);
   const [binEditorItem, setBinEditorItem] = useState<InventoryItem | null>(null);
-  const queryClient = useQueryClient();
 
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
