@@ -24,6 +24,8 @@ import { BinEditor } from "@/components/BinEditor";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
+import { reportStorageError } from "@/utils/storageErrorReporter";
+import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
@@ -50,7 +52,14 @@ async function loadQueryCache(): Promise<QueryCache> {
 }
 
 async function saveQueryCache(cache: QueryCache): Promise<void> {
-  try { await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(cache)); } catch {}
+  // Bound the cache so a long session of unique searches can't grow it without
+  // limit. Evict by LRU (oldest timestamp first) before persisting.
+  const bounded = evictLRU(cache, QUERY_CACHE_MAX_ENTRIES);
+  try {
+    await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(bounded));
+  } catch (err) {
+    reportStorageError("Could not save offline search cache", err);
+  }
 }
 
 function formatRelativeAge(ts: number): string {
@@ -148,7 +157,7 @@ function buildSearchBody(f: FilterValues) {
 
 export default function SearchScreen() {
   const colors = useColors();
-  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin } = useApp();
+  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, registerLogoutHandler } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
@@ -177,6 +186,14 @@ export default function SearchScreen() {
   // Timeout + abort tracking for slow-connection fallback
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchAbortedRef = useRef(false);
+  // Ref to the current searchMutation so the logout handler can call .reset()
+  // without going through a stale closure.
+  const searchMutationRef = useRef<{ reset: () => void } | null>(null);
+  // Ref to the latest settings so callbacks (notably the logout handler)
+  // always read the current default confidence threshold instead of the value
+  // captured the first time the effect ran.
+  const settingsRef = useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
 
   // Keep the Settings modal text input in sync with the slider / persisted value.
   // This runs on every settings change so the input always reflects what was saved.
@@ -184,16 +201,39 @@ export default function SearchScreen() {
     setConfThresholdInput(String(settings.defaultConfidenceThreshold));
   }, [settings.defaultConfidenceThreshold]);
 
-  // Apply the persisted default to the ACTIVE search filters exactly once —
-  // when settings finish loading from AsyncStorage (settingsLoading: true→false).
-  // After that point, changes made in the Settings modal do NOT overwrite the
-  // threshold the worker has already chosen for the current search.
-  // handleClear() already applies the new default when starting a fresh search.
+  // Apply the persisted default confidence threshold to the active search
+  // filters whenever it changes in Settings (and once after settings finish
+  // loading from AsyncStorage). This keeps the slider in sync so the user
+  // doesn't see stale values after editing the default.
   useEffect(() => {
     if (settingsLoading) return;
-    setFilters(f => ({ ...f, confidenceThreshold: settings.defaultConfidenceThreshold }));
+    setFilters(f =>
+      f.confidenceThreshold === settings.defaultConfidenceThreshold
+        ? f
+        : { ...f, confidenceThreshold: settings.defaultConfidenceThreshold },
+    );
+  }, [settingsLoading, settings.defaultConfidenceThreshold]);
+
+  // Reset all in-memory search state on logout so the next login starts clean.
+  useEffect(() => {
+    return registerLogoutHandler(() => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+        searchTimeoutRef.current = null;
+      }
+      searchAbortedRef.current = false;
+      setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
+      setEditItem(null);
+      setBinEditItem(null);
+      setBinOverrides({});
+      setOfflineResults(null);
+      setIsOffline(false);
+      setOfflineCacheType(null);
+      setDimensionCounts(undefined);
+      searchMutationRef.current?.reset();
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsLoading]);
+  }, [registerLogoutHandler]);
 
   const buildFuseIndex = useCallback((items: InventoryItem[]) => {
     fuseItemsRef.current = items;
@@ -234,7 +274,11 @@ export default function SearchScreen() {
         page++;
       } while (allItems.length < total);
       buildFuseIndex(allItems);
-      await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
+      try {
+        await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
+      } catch (err) {
+        reportStorageError("Could not save offline inventory cache", err);
+      }
     } catch {
       setSyncError(true);
     } finally {
@@ -256,7 +300,9 @@ export default function SearchScreen() {
           items = JSON.parse(raw) as InventoryItem[];
         } catch {
           // Corrupt cache — clear it and re-sync
-          AsyncStorage.removeItem(FUSE_CACHE_KEY).catch(() => {});
+          AsyncStorage.removeItem(FUSE_CACHE_KEY).catch(err => {
+            reportStorageError("Could not clear corrupt offline cache", err);
+          });
           syncAllInventory();
           return;
         }
@@ -329,7 +375,9 @@ export default function SearchScreen() {
             else merged.push(item);
           }
           buildFuseIndex(merged);
-          AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(() => {});
+          AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(err => {
+            reportStorageError("Could not save offline inventory cache", err);
+          });
         }
 
         // Cache results keyed by query (with TTL pruning)
@@ -346,6 +394,9 @@ export default function SearchScreen() {
       },
     },
   });
+  // Keep the ref pointing at the latest mutation so the logout handler can
+  // reset it without capturing a stale closure.
+  searchMutationRef.current = searchMutation;
 
   const handleChange = (key: keyof FilterValues, value: string | number) => {
     setFilters(f => ({ ...f, [key]: value }));
@@ -387,7 +438,9 @@ export default function SearchScreen() {
       item.id === id ? { ...item, aiKeywords: keywords } : item,
     );
     buildFuseIndex(items);
-    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
+    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(err => {
+      reportStorageError("Could not save offline inventory cache", err);
+    });
   }, [buildFuseIndex]);
 
   // Called by BinEditor after a successful save — apply override to currently
@@ -398,7 +451,9 @@ export default function SearchScreen() {
       it.id === id ? { ...it, binLocations } : it,
     );
     buildFuseIndex(items);
-    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(() => {});
+    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(err => {
+      reportStorageError("Could not save offline inventory cache", err);
+    });
   }, [buildFuseIndex]);
 
   const rawResults: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
@@ -581,10 +636,7 @@ export default function SearchScreen() {
             <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 4 }]}>
               <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Default min confidence</Text>
               <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                Pre-fills the confidence slider when you start a new search.
-              </Text>
-              <Text style={[styles.settingsRowHint, { color: colors.mutedForeground, fontStyle: "italic" }]}>
-                Changes here won't affect the search you're currently running.
+                Sets the minimum confidence applied to searches.
               </Text>
               <ConfidenceSlider
                 value={settings.defaultConfidenceThreshold}

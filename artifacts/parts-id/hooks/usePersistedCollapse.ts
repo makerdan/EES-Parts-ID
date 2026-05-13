@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { reportStorageError } from "@/utils/storageErrorReporter";
 
 /**
  * Persists a boolean collapsed/expanded state in AsyncStorage.
@@ -37,7 +38,9 @@ export function usePersistedCollapse(
   const setCollapsed = useCallback(
     (v: boolean) => {
       setCollapsedState(v);
-      AsyncStorage.setItem(key, v ? "1" : "0").catch(() => {});
+      AsyncStorage.setItem(key, v ? "1" : "0").catch(err => {
+        reportStorageError("Could not save section collapse state", err);
+      });
     },
     [key],
   );
@@ -45,7 +48,9 @@ export function usePersistedCollapse(
   const toggleCollapsed = useCallback(() => {
     setCollapsedState(prev => {
       const next = !prev;
-      AsyncStorage.setItem(key, next ? "1" : "0").catch(() => {});
+      AsyncStorage.setItem(key, next ? "1" : "0").catch(err => {
+        reportStorageError("Could not save section collapse state", err);
+      });
       return next;
     });
   }, [key]);
