@@ -200,6 +200,48 @@ describe("POST /api/admin/upload", () => {
     expect(res.body.inserted).toBe(1);
   });
 
+  it("returns 413 when the csv string exceeds the per-upload size cap", async () => {
+    // Build a CSV string a few bytes over the 15 MB cap. Use repeat to
+    // avoid generating millions of array entries.
+    const header = "Vendor,Catalog,Description,BinLocation\n";
+    const padding = "x".repeat(15 * 1024 * 1024 + 1024);
+    const csv = header + padding;
+
+    const res = await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/too large|limit/i);
+  });
+
+  it("handles two concurrent uploads of the same (vendor, catalog) without unique-constraint failure", async () => {
+    const catalog = `${UPLOAD_PREFIX}CONCURRENT-001`;
+    const csvA = buildCsv([["JEST-VENDOR", catalog, "writer-a", "A-1"]]);
+    const csvB = buildCsv([["JEST-VENDOR", catalog, "writer-b", "B-2"]]);
+
+    const send = (csv: string) =>
+      supertest(app)
+        .post("/api/admin/upload")
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ csv });
+
+    const [a, b] = await Promise.all([send(csvA), send(csvB)]);
+
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(a.body.inserted + b.body.inserted).toBe(1);
+    expect(a.body.updated + b.body.updated).toBe(1);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(rows.length).toBe(1);
+  });
+
   it("handles quoted fields with commas inside correctly", async () => {
     const csv = [
       "Vendor,Catalog,Description,BinLocation",
