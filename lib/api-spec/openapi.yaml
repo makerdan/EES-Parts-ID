@@ -110,6 +110,35 @@ paths:
           content:
             text/event-stream: {}
 
+  /inventory/{id}/bins:
+    patch:
+      operationId: updateItemBins
+      tags: [inventory]
+      summary: Replace the bin-locations array on a single inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBinsBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
   /inventory/{id}/keywords:
     patch:
       operationId: updateItemKeywords
@@ -444,6 +473,17 @@ components:
             type: integer
           description: Inventory IDs to enrich. If empty, enriches all un-enriched items.
       required: []
+
+    UpdateBinsBody:
+      type: object
+      properties:
+        binLocations:
+          type: array
+          items:
+            type: string
+          description: Replacement bin-location list. Pass [] to clear all bins.
+      required:
+        - binLocations
 
     UpdateKeywordsBody:
       type: object

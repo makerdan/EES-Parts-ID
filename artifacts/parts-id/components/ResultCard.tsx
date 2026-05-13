@@ -12,6 +12,8 @@ import { useColors } from "@/hooks/useColors";
 interface ResultCardProps {
   result: SearchResult;
   onEditKeywords?: (item: InventoryItem) => void;
+  /** Admin-only: opens the bin editor for this part. */
+  onEditBins?: (item: InventoryItem) => void;
   rank: number;
   fontScale?: number;
 }
@@ -72,7 +74,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, onEditBins, rank, fontScale = 1.0 }: ResultCardProps) {
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
@@ -124,11 +126,31 @@ export function ResultCard({ result, onEditKeywords, rank, fontScale = 1.0 }: Re
         {item.binLocations && item.binLocations.length > 0 ? (
           <View style={[cardStyles.binRow, { backgroundColor: colors.accent }]}>
             <Text style={[cardStyles.binIcon, { color: colors.accentForeground }]}>📍</Text>
-            <Text style={[cardStyles.binText, { color: colors.accentForeground }]}>
+            <Text style={[cardStyles.binText, { color: colors.accentForeground, flex: 1 }]}>
               {item.binLocations.length === 1 ? "Bin: " : "Bins: "}
               {item.binLocations.join(", ")}
             </Text>
+            {onEditBins ? (
+              <Pressable
+                onPress={(e) => { e.stopPropagation?.(); onEditBins(item); }}
+                hitSlop={8}
+                style={[cardStyles.binEditBtn, { borderColor: colors.accentForeground + "44" }]}
+              >
+                <Text style={[cardStyles.binEditText, { color: colors.accentForeground }]}>✏️ Edit</Text>
+              </Pressable>
+            ) : null}
           </View>
+        ) : onEditBins ? (
+          <Pressable
+            onPress={(e) => { e.stopPropagation?.(); onEditBins(item); }}
+            style={[cardStyles.binRow, { backgroundColor: colors.muted }]}
+          >
+            <Text style={[cardStyles.binIcon, { color: colors.mutedForeground }]}>📍</Text>
+            <Text style={[cardStyles.binText, { color: colors.mutedForeground, flex: 1 }]}>
+              No bin assigned
+            </Text>
+            <Text style={[cardStyles.binEditText, { color: colors.primary }]}>+ Add bin</Text>
+          </Pressable>
         ) : null}
 
         {/* Match reason */}
@@ -265,6 +287,13 @@ const cardStyles = StyleSheet.create({
   },
   binIcon: { fontSize: 14 },
   binText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  binEditBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  binEditText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   reason: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 4 },
   section: { marginTop: 12 },
   sectionTitle: {
