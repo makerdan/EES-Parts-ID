@@ -3,10 +3,12 @@ import {
   parseCatalogNumber,
   correctMisspelling,
   extractSizeValue,
+  compareBySize,
   getSeriesBase,
   itemFullText,
   tokenMatch,
   matchesChipFilters,
+  buildChipFilterRegexes,
 } from "../src/utils/searchHelpers";
 
 // ── normalizeMeasurement ──────────────────────────────────────────────────────
@@ -174,8 +176,49 @@ describe("extractSizeValue", () => {
     expect(extractSizeValue(item("LED100W", "100W LED bulb"))).toBe(100);
   });
 
-  it("returns 0 when no size is found", () => {
-    expect(extractSizeValue(item("MISC", "general hardware"))).toBe(0);
+  it("returns null when no size pattern is recognized", () => {
+    expect(extractSizeValue(item("MISC", "general hardware"))).toBeNull();
+  });
+});
+
+// ── compareBySize ────────────────────────────────────────────────────────────
+
+describe("compareBySize", () => {
+  const item = (catalog: string, description: string) => ({ catalog, description });
+
+  it("sorts items with detectable sizes ascending", () => {
+    const items = [
+      item("EMT", "1 conduit"),
+      item("EMT", "1/2 conduit"),
+      item("EMT", "3/4 conduit"),
+    ];
+    items.sort(compareBySize);
+    expect(items.map(i => i.description)).toEqual([
+      "1/2 conduit",
+      "3/4 conduit",
+      "1 conduit",
+    ]);
+  });
+
+  it("sends untyped items to the end of the list, never interleaved", () => {
+    // Use unambiguous typed sizes (amperage, fraction) so the test does not
+    // depend on the parser's looser fallbacks.
+    const items = [
+      item("MISC", "no size here"),       // null
+      item("BR120", "20A breaker"),       // 20 (amp)
+      item("EMT", "1/2 conduit"),         // 0.5 (frac)
+      item("RANDOM", "another untyped"),  // null
+    ];
+    items.sort(compareBySize);
+    // Typed items first (1/2 = 0.5 < 20), untyped land at the end together.
+    expect(extractSizeValue(items[0])).not.toBeNull();
+    expect(extractSizeValue(items[1])).not.toBeNull();
+    expect(extractSizeValue(items[2])).toBeNull();
+    expect(extractSizeValue(items[3])).toBeNull();
+  });
+
+  it("treats two untyped items as equal", () => {
+    expect(compareBySize(item("X", "x"), item("Y", "y"))).toBe(0);
   });
 });
 
@@ -208,15 +251,62 @@ describe("getSeriesBase", () => {
     expect(result!.label).toBe("OTHER CAPACITIES");
   });
 
-  it("groups conduit by size when description contains conduit type", () => {
+  it("groups conduit by size when catalog itself starts with size + conduit type", () => {
     const result = getSeriesBase("Allied", "2EMT", "2 inch EMT conduit");
     expect(result).not.toBeNull();
     expect(result!.label).toBe("OTHER SIZES");
   });
 
+  it("does NOT collapse non-conduit catalogs whose description merely mentions conduit", () => {
+    // A fitting whose description references EMT but whose catalog isn't a
+    // size-prefixed conduit code should not be grouped under OTHER SIZES.
+    const result = getSeriesBase(
+      "Vendor",
+      "FITTING-XYZ-9988",
+      "Connector for use with EMT conduit",
+    );
+    expect(result).toBeNull();
+  });
+
   it("returns null for unrecognised catalog patterns", () => {
     const result = getSeriesBase("Vendor", "MISC123", "miscellaneous item");
     expect(result).toBeNull();
+  });
+});
+
+// ── buildChipFilterRegexes ───────────────────────────────────────────────────
+
+describe("buildChipFilterRegexes", () => {
+  it("returns one word-boundary regex per token in each filter value", () => {
+    const out = buildChipFilterRegexes([
+      { key: "amperage", value: "20a" },
+      { key: "poleCount", value: "single pole" },
+    ]);
+    expect(out).toEqual(["\\m20a\\M", "\\msingle\\M", "\\mpole\\M"]);
+  });
+
+  it("escapes regex metacharacters in filter values (e.g. 1/2\")", () => {
+    const out = buildChipFilterRegexes([{ key: "sizeChip", value: '1/2"' }]);
+    // `/` and `"` are not POSIX regex metachars and should pass through.
+    expect(out).toEqual(['\\m1/2"\\M']);
+  });
+
+  it("escapes a literal dot inside a filter value", () => {
+    const out = buildChipFilterRegexes([{ key: "size", value: "1.5" }]);
+    expect(out).toEqual(["\\m1\\.5\\M"]);
+  });
+
+  it("skips empty values and trims whitespace", () => {
+    const out = buildChipFilterRegexes([
+      { key: "a", value: "" },
+      { key: "b", value: "  " },
+      { key: "c", value: "  red  " },
+    ]);
+    expect(out).toEqual(["\\mred\\M"]);
+  });
+
+  it("returns an empty array when given no filters", () => {
+    expect(buildChipFilterRegexes([])).toEqual([]);
   });
 });
 

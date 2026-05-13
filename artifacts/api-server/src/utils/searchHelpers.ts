@@ -89,7 +89,15 @@ export function correctMisspelling(word: string, corrections: Map<string, string
   return corrections.get(word.toLowerCase()) ?? word;
 }
 
-export function extractSizeValue(item: { catalog: string; description: string }): number {
+/**
+ * Extract a numeric size value used as the secondary sort key after confidence.
+ *
+ * Returns `null` when no recognized size pattern is present so that callers can
+ * sort untyped items to a single defined position (we send them to the end of
+ * the list) instead of clumping them at value `0` and interleaving them with
+ * real fractional sizes like 1/2 or 3/4.
+ */
+export function extractSizeValue(item: { catalog: string; description: string }): number | null {
   const text = `${item.catalog} ${item.description}`.toUpperCase();
   // Amperage
   const amp = text.match(/(\d+)\s*A\b/);
@@ -112,7 +120,24 @@ export function extractSizeValue(item: { catalog: string; description: string })
   // Wattage
   const watt = text.match(/(\d+)\s*W\b/);
   if (watt) return parseInt(watt[1]);
-  return 0;
+  return null;
+}
+
+/**
+ * Comparator suitable for `Array.prototype.sort`. Items without a recognized
+ * size (`extractSizeValue` returns `null`) are sorted to the end of the list
+ * so a typed run of sizes is never interrupted by an untyped item.
+ */
+export function compareBySize(
+  a: { catalog: string; description: string },
+  b: { catalog: string; description: string },
+): number {
+  const sa = extractSizeValue(a);
+  const sb = extractSizeValue(b);
+  if (sa === null && sb === null) return 0;
+  if (sa === null) return 1;
+  if (sb === null) return -1;
+  return sa - sb;
 }
 
 export function getSeriesBase(
@@ -131,6 +156,9 @@ export function getSeriesBase(
     const base = c.match(/^(DR|CR|TR|GF|\d{4})/)?.[1] ?? c.slice(0, 4);
     return { key: `${v}_${base}`, label: "OTHER COLORS" };
   }
+  // Wire/cable series — only suffix-strip when the catalog is gated by a
+  // known wire-prefix pattern so we don't accidentally trim real part numbers
+  // off non-wire items.
   if (/^(RX|NM|MC|SE|SER|UF|THHN|THWN)\d/.test(c)) {
     const base = c.replace(/\d{3,}FT.*$/, "").replace(/\d{3,}$/, "");
     return { key: `${v}_${base}`, label: "OTHER LENGTHS" };
@@ -139,8 +167,13 @@ export function getSeriesBase(
     const base = c.match(/^(V\d+M\d+T)/)?.[1] ?? c.slice(0, 8);
     return { key: `${v}_${base}`, label: "OTHER CAPACITIES" };
   }
-  if (/EMT|IMC|RMC|PVC|ENT/.test(description.toUpperCase())) {
-    const base = catalog.replace(/^\d+/, "");
+  // Conduit "OTHER SIZES" — only collapse when the catalog itself starts
+  // with a numeric size followed by a conduit type code (e.g. 2EMT, 1.5PVC).
+  // Previously we collapsed any catalog whose description merely mentioned a
+  // conduit type, which mangled non-conduit items that happened to reference
+  // EMT/PVC/etc. in their description.
+  if (/^\d+(?:[./]\d+)?(?:EMT|IMC|RMC|PVC|ENT)\b/i.test(c)) {
+    const base = c.replace(/^\d+(?:[./]\d+)?/, "");
     return { key: `${v}_${base}`, label: "OTHER SIZES" };
   }
   return null;
@@ -171,4 +204,32 @@ export function matchesChipFilters(
 ): boolean {
   const text = itemFullText(item);
   return chipFilters.every(f => tokenMatch(text, f.value));
+}
+
+/**
+ * Build the per-token POSIX regex strings used to push chip filters into the
+ * SQL `WHERE` clause so the candidate-row LIMIT applies AFTER chip filtering,
+ * not before.
+ *
+ * Each filter value is split into whitespace tokens; every token becomes a
+ * separate `\m<token>\M` (PostgreSQL word-boundary) regex. The caller ANDs
+ * these together against the lowercased concat of vendor/catalog/description/
+ * ai_keywords using the case-insensitive `~*` operator.
+ *
+ * Regex metacharacters in the token are escaped so values like `1/2"` or
+ * `#14` are matched literally.
+ */
+export function buildChipFilterRegexes(
+  filters: Array<{ key: string; value: string }>,
+): string[] {
+  const regexes: string[] = [];
+  for (const f of filters) {
+    const value = f.value.trim().toLowerCase();
+    if (!value) continue;
+    for (const tok of value.split(/\s+/).filter(Boolean)) {
+      const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      regexes.push(`\\m${escaped}\\M`);
+    }
+  }
+  return regexes;
 }
