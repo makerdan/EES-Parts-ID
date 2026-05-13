@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { logger } from "../lib/logger";
 
 const router = Router();
+
+const GENERIC_ERROR_MESSAGE =
+  "Sorry, the reference assistant ran into a problem. Please try again.";
 
 // POST /reference/ask — SSE streaming reference Q&A
 router.post("/ask", async (req, res) => {
@@ -10,10 +14,6 @@ router.post("/ask", async (req, res) => {
     if (!question?.trim()) {
       return void res.status(400).json({ error: "question is required" });
     }
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
 
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -29,6 +29,13 @@ router.post("/ask", async (req, res) => {
       ],
     });
 
+    // Switch to SSE only once we know the upstream call succeeded — that way
+    // failures from openai.create still produce a normal JSON HTTP error.
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content;
       if (content) {
@@ -39,9 +46,22 @@ router.post("/ask", async (req, res) => {
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
   } catch (err) {
-    console.error(err);
-    res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
-    res.end();
+    logger.error({ err }, "reference.ask failed");
+    if (res.headersSent) {
+      // Stream already started — emit a terminal SSE error frame so the
+      // client can distinguish a clean end from a mid-stream failure.
+      try {
+        res.write(
+          `event: error\ndata: ${JSON.stringify({ error: GENERIC_ERROR_MESSAGE })}\n\n`,
+        );
+      } catch {
+        // Connection may already be torn down; nothing more we can do.
+      }
+      res.end();
+    } else {
+      // No bytes written yet — return a normal HTTP error response.
+      res.status(500).json({ error: GENERIC_ERROR_MESSAGE });
+    }
   }
 });
 

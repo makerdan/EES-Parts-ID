@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
+import { parseSseLine, parseFinalBuffer, type SseEvent } from "@/utils/sseParser";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -55,25 +56,32 @@ export function ReferenceModal() {
         body: JSON.stringify({ question: question.trim() }),
       });
 
+      if (!res.ok) {
+        // Server returned a normal HTTP error before the stream started.
+        setIsError(true);
+        return;
+      }
+
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       let fullText = "";
+      let streamErrored = false;
+
+      const handleEvent = (event: SseEvent | null) => {
+        if (!event) return;
+        if (event.kind === "content") {
+          fullText += event.content;
+          setAnswer(fullText);
+          scrollRef.current?.scrollToEnd({ animated: true });
+        } else if (event.kind === "error" || event.kind === "unparseable") {
+          streamErrored = true;
+        }
+      };
 
       if (reader) {
         // Buffer partial lines across chunk boundaries so SSE frames split
         // across network packets are never passed to JSON.parse half-complete.
         let sseBuffer = "";
-        const processLine = (line: string) => {
-          if (!line.startsWith("data: ")) return;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.content) {
-              fullText += data.content;
-              setAnswer(fullText);
-              scrollRef.current?.scrollToEnd({ animated: true });
-            }
-          } catch {}
-        };
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -81,13 +89,19 @@ export function ReferenceModal() {
           const lines = sseBuffer.split("\n");
           // Keep the last (possibly incomplete) line in the buffer
           sseBuffer = lines.pop() ?? "";
-          for (const line of lines) processLine(line);
+          for (const line of lines) handleEvent(parseSseLine(line));
         }
-        // Process any remaining buffered content when the stream closes
-        if (sseBuffer.trim()) processLine(sseBuffer);
+        // Final flush in case the stream ended on a multibyte UTF-8 boundary.
+        sseBuffer += decoder.decode();
+        // Surface any leftover content when the stream closes — either parse
+        // it cleanly or flag the stream as ending unexpectedly.
+        handleEvent(parseFinalBuffer(sseBuffer));
       }
 
-      if (fullText) {
+      if (streamErrored) {
+        setIsError(true);
+      }
+      if (fullText && !streamErrored) {
         setHistory(h => [...h, { q: askedQuestionRef.current, a: fullText }]);
       }
     } catch {
