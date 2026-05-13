@@ -9,6 +9,9 @@ localPort = 8080
 name = "API Server"
 paths = ["/api"]
 
+[services.env]
+PORT = "8080"
+
 [services.development]
 run = "pnpm --filter @workspace/api-server run dev"
 
