@@ -1,80 +1,115 @@
 /**
  * @jest-environment node
  *
- * Pins the close-race fix in KeywordEditor.tsx: when the user closes the
- * editor while a save is in flight, the [item?.id] effect must NOT reset
- * the keyword refs to []. Otherwise the drainSave loop would see
- * `latest=[]` after the in-flight save resolves and overwrite the just-
- * closed item's keywords with an empty array.
+ * Pins the per-item save isolation in KeywordEditor: closing item A
+ * mid-save and immediately opening item B must NEVER cause B's keywords
+ * to be written to A's id (or vice-versa). The fix keys all save state
+ * by item id in `stateByIdRef`, so each drainSave run reads/writes only
+ * its own entry.
  *
- * This test models that scenario directly against drainSave to lock the
- * contract regardless of any future refactor of the React side.
+ * We model the same per-id state machine here directly against drainSave
+ * to lock the contract regardless of any future React-side refactor.
  */
 import { drainSave } from "../utils/drainSave";
 import { arraysEqual } from "../utils/arraysEqual";
 
-describe("KeywordEditor close-during-save race", () => {
-  it("does NOT write empty keywords when item is closed mid-save", async () => {
-    const isRunningRef = { current: false };
-    let lastSaved: string[] = [];
-    const latestRef = { current: ["edit1"] };
-    const saved: string[][] = [];
+type ItemState = { latest: string[]; lastSaved: string[]; saving: boolean };
 
-    const save = jest.fn(async (v: string[]) => {
-      saved.push(v);
-      // Simulate the user closing the editor while the save is in flight.
-      // With the bug, the [item?.id] effect would reset latestRef to [].
-      // With the fix, the effect early-returns when item becomes null,
-      // so latestRef keeps its last edited value.
-      // Here we explicitly do NOT mutate latestRef — that's the fix.
-      await Promise.resolve();
-    });
+function performSaveForId(
+  stateById: Record<number, ItemState>,
+  id: number,
+  saveImpl: (id: number, kws: string[]) => Promise<void>,
+): Promise<void> {
+  const s = stateById[id];
+  if (!s) return Promise.resolve();
+  if (s.saving) return Promise.resolve();
+  if (arraysEqual(s.latest, s.lastSaved)) return Promise.resolve();
+  s.saving = true;
+  return drainSave({
+    getLatest: () => s.latest,
+    getLastSaved: () => s.lastSaved,
+    setLastSaved: v => { s.lastSaved = v; },
+    save: kws => saveImpl(id, kws),
+    equal: arraysEqual,
+    isRunningRef: { current: false },
+  }).finally(() => { s.saving = false; });
+}
 
-    await drainSave({
-      getLatest: () => latestRef.current,
-      getLastSaved: () => lastSaved,
-      setLastSaved: v => { lastSaved = v; },
-      save,
-      equal: arraysEqual,
-      isRunningRef,
-    });
+describe("KeywordEditor cross-item save isolation", () => {
+  it("does NOT write item B's keywords to item A's id when user switches mid-save", async () => {
+    const stateById: Record<number, ItemState> = {
+      1: { latest: ["a-edit"], lastSaved: [], saving: false },
+    };
+    const writes: Array<{ id: number; kws: string[] }> = [];
 
-    expect(saved).toEqual([["edit1"]]);
-    expect(saved.some(s => s.length === 0)).toBe(false);
-    expect(lastSaved).toEqual(["edit1"]);
-  });
+    let resolveFirst!: () => void;
+    const firstSavePromise = new Promise<void>(r => { resolveFirst = r; });
 
-  it("would write an empty array if the close-handler reset latest to [] (regression guard)", async () => {
-    // This documents the *bug* the fix prevents: if the close-effect resets
-    // latestRef to [] mid-save, the drain loop performs a second save with [].
-    // We assert that behavior here so any future code that re-introduces the
-    // reset is caught by the OTHER test above failing.
-    const isRunningRef = { current: false };
-    let lastSaved: string[] = [];
-    const latestRef = { current: ["edit1"] };
-    const saved: string[][] = [];
-    let firstCall = true;
-
-    const save = jest.fn(async (v: string[]) => {
-      saved.push(v);
-      if (firstCall) {
-        firstCall = false;
-        // Simulate the buggy effect resetting refs on close:
-        latestRef.current = [];
+    const saveImpl = jest.fn(async (id: number, kws: string[]) => {
+      writes.push({ id, kws });
+      if (writes.length === 1) {
+        // First save (for id=1) is in flight — simulate the user closing
+        // item A and opening item B mid-flight.
+        await firstSavePromise;
       }
     });
 
-    await drainSave({
-      getLatest: () => latestRef.current,
-      getLastSaved: () => lastSaved,
-      setLastSaved: v => { lastSaved = v; },
-      save,
-      equal: arraysEqual,
-      isRunningRef,
+    // Kick off save for id=1 (item A).
+    const aSavePromise = performSaveForId(stateById, 1, saveImpl);
+
+    // While A's save is in flight, open item B and edit it.
+    stateById[2] = { latest: ["b-edit"], lastSaved: [], saving: false };
+
+    // The buggy implementation (one shared ref pair) would now have B's
+    // edits visible to A's running drain loop. With per-id isolation,
+    // A's loop only ever sees state[1].
+    resolveFirst();
+    await aSavePromise;
+
+    // Now save B independently.
+    await performSaveForId(stateById, 2, saveImpl);
+
+    // Crucial assertions: every write goes to the correct id with the
+    // correct keywords. No cross-contamination.
+    expect(writes).toEqual([
+      { id: 1, kws: ["a-edit"] },
+      { id: 2, kws: ["b-edit"] },
+    ]);
+    expect(writes.some(w => w.id === 1 && w.kws.includes("b-edit"))).toBe(false);
+    expect(writes.some(w => w.id === 2 && w.kws.includes("a-edit"))).toBe(false);
+    expect(stateById[1].lastSaved).toEqual(["a-edit"]);
+    expect(stateById[2].lastSaved).toEqual(["b-edit"]);
+  });
+
+  it("close-then-reopen of the SAME item still drains pending edits made before close", async () => {
+    const stateById: Record<number, ItemState> = {
+      1: { latest: ["edit1"], lastSaved: [], saving: false },
+    };
+    const writes: Array<{ id: number; kws: string[] }> = [];
+
+    const saveImpl = jest.fn(async (id: number, kws: string[]) => {
+      writes.push({ id, kws });
+      // Simulate further editing landing on the same item state mid-save.
+      if (writes.length === 1) {
+        stateById[1].latest = ["edit1", "edit2"];
+      }
     });
 
-    // With the simulated bug, an empty array IS persisted — proving the
-    // primary test above is exercising a real race window.
-    expect(saved).toEqual([["edit1"], []]);
+    await performSaveForId(stateById, 1, saveImpl);
+
+    expect(writes).toEqual([
+      { id: 1, kws: ["edit1"] },
+      { id: 1, kws: ["edit1", "edit2"] },
+    ]);
+    expect(stateById[1].lastSaved).toEqual(["edit1", "edit2"]);
+  });
+
+  it("a second performSaveForId(id) entered while one is running for the same id is a no-op", async () => {
+    const stateById: Record<number, ItemState> = {
+      1: { latest: ["x"], lastSaved: [], saving: true }, // already saving
+    };
+    const saveImpl = jest.fn();
+    await performSaveForId(stateById, 1, saveImpl);
+    expect(saveImpl).not.toHaveBeenCalled();
   });
 });

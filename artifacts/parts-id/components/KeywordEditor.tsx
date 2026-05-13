@@ -35,75 +35,107 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const updateMutation = useUpdateItemKeywords();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Always reflects the most recent edit (even ones still in the debounce window).
-  const latestKeywordsRef = useRef<string[]>(keywords);
-  // The keywords that were last successfully persisted to the server.
-  const lastSavedKeywordsRef = useRef<string[]>(item?.aiKeywords ?? []);
-  // Tracks whether a mutateAsync call is currently in flight.
-  const isSavingRef = useRef(false);
+
+  // Per-item save state, keyed by item.id. This isolates the in-flight
+  // drain loop from any other item the user might open or close: closing
+  // item A while a save is in flight, then quickly opening item B, will
+  // NOT cause B's keywords to be written to A's id (or vice-versa).
+  type ItemSaveState = {
+    latest: string[];      // most recent edit (incl. ones still debounced)
+    lastSaved: string[];   // last value successfully persisted
+    saving: boolean;       // true while drainSave loop is running for this id
+  };
+  const stateByIdRef = useRef<Record<number, ItemSaveState>>({});
+  const ensureState = (id: number, kws: string[]): ItemSaveState => {
+    let s = stateByIdRef.current[id];
+    if (!s) {
+      s = { latest: kws, lastSaved: kws, saving: false };
+      stateByIdRef.current[id] = s;
+    }
+    return s;
+  };
   // Keep item in a ref so callbacks always see the latest value without stale closure issues
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
 
-  // Sync keywords when a *new* item is opened. Critically, we DO NOT reset
-  // when `item` becomes null on close — an in-flight drainSave still reads
-  // these refs to finish persisting the user's last edits, and clobbering
-  // them with `[]` would cause the drain loop to write empty keywords to
-  // the just-closed item.
+  // Sync display keywords when a *new* item is opened. Per-item save state
+  // lives in `stateByIdRef`, so opening a different item never disturbs an
+  // in-flight save for the previous item.
   useEffect(() => {
     if (!item) return;
     const kws = item.aiKeywords ?? [];
-    setKeywords(kws);
-    latestKeywordsRef.current = kws;
-    lastSavedKeywordsRef.current = kws;
-    setSaveStatus("idle");
+    const s = ensureState(item.id, kws);
+    // If no save is running and there are no pending edits, refresh from
+    // the latest server value; otherwise preserve the user's pending state.
+    if (!s.saving && arraysEqual(s.latest, s.lastSaved)) {
+      s.latest = kws;
+      s.lastSaved = kws;
+    }
+    setKeywords(s.latest);
+    setSaveStatus(s.saving ? "saving" : "idle");
   }, [item?.id]);
 
-  // Drains pending edits in a loop: after each save, if `latestKeywordsRef`
-  // has moved on (because the user kept typing while we were saving), it
-  // immediately saves again. This guarantees the last edit always lands
-  // without ever dropping intermediate state. See utils/drainSave.ts.
-  const performSave = useCallback(async () => {
-    const current = itemRef.current;
-    if (!current) return;
-    if (isSavingRef.current) return;
-    if (arraysEqual(latestKeywordsRef.current, lastSavedKeywordsRef.current)) return;
-    setSaveStatus("saving");
+  // Drains pending edits in a loop for a *specific* item id. After each
+  // save, if that item's `latest` has moved on (because the user kept
+  // typing while we were saving), it immediately saves again. This
+  // guarantees the last edit always lands without dropping intermediate
+  // state. See utils/drainSave.ts. Pinning to `id` (not itemRef) means
+  // mid-loop item switches cannot cross-contaminate writes.
+  const performSaveForId = useCallback(async (id: number) => {
+    const s = stateByIdRef.current[id];
+    if (!s) return;
+    if (s.saving) return;
+    if (arraysEqual(s.latest, s.lastSaved)) return;
+    if (itemRef.current?.id === id) setSaveStatus("saving");
+    s.saving = true;
     try {
       await drainSave<string[]>({
-        getLatest: () => latestKeywordsRef.current,
-        getLastSaved: () => lastSavedKeywordsRef.current,
+        getLatest: () => s.latest,
+        getLastSaved: () => s.lastSaved,
         setLastSaved: v => {
-          lastSavedKeywordsRef.current = v;
-          onKeywordsChanged?.(current.id, v);
+          s.lastSaved = v;
+          onKeywordsChanged?.(id, v);
         },
         save: async kws => {
-          await updateMutation.mutateAsync({ id: current.id, data: { keywords: kws } });
+          await updateMutation.mutateAsync({ id, data: { keywords: kws } });
         },
         equal: arraysEqual,
-        isRunningRef: isSavingRef,
+        isRunningRef: { current: false }, // outer `s.saving` already gates re-entry
       });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-      setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 1800);
+      if (itemRef.current?.id === id) {
+        setSaveStatus("saved");
+        setTimeout(() => {
+          if (itemRef.current?.id === id) setSaveStatus("idle");
+        }, 1800);
+      }
     } catch (err) {
       console.warn("KeywordEditor: save failed:", err);
-      setSaveStatus("error");
+      if (itemRef.current?.id === id) setSaveStatus("error");
+    } finally {
+      s.saving = false;
     }
   }, [updateMutation, queryClient, onKeywordsChanged]);
 
-  // Auto-save with debounce whenever keywords change.
+  // Auto-save with debounce whenever keywords change. Captures the *current*
+  // item id so the eventual save always targets the item that was being
+  // edited when the debounce was scheduled — never a different item the
+  // user may have opened in the meantime.
   const triggerSave = useCallback(
     (kws: string[]) => {
-      latestKeywordsRef.current = kws;
+      const current = itemRef.current;
+      if (!current) return;
+      const id = current.id;
+      const s = ensureState(id, current.aiKeywords ?? []);
+      s.latest = kws;
       if (debounceRef.current) clearTimeout(debounceRef.current);
       setSaveStatus("idle");
       debounceRef.current = setTimeout(() => {
         debounceRef.current = null;
-        void performSave();
+        void performSaveForId(id);
       }, DEBOUNCE_MS);
     },
-    [performSave],
+    [performSaveForId],
   );
 
   // Cancel any pending debounce on unmount.
@@ -134,14 +166,16 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   };
 
   const handleClose = () => {
-    // Cancel any pending debounce timer and flush immediately. `performSave`
-    // is a no-op when nothing has changed and queues correctly when a save
-    // is already in flight (its drain loop will pick up the latest edits).
+    // Cancel any pending debounce timer and flush immediately for the
+    // *currently open* item id. The drain loop is keyed by id, so even if
+    // the user opens a different item before this save finishes, no writes
+    // can cross-contaminate.
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-    void performSave();
+    const id = itemRef.current?.id;
+    if (id != null) void performSaveForId(id);
     onClose();
   };
 
