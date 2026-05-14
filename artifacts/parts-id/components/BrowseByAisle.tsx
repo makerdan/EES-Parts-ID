@@ -366,7 +366,9 @@ function ShelfRow({
           );
         })}
       </ScrollView>
-      <View style={[shelfRowStyles.plank, { backgroundColor: colors.steel + "55" }]} />
+      {(shelf.shelfHundreds !== 9 || shelf.parts.length > 3) ? (
+        <View style={[shelfRowStyles.plank, { backgroundColor: colors.steel + "55" }]} />
+      ) : null}
     </View>
   );
 }
