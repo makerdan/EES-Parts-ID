@@ -107,7 +107,7 @@ export function buildAisleHierarchy(inventory: InventoryItem[]): AisleHierarchy 
             : a.item.id - b.item.id,
         );
         sorted.forEach(p => { secIds.add(p.item.id); aisleIds.add(p.item.id); });
-        shelves.push({ shelfHundreds, label: `Shelf ${shelfHundreds}`, parts: sorted });
+        shelves.push({ shelfHundreds, label: `Shelf ${String(shelfHundreds * 100).padStart(3, "0")}`, parts: sorted });
       }
       shelves.sort((a, b) => b.shelfHundreds - a.shelfHundreds);
       sections.push({
