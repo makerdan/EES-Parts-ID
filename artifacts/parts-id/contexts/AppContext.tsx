@@ -29,11 +29,13 @@ export type AppSettings = {
   textSize: TextSize;
   defaultConfidenceThreshold: number;
   themeMode: ThemeMode;
+  shelfViewEnabled: boolean;
 };
 export const DEFAULT_SETTINGS: AppSettings = {
   textSize: "normal",
   defaultConfidenceThreshold: 50,
   themeMode: "system",
+  shelfViewEnabled: true,
 };
 
 const VALID_TEXT_SIZES: TextSize[] = ["small", "normal", "large"];

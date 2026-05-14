@@ -26,6 +26,7 @@ import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
+import { BrowseByAisle } from "@/components/BrowseByAisle";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
@@ -159,6 +160,7 @@ export default function SearchScreen() {
   const colors = useColors();
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, registerLogoutHandler } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
+  const [aisleBrowseOpen, setAisleBrowseOpen] = useState(false);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
   // Local override of bin lists keyed by item.id, applied on top of whatever
@@ -222,6 +224,7 @@ export default function SearchScreen() {
         searchTimeoutRef.current = null;
       }
       searchAbortedRef.current = false;
+      setAisleBrowseOpen(false);
       setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
       setEditItem(null);
       setBinEditItem(null);
@@ -696,6 +699,8 @@ export default function SearchScreen() {
         </View>
       </Modal>
 
+      {!aisleBrowseOpen ? (
+        <>
       {/* Offline banner */}
       {isOffline ? (
         <View style={[styles.offlineBanner, { backgroundColor: colors.warning + "15", borderBottomColor: colors.warning + "44" }]}>
@@ -898,6 +903,19 @@ export default function SearchScreen() {
                     </Text>
                   ))}
                 </View>
+                <Pressable
+                  onPress={() => setAisleBrowseOpen(true)}
+                  style={[styles.browseAisleBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+                >
+                  <Feather name="map-pin" size={20} color={colors.primary} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.browseAisleBtnTitle, { color: colors.foreground }]}>Browse by Aisle</Text>
+                    <Text style={[styles.browseAisleBtnSub, { color: colors.mutedForeground }]}>
+                      Walk the warehouse: Aisle › Section › Shelf
+                    </Text>
+                  </View>
+                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                </Pressable>
               </View>
             ) : null}
           </View>
@@ -918,6 +936,18 @@ export default function SearchScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
       />
+        </>
+      ) : (
+        <BrowseByAisle
+          inventory={fuseItemsRef.current}
+          isSyncing={syncProgress !== null}
+          shelfViewEnabled={settings.shelfViewEnabled}
+          fontScale={textFontScale}
+          onClose={() => setAisleBrowseOpen(false)}
+          onEditKeywords={setEditItem}
+          onEditBins={isAdmin ? setBinEditItem : undefined}
+        />
+      )}
 
       <ReferenceModal />
 
@@ -1075,4 +1105,16 @@ const styles = StyleSheet.create({
   textSizePicker: { flexDirection: "row", gap: 6, alignSelf: "center" },
   textSizeBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
   textSizeBtnLabel: { fontSize: 13, fontFamily: "Inter_700Bold" },
+  browseAisleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 20,
+    width: "100%",
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  browseAisleBtnTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  browseAisleBtnSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
