@@ -8,6 +8,7 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "doctor": "expo-doctor",
     "test": "jest"
   },
   "devDependencies": {
@@ -31,6 +32,7 @@
     "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.11",
+    "expo-doctor": "1.18.22",
     "expo-document-picker": "~14.0.8",
     "expo-font": "~14.0.10",
     "expo-glass-effect": "~0.1.4",
