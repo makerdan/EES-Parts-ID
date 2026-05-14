@@ -463,6 +463,9 @@ export default function UploadScreen() {
       stopMeasurePoll();
       return;
     }
+    setUploadError(null);
+    setBulkEnrichError(null);
+    setMeasureEnrichError(null);
     fetchEnrichSummary();
     (async () => {
       try {
