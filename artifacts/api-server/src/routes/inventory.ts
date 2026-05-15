@@ -526,6 +526,122 @@ function requireAdminAuth(
   next();
 }
 
+// ── POST /inventory/upsert-batch/preview ──────────────────────────────────────
+// Dry-run: accepts the same body as upsert-batch but only returns a diff
+// summary (willReplaceBins, willAddBins, willPreserveBins, noChange) plus
+// per-row details so the UI can warn admins before committing destructive bin
+// replacements. Nothing is written to the database.
+router.post("/upsert-batch/preview", requireAdminAuth, async (req, res) => {
+  try {
+    const contentLength = Number(req.headers["content-length"] ?? 0);
+    if (contentLength > UPSERT_BATCH_MAX_BYTES) {
+      return void res.status(413).json({
+        error: `Request body too large (limit ${UPSERT_BATCH_MAX_BYTES} bytes)`,
+      });
+    }
+
+    const { items } = req.body as {
+      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: string[] }>;
+    };
+
+    if (!items?.length) {
+      return void res.status(400).json({ error: "No items provided" });
+    }
+
+    if (items.length > UPSERT_BATCH_MAX_ITEMS) {
+      return void res.status(413).json({
+        error: `Too many items in batch (max ${UPSERT_BATCH_MAX_ITEMS})`,
+      });
+    }
+
+    // Build lookup keys for the incoming rows that have bin data — those are
+    // the only ones that can trigger a replacement.
+    const pairs = items.map(item => ({
+      vendor: item.vendor.toUpperCase(),
+      catalog: item.catalog,
+    }));
+
+    // Fetch all existing rows that match any incoming (vendor, catalog) pair.
+    // OR over the pairs so we get everything in one round-trip.
+    const existingRows = pairs.length > 0
+      ? await db
+          .select({
+            vendor: inventoryTable.vendor,
+            catalog: inventoryTable.catalog,
+            binLocations: inventoryTable.binLocations,
+          })
+          .from(inventoryTable)
+          .where(
+            or(
+              ...pairs.map(p =>
+                and(eq(inventoryTable.vendor, p.vendor), eq(inventoryTable.catalog, p.catalog)),
+              ),
+            ),
+          )
+      : [];
+
+    const existingMap = new Map<string, string[]>();
+    for (const row of existingRows) {
+      existingMap.set(`${row.vendor}\0${row.catalog}`, row.binLocations);
+    }
+
+    type RowStatus = "replace" | "add" | "preserve" | "none";
+
+    interface BinDiffRow {
+      vendor: string;
+      catalog: string;
+      status: RowStatus;
+      existingBins: string[];
+      incomingBins: string[];
+    }
+
+    const rows: BinDiffRow[] = [];
+    let willReplaceBins = 0;
+    let willAddBins = 0;
+    let willPreserveBins = 0;
+    let noChange = 0;
+
+    for (const item of items) {
+      const key = `${item.vendor.toUpperCase()}\0${item.catalog}`;
+      const existingBins = existingMap.get(key) ?? [];
+      const incomingBins = item.binLocations ?? [];
+      const hasIncoming = incomingBins.length > 0;
+      const hasExisting = existingBins.length > 0;
+
+      // Two bin arrays are "identical" when they contain the same values
+      // regardless of order (sorted string comparison). Identical incoming bins
+      // don't constitute a destructive replacement — skip the warning.
+      const binsIdentical =
+        hasIncoming &&
+        hasExisting &&
+        incomingBins.length === existingBins.length &&
+        [...incomingBins].sort().join("\0") === [...existingBins].sort().join("\0");
+
+      let status: RowStatus;
+      if (hasIncoming && hasExisting && !binsIdentical) {
+        status = "replace";
+        willReplaceBins++;
+      } else if (hasIncoming && !hasExisting) {
+        status = "add";
+        willAddBins++;
+      } else if (!hasIncoming && hasExisting) {
+        status = "preserve";
+        willPreserveBins++;
+      } else {
+        status = "none";
+        noChange++;
+      }
+
+      rows.push({ vendor: item.vendor, catalog: item.catalog, status, existingBins, incomingBins });
+    }
+
+    res.json({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Preview failed" });
+  }
+});
+
 // ── POST /inventory/upsert-batch ──────────────────────────────────────────────
 // Cap the number of rows accepted in a single upsert-batch call. Higher than
 // any legitimate UI flow (per-item bin edits send 1; bulk uploads use the
