@@ -34,6 +34,22 @@ type ParsedRow = {
   binLocations: string[];
 };
 
+type BinDiffRow = {
+  vendor: string;
+  catalog: string;
+  status: "replace" | "add" | "preserve" | "none";
+  existingBins: string[];
+  incomingBins: string[];
+};
+
+type BinDiffSummary = {
+  willReplaceBins: number;
+  willAddBins: number;
+  willPreserveBins: number;
+  noChange: number;
+  rows: BinDiffRow[];
+};
+
 // CSV/XLSX cell may pack multiple bins separated by ; or | — split, trim, drop blanks.
 function parseBinCell(cell: string): string[] {
   const trimmed = cell.trim();
@@ -352,6 +368,13 @@ export default function UploadScreen() {
   const [measureEnrichError, setMeasureEnrichError] = useState<string | null>(null);
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
 
+  // Bin diff / replace-warning state
+  const [binDiff, setBinDiff] = useState<BinDiffSummary | null>(null);
+  const [binDiffPending, setBinDiffPending] = useState(false);
+  const [binDiffFailed, setBinDiffFailed] = useState(false);
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false);
+  const [skipBinRows, setSkipBinRows] = useState<Set<number>>(new Set());
+
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
 
   // Build admin auth headers for protected API calls
@@ -362,6 +385,66 @@ export default function UploadScreen() {
   // Keep a ref so interval callbacks always see the current token
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  // Auto-fetch bin-diff preview whenever the parsed rows change so admins
+  // see a replace-warning before they can press Upload.
+  // Preview is a HARD precondition for upload — if it fails, upload is blocked
+  // and the admin must retry (pick file again) or re-authenticate.
+  // An AbortController cancels any in-flight request when rows or token change,
+  // preventing stale responses from overwriting state for a newer file.
+  useEffect(() => {
+    if (parsedRows.length === 0) {
+      setBinDiff(null);
+      setBinDiffFailed(false);
+      setReplaceConfirmed(false);
+      setSkipBinRows(new Set());
+      return;
+    }
+    if (!adminToken) return;
+    const controller = new AbortController();
+    setBinDiffPending(true);
+    setBinDiffFailed(false);
+    setBinDiff(null);
+    const token = adminToken;
+    fetch(`${API_BASE}/inventory/upsert-batch/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+      body: JSON.stringify({
+        items: parsedRows.map(({ vendor, catalog, description, binLocations }) =>
+          binLocations.length > 0
+            ? { vendor, catalog, description, binLocations }
+            : { vendor, catalog, description }
+        ),
+      }),
+    })
+      .then(async r => {
+        if (r.status === 401) {
+          logoutAdmin();
+          setUploadError("Admin session expired. Please unlock again.");
+          setBinDiffFailed(true);
+          return;
+        }
+        if (!r.ok) throw new Error("preview failed");
+        const data = await r.json() as BinDiffSummary;
+        setBinDiff(data);
+        setBinDiffFailed(false);
+        setReplaceConfirmed(false);
+        setSkipBinRows(new Set());
+      })
+      .catch(err => {
+        // Ignore abort errors — the effect re-ran with new data
+        if (err instanceof Error && err.name === "AbortError") return;
+        setBinDiff(null);
+        setBinDiffFailed(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setBinDiffPending(false);
+      });
+    return () => {
+      controller.abort();
+    };
+  }, [parsedRows, adminToken, logoutAdmin]);
 
   const bulkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const measurePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -646,12 +729,15 @@ export default function UploadScreen() {
         // Omit binLocations when empty so the server treats it as "no change"
         // and does not wipe existing bins on rows whose source row had no bin
         // value (e.g. file with no bin column, or blank cell).
+        // Rows where the admin toggled "skip bin update" also send empty bins
+        // so the server preserves whatever was already stored.
         body: JSON.stringify({
-          items: parsedRows.map(({ vendor, catalog, description, binLocations }) =>
-            binLocations.length > 0
-              ? { vendor, catalog, description, binLocations }
-              : { vendor, catalog, description }
-          ),
+          items: parsedRows.map(({ vendor, catalog, description, binLocations }, idx) => {
+            const effectiveBins = skipBinRows.has(idx) ? [] : binLocations;
+            return effectiveBins.length > 0
+              ? { vendor, catalog, description, binLocations: effectiveBins }
+              : { vendor, catalog, description };
+          }),
         }),
       });
 
@@ -848,24 +934,63 @@ export default function UploadScreen() {
                         {h}
                       </Text>
                     ))}
+                    <Text style={[styles.previewHeaderCell, { color: colors.mutedForeground, width: 44, textAlign: "center" }]}>
+                      SKIP
+                    </Text>
                   </View>
 
-                  {parsedRows.slice(0, 8).map((row, i) => (
-                    <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border }]}>
-                      <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
-                        {row.vendor}
-                      </Text>
-                      <Text style={[styles.previewCell, { color: colors.primary, flex: 1 }]} numberOfLines={1}>
-                        {row.catalog}
-                      </Text>
-                      <Text style={[styles.previewCell, { color: colors.mutedForeground, flex: 2 }]} numberOfLines={1}>
-                        {row.description}
-                      </Text>
-                      <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
-                        {row.binLocations.join(", ")}
-                      </Text>
-                    </View>
-                  ))}
+                  {parsedRows.slice(0, 8).map((row, i) => {
+                    const diffRow = binDiff?.rows[i];
+                    const isReplace = diffRow?.status === "replace";
+                    const isSkipped = skipBinRows.has(i);
+                    return (
+                      <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border, backgroundColor: isReplace && !isSkipped ? colors.warning + "18" : undefined }]}>
+                        <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
+                          {row.vendor}
+                        </Text>
+                        <Text style={[styles.previewCell, { color: colors.primary, flex: 1 }]} numberOfLines={1}>
+                          {row.catalog}
+                        </Text>
+                        <Text style={[styles.previewCell, { color: colors.mutedForeground, flex: 2 }]} numberOfLines={1}>
+                          {row.description}
+                        </Text>
+                        <View style={{ flex: 1 }}>
+                          {isReplace && !isSkipped ? (
+                            <>
+                              <Text style={[styles.previewCell, { color: colors.warning, textDecorationLine: "line-through", fontSize: 10 }]} numberOfLines={1}>
+                                {diffRow.existingBins.join(", ")}
+                              </Text>
+                              <Text style={[styles.previewCell, { color: colors.foreground }]} numberOfLines={1}>
+                                {row.binLocations.join(", ")}
+                              </Text>
+                            </>
+                          ) : (
+                            <Text style={[styles.previewCell, { color: isSkipped ? colors.mutedForeground : colors.foreground }]} numberOfLines={1}>
+                              {isSkipped ? "(kept)" : row.binLocations.join(", ")}
+                            </Text>
+                          )}
+                        </View>
+                        {isReplace ? (
+                          <Pressable
+                            onPress={() => {
+                              setSkipBinRows(prev => {
+                                const next = new Set(prev);
+                                if (next.has(i)) next.delete(i); else next.add(i);
+                                return next;
+                              });
+                            }}
+                            style={[styles.skipToggle, { backgroundColor: isSkipped ? colors.success + "22" : colors.warning + "22", borderColor: isSkipped ? colors.success : colors.warning }]}
+                          >
+                            <Text style={{ fontSize: 11, color: isSkipped ? colors.success : colors.warning, fontFamily: "Inter_600SemiBold" }}>
+                              {isSkipped ? "✓" : "⚠"}
+                            </Text>
+                          </Pressable>
+                        ) : (
+                          <View style={{ width: 44 }} />
+                        )}
+                      </View>
+                    );
+                  })}
 
                   {parsedRows.length > 8 ? (
                     <Text style={[styles.moreRows, { color: colors.mutedForeground }]}>
@@ -873,19 +998,120 @@ export default function UploadScreen() {
                     </Text>
                   ) : null}
 
-                  <Pressable
-                    onPress={handleUpload}
-                    disabled={uploadPending}
-                    style={[styles.uploadBtn, { backgroundColor: uploadPending ? colors.muted : colors.primary }]}
-                  >
-                    {uploadPending ? (
-                      <ActivityIndicator color={colors.primaryForeground} />
-                    ) : (
-                      <Text style={[styles.uploadBtnText, { color: colors.primaryForeground }]}>
-                        ⬆️ Upload {parsedRows.length} Items
+                  {/* Bin diff summary / warning */}
+                  {binDiffPending ? (
+                    <View style={[styles.diffCard, { backgroundColor: colors.muted }]}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                      <Text style={[styles.diffText, { color: colors.mutedForeground, marginLeft: 8 }]}>Checking for bin conflicts…</Text>
+                    </View>
+                  ) : binDiff ? (
+                    <>
+                      {/* Summary chips */}
+                      <View style={styles.diffSummaryRow}>
+                        {binDiff.willReplaceBins > 0 ? (
+                          <View style={[styles.diffChip, { backgroundColor: colors.warning + "22", borderColor: colors.warning + "55" }]}>
+                            <Text style={[styles.diffChipCount, { color: colors.warning }]}>{binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length}</Text>
+                            <Text style={[styles.diffChipLabel, { color: colors.warning }]}>will replace bins</Text>
+                          </View>
+                        ) : null}
+                        {binDiff.willAddBins > 0 ? (
+                          <View style={[styles.diffChip, { backgroundColor: colors.success + "15", borderColor: colors.success + "44" }]}>
+                            <Text style={[styles.diffChipCount, { color: colors.success }]}>{binDiff.willAddBins}</Text>
+                            <Text style={[styles.diffChipLabel, { color: colors.success }]}>will add bins</Text>
+                          </View>
+                        ) : null}
+                        {binDiff.willPreserveBins > 0 ? (
+                          <View style={[styles.diffChip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                            <Text style={[styles.diffChipCount, { color: colors.mutedForeground }]}>{binDiff.willPreserveBins + [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length}</Text>
+                            <Text style={[styles.diffChipLabel, { color: colors.mutedForeground }]}>bins preserved</Text>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      {/* Replace warning with skip-all and confirmation */}
+                      {binDiff.willReplaceBins > 0 ? (
+                        <View style={[styles.replaceWarning, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "55" }]}>
+                          <Text style={[styles.replaceWarningTitle, { color: colors.warning }]}>
+                            ⚠ {binDiff.willReplaceBins} row{binDiff.willReplaceBins !== 1 ? "s" : ""} will overwrite existing bin assignments
+                          </Text>
+                          <Text style={[styles.replaceWarningHint, { color: colors.mutedForeground }]}>
+                            Rows highlighted above show the current bins (strikethrough) being replaced by the spreadsheet value. Use the ⚠ toggles per row, or skip all replacements below.
+                          </Text>
+
+                          <Pressable
+                            onPress={() => {
+                              const replaceIndices = binDiff.rows
+                                .map((r, i) => r.status === "replace" ? i : -1)
+                                .filter(i => i >= 0);
+                              const allSkipped = replaceIndices.every(i => skipBinRows.has(i));
+                              setSkipBinRows(allSkipped ? new Set() : new Set(replaceIndices));
+                              if (!allSkipped) setReplaceConfirmed(false);
+                            }}
+                            style={[styles.skipAllBtn, { borderColor: colors.warning }]}
+                          >
+                            <Text style={[styles.skipAllBtnText, { color: colors.warning }]}>
+                              {binDiff.rows.filter((r, i) => r.status === "replace" && skipBinRows.has(i)).length === binDiff.willReplaceBins
+                                ? "↩ Restore all bin replacements"
+                                : "⏭ Skip all bin replacements (keep existing)"}
+                            </Text>
+                          </Pressable>
+
+                          {/* Explicit confirmation checkbox */}
+                          {binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length > 0 ? (
+                            <Pressable
+                              onPress={() => setReplaceConfirmed(v => !v)}
+                              style={styles.confirmRow}
+                            >
+                              <View style={[styles.checkbox, { borderColor: replaceConfirmed ? colors.primary : colors.warning, backgroundColor: replaceConfirmed ? colors.primary : "transparent" }]}>
+                                {replaceConfirmed ? <Text style={{ color: colors.primaryForeground, fontSize: 11, fontFamily: "Inter_700Bold" }}>✓</Text> : null}
+                              </View>
+                              <Text style={[styles.confirmLabel, { color: colors.foreground }]}>
+                                I understand{" "}
+                                {binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length}{" "}
+                                existing bin assignment{binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length !== 1 ? "s" : ""} will be overwritten
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  {/* Preview failed — hard block with retry hint */}
+                  {binDiffFailed ? (
+                    <View style={[styles.diffCard, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "44", borderWidth: 1, marginTop: 10 }]}>
+                      <Text style={[styles.diffText, { color: colors.destructive }]}>
+                        ⚠ Could not check for bin conflicts. Upload is disabled until the check succeeds. Please re-select the file or re-authenticate and try again.
                       </Text>
-                    )}
-                  </Pressable>
+                    </View>
+                  ) : null}
+
+                  {/* Upload button — gated on confirmation when replacements exist,
+                      and blocked entirely until preview has been successfully loaded */}
+                  {(() => {
+                    const pendingReplacements = binDiff
+                      ? binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length
+                      : 0;
+                    const needsConfirm = pendingReplacements > 0 && !replaceConfirmed;
+                    // Block upload if preview hasn't been fetched yet (pending or failed)
+                    const previewRequired = binDiffPending || binDiffFailed || binDiff === null;
+                    const isDisabled = uploadPending || previewRequired || needsConfirm;
+                    return (
+                      <Pressable
+                        onPress={handleUpload}
+                        disabled={isDisabled}
+                        style={[styles.uploadBtn, { backgroundColor: isDisabled ? colors.muted : colors.primary }]}
+                      >
+                        {uploadPending ? (
+                          <ActivityIndicator color={colors.primaryForeground} />
+                        ) : (
+                          <Text style={[styles.uploadBtnText, { color: isDisabled ? colors.mutedForeground : colors.primaryForeground }]}>
+                            {binDiffPending ? "Checking bin conflicts…" : needsConfirm ? "✓ Confirm replacement to upload" : `⬆️ Upload ${parsedRows.length} Items`}
+                          </Text>
+                        )}
+                      </Pressable>
+                    );
+                  })()}
                 </View>
               ) : null}
 
@@ -1251,9 +1477,24 @@ const styles = StyleSheet.create({
   previewCard: { borderRadius: 12, padding: 14, borderWidth: 1, marginBottom: 14 },
   previewHeaderRow: { flexDirection: "row", paddingHorizontal: 6, paddingVertical: 6, borderRadius: 4, marginBottom: 2, marginTop: 8 },
   previewHeaderCell: { fontSize: 10, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5 },
-  previewRow: { flexDirection: "row", paddingHorizontal: 6, paddingVertical: 7, borderBottomWidth: 1 },
+  previewRow: { flexDirection: "row", paddingHorizontal: 6, paddingVertical: 7, borderBottomWidth: 1, alignItems: "center" },
   previewCell: { fontSize: 12, fontFamily: "Inter_400Regular", paddingRight: 4 },
   moreRows: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", marginTop: 8 },
+  skipToggle: { width: 34, height: 28, borderRadius: 6, borderWidth: 1, alignItems: "center", justifyContent: "center", marginLeft: 5 },
+  diffCard: { flexDirection: "row", alignItems: "center", padding: 10, borderRadius: 8, marginTop: 10 },
+  diffText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  diffSummaryRow: { flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" },
+  diffChip: { flex: 1, minWidth: 90, alignItems: "center", paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, gap: 2 },
+  diffChipCount: { fontSize: 20, fontFamily: "Inter_700Bold" },
+  diffChipLabel: { fontSize: 11, fontFamily: "Inter_500Medium", textAlign: "center" },
+  replaceWarning: { marginTop: 12, padding: 14, borderRadius: 10, borderWidth: 1, gap: 8 },
+  replaceWarningTitle: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  replaceWarningHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  skipAllBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 9, alignItems: "center" },
+  skipAllBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  confirmRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4 },
+  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: "center", justifyContent: "center" },
+  confirmLabel: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
   uploadBtn: { marginTop: 12, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   uploadBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
   enrichCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 14 },
