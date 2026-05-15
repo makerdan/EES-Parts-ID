@@ -786,6 +786,7 @@ export default function SearchScreen() {
       <FlatList
         data={results}
         keyExtractor={item => String(item.item.id)}
+        style={{ flex: 1 }}
         ListHeaderComponent={() => (
           <View>
             {/* Results header */}
