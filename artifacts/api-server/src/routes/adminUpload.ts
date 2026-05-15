@@ -17,10 +17,21 @@
  *   200 { inserted: number, updated: number, total: number }
  *   400 { error: string }  — malformed CSV or missing required columns
  *   401                    — missing or invalid admin token
+ *
+ * POST /api/admin/upload/preview
+ *
+ * Dry-run: parses the same CSV body but only returns a bin-conflict diff
+ * summary without writing anything to the database. Clients should call this
+ * first and warn the user when willReplaceBins > 0.
+ *
+ * Response:
+ *   200 { willReplaceBins, willAddBins, willPreserveBins, noChange, rows[] }
+ *   400 { error: string }
+ *   401
  */
 
 import { Router } from "express";
-import { sql } from "drizzle-orm";
+import { sql, eq, or, and } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
 
@@ -126,6 +137,121 @@ function parseCsv(csvText: string): ParsedRow[] | null {
   }
   return rows;
 }
+
+// ── POST /admin/upload/preview ────────────────────────────────────────────────
+// Dry-run: parse the CSV and return a bin-conflict diff summary identical to
+// the one produced by /inventory/upsert-batch/preview. Nothing is written to
+// the database. Clients should call this before /admin/upload and warn the
+// user when willReplaceBins > 0.
+router.post("/upload/preview", requireAdminAuth, async (req, res) => {
+  try {
+    const contentLength = Number(req.headers["content-length"] ?? 0);
+    if (contentLength > UPLOAD_MAX_BYTES) {
+      return void res.status(413).json({
+        error: `Request body too large (limit ${UPLOAD_MAX_BYTES} bytes)`,
+      });
+    }
+
+    const { csv } = req.body as { csv?: string };
+
+    if (!csv || typeof csv !== "string" || !csv.trim()) {
+      return void res.status(400).json({ error: "Missing or empty csv field" });
+    }
+
+    if (csv.length > UPLOAD_MAX_CSV_CHARS) {
+      return void res.status(413).json({
+        error: `CSV payload too large (limit ${UPLOAD_MAX_CSV_CHARS} characters)`,
+      });
+    }
+
+    const rows = parseCsv(csv);
+    if (!rows) {
+      return void res.status(400).json({
+        error: "Malformed CSV: must have a header row with at least Vendor and Catalog columns",
+      });
+    }
+    if (rows.length === 0) {
+      return void res.status(400).json({ error: "CSV contains no valid data rows" });
+    }
+
+    const pairs = rows.map(r => ({
+      vendor: r.vendor.toUpperCase(),
+      catalog: r.catalog,
+    }));
+
+    const existingRows = await db
+      .select({
+        vendor: inventoryTable.vendor,
+        catalog: inventoryTable.catalog,
+        binLocations: inventoryTable.binLocations,
+      })
+      .from(inventoryTable)
+      .where(
+        or(
+          ...pairs.map(p =>
+            and(eq(inventoryTable.vendor, p.vendor), eq(inventoryTable.catalog, p.catalog)),
+          ),
+        ),
+      );
+
+    const existingMap = new Map<string, string[]>();
+    for (const row of existingRows) {
+      existingMap.set(`${row.vendor}\0${row.catalog}`, row.binLocations);
+    }
+
+    type RowStatus = "replace" | "add" | "preserve" | "none";
+
+    interface BinDiffRow {
+      vendor: string;
+      catalog: string;
+      status: RowStatus;
+      existingBins: string[];
+      incomingBins: string[];
+    }
+
+    const diffRows: BinDiffRow[] = [];
+    let willReplaceBins = 0;
+    let willAddBins = 0;
+    let willPreserveBins = 0;
+    let noChange = 0;
+
+    for (const row of rows) {
+      const key = `${row.vendor.toUpperCase()}\0${row.catalog}`;
+      const existingBins = existingMap.get(key) ?? [];
+      const incomingBins = row.binLocations;
+      const hasIncoming = incomingBins.length > 0;
+      const hasExisting = existingBins.length > 0;
+
+      const binsIdentical =
+        hasIncoming &&
+        hasExisting &&
+        incomingBins.length === existingBins.length &&
+        [...incomingBins].sort().join("\0") === [...existingBins].sort().join("\0");
+
+      let status: RowStatus;
+      if (hasIncoming && hasExisting && !binsIdentical) {
+        status = "replace";
+        willReplaceBins++;
+      } else if (hasIncoming && !hasExisting) {
+        status = "add";
+        willAddBins++;
+      } else if (!hasIncoming && hasExisting) {
+        status = "preserve";
+        willPreserveBins++;
+      } else {
+        status = "none";
+        noChange++;
+      }
+
+      diffRows.push({ vendor: row.vendor, catalog: row.catalog, status, existingBins, incomingBins });
+    }
+
+    res.json({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows: diffRows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Preview failed" });
+  }
+});
 
 // ── POST /admin/upload ────────────────────────────────────────────────────────
 router.post("/upload", requireAdminAuth, async (req, res) => {
