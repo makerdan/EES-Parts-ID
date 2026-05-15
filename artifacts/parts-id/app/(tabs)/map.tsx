@@ -27,6 +27,7 @@ const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 export default function MapScreen() {
   const colors = useColors();
   const { settings, isAdmin, textFontScale } = useApp();
+  const [browseOpen, setBrowseOpen] = useState(false);
   const [drilldown, setDrilldown] = useState<WarehouseZone | null>(null);
   const [summaryZone, setSummaryZone] = useState<WarehouseZone | null>(null);
   const inventoryRef = useRef<InventoryItem[]>([]);
@@ -51,7 +52,12 @@ export default function MapScreen() {
     setDrilldown(zone);
   };
 
-  if (drilldown !== null) {
+  const handleBrowseClose = () => {
+    setBrowseOpen(false);
+    setDrilldown(null);
+  };
+
+  if (browseOpen || drilldown !== null) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
         <BrowseByAisle
@@ -59,10 +65,10 @@ export default function MapScreen() {
           isSyncing={false}
           shelfViewEnabled={settings.shelfViewEnabled}
           fontScale={textFontScale}
-          onClose={() => setDrilldown(null)}
-          initialAisle={drilldown.aisleNum}
-          sectionParity={drilldown.sectionParity}
-          sectionNumbers={drilldown.sectionNumbers}
+          onClose={handleBrowseClose}
+          initialAisle={drilldown?.aisleNum}
+          sectionParity={drilldown?.sectionParity}
+          sectionNumbers={drilldown?.sectionNumbers}
         />
       </SafeAreaView>
     );
@@ -85,7 +91,7 @@ export default function MapScreen() {
         </Text>
 
         <Pressable
-          onPress={() => setDrilldown({ aisleNum: 0, label: "All Aisles" })}
+          onPress={() => setBrowseOpen(true)}
           style={[styles.browseBtn, { backgroundColor: colors.primary, borderColor: "#000" }]}
         >
           <Feather name="map-pin" size={18} color={colors.primaryForeground} style={{ marginRight: 8 }} />
