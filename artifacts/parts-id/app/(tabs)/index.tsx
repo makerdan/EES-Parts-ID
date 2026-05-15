@@ -5,7 +5,6 @@ import {
   Modal,
   Pressable,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -768,25 +767,12 @@ export default function SearchScreen() {
 
       </View>
 
-      {/* ── Advanced Filters — always visible, collapsible internally ── */}
-      <ScrollView
-        style={{ maxHeight: "50%" }}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={[styles.filterCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <FilterPanel
-            values={filters}
-            onChange={handleChange}
-            dimensionCounts={dimensionCounts}
-          />
-        </View>
-      </ScrollView>
-
-      <FlatList
-        data={results}
-        keyExtractor={item => String(item.item.id)}
-        style={{ flex: 1 }}
+      {/* ── Results list + floating filter overlay ── */}
+      <View style={{ flex: 1 }}>
+        <FlatList
+          data={results}
+          keyExtractor={item => String(item.item.id)}
+          style={{ flex: 1 }}
         ListHeaderComponent={() => (
           <View>
             {/* Results header */}
@@ -932,11 +918,21 @@ export default function SearchScreen() {
             />
           </View>
         )}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingTop: 76 }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
       />
+
+        {/* Floating filter overlay — sits above results, collapses to a thin header */}
+        <View style={[styles.filterOverlay, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <FilterPanel
+            values={filters}
+            onChange={handleChange}
+            dimensionCounts={dimensionCounts}
+          />
+        </View>
+      </View>
         </>
       ) : (
         <BrowseByAisle
@@ -1038,12 +1034,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  filterCard: {
-    marginHorizontal: 12,
-    marginBottom: 6,
-    padding: 16,
+  filterOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 12,
+    right: 12,
+    zIndex: 20,
     borderRadius: 12,
     borderWidth: 1,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 8,
   },
   resultsHeader: {
     flexDirection: "row",
