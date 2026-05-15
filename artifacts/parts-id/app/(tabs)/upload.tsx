@@ -374,6 +374,7 @@ export default function UploadScreen() {
   const [binDiffFailed, setBinDiffFailed] = useState(false);
   const [replaceConfirmed, setReplaceConfirmed] = useState(false);
   const [skipBinRows, setSkipBinRows] = useState<Set<number>>(new Set());
+  const [replaceListOpen, setReplaceListOpen] = useState(false);
 
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
 
@@ -398,6 +399,7 @@ export default function UploadScreen() {
       setBinDiffFailed(false);
       setReplaceConfirmed(false);
       setSkipBinRows(new Set());
+      setReplaceListOpen(false);
       return;
     }
     if (!adminToken) return;
@@ -431,6 +433,7 @@ export default function UploadScreen() {
         setBinDiffFailed(false);
         setReplaceConfirmed(false);
         setSkipBinRows(new Set());
+        setReplaceListOpen(false);
       })
       .catch(err => {
         // Ignore abort errors — the effect re-ran with new data
@@ -1035,8 +1038,72 @@ export default function UploadScreen() {
                             ⚠ {binDiff.willReplaceBins} row{binDiff.willReplaceBins !== 1 ? "s" : ""} will overwrite existing bin assignments
                           </Text>
                           <Text style={[styles.replaceWarningHint, { color: colors.mutedForeground }]}>
-                            Rows highlighted above show the current bins (strikethrough) being replaced by the spreadsheet value. Use the ⚠ toggles per row, or skip all replacements below.
+                            Expand the list below to review each replacement individually, or use the skip-all button to keep all existing bins.
                           </Text>
+
+                          {/* Collapsible full replacement list */}
+                          <Pressable
+                            onPress={() => setReplaceListOpen(v => !v)}
+                            style={[styles.reviewToggleBtn, { borderColor: colors.warning + "88", backgroundColor: colors.warning + "10" }]}
+                          >
+                            <Text style={[styles.reviewToggleBtnText, { color: colors.warning }]}>
+                              {replaceListOpen ? "▲ Hide replacement list" : `▼ Review ${binDiff.willReplaceBins} replacement${binDiff.willReplaceBins !== 1 ? "s" : ""}`}
+                            </Text>
+                          </Pressable>
+
+                          {replaceListOpen ? (
+                            <ScrollView
+                              style={[styles.replaceList, { borderColor: colors.warning + "44", backgroundColor: colors.warning + "08" }]}
+                              nestedScrollEnabled
+                            >
+                              {binDiff.rows.map((diffRow, idx) => {
+                                if (diffRow.status !== "replace") return null;
+                                const parsedRow = parsedRows[idx];
+                                const isSkipped = skipBinRows.has(idx);
+                                return (
+                                  <View key={idx} style={[styles.replaceListRow, { borderBottomColor: colors.warning + "33" }]}>
+                                    <View style={{ flex: 1, minWidth: 0 }}>
+                                      <Text style={[styles.replaceListCatalog, { color: colors.foreground }]} numberOfLines={1}>
+                                        {diffRow.catalog}
+                                      </Text>
+                                      <Text style={[styles.replaceListVendor, { color: colors.mutedForeground }]} numberOfLines={1}>
+                                        {diffRow.vendor}
+                                      </Text>
+                                      {isSkipped ? (
+                                        <Text style={[styles.replaceListBins, { color: colors.mutedForeground, fontStyle: "italic" }]} numberOfLines={1}>
+                                          keeping: {diffRow.existingBins.join(", ")}
+                                        </Text>
+                                      ) : (
+                                        <>
+                                          <Text style={[styles.replaceListBins, { color: colors.warning, textDecorationLine: "line-through" }]} numberOfLines={1}>
+                                            {diffRow.existingBins.join(", ")}
+                                          </Text>
+                                          <Text style={[styles.replaceListBins, { color: colors.foreground }]} numberOfLines={1}>
+                                            {parsedRow?.binLocations.join(", ") ?? diffRow.incomingBins.join(", ")}
+                                          </Text>
+                                        </>
+                                      )}
+                                    </View>
+                                    <Pressable
+                                      onPress={() => {
+                                        setSkipBinRows(prev => {
+                                          const next = new Set(prev);
+                                          if (next.has(idx)) next.delete(idx); else next.add(idx);
+                                          return next;
+                                        });
+                                        setReplaceConfirmed(false);
+                                      }}
+                                      style={[styles.skipToggle, { backgroundColor: isSkipped ? colors.success + "22" : colors.warning + "22", borderColor: isSkipped ? colors.success : colors.warning }]}
+                                    >
+                                      <Text style={{ fontSize: 11, color: isSkipped ? colors.success : colors.warning, fontFamily: "Inter_600SemiBold" }}>
+                                        {isSkipped ? "✓" : "⚠"}
+                                      </Text>
+                                    </Pressable>
+                                  </View>
+                                );
+                              })}
+                            </ScrollView>
+                          ) : null}
 
                           <Pressable
                             onPress={() => {
@@ -1490,6 +1557,13 @@ const styles = StyleSheet.create({
   replaceWarning: { marginTop: 12, padding: 14, borderRadius: 10, borderWidth: 1, gap: 8 },
   replaceWarningTitle: { fontSize: 14, fontFamily: "Inter_700Bold" },
   replaceWarningHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  reviewToggleBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, alignItems: "center" },
+  reviewToggleBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  replaceList: { borderWidth: 1, borderRadius: 8, maxHeight: 280 },
+  replaceListRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, gap: 10 },
+  replaceListCatalog: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  replaceListVendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.4, marginTop: 1 },
+  replaceListBins: { fontSize: 11, fontFamily: "SpaceMono_400Regular", marginTop: 2 },
   skipAllBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 9, alignItems: "center" },
   skipAllBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   confirmRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4 },
