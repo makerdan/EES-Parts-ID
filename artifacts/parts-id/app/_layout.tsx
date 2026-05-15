@@ -26,17 +26,35 @@ if (domain) {
   setBaseUrl(`https://${domain}/api`);
 }
 
+// On web: inject the Feather @font-face rule directly into expo-font's own
+// style element (id="expo-generated-fonts") before React boots.
+// expo-font's Font.isLoaded() only checks that element, and its own
+// _createWebFontTemplate omits format("truetype"), which makes browsers
+// reject the font. We bypass it entirely and inject with the correct hint.
+if (Platform.OS === "web" && typeof document !== "undefined") {
+  const EXPO_STYLE_ID = "expo-generated-fonts";
+  let styleEl = document.getElementById(EXPO_STYLE_ID) as HTMLStyleElement | null;
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = EXPO_STYLE_ID;
+    document.head.appendChild(styleEl);
+  }
+  const already = styleEl.sheet
+    ? Array.from(styleEl.sheet.cssRules).some(
+        (r) => r instanceof CSSFontFaceRule && (r as CSSFontFaceRule).style.fontFamily.replace(/['"]/g, "") === "feather"
+      )
+    : styleEl.textContent?.includes("feather");
+  if (!already) {
+    const css = `@font-face{font-family:"feather";src:url("data:font/ttf;base64,${FEATHER_FONT_B64}") format("truetype");font-weight:normal;font-style:normal;font-display:auto}`;
+    styleEl.appendChild(document.createTextNode(css));
+  }
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: 2, staleTime: 30_000 },
   },
 });
-
-// On web, use an inline base64 data URI so the font doesn't depend on
-// Metro's asset URL resolution (which breaks through the Replit proxy).
-const featherFont = Platform.OS === "web"
-  ? `data:font/ttf;base64,${FEATHER_FONT_B64}`
-  : require("../assets/fonts/Feather.ttf");
 
 function AuthGate() {
   const { isAuthenticated, isLoading } = useApp();
@@ -62,7 +80,8 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
-    feather: featherFont,
+    // Native only — on web the font is pre-injected above via CSS.
+    ...(Platform.OS !== "web" ? { feather: require("../assets/fonts/Feather.ttf") } : {}),
   });
 
   useEffect(() => {
