@@ -341,11 +341,27 @@ const gateStyles = StyleSheet.create({
   btnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
 });
 
+// ── Serialize parsed rows back to CSV text ────────────────────────────────
+// Used when the source file was XLSX/ODS (which must be converted to raw CSV
+// before being sent to the admin/upload endpoint).
+// Skipped-bin rows have their bin cell blanked so the server preserves the
+// existing bin assignment instead of overwriting it.
+function serializeToCsv(rows: ParsedRow[], skipBinRows: Set<number>): string {
+  const header = "Vendor,Catalog,Description,BinLocation";
+  const escapeField = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const lines = rows.map((row, i) => {
+    const bin = skipBinRows.has(i) ? "" : row.binLocations.join(";");
+    return [row.vendor, row.catalog, row.description, bin].map(escapeField).join(",");
+  });
+  return [header, ...lines].join("\n");
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
   const colors = useColors();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
+  const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
@@ -387,14 +403,16 @@ export default function UploadScreen() {
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
 
-  // Auto-fetch bin-diff preview whenever the parsed rows change so admins
+  // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
   // see a replace-warning before they can press Upload.
+  // Uses POST /api/admin/upload/preview (raw CSV text) — the same endpoint
+  // that the final upload will use, so the diff is always accurate.
   // Preview is a HARD precondition for upload — if it fails, upload is blocked
   // and the admin must retry (pick file again) or re-authenticate.
-  // An AbortController cancels any in-flight request when rows or token change,
-  // preventing stale responses from overwriting state for a newer file.
+  // An AbortController cancels any in-flight request when rawCsv or token
+  // change, preventing stale responses from overwriting state for a newer file.
   useEffect(() => {
-    if (parsedRows.length === 0) {
+    if (!rawCsv || parsedRows.length === 0) {
       setBinDiff(null);
       setBinDiffFailed(false);
       setReplaceConfirmed(false);
@@ -408,17 +426,11 @@ export default function UploadScreen() {
     setBinDiffFailed(false);
     setBinDiff(null);
     const token = adminToken;
-    fetch(`${API_BASE}/inventory/upsert-batch/preview`, {
+    fetch(`${API_BASE}/admin/upload/preview`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       signal: controller.signal,
-      body: JSON.stringify({
-        items: parsedRows.map(({ vendor, catalog, description, binLocations }) =>
-          binLocations.length > 0
-            ? { vendor, catalog, description, binLocations }
-            : { vendor, catalog, description }
-        ),
-      }),
+      body: JSON.stringify({ csv: rawCsv }),
     })
       .then(async r => {
         if (r.status === 401) {
@@ -447,7 +459,7 @@ export default function UploadScreen() {
     return () => {
       controller.abort();
     };
-  }, [parsedRows, adminToken, logoutAdmin]);
+  }, [rawCsv, parsedRows.length, adminToken, logoutAdmin]);
 
   const bulkPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const measurePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -682,15 +694,29 @@ export default function UploadScreen() {
 
       const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
       let rows: ParsedRow[] = [];
+      // rawText holds the CSV string that will be sent to the admin upload
+      // endpoint. For CSV/TXT files this is the file's raw text. For XLSX/ODS
+      // files the parsed rows are serialized back to CSV so the server-side
+      // parser sees the same data.
+      let rawText: string | null = null;
 
       if (ext === "csv" || ext === "txt") {
         const response = await fetch(asset.uri);
         if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
         const text = await response.text();
         rows = parseCSV(text);
+        // Normalize through serializeToCsv so the server always receives a
+        // canonical header row (Vendor,Catalog,Description,BinLocation) even
+        // when the source file used broad client-side aliases like "mfr",
+        // "part#", etc. that the server-side parser wouldn't recognise.
+        rawText = serializeToCsv(rows, new Set());
         setFileType("csv");
       } else if (["xlsx", "xls", "xlsm", "ods"].includes(ext)) {
         rows = await parseXlsx(asset.uri);
+        // Serialize to CSV so we can send it to admin/upload/preview and
+        // admin/upload which only accept raw CSV text. skipBinRows is empty
+        // at this point (file just loaded), so all bin data is included.
+        rawText = serializeToCsv(rows, new Set());
         setFileType("xlsx");
       } else {
         try {
@@ -698,9 +724,11 @@ export default function UploadScreen() {
           if (!response.ok) throw new Error(`Failed to read file: ${response.status}`);
           const text = await response.text();
           rows = parseCSV(text);
+          rawText = serializeToCsv(rows, new Set());
           setFileType("csv");
         } catch {
           rows = await parseXlsx(asset.uri);
+          rawText = serializeToCsv(rows, new Set());
           setFileType("xlsx");
         }
       }
@@ -711,6 +739,7 @@ export default function UploadScreen() {
       }
       setUploadError(null);
       setUploadSuccess(null);
+      setRawCsv(rawText);
       setParsedRows(rows);
     } catch (err) {
       setUploadError("Failed to read file. Please try again.");
@@ -718,30 +747,30 @@ export default function UploadScreen() {
   };
 
   const handleUpload = async () => {
-    if (!parsedRows.length) return;
+    if (!parsedRows.length || !rawCsv) return;
+    // Defensive guard: never commit an upload if the preview hasn't successfully
+    // loaded. The UI already keeps the button disabled in this state, but this
+    // guard adds a function-level safety net in case of unexpected state drift.
+    if (binDiffPending || binDiffFailed || binDiff === null) return;
     setUploadError(null);
     setUploadSuccess(null);
     setUploadPending(true);
     try {
-      const response = await fetch(`${API_BASE}/inventory/upsert-batch`, {
+      // Build the CSV to submit. For rows where the admin toggled "skip bin
+      // update" we rebuild the CSV with those bin cells blanked so the server
+      // preserves the existing assignment instead of overwriting it.
+      // When no rows are skipped we send the original raw CSV unchanged.
+      const csvToSubmit = skipBinRows.size > 0
+        ? serializeToCsv(parsedRows, skipBinRows)
+        : rawCsv;
+
+      const response = await fetch(`${API_BASE}/admin/upload`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...adminHeaders,
         },
-        // Omit binLocations when empty so the server treats it as "no change"
-        // and does not wipe existing bins on rows whose source row had no bin
-        // value (e.g. file with no bin column, or blank cell).
-        // Rows where the admin toggled "skip bin update" also send empty bins
-        // so the server preserves whatever was already stored.
-        body: JSON.stringify({
-          items: parsedRows.map(({ vendor, catalog, description, binLocations }, idx) => {
-            const effectiveBins = skipBinRows.has(idx) ? [] : binLocations;
-            return effectiveBins.length > 0
-              ? { vendor, catalog, description, binLocations: effectiveBins }
-              : { vendor, catalog, description };
-          }),
-        }),
+        body: JSON.stringify({ csv: csvToSubmit }),
       });
 
       if (!response.ok) {
@@ -758,6 +787,7 @@ export default function UploadScreen() {
       const result = await response.json() as { inserted: number; updated: number; total: number };
       setUploadSuccess({ inserted: result.inserted, updated: result.updated, total: result.total });
       setParsedRows([]);
+      setRawCsv(null);
       setFileName(null);
       setFileType(null);
       await inventoryQuery.refetch();
