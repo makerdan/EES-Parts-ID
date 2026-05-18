@@ -139,6 +139,35 @@ paths:
         "404":
           description: Item not found
 
+  /inventory/{id}/description:
+    patch:
+      operationId: updateItemDescription
+      tags: [inventory]
+      summary: Update the description for a single inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDescriptionBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
   /inventory/{id}/keywords:
     patch:
       operationId: updateItemKeywords
@@ -581,6 +610,15 @@ components:
             type: string
       required:
         - keywords
+
+    UpdateDescriptionBody:
+      type: object
+      properties:
+        description:
+          type: string
+          description: Free-text description of the part
+      required:
+        - description
 
     DictionaryLookupResponse:
       type: object

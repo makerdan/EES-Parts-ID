@@ -20,6 +20,7 @@ import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
 import { BinEditor } from "@/components/BinEditor";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
@@ -162,6 +163,7 @@ export default function SearchScreen() {
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [aisleBrowseOpen, setAisleBrowseOpen] = useState(false);
   const [showAddPartModal, setShowAddPartModal] = useState(false);
+  const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
   // Local override of bin lists keyed by item.id, applied on top of whatever
@@ -975,6 +977,13 @@ export default function SearchScreen() {
         onSuccess={() => {
           syncAllInventory();
         }}
+        onAddDetails={isAdmin ? (item) => setDetailsItem(item) : undefined}
+      />
+
+      <PartDetailsEditor
+        item={detailsItem}
+        adminToken={adminToken}
+        onClose={() => setDetailsItem(null)}
       />
 
       <ReferenceModal open={showReference} onClose={() => setShowReference(false)} />

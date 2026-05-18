@@ -32,6 +32,7 @@ import type {
   SearchInventoryBody,
   SearchInventoryResponse,
   UpdateBinsBody,
+  UpdateDescriptionBody,
   UpdateKeywordsBody,
   UpdateWarehouseZoneBody,
   UpsertInventoryBody,
@@ -562,6 +563,93 @@ export const useUpdateItemBins = <
   TContext
 > => {
   return useMutation(getUpdateItemBinsMutationOptions(options));
+};
+
+/**
+ * @summary Update the description for a single inventory item (admin)
+ */
+export const getUpdateItemDescriptionUrl = (id: number) => {
+  return `/api/inventory/${id}/description`;
+};
+
+export const updateItemDescription = async (
+  id: number,
+  updateDescriptionBody: UpdateDescriptionBody,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getUpdateItemDescriptionUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateDescriptionBody),
+  });
+};
+
+export const getUpdateItemDescriptionMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemDescription>>,
+    TError,
+    { id: number; data: BodyType<UpdateDescriptionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateItemDescription>>,
+  TError,
+  { id: number; data: BodyType<UpdateDescriptionBody> },
+  TContext
+> => {
+  const mutationKey = ["updateItemDescription"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateItemDescription>>,
+    { id: number; data: BodyType<UpdateDescriptionBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateItemDescription(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateItemDescriptionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateItemDescription>>
+>;
+export type UpdateItemDescriptionMutationBody = BodyType<UpdateDescriptionBody>;
+export type UpdateItemDescriptionMutationError = ErrorType<void>;
+
+/**
+ * @summary Update the description for a single inventory item (admin)
+ */
+export const useUpdateItemDescription = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemDescription>>,
+    TError,
+    { id: number; data: BodyType<UpdateDescriptionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateItemDescription>>,
+  TError,
+  { id: number; data: BodyType<UpdateDescriptionBody> },
+  TContext
+> => {
+  return useMutation(getUpdateItemDescriptionMutationOptions(options));
 };
 
 /**
