@@ -17,6 +17,7 @@ import { useListInventory } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BinEditor } from "@/components/BinEditor";
+import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
 import { useApp } from "@/contexts/AppContext";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
@@ -1211,6 +1212,15 @@ export default function UploadScreen() {
                   })()}
                 </View>
               ) : null}
+
+              {/* PDF Catalog Import */}
+              <CatalogPdfUpload
+                adminToken={adminToken}
+                onSessionExpired={() => {
+                  logoutAdmin();
+                  setUploadError("Admin session expired. Please unlock again.");
+                }}
+              />
 
               {/* Bulk Enrichment Coverage */}
               <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>

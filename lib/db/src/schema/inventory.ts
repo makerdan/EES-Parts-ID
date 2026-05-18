@@ -32,6 +32,12 @@ export const inventoryTable = pgTable(
       .notNull()
       .default(sql`ARRAY[]::text[]`),
     enrichedAt: timestamp("enriched_at"),
+    // ── PDF catalog enrichment ────────────────────────────────────────────────
+    imageUrl: text("image_url"),
+    imageSource: text("image_source"),
+    imageConfidence: real("image_confidence"),
+    previousDescription: text("previous_description"),
+    catalogPdfJobId: integer("catalog_pdf_job_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -47,6 +53,31 @@ export const insertInventorySchema = createInsertSchema(inventoryTable).omit({
 });
 export type InsertInventory = z.infer<typeof insertInventorySchema>;
 export type Inventory = typeof inventoryTable.$inferSelect;
+
+// ── Catalog PDF Job ────────────────────────────────────────────────────────────
+export const PDF_JOB_STATUS = ["pending", "processing", "done", "failed"] as const;
+export type PdfJobStatus = (typeof PDF_JOB_STATUS)[number];
+
+export const catalogPdfJobTable = pgTable("catalog_pdf_job", {
+  id: serial("id").primaryKey(),
+  vendor: text("vendor").notNull(),
+  filename: text("filename").notNull(),
+  status: text("status").notNull().default("pending"),
+  totalPages: integer("total_pages"),
+  processedPages: integer("processed_pages").notNull().default(0),
+  matchedParts: integer("matched_parts").notNull().default(0),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertCatalogPdfJobSchema = createInsertSchema(catalogPdfJobTable).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertCatalogPdfJob = z.infer<typeof insertCatalogPdfJobSchema>;
+export type CatalogPdfJob = typeof catalogPdfJobTable.$inferSelect;
 
 export const warehouseZoneTable = pgTable(
   "warehouse_zone",

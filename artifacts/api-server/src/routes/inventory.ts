@@ -349,6 +349,12 @@ router.post("/search", async (req, res) => {
         binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as string[] : [],
         aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
+        // PDF catalog enrichment columns (not included in FTS search results)
+        imageUrl: null,
+        imageSource: null,
+        imageConfidence: null,
+        previousDescription: null,
+        catalogPdfJobId: null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
         updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
       };
