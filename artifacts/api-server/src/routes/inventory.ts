@@ -526,6 +526,55 @@ function requireAdminAuth(
   next();
 }
 
+// ── POST /inventory/add-part ──────────────────────────────────────────────────
+// Quick single-part entry. Admin-protected. Returns 409 if the vendor+catalog
+// combination already exists in the database.
+router.post("/add-part", requireAdminAuth, async (req, res) => {
+  try {
+    const { vendor, catalog, binLocation } = req.body as {
+      vendor?: string;
+      catalog?: string;
+      binLocation?: string;
+    };
+
+    if (!vendor?.trim() || !catalog?.trim()) {
+      return void res.status(400).json({ error: "vendor and catalog are required" });
+    }
+
+    const upperVendor = vendor.trim().toUpperCase();
+    const trimmedCatalog = catalog.trim();
+    const binLocations = binLocation?.trim() ? [binLocation.trim()] : [];
+
+    // Check for duplicate before inserting so we can return a clear 409.
+    const existing = await db
+      .select({ id: inventoryTable.id })
+      .from(inventoryTable)
+      .where(and(eq(inventoryTable.vendor, upperVendor), eq(inventoryTable.catalog, trimmedCatalog)));
+
+    if (existing.length > 0) {
+      return void res.status(409).json({
+        error: `Part already exists: ${upperVendor} / ${trimmedCatalog}`,
+      });
+    }
+
+    const [created] = await db
+      .insert(inventoryTable)
+      .values({
+        vendor: upperVendor,
+        catalog: trimmedCatalog,
+        description: "",
+        binLocations,
+        aiKeywords: [],
+      })
+      .returning();
+
+    res.status(201).json({ item: created });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to add part" });
+  }
+});
+
 // ── POST /inventory/upsert-batch/preview ──────────────────────────────────────
 // Dry-run: accepts the same body as upsert-batch but only returns a diff
 // summary (willReplaceBins, willAddBins, willPreserveBins, noChange) plus

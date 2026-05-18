@@ -26,6 +26,7 @@ import { secondaryBtnBase } from "@/styles/shared";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
+import { AddPartModal } from "@/components/AddPartModal";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
@@ -157,9 +158,10 @@ function buildSearchBody(f: FilterValues) {
 
 export default function SearchScreen() {
   const colors = useColors();
-  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, registerLogoutHandler } = useApp();
+  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [aisleBrowseOpen, setAisleBrowseOpen] = useState(false);
+  const [showAddPartModal, setShowAddPartModal] = useState(false);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
   // Local override of bin lists keyed by item.id, applied on top of whatever
@@ -506,6 +508,15 @@ export default function SearchScreen() {
           </View>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          {isAdmin ? (
+            <Pressable
+              onPress={() => setShowAddPartModal(true)}
+              style={[styles.headerBtn, styles.addPartBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+            >
+              <Feather name="plus" size={16} color={colors.primary} />
+              <Text style={[styles.logoutBtnLabel, { color: colors.primary }]}>Add Part</Text>
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={() => setShowReference(true)}
             style={[styles.headerBtn, styles.refBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
@@ -951,8 +962,20 @@ export default function SearchScreen() {
           onClose={() => setAisleBrowseOpen(false)}
           onEditKeywords={setEditItem}
           onEditBins={isAdmin ? setBinEditItem : undefined}
+          isAdmin={isAdmin}
+          adminToken={adminToken}
+          onPartAdded={() => syncAllInventory()}
         />
       )}
+
+      <AddPartModal
+        visible={showAddPartModal}
+        adminToken={adminToken}
+        onClose={() => setShowAddPartModal(false)}
+        onSuccess={() => {
+          syncAllInventory();
+        }}
+      />
 
       <ReferenceModal open={showReference} onClose={() => setShowReference(false)} />
 
@@ -990,6 +1013,7 @@ const styles = StyleSheet.create({
   offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   headerBtn: { height: 44, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   logoutBtn: { flexDirection: "column", gap: 2, paddingVertical: 4, paddingHorizontal: 10 },
+  addPartBtn: { width: 60, flexDirection: "column", gap: 2, paddingVertical: 4 },
   logoutBtnLabel: { fontSize: 9, fontFamily: "Inter_500Medium", letterSpacing: 0.2 },
   refBtn: { flexDirection: "column", gap: 2, paddingVertical: 4, paddingHorizontal: 10 },
   refBtnIcon: { fontSize: 14 },
