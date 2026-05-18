@@ -348,6 +348,90 @@ export const AskReferenceBody = zod.object({
 });
 
 /**
+ * @summary List all warehouse zone overlays
+ */
+export const ListWarehouseZonesResponse = zod.object({
+  zones: zod.array(
+    zod.object({
+      id: zod.number(),
+      aisleId: zod.string(),
+      label: zod.string(),
+      sectionParity: zod.string(),
+      isInventory: zod.boolean(),
+      svgX: zod.number(),
+      svgY: zod.number(),
+      svgWidth: zod.number(),
+      svgHeight: zod.number(),
+      sortOrder: zod.number(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create a warehouse zone overlay (admin)
+ */
+export const CreateWarehouseZoneBody = zod.object({
+  aisleId: zod.string(),
+  label: zod.string(),
+  sectionParity: zod.string().optional(),
+  isInventory: zod.boolean().optional(),
+  svgX: zod.number(),
+  svgY: zod.number(),
+  svgWidth: zod.number(),
+  svgHeight: zod.number(),
+  sortOrder: zod.number().optional(),
+});
+
+/**
+ * @summary Update a warehouse zone overlay (admin)
+ */
+export const UpdateWarehouseZoneParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateWarehouseZoneBody = zod.object({
+  aisleId: zod.string().optional(),
+  label: zod.string().optional(),
+  sectionParity: zod.string().optional(),
+  isInventory: zod.boolean().optional(),
+  svgX: zod.number().optional(),
+  svgY: zod.number().optional(),
+  svgWidth: zod.number().optional(),
+  svgHeight: zod.number().optional(),
+  sortOrder: zod.number().optional(),
+});
+
+export const UpdateWarehouseZoneResponse = zod.object({
+  zone: zod.object({
+    id: zod.number(),
+    aisleId: zod.string(),
+    label: zod.string(),
+    sectionParity: zod.string(),
+    isInventory: zod.boolean(),
+    svgX: zod.number(),
+    svgY: zod.number(),
+    svgWidth: zod.number(),
+    svgHeight: zod.number(),
+    sortOrder: zod.number(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+});
+
+/**
+ * @summary Delete a warehouse zone overlay (admin)
+ */
+export const DeleteWarehouseZoneParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeleteWarehouseZoneResponse = zod.object({
+  deleted: zod.boolean(),
+});
+
+/**
  * @deprecated
  * @summary [Deprecated] Use /reference/ask instead
  */

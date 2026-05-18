@@ -1,3 +1,10 @@
 const { getDefaultConfig } = require("expo/metro-config");
 
-module.exports = getDefaultConfig(__dirname);
+const config = getDefaultConfig(__dirname);
+
+// Allow bundling .svg files as static assets (used by SvgUri via expo-asset)
+const { assetExts, sourceExts } = config.resolver;
+config.resolver.assetExts = [...assetExts.filter(ext => ext !== "svg"), "svg"];
+config.resolver.sourceExts = sourceExts.filter(ext => ext !== "svg");
+
+module.exports = config;

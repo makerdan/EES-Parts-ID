@@ -6,6 +6,7 @@ import aiRouter from "./ai";
 import referenceRouter from "./reference";
 import adminRouter from "./admin";
 import adminUploadRouter from "./adminUpload";
+import warehouseZonesRouter from "./warehouseZones";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use("/ai", aiRouter);
 router.use("/reference", referenceRouter);
 router.use("/admin", adminRouter);
 router.use("/admin", adminUploadRouter);
+router.use("/warehouse-zones", warehouseZonesRouter);
 
 export default router;

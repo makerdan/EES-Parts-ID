@@ -162,6 +162,53 @@ export interface AiIdentifyResponse {
   results: SearchResult[];
 }
 
+export interface WarehouseZoneItem {
+  id: number;
+  aisleId: string;
+  label: string;
+  sectionParity: string;
+  isInventory: boolean;
+  svgX: number;
+  svgY: number;
+  svgWidth: number;
+  svgHeight: number;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WarehouseZoneListResponse {
+  zones: WarehouseZoneItem[];
+}
+
+export interface WarehouseZoneResponse {
+  zone: WarehouseZoneItem;
+}
+
+export interface CreateWarehouseZoneBody {
+  aisleId: string;
+  label: string;
+  sectionParity?: string;
+  isInventory?: boolean;
+  svgX: number;
+  svgY: number;
+  svgWidth: number;
+  svgHeight: number;
+  sortOrder?: number;
+}
+
+export interface UpdateWarehouseZoneBody {
+  aisleId?: string;
+  label?: string;
+  sectionParity?: string;
+  isInventory?: boolean;
+  svgX?: number;
+  svgY?: number;
+  svgWidth?: number;
+  svgHeight?: number;
+  sortOrder?: number;
+}
+
 export interface AiReferenceBody {
   question: string;
 }
@@ -173,4 +220,8 @@ export type ListInventoryParams = {
 
 export type LookupDictionaryParams = {
   term: string;
+};
+
+export type DeleteWarehouseZone200 = {
+  deleted: boolean;
 };
