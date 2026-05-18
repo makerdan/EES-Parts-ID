@@ -24,7 +24,6 @@ const SVG_H = 2457.41;
 const HANDLE_PX = 10; // handle visual size in screen pixels
 const MIN_ZONE_PX = 8; // minimum zone size in screen pixels before it's discarded
 const API_BASE = `${window.location.origin}/api`;
-const TOKEN_KEY = "zone_editor_admin_token";
 const INITIAL_SCALE = 0.18; // start zoomed out to show whole floor plan
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -124,9 +123,6 @@ export function ZoneEditor() {
   const [form, setForm] = useState<FormState>({
     aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0,
   });
-  const [adminToken, setAdminToken] = useState(() =>
-    localStorage.getItem(TOKEN_KEY) ?? ""
-  );
   const [saving, setSaving] = useState(false);
 
   // Refs — updated every render so event handlers never go stale
@@ -135,24 +131,16 @@ export function ZoneEditor() {
   const tfRef = useRef(tf);
   const zonesRef = useRef(zones);
   const dragZoneRef = useRef<Zone | null>(null);
-  const adminTokenRef = useRef(adminToken);
   const modeRef = useRef(mode);
 
   useEffect(() => { tfRef.current = tf; }, [tf]);
   useEffect(() => { zonesRef.current = zones; }, [zones]);
   useEffect(() => { dragZoneRef.current = dragZone; }, [dragZone]);
-  useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
-  useEffect(() => { localStorage.setItem(TOKEN_KEY, adminToken); }, [adminToken]);
 
   // ── API helpers ─────────────────────────────────────────────────────────────
   const headers = useCallback(
-    () => ({
-      "Content-Type": "application/json",
-      ...(adminTokenRef.current
-        ? { Authorization: `Bearer ${adminTokenRef.current}` }
-        : {}),
-    }),
+    () => ({ "Content-Type": "application/json" }),
     [],
   );
 
@@ -629,18 +617,6 @@ export function ZoneEditor() {
 
         {/* ── Sidebar ───────────────────────────────────────────────────────── */}
         <div style={styles.sidebar}>
-          {/* Admin token */}
-          <SideSection>
-            <Label>Admin Token</Label>
-            <input
-              type="password"
-              value={adminToken}
-              onChange={(e) => setAdminToken(e.target.value)}
-              placeholder="Paste admin token for writes"
-              style={styles.input}
-            />
-          </SideSection>
-
           {/* Context-sensitive form area */}
           <SideSection style={{ flex: "0 0 auto" }}>
             {pendingRect ? (
