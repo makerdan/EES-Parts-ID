@@ -97,9 +97,9 @@ function serveFile(filePath, res) {
  */
 function serveWebOrFallback(urlPath, req, res, landingPageTemplate, appName) {
   const safePath = path.normalize(urlPath).replace(/^(\.\.(\/|\\|$))+/, "");
-
-  // 1. Try web build directory (SPA)
   const webIndexPath = path.join(WEB_ROOT, "index.html");
+
+  // 1. Exact match in web build directory
   if (fs.existsSync(webIndexPath)) {
     const webFilePath = path.join(WEB_ROOT, safePath);
     if (
@@ -109,11 +109,11 @@ function serveWebOrFallback(urlPath, req, res, landingPageTemplate, appName) {
     ) {
       return serveFile(webFilePath, res);
     }
-    // SPA fallback — all unmatched paths serve index.html for client-side routing
-    return serveFile(webIndexPath, res);
   }
 
-  // 2. Try native static files (Expo Go asset requests don't send expo-platform)
+  // 2. Native static files — checked BEFORE SPA fallback so Expo Go bundle/asset
+  //    requests (which lack expo-platform headers) are served correctly even when
+  //    a web build exists.
   const staticFilePath = path.join(STATIC_ROOT, safePath);
   if (
     staticFilePath.startsWith(STATIC_ROOT) &&
@@ -123,7 +123,12 @@ function serveWebOrFallback(urlPath, req, res, landingPageTemplate, appName) {
     return serveFile(staticFilePath, res);
   }
 
-  // 3. No web build — show Expo Go landing page
+  // 3. SPA fallback — serve index.html for client-side routes
+  if (fs.existsSync(webIndexPath)) {
+    return serveFile(webIndexPath, res);
+  }
+
+  // 4. No web build — show Expo Go landing page
   serveLandingPage(req, res, landingPageTemplate, appName);
 }
 

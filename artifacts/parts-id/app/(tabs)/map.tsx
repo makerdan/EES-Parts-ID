@@ -7,6 +7,7 @@
  */
 import React, { useRef, useState } from "react";
 import {
+  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -27,7 +28,7 @@ const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 export default function MapScreen() {
   const colors = useColors();
   const { settings, isAdmin, textFontScale } = useApp();
-  const [browseOpen, setBrowseOpen] = useState(false);
+  const [browseOpen, setBrowseOpen] = useState(Platform.OS === "web");
   const [drilldown, setDrilldown] = useState<WarehouseZone | null>(null);
   const [summaryZone, setSummaryZone] = useState<WarehouseZone | null>(null);
   const inventoryRef = useRef<InventoryItem[]>([]);
