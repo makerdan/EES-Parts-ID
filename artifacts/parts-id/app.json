@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Parts ID",
+    "name": "RDC34 Parts ID",
     "slug": "parts-id",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -19,8 +19,8 @@
     "android": {},
     "web": {
       "favicon": "./assets/images/icon.png",
-      "name": "Parts ID",
-      "shortName": "Parts ID",
+      "name": "RDC34 Parts ID",
+      "shortName": "RDC34 Parts ID",
       "themeColor": "#f59e0b",
       "backgroundColor": "#ffffff",
       "display": "standalone",
