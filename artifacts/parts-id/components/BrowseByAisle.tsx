@@ -27,6 +27,7 @@ import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { ResultCard } from "@/components/ResultCard";
+import { AddPartModal } from "@/components/AddPartModal";
 import {
   buildAisleHierarchy,
   filterSections,
@@ -45,9 +46,12 @@ export interface BrowseByAisleProps {
   onClose: () => void;
   onEditKeywords?: (item: InventoryItem) => void;
   onEditBins?: (item: InventoryItem) => void;
+  onPartAdded?: () => void;
   initialAisle?: number;
   sectionParity?: "odd" | "even";
   sectionNumbers?: number[];
+  adminToken?: string | null;
+  isAdmin?: boolean;
 }
 
 type CrumbState = {
@@ -572,11 +576,15 @@ export function BrowseByAisle({
   onClose,
   onEditKeywords,
   onEditBins,
+  onPartAdded,
   initialAisle,
   sectionParity,
   sectionNumbers,
+  adminToken,
+  isAdmin = false,
 }: BrowseByAisleProps) {
   const colors = useColors();
+  const [addPartVisible, setAddPartVisible] = useState(false);
 
   const hierarchy: AisleHierarchy = useMemo(
     () => buildAisleHierarchy(inventory),
@@ -680,6 +688,14 @@ export function BrowseByAisle({
       : level === "parts"
       ? `${crumbs.section!.partCount} part${crumbs.section!.partCount !== 1 ? "s" : ""}`
       : undefined;
+
+  const addPartDefaultBin = useMemo(() => {
+    if (!crumbs.aisle) return "";
+    const aisleStr = String(crumbs.aisle.aisleNum).padStart(2, "0");
+    if (!crumbs.section) return `${aisleStr}-`;
+    const sectionStr = String(crumbs.section.sectionNum).padStart(2, "0");
+    return `${aisleStr}-${sectionStr}-`;
+  }, [crumbs]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -825,6 +841,27 @@ export function BrowseByAisle({
           />
         )
       ) : null}
+
+      {/* ── Admin: Add Part FAB ── */}
+      {isAdmin ? (
+        <Pressable
+          onPress={() => setAddPartVisible(true)}
+          style={[browseStyles.addPartFab, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
+        >
+          <Feather name="plus" size={22} color={colors.primaryForeground} />
+        </Pressable>
+      ) : null}
+
+      <AddPartModal
+        visible={addPartVisible}
+        adminToken={adminToken ?? null}
+        defaultBin={addPartDefaultBin}
+        onClose={() => setAddPartVisible(false)}
+        onSuccess={() => {
+          setAddPartVisible(false);
+          onPartAdded?.();
+        }}
+      />
     </View>
   );
 }
@@ -840,4 +877,21 @@ const footerStyles = StyleSheet.create({
   },
   unsortedLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
   unsortedHint: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+});
+
+const browseStyles = StyleSheet.create({
+  addPartFab: {
+    position: "absolute",
+    bottom: 28,
+    right: 20,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 6,
+  },
 });
