@@ -1,5 +1,6 @@
 export * from "./inventory";
 export * from "./abbreviation_map";
+
 export * from "./vendor_map";
 export * from "./synonym_map";
 export * from "./misspelling_map";

@@ -1,0 +1,288 @@
+/**
+ * Catalog Review Screen
+ *
+ * Lists all inventory items updated by PDF extraction, showing the
+ * before/after description change. Low-confidence matches are flagged.
+ * Admins can revert individual parts to their previous state.
+ *
+ * Route: /catalog-review?jobId=<n>  (jobId is optional — omit to show all)
+ */
+
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useColors } from "@/hooks/useColors";
+import { useApp } from "@/contexts/AppContext";
+
+const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+  : "";
+
+type ReviewItem = {
+  id: number;
+  vendor: string;
+  catalog: string;
+  description: string;
+  previousDescription: string | null;
+  imageUrl: string | null;
+  imageConfidence: number | null;
+  catalogPdfJobId: number | null;
+  updatedAt: string;
+  isLowConfidence: boolean;
+  job: {
+    id: number;
+    vendor: string;
+    filename: string;
+    status: string;
+    createdAt: string;
+  } | null;
+};
+
+type ReviewResponse = {
+  items: ReviewItem[];
+  total: number;
+};
+
+export default function CatalogReviewScreen() {
+  const colors = useColors();
+  const router = useRouter();
+  const { jobId } = useLocalSearchParams<{ jobId?: string }>();
+  const { adminToken, logoutAdmin } = useApp();
+
+  const [items, setItems] = useState<ReviewItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [revertingId, setRevertingId] = useState<number | null>(null);
+  const [revertedIds, setRevertedIds] = useState<Set<number>>(new Set());
+
+  const authHeaders: Record<string, string> = adminToken
+    ? { Authorization: `Bearer ${adminToken}` }
+    : {};
+
+  const fetchItems = useCallback(async () => {
+    if (!adminToken) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const url = jobId
+        ? `${API_BASE}/admin/catalog-pdf/reviews?jobId=${jobId}`
+        : `${API_BASE}/admin/catalog-pdf/reviews`;
+      const r = await fetch(url, { headers: authHeaders });
+      if (r.status === 401) { logoutAdmin(); return; }
+      if (!r.ok) throw new Error("Failed to load");
+      const data = await r.json() as ReviewResponse;
+      setItems(data.items);
+    } catch {
+      setError("Could not load review data. Check your connection.");
+    } finally {
+      setLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken, jobId]);
+
+  useEffect(() => { fetchItems(); }, [fetchItems]);
+
+  const handleRevert = async (item: ReviewItem) => {
+    if (revertingId) return;
+    setRevertingId(item.id);
+    try {
+      const r = await fetch(`${API_BASE}/admin/catalog-pdf/reviews/${item.id}/revert`, {
+        method: "POST",
+        headers: authHeaders,
+      });
+      if (r.status === 401) { logoutAdmin(); return; }
+      if (!r.ok) return;
+      setRevertedIds((prev) => new Set([...prev, item.id]));
+    } catch { /* silent */ }
+    finally { setRevertingId(null); }
+  };
+
+  const activeItems = items.filter((i) => !revertedIds.has(i.id));
+
+  const renderItem = ({ item }: { item: ReviewItem }) => {
+    const conf = item.imageConfidence != null ? Math.round(item.imageConfidence * 100) : null;
+    const isReverting = revertingId === item.id;
+
+    return (
+      <View style={[s.row, { backgroundColor: colors.card, borderColor: item.isLowConfidence ? colors.warning + "88" : colors.border }]}>
+        <View style={s.rowTop}>
+          <View style={s.rowIdent}>
+            <Text style={[s.catalog, { color: colors.foreground }]}>{item.catalog}</Text>
+            <Text style={[s.vendor, { color: colors.mutedForeground }]}>{item.vendor}</Text>
+          </View>
+          <View style={s.rowBadges}>
+            {item.isLowConfidence ? (
+              <View style={[s.badge, { backgroundColor: colors.warning + "22" }]}>
+                <Text style={[s.badgeText, { color: colors.warning }]}>Low confidence</Text>
+              </View>
+            ) : null}
+            {conf != null ? (
+              <View style={[s.badge, { backgroundColor: colors.muted }]}>
+                <Text style={[s.badgeText, { color: colors.mutedForeground }]}>{conf}%</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+
+        {/* Description diff */}
+        <View style={s.diffBlock}>
+          {item.previousDescription != null && item.previousDescription !== item.description ? (
+            <>
+              <Text style={[s.diffLabel, { color: colors.mutedForeground }]}>Before</Text>
+              <Text style={[s.diffOld, { color: colors.mutedForeground, textDecorationLine: "line-through" }]} numberOfLines={2}>
+                {item.previousDescription || "(empty)"}
+              </Text>
+              <Text style={[s.diffLabel, { color: colors.mutedForeground, marginTop: 4 }]}>After</Text>
+              <Text style={[s.diffNew, { color: colors.foreground }]} numberOfLines={2}>
+                {item.description}
+              </Text>
+            </>
+          ) : (
+            <Text style={[s.diffNew, { color: colors.foreground }]} numberOfLines={2}>
+              {item.description || "(no description)"}
+            </Text>
+          )}
+        </View>
+
+        {/* Image indicator */}
+        {item.imageUrl ? (
+          <View style={[s.imageBadge, { backgroundColor: colors.success + "18" }]}>
+            <Text style={[s.imageBadgeText, { color: colors.success }]}>Image saved</Text>
+          </View>
+        ) : null}
+
+        {/* Revert button */}
+        <Pressable
+          onPress={() => handleRevert(item)}
+          disabled={isReverting}
+          style={[s.revertBtn, { borderColor: colors.destructive + "88" }]}
+        >
+          {isReverting ? (
+            <ActivityIndicator size="small" color={colors.destructive} />
+          ) : (
+            <Text style={[s.revertBtnText, { color: colors.destructive }]}>Revert</Text>
+          )}
+        </Pressable>
+      </View>
+    );
+  };
+
+  return (
+    <SafeAreaView style={[s.safe, { backgroundColor: colors.background }]}>
+      {/* Header */}
+      <View style={[s.header, { borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => router.back()} style={s.backBtn}>
+          <Text style={[s.backText, { color: colors.primary }]}>← Back</Text>
+        </Pressable>
+        <View style={s.headerCenter}>
+          <Text style={[s.headerTitle, { color: colors.foreground }]}>Catalog Review</Text>
+          {jobId ? (
+            <Text style={[s.headerSub, { color: colors.mutedForeground }]}>Job #{jobId}</Text>
+          ) : null}
+        </View>
+        <Pressable onPress={fetchItems} style={s.refreshBtn}>
+          <Text style={[s.refreshText, { color: colors.mutedForeground }]}>Refresh</Text>
+        </Pressable>
+      </View>
+
+      {loading ? (
+        <View style={s.center}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[s.hint, { color: colors.mutedForeground }]}>Loading…</Text>
+        </View>
+      ) : error ? (
+        <View style={s.center}>
+          <Text style={[s.errorText, { color: colors.destructive }]}>{error}</Text>
+          <Pressable onPress={fetchItems} style={[s.retryBtn, { backgroundColor: colors.primary }]}>
+            <Text style={[s.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : activeItems.length === 0 ? (
+        <View style={s.center}>
+          <Text style={[s.emptyEmoji]}>✅</Text>
+          <Text style={[s.emptyTitle, { color: colors.foreground }]}>
+            {revertedIds.size > 0 ? "All reverted" : "No items to review"}
+          </Text>
+          <Text style={[s.hint, { color: colors.mutedForeground }]}>
+            {revertedIds.size > 0
+              ? `${revertedIds.size} item${revertedIds.size !== 1 ? "s" : ""} reverted successfully.`
+              : "No inventory items have been updated by PDF extraction yet."}
+          </Text>
+        </View>
+      ) : (
+        <>
+          <View style={[s.summaryBar, { borderBottomColor: colors.border }]}>
+            <Text style={[s.summaryText, { color: colors.mutedForeground }]}>
+              {activeItems.length} item{activeItems.length !== 1 ? "s" : ""}
+              {activeItems.filter((i) => i.isLowConfidence).length > 0
+                ? ` · ${activeItems.filter((i) => i.isLowConfidence).length} low-confidence`
+                : ""}
+              {revertedIds.size > 0 ? ` · ${revertedIds.size} reverted` : ""}
+            </Text>
+          </View>
+          <FlatList
+            data={activeItems}
+            keyExtractor={(i) => String(i.id)}
+            renderItem={renderItem}
+            contentContainerStyle={{ padding: 12, paddingBottom: 100, gap: 10 }}
+          />
+        </>
+      )}
+    </SafeAreaView>
+  );
+}
+
+const s = StyleSheet.create({
+  safe: { flex: 1 },
+  header: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 14, paddingVertical: 14, borderBottomWidth: 1,
+  },
+  backBtn: { minWidth: 60 },
+  backText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  headerCenter: { flex: 1, alignItems: "center" },
+  headerTitle: { fontSize: 17, fontFamily: "Inter_700Bold" },
+  headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 1 },
+  refreshBtn: { minWidth: 60, alignItems: "flex-end" },
+  refreshText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
+  hint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
+  emptyEmoji: { fontSize: 48 },
+  emptyTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
+  errorText: { fontSize: 14, fontFamily: "Inter_500Medium", textAlign: "center" },
+  retryBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
+  retryBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  summaryBar: {
+    paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1,
+  },
+  summaryText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  row: {
+    borderRadius: 12, borderWidth: 1, padding: 14, gap: 8,
+  },
+  rowTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  rowIdent: { flex: 1 },
+  rowBadges: { flexDirection: "row", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
+  catalog: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  vendor: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 2 },
+  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  diffBlock: { gap: 2 },
+  diffLabel: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5 },
+  diffOld: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  diffNew: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  imageBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: "flex-start" },
+  imageBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  revertBtn: {
+    borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14,
+    alignSelf: "flex-start", alignItems: "center",
+  },
+  revertBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+});

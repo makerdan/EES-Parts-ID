@@ -7,6 +7,7 @@ import referenceRouter from "./reference";
 import adminRouter from "./admin";
 import adminUploadRouter from "./adminUpload";
 import warehouseZonesRouter from "./warehouseZones";
+import catalogPdfRouter from "./catalogPdf";
 
 const router: IRouter = Router();
 
@@ -17,6 +18,7 @@ router.use("/ai", aiRouter);
 router.use("/reference", referenceRouter);
 router.use("/admin", adminRouter);
 router.use("/admin", adminUploadRouter);
+router.use("/admin", catalogPdfRouter);
 router.use("/warehouse-zones", warehouseZonesRouter);
 
 export default router;
