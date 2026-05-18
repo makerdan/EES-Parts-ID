@@ -17,6 +17,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useColorScheme,
   View,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -73,6 +74,8 @@ export function WarehouseMapView({
   isAdmin,
 }: WarehouseMapViewProps) {
   const colors = useColors();
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === "dark";
 
   // JS state for rendering (drives SVG dimensions)
   const [containerW, setContainerW] = useState(0);
@@ -223,9 +226,16 @@ export function WarehouseMapView({
     <View style={styles.fill} onLayout={onLayout}>
       <GestureDetector gesture={mainGesture}>
         <Animated.View style={animatedStyle}>
-          {/* Base floor plan SVG */}
+          {/* Base floor plan SVG — dark mode: invert + darken for readable contrast */}
           {svgUri ? (
-            <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
+            <View
+              style={[
+                { width: svgRenderW, height: svgRenderH },
+                isDark && styles.svgDarkFilter,
+              ]}
+            >
+              <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
+            </View>
           ) : (
             <View
               style={[
@@ -316,6 +326,10 @@ export function WarehouseMapView({
 const styles = StyleSheet.create({
   fill: { flex: 1, overflow: "hidden" },
   svgFallback: { alignItems: "center", justifyContent: "center" },
+  // Invert + slight brightness reduction for dark mode floor plan legibility
+  svgDarkFilter: {
+    filter: [{ invert: 1 }, { brightness: 0.88 }] as never,
+  },
   floatingBadge: {
     position: "absolute",
     top: 12,
