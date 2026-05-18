@@ -5,12 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { WarehouseZoneItemSectionParity } from "./warehouseZoneItemSectionParity";
 
 export interface WarehouseZoneItem {
   id: number;
   aisleId: string;
   label: string;
-  sectionParity: string;
+  sectionParity: WarehouseZoneItemSectionParity;
   isInventory: boolean;
   svgX: number;
   svgY: number;

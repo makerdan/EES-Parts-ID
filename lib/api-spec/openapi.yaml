@@ -679,6 +679,7 @@ components:
           type: string
         sectionParity:
           type: string
+          enum: [odd, even, all]
         isInventory:
           type: boolean
         svgX:
@@ -738,6 +739,7 @@ components:
           type: string
         sectionParity:
           type: string
+          enum: [odd, even, all]
         isInventory:
           type: boolean
         svgX:
@@ -767,6 +769,7 @@ components:
           type: string
         sectionParity:
           type: string
+          enum: [odd, even, all]
         isInventory:
           type: boolean
         svgX:

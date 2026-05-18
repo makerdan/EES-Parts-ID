@@ -4,10 +4,11 @@
  * Web  → WarehouseMapWeb (zoomable SVG floor plan + section pins)
  * iOS  → WarehouseMapView (pan/zoom SVG + DB zone overlays)
  *
- * Tap zone  → BrowseByAisle
- * Long-press zone → AisleSummarySheet
+ * Zone sync:
+ *   - useWarehouseZones fetches on mount, on tab focus, and on app foreground.
+ *   - Cached data is served immediately; background refresh keeps it fresh.
  */
-import React, { useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   Platform,
   Pressable,
@@ -17,6 +18,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useFocusEffect } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -26,7 +28,7 @@ import { AisleSummarySheet } from "@/components/AisleSummarySheet";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { WarehouseMapWeb } from "@/components/WarehouseMapWeb";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
-import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
+import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 
@@ -44,12 +46,22 @@ function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
 export default function MapScreen() {
   const colors = useColors();
   const { settings, isAdmin, textFontScale } = useApp();
+
+  // Zone data — owned at this level so useFocusEffect can trigger refetch
+  const { zones, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
+
+  // Re-sync zones every time the tab comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      refetchZones();
+    }, [refetchZones]),
+  );
+
   const [browseOpen, setBrowseOpen] = useState(false);
   const [drilldown, setDrilldown] = useState<WarehouseZone | null>(null);
   const [summaryZone, setSummaryZone] = useState<WarehouseZone | null>(null);
   const inventoryRef = useRef<InventoryItem[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [loaded, setLoaded] = useState(false);
 
   React.useEffect(() => {
     AsyncStorage.getItem(FUSE_CACHE_KEY)
@@ -60,27 +72,26 @@ export default function MapScreen() {
           inventoryRef.current = items;
           setInventory(items);
         } catch { /* ignore corrupt cache */ }
-      })
-      .finally(() => setLoaded(true));
+      });
   }, []);
 
-  const handleZoneTap = (zone: ApiWarehouseZone) => {
+  const handleZoneTap = useCallback((zone: ApiWarehouseZone) => {
     setDrilldown(toAisleZone(zone));
-  };
+  }, []);
 
-  const handleZoneLongPress = (zone: ApiWarehouseZone) => {
+  const handleZoneLongPress = useCallback((zone: ApiWarehouseZone) => {
     setSummaryZone(toAisleZone(zone));
-  };
+  }, []);
 
-  const handleBrowseFromSheet = (zone: WarehouseZone) => {
+  const handleBrowseFromSheet = useCallback((zone: WarehouseZone) => {
     setSummaryZone(null);
     setDrilldown(zone);
-  };
+  }, []);
 
-  const handleBrowseClose = () => {
+  const handleBrowseClose = useCallback(() => {
     setBrowseOpen(false);
     setDrilldown(null);
-  };
+  }, []);
 
   if (browseOpen || drilldown !== null) {
     return (
@@ -99,7 +110,7 @@ export default function MapScreen() {
     );
   }
 
-  // ── Web: WarehouseMapWeb (existing) ───────────────────────────────────────
+  // ── Web: existing WarehouseMapWeb ─────────────────────────────────────────
   if (Platform.OS === "web") {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -123,7 +134,7 @@ export default function MapScreen() {
     );
   }
 
-  // ── Native: WarehouseMapView (SVG floor plan with zone overlays) ──────────
+  // ── Native: SVG floor plan with zone overlays ─────────────────────────────
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -138,7 +149,10 @@ export default function MapScreen() {
       </View>
 
       <WarehouseMapView
-        inventory={inventory}
+        zones={zones}
+        zonesLoading={zonesLoading}
+        zonesError={zonesError}
+        onZonesRetry={refetchZones}
         onZoneTap={handleZoneTap}
         onZoneLongPress={handleZoneLongPress}
         isAdmin={isAdmin}
