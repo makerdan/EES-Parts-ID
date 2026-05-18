@@ -24,6 +24,7 @@ export * from "./searchInventoryResponse";
 export * from "./searchInventoryResponseDimensionCounts";
 export * from "./searchResult";
 export * from "./updateBinsBody";
+export * from "./updateDescriptionBody";
 export * from "./updateKeywordsBody";
 export * from "./updateWarehouseZoneBody";
 export * from "./updateWarehouseZoneBodySectionParity";

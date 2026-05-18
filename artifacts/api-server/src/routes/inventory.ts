@@ -1179,6 +1179,32 @@ router.patch("/:id/bins", requireAdminAuth, async (req, res) => {
   }
 });
 
+// ── PATCH /inventory/:id/description ─────────────────────────────────────────
+// Admin-only: update the free-text description on a single part. Lets admins
+// enrich a part's description after quick-add without re-uploading the sheet.
+router.patch("/:id/description", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    const { description } = req.body as { description?: unknown };
+
+    if (typeof description !== "string") {
+      return void res.status(400).json({ error: "description must be a string" });
+    }
+
+    const [updated] = await db
+      .update(inventoryTable)
+      .set({ description: description.trim(), updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning();
+
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update description" });
+  }
+});
+
 // ── PATCH /inventory/:id/keywords ─────────────────────────────────────────────
 router.patch("/:id/keywords", async (req, res) => {
   try {

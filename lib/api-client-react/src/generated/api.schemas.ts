@@ -133,6 +133,11 @@ export interface UpdateKeywordsBody {
   keywords: string[];
 }
 
+export interface UpdateDescriptionBody {
+  /** Free-text description of the part */
+  description: string;
+}
+
 export interface DictionaryLookupResponse {
   abbreviations: string[];
   synonyms: string[];

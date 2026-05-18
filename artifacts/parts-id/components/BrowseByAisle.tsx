@@ -28,6 +28,7 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { ResultCard } from "@/components/ResultCard";
 import { AddPartModal } from "@/components/AddPartModal";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import {
   buildAisleHierarchy,
   filterSections,
@@ -585,6 +586,7 @@ export function BrowseByAisle({
 }: BrowseByAisleProps) {
   const colors = useColors();
   const [addPartVisible, setAddPartVisible] = useState(false);
+  const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
 
   const hierarchy: AisleHierarchy = useMemo(
     () => buildAisleHierarchy(inventory),
@@ -858,9 +860,15 @@ export function BrowseByAisle({
         defaultBin={addPartDefaultBin}
         onClose={() => setAddPartVisible(false)}
         onSuccess={() => {
-          setAddPartVisible(false);
           onPartAdded?.();
         }}
+        onAddDetails={isAdmin ? (item) => setDetailsItem(item) : undefined}
+      />
+
+      <PartDetailsEditor
+        item={detailsItem}
+        adminToken={adminToken ?? null}
+        onClose={() => setDetailsItem(null)}
       />
     </View>
   );

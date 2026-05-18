@@ -233,6 +233,33 @@ export const UpdateItemBinsResponse = zod.object({
 });
 
 /**
+ * @summary Update the description for a single inventory item (admin)
+ */
+export const UpdateItemDescriptionParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateItemDescriptionBody = zod.object({
+  description: zod.string().describe("Free-text description of the part"),
+});
+
+export const UpdateItemDescriptionResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  description: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Bin locations where this part is stored (a part may live in multiple bins)",
+    ),
+  aiKeywords: zod.array(zod.string()),
+  enrichedAt: zod.coerce.date().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
  * @summary Manually update keywords for an inventory item
  */
 export const UpdateItemKeywordsParams = zod.object({
