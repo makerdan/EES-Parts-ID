@@ -109,28 +109,47 @@ export function WarehouseMapWeb({ inventory, onAislePress }: Props) {
                 </View>
 
                 <View style={styles.rowCells}>
-                  {row.map(aisle => (
-                    <Pressable
-                      key={aisle.aisleNum}
-                      onPress={() => onAislePress(aisle.aisleNum)}
-                      style={({ pressed }) => [
-                        styles.cell,
-                        {
-                          width: cellSize,
-                          height: cellSize,
-                          backgroundColor: aisleColor(aisle.partCount),
-                          borderColor: "#d97706",
-                          opacity: pressed ? 0.7 : 1,
-                        },
-                      ]}
-                    >
-                      <Text style={styles.cellAisle}>
-                        A{String(aisle.aisleNum).padStart(2, "0")}
-                      </Text>
-                      <Text style={styles.cellCount}>{aisle.partCount}</Text>
-                      <Text style={styles.cellLabel}>parts</Text>
-                    </Pressable>
-                  ))}
+                  {row.map(aisle => {
+                    const showPins = cellSize >= 100;
+                    const maxSec = Math.max(1, ...aisle.sections.map(s => s.partCount));
+                    return (
+                      <Pressable
+                        key={aisle.aisleNum}
+                        onPress={() => onAislePress(aisle.aisleNum)}
+                        style={({ pressed }) => [
+                          styles.cell,
+                          {
+                            width: cellSize,
+                            height: cellSize,
+                            backgroundColor: aisleColor(aisle.partCount),
+                            borderColor: "#d97706",
+                            opacity: pressed ? 0.7 : 1,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.cellAisle}>
+                          A{String(aisle.aisleNum).padStart(2, "0")}
+                        </Text>
+                        <Text style={styles.cellCount}>{aisle.partCount}</Text>
+                        <Text style={styles.cellLabel}>parts</Text>
+                        {/* Section pins — visible when zoomed in */}
+                        {showPins && aisle.sections.length > 0 && (
+                          <View style={styles.pinsRow}>
+                            {aisle.sections.slice(0, 8).map(sec => {
+                              const density = sec.partCount / maxSec;
+                              const pinColor = density > 0.66 ? "#92400e" : density > 0.33 ? "#b45309" : "#d97706";
+                              return (
+                                <View
+                                  key={sec.sectionNum}
+                                  style={[styles.pin, { backgroundColor: pinColor }]}
+                                />
+                              );
+                            })}
+                          </View>
+                        )}
+                      </Pressable>
+                    );
+                  })}
 
                   {/* Pad last row if odd number of aisles */}
                   {row.length < COLS && (
@@ -236,6 +255,8 @@ const styles = StyleSheet.create({
   cellAisle: { fontSize: 16, fontFamily: "Inter_700Bold", color: "#92400e" },
   cellCount: { fontSize: 20, fontFamily: "Inter_700Bold", color: "#78350f", marginTop: 2 },
   cellLabel: { fontSize: 10, fontFamily: "Inter_400Regular", color: "#78350f" },
+  pinsRow: { flexDirection: "row", flexWrap: "wrap", gap: 3, marginTop: 6, justifyContent: "center" },
+  pin: { width: 8, height: 8, borderRadius: 4 },
   empty: { paddingVertical: 80, alignItems: "center", gap: 12 },
   emptyText: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
   emptyHint: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },

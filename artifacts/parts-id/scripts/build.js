@@ -561,19 +561,26 @@ async function main() {
     metroProcess = null;
   }
 
-  await buildWeb();
+  await buildWeb(domain, expoPublicReplId);
 
   console.log("Build complete! Deploy to:", baseUrl);
   process.exit(0);
 }
 
-async function buildWeb() {
+async function buildWeb(domain, expoPublicReplId) {
   console.log("Building web bundle...");
+  console.log(`Setting EXPO_PUBLIC_DOMAIN=${domain} for web build`);
 
   const webOutDir = path.join(projectRoot, "static-build", "web");
   if (fs.existsSync(webOutDir)) {
     fs.rmSync(webOutDir, { recursive: true });
   }
+
+  const env = {
+    ...process.env,
+    EXPO_PUBLIC_DOMAIN: domain,
+    EXPO_PUBLIC_REPL_ID: expoPublicReplId || "",
+  };
 
   return new Promise((resolve, reject) => {
     const proc = spawn(
@@ -583,7 +590,7 @@ async function buildWeb() {
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,
         cwd: projectRoot,
-        env: { ...process.env },
+        env,
       },
     );
 
