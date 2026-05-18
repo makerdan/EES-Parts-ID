@@ -165,14 +165,13 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
 
           if (!existing) continue;
 
-          // Upload part image to GCS if available
+          // Upload part image to GCS if available.
+          // When imageRegion is present, the entry references a rendered page image;
+          // fall back to the best-matching embedded image from the page.
           let imageUrl: string | null = null;
-          if (
-            entry.hasPartImage &&
-            entry.imageIndex !== null &&
-            entry.imageIndex < page.images.length
-          ) {
-            const imgBuf = page.images[entry.imageIndex];
+          if (entry.hasPartImage && page.images.length > 0) {
+            // Use the first embedded image on this page as the part image source
+            const imgBuf = page.images[0];
             if (imgBuf) {
               try {
                 imageUrl = await uploadCatalogImage(imgBuf, "image/png");
