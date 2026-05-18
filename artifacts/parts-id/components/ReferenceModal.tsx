@@ -21,9 +21,21 @@ const API_BASE =
     ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
     : "";
 
-export function ReferenceModal() {
+type Props = {
+  /** Controlled mode: when provided, the FAB is hidden and this value drives
+   *  Modal visibility. Pair with `onClose` to handle dismiss requests. */
+  open?: boolean;
+  onClose?: () => void;
+};
+
+export function ReferenceModal({ open, onClose }: Props = {}) {
   const colors = useColors();
+  const controlled = open !== undefined;
+  // In uncontrolled mode this state drives visibility; in controlled mode it
+  // is ignored and `open` prop is used instead.
   const [visible, setVisible] = useState(false);
+  const isVisible = controlled ? open : visible;
+  const handleClose = controlled ? (onClose ?? (() => {})) : () => setVisible(false);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
@@ -139,23 +151,25 @@ export function ReferenceModal() {
 
   return (
     <>
-      {/* Floating button */}
-      <Animated.View style={[fabStyles.fab, { transform: [{ scale: pulse }] }]}>
-        <Pressable
-          onPress={() => setVisible(true)}
-          style={[fabStyles.fabBtn, { backgroundColor: colors.primary }]}
-        >
-          <Text style={fabStyles.fabIcon}>⚡</Text>
-          <Text style={[fabStyles.fabLabel, { color: colors.primaryForeground }]}>REF</Text>
-        </Pressable>
-      </Animated.View>
+      {/* Floating button — hidden in controlled mode (header button takes its place) */}
+      {!controlled && (
+        <Animated.View style={[fabStyles.fab, { transform: [{ scale: pulse }] }]}>
+          <Pressable
+            onPress={() => setVisible(true)}
+            style={[fabStyles.fabBtn, { backgroundColor: colors.primary }]}
+          >
+            <Text style={fabStyles.fabIcon}>⚡</Text>
+            <Text style={[fabStyles.fabLabel, { color: colors.primaryForeground }]}>REF</Text>
+          </Pressable>
+        </Animated.View>
+      )}
 
       {/* Modal */}
       <Modal
-        visible={visible}
+        visible={isVisible}
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => setVisible(false)}
+        onRequestClose={handleClose}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -178,7 +192,7 @@ export function ReferenceModal() {
                 </Pressable>
               ) : null}
               <Pressable
-                onPress={() => setVisible(false)}
+                onPress={handleClose}
                 style={[modalStyles.closeBtn, { backgroundColor: colors.muted }]}
               >
                 <Text style={[modalStyles.closeText, { color: colors.foreground }]}>✕</Text>

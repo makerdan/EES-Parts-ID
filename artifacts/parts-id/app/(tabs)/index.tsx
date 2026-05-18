@@ -174,6 +174,7 @@ export default function SearchScreen() {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
   const [cacheAge, setCacheAge] = useState<string | null>(null);
+  const [showReference, setShowReference] = useState(false);
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
@@ -505,6 +506,13 @@ export default function SearchScreen() {
           </View>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Pressable
+            onPress={() => setShowReference(true)}
+            style={[styles.headerBtn, styles.refBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+          >
+            <Text style={styles.refBtnIcon}>⚡</Text>
+            <Text style={[styles.logoutBtnLabel, { color: colors.mutedForeground }]}>Ref</Text>
+          </Pressable>
           <Pressable
             onPress={() => {
               setShowLogoutModal(true);
@@ -946,7 +954,7 @@ export default function SearchScreen() {
         />
       )}
 
-      <ReferenceModal />
+      <ReferenceModal open={showReference} onClose={() => setShowReference(false)} />
 
       <KeywordEditor
         item={editItem}
@@ -981,8 +989,10 @@ const styles = StyleSheet.create({
   offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
   offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   headerBtn: { height: 44, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  logoutBtn: { width: 48, flexDirection: "column", gap: 2, paddingVertical: 4 },
+  logoutBtn: { flexDirection: "column", gap: 2, paddingVertical: 4, paddingHorizontal: 10 },
   logoutBtnLabel: { fontSize: 9, fontFamily: "Inter_500Medium", letterSpacing: 0.2 },
+  refBtn: { flexDirection: "column", gap: 2, paddingVertical: 4, paddingHorizontal: 10 },
+  refBtnIcon: { fontSize: 14 },
   modalOverlay: { flex: 1, backgroundColor: "#00000055", alignItems: "center", justifyContent: "center", padding: 32 },
   logoutModal: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 24 },
   logoutModalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
