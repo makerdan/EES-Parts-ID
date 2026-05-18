@@ -20,6 +20,8 @@ import type {
   AiIdentifyBody,
   AiIdentifyResponse,
   AiReferenceBody,
+  CreateWarehouseZoneBody,
+  DeleteWarehouseZone200,
   DictionaryLookupResponse,
   EnrichInventoryBody,
   HealthStatus,
@@ -31,8 +33,11 @@ import type {
   SearchInventoryResponse,
   UpdateBinsBody,
   UpdateKeywordsBody,
+  UpdateWarehouseZoneBody,
   UpsertInventoryBody,
   UpsertInventoryResponse,
+  WarehouseZoneListResponse,
+  WarehouseZoneResponse,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -913,6 +918,338 @@ export const useAskReference = <
   TContext
 > => {
   return useMutation(getAskReferenceMutationOptions(options));
+};
+
+/**
+ * @summary List all warehouse zone overlays
+ */
+export const getListWarehouseZonesUrl = () => {
+  return `/api/warehouse-zones`;
+};
+
+export const listWarehouseZones = async (
+  options?: RequestInit,
+): Promise<WarehouseZoneListResponse> => {
+  return customFetch<WarehouseZoneListResponse>(getListWarehouseZonesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListWarehouseZonesQueryKey = () => {
+  return [`/api/warehouse-zones`] as const;
+};
+
+export const getListWarehouseZonesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listWarehouseZones>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listWarehouseZones>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListWarehouseZonesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listWarehouseZones>>
+  > = ({ signal }) => listWarehouseZones({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listWarehouseZones>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListWarehouseZonesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listWarehouseZones>>
+>;
+export type ListWarehouseZonesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all warehouse zone overlays
+ */
+
+export function useListWarehouseZones<
+  TData = Awaited<ReturnType<typeof listWarehouseZones>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listWarehouseZones>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListWarehouseZonesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a warehouse zone overlay (admin)
+ */
+export const getCreateWarehouseZoneUrl = () => {
+  return `/api/warehouse-zones`;
+};
+
+export const createWarehouseZone = async (
+  createWarehouseZoneBody: CreateWarehouseZoneBody,
+  options?: RequestInit,
+): Promise<WarehouseZoneResponse> => {
+  return customFetch<WarehouseZoneResponse>(getCreateWarehouseZoneUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createWarehouseZoneBody),
+  });
+};
+
+export const getCreateWarehouseZoneMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createWarehouseZone>>,
+    TError,
+    { data: BodyType<CreateWarehouseZoneBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createWarehouseZone>>,
+  TError,
+  { data: BodyType<CreateWarehouseZoneBody> },
+  TContext
+> => {
+  const mutationKey = ["createWarehouseZone"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createWarehouseZone>>,
+    { data: BodyType<CreateWarehouseZoneBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createWarehouseZone(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateWarehouseZoneMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createWarehouseZone>>
+>;
+export type CreateWarehouseZoneMutationBody = BodyType<CreateWarehouseZoneBody>;
+export type CreateWarehouseZoneMutationError = ErrorType<void>;
+
+/**
+ * @summary Create a warehouse zone overlay (admin)
+ */
+export const useCreateWarehouseZone = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createWarehouseZone>>,
+    TError,
+    { data: BodyType<CreateWarehouseZoneBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createWarehouseZone>>,
+  TError,
+  { data: BodyType<CreateWarehouseZoneBody> },
+  TContext
+> => {
+  return useMutation(getCreateWarehouseZoneMutationOptions(options));
+};
+
+/**
+ * @summary Update a warehouse zone overlay (admin)
+ */
+export const getUpdateWarehouseZoneUrl = (id: number) => {
+  return `/api/warehouse-zones/${id}`;
+};
+
+export const updateWarehouseZone = async (
+  id: number,
+  updateWarehouseZoneBody: UpdateWarehouseZoneBody,
+  options?: RequestInit,
+): Promise<WarehouseZoneResponse> => {
+  return customFetch<WarehouseZoneResponse>(getUpdateWarehouseZoneUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateWarehouseZoneBody),
+  });
+};
+
+export const getUpdateWarehouseZoneMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateWarehouseZone>>,
+    TError,
+    { id: number; data: BodyType<UpdateWarehouseZoneBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateWarehouseZone>>,
+  TError,
+  { id: number; data: BodyType<UpdateWarehouseZoneBody> },
+  TContext
+> => {
+  const mutationKey = ["updateWarehouseZone"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateWarehouseZone>>,
+    { id: number; data: BodyType<UpdateWarehouseZoneBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateWarehouseZone(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateWarehouseZoneMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateWarehouseZone>>
+>;
+export type UpdateWarehouseZoneMutationBody = BodyType<UpdateWarehouseZoneBody>;
+export type UpdateWarehouseZoneMutationError = ErrorType<void>;
+
+/**
+ * @summary Update a warehouse zone overlay (admin)
+ */
+export const useUpdateWarehouseZone = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateWarehouseZone>>,
+    TError,
+    { id: number; data: BodyType<UpdateWarehouseZoneBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateWarehouseZone>>,
+  TError,
+  { id: number; data: BodyType<UpdateWarehouseZoneBody> },
+  TContext
+> => {
+  return useMutation(getUpdateWarehouseZoneMutationOptions(options));
+};
+
+/**
+ * @summary Delete a warehouse zone overlay (admin)
+ */
+export const getDeleteWarehouseZoneUrl = (id: number) => {
+  return `/api/warehouse-zones/${id}`;
+};
+
+export const deleteWarehouseZone = async (
+  id: number,
+  options?: RequestInit,
+): Promise<DeleteWarehouseZone200> => {
+  return customFetch<DeleteWarehouseZone200>(getDeleteWarehouseZoneUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteWarehouseZoneMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteWarehouseZone>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteWarehouseZone>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteWarehouseZone"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteWarehouseZone>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteWarehouseZone(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteWarehouseZoneMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteWarehouseZone>>
+>;
+
+export type DeleteWarehouseZoneMutationError = ErrorType<void>;
+
+/**
+ * @summary Delete a warehouse zone overlay (admin)
+ */
+export const useDeleteWarehouseZone = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteWarehouseZone>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteWarehouseZone>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteWarehouseZoneMutationOptions(options));
 };
 
 /**

@@ -219,6 +219,93 @@ paths:
           content:
             text/event-stream: {}
 
+  /warehouse-zones:
+    get:
+      operationId: listWarehouseZones
+      tags: [inventory]
+      summary: List all warehouse zone overlays
+      responses:
+        "200":
+          description: List of warehouse zones
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseZoneListResponse"
+    post:
+      operationId: createWarehouseZone
+      tags: [inventory]
+      summary: Create a warehouse zone overlay (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWarehouseZoneBody"
+      responses:
+        "201":
+          description: Created zone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseZoneResponse"
+        "401":
+          description: Admin token required
+
+  /warehouse-zones/{id}:
+    patch:
+      operationId: updateWarehouseZone
+      tags: [inventory]
+      summary: Update a warehouse zone overlay (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWarehouseZoneBody"
+      responses:
+        "200":
+          description: Updated zone
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseZoneResponse"
+        "401":
+          description: Admin token required
+        "404":
+          description: Zone not found
+    delete:
+      operationId: deleteWarehouseZone
+      tags: [inventory]
+      summary: Delete a warehouse zone overlay (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                required:
+                  - deleted
+        "401":
+          description: Admin token required
+        "404":
+          description: Zone not found
+
   /ai/reference:
     post:
       operationId: aiReference
@@ -580,6 +667,118 @@ components:
         - manufacturerVerified
         - summary
         - results
+
+    WarehouseZoneItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        aisleId:
+          type: string
+        label:
+          type: string
+        sectionParity:
+          type: string
+        isInventory:
+          type: boolean
+        svgX:
+          type: number
+        svgY:
+          type: number
+        svgWidth:
+          type: number
+        svgHeight:
+          type: number
+        sortOrder:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - aisleId
+        - label
+        - sectionParity
+        - isInventory
+        - svgX
+        - svgY
+        - svgWidth
+        - svgHeight
+        - sortOrder
+        - createdAt
+        - updatedAt
+
+    WarehouseZoneListResponse:
+      type: object
+      properties:
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/WarehouseZoneItem"
+      required:
+        - zones
+
+    WarehouseZoneResponse:
+      type: object
+      properties:
+        zone:
+          $ref: "#/components/schemas/WarehouseZoneItem"
+      required:
+        - zone
+
+    CreateWarehouseZoneBody:
+      type: object
+      properties:
+        aisleId:
+          type: string
+        label:
+          type: string
+        sectionParity:
+          type: string
+        isInventory:
+          type: boolean
+        svgX:
+          type: number
+        svgY:
+          type: number
+        svgWidth:
+          type: number
+        svgHeight:
+          type: number
+        sortOrder:
+          type: integer
+      required:
+        - aisleId
+        - label
+        - svgX
+        - svgY
+        - svgWidth
+        - svgHeight
+
+    UpdateWarehouseZoneBody:
+      type: object
+      properties:
+        aisleId:
+          type: string
+        label:
+          type: string
+        sectionParity:
+          type: string
+        isInventory:
+          type: boolean
+        svgX:
+          type: number
+        svgY:
+          type: number
+        svgWidth:
+          type: number
+        svgHeight:
+          type: number
+        sortOrder:
+          type: integer
 
     AiReferenceBody:
       type: object
