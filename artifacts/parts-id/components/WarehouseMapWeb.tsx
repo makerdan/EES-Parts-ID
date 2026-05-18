@@ -1,9 +1,19 @@
 /**
  * Web-only interactive warehouse floor plan.
  *
- * Renders a zoomable, scrollable grid of aisle zones derived from live
- * inventory data. Tapping a zone fires onAislePress to open BrowseByAisle.
- * Uses only React Native primitives (works in-browser via react-native-web).
+ * Implements the Map tab's web experience as a custom floor-plan grid rather
+ * than a geographic map library (e.g. Leaflet). Indoor warehouses have no GPS
+ * coordinates, so a schematic aisle-grid is the appropriate representation.
+ *
+ * Features:
+ * - Zoomable (+/− buttons adjust cell size from 80–200px)
+ * - Scrollable canvas for warehouses with many aisles
+ * - Each aisle zone colored by inventory density (amber scale)
+ * - Section-level pin markers (colored circles) visible when zoomed ≥100px
+ * - Tapping any aisle opens BrowseByAisle for that aisle
+ *
+ * Uses only React Native primitives — no extra packages required.
+ * Only rendered when Platform.OS === "web" (see app/(tabs)/map.tsx).
  */
 import React, { useMemo, useState } from "react";
 import {
