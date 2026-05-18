@@ -1,9 +1,11 @@
 /**
  * Warehouse Map tab.
  *
- * The SVG map rendering itself is planned for a future task. This tab
- * provides the BrowseByAisle overlay wiring and a stub placeholder until
- * the map visual is built.
+ * Web  → WarehouseMapWeb (zoomable SVG floor plan + section pins)
+ * iOS  → WarehouseMapView (pan/zoom SVG + DB zone overlays)
+ *
+ * Tap zone  → BrowseByAisle
+ * Long-press zone → AisleSummarySheet
  */
 import React, { useRef, useState } from "react";
 import {
@@ -23,8 +25,21 @@ import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AisleSummarySheet } from "@/components/AisleSummarySheet";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { WarehouseMapWeb } from "@/components/WarehouseMapWeb";
+import { WarehouseMapView } from "@/components/WarehouseMapView";
+import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
+
+function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
+  return {
+    aisleNum: parseInt(zone.aisleId, 10) || 0,
+    label: zone.label,
+    sectionParity:
+      zone.sectionParity === "odd" || zone.sectionParity === "even"
+        ? zone.sectionParity
+        : undefined,
+  };
+}
 
 export default function MapScreen() {
   const colors = useColors();
@@ -48,6 +63,14 @@ export default function MapScreen() {
       })
       .finally(() => setLoaded(true));
   }, []);
+
+  const handleZoneTap = (zone: ApiWarehouseZone) => {
+    setDrilldown(toAisleZone(zone));
+  };
+
+  const handleZoneLongPress = (zone: ApiWarehouseZone) => {
+    setSummaryZone(toAisleZone(zone));
+  };
 
   const handleBrowseFromSheet = (zone: WarehouseZone) => {
     setSummaryZone(null);
@@ -76,7 +99,7 @@ export default function MapScreen() {
     );
   }
 
-  // On web: show the interactive warehouse floor plan (zoomable, tappable aisles)
+  // ── Web: WarehouseMapWeb (existing) ───────────────────────────────────────
   if (Platform.OS === "web") {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -100,41 +123,26 @@ export default function MapScreen() {
     );
   }
 
-  // Native: placeholder until the full SVG map is implemented
+  // ── Native: WarehouseMapView (SVG floor plan with zone overlays) ──────────
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
-      {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>🗺 Warehouse Map</Text>
-      </View>
-
-      <View style={styles.placeholder}>
-        <Text style={[styles.placeholderEmoji]}>🏭</Text>
-        <Text style={[styles.placeholderTitle, { color: colors.foreground }]}>Map coming soon</Text>
-        <Text style={[styles.placeholderHint, { color: colors.mutedForeground }]}>
-          The interactive warehouse map is under construction.{"\n"}
-          Use Browse by Aisle to navigate now.
-        </Text>
-
+        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Warehouse Map</Text>
         <Pressable
           onPress={() => setBrowseOpen(true)}
-          style={[styles.browseBtn, { backgroundColor: colors.primary, borderColor: "#000" }]}
+          style={[styles.browseLink, { borderColor: colors.border }]}
         >
-          <Feather name="map-pin" size={18} color={colors.primaryForeground} style={{ marginRight: 8 }} />
-          <View>
-            <Text style={[styles.browseBtnTitle, { color: colors.primaryForeground }]}>Browse by Aisle</Text>
-            <Text style={[styles.browseBtnSub, { color: colors.primaryForeground + "bb" }]}>
-              Aisle › Section › Shelf
-            </Text>
-          </View>
+          <Feather name="list" size={14} color={colors.foreground} style={{ marginRight: 4 }} />
+          <Text style={[styles.browseLinkText, { color: colors.foreground }]}>List view</Text>
         </Pressable>
-
-        {loaded && inventory.length === 0 ? (
-          <Text style={[styles.noCache, { color: colors.mutedForeground }]}>
-            No cached inventory. Visit the Search tab to sync.
-          </Text>
-        ) : null}
       </View>
+
+      <WarehouseMapView
+        inventory={inventory}
+        onZoneTap={handleZoneTap}
+        onZoneLongPress={handleZoneLongPress}
+        isAdmin={isAdmin}
+      />
 
       <AisleSummarySheet
         zone={summaryZone}
@@ -166,30 +174,4 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   browseLinkText: { fontSize: 13, fontFamily: "Inter_400Regular" },
-  placeholder: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 32,
-  },
-  placeholderEmoji: { fontSize: 56, marginBottom: 16 },
-  placeholderTitle: { fontSize: 22, fontFamily: "Inter_700Bold", marginBottom: 8 },
-  placeholderHint: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    textAlign: "center",
-    lineHeight: 22,
-    marginBottom: 32,
-  },
-  browseBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-  },
-  browseBtnTitle: { fontSize: 16, fontFamily: "Inter_700Bold" },
-  browseBtnSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  noCache: { marginTop: 20, fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
 });

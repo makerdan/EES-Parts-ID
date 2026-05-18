@@ -183,7 +183,7 @@ export function WarehouseMapView({
         <Pressable
           key={zone.id}
           onPress={() => onZoneTap(zone)}
-          onLongPress={() => setLongPressZone(toWarehouseZone(zone))}
+          onLongPress={() => onZoneLongPress?.(zone)}
           delayLongPress={400}
           style={[
             styles.zoneOverlay,
@@ -290,16 +290,6 @@ export function WarehouseMapView({
         </Text>
       </View>
 
-      {/* AisleSummarySheet for long-press */}
-      <AisleSummarySheet
-        zone={longPressZone}
-        inventory={inventory}
-        onClose={() => setLongPressZone(null)}
-        onBrowse={(z) => {
-          setLongPressZone(null);
-          onZoneTap(zones.find(zo => zo.aisleId === String(z.aisleNum)) ?? zones[0]!);
-        }}
-      />
     </View>
   );
 }
