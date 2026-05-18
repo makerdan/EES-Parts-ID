@@ -1,18 +1,29 @@
 /**
  * AI utility: calls GPT-4o to extract catalog entries from a single PDF page.
- * Accepts the page's text content and up to 4 embedded images.
+ * Accepts the page's text content and/or rendered/embedded page images.
  * Returns structured JSON with one entry per part found on the page.
+ *
+ * imageRegion (when set) is a normalised bounding box [0–1] representing the
+ * location of the part image on the page: { x, y, width, height }.
+ * It is null when the extraction is text-only (no page rendering available).
  */
 
 import { openai } from "@workspace/integrations-openai-ai-server";
+
+export interface ImageRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface CatalogEntry {
   catalogNumber: string;
   description: string;
   confidence: number;
   hasPartImage: boolean;
-  /** 0-based index into the page images array, or null */
-  imageIndex: number | null;
+  /** Normalised bounding box of the part image on the page, or null */
+  imageRegion: ImageRegion | null;
 }
 
 const SYSTEM_PROMPT = `You are an expert electrical supply catalog parser.
@@ -21,8 +32,8 @@ For each part return a JSON object with:
   - catalogNumber: the manufacturer catalog/part number (exact string, no spaces around hyphens)
   - description: short product description (max 200 chars)
   - confidence: how confident you are this is a real part number (0.0–1.0)
-  - hasPartImage: boolean — true if there is a product photo associated with this part
-  - imageIndex: if hasPartImage is true, the 0-based index of the image in the provided images array that best shows this part; otherwise null
+  - hasPartImage: boolean — true if there is a product photo associated with this part on this page
+  - imageRegion: if hasPartImage is true, a normalised bounding box object { "x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0 } (values 0–1 as fraction of page dimensions) describing where the part image appears; otherwise null
 
 Return ONLY a JSON array of objects with exactly those 5 fields. No markdown, no explanation.
 If no parts are found, return an empty array [].`;
@@ -43,7 +54,7 @@ export async function extractCatalogPage(
     });
   }
 
-  // Include up to 4 images from the page
+  // Include up to 4 images from the page (rendered page image or embedded images)
   const imagesToSend = pageImages.slice(0, 4);
   for (const imgBuf of imagesToSend) {
     userContent.push({
@@ -72,7 +83,7 @@ export async function extractCatalogPage(
     if (!Array.isArray(parsed)) return [];
 
     return parsed
-      .filter((e): e is CatalogEntry => {
+      .filter((e): e is Record<string, unknown> => {
         const entry = e as Partial<CatalogEntry>;
         return (
           typeof entry.catalogNumber === "string" &&
@@ -81,13 +92,33 @@ export async function extractCatalogPage(
           typeof entry.confidence === "number"
         );
       })
-      .map((e) => ({
-        catalogNumber: e.catalogNumber.trim(),
-        description: e.description.trim().slice(0, 200),
-        confidence: Math.max(0, Math.min(1, e.confidence)),
-        hasPartImage: !!e.hasPartImage,
-        imageIndex: typeof e.imageIndex === "number" ? e.imageIndex : null,
-      }));
+      .map((e) => {
+        const entry = e as Partial<CatalogEntry> & { imageRegion?: unknown };
+        let imageRegion: ImageRegion | null = null;
+        if (entry.hasPartImage && entry.imageRegion && typeof entry.imageRegion === "object") {
+          const r = entry.imageRegion as unknown as Record<string, unknown>;
+          if (
+            typeof r["x"] === "number" &&
+            typeof r["y"] === "number" &&
+            typeof r["width"] === "number" &&
+            typeof r["height"] === "number"
+          ) {
+            imageRegion = {
+              x: Math.max(0, Math.min(1, r["x"] as number)),
+              y: Math.max(0, Math.min(1, r["y"] as number)),
+              width: Math.max(0, Math.min(1, r["width"] as number)),
+              height: Math.max(0, Math.min(1, r["height"] as number)),
+            };
+          }
+        }
+        return {
+          catalogNumber: (entry.catalogNumber as string).trim(),
+          description: (entry.description as string).trim().slice(0, 200),
+          confidence: Math.max(0, Math.min(1, entry.confidence as number)),
+          hasPartImage: !!entry.hasPartImage,
+          imageRegion,
+        };
+      });
   } catch (err) {
     console.error("[catalog-extract] GPT-4o error:", err);
     return [];
