@@ -59,8 +59,14 @@ router.post("/", requireAdminAuth, async (req, res) => {
       svgHeight: number;
       sortOrder?: number;
     };
+    const validParities = ["odd", "even", "all"] as const;
+    const resolvedParity = sectionParity ?? "all";
     if (!aisleId || !label || svgX == null || svgY == null || svgWidth == null || svgHeight == null) {
       res.status(400).json({ error: "aisleId, label, svgX, svgY, svgWidth, svgHeight required" });
+      return;
+    }
+    if (!validParities.includes(resolvedParity as typeof validParities[number])) {
+      res.status(400).json({ error: "sectionParity must be 'odd', 'even', or 'all'" });
       return;
     }
     const [zone] = await db
@@ -68,7 +74,7 @@ router.post("/", requireAdminAuth, async (req, res) => {
       .values({
         aisleId,
         label,
-        sectionParity: sectionParity ?? "all",
+        sectionParity: resolvedParity,
         isInventory: isInventory ?? true,
         svgX,
         svgY,
@@ -102,6 +108,13 @@ router.patch("/:id", requireAdminAuth, async (req, res) => {
       svgHeight: number;
       sortOrder: number;
     }>;
+    if (updates.sectionParity !== undefined) {
+      const validParities = ["odd", "even", "all"];
+      if (!validParities.includes(updates.sectionParity)) {
+        res.status(400).json({ error: "sectionParity must be 'odd', 'even', or 'all'" });
+        return;
+      }
+    }
     const [zone] = await db
       .update(warehouseZoneTable)
       .set({ ...updates, updatedAt: new Date() })

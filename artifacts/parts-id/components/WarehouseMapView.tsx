@@ -1,16 +1,15 @@
 /**
- * WarehouseMapView — native pan/zoom warehouse floor plan with zone overlays.
+ * WarehouseMapView — native pan/zoom warehouse floor plan with SVG zone overlays.
  *
  * SVG viewBox: 0 0 3592.55 2457.41
- * - Tap a zone  → BrowseByAisle for that aisle
- * - Long-press  → AisleSummarySheet summary + CTA
- * - Empty zones → instructional empty state over the map
+ * Zone overlays rendered as SVG <Rect> elements in viewBox coordinate space
+ * so coordinate mapping is handled by the SVG viewport transform.
+ *
+ * isInventory=true  → interactive (tap → browse, long-press → summary)
+ * isInventory=false → muted, non-interactive label overlay
+ * Empty zones       → instructional empty state card over the map
  */
-import React, {
-  useCallback,
-  useMemo,
-  useState,
-} from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -26,10 +25,9 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from "react-native-reanimated";
-import { SvgUri } from "react-native-svg";
-import type { InventoryItem } from "@workspace/api-client-react";
+import { Svg, Rect, G, Text as SvgText, SvgUri } from "react-native-svg";
 import { useColors } from "@/hooks/useColors";
-import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
+import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 
 const SVG_VIEWBOX_W = 3592.55;
 const SVG_VIEWBOX_H = 2457.41;
@@ -38,20 +36,13 @@ const SVG_ASPECT = SVG_VIEWBOX_W / SVG_VIEWBOX_H;
 const MIN_SCALE = 0.8;
 const MAX_SCALE = 6;
 
-interface WarehouseMapViewProps {
-  inventory: InventoryItem[];
-  onZoneTap: (zone: ApiWarehouseZone) => void;
-  onZoneLongPress?: (zone: ApiWarehouseZone) => void;
-  isAdmin?: boolean;
-}
-
-// Clamp a value between min and max
+// Standalone worklet — no closure over JS values
 function clamp(val: number, min: number, max: number) {
   "worklet";
-  return Math.min(Math.max(val, min), max);
+  return val < min ? min : val > max ? max : val;
 }
 
-// Gets the SVG asset URI using react-native's asset resolver (works without expo-asset)
+// Gets the bundled SVG asset URI via React Native's asset resolver
 function getSvgUri(): string {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -62,28 +53,55 @@ function getSvgUri(): string {
   }
 }
 
+export interface WarehouseMapViewProps {
+  zones: ApiWarehouseZone[];
+  zonesLoading: boolean;
+  zonesError: boolean;
+  onZonesRetry: () => void;
+  onZoneTap: (zone: ApiWarehouseZone) => void;
+  onZoneLongPress?: (zone: ApiWarehouseZone) => void;
+  isAdmin?: boolean;
+}
+
 export function WarehouseMapView({
-  inventory,
+  zones,
+  zonesLoading,
+  zonesError,
+  onZonesRetry,
   onZoneTap,
   onZoneLongPress,
   isAdmin,
 }: WarehouseMapViewProps) {
   const colors = useColors();
-  const { zones, loading, error, refetch } = useWarehouseZones();
 
-  // Container dimensions
+  // JS state for rendering (drives SVG dimensions)
   const [containerW, setContainerW] = useState(0);
   const [containerH, setContainerH] = useState(0);
-
-  // The SVG is rendered to fill container width, maintaining aspect ratio
   const svgRenderW = containerW;
   const svgRenderH = containerW > 0 ? containerW / SVG_ASPECT : 0;
 
-  // Scale factors from SVG coords → rendered pixels
-  const scaleX = containerW > 0 ? containerW / SVG_VIEWBOX_W : 0;
-  const scaleY = svgRenderH > 0 ? svgRenderH / SVG_VIEWBOX_H : 0;
+  // Shared values for gesture computations (UI thread safe)
+  const containerWV = useSharedValue(0);
+  const containerHV = useSharedValue(0);
+  const svgRenderWV = useSharedValue(0);
+  const svgRenderHV = useSharedValue(0);
 
-  // Reanimated shared values for pan/zoom
+  const onLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      const { width, height } = e.nativeEvent.layout;
+      const rh = width > 0 ? width / SVG_ASPECT : 0;
+      setContainerW(width);
+      setContainerH(height);
+      containerWV.value = width;
+      containerHV.value = height;
+      svgRenderWV.value = width;
+      svgRenderHV.value = rh;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // Pan/zoom shared values
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -93,36 +111,17 @@ export function WarehouseMapView({
 
   const svgUri = useMemo(() => getSvgUri(), []);
 
-
-  const onLayout = useCallback((e: LayoutChangeEvent) => {
-    setContainerW(e.nativeEvent.layout.width);
-    setContainerH(e.nativeEvent.layout.height);
-  }, []);
-
-  // Clamp translate so the map can't be panned fully off-screen
-  const clampTranslate = useCallback(
-    (tx: number, ty: number, sc: number) => {
-      "worklet";
-      const scaledW = svgRenderW * sc;
-      const scaledH = svgRenderH * sc;
-      const maxX = Math.max(0, (scaledW - containerW) / 2);
-      const maxY = Math.max(0, (scaledH - containerH) / 2);
-      return {
-        tx: clamp(tx, -maxX, maxX),
-        ty: clamp(ty, -maxY, maxY),
-      };
-    },
-    [svgRenderW, svgRenderH, containerW, containerH],
-  );
-
-  // ── Pinch gesture ─────────────────────────────────────────────────────────
+  // ── Pinch gesture ──────────────────────────────────────────────────────────
   const pinchGesture = Gesture.Pinch()
     .onUpdate((e) => {
       const newScale = clamp(savedScale.value * e.scale, MIN_SCALE, MAX_SCALE);
       scale.value = newScale;
-      const { tx, ty } = clampTranslate(savedTX.value, savedTY.value, newScale);
-      translateX.value = tx;
-      translateY.value = ty;
+      const scaledW = svgRenderWV.value * newScale;
+      const scaledH = svgRenderHV.value * newScale;
+      const maxX = Math.max(0, (scaledW - containerWV.value) / 2);
+      const maxY = Math.max(0, (scaledH - containerHV.value) / 2);
+      translateX.value = clamp(savedTX.value, -maxX, maxX);
+      translateY.value = clamp(savedTY.value, -maxY, maxY);
     })
     .onEnd(() => {
       savedScale.value = scale.value;
@@ -130,34 +129,24 @@ export function WarehouseMapView({
       savedTY.value = translateY.value;
     });
 
-  // ── Pan gesture ────────────────────────────────────────────────────────────
+  // ── Pan gesture (minDistance prevents tap interference) ────────────────────
   const panGesture = Gesture.Pan()
     .minPointers(1)
+    .minDistance(6)
     .onUpdate((e) => {
-      const { tx, ty } = clampTranslate(
-        savedTX.value + e.translationX,
-        savedTY.value + e.translationY,
-        scale.value,
-      );
-      translateX.value = tx;
-      translateY.value = ty;
+      const scaledW = svgRenderWV.value * scale.value;
+      const scaledH = svgRenderHV.value * scale.value;
+      const maxX = Math.max(0, (scaledW - containerWV.value) / 2);
+      const maxY = Math.max(0, (scaledH - containerHV.value) / 2);
+      translateX.value = clamp(savedTX.value + e.translationX, -maxX, maxX);
+      translateY.value = clamp(savedTY.value + e.translationY, -maxY, maxY);
     })
     .onEnd(() => {
       savedTX.value = translateX.value;
       savedTY.value = translateY.value;
     });
 
-  const combinedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
-    ],
-  }));
-
-  // Reset zoom on double-tap
+  // ── Double-tap to reset zoom ────────────────────────────────────────────────
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
@@ -169,46 +158,63 @@ export function WarehouseMapView({
       savedTY.value = 0;
     });
 
-  const mainGesture = Gesture.Exclusive(doubleTapGesture, combinedGesture);
+  const mainGesture = Gesture.Exclusive(
+    doubleTapGesture,
+    Gesture.Simultaneous(pinchGesture, panGesture),
+  );
 
-  // ── Render zone overlays ───────────────────────────────────────────────────
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+  }));
+
+  // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────
   const zoneOverlays = useMemo(() => {
-    if (scaleX === 0 || scaleY === 0) return null;
+    if (!zones.length) return null;
     return zones.map((zone) => {
-      const x = zone.svgX * scaleX;
-      const y = zone.svgY * scaleY;
-      const w = zone.svgWidth * scaleX;
-      const h = zone.svgHeight * scaleY;
+      const isActive = zone.isInventory;
+      const fillColor = isActive ? colors.primary + "30" : colors.mutedForeground + "18";
+      const strokeColor = isActive ? colors.primary : colors.mutedForeground;
+      const strokeWidth = isActive ? 8 : 4;
+      const labelColor = isActive ? colors.primary : colors.mutedForeground;
+
       return (
-        <Pressable
+        <G
           key={zone.id}
-          onPress={() => onZoneTap(zone)}
-          onLongPress={() => onZoneLongPress?.(zone)}
+          onPress={isActive ? () => onZoneTap(zone) : undefined}
+          onLongPress={isActive ? () => onZoneLongPress?.(zone) : undefined}
           delayLongPress={400}
-          style={[
-            styles.zoneOverlay,
-            {
-              left: x,
-              top: y,
-              width: w,
-              height: h,
-              borderColor: colors.primary,
-              backgroundColor: colors.primary + "28",
-            },
-          ]}
         >
-          <Text
-            style={[styles.zoneLabel, { color: colors.primary }]}
-            numberOfLines={2}
+          <Rect
+            x={zone.svgX}
+            y={zone.svgY}
+            width={zone.svgWidth}
+            height={zone.svgHeight}
+            fill={fillColor}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeDasharray={isActive ? undefined : "20 10"}
+          />
+          <SvgText
+            x={zone.svgX + zone.svgWidth / 2}
+            y={zone.svgY + zone.svgHeight / 2}
+            fontSize={Math.max(24, Math.min(48, zone.svgHeight / 3))}
+            fontWeight="bold"
+            fill={labelColor}
+            textAnchor="middle"
+            alignmentBaseline="middle"
           >
             {zone.label}
-          </Text>
-        </Pressable>
+          </SvgText>
+        </G>
       );
     });
-  }, [zones, scaleX, scaleY, colors, onZoneTap]);
+  }, [zones, colors, onZoneTap, onZoneLongPress]);
 
-  // ── Loading / error states ─────────────────────────────────────────────────
+  // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
     return <View style={styles.fill} onLayout={onLayout} />;
   }
@@ -216,38 +222,41 @@ export function WarehouseMapView({
   return (
     <View style={styles.fill} onLayout={onLayout}>
       <GestureDetector gesture={mainGesture}>
-        <Animated.View style={[styles.mapContainer, animatedStyle]}>
-          {/* SVG floor plan */}
+        <Animated.View style={animatedStyle}>
+          {/* Base floor plan SVG */}
           {svgUri ? (
-            <SvgUri
-              uri={svgUri}
-              width={svgRenderW}
-              height={svgRenderH}
-            />
+            <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
           ) : (
-            <View style={[styles.svgFallback, { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted }]}>
+            <View
+              style={[
+                styles.svgFallback,
+                { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
+              ]}
+            >
               <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
                 Map unavailable
               </Text>
             </View>
           )}
 
-          {/* Zone overlays (absolute, positioned over the SVG) */}
-          <View
-            style={[
-              styles.overlayContainer,
-              { width: svgRenderW, height: svgRenderH },
-            ]}
-            pointerEvents="box-none"
+          {/* Zone overlays — same viewBox as base SVG → exact coordinate alignment */}
+          <Svg
+            style={StyleSheet.absoluteFill}
+            viewBox={`0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
+            width={svgRenderW}
+            height={svgRenderH}
           >
             {zoneOverlays}
-          </View>
+          </Svg>
         </Animated.View>
       </GestureDetector>
 
-      {/* Loading spinner */}
-      {loading && (
-        <View style={[styles.floatingBadge, { backgroundColor: colors.card }]} pointerEvents="none">
+      {/* Zone loading spinner */}
+      {zonesLoading && (
+        <View
+          style={[styles.floatingBadge, { backgroundColor: colors.card }]}
+          pointerEvents="none"
+        >
           <ActivityIndicator size="small" color={colors.primary} />
           <Text style={[styles.badgeText, { color: colors.mutedForeground }]}>
             Loading zones…
@@ -255,11 +264,11 @@ export function WarehouseMapView({
         </View>
       )}
 
-      {/* Error badge */}
-      {error && !loading && (
+      {/* Zone error badge */}
+      {zonesError && !zonesLoading && (
         <Pressable
           style={[styles.floatingBadge, { backgroundColor: colors.destructive + "18" }]}
-          onPress={refetch}
+          onPress={onZonesRetry}
         >
           <Text style={[styles.badgeText, { color: colors.destructive }]}>
             Zone sync failed — tap to retry
@@ -267,10 +276,15 @@ export function WarehouseMapView({
         </Pressable>
       )}
 
-      {/* Empty state — shown only after zones have loaded and there are none */}
-      {!loading && !error && zones.length === 0 && (
-        <View style={[styles.emptyOverlay]} pointerEvents="none">
-          <View style={[styles.emptyCard, { backgroundColor: colors.card + "ee", borderColor: colors.border }]}>
+      {/* Empty state: no zones defined yet */}
+      {!zonesLoading && !zonesError && zones.length === 0 && (
+        <View style={styles.emptyOverlay} pointerEvents="none">
+          <View
+            style={[
+              styles.emptyCard,
+              { backgroundColor: colors.card + "ee", borderColor: colors.border },
+            ]}
+          >
             <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
               No zones defined
             </Text>
@@ -283,44 +297,25 @@ export function WarehouseMapView({
         </View>
       )}
 
-      {/* Hint badge — double tap to reset zoom */}
-      <View style={[styles.hintBadge, { backgroundColor: colors.card + "cc", borderColor: colors.border }]} pointerEvents="none">
+      {/* Hint: double-tap to reset zoom */}
+      <View
+        style={[
+          styles.hintBadge,
+          { backgroundColor: colors.card + "cc", borderColor: colors.border },
+        ]}
+        pointerEvents="none"
+      >
         <Text style={[styles.hintText, { color: colors.mutedForeground }]}>
           Pinch/drag to pan · Double-tap to reset
         </Text>
       </View>
-
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1 },
-  mapContainer: {
-    alignItems: "flex-start",
-  },
-  svgFallback: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  overlayContainer: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-  },
-  zoneOverlay: {
-    position: "absolute",
-    borderWidth: 2,
-    borderRadius: 4,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 4,
-  },
-  zoneLabel: {
-    fontSize: 10,
-    fontFamily: "Inter_700Bold",
-    textAlign: "center",
-  },
+  fill: { flex: 1, overflow: "hidden" },
+  svgFallback: { alignItems: "center", justifyContent: "center" },
   floatingBadge: {
     position: "absolute",
     top: 12,
@@ -332,7 +327,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     gap: 6,
     shadowColor: "#000",
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.12,
     shadowRadius: 4,
     elevation: 3,
   },
@@ -341,7 +336,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: "flex-end",
     alignItems: "center",
-    paddingBottom: 40,
+    paddingBottom: 44,
   },
   emptyCard: {
     borderWidth: 1,
@@ -351,11 +346,7 @@ const styles = StyleSheet.create({
     maxWidth: 280,
     alignItems: "center",
   },
-  emptyTitle: {
-    fontSize: 15,
-    fontFamily: "Inter_700Bold",
-    marginBottom: 6,
-  },
+  emptyTitle: { fontSize: 15, fontFamily: "Inter_700Bold", marginBottom: 6 },
   emptyHint: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
