@@ -1,9 +1,20 @@
 import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { eq, asc } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { warehouseZoneTable } from "@workspace/db";
 
 const router = Router();
+
+// Warehouse zone mutations are unauthenticated by design (dev/local zone editor
+// tool). Block writes in production to prevent accidental open mutation.
+function devOnly(_req: Request, res: Response, next: NextFunction): void {
+  if (process.env.NODE_ENV === "production") {
+    res.status(403).json({ error: "Zone editor writes are disabled in production." });
+    return;
+  }
+  next();
+}
 
 // GET /warehouse-zones
 router.get("/", async (_req, res) => {
@@ -18,8 +29,8 @@ router.get("/", async (_req, res) => {
   }
 });
 
-// POST /warehouse-zones
-router.post("/", async (req, res) => {
+// POST /warehouse-zones  (dev-only — no auth, blocked in production)
+router.post("/", devOnly, async (req, res) => {
   try {
     const {
       aisleId,
@@ -72,8 +83,8 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PATCH /warehouse-zones/:id
-router.patch("/:id", async (req, res) => {
+// PATCH /warehouse-zones/:id  (dev-only)
+router.patch("/:id", devOnly, async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -113,8 +124,8 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
-// DELETE /warehouse-zones/:id
-router.delete("/:id", async (req, res) => {
+// DELETE /warehouse-zones/:id  (dev-only)
+router.delete("/:id", devOnly, async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
