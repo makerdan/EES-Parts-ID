@@ -326,9 +326,11 @@ export function WarehouseMapView({
 const styles = StyleSheet.create({
   fill: { flex: 1, overflow: "hidden" },
   svgFallback: { alignItems: "center", justifyContent: "center" },
-  // Invert + slight brightness reduction for dark mode floor plan legibility
+  // Invert + slight brightness reduction for dark-mode floor plan legibility.
+  // filter is supported in RN 0.76+ (Expo SDK 52+); type augmented in
+  // artifacts/parts-id/types/react-native-filter.d.ts
   svgDarkFilter: {
-    filter: [{ invert: 1 }, { brightness: 0.88 }] as never,
+    filter: [{ invert: 1 }, { brightness: 0.88 }],
   },
   floatingBadge: {
     position: "absolute",

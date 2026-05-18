@@ -2,16 +2,17 @@
  * useWarehouseZones — fetches warehouse zone definitions from the API.
  *
  * Behaviour:
- * - Returns cached data immediately if available (< TTL).
- * - Always starts a background fetch to refresh stale or cold data.
- * - Caller can trigger explicit refresh (tab focus, app foreground) via `refetch()`.
+ * - Returns cached data immediately if available.
+ * - Always starts a background fetch to keep data fresh (no TTL gate).
+ * - Skips duplicate in-flight fetches (fetchingRef guard).
+ * - Re-fetches on app foreground via AppState subscription.
+ * - Caller can trigger an explicit refresh via `refetch()` (e.g. on tab focus).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export type ApiWarehouseZone = {
   id: number;
@@ -29,7 +30,6 @@ export type ApiWarehouseZone = {
 };
 
 type ZoneCache = {
-  timestamp: number;
   zones: ApiWarehouseZone[];
 };
 
@@ -44,9 +44,10 @@ export function useWarehouseZones() {
   const mountedRef = useRef(true);
   const fetchingRef = useRef(false);
 
-  // Background fetch — always called; updates state on completion.
+  // Background fetch — deduplicates concurrent calls via fetchingRef.
+  // Does NOT reset the flag externally; only the fetch itself clears it.
   const backgroundFetch = useCallback(async () => {
-    if (fetchingRef.current) return;
+    if (fetchingRef.current) return; // already in flight — skip
     fetchingRef.current = true;
     try {
       const res = await fetch(`${API_BASE}/warehouse-zones`);
@@ -57,7 +58,7 @@ export function useWarehouseZones() {
         setError(false);
         setLoading(false);
       }
-      const entry: ZoneCache = { timestamp: Date.now(), zones: data.zones };
+      const entry: ZoneCache = { zones: data.zones };
       await AsyncStorage.setItem(ZONES_CACHE_KEY, JSON.stringify(entry)).catch(() => {});
     } catch {
       if (mountedRef.current) {
@@ -83,9 +84,9 @@ export function useWarehouseZones() {
             setLoading(false);
           }
         }
-      } catch { /* ignore */ }
+      } catch { /* ignore corrupt cache */ }
 
-      // Always fetch fresh data in the background.
+      // Always refresh in the background after serving the cache.
       backgroundFetch();
     })();
 
@@ -104,8 +105,9 @@ export function useWarehouseZones() {
   }, [backgroundFetch]);
 
   // Explicit refetch for tab-focus calls from the screen.
+  // Does not override the in-flight guard; backgroundFetch() will no-op if
+  // a fetch is already running.
   const refetch = useCallback(() => {
-    fetchingRef.current = false; // allow new fetch even if one just finished
     backgroundFetch();
   }, [backgroundFetch]);
 
