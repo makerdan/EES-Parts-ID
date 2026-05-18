@@ -1,26 +1,9 @@
 import { Router } from "express";
-import type { Request, Response, NextFunction } from "express";
 import { eq, asc } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { warehouseZoneTable } from "@workspace/db";
-import { verifyAdminToken } from "./admin";
 
 const router = Router();
-
-function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminPassword) {
-    res.status(503).json({ error: "Admin access not configured on this server." });
-    return;
-  }
-  const authHeader = req.headers["authorization"] ?? "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  if (!token || !verifyAdminToken(token, adminPassword)) {
-    res.status(401).json({ error: "Unauthorized: valid admin token required" });
-    return;
-  }
-  next();
-}
 
 // GET /warehouse-zones
 router.get("/", async (_req, res) => {
@@ -35,8 +18,8 @@ router.get("/", async (_req, res) => {
   }
 });
 
-// POST /warehouse-zones  (admin)
-router.post("/", requireAdminAuth, async (req, res) => {
+// POST /warehouse-zones
+router.post("/", async (req, res) => {
   try {
     const {
       aisleId,
@@ -89,8 +72,8 @@ router.post("/", requireAdminAuth, async (req, res) => {
   }
 });
 
-// PATCH /warehouse-zones/:id  (admin)
-router.patch("/:id", requireAdminAuth, async (req, res) => {
+// PATCH /warehouse-zones/:id
+router.patch("/:id", async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -130,8 +113,8 @@ router.patch("/:id", requireAdminAuth, async (req, res) => {
   }
 });
 
-// DELETE /warehouse-zones/:id  (admin)
-router.delete("/:id", requireAdminAuth, async (req, res) => {
+// DELETE /warehouse-zones/:id
+router.delete("/:id", async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
