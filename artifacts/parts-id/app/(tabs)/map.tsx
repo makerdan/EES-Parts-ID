@@ -22,13 +22,14 @@ import { useApp } from "@/contexts/AppContext";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AisleSummarySheet } from "@/components/AisleSummarySheet";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
+import { WarehouseMapWeb } from "@/components/WarehouseMapWeb";
 
 const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 
 export default function MapScreen() {
   const colors = useColors();
   const { settings, isAdmin, textFontScale } = useApp();
-  const [browseOpen, setBrowseOpen] = useState(Platform.OS === "web");
+  const [browseOpen, setBrowseOpen] = useState(false);
   const [drilldown, setDrilldown] = useState<WarehouseZone | null>(null);
   const [summaryZone, setSummaryZone] = useState<WarehouseZone | null>(null);
   const inventoryRef = useRef<InventoryItem[]>([]);
@@ -75,6 +76,31 @@ export default function MapScreen() {
     );
   }
 
+  // On web: show the interactive warehouse floor plan (zoomable, tappable aisles)
+  if (Platform.OS === "web") {
+    return (
+      <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>Warehouse Map</Text>
+          <Pressable
+            onPress={() => setBrowseOpen(true)}
+            style={[styles.browseLink, { borderColor: colors.border }]}
+          >
+            <Feather name="list" size={14} color={colors.foreground} style={{ marginRight: 4 }} />
+            <Text style={[styles.browseLinkText, { color: colors.foreground }]}>List view</Text>
+          </Pressable>
+        </View>
+        <WarehouseMapWeb
+          inventory={inventory}
+          onAislePress={(aisleNum) => {
+            setDrilldown({ aisleNum, label: `Aisle ${String(aisleNum).padStart(2, "0")}` });
+          }}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // Native: placeholder until the full SVG map is implemented
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -82,7 +108,6 @@ export default function MapScreen() {
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>🗺 Warehouse Map</Text>
       </View>
 
-      {/* Placeholder until the SVG map is built */}
       <View style={styles.placeholder}>
         <Text style={[styles.placeholderEmoji]}>🏭</Text>
         <Text style={[styles.placeholderTitle, { color: colors.foreground }]}>Map coming soon</Text>
@@ -124,11 +149,23 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1 },
   header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
   },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
+  browseLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  browseLinkText: { fontSize: 13, fontFamily: "Inter_400Regular" },
   placeholder: {
     flex: 1,
     alignItems: "center",
