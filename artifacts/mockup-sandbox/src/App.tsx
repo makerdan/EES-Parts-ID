@@ -1,4 +1,8 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useState, lazy, Suspense, type ComponentType } from "react";
+
+const ZoneEditorPage = lazy(() =>
+  import("./pages/ZoneEditor").then((m) => ({ default: m.ZoneEditor }))
+);
 
 import { modules as discoveredModules } from "./.generated/mockup-components";
 
@@ -128,6 +132,16 @@ function getPreviewPath(): string | null {
   return match ? match[1] : null;
 }
 
+function isZoneEditorPath(): boolean {
+  const basePath = getBasePath();
+  const { pathname } = window.location;
+  const local =
+    basePath && pathname.startsWith(basePath)
+      ? pathname.slice(basePath.length) || "/"
+      : pathname;
+  return local === "/zone-editor" || local.startsWith("/zone-editor/");
+}
+
 function App() {
   const previewPath = getPreviewPath();
 
@@ -137,6 +151,14 @@ function App() {
         componentPath={previewPath}
         modules={discoveredModules}
       />
+    );
+  }
+
+  if (isZoneEditorPath()) {
+    return (
+      <Suspense fallback={null}>
+        <ZoneEditorPage />
+      </Suspense>
     );
   }
 
