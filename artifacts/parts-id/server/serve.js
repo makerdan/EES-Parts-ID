@@ -81,27 +81,50 @@ function serveLandingPage(req, res, landingPageTemplate, appName) {
   res.end(html);
 }
 
-function serveStaticFile(urlPath, res) {
-  const safePath = path.normalize(urlPath).replace(/^(\.\.(\/|\\|$))+/, "");
-  const filePath = path.join(STATIC_ROOT, safePath);
+const WEB_ROOT = path.join(STATIC_ROOT, "web");
 
-  if (!filePath.startsWith(STATIC_ROOT)) {
-    res.writeHead(403);
-    res.end("Forbidden");
-    return;
-  }
-
-  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-    res.writeHead(404);
-    res.end("Not Found");
-    return;
-  }
-
+function serveFile(filePath, res) {
   const ext = path.extname(filePath).toLowerCase();
   const contentType = MIME_TYPES[ext] || "application/octet-stream";
-  const content = fs.readFileSync(filePath);
   res.writeHead(200, { "content-type": contentType });
-  res.end(content);
+  res.end(fs.readFileSync(filePath));
+}
+
+/**
+ * Serve a browser request from the Expo web build (static-build/web/).
+ * Falls through to native static files (for Expo Go asset downloads),
+ * then falls back to the Expo Go landing page if no web build exists.
+ */
+function serveWebOrFallback(urlPath, req, res, landingPageTemplate, appName) {
+  const safePath = path.normalize(urlPath).replace(/^(\.\.(\/|\\|$))+/, "");
+
+  // 1. Try web build directory (SPA)
+  const webIndexPath = path.join(WEB_ROOT, "index.html");
+  if (fs.existsSync(webIndexPath)) {
+    const webFilePath = path.join(WEB_ROOT, safePath);
+    if (
+      webFilePath.startsWith(WEB_ROOT) &&
+      fs.existsSync(webFilePath) &&
+      fs.statSync(webFilePath).isFile()
+    ) {
+      return serveFile(webFilePath, res);
+    }
+    // SPA fallback — all unmatched paths serve index.html for client-side routing
+    return serveFile(webIndexPath, res);
+  }
+
+  // 2. Try native static files (Expo Go asset requests don't send expo-platform)
+  const staticFilePath = path.join(STATIC_ROOT, safePath);
+  if (
+    staticFilePath.startsWith(STATIC_ROOT) &&
+    fs.existsSync(staticFilePath) &&
+    fs.statSync(staticFilePath).isFile()
+  ) {
+    return serveFile(staticFilePath, res);
+  }
+
+  // 3. No web build — show Expo Go landing page
+  serveLandingPage(req, res, landingPageTemplate, appName);
 }
 
 const landingPageTemplate = fs.readFileSync(TEMPLATE_PATH, "utf-8");
@@ -115,18 +138,14 @@ const server = http.createServer((req, res) => {
     pathname = pathname.slice(basePath.length) || "/";
   }
 
-  if (pathname === "/" || pathname === "/manifest") {
-    const platform = req.headers["expo-platform"];
-    if (platform === "ios" || platform === "android") {
-      return serveManifest(platform, res);
-    }
-
-    if (pathname === "/") {
-      return serveLandingPage(req, res, landingPageTemplate, appName);
-    }
+  // Native Expo Go manifest requests always take priority
+  const platform = req.headers["expo-platform"];
+  if ((platform === "ios" || platform === "android") &&
+      (pathname === "/" || pathname === "/manifest")) {
+    return serveManifest(platform, res);
   }
 
-  serveStaticFile(pathname, res);
+  serveWebOrFallback(pathname, req, res, landingPageTemplate, appName);
 });
 
 const port = parseInt(process.env.PORT || "3000", 10);
