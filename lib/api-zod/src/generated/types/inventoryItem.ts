@@ -17,6 +17,8 @@ export interface InventoryItem {
   /** Barcode values associated with this part */
   barcodes: string[];
   enrichedAt?: Date | null;
+  /** URL of the catalog image extracted from a PDF import, served via the API proxy */
+  imageUrl?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

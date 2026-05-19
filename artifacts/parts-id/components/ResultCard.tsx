@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   Animated,
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -115,6 +116,13 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
             </View>
           </View>
           <View style={cardStyles.headerRight}>
+            {item.imageUrl ? (
+              <Image
+                source={{ uri: item.imageUrl }}
+                style={cardStyles.thumbnail}
+                resizeMode="contain"
+              />
+            ) : null}
             <ConfidenceBadge confidence={confidence} />
           </View>
         </View>
@@ -163,6 +171,20 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
         {/* Expanded content */}
         {expanded ? (
           <>
+            {/* Catalog image */}
+            {item.imageUrl ? (
+              <View style={cardStyles.section}>
+                <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
+                  CATALOG IMAGE
+                </Text>
+                <Image
+                  source={{ uri: item.imageUrl }}
+                  style={[cardStyles.catalogImage, { backgroundColor: colors.muted }]}
+                  resizeMode="contain"
+                />
+              </View>
+            ) : null}
+
             {/* Barcodes section */}
             <View style={cardStyles.section}>
               <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
@@ -353,5 +375,16 @@ const cardStyles = StyleSheet.create({
   enrichedAt: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
   moreText: { fontSize: 12, fontFamily: "Inter_400Regular", alignSelf: "center", marginBottom: 6 },
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
+  thumbnail: {
+    width: 52,
+    height: 52,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  catalogImage: {
+    width: "100%",
+    height: 200,
+    borderRadius: 8,
+  },
 });
 

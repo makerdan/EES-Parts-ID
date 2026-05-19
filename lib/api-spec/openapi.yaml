@@ -440,6 +440,10 @@ components:
           type: string
           format: date-time
           nullable: true
+        imageUrl:
+          type: string
+          nullable: true
+          description: URL of the catalog image extracted from a PDF import, served via the API proxy
         createdAt:
           type: string
           format: date-time
