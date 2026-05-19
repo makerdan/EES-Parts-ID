@@ -298,4 +298,146 @@ describe("POST /api/admin/upload", () => {
     expect(res.body.inserted).toBe(1);
     expect(res.body.total).toBe(1);
   });
+
+  // ── Barcode round-trip (Task #507) ──
+  // These tests guard against regressions where barcodes are silently dropped
+  // on upload or incorrectly overwritten during a re-upload that lacks the
+  // Barcodes column.
+
+  it("saves barcodes from a CSV with a comma-separated (quoted) Barcodes cell", async () => {
+    // When multiple barcodes are comma-delimited they must be wrapped in quotes
+    // so the CSV parser treats the entire value as one field.
+    const catalog = `${UPLOAD_PREFIX}BARCODE-COMMA`;
+    const csv = [
+      "Vendor,Catalog,Description,Barcodes",
+      `JEST-VENDOR,${catalog},Widget,"012345678901,987654321098"`,
+    ].join("\n");
+
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.barcodes).toEqual(["012345678901", "987654321098"]);
+  });
+
+  it("saves barcodes from a CSV with a semicolon-separated Barcodes column", async () => {
+    const catalog = `${UPLOAD_PREFIX}BARCODE-SEMI`;
+    const csv = [
+      "Vendor,Catalog,Description,Barcodes",
+      `JEST-VENDOR,${catalog},Widget,012345678901;987654321098`,
+    ].join("\n");
+
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.barcodes).toEqual(["012345678901", "987654321098"]);
+  });
+
+  it("saves barcodes from a CSV with a mixed-separator Barcodes column", async () => {
+    const catalog = `${UPLOAD_PREFIX}BARCODE-MIXED`;
+    const csv = [
+      "Vendor,Catalog,Barcodes",
+      `JEST-VENDOR,${catalog},012300000001;023400000002|034500000003`,
+    ].join("\n");
+
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.barcodes).toEqual([
+      "012300000001",
+      "023400000002",
+      "034500000003",
+    ]);
+  });
+
+  it("preserves existing barcodes when a re-upload CSV omits the Barcodes column", async () => {
+    const catalog = `${UPLOAD_PREFIX}BARCODE-PRESERVE`;
+
+    // Initial upload — includes barcodes.
+    const firstCsv = [
+      "Vendor,Catalog,Description,Barcodes",
+      `JEST-VENDOR,${catalog},Original,012345678901;987654321098`,
+    ].join("\n");
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv: firstCsv })
+      .expect(200);
+
+    // Re-upload — Barcodes column is entirely absent.
+    const secondCsv = [
+      "Vendor,Catalog,Description",
+      `JEST-VENDOR,${catalog},Updated description`,
+    ].join("\n");
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv: secondCsv })
+      .expect(200);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.barcodes).toEqual(["012345678901", "987654321098"]);
+    expect(rows[0]!.description).toBe("Updated description");
+  });
+
+  it("preserves existing barcodes when a re-upload CSV has an empty Barcodes cell", async () => {
+    const catalog = `${UPLOAD_PREFIX}BARCODE-EMPTY-CELL`;
+
+    // Initial upload — includes barcodes.
+    const firstCsv = [
+      "Vendor,Catalog,Barcodes",
+      `JEST-VENDOR,${catalog},012345678901`,
+    ].join("\n");
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv: firstCsv })
+      .expect(200);
+
+    // Re-upload — Barcodes column present but cell is empty.
+    const secondCsv = [
+      "Vendor,Catalog,Barcodes",
+      `JEST-VENDOR,${catalog},`,
+    ].join("\n");
+    await supertest(app)
+      .post("/api/admin/upload")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv: secondCsv })
+      .expect(200);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+    expect(rows.length).toBe(1);
+    // Existing barcodes must not have been cleared.
+    expect(rows[0]!.barcodes).toEqual(["012345678901"]);
+  });
 });

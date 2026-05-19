@@ -95,7 +95,7 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-interface ParsedRow {
+export interface ParsedRow {
   vendor: string;
   catalog: string;
   description: string;
@@ -107,7 +107,7 @@ interface ParsedRow {
  * Parse a raw CSV string into structured inventory rows.
  * Returns null if the CSV is malformed (no header, or missing required columns).
  */
-function parseCsv(csvText: string): ParsedRow[] | null {
+export function parseCsv(csvText: string): ParsedRow[] | null {
   const lines = csvText.split(/\r?\n/).filter(l => l.trim().length > 0);
   if (lines.length < 2) return null; // header-only or empty
 
