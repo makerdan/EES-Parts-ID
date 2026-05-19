@@ -942,7 +942,7 @@ export default function UploadScreen() {
                   Required columns: vendor, catalog{"\n"}
                   Optional: description, bin (or binLocation), barcodes (upc/ean/gtin){"\n"}
                   Multiple bins per row: separate with ; or |{"\n"}
-                  Multiple barcodes per row: separate with ,
+                  Multiple barcodes per row: separate with , ; or |
                 </Text>
 
                 <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
