@@ -32,7 +32,9 @@ import { useScanHistory } from "@/hooks/useScanHistory";
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatRelativeTime(isoString: string): string {
-  const diff = Date.now() - new Date(isoString).getTime();
+  const ts = new Date(isoString).getTime();
+  if (isNaN(ts)) return "";
+  const diff = Date.now() - ts;
   const minutes = Math.floor(diff / 60_000);
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m ago`;
@@ -541,12 +543,12 @@ export default function BarcodeScreen() {
         ) : null}
 
         {/* ── Recents ────────────────────────────────────────────────────────── */}
-        {!shelfMode && scanPhase === "idle" && history.length > 0 ? (
+        {!shelfMode && history.length > 0 ? (
           <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
             <View style={styles.recentsHeader}>
               <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>RECENT SCANS</Text>
               <Pressable onPress={clearHistory} style={[styles.clearBtn, { borderColor: colors.border }]}>
-                <Text style={[styles.clearBtnText, { color: colors.mutedForeground }]}>Clear</Text>
+                <Text style={[styles.clearBtnText, { color: colors.mutedForeground }]}>Clear history</Text>
               </Pressable>
             </View>
             {history.map((entry, idx) => (
@@ -563,7 +565,7 @@ export default function BarcodeScreen() {
                       ) : null}
                     </Text>
                   ) : (
-                    <Text style={[styles.recentCatalog, { color: colors.mutedForeground }]}>Not assigned</Text>
+                    <Text style={[styles.recentCatalog, { color: colors.mutedForeground }]}>Unassigned</Text>
                   )}
                   <Text style={[styles.recentBarcode, { color: colors.mutedForeground }]}>{entry.barcode}</Text>
                 </View>
