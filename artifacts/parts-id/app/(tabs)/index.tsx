@@ -29,7 +29,12 @@ import { reportStorageError } from "@/utils/storageErrorReporter";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AddPartModal } from "@/components/AddPartModal";
-import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
+import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, getFuseCacheSyncedAt } from "@/utils/offlineBarcode";
+
+// Trigger a background full sync if the cache is older than this. The full
+// sync replaces the cache with the authoritative server list, naturally pruning
+// items deleted server-side since the last sync.
+const FUSE_SYNC_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -286,6 +291,10 @@ export default function SearchScreen() {
       buildFuseIndex(allItems);
       try {
         await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
+        // Record when this authoritative full sync completed. The mount effect
+        // uses this to trigger a background re-sync when the cache is stale,
+        // which prunes items deleted server-side since the last sync.
+        await AsyncStorage.setItem(FUSE_CACHE_SYNCED_AT_KEY, String(Date.now()));
       } catch (err) {
         reportStorageError("Could not save offline inventory cache", err);
       }
@@ -296,7 +305,10 @@ export default function SearchScreen() {
     }
   }, [buildFuseIndex]);
 
-  // Seed local Fuse index from AsyncStorage on mount; sync from API if cache is empty
+  // Seed local Fuse index from AsyncStorage on mount; sync from API if cache is
+  // empty or stale. A stale cache (older than FUSE_SYNC_MAX_AGE_MS) is served
+  // immediately for offline capability, then replaced in background with the
+  // authoritative server list — which prunes items deleted since the last sync.
   useEffect(() => {
     AsyncStorage.getItem(FUSE_CACHE_KEY)
       .then(raw => {
@@ -317,6 +329,20 @@ export default function SearchScreen() {
           return;
         }
         buildFuseIndex(items);
+
+        // Check cache age: if older than FUSE_SYNC_MAX_AGE_MS (or timestamp
+        // missing because the cache predates timestamp tracking), kick off a
+        // background full sync. The sync will replace the cache with the
+        // authoritative server list and record a fresh timestamp.
+        getFuseCacheSyncedAt().then(syncedAt => {
+          const age = syncedAt == null ? Infinity : Date.now() - syncedAt;
+          if (age > FUSE_SYNC_MAX_AGE_MS) {
+            syncAllInventory();
+          }
+        }).catch(() => {
+          // If we can't read the timestamp, play it safe and re-sync
+          syncAllInventory();
+        });
       })
       .catch(() => {
         syncAllInventory();

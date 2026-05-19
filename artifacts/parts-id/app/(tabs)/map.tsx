@@ -29,8 +29,7 @@ import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { WarehouseMapWeb } from "@/components/WarehouseMapWeb";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
-
-const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
+import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
 
 function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
   return {
