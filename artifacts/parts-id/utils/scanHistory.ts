@@ -15,13 +15,24 @@ export interface ScanEntry {
   timestamp: string;
 }
 
+function isValidEntry(e: unknown): e is ScanEntry {
+  if (!e || typeof e !== "object") return false;
+  const obj = e as Record<string, unknown>;
+  return (
+    typeof obj["barcode"] === "string" &&
+    typeof obj["found"] === "boolean" &&
+    typeof obj["timestamp"] === "string" &&
+    !isNaN(new Date(obj["timestamp"] as string).getTime())
+  );
+}
+
 export async function loadScanHistory(): Promise<ScanEntry[]> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed as ScanEntry[];
+    return parsed.filter(isValidEntry);
   } catch {
     return [];
   }
