@@ -166,15 +166,34 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
           if (!existing) continue;
 
           // Upload part image to GCS if available.
-          // When imageRegion is present, the entry references a rendered page image;
-          // fall back to the best-matching embedded image from the page.
+          // Primary: page is rendered (pdftoppm) + entry has imageRegion → crop
+          //          the region from the rendered page image using sharp.
+          // Fallback: page has embedded images → upload the first one.
           let imageUrl: string | null = null;
           if (entry.hasPartImage && page.images.length > 0) {
-            // Use the first embedded image on this page as the part image source
-            const imgBuf = page.images[0];
-            if (imgBuf) {
+            const srcImg = page.images[0];
+            if (srcImg) {
+              let imgToBuf: Buffer = srcImg;
+              if (page.isRendered && entry.imageRegion && page.pageWidth > 0 && page.pageHeight > 0) {
+                try {
+                  const { x, y, width, height } = entry.imageRegion;
+                  // Convert normalised coords to pixel region with safe clamping
+                  const left = Math.max(0, Math.round(x * page.pageWidth));
+                  const top = Math.max(0, Math.round(y * page.pageHeight));
+                  const w = Math.min(page.pageWidth - left, Math.max(1, Math.round(width * page.pageWidth)));
+                  const h = Math.min(page.pageHeight - top, Math.max(1, Math.round(height * page.pageHeight)));
+                  const sharp = await import("sharp");
+                  imgToBuf = await (sharp.default ?? sharp)(srcImg)
+                    .extract({ left, top, width: w, height: h })
+                    .png()
+                    .toBuffer();
+                } catch (cropErr) {
+                  console.warn("[catalog-pdf] Crop failed, using full page:", cropErr);
+                  imgToBuf = srcImg;
+                }
+              }
               try {
-                imageUrl = await uploadCatalogImage(imgBuf, "image/png");
+                imageUrl = await uploadCatalogImage(imgToBuf, "image/png");
               } catch (imgErr) {
                 console.warn("[catalog-pdf] Image upload failed:", imgErr);
               }

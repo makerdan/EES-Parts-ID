@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS "catalog_pdf_job" (
   "total_pages" integer,
   "processed_pages" integer DEFAULT 0 NOT NULL,
   "matched_parts" integer DEFAULT 0 NOT NULL,
+  "started_at" timestamp,
+  "finished_at" timestamp,
   "error_message" text,
-  "created_at" timestamp DEFAULT now() NOT NULL,
-  "updated_at" timestamp DEFAULT now() NOT NULL
+  "created_at" timestamp DEFAULT now() NOT NULL
 );

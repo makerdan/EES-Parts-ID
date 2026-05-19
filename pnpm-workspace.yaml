@@ -38,8 +38,10 @@ minimumReleaseAgeExclude:
 
 onlyBuiltDependencies:
   - '@swc/core'
+  - canvas
   - esbuild
   - msw
+  - sharp
   - unrs-resolver
 
 overrides:
