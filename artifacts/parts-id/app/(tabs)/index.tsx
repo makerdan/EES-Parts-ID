@@ -29,8 +29,8 @@ import { reportStorageError } from "@/utils/storageErrorReporter";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AddPartModal } from "@/components/AddPartModal";
+import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
 
-const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -253,6 +253,7 @@ export default function SearchScreen() {
         { name: "description", weight: 0.30 },
         { name: "vendor", weight: 0.10 },
         { name: "aiKeywords", weight: 0.25 },
+        { name: "barcodes", weight: 0.00 },
       ],
       threshold: 0.45,
       ignoreLocation: true,
