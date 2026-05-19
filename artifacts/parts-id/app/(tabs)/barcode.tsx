@@ -1,0 +1,810 @@
+import React, { useState, useRef, useCallback, useEffect } from "react";
+import {
+  ActivityIndicator,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { useColors } from "@/hooks/useColors";
+import { useApp } from "@/contexts/AppContext";
+import {
+  lookupByBarcode,
+  useUpdateItemBarcodes,
+  useSearchInventory,
+  useListInventory,
+  getListInventoryQueryKey,
+} from "@workspace/api-client-react";
+import type { InventoryItem } from "@workspace/api-client-react";
+import { ResultCard } from "@/components/ResultCard";
+import { BarcodeEditor } from "@/components/BarcodeEditor";
+import { useQueryClient } from "@tanstack/react-query";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+type ScanPhase = "idle" | "looking" | "found" | "notfound";
+
+interface AssignmentEntry {
+  barcode: string;
+  item: InventoryItem;
+  timestamp: Date;
+}
+
+// ── Catalog search picker (used in "assign" flow and "Add by Shelf") ──────────
+function CatalogPickerModal({
+  visible,
+  barcodeCode,
+  shelfPrefix,
+  onAssign,
+  onCancel,
+}: {
+  visible: boolean;
+  barcodeCode: string;
+  shelfPrefix?: string;
+  onAssign: (item: InventoryItem) => void;
+  onCancel: () => void;
+}) {
+  const colors = useColors();
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchMutation = useSearchInventory();
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedQuery(query), 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query]);
+
+  useEffect(() => {
+    if (!visible) { setQuery(""); setDebouncedQuery(""); return; }
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible || !debouncedQuery.trim()) return;
+    searchMutation.mutate({ data: { keywords: debouncedQuery, confidenceThreshold: 20 } });
+  }, [debouncedQuery, visible]);
+
+  const prefix = shelfPrefix?.trim().toLowerCase() ?? "";
+  const allResults = searchMutation.data?.results ?? [];
+  // When a shelf prefix is set, pre-filter to items whose bin locations match
+  // that shelf, while keeping the full list as a fallback if nothing matches.
+  const shelfFiltered = prefix
+    ? allResults.filter(r =>
+        r.item.binLocations.some(b => b.toLowerCase().startsWith(prefix))
+      )
+    : allResults;
+  const results = shelfFiltered.length > 0 ? shelfFiltered : allResults;
+  const isFiltered = prefix && shelfFiltered.length > 0;
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onCancel}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={[pickerStyles.container, { backgroundColor: colors.background }]}
+      >
+        <View style={[pickerStyles.header, { borderBottomColor: colors.border }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[pickerStyles.title, { color: colors.foreground }]}>Assign Barcode</Text>
+            <Text style={[pickerStyles.sub, { color: colors.mutedForeground }]} numberOfLines={1}>
+              Code: {barcodeCode}
+            </Text>
+            {isFiltered ? (
+              <Text style={[pickerStyles.sub, { color: colors.primary, marginTop: 2 }]} numberOfLines={1}>
+                Filtered to shelf: {shelfPrefix}
+              </Text>
+            ) : null}
+          </View>
+          <Pressable onPress={onCancel} style={[pickerStyles.closeBtn, { backgroundColor: colors.muted }]}>
+            <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
+          </Pressable>
+        </View>
+
+        <View style={{ padding: 12 }}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder={prefix ? `Search parts on shelf ${shelfPrefix}…` : "Search catalog…"}
+            placeholderTextColor={colors.mutedForeground}
+            autoFocus
+            style={[pickerStyles.searchInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+        </View>
+
+        {searchMutation.isPending ? (
+          <View style={{ padding: 24, alignItems: "center" }}>
+            <ActivityIndicator color={colors.primary} />
+          </View>
+        ) : (
+          <FlatList
+            data={results}
+            keyExtractor={(r) => String(r.item.id)}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item: r }) => (
+              <Pressable
+                onPress={() => onAssign(r.item)}
+                style={[pickerStyles.resultRow, { borderBottomColor: colors.border }]}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Text style={[pickerStyles.resultCatalog, { color: colors.foreground, flex: 1 }]}>
+                    {r.item.catalog}
+                  </Text>
+                  {prefix && r.item.binLocations.some(b => b.toLowerCase().startsWith(prefix)) ? (
+                    <View style={[pickerStyles.shelfBadge, { backgroundColor: colors.primary + "22" }]}>
+                      <Text style={[pickerStyles.shelfBadgeText, { color: colors.primary }]}>
+                        {r.item.binLocations.find(b => b.toLowerCase().startsWith(prefix))}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={[pickerStyles.resultVendor, { color: colors.mutedForeground }]}>
+                  {r.item.vendor}
+                </Text>
+                {r.item.description ? (
+                  <Text style={[pickerStyles.resultDesc, { color: colors.mutedForeground }]} numberOfLines={1}>
+                    {r.item.description}
+                  </Text>
+                ) : null}
+              </Pressable>
+            )}
+            ListEmptyComponent={
+              debouncedQuery.trim() && !searchMutation.isPending ? (
+                <Text style={[pickerStyles.emptyText, { color: colors.mutedForeground }]}>
+                  No results — try different keywords.
+                </Text>
+              ) : !debouncedQuery.trim() ? (
+                <Text style={[pickerStyles.emptyText, { color: colors.mutedForeground }]}>
+                  Type to search the catalog…
+                </Text>
+              ) : null
+            }
+          />
+        )}
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ── Main Barcode Screen ────────────────────────────────────────────────────────
+export default function BarcodeScreen() {
+  const colors = useColors();
+  const { isAdmin, textFontScale } = useApp();
+  const queryClient = useQueryClient();
+
+  const [permission, requestPermission] = useCameraPermissions();
+
+  // ── Scan state ───────────────────────────────────────────────────────────────
+  const [scanPhase, setScanPhase] = useState<ScanPhase>("idle");
+  const [scannedCode, setScannedCode] = useState<string | null>(null);
+  const [matchedItem, setMatchedItem] = useState<InventoryItem | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [showAssignPicker, setShowAssignPicker] = useState(false);
+  const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
+
+  // Debounce scans so a single barcode doesn't fire dozens of times
+  const lastScannedRef = useRef<string | null>(null);
+  const scanCooldownRef = useRef(false);
+
+  // ── Bin location suggestions (for shelf picker step 1) ───────────────────────
+  const { data: inventoryPage } = useListInventory({ limit: 500 });
+  const allBinLocations = React.useMemo(() => {
+    const items = inventoryPage?.items ?? [];
+    const set = new Set<string>();
+    for (const item of items) {
+      for (const bin of item.binLocations ?? []) {
+        if (bin.trim()) set.add(bin.trim());
+      }
+    }
+    return Array.from(set).sort();
+  }, [inventoryPage]);
+
+  // ── Add by Shelf state ───────────────────────────────────────────────────────
+  const [shelfMode, setShelfMode] = useState(false);
+  const [shelfPrefix, setShelfPrefix] = useState("");
+  const [shelfStep, setShelfStep] = useState<"pickshelf" | "scanning">("pickshelf");
+  const [shelfScannedCode, setShelfScannedCode] = useState<string | null>(null);
+  const [shelfAssignPicker, setShelfAssignPicker] = useState(false);
+  const [assignments, setAssignments] = useState<AssignmentEntry[]>([]);
+
+  const updateBarcodesMutation = useUpdateItemBarcodes();
+
+  // ── Scan handler ─────────────────────────────────────────────────────────────
+  const handleBarcodeScanned = useCallback(
+    async (data: { data: string }) => {
+      const code = data.data;
+
+      // Shelf mode: capture and show catalog picker
+      if (shelfMode && shelfStep === "scanning") {
+        if (scanCooldownRef.current || code === lastScannedRef.current) return;
+        lastScannedRef.current = code;
+        scanCooldownRef.current = true;
+        setTimeout(() => { scanCooldownRef.current = false; }, 2000);
+        setShelfScannedCode(code);
+        setShelfAssignPicker(true);
+        return;
+      }
+
+      // Normal lookup mode
+      if (scanCooldownRef.current || code === scannedCode) return;
+      scanCooldownRef.current = true;
+      setTimeout(() => { scanCooldownRef.current = false; }, 2000);
+
+      setScannedCode(code);
+      lastScannedRef.current = code;
+      setScanPhase("looking");
+      setScanError(null);
+      setMatchedItem(null);
+
+      try {
+        const result = await lookupByBarcode(encodeURIComponent(code));
+        setMatchedItem(result);
+        setScanPhase("found");
+      } catch (err: unknown) {
+        const status =
+          err && typeof err === "object" && "status" in err
+            ? (err as { status: number }).status
+            : null;
+        if (status === 404) {
+          setScanPhase("notfound");
+        } else {
+          setScanError("Lookup failed — please try again.");
+          setScanPhase("idle");
+        }
+      }
+    },
+    [shelfMode, shelfStep, scannedCode],
+  );
+
+  const resetScan = () => {
+    setScannedCode(null);
+    setMatchedItem(null);
+    setScanPhase("idle");
+    setScanError(null);
+    lastScannedRef.current = null;
+    scanCooldownRef.current = false;
+  };
+
+  // ── Assign barcode to item (normal mode) ─────────────────────────────────────
+  const handleAssign = useCallback(
+    async (item: InventoryItem) => {
+      if (!scannedCode) return;
+      setShowAssignPicker(false);
+      try {
+        const existing = item.barcodes ?? [];
+        if (!existing.includes(scannedCode)) {
+          const updated = await updateBarcodesMutation.mutateAsync({
+            id: item.id,
+            data: { barcodes: [...existing, scannedCode] },
+          });
+          const listKeyPrefix = getListInventoryQueryKey()[0];
+          await queryClient.invalidateQueries({
+            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+          });
+          setMatchedItem(updated);
+        }
+        setScanPhase("found");
+        setMatchedItem((prev) => prev ?? item);
+      } catch {
+        setScanError("Could not assign barcode. Please try again.");
+      }
+    },
+    [scannedCode, updateBarcodesMutation, queryClient],
+  );
+
+  // ── Shelf mode assign ─────────────────────────────────────────────────────────
+  const handleShelfAssign = useCallback(
+    async (item: InventoryItem) => {
+      if (!shelfScannedCode) return;
+      setShelfAssignPicker(false);
+      try {
+        const existing = item.barcodes ?? [];
+        if (!existing.includes(shelfScannedCode)) {
+          await updateBarcodesMutation.mutateAsync({
+            id: item.id,
+            data: { barcodes: [...existing, shelfScannedCode] },
+          });
+          const listKeyPrefix = getListInventoryQueryKey()[0];
+          await queryClient.invalidateQueries({
+            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+          });
+        }
+        setAssignments((prev) => [
+          { barcode: shelfScannedCode, item, timestamp: new Date() },
+          ...prev,
+        ]);
+        setShelfScannedCode(null);
+        lastScannedRef.current = null;
+      } catch {
+        setScanError("Could not assign barcode. Please try again.");
+        setShelfScannedCode(null);
+      }
+    },
+    [shelfScannedCode, updateBarcodesMutation, queryClient],
+  );
+
+  const startShelfMode = () => {
+    setShelfMode(true);
+    setShelfStep("pickshelf");
+    setShelfPrefix("");
+    setAssignments([]);
+    resetScan();
+  };
+
+  const exitShelfMode = () => {
+    setShelfMode(false);
+    setShelfStep("pickshelf");
+    setShelfPrefix("");
+    setShelfScannedCode(null);
+    setShelfAssignPicker(false);
+    resetScan();
+  };
+
+  // ── Permission gate ──────────────────────────────────────────────────────────
+  if (!permission) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>Barcode</Text>
+          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Scan barcodes to look up parts</Text>
+        </View>
+        <View style={styles.center}>
+          <Text style={[styles.permText, { color: colors.foreground }]}>Camera access is required for barcode scanning.</Text>
+          <Pressable
+            onPress={requestPermission}
+            style={[styles.permBtn, { backgroundColor: colors.primary }]}
+          >
+            <Text style={[styles.permBtnText, { color: colors.primaryForeground }]}>Allow Camera Access</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const isCameraActive = !showAssignPicker && !barcodeEditItem && !shelfAssignPicker;
+
+  return (
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+      {/* Header */}
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>
+            {shelfMode ? `Add by Shelf${shelfPrefix ? ` — ${shelfPrefix}` : ""}` : "Barcode"}
+          </Text>
+          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
+            {shelfMode
+              ? shelfStep === "pickshelf" ? "Pick a shelf prefix to begin" : `Scanning for shelf ${shelfPrefix}`
+              : "Scan a barcode to look up parts"}
+          </Text>
+        </View>
+        {isAdmin && !shelfMode ? (
+          <Pressable
+            onPress={startShelfMode}
+            style={[styles.shelfBtn, { backgroundColor: colors.accent, borderColor: colors.border }]}
+          >
+            <Text style={[styles.shelfBtnText, { color: colors.foreground }]}>+ Add by Shelf</Text>
+          </Pressable>
+        ) : null}
+        {shelfMode ? (
+          <Pressable
+            onPress={exitShelfMode}
+            style={[styles.shelfBtn, { backgroundColor: colors.destructive + "22", borderColor: colors.destructive + "44" }]}
+          >
+            <Text style={[styles.shelfBtnText, { color: colors.destructive }]}>Done</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      <ScrollView contentContainerStyle={{ paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
+        {/* ── Shelf mode: step 1 pick shelf ──────────────────────────────────── */}
+        {shelfMode && shelfStep === "pickshelf" ? (
+          <View style={{ padding: 16, gap: 12 }}>
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>SHELF / BIN PREFIX</Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TextInput
+                value={shelfPrefix}
+                onChangeText={setShelfPrefix}
+                placeholder="e.g. A1, B-Row, Shelf-3…"
+                placeholderTextColor={colors.mutedForeground}
+                style={[styles.shelfInput, { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                autoCorrect={false}
+                autoCapitalize="characters"
+                returnKeyType="done"
+              />
+              <Pressable
+                onPress={() => { if (shelfPrefix.trim()) setShelfStep("scanning"); }}
+                disabled={!shelfPrefix.trim()}
+                style={[styles.shelfStartBtn, { backgroundColor: shelfPrefix.trim() ? colors.primary : colors.muted }]}
+              >
+                <Text style={[styles.shelfStartBtnText, { color: shelfPrefix.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
+                  Start
+                </Text>
+              </Pressable>
+            </View>
+            {/* Suggestions from existing bin locations */}
+            {allBinLocations.length > 0 ? (
+              <View>
+                <Text style={[styles.hint, { color: colors.mutedForeground, marginBottom: 6 }]}>
+                  Tap an existing bin location to use it as a prefix:
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                  <View style={{ flexDirection: "row", flexWrap: "nowrap", gap: 6 }}>
+                    {allBinLocations
+                      .filter(b => !shelfPrefix.trim() || b.toUpperCase().startsWith(shelfPrefix.toUpperCase()))
+                      .slice(0, 30)
+                      .map(bin => (
+                        <Pressable
+                          key={bin}
+                          onPress={() => setShelfPrefix(bin)}
+                          style={[
+                            styles.binChip,
+                            {
+                              backgroundColor: shelfPrefix === bin ? colors.primary : colors.muted,
+                              borderColor: shelfPrefix === bin ? colors.primary : colors.border,
+                            },
+                          ]}
+                        >
+                          <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: shelfPrefix === bin ? colors.primaryForeground : colors.foreground }}>
+                            {bin}
+                          </Text>
+                        </Pressable>
+                      ))}
+                  </View>
+                </ScrollView>
+              </View>
+            ) : null}
+            <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+              Select or type a shelf/bin prefix. Each scanned barcode will be assigned to an item from that shelf.
+            </Text>
+          </View>
+        ) : null}
+
+        {/* ── Camera viewfinder ──────────────────────────────────────────────── */}
+        {(!shelfMode || shelfStep === "scanning") ? (
+          <View style={styles.cameraWrapper}>
+            {isCameraActive ? (
+              <CameraView
+                style={styles.camera}
+                facing="back"
+                barcodeScannerSettings={{ barcodeTypes: ["qr", "ean13", "ean8", "code128", "code39", "pdf417", "upc_a", "upc_e", "aztec", "datamatrix", "itf14"] }}
+                onBarcodeScanned={handleBarcodeScanned}
+              />
+            ) : (
+              <View style={[styles.camera, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
+                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>Camera paused</Text>
+              </View>
+            )}
+
+            {/* Viewfinder overlay */}
+            <View style={styles.viewfinderOverlay} pointerEvents="none">
+              <View style={[styles.viewfinderFrame, { borderColor: colors.primary }]} />
+            </View>
+
+            {/* Scanning status indicator */}
+            {scanPhase === "looking" ? (
+              <View style={[styles.scanStatus, { backgroundColor: colors.primary + "cc" }]}>
+                <ActivityIndicator color="#fff" size="small" />
+                <Text style={styles.scanStatusText}>Looking up…</Text>
+              </View>
+            ) : scanPhase === "idle" && !shelfMode ? (
+              <View style={[styles.scanStatus, { backgroundColor: "#00000088" }]}>
+                <Text style={styles.scanStatusText}>Point camera at a barcode</Text>
+              </View>
+            ) : shelfMode && shelfStep === "scanning" ? (
+              <View style={[styles.scanStatus, { backgroundColor: "#00000088" }]}>
+                <Text style={styles.scanStatusText}>Scan a barcode to assign</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* ── Error banner ───────────────────────────────────────────────────── */}
+        {scanError ? (
+          <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "44" }]}>
+            <Text style={[styles.errorText, { color: colors.destructive }]}>⚠ {scanError}</Text>
+            <Pressable onPress={() => setScanError(null)}>
+              <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {/* ── Normal mode: found result ─────────────────────────────────────── */}
+        {!shelfMode && scanPhase === "found" && matchedItem ? (
+          <View style={{ padding: 16 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>SCAN RESULT</Text>
+              <Pressable onPress={resetScan} style={[styles.rescanBtn, { borderColor: colors.border }]}>
+                <Text style={[styles.rescanText, { color: colors.foreground }]}>↩ Scan Again</Text>
+              </Pressable>
+            </View>
+            <Text style={[styles.scannedCode, { color: colors.mutedForeground }]}>
+              Code: {scannedCode}
+            </Text>
+            <ResultCard
+              result={{ item: matchedItem, confidence: 1.0, matchReason: "barcode match", seriesBase: null, seriesLabel: null, variants: [] }}
+              onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
+              rank={0}
+              fontScale={textFontScale}
+            />
+          </View>
+        ) : null}
+
+        {/* ── Normal mode: not found ────────────────────────────────────────── */}
+        {!shelfMode && scanPhase === "notfound" && scannedCode ? (
+          <View style={{ padding: 16 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>NOT FOUND</Text>
+              <Pressable onPress={resetScan} style={[styles.rescanBtn, { borderColor: colors.border }]}>
+                <Text style={[styles.rescanText, { color: colors.foreground }]}>↩ Scan Again</Text>
+              </Pressable>
+            </View>
+            <View style={[styles.notFoundCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.notFoundTitle, { color: colors.foreground }]}>No item found</Text>
+              <Text style={[styles.scannedCode, { color: colors.mutedForeground }]}>
+                Code: {scannedCode}
+              </Text>
+              <Text style={[styles.notFoundDesc, { color: colors.mutedForeground }]}>
+                This barcode isn't assigned to any catalog item yet.
+              </Text>
+              {isAdmin ? (
+                <Pressable
+                  onPress={() => setShowAssignPicker(true)}
+                  style={[styles.assignBtn, { backgroundColor: colors.primary }]}
+                >
+                  <Text style={[styles.assignBtnText, { color: colors.primaryForeground }]}>
+                    Assign to Item
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
+        {/* ── Shelf mode: assignment log ────────────────────────────────────── */}
+        {shelfMode && shelfStep === "scanning" && assignments.length > 0 ? (
+          <View style={{ padding: 16 }}>
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+              COMPLETED ({assignments.length})
+            </Text>
+            {assignments.map((a, i) => (
+              <View
+                key={i}
+                style={[styles.logRow, { backgroundColor: colors.card, borderColor: colors.border }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.logCatalog, { color: colors.foreground }]}>
+                    {a.item.catalog}
+                    <Text style={[styles.logVendor, { color: colors.mutedForeground }]}> · {a.item.vendor}</Text>
+                  </Text>
+                  <Text style={[styles.logBarcode, { color: colors.mutedForeground }]}>{a.barcode}</Text>
+                </View>
+                <View style={[styles.logBadge, { backgroundColor: colors.success + "22" }]}>
+                  <Text style={[styles.logBadgeText, { color: colors.success }]}>✓</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
+      </ScrollView>
+
+      {/* ── Assign picker modals ─────────────────────────────────────────────── */}
+      <CatalogPickerModal
+        visible={showAssignPicker}
+        barcodeCode={scannedCode ?? ""}
+        onAssign={handleAssign}
+        onCancel={() => setShowAssignPicker(false)}
+      />
+
+      <CatalogPickerModal
+        visible={shelfAssignPicker}
+        barcodeCode={shelfScannedCode ?? ""}
+        shelfPrefix={shelfPrefix}
+        onAssign={handleShelfAssign}
+        onCancel={() => { setShelfAssignPicker(false); setShelfScannedCode(null); lastScannedRef.current = null; }}
+      />
+
+      {/* ── Barcode editor modal ─────────────────────────────────────────────── */}
+      <BarcodeEditor
+        item={barcodeEditItem}
+        onClose={() => setBarcodeEditItem(null)}
+        onBarcodesChanged={(id, barcodes) => {
+          if (matchedItem?.id === id) {
+            setMatchedItem((prev) => prev ? { ...prev, barcodes } : prev);
+          }
+        }}
+      />
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: { flex: 1 },
+  header: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, flexDirection: "row", alignItems: "center", gap: 10 },
+  headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
+  headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  permText: { fontSize: 15, fontFamily: "Inter_400Regular", textAlign: "center", marginBottom: 20, lineHeight: 22 },
+  permBtn: { paddingHorizontal: 24, paddingVertical: 14, borderRadius: 10 },
+  permBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  shelfBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  shelfBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  sectionLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 6,
+  },
+  cameraWrapper: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 16,
+    overflow: "hidden",
+    height: 280,
+    position: "relative",
+  },
+  camera: { flex: 1, width: "100%", height: "100%" },
+  viewfinderOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  viewfinderFrame: {
+    width: 200,
+    height: 120,
+    borderWidth: 2,
+    borderRadius: 8,
+    opacity: 0.8,
+  },
+  scanStatus: {
+    position: "absolute",
+    bottom: 12,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  scanStatusText: { color: "#fff", fontSize: 13, fontFamily: "Inter_500Medium" },
+  errorBanner: {
+    margin: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  errorText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1 },
+  scannedCode: { fontSize: 12, fontFamily: "Inter_400Regular", marginBottom: 8 },
+  rescanBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  rescanText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  notFoundCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+    gap: 6,
+  },
+  notFoundTitle: { fontSize: 16, fontFamily: "Inter_700Bold" },
+  notFoundDesc: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  assignBtn: {
+    marginTop: 8,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  assignBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  shelfInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+  },
+  shelfStartBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    justifyContent: "center",
+  },
+  shelfStartBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  hint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic", lineHeight: 18 },
+  binChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  logRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 10,
+    marginBottom: 6,
+    gap: 10,
+  },
+  logCatalog: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  logVendor: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  logBarcode: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  logBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logBadgeText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+});
+
+const pickerStyles = StyleSheet.create({
+  container: { flex: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+    paddingTop: 20,
+    borderBottomWidth: 1,
+    gap: 8,
+  },
+  title: { fontSize: 18, fontFamily: "Inter_700Bold" },
+  sub: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
+  closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  searchInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+  },
+  resultRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  resultCatalog: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  resultVendor: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  resultDesc: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  emptyText: { padding: 24, textAlign: "center", fontSize: 13, fontFamily: "Inter_400Regular" },
+  shelfBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    flexShrink: 1,
+  },
+  shelfBadgeText: { fontSize: 11, fontFamily: "Inter_500Medium" },
+});

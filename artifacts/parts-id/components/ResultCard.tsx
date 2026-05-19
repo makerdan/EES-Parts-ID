@@ -14,6 +14,8 @@ interface ResultCardProps {
   onEditKeywords?: (item: InventoryItem) => void;
   /** Admin-only: opens the bin editor for this part. */
   onEditBins?: (item: InventoryItem) => void;
+  /** Admin-only: opens the barcode editor for this part. */
+  onEditBarcodes?: (item: InventoryItem) => void;
   rank: number;
   fontScale?: number;
 }
@@ -74,7 +76,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, onEditBins, rank, fontScale = 1.0 }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, rank, fontScale = 1.0 }: ResultCardProps) {
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
@@ -161,6 +163,38 @@ export function ResultCard({ result, onEditKeywords, onEditBins, rank, fontScale
         {/* Expanded content */}
         {expanded ? (
           <>
+            {/* Barcodes section */}
+            <View style={cardStyles.section}>
+              <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
+                BARCODES
+              </Text>
+              {item.barcodes && item.barcodes.length > 0 ? (
+                <View style={cardStyles.keywordRow}>
+                  {item.barcodes.map((bc, i) => (
+                    <View key={i} style={[cardStyles.keyword, { backgroundColor: colors.muted }]}>
+                      <Text style={[cardStyles.keywordText, { color: colors.foreground, fontFamily: "Inter_500Medium" }]}>
+                        {bc}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={[cardStyles.keywordText, { color: colors.mutedForeground, marginBottom: 6 }]}>
+                  No barcodes assigned.
+                </Text>
+              )}
+              {onEditBarcodes ? (
+                <Pressable
+                  onPress={() => onEditBarcodes(item)}
+                  style={[cardStyles.editBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
+                    ✏️ Edit Barcodes
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+
             {/* Keywords — always shown when expanded; edit button always accessible */}
             <View style={cardStyles.section}>
               <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>

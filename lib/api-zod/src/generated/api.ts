@@ -39,6 +39,9 @@ export const ListInventoryResponse = zod.object({
           "Bin locations where this part is stored (a part may live in multiple bins)",
         ),
       aiKeywords: zod.array(zod.string()),
+      barcodes: zod
+        .array(zod.string())
+        .describe("Barcode values associated with this part"),
       enrichedAt: zod.coerce.date().nullish(),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
@@ -129,6 +132,9 @@ export const SearchInventoryResponse = zod.object({
             "Bin locations where this part is stored (a part may live in multiple bins)",
           ),
         aiKeywords: zod.array(zod.string()),
+        barcodes: zod
+          .array(zod.string())
+          .describe("Barcode values associated with this part"),
         enrichedAt: zod.coerce.date().nullish(),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
@@ -149,6 +155,9 @@ export const SearchInventoryResponse = zod.object({
               "Bin locations where this part is stored (a part may live in multiple bins)",
             ),
           aiKeywords: zod.array(zod.string()),
+          barcodes: zod
+            .array(zod.string())
+            .describe("Barcode values associated with this part"),
           enrichedAt: zod.coerce.date().nullish(),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
@@ -227,6 +236,67 @@ export const UpdateItemBinsResponse = zod.object({
       "Bin locations where this part is stored (a part may live in multiple bins)",
     ),
   aiKeywords: zod.array(zod.string()),
+  barcodes: zod
+    .array(zod.string())
+    .describe("Barcode values associated with this part"),
+  enrichedAt: zod.coerce.date().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Look up an inventory item by barcode value
+ */
+export const LookupByBarcodeParams = zod.object({
+  code: zod.coerce.string(),
+});
+
+export const LookupByBarcodeResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  description: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Bin locations where this part is stored (a part may live in multiple bins)",
+    ),
+  aiKeywords: zod.array(zod.string()),
+  barcodes: zod
+    .array(zod.string())
+    .describe("Barcode values associated with this part"),
+  enrichedAt: zod.coerce.date().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Replace the barcodes array on a single inventory item (admin)
+ */
+export const UpdateItemBarcodesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateItemBarcodesBody = zod.object({
+  barcodes: zod
+    .array(zod.string())
+    .describe("Replacement barcode list. Pass [] to clear all barcodes."),
+});
+
+export const UpdateItemBarcodesResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  description: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Bin locations where this part is stored (a part may live in multiple bins)",
+    ),
+  aiKeywords: zod.array(zod.string()),
+  barcodes: zod
+    .array(zod.string())
+    .describe("Barcode values associated with this part"),
   enrichedAt: zod.coerce.date().nullish(),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
@@ -254,6 +324,9 @@ export const UpdateItemDescriptionResponse = zod.object({
       "Bin locations where this part is stored (a part may live in multiple bins)",
     ),
   aiKeywords: zod.array(zod.string()),
+  barcodes: zod
+    .array(zod.string())
+    .describe("Barcode values associated with this part"),
   enrichedAt: zod.coerce.date().nullish(),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
@@ -281,6 +354,9 @@ export const UpdateItemKeywordsResponse = zod.object({
       "Bin locations where this part is stored (a part may live in multiple bins)",
     ),
   aiKeywords: zod.array(zod.string()),
+  barcodes: zod
+    .array(zod.string())
+    .describe("Barcode values associated with this part"),
   enrichedAt: zod.coerce.date().nullish(),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
@@ -338,6 +414,9 @@ export const AiIdentifyPartResponse = zod.object({
             "Bin locations where this part is stored (a part may live in multiple bins)",
           ),
         aiKeywords: zod.array(zod.string()),
+        barcodes: zod
+          .array(zod.string())
+          .describe("Barcode values associated with this part"),
         enrichedAt: zod.coerce.date().nullish(),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
@@ -358,6 +437,9 @@ export const AiIdentifyPartResponse = zod.object({
               "Bin locations where this part is stored (a part may live in multiple bins)",
             ),
           aiKeywords: zod.array(zod.string()),
+          barcodes: zod
+            .array(zod.string())
+            .describe("Barcode values associated with this part"),
           enrichedAt: zod.coerce.date().nullish(),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),

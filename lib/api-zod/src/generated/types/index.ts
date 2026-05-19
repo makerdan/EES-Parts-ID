@@ -23,6 +23,7 @@ export * from "./searchInventoryBody";
 export * from "./searchInventoryResponse";
 export * from "./searchInventoryResponseDimensionCounts";
 export * from "./searchResult";
+export * from "./updateBarcodesBody";
 export * from "./updateBinsBody";
 export * from "./updateDescriptionBody";
 export * from "./updateKeywordsBody";

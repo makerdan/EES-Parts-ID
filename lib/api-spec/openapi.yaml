@@ -139,6 +139,56 @@ paths:
         "404":
           description: Item not found
 
+  /inventory/barcode/{code}:
+    get:
+      operationId: lookupByBarcode
+      tags: [inventory]
+      summary: Look up an inventory item by barcode value
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matched inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "404":
+          description: No item with that barcode
+
+  /inventory/{id}/barcodes:
+    patch:
+      operationId: updateItemBarcodes
+      tags: [inventory]
+      summary: Replace the barcodes array on a single inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBarcodesBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
   /inventory/{id}/description:
     patch:
       operationId: updateItemDescription
@@ -381,6 +431,11 @@ components:
           type: array
           items:
             type: string
+        barcodes:
+          type: array
+          items:
+            type: string
+          description: Barcode values associated with this part
         enrichedAt:
           type: string
           format: date-time
@@ -398,6 +453,7 @@ components:
         - description
         - binLocations
         - aiKeywords
+        - barcodes
         - createdAt
         - updatedAt
 
@@ -600,6 +656,17 @@ components:
           description: Replacement bin-location list. Pass [] to clear all bins.
       required:
         - binLocations
+
+    UpdateBarcodesBody:
+      type: object
+      properties:
+        barcodes:
+          type: array
+          items:
+            type: string
+          description: Replacement barcode list. Pass [] to clear all barcodes.
+      required:
+        - barcodes
 
     UpdateKeywordsBody:
       type: object
