@@ -354,7 +354,8 @@ export default function UploadScreen() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
-  const [tab, setTab] = useState<"upload" | "inventory">("upload");
+  const [tab, setTab] = useState<"import" | "enrichment">("import");
+  const [pasteText, setPasteText] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadPending, setUploadPending] = useState(false);
@@ -392,6 +393,7 @@ export default function UploadScreen() {
   // Keep a ref so interval callbacks always see the current token
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+  const pasteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
   // see a replace-warning before they can press Upload.
@@ -583,7 +585,11 @@ export default function UploadScreen() {
   }, [isAdmin, fetchEnrichSummary, startBulkPoll, stopBulkPoll, startMeasurePoll, stopMeasurePoll, logoutAdmin]);
 
   // Clean up polling on unmount
-  useEffect(() => () => { stopBulkPoll(); stopMeasurePoll(); }, [stopBulkPoll, stopMeasurePoll]);
+  useEffect(() => () => {
+    stopBulkPoll();
+    stopMeasurePoll();
+    if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
+  }, [stopBulkPoll, stopMeasurePoll]);
 
   const handleStartBulkEnrich = async () => {
     setBulkEnrichError(null);
@@ -662,6 +668,8 @@ export default function UploadScreen() {
   };
 
   const handlePickFile = async () => {
+    setPasteText("");
+    if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [
@@ -736,6 +744,31 @@ export default function UploadScreen() {
     }
   };
 
+  const handlePasteChange = useCallback((text: string) => {
+    setPasteText(text);
+    setFileName(null);
+    setFileType(null);
+    if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
+    if (!text.trim()) {
+      setParsedRows([]);
+      setRawCsv(null);
+      return;
+    }
+    pasteDebounceRef.current = setTimeout(() => {
+      const rows = parseCSV(text);
+      if (rows.length === 0) {
+        setUploadError("No data rows found. Ensure the text has columns: vendor, catalog (required), description, bin (optional).");
+        setParsedRows([]);
+        setRawCsv(null);
+        return;
+      }
+      setUploadError(null);
+      setUploadSuccess(null);
+      setParsedRows(rows);
+      setRawCsv(serializeToCsv(rows, new Set()));
+    }, 400);
+  }, []);
+
   const handleUpload = async () => {
     if (!parsedRows.length || !rawCsv) return;
     // Defensive guard: never commit an upload if the preview hasn't successfully
@@ -780,6 +813,7 @@ export default function UploadScreen() {
       setRawCsv(null);
       setFileName(null);
       setFileType(null);
+      setPasteText("");
       await inventoryQuery.refetch();
     } catch {
       setUploadError("Upload failed — could not save inventory items. Please try again.");
@@ -886,7 +920,7 @@ export default function UploadScreen() {
                 Upload complete — inserted {uploadSuccess.inserted}, updated {uploadSuccess.updated} ({uploadSuccess.total} total)
               </Text>
               <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                <Pressable onPress={() => { setUploadSuccess(null); setTab("inventory"); }}>
+                <Pressable onPress={() => { setUploadSuccess(null); setTab("enrichment"); }}>
                   <Text style={{ color: "#059669", fontSize: 12, fontFamily: "Inter_600SemiBold" }}>View →</Text>
                 </Pressable>
                 <Pressable onPress={() => setUploadSuccess(null)} style={styles.bannerClose}>
@@ -898,7 +932,7 @@ export default function UploadScreen() {
 
           {/* Tab bar */}
           <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-            {(["upload", "inventory"] as const).map(t => (
+            {(["import", "enrichment"] as const).map(t => (
               <Pressable
                 key={t}
                 onPress={() => setTab(t)}
@@ -908,13 +942,13 @@ export default function UploadScreen() {
                 ]}
               >
                 <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
-                  {t === "upload" ? "Upload File" : `New Inventory (${inventoryTotal})`}
+                  {t === "import" ? "Import File" : `Enrichment (${inventoryTotal})`}
                 </Text>
               </Pressable>
             ))}
           </View>
 
-          {tab === "upload" ? (
+          {tab === "import" ? (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
               {/* File upload card */}
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -940,6 +974,27 @@ export default function UploadScreen() {
                     </Text>
                   </View>
                 ) : null}
+
+                {/* Paste input */}
+                <View style={styles.pasteDivider}>
+                  <View style={[styles.pasteDividerLine, { backgroundColor: colors.border }]} />
+                  <Text style={[styles.pasteDividerLabel, { backgroundColor: colors.card, color: colors.mutedForeground }]}>or</Text>
+                </View>
+                <Text style={[styles.pasteLabel, { color: colors.mutedForeground }]}>
+                  Paste rows from a spreadsheet
+                </Text>
+                <TextInput
+                  value={pasteText}
+                  onChangeText={handlePasteChange}
+                  placeholder={"Vendor,Catalog,Description,BinLocation\nEATON,BR120,1 Pole Breaker,A1"}
+                  placeholderTextColor={colors.mutedForeground}
+                  multiline
+                  scrollEnabled
+                  style={[styles.pasteInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  textAlignVertical="top"
+                />
               </View>
 
               {/* Preview */}
@@ -1228,7 +1283,7 @@ export default function UploadScreen() {
                   {binDiffFailed ? (
                     <View style={[styles.diffCard, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "44", borderWidth: 1, marginTop: 10 }]}>
                       <Text style={[styles.diffText, { color: colors.destructive }]}>
-                        ⚠ Could not check for bin conflicts. Upload is disabled until the check succeeds. Please re-select the file or re-authenticate and try again.
+                        ⚠ Could not check for bin conflicts. Upload is disabled until the check succeeds. Please re-select the file, re-paste, or re-authenticate and try again.
                       </Text>
                     </View>
                   ) : null}
@@ -1262,339 +1317,279 @@ export default function UploadScreen() {
                 </View>
               ) : null}
 
-              {/* PDF Catalog Import */}
-              <CatalogPdfUpload
-                adminToken={adminToken}
-                onSessionExpired={() => {
-                  logoutAdmin();
-                  setUploadError("Admin session expired. Please unlock again.");
-                }}
-              />
-
-              {/* Bulk Enrichment Coverage */}
-              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📊 Enrichment Coverage</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  AI generates searchable keywords for each part and saves them to the database permanently.
-                </Text>
-
-                {/* Global coverage stats */}
-                {enrichSummary ? (
-                  <>
-                    <View style={styles.enrichStats}>
-                      <View style={[styles.statChip, { backgroundColor: colors.success + "11" }]}>
-                        <Text style={[styles.statValue, { color: colors.success }]}>
-                          {enrichSummary.enriched.toLocaleString()}
-                        </Text>
-                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Enriched</Text>
-                      </View>
-                      <View style={[styles.statChip, { backgroundColor: colors.warning + "11" }]}>
-                        <Text style={[styles.statValue, { color: colors.warning }]}>
-                          {enrichSummary.unenriched.toLocaleString()}
-                        </Text>
-                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Pending</Text>
-                      </View>
-                      <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
-                        <Text style={[styles.statValue, { color: colors.foreground }]}>
-                          {enrichSummary.total > 0
-                            ? `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`
-                            : "—"}
-                        </Text>
-                        <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Coverage</Text>
-                      </View>
-                    </View>
-
-                    {/* Coverage progress bar */}
-                    {enrichSummary.total > 0 ? (
-                      <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
-                        <View
-                          style={[
-                            styles.progressFill,
-                            {
-                              backgroundColor: colors.success,
-                              width: `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`,
-                            },
-                          ]}
-                        />
-                      </View>
-                    ) : null}
-                  </>
-                ) : (
-                  <ActivityIndicator size="small" color={colors.primary} />
+            </ScrollView>
+          ) : (
+            <View style={{ flex: 1 }}>
+              <FlatList
+                data={inventory}
+                keyExtractor={item => String(item.id)}
+                renderItem={({ item }) => (
+                  <InventoryRow item={item} colors={colors} onEditBins={setBinEditorItem} />
                 )}
+                contentContainerStyle={{ paddingBottom: 120 }}
+                ListHeaderComponent={() => (
+                  <View style={{ padding: 16 }}>
+                    {/* PDF Catalog Import */}
+                    <CatalogPdfUpload
+                      adminToken={adminToken}
+                      onSessionExpired={() => {
+                        logoutAdmin();
+                        setUploadError("Admin session expired. Please unlock again.");
+                      }}
+                    />
 
-                {/* Bulk job progress (while running) */}
-                {bulkJobStatus?.running ? (
-                  <View style={styles.progressContainer}>
-                    <View style={[styles.bulkStatusRow]}>
-                      <ActivityIndicator size="small" color={colors.primary} />
-                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8, flex: 1 }]}>
-                        {bulkJobStatus.stopRequested ? "Stopping after current batch…" : "Background enrichment running…"}
+                    {/* Bulk Enrichment Coverage */}
+                    <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <Text style={[styles.cardTitle, { color: colors.foreground }]}>📊 Enrichment Coverage</Text>
+                      <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                        AI generates searchable keywords for each part and saves them to the database permanently.
                       </Text>
+
+                      {enrichSummary ? (
+                        <>
+                          <View style={styles.enrichStats}>
+                            <View style={[styles.statChip, { backgroundColor: colors.success + "11" }]}>
+                              <Text style={[styles.statValue, { color: colors.success }]}>
+                                {enrichSummary.enriched.toLocaleString()}
+                              </Text>
+                              <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Enriched</Text>
+                            </View>
+                            <View style={[styles.statChip, { backgroundColor: colors.warning + "11" }]}>
+                              <Text style={[styles.statValue, { color: colors.warning }]}>
+                                {enrichSummary.unenriched.toLocaleString()}
+                              </Text>
+                              <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Pending</Text>
+                            </View>
+                            <View style={[styles.statChip, { backgroundColor: colors.muted }]}>
+                              <Text style={[styles.statValue, { color: colors.foreground }]}>
+                                {enrichSummary.total > 0
+                                  ? `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%`
+                                  : "—"}
+                              </Text>
+                              <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>Coverage</Text>
+                            </View>
+                          </View>
+                          {enrichSummary.total > 0 ? (
+                            <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                              <View
+                                style={[styles.progressFill, { backgroundColor: colors.success, width: `${Math.round((enrichSummary.enriched / enrichSummary.total) * 100)}%` }]}
+                              />
+                            </View>
+                          ) : null}
+                        </>
+                      ) : (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      )}
+                      {bulkJobStatus?.running ? (
+                        <View style={styles.progressContainer}>
+                          <View style={[styles.bulkStatusRow]}>
+                            <ActivityIndicator size="small" color={colors.primary} />
+                            <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8, flex: 1 }]}>
+                              {bulkJobStatus.stopRequested ? "Stopping after current batch…" : "Background enrichment running…"}
+                            </Text>
+                            <Pressable
+                              onPress={handleStopBulkEnrich}
+                              disabled={bulkStopPending || bulkJobStatus.stopRequested}
+                              style={[styles.stopBtn, { borderColor: (bulkStopPending || bulkJobStatus.stopRequested) ? colors.border : colors.destructive }]}
+                            >
+                              {bulkStopPending ? (
+                                <ActivityIndicator size="small" color={colors.destructive} />
+                              ) : (
+                                <Text style={[styles.stopBtnText, { color: bulkJobStatus.stopRequested ? colors.mutedForeground : colors.destructive }]}>
+                                  {bulkJobStatus.stopRequested ? "Stopping…" : "Stop"}
+                                </Text>
+                              )}
+                            </Pressable>
+                          </View>
+                          {bulkJobStatus.total != null && bulkJobStatus.total > 0 ? (
+                            <>
+                              <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                                <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${Math.round((bulkJobStatus.processed / bulkJobStatus.total) * 100)}%` }]} />
+                              </View>
+                              <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
+                                {bulkJobStatus.processed.toLocaleString()} / {bulkJobStatus.total.toLocaleString()} processed
+                                {bulkJobStatus.errors > 0 ? ` · ${bulkJobStatus.errors} errors` : ""}
+                              </Text>
+                            </>
+                          ) : null}
+                        </View>
+                      ) : null}
+                      {bulkJobStatus && !bulkJobStatus.running && bulkJobStatus.finishedAt ? (
+                        <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
+                          <Text style={[styles.doneText, { color: colors.success }]}>
+                            ✓ Last run: {bulkJobStatus.processed.toLocaleString()} processed
+                            {bulkJobStatus.errors > 0 ? `, ${bulkJobStatus.errors} errors` : ""}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {(bulkJobStatus?.lastError || bulkEnrichError) ? (
+                        <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
+                          <Text style={[styles.doneText, { color: colors.destructive }]}>
+                            ⚠ {bulkEnrichError ?? bulkJobStatus?.lastError}
+                          </Text>
+                        </View>
+                      ) : null}
                       <Pressable
-                        onPress={handleStopBulkEnrich}
-                        disabled={bulkStopPending || bulkJobStatus.stopRequested}
-                        style={[
-                          styles.stopBtn,
-                          { borderColor: (bulkStopPending || bulkJobStatus.stopRequested) ? colors.border : colors.destructive },
-                        ]}
+                        onPress={handleStartBulkEnrich}
+                        disabled={bulkJobStatus?.running || bulkEnrichPending}
+                        style={[styles.enrichBtn, { backgroundColor: (bulkJobStatus?.running || bulkEnrichPending) ? colors.muted : colors.primary }]}
                       >
-                        {bulkStopPending ? (
-                          <ActivityIndicator size="small" color={colors.destructive} />
+                        {bulkEnrichPending ? (
+                          <ActivityIndicator color={colors.primaryForeground} />
                         ) : (
-                          <Text style={[styles.stopBtnText, { color: (bulkJobStatus.stopRequested) ? colors.mutedForeground : colors.destructive }]}>
-                            {bulkJobStatus.stopRequested ? "Stopping…" : "Stop"}
+                          <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                            {bulkJobStatus?.running ? "⏳ Enrichment Running…" : "🚀 Start Bulk Enrichment"}
                           </Text>
                         )}
                       </Pressable>
                     </View>
-                    {bulkJobStatus.total != null && bulkJobStatus.total > 0 ? (
-                      <>
-                        <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
-                          <View
-                            style={[
-                              styles.progressFill,
-                              {
-                                backgroundColor: colors.primary,
-                                width: `${Math.round((bulkJobStatus.processed / bulkJobStatus.total) * 100)}%`,
-                              },
-                            ]}
-                          />
+
+                    {/* Measurement Enrichment */}
+                    <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <Text style={[styles.cardTitle, { color: colors.foreground }]}>📐 Measurement Enrichment</Text>
+                      <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                        Converts measurement terms (e.g. 1/2" → 0.5in, 12mm) into searchable keywords for every part.
+                      </Text>
+                      {measureJobStatus?.running ? (
+                        <View style={styles.progressContainer}>
+                          <View style={styles.bulkStatusRow}>
+                            <ActivityIndicator size="small" color={colors.primary} />
+                            <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8 }]}>
+                              Measurement enrichment running…
+                            </Text>
+                          </View>
+                          {measureJobStatus.total != null && measureJobStatus.total > 0 ? (
+                            <>
+                              <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                                <View style={[styles.progressFill, { backgroundColor: colors.primary, width: `${Math.round((measureJobStatus.processed / measureJobStatus.total) * 100)}%` }]} />
+                              </View>
+                              <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
+                                {measureJobStatus.processed.toLocaleString()} / {measureJobStatus.total.toLocaleString()} processed
+                                {measureJobStatus.updated > 0 ? ` · ${measureJobStatus.updated} updated` : ""}
+                              </Text>
+                            </>
+                          ) : null}
                         </View>
-                        <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                          {bulkJobStatus.processed.toLocaleString()} / {bulkJobStatus.total.toLocaleString()} processed
-                          {bulkJobStatus.errors > 0 ? ` · ${bulkJobStatus.errors} errors` : ""}
-                        </Text>
-                      </>
-                    ) : null}
-                  </View>
-                ) : null}
-
-                {/* Bulk job done state */}
-                {bulkJobStatus && !bulkJobStatus.running && bulkJobStatus.finishedAt ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.success }]}>
-                      ✓ Last run: {bulkJobStatus.processed.toLocaleString()} processed
-                      {bulkJobStatus.errors > 0 ? `, ${bulkJobStatus.errors} errors` : ""}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {/* Bulk job error */}
-                {(bulkJobStatus?.lastError || bulkEnrichError) ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.destructive }]}>
-                      ⚠ {bulkEnrichError ?? bulkJobStatus?.lastError}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {/* Start / running button */}
-                <Pressable
-                  onPress={handleStartBulkEnrich}
-                  disabled={bulkJobStatus?.running || bulkEnrichPending}
-                  style={[
-                    styles.enrichBtn,
-                    { backgroundColor: (bulkJobStatus?.running || bulkEnrichPending) ? colors.muted : colors.primary },
-                  ]}
-                >
-                  {bulkEnrichPending ? (
-                    <ActivityIndicator color={colors.primaryForeground} />
-                  ) : (
-                    <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                      {bulkJobStatus?.running ? "⏳ Enrichment Running…" : "🚀 Start Bulk Enrichment"}
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
-
-              {/* Measurement Enrichment */}
-              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>📐 Measurement Enrichment</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Converts measurement terms (e.g. 1/2" → 0.5in, 12mm) into searchable keywords for every part.
-                </Text>
-
-                {/* Running progress */}
-                {measureJobStatus?.running ? (
-                  <View style={styles.progressContainer}>
-                    <View style={styles.bulkStatusRow}>
-                      <ActivityIndicator size="small" color={colors.primary} />
-                      <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8 }]}>
-                        Measurement enrichment running…
-                      </Text>
-                    </View>
-                    {measureJobStatus.total != null && measureJobStatus.total > 0 ? (
-                      <>
-                        <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
-                          <View
-                            style={[
-                              styles.progressFill,
-                              {
-                                backgroundColor: colors.primary,
-                                width: `${Math.round((measureJobStatus.processed / measureJobStatus.total) * 100)}%`,
-                              },
-                            ]}
-                          />
+                      ) : null}
+                      {measureJobStatus && !measureJobStatus.running && measureJobStatus.finishedAt ? (
+                        <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
+                          <Text style={[styles.doneText, { color: colors.success }]}>
+                            ✓ Last run: {measureJobStatus.processed.toLocaleString()} processed
+                            {measureJobStatus.updated > 0 ? `, ${measureJobStatus.updated} updated` : ""}
+                          </Text>
                         </View>
-                        <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                          {measureJobStatus.processed.toLocaleString()} / {measureJobStatus.total.toLocaleString()} processed
-                          {measureJobStatus.updated > 0 ? ` · ${measureJobStatus.updated} updated` : ""}
-                        </Text>
-                      </>
-                    ) : null}
-                  </View>
-                ) : null}
-
-                {/* Done state */}
-                {measureJobStatus && !measureJobStatus.running && measureJobStatus.finishedAt ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.success }]}>
-                      ✓ Last run: {measureJobStatus.processed.toLocaleString()} processed
-                      {measureJobStatus.updated > 0 ? `, ${measureJobStatus.updated} updated` : ""}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {/* Error */}
-                {(measureJobStatus?.lastError || measureEnrichError) ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.destructive }]}>
-                      ⚠ {measureEnrichError ?? measureJobStatus?.lastError}
-                    </Text>
-                  </View>
-                ) : null}
-
-                <Pressable
-                  onPress={handleStartMeasureEnrich}
-                  disabled={measureJobStatus?.running || measureEnrichPending}
-                  style={[
-                    styles.enrichBtn,
-                    { backgroundColor: (measureJobStatus?.running || measureEnrichPending) ? colors.muted : colors.primary },
-                  ]}
-                >
-                  {measureEnrichPending ? (
-                    <ActivityIndicator color={colors.primaryForeground} />
-                  ) : (
-                    <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                      {measureJobStatus?.running ? "⏳ Running…" : "📐 Run Measurement Enrichment"}
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
-
-              {/* Quick-enrich (SSE streaming for immediate feedback) */}
-              <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 Quick Enrich</Text>
-                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Enrich a small batch immediately with live progress. Useful for newly imported items.
-                </Text>
-
-                {enrichProgress && !enrichProgress.done ? (
-                  <View style={styles.progressContainer}>
-                    <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
-                      <View
-                        style={[
-                          styles.progressFill,
-                          {
-                            backgroundColor: colors.primary,
-                            width: enrichProgress.total > 0
-                              ? `${Math.round((enrichProgress.progress / enrichProgress.total) * 100)}%`
-                              : "0%",
-                          },
-                        ]}
-                      />
+                      ) : null}
+                      {(measureJobStatus?.lastError || measureEnrichError) ? (
+                        <View style={[styles.doneCard, { backgroundColor: colors.destructive + "11" }]}>
+                          <Text style={[styles.doneText, { color: colors.destructive }]}>
+                            ⚠ {measureEnrichError ?? measureJobStatus?.lastError}
+                          </Text>
+                        </View>
+                      ) : null}
+                      <Pressable
+                        onPress={handleStartMeasureEnrich}
+                        disabled={measureJobStatus?.running || measureEnrichPending}
+                        style={[styles.enrichBtn, { backgroundColor: (measureJobStatus?.running || measureEnrichPending) ? colors.muted : colors.primary }]}
+                      >
+                        {measureEnrichPending ? (
+                          <ActivityIndicator color={colors.primaryForeground} />
+                        ) : (
+                          <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                            {measureJobStatus?.running ? "⏳ Running…" : "📐 Run Measurement Enrichment"}
+                          </Text>
+                        )}
+                      </Pressable>
                     </View>
-                    <Text style={[styles.progressText, { color: colors.foreground }]}>
-                      {enrichProgress.progress} / {enrichProgress.total} items
-                      {enrichProgress.batchSize ? ` (batch of ${enrichProgress.batchSize})` : ""}
-                    </Text>
-                    {enrichProgress.etaSeconds != null && enrichProgress.etaSeconds > 0 ? (
-                      <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                        ETA: ~{enrichProgress.etaSeconds < 60
-                          ? `${enrichProgress.etaSeconds}s`
-                          : `${Math.ceil(enrichProgress.etaSeconds / 60)}m`}
-                      </Text>
-                    ) : null}
-                  </View>
-                ) : null}
 
-                {enrichProgress?.done ? (
-                  <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
-                    <Text style={[styles.doneText, { color: colors.success }]}>
-                      ✓ Done! {enrichProgress.progress} items processed.
-                    </Text>
-                  </View>
-                ) : null}
-
-                <Pressable
-                  onPress={() => handleEnrich()}
-                  disabled={!!enrichProgress && !enrichProgress.done}
-                  style={[
-                    styles.enrichBtn,
-                    { backgroundColor: (enrichProgress && !enrichProgress.done) ? colors.muted : colors.primary },
-                  ]}
-                >
-                  <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                    {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Quick Enrich Pending"}
-                  </Text>
-                </Pressable>
-              </View>
-            </ScrollView>
-          ) : (
-            <View style={{ flex: 1 }}>
-              {inventoryQuery.isLoading ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color={colors.primary} />
-                  <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
-                </View>
-              ) : inventory.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyEmoji}>📦</Text>
-                  <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
-                  <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-                    Upload a CSV or Excel file to add inventory items.
-                  </Text>
-                  <Pressable
-                    onPress={() => setTab("upload")}
-                    style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
-                  >
-                    <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Upload</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <FlatList
-                  data={inventory}
-                  keyExtractor={item => String(item.id)}
-                  renderItem={({ item }) => (
-                    <InventoryRow item={item} colors={colors} onEditBins={setBinEditorItem} />
-                  )}
-                  contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
-                  ListHeaderComponent={() => (
-                    <View style={styles.inventoryHeader}>
-                      <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
-                        {inventoryTotal} items total
+                    {/* Quick Enrich */}
+                    <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 Quick Enrich</Text>
+                      <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                        Enrich a small batch immediately with live progress. Useful for newly imported items.
                       </Text>
+                      {enrichProgress && !enrichProgress.done ? (
+                        <View style={styles.progressContainer}>
+                          <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                            <View
+                              style={[styles.progressFill, { backgroundColor: colors.primary, width: enrichProgress.total > 0 ? `${Math.round((enrichProgress.progress / enrichProgress.total) * 100)}%` : "0%" }]}
+                            />
+                          </View>
+                          <Text style={[styles.progressText, { color: colors.foreground }]}>
+                            {enrichProgress.progress} / {enrichProgress.total} items
+                            {enrichProgress.batchSize ? ` (batch of ${enrichProgress.batchSize})` : ""}
+                          </Text>
+                          {enrichProgress.etaSeconds != null && enrichProgress.etaSeconds > 0 ? (
+                            <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
+                              ETA: ~{enrichProgress.etaSeconds < 60 ? `${enrichProgress.etaSeconds}s` : `${Math.ceil(enrichProgress.etaSeconds / 60)}m`}
+                            </Text>
+                          ) : null}
+                        </View>
+                      ) : null}
+                      {enrichProgress?.done ? (
+                        <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
+                          <Text style={[styles.doneText, { color: colors.success }]}>
+                            ✓ Done! {enrichProgress.progress} items processed.
+                          </Text>
+                        </View>
+                      ) : null}
                       <Pressable
                         onPress={() => handleEnrich()}
-                        style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
+                        disabled={!!enrichProgress && !enrichProgress.done}
+                        style={[styles.enrichBtn, { backgroundColor: (enrichProgress && !enrichProgress.done) ? colors.muted : colors.primary }]}
                       >
-                        <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
+                        <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                          {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Quick Enrich Pending"}
+                        </Text>
                       </Pressable>
                     </View>
-                  )}
-                  ListFooterComponent={() =>
-                    inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
-                      <Pressable
-                        onPress={() => setInventoryPage(p => p + 1)}
-                        style={[styles.loadMoreBtn, { borderColor: colors.border }]}
-                      >
-                        <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
-                      </Pressable>
-                    ) : null
-                  }
-                />
-              )}
+
+                    {/* Inventory section header */}
+                    {inventoryQuery.isLoading ? (
+                      <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={colors.primary} />
+                        <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading inventory…</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.inventoryHeader}>
+                        <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
+                          {inventoryTotal} items total
+                        </Text>
+                        <Pressable
+                          onPress={() => handleEnrich()}
+                          style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
+                        >
+                          <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
+                        </Pressable>
+                      </View>
+                    )}
+                  </View>
+                )}
+                ListEmptyComponent={!inventoryQuery.isLoading ? (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyEmoji}>📦</Text>
+                    <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No Inventory</Text>
+                    <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+                      Upload a CSV or Excel file to add inventory items.
+                    </Text>
+                    <Pressable
+                      onPress={() => setTab("import")}
+                      style={[styles.goUploadBtn, { backgroundColor: colors.primary }]}
+                    >
+                      <Text style={[styles.goUploadText, { color: colors.primaryForeground }]}>Go to Import</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                ListFooterComponent={() =>
+                  inventoryQuery.data && inventoryPage * 50 < inventoryTotal ? (
+                    <Pressable
+                      onPress={() => setInventoryPage(p => p + 1)}
+                      style={[styles.loadMoreBtn, { borderColor: colors.border }]}
+                    >
+                      <Text style={[styles.loadMoreText, { color: colors.primary }]}>Load More</Text>
+                    </Pressable>
+                  ) : null
+                }
+              />
             </View>
           )}
         </>
@@ -1690,6 +1685,11 @@ const styles = StyleSheet.create({
   enrichSmallText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: "center", marginTop: 8 },
   loadMoreText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  pasteDivider: { alignItems: "center", position: "relative", height: 22, justifyContent: "center", marginTop: 4 },
+  pasteDividerLine: { position: "absolute", left: 0, right: 0, height: 1 },
+  pasteDividerLabel: { paddingHorizontal: 10, fontSize: 12, fontFamily: "Inter_400Regular" },
+  pasteLabel: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  pasteInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 12, fontFamily: "SpaceMono_400Regular", height: 148, lineHeight: 18 },
   inlineBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
   errorBanner: {},
   successBanner: {},
