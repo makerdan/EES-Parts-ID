@@ -10,7 +10,7 @@
 ALTER TABLE "inventory"
   ADD COLUMN IF NOT EXISTS "image_url" text,
   ADD COLUMN IF NOT EXISTS "image_source" text,
-  ADD COLUMN IF NOT EXISTS "image_confidence" numeric(4,3),
+  ADD COLUMN IF NOT EXISTS "image_confidence" real,
   ADD COLUMN IF NOT EXISTS "previous_description" text,
   ADD COLUMN IF NOT EXISTS "catalog_pdf_job_id" integer;
 

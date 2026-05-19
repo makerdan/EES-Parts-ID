@@ -1,28 +1,52 @@
 /**
  * Minimal GCS wrapper for server-side image uploads.
  * Uses the Replit sidecar for authentication — do NOT modify the credentials block.
+ *
+ * The external-account credential shape is typed locally to avoid a direct
+ * dependency on google-auth-library (which would conflict with the version
+ * already pulled in by @google-cloud/storage).
  */
 import { Storage } from "@google-cloud/storage";
+import type { StorageOptions } from "@google-cloud/storage";
 import { randomUUID } from "crypto";
 
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
 
-const gcs = new Storage({
-  credentials: {
-    audience: "replit",
-    subject_token_type: "access_token",
-    token_url: `${REPLIT_SIDECAR_ENDPOINT}/token`,
-    type: "external_account",
-    credential_source: {
-      url: `${REPLIT_SIDECAR_ENDPOINT}/credential`,
-      format: {
-        type: "json",
-        subject_token_field_name: "access_token",
-      },
+/**
+ * Minimal local mirror of google-auth-library's ExternalAccountClientOptions.
+ * Only the fields required for Replit sidecar auth are included.
+ */
+interface ExternalAccountCredential {
+  type: "external_account";
+  audience: string;
+  subject_token_type: string;
+  token_url: string;
+  credential_source: {
+    url: string;
+    format: { type: string; subject_token_field_name: string };
+  };
+  universe_domain?: string;
+}
+
+const sidecarCredential: ExternalAccountCredential = {
+  type: "external_account",
+  audience: "replit",
+  subject_token_type: "access_token",
+  token_url: `${REPLIT_SIDECAR_ENDPOINT}/token`,
+  credential_source: {
+    url: `${REPLIT_SIDECAR_ENDPOINT}/credential`,
+    format: {
+      type: "json",
+      subject_token_field_name: "access_token",
     },
-    universe_domain: "googleapis.com",
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as unknown as any,
+  },
+  universe_domain: "googleapis.com",
+};
+
+// The Storage constructor accepts external-account credentials at runtime;
+// a single cast to StorageOptions["credentials"] bridges the local interface.
+const gcs = new Storage({
+  credentials: sidecarCredential as StorageOptions["credentials"],
   projectId: "",
 });
 

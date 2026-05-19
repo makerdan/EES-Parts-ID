@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -204,10 +205,16 @@ export default function CatalogReviewScreen() {
           )}
         </View>
 
-        {/* Image indicator */}
+        {/* Extracted part image */}
         {item.imageUrl ? (
-          <View style={[s.imageBadge, { backgroundColor: colors.success + "18" }]}>
-            <Text style={[s.imageBadgeText, { color: colors.success }]}>Image saved</Text>
+          <View style={s.imageBlock}>
+            <Image
+              source={{ uri: item.imageUrl.startsWith("/objects/")
+                ? `${API_BASE.replace("/api", "")}${item.imageUrl}`
+                : item.imageUrl }}
+              style={s.partImage}
+              resizeMode="contain"
+            />
           </View>
         ) : null}
 
@@ -328,8 +335,8 @@ const s = StyleSheet.create({
   diffLabel: { fontSize: 11, fontFamily: "Inter_500Medium", textTransform: "uppercase", letterSpacing: 0.5 },
   diffOld: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
   diffNew: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
-  imageBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: "flex-start" },
-  imageBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   revertBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, alignSelf: "flex-start", alignItems: "center" },
   revertBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  imageBlock: { borderRadius: 8, overflow: "hidden", alignSelf: "flex-start" },
+  partImage: { width: 120, height: 90 },
 });
