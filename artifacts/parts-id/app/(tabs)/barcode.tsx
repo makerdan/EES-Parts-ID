@@ -46,7 +46,7 @@ function formatRelativeTime(isoString: string): string {
   return `${days}d ago`;
 }
 
-type ScanPhase = "idle" | "looking" | "found" | "notfound";
+type ScanPhase = "idle" | "looking" | "found" | "notfound" | "offline_miss";
 
 interface AssignmentEntry {
   barcode: string;
@@ -291,8 +291,7 @@ export default function BarcodeScreen() {
             setIsOfflineMatch(true);
             setScanPhase("found");
           } else {
-            setScanError("Lookup failed — please try again.");
-            setScanPhase("idle");
+            setScanPhase("offline_miss");
           }
         } else {
           setScanError("Lookup failed — please try again.");
@@ -608,6 +607,27 @@ export default function BarcodeScreen() {
           </View>
         ) : null}
 
+        {/* ── Offline + no cache hit ─────────────────────────────────────────── */}
+        {scanPhase === "offline_miss" ? (
+          <View style={[styles.offlineMissCard, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "55" }]}>
+            <View style={styles.offlineMissHeader}>
+              <Text style={[styles.offlineMissIcon, { color: colors.warning }]}>⚡</Text>
+              <Text style={[styles.offlineMissTitle, { color: colors.warning }]}>No connection — barcode not cached</Text>
+            </View>
+            <Text style={[styles.offlineMissBody, { color: colors.foreground }]}>
+              This barcode isn{"'"}t in your local cache. Connect to the network and the next scan will look it up and save it for offline use.
+            </Text>
+            {scannedCode ? (
+              <Text style={[styles.offlineMissCode, { color: colors.mutedForeground }]}>
+                Code: {scannedCode}
+              </Text>
+            ) : null}
+            <Pressable onPress={resetScan} style={[styles.offlineMissBtn, { borderColor: colors.warning + "88" }]}>
+              <Text style={[styles.offlineMissBtnText, { color: colors.warning }]}>↩ Scan Again</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         {/* ── Normal mode: found result ─────────────────────────────────────── */}
         {!shelfMode && scanPhase === "found" && matchedItem ? (
           <View style={{ padding: 16 }}>
@@ -800,6 +820,27 @@ const styles = StyleSheet.create({
   rescanText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   offlineBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
   offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
+  offlineMissCard: {
+    margin: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+    gap: 10,
+  },
+  offlineMissHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  offlineMissIcon: { fontSize: 18 },
+  offlineMissTitle: { fontSize: 14, fontFamily: "Inter_700Bold", flex: 1 },
+  offlineMissBody: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  offlineMissCode: { fontSize: 11, fontFamily: "SpaceMono_400Regular" },
+  offlineMissBtn: {
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginTop: 2,
+  },
+  offlineMissBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   notFoundCard: {
     borderRadius: 12,
     borderWidth: 1,
