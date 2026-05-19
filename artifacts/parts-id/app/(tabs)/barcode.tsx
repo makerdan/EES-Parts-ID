@@ -194,7 +194,12 @@ function CatalogPickerModal({
 }
 
 // ── Main Barcode Screen ────────────────────────────────────────────────────────
-export default function BarcodeScreen() {
+interface BarcodeScreenProps {
+  /** When provided (modal mode) a "Close" button appears in the header. */
+  onClose?: () => void;
+}
+
+export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const colors = useColors();
   const { isAdmin, textFontScale } = useApp();
   const queryClient = useQueryClient();
@@ -483,6 +488,14 @@ export default function BarcodeScreen() {
             style={[styles.shelfBtn, { backgroundColor: colors.destructive + "22", borderColor: colors.destructive + "44" }]}
           >
             <Text style={[styles.shelfBtnText, { color: colors.destructive }]}>Done</Text>
+          </Pressable>
+        ) : null}
+        {onClose ? (
+          <Pressable
+            onPress={onClose}
+            style={[styles.shelfBtn, { backgroundColor: colors.muted, borderColor: colors.border, marginLeft: 6 }]}
+          >
+            <Text style={[styles.shelfBtnText, { color: colors.foreground }]}>Close</Text>
           </Pressable>
         ) : null}
       </View>
