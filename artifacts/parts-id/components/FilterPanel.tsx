@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef } from "react";
+import { useWebHorizontalScroll } from "@/hooks/useWebHorizontalScroll";
 import { usePersistedCollapse } from "@/hooks/usePersistedCollapse";
 import {
   Animated,
@@ -163,10 +164,12 @@ function ChipRow({
   /** Live per-option match counts from last search; undefined = not yet searched */
   counts?: Record<string, number>;
 }) {
+  const scrollRef = useRef<ScrollView>(null);
+  useWebHorizontalScroll(scrollRef);
   return (
     <View style={{ marginBottom: 10 }}>
       <Text style={[chipStyles.rowLabel, { color: colors.mutedForeground }]}>{label}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false}>
         <View style={{ flexDirection: "row", gap: 6, paddingVertical: 2 }}>
           {options.map((opt) => {
             const active = value === opt;
