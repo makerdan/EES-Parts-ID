@@ -719,7 +719,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     }
 
     const { items } = req.body as {
-      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: string[] }>;
+      items: Array<{ vendor: string; catalog: string; description?: string; binLocations?: string[]; barcodes?: string[] }>;
     };
 
     if (!items?.length) {
@@ -746,6 +746,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
           catalog: item.catalog,
           description: item.description ?? "",
           binLocations: item.binLocations ?? [],
+          barcodes: item.barcodes ?? [],
           aiKeywords: [],
         })
         .onConflictDoUpdate({
@@ -758,6 +759,10 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
             // Preserve existing bins when no bin data is supplied — guards
             // multi-bin assignments during bulk re-uploads (Task #455).
             binLocations: sql`CASE WHEN coalesce(array_length(EXCLUDED.bin_locations, 1), 0) > 0 THEN EXCLUDED.bin_locations ELSE ${inventoryTable.binLocations} END`,
+            // Preserve existing barcodes when no barcode data is supplied —
+            // same semantics as binLocations so manual scan assignments survive
+            // re-uploads that omit the barcodes column.
+            barcodes: sql`CASE WHEN coalesce(array_length(EXCLUDED.barcodes, 1), 0) > 0 THEN EXCLUDED.barcodes ELSE ${inventoryTable.barcodes} END`,
             updatedAt: sql`now()`,
           },
         })
