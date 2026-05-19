@@ -65,3 +65,64 @@ export async function clearScanHistory(): Promise<void> {
     reportStorageError("Could not clear scan history", err);
   }
 }
+
+// ── Date-grouped history ───────────────────────────────────────────────────────
+
+export interface ScanGroup {
+  /** Human-readable label: "Today", "Yesterday", or e.g. "May 14" */
+  label: string;
+  /** YYYY-MM-DD key used as a stable collapse identifier */
+  dateKey: string;
+  entries: ScanEntry[];
+}
+
+function toLocalDateKey(isoString: string): string {
+  const d = new Date(isoString);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+function labelForDateKey(dateKey: string, todayKey: string, yesterdayKey: string): string {
+  if (dateKey === todayKey) return "Today";
+  if (dateKey === yesterdayKey) return "Yesterday";
+  const [, m, d] = dateKey.split("-");
+  const month = MONTH_NAMES[parseInt(m, 10) - 1] ?? m;
+  return `${month} ${parseInt(d, 10)}`;
+}
+
+/**
+ * Groups a flat list of ScanEntry (assumed newest-first) into date buckets.
+ * Groups are ordered newest-first. Entries within each group preserve their
+ * original order.
+ */
+export function groupScansByDate(entries: ScanEntry[]): ScanGroup[] {
+  const now = new Date();
+  const todayKey = toLocalDateKey(now.toISOString());
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = toLocalDateKey(yesterday.toISOString());
+
+  const map = new Map<string, ScanEntry[]>();
+  for (const entry of entries) {
+    const key = toLocalDateKey(entry.timestamp);
+    const bucket = map.get(key);
+    if (bucket) {
+      bucket.push(entry);
+    } else {
+      map.set(key, [entry]);
+    }
+  }
+
+  return Array.from(map.entries()).map(([dateKey, groupEntries]) => ({
+    label: labelForDateKey(dateKey, todayKey, yesterdayKey),
+    dateKey,
+    entries: groupEntries,
+  }));
+}
