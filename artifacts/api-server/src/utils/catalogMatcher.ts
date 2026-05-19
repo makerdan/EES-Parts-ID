@@ -30,14 +30,14 @@ export async function matchCatalogNumber(
 ): Promise<MatchResult | null> {
   const vendorUpper = vendor.toUpperCase();
 
-  // 1. Exact match (normalise whitespace)
+  // 1. Exact match (case-insensitive vendor + normalised catalog number)
   const normalised = catalogNumber.replace(/\s+/g, "").toUpperCase();
   const exactRows = await db
     .select({ id: inventoryTable.id })
     .from(inventoryTable)
     .where(
       and(
-        eq(inventoryTable.vendor, vendorUpper),
+        sql`upper(${inventoryTable.vendor}) = ${vendorUpper}`,
         sql`upper(replace(${inventoryTable.catalog}, ' ', '')) = ${normalised}`,
       ),
     )
@@ -47,7 +47,7 @@ export async function matchCatalogNumber(
     return { inventoryId: exactRows[0].id, similarityScore: EXACT_SCORE };
   }
 
-  // 2. Trigram similarity fallback
+  // 2. Trigram similarity fallback (case-insensitive vendor)
   const trgmRows = await db
     .select({
       id: inventoryTable.id,
@@ -56,7 +56,7 @@ export async function matchCatalogNumber(
     .from(inventoryTable)
     .where(
       and(
-        eq(inventoryTable.vendor, vendorUpper),
+        sql`upper(${inventoryTable.vendor}) = ${vendorUpper}`,
         sql`similarity(${inventoryTable.catalog}, ${catalogNumber}) >= ${TRGM_THRESHOLD}`,
       ),
     )
