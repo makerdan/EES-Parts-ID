@@ -24,6 +24,7 @@ import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
 import { useApp } from "@/contexts/AppContext";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
+import { serializeInventoryToCsv } from "@/utils/exportCsv";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -906,16 +907,7 @@ export default function UploadScreen() {
         page++;
       }
 
-      const escapeField = (v: string) => `"${v.replace(/"/g, '""')}"`;
-      const header = "Vendor,Catalog,Description,BinLocation,Barcodes";
-      const lines = allItems.map(item => {
-        const bin = item.binLocations.join(";");
-        const barcodes = item.barcodes.join(",");
-        return [item.vendor, item.catalog, item.description, bin, barcodes]
-          .map(escapeField)
-          .join(",");
-      });
-      const csvContent = [header, ...lines].join("\n");
+      const csvContent = serializeInventoryToCsv(allItems);
       const fileName = `inventory-export-${new Date().toISOString().slice(0, 10)}.csv`;
 
       if (Platform.OS === "web") {
