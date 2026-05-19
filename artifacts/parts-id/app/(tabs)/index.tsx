@@ -950,19 +950,6 @@ export default function SearchScreen() {
                     </Text>
                   ))}
                 </View>
-                <Pressable
-                  onPress={() => setAisleBrowseOpen(true)}
-                  style={[styles.browseAisleBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
-                >
-                  <Feather name="map-pin" size={20} color={colors.primary} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.browseAisleBtnTitle, { color: colors.foreground }]}>Browse by Aisle</Text>
-                    <Text style={[styles.browseAisleBtnSub, { color: colors.mutedForeground }]}>
-                      Walk the warehouse: Aisle › Section › Shelf
-                    </Text>
-                  </View>
-                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-                </Pressable>
               </View>
             ) : null}
           </View>
@@ -985,13 +972,28 @@ export default function SearchScreen() {
         keyboardDismissMode="none"
       />
 
-        {/* Floating filter overlay — sits above results, collapses to a thin header */}
-        <View style={[styles.filterOverlay, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <FilterPanel
-            values={filters}
-            onChange={handleChange}
-            dimensionCounts={dimensionCounts}
-          />
+        {/* Browse by Aisle + Floating filter overlay — stacked above results */}
+        <View style={styles.filterOverlayWrapper}>
+          <Pressable
+            onPress={() => setAisleBrowseOpen(true)}
+            style={[styles.browseAisleBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+          >
+            <Feather name="map-pin" size={20} color={colors.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.browseAisleBtnTitle, { color: colors.foreground }]}>Browse by Aisle</Text>
+              <Text style={[styles.browseAisleBtnSub, { color: colors.mutedForeground }]}>
+                Walk the warehouse: Aisle › Section › Shelf
+              </Text>
+            </View>
+            <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+          </Pressable>
+          <View style={[styles.filterOverlay, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <FilterPanel
+              values={filters}
+              onChange={handleChange}
+              dimensionCounts={dimensionCounts}
+            />
+          </View>
         </View>
       </View>
         </>
@@ -1123,12 +1125,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  filterOverlay: {
+  filterOverlayWrapper: {
     position: "absolute",
     top: 0,
     left: 12,
     right: 12,
     zIndex: 20,
+    flexDirection: "column",
+    alignItems: "center",
+  },
+  filterOverlay: {
+    alignSelf: "stretch",
     borderRadius: 12,
     borderWidth: 1,
     padding: 16,
@@ -1203,8 +1210,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginTop: 20,
-    width: "100%",
+    marginBottom: 8,
+    alignSelf: "center",
+    width: "80%",
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
