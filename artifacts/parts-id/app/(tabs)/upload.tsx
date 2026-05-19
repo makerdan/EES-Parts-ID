@@ -399,6 +399,7 @@ export default function UploadScreen() {
   const [replaceConfirmed, setReplaceConfirmed] = useState(false);
   const [skipBinRows, setSkipBinRows] = useState<Set<number>>(new Set());
   const [replaceListOpen, setReplaceListOpen] = useState(false);
+  const [replaceListSearch, setReplaceListSearch] = useState("");
 
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
 
@@ -1099,7 +1100,7 @@ export default function UploadScreen() {
 
                           {/* Collapsible full replacement list */}
                           <Pressable
-                            onPress={() => setReplaceListOpen(v => !v)}
+                            onPress={() => { setReplaceListOpen(v => !v); setReplaceListSearch(""); }}
                             style={[styles.reviewToggleBtn, { borderColor: colors.warning + "88", backgroundColor: colors.warning + "10" }]}
                           >
                             <Text style={[styles.reviewToggleBtnText, { color: colors.warning }]}>
@@ -1112,8 +1113,34 @@ export default function UploadScreen() {
                               style={[styles.replaceList, { borderColor: colors.warning + "44", backgroundColor: colors.warning + "08" }]}
                               nestedScrollEnabled
                             >
+                              {binDiff.willReplaceBins > 20 ? (
+                                <View style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: 4 }}>
+                                  <TextInput
+                                    value={replaceListSearch}
+                                    onChangeText={setReplaceListSearch}
+                                    placeholder="Search by vendor or catalog…"
+                                    placeholderTextColor={colors.mutedForeground}
+                                    style={{
+                                      backgroundColor: colors.background,
+                                      borderColor: colors.warning + "66",
+                                      borderWidth: 1,
+                                      borderRadius: 6,
+                                      paddingHorizontal: 10,
+                                      paddingVertical: 6,
+                                      fontSize: 13,
+                                      color: colors.foreground,
+                                      fontFamily: "Inter_400Regular",
+                                    }}
+                                    clearButtonMode="while-editing"
+                                    autoCorrect={false}
+                                    autoCapitalize="none"
+                                  />
+                                </View>
+                              ) : null}
                               {binDiff.rows.map((diffRow, idx) => {
                                 if (diffRow.status !== "replace") return null;
+                                const query = replaceListSearch.trim().toLowerCase();
+                                if (query && !diffRow.catalog.toLowerCase().includes(query) && !diffRow.vendor.toLowerCase().includes(query)) return null;
                                 const parsedRow = parsedRows[idx];
                                 const isSkipped = skipBinRows.has(idx);
                                 return (
