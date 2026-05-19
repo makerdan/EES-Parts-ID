@@ -14,6 +14,8 @@ export interface InventoryItem {
   /** Bin locations where this part is stored (a part may live in multiple bins) */
   binLocations: string[];
   aiKeywords: string[];
+  /** Barcode values associated with this part */
+  barcodes: string[];
   enrichedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;

@@ -221,8 +221,8 @@ router.post("/search", async (req, res) => {
     // ─── PG FTS + trigram ranked search (server-side) ───────────────────────
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
-      bin_locations: string[]; ai_keywords: string[]; enriched_at: Date | null;
-      created_at: Date; updated_at: Date;
+      bin_locations: string[]; ai_keywords: string[]; barcodes: string[];
+      enriched_at: Date | null; created_at: Date; updated_at: Date;
       fts_rank: number; trgm_sim: number;
     };
 
@@ -263,7 +263,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.enriched_at, i.created_at, i.updated_at,
+              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 to_tsvector('english',
                   coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
@@ -348,6 +348,7 @@ router.post("/search", async (req, res) => {
         // Safe fallbacks for fields not included in the runtime shape-validation filter
         binLocations: Array.isArray(row.bin_locations) ? row.bin_locations as string[] : [],
         aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
+        barcodes: Array.isArray(row.barcodes) ? row.barcodes as string[] : [],
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
         // PDF catalog enrichment columns (not included in FTS search results)
         imageUrl: null,
@@ -1144,6 +1145,67 @@ router.post("/enrich-measurements", requireAdminAuth, (_req, res) => {
 // ── GET /inventory/enrich-measurements/status ─────────────────────────────────
 router.get("/enrich-measurements/status", requireAdminAuth, (_req, res) => {
   res.json(measureEnrichJob);
+});
+
+// ── GET /inventory/barcode/{code} ────────────────────────────────────────────
+// OpenAPI spec declares this as /inventory/barcode/{code}. The Express route
+// uses a wildcard (`/barcode/*`) so that QR codes or URLs containing forward
+// slashes are handled correctly after the client encodes them with
+// encodeURIComponent. req.params["0"] holds the encoded segment; it is decoded
+// with decodeURIComponent before the DB query.
+// Returns the first item whose barcodes array contains the code (case-sensitive).
+router.get("/barcode/*", async (req, res) => {
+  try {
+    const code = decodeURIComponent(String((req.params as unknown as Record<string, string>)["0"] ?? "")).trim();
+    if (!code) return void res.status(400).json({ error: "code is required" });
+
+    const [item] = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.barcodes} @> ARRAY[${code}]::text[]`)
+      .limit(1);
+
+    if (!item) return void res.status(404).json({ error: "No item found for that barcode" });
+    res.json(item);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Barcode lookup failed" });
+  }
+});
+
+// ── PATCH /inventory/:id/barcodes ─────────────────────────────────────────────
+// Admin-only: replace the barcodes array on a single part.
+router.patch("/:id/barcodes", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    const { barcodes } = req.body as { barcodes: unknown };
+
+    if (!Array.isArray(barcodes) || !barcodes.every((b) => typeof b === "string")) {
+      return void res.status(400).json({ error: "barcodes must be an array of strings" });
+    }
+
+    const seen = new Set<string>();
+    const normalised: string[] = [];
+    for (const raw of barcodes as string[]) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      if (seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      normalised.push(trimmed);
+    }
+
+    const [updated] = await db
+      .update(inventoryTable)
+      .set({ barcodes: normalised, updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning();
+
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update barcodes" });
+  }
 });
 
 // ── PATCH /inventory/:id/bins ─────────────────────────────────────────────────

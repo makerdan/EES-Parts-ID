@@ -31,6 +31,13 @@ export const inventoryTable = pgTable(
       .array()
       .notNull()
       .default(sql`ARRAY[]::text[]`),
+    // NOT NULL DEFAULT '{}' is intentional — same contract as binLocations.
+    // An empty array means "no barcodes assigned" (not unknown); simplifies
+    // array-containment queries and avoids null checks throughout the API.
+    barcodes: text("barcodes")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::text[]`),
     enrichedAt: timestamp("enriched_at"),
     // ── PDF catalog enrichment ────────────────────────────────────────────────
     imageUrl: text("image_url"),

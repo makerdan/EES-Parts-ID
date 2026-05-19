@@ -20,6 +20,7 @@ import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { KeywordEditor } from "@/components/KeywordEditor";
 import { BinEditor } from "@/components/BinEditor";
+import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
@@ -166,6 +167,7 @@ export default function SearchScreen() {
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
+  const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
   // Local override of bin lists keyed by item.id, applied on top of whatever
   // results are currently displayed (online searchMutation.data, offlineResults,
   // or Fuse fallback). Lets bin edits show up immediately without a re-search.
@@ -456,6 +458,16 @@ export default function SearchScreen() {
     setBinOverrides(prev => ({ ...prev, [id]: binLocations }));
     const items = fuseItemsRef.current.map(it =>
       it.id === id ? { ...it, binLocations } : it,
+    );
+    buildFuseIndex(items);
+    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(err => {
+      reportStorageError("Could not save offline inventory cache", err);
+    });
+  }, [buildFuseIndex]);
+
+  const handleBarcodesChanged = useCallback((id: number, barcodes: string[]) => {
+    const items = fuseItemsRef.current.map(it =>
+      it.id === id ? { ...it, barcodes } : it,
     );
     buildFuseIndex(items);
     AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(err => {
@@ -934,6 +946,7 @@ export default function SearchScreen() {
               result={result}
               onEditKeywords={setEditItem}
               onEditBins={isAdmin ? setBinEditItem : undefined}
+              onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
               rank={index}
               fontScale={textFontScale}
             />
@@ -998,6 +1011,12 @@ export default function SearchScreen() {
         item={binEditItem}
         onClose={() => setBinEditItem(null)}
         onBinsChanged={handleBinsChanged}
+      />
+
+      <BarcodeEditor
+        item={barcodeEditItem}
+        onClose={() => setBarcodeEditItem(null)}
+        onBarcodesChanged={handleBarcodesChanged}
       />
     </SafeAreaView>
   );

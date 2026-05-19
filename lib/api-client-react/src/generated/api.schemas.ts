@@ -17,6 +17,8 @@ export interface InventoryItem {
   /** Bin locations where this part is stored (a part may live in multiple bins) */
   binLocations: string[];
   aiKeywords: string[];
+  /** Barcode values associated with this part */
+  barcodes: string[];
   enrichedAt?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -127,6 +129,11 @@ export interface EnrichInventoryBody {
 export interface UpdateBinsBody {
   /** Replacement bin-location list. Pass [] to clear all bins. */
   binLocations: string[];
+}
+
+export interface UpdateBarcodesBody {
+  /** Replacement barcode list. Pass [] to clear all barcodes. */
+  barcodes: string[];
 }
 
 export interface UpdateKeywordsBody {

@@ -31,6 +31,7 @@ import type {
   LookupDictionaryParams,
   SearchInventoryBody,
   SearchInventoryResponse,
+  UpdateBarcodesBody,
   UpdateBinsBody,
   UpdateDescriptionBody,
   UpdateKeywordsBody,
@@ -563,6 +564,180 @@ export const useUpdateItemBins = <
   TContext
 > => {
   return useMutation(getUpdateItemBinsMutationOptions(options));
+};
+
+/**
+ * @summary Look up an inventory item by barcode value
+ */
+export const getLookupByBarcodeUrl = (code: string) => {
+  return `/api/inventory/barcode/${code}`;
+};
+
+export const lookupByBarcode = async (
+  code: string,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getLookupByBarcodeUrl(code), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getLookupByBarcodeQueryKey = (code: string) => {
+  return [`/api/inventory/barcode/${code}`] as const;
+};
+
+export const getLookupByBarcodeQueryOptions = <
+  TData = Awaited<ReturnType<typeof lookupByBarcode>>,
+  TError = ErrorType<void>,
+>(
+  code: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupByBarcode>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getLookupByBarcodeQueryKey(code);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof lookupByBarcode>>> = ({
+    signal,
+  }) => lookupByBarcode(code, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!code,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof lookupByBarcode>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type LookupByBarcodeQueryResult = NonNullable<
+  Awaited<ReturnType<typeof lookupByBarcode>>
+>;
+export type LookupByBarcodeQueryError = ErrorType<void>;
+
+/**
+ * @summary Look up an inventory item by barcode value
+ */
+
+export function useLookupByBarcode<
+  TData = Awaited<ReturnType<typeof lookupByBarcode>>,
+  TError = ErrorType<void>,
+>(
+  code: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof lookupByBarcode>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getLookupByBarcodeQueryOptions(code, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Replace the barcodes array on a single inventory item (admin)
+ */
+export const getUpdateItemBarcodesUrl = (id: number) => {
+  return `/api/inventory/${id}/barcodes`;
+};
+
+export const updateItemBarcodes = async (
+  id: number,
+  updateBarcodesBody: UpdateBarcodesBody,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getUpdateItemBarcodesUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateBarcodesBody),
+  });
+};
+
+export const getUpdateItemBarcodesMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemBarcodes>>,
+    TError,
+    { id: number; data: BodyType<UpdateBarcodesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateItemBarcodes>>,
+  TError,
+  { id: number; data: BodyType<UpdateBarcodesBody> },
+  TContext
+> => {
+  const mutationKey = ["updateItemBarcodes"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateItemBarcodes>>,
+    { id: number; data: BodyType<UpdateBarcodesBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateItemBarcodes(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateItemBarcodesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateItemBarcodes>>
+>;
+export type UpdateItemBarcodesMutationBody = BodyType<UpdateBarcodesBody>;
+export type UpdateItemBarcodesMutationError = ErrorType<void>;
+
+/**
+ * @summary Replace the barcodes array on a single inventory item (admin)
+ */
+export const useUpdateItemBarcodes = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemBarcodes>>,
+    TError,
+    { id: number; data: BodyType<UpdateBarcodesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateItemBarcodes>>,
+  TError,
+  { id: number; data: BodyType<UpdateBarcodesBody> },
+  TContext
+> => {
+  return useMutation(getUpdateItemBarcodesMutationOptions(options));
 };
 
 /**

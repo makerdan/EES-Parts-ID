@@ -18,6 +18,7 @@ import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
 import { BinEditor } from "@/components/BinEditor";
+import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
@@ -26,6 +27,7 @@ export default function PhotoScreen() {
   const colors = useColors();
   const { textFontScale, isAdmin } = useApp();
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
+  const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");
@@ -430,6 +432,7 @@ export default function PhotoScreen() {
                   key={result.item.id}
                   result={result}
                   onEditBins={isAdmin ? setBinEditItem : undefined}
+                  onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
                   rank={index}
                   fontScale={textFontScale}
                 />
@@ -474,6 +477,16 @@ export default function PhotoScreen() {
         </View>
       </ScrollView>
       <ReferenceModal />
+
+      <BarcodeEditor
+        item={barcodeEditItem}
+        onClose={() => setBarcodeEditItem(null)}
+        onBarcodesChanged={(id, barcodes) => {
+          setResults(prev => prev.map(r =>
+            r.item.id === id ? { ...r, item: { ...r.item, barcodes } } : r,
+          ));
+        }}
+      />
 
       <BinEditor
         item={binEditItem}
