@@ -1,11 +1,11 @@
 /**
  * Catalog Review Screen
  *
- * Lists all inventory items updated by PDF extraction, showing the
- * before/after description change. Low-confidence matches are flagged.
- * Admins can revert individual parts to their previous state.
+ * Lists all inventory items updated by PDF extraction, grouped by upload
+ * session. Each item shows the before/after description change. Low-confidence
+ * matches are flagged. Admins can revert individual parts.
  *
- * Route: /catalog-review?jobId=<n>  (jobId is optional — omit to show all)
+ * Route: /catalog-review?jobId=<n>  (jobId optional — omit to show all)
  */
 
 import React, { useCallback, useEffect, useState } from "react";
@@ -26,6 +26,14 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "";
 
+type JobMeta = {
+  id: number;
+  vendor: string;
+  filename: string;
+  status: string;
+  createdAt: string;
+};
+
 type ReviewItem = {
   id: number;
   vendor: string;
@@ -37,18 +45,13 @@ type ReviewItem = {
   catalogPdfJobId: number | null;
   updatedAt: string;
   isLowConfidence: boolean;
-  job: {
-    id: number;
-    vendor: string;
-    filename: string;
-    status: string;
-    createdAt: string;
-  } | null;
+  job: JobMeta | null;
 };
 
-type ReviewResponse = {
+type SessionGroup = {
+  job: JobMeta | null;
+  jobId: number | null;
   items: ReviewItem[];
-  total: number;
 };
 
 export default function CatalogReviewScreen() {
@@ -57,7 +60,7 @@ export default function CatalogReviewScreen() {
   const { jobId } = useLocalSearchParams<{ jobId?: string }>();
   const { adminToken, logoutAdmin } = useApp();
 
-  const [items, setItems] = useState<ReviewItem[]>([]);
+  const [groups, setGroups] = useState<SessionGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revertingId, setRevertingId] = useState<number | null>(null);
@@ -78,8 +81,21 @@ export default function CatalogReviewScreen() {
       const r = await fetch(url, { headers: authHeaders });
       if (r.status === 401) { logoutAdmin(); return; }
       if (!r.ok) throw new Error("Failed to load");
-      const data = await r.json() as ReviewResponse;
-      setItems(data.items);
+      const data = await r.json() as { items: ReviewItem[] };
+
+      // Group by upload session (catalogPdfJobId)
+      const groupMap = new Map<number | null, SessionGroup>();
+      for (const item of data.items) {
+        const key = item.catalogPdfJobId;
+        if (!groupMap.has(key)) {
+          groupMap.set(key, { job: item.job, jobId: key, items: [] });
+        }
+        groupMap.get(key)!.items.push(item);
+      }
+      // Sort groups newest-first (higher jobId = newer)
+      setGroups(
+        [...groupMap.values()].sort((a, b) => (b.jobId ?? 0) - (a.jobId ?? 0)),
+      );
     } catch {
       setError("Could not load review data. Check your connection.");
     } finally {
@@ -105,9 +121,45 @@ export default function CatalogReviewScreen() {
     finally { setRevertingId(null); }
   };
 
-  const activeItems = items.filter((i) => !revertedIds.has(i.id));
+  const totalActive = groups.reduce(
+    (acc, g) => acc + g.items.filter((i) => !revertedIds.has(i.id)).length,
+    0,
+  );
 
-  const renderItem = ({ item }: { item: ReviewItem }) => {
+  // Flat list data: section headers + items
+  type ListRow =
+    | { kind: "header"; group: SessionGroup }
+    | { kind: "item"; item: ReviewItem };
+
+  const listData: ListRow[] = [];
+  for (const group of groups) {
+    const activeItems = group.items.filter((i) => !revertedIds.has(i.id));
+    if (activeItems.length === 0) continue;
+    listData.push({ kind: "header", group });
+    for (const item of activeItems) {
+      listData.push({ kind: "item", item });
+    }
+  }
+
+  const renderRow = ({ item: row }: { item: ListRow }) => {
+    if (row.kind === "header") {
+      const { group } = row;
+      const date = group.job?.createdAt
+        ? new Date(group.job.createdAt).toLocaleDateString()
+        : "Unknown date";
+      return (
+        <View style={[s.sectionHeader, { backgroundColor: colors.muted }]}>
+          <Text style={[s.sectionTitle, { color: colors.foreground }]}>
+            {group.job?.vendor ?? "Unknown vendor"} — {group.job?.filename ?? "catalog.pdf"}
+          </Text>
+          <Text style={[s.sectionSub, { color: colors.mutedForeground }]}>
+            {date} · {group.items.filter((i) => !revertedIds.has(i.id)).length} item{group.items.length !== 1 ? "s" : ""}
+          </Text>
+        </View>
+      );
+    }
+
+    const { item } = row;
     const conf = item.imageConfidence != null ? Math.round(item.imageConfidence * 100) : null;
     const isReverting = revertingId === item.id;
 
@@ -205,15 +257,14 @@ export default function CatalogReviewScreen() {
             <Text style={[s.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
           </Pressable>
         </View>
-      ) : activeItems.length === 0 ? (
+      ) : listData.length === 0 ? (
         <View style={s.center}>
-          <Text style={[s.emptyEmoji]}>✅</Text>
           <Text style={[s.emptyTitle, { color: colors.foreground }]}>
             {revertedIds.size > 0 ? "All reverted" : "No items to review"}
           </Text>
           <Text style={[s.hint, { color: colors.mutedForeground }]}>
             {revertedIds.size > 0
-              ? `${revertedIds.size} item${revertedIds.size !== 1 ? "s" : ""} reverted successfully.`
+              ? `${revertedIds.size} item${revertedIds.size !== 1 ? "s" : ""} reverted.`
               : "No inventory items have been updated by PDF extraction yet."}
           </Text>
         </View>
@@ -221,18 +272,19 @@ export default function CatalogReviewScreen() {
         <>
           <View style={[s.summaryBar, { borderBottomColor: colors.border }]}>
             <Text style={[s.summaryText, { color: colors.mutedForeground }]}>
-              {activeItems.length} item{activeItems.length !== 1 ? "s" : ""}
-              {activeItems.filter((i) => i.isLowConfidence).length > 0
-                ? ` · ${activeItems.filter((i) => i.isLowConfidence).length} low-confidence`
-                : ""}
+              {totalActive} item{totalActive !== 1 ? "s" : ""} across {groups.filter(g => g.items.filter(i => !revertedIds.has(i.id)).length > 0).length} session{groups.length !== 1 ? "s" : ""}
               {revertedIds.size > 0 ? ` · ${revertedIds.size} reverted` : ""}
             </Text>
           </View>
           <FlatList
-            data={activeItems}
-            keyExtractor={(i) => String(i.id)}
-            renderItem={renderItem}
-            contentContainerStyle={{ padding: 12, paddingBottom: 100, gap: 10 }}
+            data={listData}
+            keyExtractor={(row, i) =>
+              row.kind === "header"
+                ? `hdr-${row.group.jobId ?? "null"}`
+                : `item-${row.item.id}-${i}`
+            }
+            renderItem={renderRow}
+            contentContainerStyle={{ paddingBottom: 100 }}
           />
         </>
       )}
@@ -255,18 +307,16 @@ const s = StyleSheet.create({
   refreshText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   hint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
-  emptyEmoji: { fontSize: 48 },
   emptyTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
   errorText: { fontSize: 14, fontFamily: "Inter_500Medium", textAlign: "center" },
   retryBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
   retryBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  summaryBar: {
-    paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1,
-  },
+  summaryBar: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1 },
   summaryText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  row: {
-    borderRadius: 12, borderWidth: 1, padding: 14, gap: 8,
-  },
+  sectionHeader: { paddingHorizontal: 14, paddingVertical: 10, marginTop: 8 },
+  sectionTitle: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  sectionSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  row: { marginHorizontal: 12, marginTop: 8, borderRadius: 12, borderWidth: 1, padding: 14, gap: 8 },
   rowTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
   rowIdent: { flex: 1 },
   rowBadges: { flexDirection: "row", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" },
@@ -280,9 +330,6 @@ const s = StyleSheet.create({
   diffNew: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
   imageBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: "flex-start" },
   imageBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
-  revertBtn: {
-    borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14,
-    alignSelf: "flex-start", alignItems: "center",
-  },
+  revertBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, alignSelf: "flex-start", alignItems: "center" },
   revertBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
 });
