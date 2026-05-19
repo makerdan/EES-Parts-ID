@@ -27,8 +27,21 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { ResultCard } from "@/components/ResultCard";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { useQueryClient } from "@tanstack/react-query";
+import { useScanHistory } from "@/hooks/useScanHistory";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatRelativeTime(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  return `${days}d ago`;
+}
 
 type ScanPhase = "idle" | "looking" | "found" | "notfound";
 
@@ -217,6 +230,7 @@ export default function BarcodeScreen() {
   const [assignments, setAssignments] = useState<AssignmentEntry[]>([]);
 
   const updateBarcodesMutation = useUpdateItemBarcodes();
+  const { history, addEntry, clear: clearHistory } = useScanHistory();
 
   // ── Scan handler ─────────────────────────────────────────────────────────────
   const handleBarcodeScanned = useCallback(
@@ -249,6 +263,14 @@ export default function BarcodeScreen() {
         const result = await lookupByBarcode(encodeURIComponent(code));
         setMatchedItem(result);
         setScanPhase("found");
+        addEntry({
+          barcode: code,
+          found: true,
+          itemId: result.id,
+          catalog: result.catalog,
+          vendor: result.vendor,
+          timestamp: new Date().toISOString(),
+        });
       } catch (err: unknown) {
         const status =
           err && typeof err === "object" && "status" in err
@@ -256,13 +278,14 @@ export default function BarcodeScreen() {
             : null;
         if (status === 404) {
           setScanPhase("notfound");
+          addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
         } else {
           setScanError("Lookup failed — please try again.");
           setScanPhase("idle");
         }
       }
     },
-    [shelfMode, shelfStep, scannedCode],
+    [shelfMode, shelfStep, scannedCode, addEntry],
   );
 
   const resetScan = () => {
@@ -517,6 +540,46 @@ export default function BarcodeScreen() {
           </View>
         ) : null}
 
+        {/* ── Recents ────────────────────────────────────────────────────────── */}
+        {!shelfMode && scanPhase === "idle" && history.length > 0 ? (
+          <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+            <View style={styles.recentsHeader}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>RECENT SCANS</Text>
+              <Pressable onPress={clearHistory} style={[styles.clearBtn, { borderColor: colors.border }]}>
+                <Text style={[styles.clearBtnText, { color: colors.mutedForeground }]}>Clear</Text>
+              </Pressable>
+            </View>
+            {history.map((entry, idx) => (
+              <View
+                key={`${entry.barcode}-${idx}`}
+                style={[styles.recentRow, { backgroundColor: colors.card, borderColor: colors.border }]}
+              >
+                <View style={{ flex: 1, gap: 2 }}>
+                  {entry.found && entry.catalog ? (
+                    <Text style={[styles.recentCatalog, { color: colors.foreground }]}>
+                      {entry.catalog}
+                      {entry.vendor ? (
+                        <Text style={[styles.recentVendor, { color: colors.mutedForeground }]}> · {entry.vendor}</Text>
+                      ) : null}
+                    </Text>
+                  ) : (
+                    <Text style={[styles.recentCatalog, { color: colors.mutedForeground }]}>Not assigned</Text>
+                  )}
+                  <Text style={[styles.recentBarcode, { color: colors.mutedForeground }]}>{entry.barcode}</Text>
+                </View>
+                <View style={{ alignItems: "flex-end", gap: 4 }}>
+                  <Text style={[styles.recentTime, { color: colors.mutedForeground }]}>{formatRelativeTime(entry.timestamp)}</Text>
+                  <View style={[styles.recentBadge, { backgroundColor: entry.found ? colors.success + "22" : colors.muted }]}>
+                    <Text style={[styles.recentBadgeText, { color: entry.found ? colors.success : colors.mutedForeground }]}>
+                      {entry.found ? "found" : "unassigned"}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
         {/* ── Error banner ───────────────────────────────────────────────────── */}
         {scanError ? (
           <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "44" }]}>
@@ -767,6 +830,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   logBadgeText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  recentsHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  clearBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1 },
+  clearBtnText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  recentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 10,
+    marginBottom: 6,
+    gap: 10,
+  },
+  recentCatalog: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  recentVendor: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  recentBarcode: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 1 },
+  recentTime: { fontSize: 11, fontFamily: "Inter_400Regular" },
+  recentBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  recentBadgeText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
 });
 
 const pickerStyles = StyleSheet.create({
