@@ -30,6 +30,7 @@ import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { useQueryClient } from "@tanstack/react-query";
 import { useScanHistory } from "@/hooks/useScanHistory";
 import type { ScanEntry } from "@/utils/scanHistory";
+import { groupScansByDate } from "@/utils/scanHistory";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -209,6 +210,7 @@ export default function BarcodeScreen() {
   const [showAssignPicker, setShowAssignPicker] = useState(false);
   const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
   const [historyPreviewItem, setHistoryPreviewItem] = useState<InventoryItem | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   // Debounce scans so a single barcode doesn't fire dozens of times
   const lastScannedRef = useRef<string | null>(null);
@@ -237,6 +239,20 @@ export default function BarcodeScreen() {
 
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const { history, addEntry, clear: clearHistory } = useScanHistory();
+
+  const scanGroups = React.useMemo(() => groupScansByDate(history), [history]);
+
+  const toggleGroup = useCallback((dateKey: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(dateKey)) {
+        next.delete(dateKey);
+      } else {
+        next.add(dateKey);
+      }
+      return next;
+    });
+  }, []);
 
   // ── Scan handler ─────────────────────────────────────────────────────────────
   const handleBarcodeScanned = useCallback(
@@ -583,45 +599,71 @@ export default function BarcodeScreen() {
                 <Text style={[styles.clearBtnText, { color: colors.mutedForeground }]}>Clear history</Text>
               </Pressable>
             </View>
-            {history.map((entry, idx) => (
-              <Pressable
-                key={`${entry.barcode}-${idx}`}
-                onPress={() => handleRecentTap(entry)}
-                disabled={!entry.found}
-                style={({ pressed }) => [
-                  styles.recentRow,
-                  {
-                    backgroundColor: pressed && entry.found ? colors.muted : colors.card,
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <View style={{ flex: 1, gap: 2 }}>
-                  {entry.found && entry.catalog ? (
-                    <Text style={[styles.recentCatalog, { color: colors.foreground }]}>
-                      {entry.catalog}
-                      {entry.vendor ? (
-                        <Text style={[styles.recentVendor, { color: colors.mutedForeground }]}> · {entry.vendor}</Text>
+            {scanGroups.map((group) => {
+              const isCollapsed = collapsedGroups.has(group.dateKey);
+              return (
+                <View key={group.dateKey}>
+                  {/* Date group header */}
+                  <Pressable
+                    onPress={() => toggleGroup(group.dateKey)}
+                    style={[styles.groupHeader, { borderColor: colors.border }]}
+                  >
+                    <Text style={[styles.groupLabel, { color: colors.mutedForeground }]}>
+                      {group.label.toUpperCase()}
+                    </Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Text style={[styles.groupCount, { color: colors.mutedForeground }]}>
+                        {group.entries.length}
+                      </Text>
+                      <Text style={[styles.groupChevron, { color: colors.mutedForeground }]}>
+                        {isCollapsed ? "›" : "⌄"}
+                      </Text>
+                    </View>
+                  </Pressable>
+
+                  {/* Group entries */}
+                  {!isCollapsed && group.entries.map((entry, idx) => (
+                    <Pressable
+                      key={`${entry.barcode}-${idx}`}
+                      onPress={() => handleRecentTap(entry)}
+                      disabled={!entry.found}
+                      style={({ pressed }) => [
+                        styles.recentRow,
+                        {
+                          backgroundColor: pressed && entry.found ? colors.muted : colors.card,
+                          borderColor: colors.border,
+                        },
+                      ]}
+                    >
+                      <View style={{ flex: 1, gap: 2 }}>
+                        {entry.found && entry.catalog ? (
+                          <Text style={[styles.recentCatalog, { color: colors.foreground }]}>
+                            {entry.catalog}
+                            {entry.vendor ? (
+                              <Text style={[styles.recentVendor, { color: colors.mutedForeground }]}> · {entry.vendor}</Text>
+                            ) : null}
+                          </Text>
+                        ) : (
+                          <Text style={[styles.recentCatalog, { color: colors.mutedForeground }]}>Unassigned</Text>
+                        )}
+                        <Text style={[styles.recentBarcode, { color: colors.mutedForeground }]}>{entry.barcode}</Text>
+                      </View>
+                      <View style={{ alignItems: "flex-end", gap: 4 }}>
+                        <Text style={[styles.recentTime, { color: colors.mutedForeground }]}>{formatRelativeTime(entry.timestamp)}</Text>
+                        <View style={[styles.recentBadge, { backgroundColor: entry.found ? colors.success + "22" : colors.muted }]}>
+                          <Text style={[styles.recentBadgeText, { color: entry.found ? colors.success : colors.mutedForeground }]}>
+                            {entry.found ? "found" : "unassigned"}
+                          </Text>
+                        </View>
+                      </View>
+                      {entry.found ? (
+                        <Text style={[styles.recentChevron, { color: colors.mutedForeground }]}>›</Text>
                       ) : null}
-                    </Text>
-                  ) : (
-                    <Text style={[styles.recentCatalog, { color: colors.mutedForeground }]}>Unassigned</Text>
-                  )}
-                  <Text style={[styles.recentBarcode, { color: colors.mutedForeground }]}>{entry.barcode}</Text>
+                    </Pressable>
+                  ))}
                 </View>
-                <View style={{ alignItems: "flex-end", gap: 4 }}>
-                  <Text style={[styles.recentTime, { color: colors.mutedForeground }]}>{formatRelativeTime(entry.timestamp)}</Text>
-                  <View style={[styles.recentBadge, { backgroundColor: entry.found ? colors.success + "22" : colors.muted }]}>
-                    <Text style={[styles.recentBadgeText, { color: entry.found ? colors.success : colors.mutedForeground }]}>
-                      {entry.found ? "found" : "unassigned"}
-                    </Text>
-                  </View>
-                </View>
-                {entry.found ? (
-                  <Text style={[styles.recentChevron, { color: colors.mutedForeground }]}>›</Text>
-                ) : null}
-              </Pressable>
-            ))}
+              );
+            })}
           </View>
         ) : null}
 
@@ -979,6 +1021,19 @@ const styles = StyleSheet.create({
   recentBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
   recentBadgeText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
   recentChevron: { fontSize: 20, fontFamily: "Inter_400Regular", lineHeight: 24 },
+  groupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginBottom: 6,
+    marginTop: 4,
+  },
+  groupLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.6 },
+  groupCount: { fontSize: 11, fontFamily: "Inter_400Regular" },
+  groupChevron: { fontSize: 16, fontFamily: "Inter_400Regular", lineHeight: 20 },
   previewHeader: {
     flexDirection: "row",
     alignItems: "center",
