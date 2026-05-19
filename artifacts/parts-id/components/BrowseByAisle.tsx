@@ -27,6 +27,7 @@ import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { useWebDragScroll } from "@/hooks/useWebDragScroll";
+import { useWebHorizontalScroll } from "@/hooks/useWebHorizontalScroll";
 import { ResultCard } from "@/components/ResultCard";
 import { AddPartModal } from "@/components/AddPartModal";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
@@ -221,6 +222,110 @@ const drillStyles = StyleSheet.create({
   hint: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   countBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   countText: { fontSize: 12, fontFamily: "Inter_700Bold" },
+});
+
+function AislePillRow({
+  aisles,
+  currentAisleNum,
+  onSelect,
+  colors,
+}: {
+  aisles: AisleNode[];
+  currentAisleNum: number;
+  onSelect: (aisle: AisleNode) => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+  useWebDragScroll(scrollRef);
+  useWebHorizontalScroll(scrollRef);
+  return (
+    <ScrollView
+      ref={scrollRef}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={[pillRowStyles.row, { backgroundColor: colors.card, borderBottomColor: colors.border }]}
+      contentContainerStyle={pillRowStyles.content}
+    >
+      {aisles.map(aisle => {
+        const active = aisle.aisleNum === currentAisleNum;
+        return (
+          <Pressable
+            key={aisle.aisleNum}
+            onPress={() => onSelect(aisle)}
+            style={[
+              pillRowStyles.pill,
+              {
+                backgroundColor: active ? colors.primary : colors.muted,
+                borderColor: active ? colors.primary : colors.border,
+              },
+            ]}
+          >
+            <Text style={[pillRowStyles.pillText, { color: active ? colors.primaryForeground : colors.foreground }]}>
+              {aisle.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+function SectionPillRow({
+  sections,
+  currentSectionNum,
+  onSelect,
+  colors,
+}: {
+  sections: SectionNode[];
+  currentSectionNum: number;
+  onSelect: (section: SectionNode) => void;
+  colors: ReturnType<typeof useColors>;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+  useWebDragScroll(scrollRef);
+  useWebHorizontalScroll(scrollRef);
+  return (
+    <ScrollView
+      ref={scrollRef}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={[pillRowStyles.row, { backgroundColor: colors.card, borderBottomColor: colors.border }]}
+      contentContainerStyle={pillRowStyles.content}
+    >
+      {sections.map(section => {
+        const active = section.sectionNum === currentSectionNum;
+        return (
+          <Pressable
+            key={section.sectionNum}
+            onPress={() => onSelect(section)}
+            style={[
+              pillRowStyles.pill,
+              {
+                backgroundColor: active ? colors.primary : colors.muted,
+                borderColor: active ? colors.primary : colors.border,
+              },
+            ]}
+          >
+            <Text style={[pillRowStyles.pillText, { color: active ? colors.primaryForeground : colors.foreground }]}>
+              {section.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+const pillRowStyles = StyleSheet.create({
+  row: { borderBottomWidth: 1 },
+  content: { paddingHorizontal: 12, paddingVertical: 8, gap: 6 },
+  pill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  pillText: { fontSize: 12, fontFamily: "Inter_500Medium" },
 });
 
 function SectionNavBar({
@@ -772,6 +877,12 @@ export function BrowseByAisle({
             nextLabel={hierarchy.aisles[aisleIdx + 1]?.label ?? ""}
             colors={colors}
           />
+          <AislePillRow
+            aisles={hierarchy.aisles}
+            currentAisleNum={crumbs.aisle!.aisleNum}
+            onSelect={aisle => setCrumbs({ aisle, section: null })}
+            colors={colors}
+          />
           <FlatList
             ref={sectionsListRef}
             data={filteredSections}
@@ -813,38 +924,46 @@ export function BrowseByAisle({
 
       {/* ── Parts level ── */}
       {level === "parts" ? (
-        shelfViewEnabled ? (
-          <SectionShelfView
-            section={crumbs.section!}
-            onPrev={goToPrevSection}
-            onNext={goToNextSection}
-            prevDisabled={sectionIdx <= 0}
-            nextDisabled={sectionIdx >= filteredSections.length - 1}
-            prevLabel={filteredSections[sectionIdx - 1]?.label ?? ""}
-            nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
-            fontScale={fontScale}
-            onEditKeywords={onEditKeywords}
-            onEditBins={onEditBins}
+        <View style={{ flex: 1 }}>
+          <SectionPillRow
+            sections={filteredSections}
+            currentSectionNum={crumbs.section!.sectionNum}
+            onSelect={section => setCrumbs(prev => ({ ...prev, section }))}
             colors={colors}
-            cardItemPanHandlers={cardItemSwipe.panHandlers}
-            sectionPanHandlers={sectionSwipe.panHandlers}
           />
-        ) : (
-          <PartsListView
-            section={crumbs.section!}
-            onPrev={goToPrevSection}
-            onNext={goToNextSection}
-            prevDisabled={sectionIdx <= 0}
-            nextDisabled={sectionIdx >= filteredSections.length - 1}
-            prevLabel={filteredSections[sectionIdx - 1]?.label ?? ""}
-            nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
-            fontScale={fontScale}
-            onEditKeywords={onEditKeywords}
-            onEditBins={onEditBins}
-            colors={colors}
-            sectionPanHandlers={sectionSwipe.panHandlers}
-          />
-        )
+          {shelfViewEnabled ? (
+            <SectionShelfView
+              section={crumbs.section!}
+              onPrev={goToPrevSection}
+              onNext={goToNextSection}
+              prevDisabled={sectionIdx <= 0}
+              nextDisabled={sectionIdx >= filteredSections.length - 1}
+              prevLabel={filteredSections[sectionIdx - 1]?.label ?? ""}
+              nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
+              fontScale={fontScale}
+              onEditKeywords={onEditKeywords}
+              onEditBins={onEditBins}
+              colors={colors}
+              cardItemPanHandlers={cardItemSwipe.panHandlers}
+              sectionPanHandlers={sectionSwipe.panHandlers}
+            />
+          ) : (
+            <PartsListView
+              section={crumbs.section!}
+              onPrev={goToPrevSection}
+              onNext={goToNextSection}
+              prevDisabled={sectionIdx <= 0}
+              nextDisabled={sectionIdx >= filteredSections.length - 1}
+              prevLabel={filteredSections[sectionIdx - 1]?.label ?? ""}
+              nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
+              fontScale={fontScale}
+              onEditKeywords={onEditKeywords}
+              onEditBins={onEditBins}
+              colors={colors}
+              sectionPanHandlers={sectionSwipe.panHandlers}
+            />
+          )}
+        </View>
       ) : null}
 
       {/* ── Admin: Add Part FAB ── */}
