@@ -43,6 +43,12 @@ export const ListInventoryResponse = zod.object({
         .array(zod.string())
         .describe("Barcode values associated with this part"),
       enrichedAt: zod.coerce.date().nullish(),
+      imageUrl: zod
+        .string()
+        .nullish()
+        .describe(
+          "URL of the catalog image extracted from a PDF import, served via the API proxy",
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     }),
@@ -136,6 +142,12 @@ export const SearchInventoryResponse = zod.object({
           .array(zod.string())
           .describe("Barcode values associated with this part"),
         enrichedAt: zod.coerce.date().nullish(),
+        imageUrl: zod
+          .string()
+          .nullish()
+          .describe(
+            "URL of the catalog image extracted from a PDF import, served via the API proxy",
+          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -159,6 +171,12 @@ export const SearchInventoryResponse = zod.object({
             .array(zod.string())
             .describe("Barcode values associated with this part"),
           enrichedAt: zod.coerce.date().nullish(),
+          imageUrl: zod
+            .string()
+            .nullish()
+            .describe(
+              "URL of the catalog image extracted from a PDF import, served via the API proxy",
+            ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
         }),
@@ -240,6 +258,12 @@ export const UpdateItemBinsResponse = zod.object({
     .array(zod.string())
     .describe("Barcode values associated with this part"),
   enrichedAt: zod.coerce.date().nullish(),
+  imageUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -266,6 +290,12 @@ export const LookupByBarcodeResponse = zod.object({
     .array(zod.string())
     .describe("Barcode values associated with this part"),
   enrichedAt: zod.coerce.date().nullish(),
+  imageUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -298,6 +328,12 @@ export const UpdateItemBarcodesResponse = zod.object({
     .array(zod.string())
     .describe("Barcode values associated with this part"),
   enrichedAt: zod.coerce.date().nullish(),
+  imageUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -328,6 +364,12 @@ export const UpdateItemDescriptionResponse = zod.object({
     .array(zod.string())
     .describe("Barcode values associated with this part"),
   enrichedAt: zod.coerce.date().nullish(),
+  imageUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -358,6 +400,12 @@ export const UpdateItemKeywordsResponse = zod.object({
     .array(zod.string())
     .describe("Barcode values associated with this part"),
   enrichedAt: zod.coerce.date().nullish(),
+  imageUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -418,6 +466,12 @@ export const AiIdentifyPartResponse = zod.object({
           .array(zod.string())
           .describe("Barcode values associated with this part"),
         enrichedAt: zod.coerce.date().nullish(),
+        imageUrl: zod
+          .string()
+          .nullish()
+          .describe(
+            "URL of the catalog image extracted from a PDF import, served via the API proxy",
+          ),
         createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
@@ -441,6 +495,12 @@ export const AiIdentifyPartResponse = zod.object({
             .array(zod.string())
             .describe("Barcode values associated with this part"),
           enrichedAt: zod.coerce.date().nullish(),
+          imageUrl: zod
+            .string()
+            .nullish()
+            .describe(
+              "URL of the catalog image extracted from a PDF import, served via the API proxy",
+            ),
           createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
         }),

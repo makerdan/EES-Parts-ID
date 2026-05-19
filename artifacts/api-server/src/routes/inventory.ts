@@ -222,7 +222,7 @@ router.post("/search", async (req, res) => {
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
       bin_locations: string[]; ai_keywords: string[]; barcodes: string[];
-      enriched_at: Date | null; created_at: Date; updated_at: Date;
+      enriched_at: Date | null; image_url: string | null; created_at: Date; updated_at: Date;
       fts_rank: number; trgm_sim: number;
     };
 
@@ -263,7 +263,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.created_at, i.updated_at,
+              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 to_tsvector('english',
                   coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
@@ -350,8 +350,8 @@ router.post("/search", async (req, res) => {
         aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
         barcodes: Array.isArray(row.barcodes) ? row.barcodes as string[] : [],
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
-        // PDF catalog enrichment columns (not included in FTS search results)
-        imageUrl: null,
+        // PDF catalog enrichment columns — image_url is now included in the SELECT
+        imageUrl: typeof row.image_url === "string" ? row.image_url : null,
         imageSource: null,
         imageConfidence: null,
         previousDescription: null,
