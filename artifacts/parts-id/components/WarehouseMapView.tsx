@@ -62,6 +62,9 @@ export interface WarehouseMapViewProps {
   onZoneTap: (zone: ApiWarehouseZone) => void;
   onZoneLongPress?: (zone: ApiWarehouseZone) => void;
   isAdmin?: boolean;
+  cycleMode?: boolean;
+  cycleLocked?: boolean;
+  countedZoneIds?: ReadonlySet<number>;
 }
 
 export function WarehouseMapView({
@@ -72,6 +75,9 @@ export function WarehouseMapView({
   onZoneTap,
   onZoneLongPress,
   isAdmin,
+  cycleMode = false,
+  cycleLocked = false,
+  countedZoneIds,
 }: WarehouseMapViewProps) {
   const colors = useColors();
   const colorScheme = useColorScheme();
@@ -179,6 +185,43 @@ export function WarehouseMapView({
     if (!zones.length) return null;
     return zones.map((zone) => {
       const isActive = zone.isInventory;
+
+      if (cycleMode) {
+        const isCounted = countedZoneIds?.has(zone.id) ?? false;
+        const fillColor = isCounted ? "#22c55ecc" : colors.primary + "18";
+        const strokeColor = isCounted ? "#16a34a" : colors.primary + "50";
+        const strokeWidth = isCounted ? 10 : 4;
+        const labelColor = isCounted ? "#fff" : colors.primary + "80";
+        return (
+          <G
+            key={zone.id}
+            onLongPress={(!cycleLocked && isActive) ? () => onZoneLongPress?.(zone) : undefined}
+            delayLongPress={400}
+          >
+            <Rect
+              x={zone.svgX}
+              y={zone.svgY}
+              width={zone.svgWidth}
+              height={zone.svgHeight}
+              fill={fillColor}
+              stroke={strokeColor}
+              strokeWidth={strokeWidth}
+            />
+            <SvgText
+              x={zone.svgX + zone.svgWidth / 2}
+              y={zone.svgY + zone.svgHeight / 2}
+              fontSize={Math.max(24, Math.min(48, zone.svgHeight / 3))}
+              fontWeight="bold"
+              fill={labelColor}
+              textAnchor="middle"
+              alignmentBaseline="middle"
+            >
+              {zone.label}
+            </SvgText>
+          </G>
+        );
+      }
+
       const fillColor = isActive ? colors.primary + "30" : colors.mutedForeground + "18";
       const strokeColor = isActive ? colors.primary : colors.mutedForeground;
       const strokeWidth = isActive ? 8 : 4;
@@ -215,7 +258,7 @@ export function WarehouseMapView({
         </G>
       );
     });
-  }, [zones, colors, onZoneTap, onZoneLongPress]);
+  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, cycleLocked, countedZoneIds]);
 
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
@@ -307,7 +350,7 @@ export function WarehouseMapView({
         </View>
       )}
 
-      {/* Hint: double-tap to reset zoom */}
+      {/* Hint: double-tap to reset zoom / cycle layer instructions */}
       <View
         style={[
           styles.hintBadge,
@@ -316,7 +359,11 @@ export function WarehouseMapView({
         pointerEvents="none"
       >
         <Text style={[styles.hintText, { color: colors.mutedForeground }]}>
-          Pinch/drag to pan · Double-tap to reset
+          {cycleMode
+            ? cycleLocked
+              ? "Cycle layer — locked"
+              : "Long-press a zone to mark counted"
+            : "Pinch/drag to pan · Double-tap to reset"}
         </Text>
       </View>
     </View>
