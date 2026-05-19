@@ -1,8 +1,7 @@
 /**
- * Warehouse Map tab.
+ * Warehouse Map tab — pan/zoom SVG floor plan with DB zone overlays.
  *
- * Web  → WarehouseMapWeb (zoomable SVG floor plan + section pins)
- * iOS  → WarehouseMapView (pan/zoom SVG + DB zone overlays)
+ * WarehouseMapView is used on all platforms (web and native).
  *
  * Zone sync:
  *   - useWarehouseZones fetches on mount, on tab focus, and on app foreground.
@@ -10,7 +9,6 @@
  */
 import React, { useCallback, useRef, useState } from "react";
 import {
-  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -26,7 +24,6 @@ import { useApp } from "@/contexts/AppContext";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AisleSummarySheet } from "@/components/AisleSummarySheet";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
-import { WarehouseMapWeb } from "@/components/WarehouseMapWeb";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
@@ -109,31 +106,6 @@ export default function MapScreen() {
     );
   }
 
-  // ── Web: existing WarehouseMapWeb ─────────────────────────────────────────
-  if (Platform.OS === "web") {
-    return (
-      <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>Warehouse Map</Text>
-          <Pressable
-            onPress={() => setBrowseOpen(true)}
-            style={[styles.browseLink, { borderColor: colors.border }]}
-          >
-            <Feather name="list" size={14} color={colors.foreground} style={{ marginRight: 4 }} />
-            <Text style={[styles.browseLinkText, { color: colors.foreground }]}>List view</Text>
-          </Pressable>
-        </View>
-        <WarehouseMapWeb
-          inventory={inventory}
-          onAislePress={(aisleNum) => {
-            setDrilldown({ aisleNum, label: `Aisle ${String(aisleNum).padStart(2, "0")}` });
-          }}
-        />
-      </SafeAreaView>
-    );
-  }
-
-  // ── Native: SVG floor plan with zone overlays ─────────────────────────────
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
