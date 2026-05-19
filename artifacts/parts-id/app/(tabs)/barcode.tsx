@@ -24,6 +24,7 @@ import {
   getListInventoryQueryKey,
 } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
+import { lookupByBarcodeOffline } from "@/utils/offlineBarcode";
 import { ResultCard } from "@/components/ResultCard";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { useQueryClient } from "@tanstack/react-query";
@@ -203,6 +204,7 @@ export default function BarcodeScreen() {
   const [scannedCode, setScannedCode] = useState<string | null>(null);
   const [matchedItem, setMatchedItem] = useState<InventoryItem | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [isOfflineMatch, setIsOfflineMatch] = useState(false);
   const [showAssignPicker, setShowAssignPicker] = useState(false);
   const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
 
@@ -260,6 +262,7 @@ export default function BarcodeScreen() {
       setScanPhase("looking");
       setScanError(null);
       setMatchedItem(null);
+      setIsOfflineMatch(false);
 
       try {
         const result = await lookupByBarcode(encodeURIComponent(code));
@@ -281,6 +284,16 @@ export default function BarcodeScreen() {
         if (status === 404) {
           setScanPhase("notfound");
           addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
+        } else if (status === null) {
+          const offlineItem = await lookupByBarcodeOffline(code);
+          if (offlineItem) {
+            setMatchedItem(offlineItem);
+            setIsOfflineMatch(true);
+            setScanPhase("found");
+          } else {
+            setScanError("Lookup failed — please try again.");
+            setScanPhase("idle");
+          }
         } else {
           setScanError("Lookup failed — please try again.");
           setScanPhase("idle");
@@ -295,6 +308,7 @@ export default function BarcodeScreen() {
     setMatchedItem(null);
     setScanPhase("idle");
     setScanError(null);
+    setIsOfflineMatch(false);
     lastScannedRef.current = null;
     scanCooldownRef.current = false;
   };
@@ -596,7 +610,14 @@ export default function BarcodeScreen() {
         {!shelfMode && scanPhase === "found" && matchedItem ? (
           <View style={{ padding: 16 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>SCAN RESULT</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>SCAN RESULT</Text>
+                {isOfflineMatch ? (
+                  <View style={[styles.offlineBadge, { backgroundColor: colors.warning + "22" }]}>
+                    <Text style={[styles.offlineBadgeText, { color: colors.warning }]}>OFFLINE</Text>
+                  </View>
+                ) : null}
+              </View>
               <Pressable onPress={resetScan} style={[styles.rescanBtn, { borderColor: colors.border }]}>
                 <Text style={[styles.rescanText, { color: colors.foreground }]}>↩ Scan Again</Text>
               </Pressable>
@@ -605,7 +626,7 @@ export default function BarcodeScreen() {
               Code: {scannedCode}
             </Text>
             <ResultCard
-              result={{ item: matchedItem, confidence: 1.0, matchReason: "barcode match", seriesBase: null, seriesLabel: null, variants: [] }}
+              result={{ item: matchedItem, confidence: 1.0, matchReason: isOfflineMatch ? "offline match" : "barcode match", seriesBase: null, seriesLabel: null, variants: [] }}
               onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
               rank={0}
               fontScale={textFontScale}
@@ -775,6 +796,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   rescanText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  offlineBadge: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
+  offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
   notFoundCard: {
     borderRadius: 12,
     borderWidth: 1,
