@@ -28,6 +28,8 @@ import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
 
+const CYCLE_COUNTED_KEY = "CYCLE_COUNTED_IDS";
+
 function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
   return {
     aisleNum: parseInt(zone.aisleId, 10) || 0,
@@ -59,6 +61,21 @@ export default function MapScreen() {
   const inventoryRef = useRef<InventoryItem[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
+  // ── Cycle count layer ──────────────────────────────────────────────────────
+  const [cycleMode, setCycleMode] = useState(false);
+  const [cycleLocked, setCycleLocked] = useState(false);
+  const [countedZoneIds, setCountedZoneIds] = useState<Set<number>>(new Set());
+
+  React.useEffect(() => {
+    AsyncStorage.getItem(CYCLE_COUNTED_KEY).then((raw) => {
+      if (!raw) return;
+      try {
+        const ids = JSON.parse(raw) as number[];
+        setCountedZoneIds(new Set(ids));
+      } catch { /* ignore corrupt data */ }
+    });
+  }, []);
+
   React.useEffect(() => {
     AsyncStorage.getItem(FUSE_CACHE_KEY)
       .then(raw => {
@@ -76,8 +93,22 @@ export default function MapScreen() {
   }, []);
 
   const handleZoneLongPress = useCallback((zone: ApiWarehouseZone) => {
+    if (cycleMode) {
+      if (cycleLocked) return;
+      setCountedZoneIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(zone.id)) {
+          next.delete(zone.id);
+        } else {
+          next.add(zone.id);
+        }
+        void AsyncStorage.setItem(CYCLE_COUNTED_KEY, JSON.stringify([...next]));
+        return next;
+      });
+      return;
+    }
     setSummaryZone(toAisleZone(zone));
-  }, []);
+  }, [cycleMode, cycleLocked]);
 
   const handleBrowseFromSheet = useCallback((zone: WarehouseZone) => {
     setSummaryZone(null);
@@ -110,13 +141,45 @@ export default function MapScreen() {
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Warehouse Map</Text>
-        <Pressable
-          onPress={() => setBrowseOpen(true)}
-          style={[styles.browseLink, { borderColor: colors.border }]}
-        >
-          <Feather name="list" size={14} color={colors.foreground} style={{ marginRight: 4 }} />
-          <Text style={[styles.browseLinkText, { color: colors.foreground }]}>List view</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          {cycleMode && (
+            <Pressable
+              onPress={() => setCycleLocked((v) => !v)}
+              style={[
+                styles.iconBtn,
+                { borderColor: cycleLocked ? colors.primary : colors.border },
+              ]}
+              accessibilityLabel={cycleLocked ? "Unlock cycle layer" : "Lock cycle layer"}
+            >
+              <Feather
+                name={cycleLocked ? "lock" : "unlock"}
+                size={15}
+                color={cycleLocked ? colors.primary : colors.mutedForeground}
+              />
+            </Pressable>
+          )}
+          <Pressable
+            onPress={() => setCycleMode((v) => !v)}
+            style={[
+              styles.iconBtn,
+              { borderColor: cycleMode ? colors.primary : colors.border },
+            ]}
+            accessibilityLabel={cycleMode ? "Hide cycle count layer" : "Show cycle count layer"}
+          >
+            <Feather
+              name="layers"
+              size={15}
+              color={cycleMode ? colors.primary : colors.mutedForeground}
+            />
+          </Pressable>
+          <Pressable
+            onPress={() => setBrowseOpen(true)}
+            style={[styles.iconBtn, { borderColor: colors.border }]}
+            accessibilityLabel="List view"
+          >
+            <Feather name="list" size={15} color={colors.foreground} />
+          </Pressable>
+        </View>
       </View>
 
       <WarehouseMapView
@@ -124,9 +187,12 @@ export default function MapScreen() {
         zonesLoading={zonesLoading}
         zonesError={zonesError}
         onZonesRetry={refetchZones}
-        onZoneTap={handleZoneTap}
+        onZoneTap={cycleMode ? () => undefined : handleZoneTap}
         onZoneLongPress={handleZoneLongPress}
         isAdmin={isAdmin}
+        cycleMode={cycleMode}
+        cycleLocked={cycleLocked}
+        countedZoneIds={countedZoneIds}
       />
 
       <AisleSummarySheet
@@ -150,13 +216,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   headerTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
-  browseLink: {
+  headerActions: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
+  },
+  iconBtn: {
     borderWidth: 1,
     borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    padding: 7,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  browseLinkText: { fontSize: 13, fontFamily: "Inter_400Regular" },
 });
