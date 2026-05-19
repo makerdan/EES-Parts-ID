@@ -18,3 +18,21 @@ export async function lookupByBarcodeOffline(
     return null;
   }
 }
+
+export async function upsertItemInBarcodeCache(
+  updatedItem: InventoryItem,
+): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
+    const items: InventoryItem[] = raw ? (JSON.parse(raw) as InventoryItem[]) : [];
+    const idx = items.findIndex((item) => item.id === updatedItem.id);
+    if (idx >= 0) {
+      items[idx] = updatedItem;
+    } else {
+      items.push(updatedItem);
+    }
+    await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items));
+  } catch {
+    // Non-fatal: cache update failure should not surface to the user
+  }
+}

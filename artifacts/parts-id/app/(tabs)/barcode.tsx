@@ -24,7 +24,7 @@ import {
   getListInventoryQueryKey,
 } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
-import { lookupByBarcodeOffline } from "@/utils/offlineBarcode";
+import { lookupByBarcodeOffline, upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { ResultCard } from "@/components/ResultCard";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { useQueryClient } from "@tanstack/react-query";
@@ -329,6 +329,7 @@ export default function BarcodeScreen() {
           await queryClient.invalidateQueries({
             predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
           });
+          await upsertItemInBarcodeCache(updated);
           setMatchedItem(updated);
         }
         setScanPhase("found");
@@ -348,7 +349,7 @@ export default function BarcodeScreen() {
       try {
         const existing = item.barcodes ?? [];
         if (!existing.includes(shelfScannedCode)) {
-          await updateBarcodesMutation.mutateAsync({
+          const updated = await updateBarcodesMutation.mutateAsync({
             id: item.id,
             data: { barcodes: [...existing, shelfScannedCode] },
           });
@@ -356,6 +357,7 @@ export default function BarcodeScreen() {
           await queryClient.invalidateQueries({
             predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
           });
+          await upsertItemInBarcodeCache(updated);
         }
         setAssignments((prev) => [
           { barcode: shelfScannedCode, item, timestamp: new Date() },
