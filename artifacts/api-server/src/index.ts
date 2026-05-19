@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { startServer, MAX_RETRIES } from "./lib/startServer";
 import { db } from "@workspace/db";
 import { catalogPdfJobTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -17,9 +18,6 @@ const port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
-
-const MAX_RETRIES = 5;
-const RETRY_DELAY_MS = 1000;
 
 async function recoverOrphanedJobs(): Promise<void> {
   try {
@@ -44,26 +42,6 @@ async function recoverOrphanedJobs(): Promise<void> {
   }
 }
 
-function startServer(retries: number): void {
-  const server = app.listen(port, () => {
-    logger.info({ port }, "Server listening");
-  });
-
-  server.on("error", (err: NodeJS.ErrnoException) => {
-    if (err.code === "EADDRINUSE" && retries > 0) {
-      logger.warn(
-        { port, retriesLeft: retries - 1 },
-        "Port in use — retrying in 1s…",
-      );
-      server.close();
-      setTimeout(() => startServer(retries - 1), RETRY_DELAY_MS);
-    } else {
-      logger.error({ err }, "Error listening on port");
-      process.exit(1);
-    }
-  });
-}
-
 recoverOrphanedJobs().then(() => {
-  startServer(MAX_RETRIES);
+  startServer(app, port, MAX_RETRIES);
 });
