@@ -24,5 +24,5 @@ export function useWebHorizontalScroll(
 
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
-  });
+  }, [ref]);
 }

@@ -4,18 +4,28 @@ import type { ScrollView } from "react-native";
 
 type ScrollableNode = { getScrollableNode: () => HTMLElement | undefined };
 
+const DRAG_THRESHOLD_PX = 4;
+
 interface DragState {
   active: boolean;
+  moved: boolean;
   startX: number;
   startScrollLeft: number;
 }
 
 /**
  * Web-only: adds click-and-drag horizontal scrolling to the given ScrollView
- * ref. No-ops on iOS / Android.
+ * ref. Only responds to the primary (left) mouse button. A small movement
+ * threshold prevents accidental drags from interfering with clicks.
+ * No-ops on iOS / Android.
  */
 export function useWebDragScroll(ref: React.RefObject<ScrollView | null>) {
-  const drag = useRef<DragState>({ active: false, startX: 0, startScrollLeft: 0 });
+  const drag = useRef<DragState>({
+    active: false,
+    moved: false,
+    startX: 0,
+    startScrollLeft: 0,
+  });
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
@@ -26,23 +36,31 @@ export function useWebDragScroll(ref: React.RefObject<ScrollView | null>) {
     const state = drag.current;
 
     function onMouseDown(e: MouseEvent) {
+      if (e.button !== 0) return;
       state.active = true;
+      state.moved = false;
       state.startX = e.pageX - node!.offsetLeft;
       state.startScrollLeft = node!.scrollLeft;
-      node!.style.cursor = "grabbing";
-      node!.style.userSelect = "none";
     }
 
     function onMouseMove(e: MouseEvent) {
       if (!state.active) return;
-      e.preventDefault();
       const x = e.pageX - node!.offsetLeft;
-      node!.scrollLeft = state.startScrollLeft - (x - state.startX);
+      const delta = x - state.startX;
+      if (!state.moved && Math.abs(delta) < DRAG_THRESHOLD_PX) return;
+      if (!state.moved) {
+        state.moved = true;
+        node!.style.cursor = "grabbing";
+        node!.style.userSelect = "none";
+      }
+      e.preventDefault();
+      node!.scrollLeft = state.startScrollLeft - delta;
     }
 
     function onRelease() {
       if (!state.active) return;
       state.active = false;
+      state.moved = false;
       node!.style.cursor = "";
       node!.style.userSelect = "";
     }
@@ -58,5 +76,5 @@ export function useWebDragScroll(ref: React.RefObject<ScrollView | null>) {
       node.removeEventListener("mouseup", onRelease);
       node.removeEventListener("mouseleave", onRelease);
     };
-  });
+  }, [ref]);
 }
