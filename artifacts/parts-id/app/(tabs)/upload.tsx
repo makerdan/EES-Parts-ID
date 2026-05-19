@@ -33,6 +33,7 @@ type ParsedRow = {
   catalog: string;
   description: string;
   binLocations: string[];
+  barcodes: string[];
 };
 
 type BinDiffRow = {
@@ -100,6 +101,7 @@ const VENDOR_ALIASES = ["vendor", "mfr", "manufacturer", "brand", "make", "suppl
 const CATALOG_ALIASES = ["catalog", "catalog#", "cat#", "part", "part#", "partno", "item", "itemno", "sku", "model", "partnumber", "part number", "cat no", "catalog no"];
 const DESC_ALIASES = ["description", "desc", "name", "product", "productname", "title", "item description"];
 const BIN_ALIASES = ["bin", "bin location", "binlocation", "location", "loc", "shelf", "aisle", "bin#", "bin no"];
+const BARCODE_ALIASES = ["barcode", "barcodes", "barcode#", "upc", "ean", "gtin"];
 
 function findCol(headers: string[], aliases: string[]): number {
   return aliases.map(a => headers.indexOf(a)).find(i => i >= 0) ?? -1;
@@ -115,6 +117,7 @@ function parseCSV(text: string): ParsedRow[] {
   const catalogCol = findCol(headers, CATALOG_ALIASES);
   const descCol = findCol(headers, DESC_ALIASES);
   const binCol = findCol(headers, BIN_ALIASES);
+  const barcodeCol = findCol(headers, BARCODE_ALIASES);
 
   const rows: ParsedRow[] = [];
   for (let i = 1; i < lines.length; i++) {
@@ -127,6 +130,7 @@ function parseCSV(text: string): ParsedRow[] {
       catalog: catalog || "UNKNOWN",
       description: descCol >= 0 ? cells[descCol]?.trim() ?? "" : "",
       binLocations: binCol >= 0 ? parseBinCell(cells[binCol] ?? "") : [],
+      barcodes: barcodeCol >= 0 ? (cells[barcodeCol] ?? "").trim().split(/[,;|]/).map(b => b.trim()).filter(b => b.length > 0) : [],
     });
   }
   return rows;
@@ -188,6 +192,7 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
   const catalogCol = findCol(headers, CATALOG_ALIASES);
   const descCol = findCol(headers, DESC_ALIASES);
   const binCol = findCol(headers, BIN_ALIASES);
+  const barcodeCol = findCol(headers, BARCODE_ALIASES);
 
   const rows: ParsedRow[] = [];
   for (let i = 1; i < rawRows.length; i++) {
@@ -200,6 +205,7 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
       catalog: catalog || "UNKNOWN",
       description: descCol >= 0 ? cells[descCol] ?? "" : "",
       binLocations: binCol >= 0 ? parseBinCell(cells[binCol] ?? "") : [],
+      barcodes: barcodeCol >= 0 ? (cells[barcodeCol] ?? "").split(/[,;|]/).map(b => b.trim()).filter(b => b.length > 0) : [],
     });
   }
   return rows;
@@ -348,11 +354,12 @@ const gateStyles = StyleSheet.create({
 // Skipped-bin rows have their bin cell blanked so the server preserves the
 // existing bin assignment instead of overwriting it.
 function serializeToCsv(rows: ParsedRow[], skipBinRows: Set<number>): string {
-  const header = "Vendor,Catalog,Description,BinLocation";
+  const header = "Vendor,Catalog,Description,BinLocation,Barcodes";
   const escapeField = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const lines = rows.map((row, i) => {
     const bin = skipBinRows.has(i) ? "" : row.binLocations.join(";");
-    return [row.vendor, row.catalog, row.description, bin].map(escapeField).join(",");
+    const barcodes = row.barcodes.join(",");
+    return [row.vendor, row.catalog, row.description, bin, barcodes].map(escapeField).join(",");
   });
   return [header, ...lines].join("\n");
 }
@@ -933,8 +940,9 @@ export default function UploadScreen() {
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
                   Accepts: CSV, Excel (.xlsx/.xls), ODS{"\n"}
                   Required columns: vendor, catalog{"\n"}
-                  Optional: description, bin (or binLocation){"\n"}
-                  Multiple bins per row: separate with ; or |
+                  Optional: description, bin (or binLocation), barcodes (upc/ean/gtin){"\n"}
+                  Multiple bins per row: separate with ; or |{"\n"}
+                  Multiple barcodes per row: separate with ,
                 </Text>
 
                 <Pressable onPress={handlePickFile} style={[styles.pickBtn, { borderColor: colors.primary }]}>
@@ -959,72 +967,89 @@ export default function UploadScreen() {
                     Preview ({parsedRows.length} rows)
                   </Text>
 
-                  <View style={[styles.previewHeaderRow, { backgroundColor: colors.muted }]}>
-                    {["VENDOR", "CATALOG", "DESCRIPTION", "BIN"].map(h => (
-                      <Text
-                        key={h}
-                        style={[styles.previewHeaderCell, { color: colors.mutedForeground, flex: h === "DESCRIPTION" ? 2 : 1 }]}
-                      >
-                        {h}
-                      </Text>
-                    ))}
-                    <Text style={[styles.previewHeaderCell, { color: colors.mutedForeground, width: 44, textAlign: "center" }]}>
-                      SKIP
-                    </Text>
-                  </View>
-
-                  {parsedRows.slice(0, 8).map((row, i) => {
-                    const diffRow = binDiff?.rows[i];
-                    const isReplace = diffRow?.status === "replace";
-                    const isSkipped = skipBinRows.has(i);
+                  {(() => {
+                    const hasBarcodes = parsedRows.some(r => r.barcodes.length > 0);
                     return (
-                      <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border, backgroundColor: isReplace && !isSkipped ? colors.warning + "18" : undefined }]}>
-                        <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
-                          {row.vendor}
-                        </Text>
-                        <Text style={[styles.previewCell, { color: colors.primary, flex: 1 }]} numberOfLines={1}>
-                          {row.catalog}
-                        </Text>
-                        <Text style={[styles.previewCell, { color: colors.mutedForeground, flex: 2 }]} numberOfLines={1}>
-                          {row.description}
-                        </Text>
-                        <View style={{ flex: 1 }}>
-                          {isReplace && !isSkipped ? (
-                            <>
-                              <Text style={[styles.previewCell, { color: colors.warning, textDecorationLine: "line-through", fontSize: 10 }]} numberOfLines={1}>
-                                {diffRow.existingBins.join(", ")}
-                              </Text>
-                              <Text style={[styles.previewCell, { color: colors.foreground }]} numberOfLines={1}>
-                                {row.binLocations.join(", ")}
-                              </Text>
-                            </>
-                          ) : (
-                            <Text style={[styles.previewCell, { color: isSkipped ? colors.mutedForeground : colors.foreground }]} numberOfLines={1}>
-                              {isSkipped ? "(kept)" : row.binLocations.join(", ")}
+                      <>
+                        <View style={[styles.previewHeaderRow, { backgroundColor: colors.muted }]}>
+                          {["VENDOR", "CATALOG", "DESCRIPTION", "BIN"].map(h => (
+                            <Text
+                              key={h}
+                              style={[styles.previewHeaderCell, { color: colors.mutedForeground, flex: h === "DESCRIPTION" ? 2 : 1 }]}
+                            >
+                              {h}
                             </Text>
-                          )}
+                          ))}
+                          {hasBarcodes ? (
+                            <Text style={[styles.previewHeaderCell, { color: colors.mutedForeground, flex: 1 }]}>
+                              BARCODES
+                            </Text>
+                          ) : null}
+                          <Text style={[styles.previewHeaderCell, { color: colors.mutedForeground, width: 44, textAlign: "center" }]}>
+                            SKIP
+                          </Text>
                         </View>
-                        {isReplace ? (
-                          <Pressable
-                            onPress={() => {
-                              setSkipBinRows(prev => {
-                                const next = new Set(prev);
-                                if (next.has(i)) next.delete(i); else next.add(i);
-                                return next;
-                              });
-                            }}
-                            style={[styles.skipToggle, { backgroundColor: isSkipped ? colors.success + "22" : colors.warning + "22", borderColor: isSkipped ? colors.success : colors.warning }]}
-                          >
-                            <Text style={{ fontSize: 11, color: isSkipped ? colors.success : colors.warning, fontFamily: "Inter_600SemiBold" }}>
-                              {isSkipped ? "✓" : "⚠"}
-                            </Text>
-                          </Pressable>
-                        ) : (
-                          <View style={{ width: 44 }} />
-                        )}
-                      </View>
+
+                        {parsedRows.slice(0, 8).map((row, i) => {
+                          const diffRow = binDiff?.rows[i];
+                          const isReplace = diffRow?.status === "replace";
+                          const isSkipped = skipBinRows.has(i);
+                          return (
+                            <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border, backgroundColor: isReplace && !isSkipped ? colors.warning + "18" : undefined }]}>
+                              <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
+                                {row.vendor}
+                              </Text>
+                              <Text style={[styles.previewCell, { color: colors.primary, flex: 1 }]} numberOfLines={1}>
+                                {row.catalog}
+                              </Text>
+                              <Text style={[styles.previewCell, { color: colors.mutedForeground, flex: 2 }]} numberOfLines={1}>
+                                {row.description}
+                              </Text>
+                              <View style={{ flex: 1 }}>
+                                {isReplace && !isSkipped ? (
+                                  <>
+                                    <Text style={[styles.previewCell, { color: colors.warning, textDecorationLine: "line-through", fontSize: 10 }]} numberOfLines={1}>
+                                      {diffRow.existingBins.join(", ")}
+                                    </Text>
+                                    <Text style={[styles.previewCell, { color: colors.foreground }]} numberOfLines={1}>
+                                      {row.binLocations.join(", ")}
+                                    </Text>
+                                  </>
+                                ) : (
+                                  <Text style={[styles.previewCell, { color: isSkipped ? colors.mutedForeground : colors.foreground }]} numberOfLines={1}>
+                                    {isSkipped ? "(kept)" : row.binLocations.join(", ")}
+                                  </Text>
+                                )}
+                              </View>
+                              {hasBarcodes ? (
+                                <Text style={[styles.previewCell, { color: colors.mutedForeground, flex: 1, fontSize: 11 }]} numberOfLines={1}>
+                                  {row.barcodes.join(", ")}
+                                </Text>
+                              ) : null}
+                              {isReplace ? (
+                                <Pressable
+                                  onPress={() => {
+                                    setSkipBinRows(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(i)) next.delete(i); else next.add(i);
+                                      return next;
+                                    });
+                                  }}
+                                  style={[styles.skipToggle, { backgroundColor: isSkipped ? colors.success + "22" : colors.warning + "22", borderColor: isSkipped ? colors.success : colors.warning }]}
+                                >
+                                  <Text style={{ fontSize: 11, color: isSkipped ? colors.success : colors.warning, fontFamily: "Inter_600SemiBold" }}>
+                                    {isSkipped ? "✓" : "⚠"}
+                                  </Text>
+                                </Pressable>
+                              ) : (
+                                <View style={{ width: 44 }} />
+                              )}
+                            </View>
+                          );
+                        })}
+                      </>
                     );
-                  })}
+                  })()}
 
                   {parsedRows.length > 8 ? (
                     <Text style={[styles.moreRows, { color: colors.mutedForeground }]}>

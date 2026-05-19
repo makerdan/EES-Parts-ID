@@ -12,6 +12,7 @@
  *   Vendor, Catalog     — required
  *   Description         — optional
  *   BinLocation         — optional
+ *   Barcodes            — optional (comma/semicolon/pipe-separated values within the cell)
  *
  * Response:
  *   200 { inserted: number, updated: number, total: number }
@@ -99,6 +100,7 @@ interface ParsedRow {
   catalog: string;
   description: string;
   binLocations: string[];
+  barcodes: string[];
 }
 
 /**
@@ -116,6 +118,7 @@ function parseCsv(csvText: string): ParsedRow[] | null {
 
   const descIdx = header.findIndex(h => h === "description");
   const binIdx = header.findIndex(h => h === "binlocation" || h === "bin" || h === "binnumber");
+  const barcodeIdx = header.findIndex(h => h === "barcodes" || h === "barcode" || h === "upc" || h === "ean" || h === "gtin" || h === "barcode#");
 
   const rows: ParsedRow[] = [];
   for (let i = 1; i < lines.length; i++) {
@@ -128,11 +131,17 @@ function parseCsv(csvText: string): ParsedRow[] | null {
     const binLocations = binCell
       ? binCell.split(/[;|]/).map(b => b.trim()).filter(b => b.length > 0)
       : [];
+    const barcodeCell = (barcodeIdx >= 0 ? fields[barcodeIdx]?.trim() : "") ?? "";
+    // CSV may pack multiple barcodes separated by , ; or | — split, trim, drop blanks
+    const barcodes = barcodeCell
+      ? barcodeCell.split(/[,;|]/).map(b => b.trim()).filter(b => b.length > 0)
+      : [];
     rows.push({
       vendor,
       catalog,
       description: (descIdx >= 0 ? fields[descIdx]?.trim() : "") ?? "",
       binLocations,
+      barcodes,
     });
   }
   return rows;
@@ -299,6 +308,7 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
           catalog: row.catalog,
           description: row.description,
           binLocations: row.binLocations,
+          barcodes: row.barcodes,
           aiKeywords: [],
         })
         .onConflictDoUpdate({
@@ -308,6 +318,9 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
             // Preserve existing bins when no bin data is supplied — guards
             // multi-bin assignments during partial re-uploads (Task #455).
             binLocations: sql`CASE WHEN coalesce(array_length(EXCLUDED.bin_locations, 1), 0) > 0 THEN EXCLUDED.bin_locations ELSE ${inventoryTable.binLocations} END`,
+            // Preserve existing barcodes when no barcode data is supplied — same
+            // semantics as binLocations so manual scan assignments survive re-uploads.
+            barcodes: sql`CASE WHEN coalesce(array_length(EXCLUDED.barcodes, 1), 0) > 0 THEN EXCLUDED.barcodes ELSE ${inventoryTable.barcodes} END`,
             updatedAt: sql`now()`,
           },
         })
