@@ -193,6 +193,7 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
         vendor: inventoryTable.vendor,
         catalog: inventoryTable.catalog,
         binLocations: inventoryTable.binLocations,
+        barcodes: inventoryTable.barcodes,
       })
       .from(inventoryTable)
       .where(
@@ -204,8 +205,10 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
       );
 
     const existingMap = new Map<string, string[]>();
+    const existingBarcodesMap = new Map<string, string[]>();
     for (const row of existingRows) {
       existingMap.set(`${row.vendor}\0${row.catalog}`, row.binLocations);
+      existingBarcodesMap.set(`${row.vendor}\0${row.catalog}`, row.barcodes ?? []);
     }
 
     type RowStatus = "replace" | "add" | "preserve" | "none";
@@ -216,6 +219,8 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
       status: RowStatus;
       existingBins: string[];
       incomingBins: string[];
+      barcodeStatus: RowStatus;
+      existingBarcodes: string[];
     }
 
     const diffRows: BinDiffRow[] = [];
@@ -223,6 +228,9 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
     let willAddBins = 0;
     let willPreserveBins = 0;
     let noChange = 0;
+    let willReplaceBarcodes = 0;
+    let willAddBarcodes = 0;
+    let willPreserveBarcodes = 0;
 
     for (const row of rows) {
       const key = `${row.vendor.toUpperCase()}\0${row.catalog}`;
@@ -252,10 +260,36 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
         noChange++;
       }
 
-      diffRows.push({ vendor: row.vendor, catalog: row.catalog, status, existingBins, incomingBins });
+      // Barcode diff
+      const existingBarcodes = existingBarcodesMap.get(key) ?? [];
+      const incomingBarcodes = row.barcodes;
+      const hasIncomingBarcodes = incomingBarcodes.length > 0;
+      const hasExistingBarcodes = existingBarcodes.length > 0;
+
+      const barcodesIdentical =
+        hasIncomingBarcodes &&
+        hasExistingBarcodes &&
+        incomingBarcodes.length === existingBarcodes.length &&
+        [...incomingBarcodes].sort().join("\0") === [...existingBarcodes].sort().join("\0");
+
+      let barcodeStatus: RowStatus;
+      if (hasIncomingBarcodes && hasExistingBarcodes && !barcodesIdentical) {
+        barcodeStatus = "replace";
+        willReplaceBarcodes++;
+      } else if (hasIncomingBarcodes && !hasExistingBarcodes) {
+        barcodeStatus = "add";
+        willAddBarcodes++;
+      } else if (!hasIncomingBarcodes && hasExistingBarcodes) {
+        barcodeStatus = "preserve";
+        willPreserveBarcodes++;
+      } else {
+        barcodeStatus = "none";
+      }
+
+      diffRows.push({ vendor: row.vendor, catalog: row.catalog, status, existingBins, incomingBins, barcodeStatus, existingBarcodes });
     }
 
-    res.json({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows: diffRows });
+    res.json({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows: diffRows, willReplaceBarcodes, willAddBarcodes, willPreserveBarcodes });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Preview failed" });

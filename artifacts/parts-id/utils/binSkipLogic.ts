@@ -18,6 +18,8 @@ export type BinDiffRow = {
   status: "replace" | "add" | "preserve" | "none";
   existingBins: string[];
   incomingBins: string[];
+  barcodeStatus?: "replace" | "add" | "preserve" | "none";
+  existingBarcodes?: string[];
 };
 
 /**

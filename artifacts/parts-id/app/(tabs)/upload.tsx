@@ -44,6 +44,9 @@ type BinDiffSummary = {
   willPreserveBins: number;
   noChange: number;
   rows: BinDiffRow[];
+  willReplaceBarcodes: number;
+  willAddBarcodes: number;
+  willPreserveBarcodes: number;
 };
 
 // CSV/XLSX cell may pack multiple bins separated by ; or | — split, trim, drop blanks.
@@ -972,9 +975,10 @@ export default function UploadScreen() {
                         {parsedRows.slice(0, 8).map((row, i) => {
                           const diffRow = binDiff?.rows[i];
                           const isReplace = diffRow?.status === "replace";
+                          const isBarcodeReplace = diffRow?.barcodeStatus === "replace";
                           const isSkipped = skipBinRows.has(i);
                           return (
-                            <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border, backgroundColor: isReplace && !isSkipped ? colors.warning + "18" : undefined }]}>
+                            <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border, backgroundColor: (isReplace && !isSkipped) || isBarcodeReplace ? colors.warning + "18" : undefined }]}>
                               <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
                                 {row.vendor}
                               </Text>
@@ -1001,9 +1005,16 @@ export default function UploadScreen() {
                                 )}
                               </View>
                               {hasBarcodes ? (
-                                <Text style={[styles.previewCell, { color: colors.mutedForeground, flex: 1, fontSize: 11 }]} numberOfLines={1}>
-                                  {row.barcodes.join(", ")}
-                                </Text>
+                                <View style={{ flex: 1 }}>
+                                  {isBarcodeReplace && diffRow?.existingBarcodes && diffRow.existingBarcodes.length > 0 ? (
+                                    <Text style={[styles.previewCell, { color: colors.warning, textDecorationLine: "line-through", fontSize: 10 }]} numberOfLines={1}>
+                                      {diffRow.existingBarcodes.join(", ")}
+                                    </Text>
+                                  ) : null}
+                                  <Text style={[styles.previewCell, { color: colors.mutedForeground, fontSize: 11 }]} numberOfLines={1}>
+                                    {row.barcodes.join(", ")}
+                                  </Text>
+                                </View>
                               ) : null}
                               {isReplace ? (
                                 <Pressable
@@ -1058,6 +1069,24 @@ export default function UploadScreen() {
                           <View style={[styles.diffChip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
                             <Text style={[styles.diffChipCount, { color: colors.mutedForeground }]}>{preservedBinCount(binDiff.willPreserveBins, skipBinRows, binDiff.rows)}</Text>
                             <Text style={[styles.diffChipLabel, { color: colors.mutedForeground }]}>bins preserved</Text>
+                          </View>
+                        ) : null}
+                        {binDiff.willReplaceBarcodes > 0 ? (
+                          <View style={[styles.diffChip, { backgroundColor: colors.warning + "22", borderColor: colors.warning + "55" }]}>
+                            <Text style={[styles.diffChipCount, { color: colors.warning }]}>{binDiff.willReplaceBarcodes}</Text>
+                            <Text style={[styles.diffChipLabel, { color: colors.warning }]}>will replace barcodes</Text>
+                          </View>
+                        ) : null}
+                        {binDiff.willAddBarcodes > 0 ? (
+                          <View style={[styles.diffChip, { backgroundColor: colors.success + "15", borderColor: colors.success + "44" }]}>
+                            <Text style={[styles.diffChipCount, { color: colors.success }]}>{binDiff.willAddBarcodes}</Text>
+                            <Text style={[styles.diffChipLabel, { color: colors.success }]}>will add barcodes</Text>
+                          </View>
+                        ) : null}
+                        {binDiff.willPreserveBarcodes > 0 ? (
+                          <View style={[styles.diffChip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                            <Text style={[styles.diffChipCount, { color: colors.mutedForeground }]}>{binDiff.willPreserveBarcodes}</Text>
+                            <Text style={[styles.diffChipLabel, { color: colors.mutedForeground }]}>barcodes preserved</Text>
                           </View>
                         ) : null}
                       </View>
