@@ -29,6 +29,7 @@ import { ResultCard } from "@/components/ResultCard";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { useQueryClient } from "@tanstack/react-query";
 import { useScanHistory } from "@/hooks/useScanHistory";
+import type { ScanEntry } from "@/utils/scanHistory";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -207,6 +208,7 @@ export default function BarcodeScreen() {
   const [isOfflineMatch, setIsOfflineMatch] = useState(false);
   const [showAssignPicker, setShowAssignPicker] = useState(false);
   const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
+  const [historyPreviewItem, setHistoryPreviewItem] = useState<InventoryItem | null>(null);
 
   // Debounce scans so a single barcode doesn't fire dozens of times
   const lastScannedRef = useRef<string | null>(null);
@@ -301,6 +303,21 @@ export default function BarcodeScreen() {
     },
     [shelfMode, shelfStep, scannedCode, addEntry],
   );
+
+  const handleRecentTap = useCallback(async (entry: ScanEntry) => {
+    if (!entry.found) return;
+    const offlineItem = await lookupByBarcodeOffline(entry.barcode);
+    if (offlineItem) {
+      setHistoryPreviewItem(offlineItem);
+      return;
+    }
+    try {
+      const item = await lookupByBarcode(encodeURIComponent(entry.barcode));
+      setHistoryPreviewItem(item);
+    } catch {
+      // Item may have been deleted or is unreachable — nothing to show
+    }
+  }, []);
 
   const resetScan = () => {
     setScannedCode(null);
@@ -567,9 +584,17 @@ export default function BarcodeScreen() {
               </Pressable>
             </View>
             {history.map((entry, idx) => (
-              <View
+              <Pressable
                 key={`${entry.barcode}-${idx}`}
-                style={[styles.recentRow, { backgroundColor: colors.card, borderColor: colors.border }]}
+                onPress={() => handleRecentTap(entry)}
+                disabled={!entry.found}
+                style={({ pressed }) => [
+                  styles.recentRow,
+                  {
+                    backgroundColor: pressed && entry.found ? colors.muted : colors.card,
+                    borderColor: colors.border,
+                  },
+                ]}
               >
                 <View style={{ flex: 1, gap: 2 }}>
                   {entry.found && entry.catalog ? (
@@ -592,7 +617,10 @@ export default function BarcodeScreen() {
                     </Text>
                   </View>
                 </View>
-              </View>
+                {entry.found ? (
+                  <Text style={[styles.recentChevron, { color: colors.mutedForeground }]}>›</Text>
+                ) : null}
+              </Pressable>
             ))}
           </View>
         ) : null}
@@ -740,6 +768,40 @@ export default function BarcodeScreen() {
           }
         }}
       />
+
+      {/* ── History item preview modal ────────────────────────────────────────── */}
+      <Modal
+        visible={!!historyPreviewItem}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setHistoryPreviewItem(null)}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+          <View style={[styles.previewHeader, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.previewTitle, { color: colors.foreground }]}>Part Detail</Text>
+            <Pressable onPress={() => setHistoryPreviewItem(null)} hitSlop={10}>
+              <Text style={{ color: colors.primary, fontSize: 15, fontFamily: "Inter_500Medium" }}>Done</Text>
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+            {historyPreviewItem ? (
+              <ResultCard
+                result={{
+                  item: historyPreviewItem,
+                  confidence: 1.0,
+                  matchReason: "scan history",
+                  seriesBase: null,
+                  seriesLabel: null,
+                  variants: [],
+                }}
+                onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
+                rank={0}
+                fontScale={textFontScale}
+              />
+            ) : null}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -916,6 +978,16 @@ const styles = StyleSheet.create({
   recentTime: { fontSize: 11, fontFamily: "Inter_400Regular" },
   recentBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
   recentBadgeText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
+  recentChevron: { fontSize: 20, fontFamily: "Inter_400Regular", lineHeight: 24 },
+  previewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  previewTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
 });
 
 const pickerStyles = StyleSheet.create({
