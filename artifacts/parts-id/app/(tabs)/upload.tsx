@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -11,6 +12,8 @@ import {
   View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import { File as FsFile, Paths as FsPaths } from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import * as XLSX from "xlsx";
 import { useListInventory } from "@workspace/api-client-react";
 
@@ -375,6 +378,9 @@ export default function UploadScreen() {
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
 
   // Bin diff / replace-warning state
+  const [exportPending, setExportPending] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
   const [binDiff, setBinDiff] = useState<BinDiffSummary | null>(null);
   const [binDiffPending, setBinDiffPending] = useState(false);
   const [binDiffFailed, setBinDiffFailed] = useState(false);
@@ -877,6 +883,67 @@ export default function UploadScreen() {
     } catch {
       setUploadError("AI enrichment failed — please check your connection and try again.");
       setEnrichProgress(null);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    setExportPending(true);
+    setExportError(null);
+    try {
+      const pageSize = 200;
+      let page = 1;
+      let allItems: InventoryItem[] = [];
+      let total = Infinity;
+
+      while (allItems.length < total) {
+        const url = `${API_BASE}/inventory?page=${page}&limit=${pageSize}`;
+        const res = await fetch(url, { headers: adminHeaders });
+        if (!res.ok) throw new Error(`API error ${res.status}`);
+        const data: { items: InventoryItem[]; total: number } = await res.json();
+        total = data.total;
+        allItems = allItems.concat(data.items);
+        if (data.items.length < pageSize) break;
+        page++;
+      }
+
+      const escapeField = (v: string) => `"${v.replace(/"/g, '""')}"`;
+      const header = "Vendor,Catalog,Description,BinLocation,Barcodes";
+      const lines = allItems.map(item => {
+        const bin = item.binLocations.join(";");
+        const barcodes = item.barcodes.join(",");
+        return [item.vendor, item.catalog, item.description, bin, barcodes]
+          .map(escapeField)
+          .join(",");
+      });
+      const csvContent = [header, ...lines].join("\n");
+      const fileName = `inventory-export-${new Date().toISOString().slice(0, 10)}.csv`;
+
+      if (Platform.OS === "web") {
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        const file = new FsFile(FsPaths.cache, fileName);
+        file.write(csvContent);
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(file.uri, {
+            mimeType: "text/csv",
+            dialogTitle: "Export Inventory CSV",
+            UTI: "public.comma-separated-values-text",
+          });
+        }
+      }
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExportPending(false);
     }
   };
 
@@ -1554,14 +1621,35 @@ export default function UploadScreen() {
                         <Text style={[styles.inventoryCount, { color: colors.foreground }]}>
                           {inventoryTotal} items total
                         </Text>
-                        <Pressable
-                          onPress={() => handleEnrich()}
-                          style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
-                        >
-                          <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
-                        </Pressable>
+                        <View style={styles.inventoryHeaderActions}>
+                          <Pressable
+                            onPress={handleExportCsv}
+                            disabled={exportPending}
+                            style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card, opacity: exportPending ? 0.6 : 1 }]}
+                          >
+                            {exportPending ? (
+                              <ActivityIndicator size="small" color={colors.primary} />
+                            ) : (
+                              <Text style={[styles.exportCsvText, { color: colors.primary }]}>⬇ Export CSV</Text>
+                            )}
+                          </Pressable>
+                          <Pressable
+                            onPress={() => handleEnrich()}
+                            style={[styles.enrichSmallBtn, { backgroundColor: colors.primary }]}
+                          >
+                            <Text style={[styles.enrichSmallText, { color: colors.primaryForeground }]}>🤖 Enrich All</Text>
+                          </Pressable>
+                        </View>
                       </View>
                     )}
+                    {exportError ? (
+                      <View style={[styles.exportErrorBanner, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
+                        <Text style={[styles.exportErrorText, { color: colors.destructive }]}>⚠ Export failed: {exportError}</Text>
+                        <Pressable onPress={() => setExportError(null)}>
+                          <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
                   </View>
                 )}
                 ListEmptyComponent={!inventoryQuery.isLoading ? (
@@ -1681,6 +1769,11 @@ const styles = StyleSheet.create({
   goUploadText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   inventoryHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
   inventoryCount: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  inventoryHeaderActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  exportCsvBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, minWidth: 36, alignItems: "center", justifyContent: "center" },
+  exportCsvText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  exportErrorBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, marginBottom: 10 },
+  exportErrorText: { fontSize: 12, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 17 },
   enrichSmallBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8 },
   enrichSmallText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   loadMoreBtn: { ...secondaryBtnBase, padding: 12, alignItems: "center", marginTop: 8 },
