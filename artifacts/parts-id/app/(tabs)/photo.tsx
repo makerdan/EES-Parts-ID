@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import {
   ActivityIndicator,
   Image,
+  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -10,6 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { resizeImage } from "@/utils/resizeImage";
 import { useSearchInventory, useAiIdentifyPart } from "@workspace/api-client-react";
@@ -20,6 +22,8 @@ import { ResultCard } from "@/components/ResultCard";
 import { BinEditor } from "@/components/BinEditor";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { ReferenceModal } from "@/components/ReferenceModal";
+import { BarcodeScanModal } from "@/components/BarcodeScanModal";
+import BarcodeScreen from "./barcode";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 
@@ -39,6 +43,9 @@ export default function PhotoScreen() {
   const [aiTerms, setAiTerms] = useState<string[]>([]);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [barcodeScanVisible, setBarcodeScanVisible] = useState(false);
+  const [barcodeMoreVisible, setBarcodeMoreVisible] = useState(false);
+  const [barcodeResult, setBarcodeResult] = useState<InventoryItem | null>(null);
   // Tracks which phase of the multi-step AI identification flow we are in.
   type ProgressPhase = "uploading" | "analysing" | "searching" | null;
   const [progressPhase, setProgressPhase] = useState<ProgressPhase>(null);
@@ -231,51 +238,64 @@ export default function PhotoScreen() {
         <View style={styles.content}>
           {/* Image capture */}
           <View style={styles.imageSection}>
-            <View style={styles.imageRow}>
-              {images.map((img, index) => (
-                <View key={index} style={styles.imageWrapper}>
-                  <Image
-                    source={{ uri: img.uri }}
-                    style={[styles.thumbnail, { borderColor: colors.primary }]}
-                    resizeMode="cover"
-                  />
-                  <Pressable
-                    onPress={() => removeImage(index)}
-                    style={[styles.removeBtn, { backgroundColor: colors.destructive }]}
-                  >
-                    <Text style={styles.removeBtnText}>✕</Text>
-                  </Pressable>
-                </View>
-              ))}
+            {images.length > 0 ? (
+              <View style={styles.imageRow}>
+                {images.map((img, index) => (
+                  <View key={index} style={styles.imageWrapper}>
+                    <Image
+                      source={{ uri: img.uri }}
+                      style={[styles.thumbnail, { borderColor: colors.primary }]}
+                      resizeMode="cover"
+                    />
+                    <Pressable
+                      onPress={() => removeImage(index)}
+                      style={[styles.removeBtn, { backgroundColor: colors.destructive }]}
+                    >
+                      <Text style={styles.removeBtnText}>✕</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            ) : null}
 
-              {images.length < 4 ? (
-                isProcessing ? (
-                  <View style={[styles.processingRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
-                    <ActivityIndicator size="small" color={colors.primary} />
-                    <Text style={[styles.processingLabel, { color: colors.mutedForeground }]}>Processing…</Text>
-                  </View>
-                ) : (
-                  <View style={styles.addImageButtons}>
-                    <Pressable
-                      onPress={() => pickImage("camera")}
-                      disabled={isProcessing}
-                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
-                    >
-                      <Text style={styles.addImageEmoji}>📷</Text>
-                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Camera</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => pickImage("library")}
-                      disabled={isProcessing}
-                      style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
-                    >
-                      <Text style={styles.addImageEmoji}>🖼️</Text>
-                      <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
-                    </Pressable>
-                  </View>
-                )
-              ) : null}
-            </View>
+            {isProcessing ? (
+              <View style={[styles.processingRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={[styles.processingLabel, { color: colors.mutedForeground }]}>Processing…</Text>
+              </View>
+            ) : (
+              <View style={styles.addImageButtons}>
+                <Pressable
+                  onPress={() => pickImage("camera")}
+                  disabled={isProcessing || images.length >= 4}
+                  style={[
+                    styles.addImageBtn,
+                    { backgroundColor: colors.card, borderColor: colors.foreground, opacity: images.length >= 4 ? 0.4 : 1 },
+                  ]}
+                >
+                  <Text style={styles.addImageEmoji}>📷</Text>
+                  <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Camera</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => pickImage("library")}
+                  disabled={isProcessing || images.length >= 4}
+                  style={[
+                    styles.addImageBtn,
+                    { backgroundColor: colors.card, borderColor: colors.foreground, opacity: images.length >= 4 ? 0.4 : 1 },
+                  ]}
+                >
+                  <Text style={styles.addImageEmoji}>🖼️</Text>
+                  <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setBarcodeScanVisible(true)}
+                  style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
+                >
+                  <Feather name="maximize" size={24} color={colors.foreground} />
+                  <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Scan Barcode</Text>
+                </Pressable>
+              </View>
+            )}
 
             {images.length === 0 ? (
               <Text style={[styles.imageHint, { color: colors.mutedForeground }]}>
@@ -286,6 +306,16 @@ export default function PhotoScreen() {
                 {images.length} / 4 photos
               </Text>
             )}
+
+            <Pressable
+              onPress={() => setBarcodeMoreVisible(true)}
+              style={styles.historyLink}
+            >
+              <Text style={[styles.historyLinkText, { color: colors.primary }]}>
+                Scan history &amp; more
+              </Text>
+              <Text style={{ color: colors.primary, fontSize: 13 }}>›</Text>
+            </Pressable>
           </View>
 
           {/* Optional context */}
@@ -401,6 +431,25 @@ export default function PhotoScreen() {
             </View>
           ) : null}
 
+          {/* Barcode result */}
+          {barcodeResult ? (
+            <View>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <Text style={[styles.resultsTitle, { color: colors.foreground }]}>Barcode Match</Text>
+                <Pressable onPress={() => setBarcodeResult(null)} hitSlop={10}>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 14 }}>✕</Text>
+                </Pressable>
+              </View>
+              <ResultCard
+                result={{ item: barcodeResult, confidence: 1.0, matchReason: "barcode scan", seriesBase: null, seriesLabel: null, variants: [] }}
+                onEditBins={isAdmin ? setBinEditItem : undefined}
+                onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
+                rank={0}
+                fontScale={textFontScale}
+              />
+            </View>
+          ) : null}
+
           {/* AI summary */}
           {aiSummary ? (
             <View style={[styles.summaryCard, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}>
@@ -476,6 +525,21 @@ export default function PhotoScreen() {
           ) : null}
         </View>
       </ScrollView>
+      <BarcodeScanModal
+        visible={barcodeScanVisible}
+        onClose={() => setBarcodeScanVisible(false)}
+        onFound={(item) => setBarcodeResult(item)}
+      />
+
+      <Modal
+        visible={barcodeMoreVisible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setBarcodeMoreVisible(false)}
+      >
+        <BarcodeScreen onClose={() => setBarcodeMoreVisible(false)} />
+      </Modal>
+
       <ReferenceModal />
 
       <BarcodeEditor
@@ -525,25 +589,27 @@ const styles = StyleSheet.create({
   },
   removeBtnText: { color: "#fff", fontSize: 10, fontFamily: "Inter_700Bold" },
   processingRow: {
-    width: 270, height: 130, borderRadius: 10, borderWidth: 1,
+    height: 88, borderRadius: 10, borderWidth: 1,
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
   },
   processingLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  addImageButtons: { flexDirection: "row", gap: 10, justifyContent: "center" },
+  addImageButtons: { flexDirection: "row", gap: 8 },
   addImageBtn: {
-    width: 130,
-    height: 130,
+    flex: 1,
+    height: 88,
     borderRadius: 10,
     borderWidth: 2,
     borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
+    gap: 5,
   },
   addImageEmoji: { fontSize: 28 },
   addImageLabel: { fontSize: 12, fontFamily: "Inter_500Medium" },
   imageHint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic" },
   photoCounter: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  historyLink: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start" },
+  historyLinkText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   contextCard: { borderRadius: 12, padding: 14, borderWidth: 1 },
   contextTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 12 },
   fieldLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 5 },

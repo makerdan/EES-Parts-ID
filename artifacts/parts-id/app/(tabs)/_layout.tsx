@@ -63,13 +63,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="barcode"
-        options={{
-          title: "Barcode",
-          tabBarIcon: ({ color }) => <Feather name="maximize" size={22} color={color} />,
-        }}
-      />
-      <Tabs.Screen
         name="upload"
         options={{
           title: "Upload",
