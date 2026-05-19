@@ -1148,15 +1148,16 @@ router.get("/enrich-measurements/status", requireAdminAuth, (_req, res) => {
 });
 
 // ── GET /inventory/barcode/{code} ────────────────────────────────────────────
-// OpenAPI spec declares this as /inventory/barcode/{code}. The Express route
-// uses a wildcard (`/barcode/*`) so that QR codes or URLs containing forward
-// slashes are handled correctly after the client encodes them with
-// encodeURIComponent. req.params["0"] holds the encoded segment; it is decoded
-// with decodeURIComponent before the DB query.
+// OpenAPI spec declares this as /inventory/barcode/{code}. A regex route is
+// used instead of a path-to-regexp string pattern so that barcodes containing
+// forward slashes (encoded as %2F by the client) are captured in a single
+// group without triggering path-to-regexp v8's named-parameter restrictions.
+// Capture group 1 holds the raw encoded segment; decodeURIComponent decodes it.
 // Returns the first item whose barcodes array contains the code (case-sensitive).
-router.get("/barcode/*", async (req, res) => {
+router.get(/^\/barcode\/(.+)$/, async (req, res) => {
   try {
-    const code = decodeURIComponent(String((req.params as unknown as Record<string, string>)["0"] ?? "")).trim();
+    const raw = (req.params as unknown as Record<string, string>)["0"] ?? "";
+    const code = decodeURIComponent(raw).trim();
     if (!code) return void res.status(400).json({ error: "code is required" });
 
     const [item] = await db
