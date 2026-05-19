@@ -28,21 +28,15 @@ const API_BASE =
     : "";
 
 
-type ParsedRow = {
-  vendor: string;
-  catalog: string;
-  description: string;
-  binLocations: string[];
-  barcodes: string[];
-};
-
-type BinDiffRow = {
-  vendor: string;
-  catalog: string;
-  status: "replace" | "add" | "preserve" | "none";
-  existingBins: string[];
-  incomingBins: string[];
-};
+import {
+  type ParsedRow,
+  type BinDiffRow,
+  toggleSkipRow,
+  toggleSkipAll,
+  activeReplacementCount,
+  preservedBinCount,
+  serializeToCsv,
+} from "@/utils/binSkipLogic";
 
 type BinDiffSummary = {
   willReplaceBins: number;
@@ -347,22 +341,6 @@ const gateStyles = StyleSheet.create({
   btn: { width: "100%", borderRadius: 8, paddingVertical: 14, alignItems: "center" },
   btnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
 });
-
-// ── Serialize parsed rows back to CSV text ────────────────────────────────
-// Used when the source file was XLSX/ODS (which must be converted to raw CSV
-// before being sent to the admin/upload endpoint).
-// Skipped-bin rows have their bin cell blanked so the server preserves the
-// existing bin assignment instead of overwriting it.
-function serializeToCsv(rows: ParsedRow[], skipBinRows: Set<number>): string {
-  const header = "Vendor,Catalog,Description,BinLocation,Barcodes";
-  const escapeField = (v: string) => `"${v.replace(/"/g, '""')}"`;
-  const lines = rows.map((row, i) => {
-    const bin = skipBinRows.has(i) ? "" : row.binLocations.join(";");
-    const barcodes = row.barcodes.join(",");
-    return [row.vendor, row.catalog, row.description, bin, barcodes].map(escapeField).join(",");
-  });
-  return [header, ...lines].join("\n");
-}
 
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
@@ -1030,11 +1008,7 @@ export default function UploadScreen() {
                               {isReplace ? (
                                 <Pressable
                                   onPress={() => {
-                                    setSkipBinRows(prev => {
-                                      const next = new Set(prev);
-                                      if (next.has(i)) next.delete(i); else next.add(i);
-                                      return next;
-                                    });
+                                    setSkipBinRows(prev => toggleSkipRow(prev, i));
                                   }}
                                   style={[styles.skipToggle, { backgroundColor: isSkipped ? colors.success + "22" : colors.warning + "22", borderColor: isSkipped ? colors.success : colors.warning }]}
                                 >
@@ -1070,7 +1044,7 @@ export default function UploadScreen() {
                       <View style={styles.diffSummaryRow}>
                         {binDiff.willReplaceBins > 0 ? (
                           <View style={[styles.diffChip, { backgroundColor: colors.warning + "22", borderColor: colors.warning + "55" }]}>
-                            <Text style={[styles.diffChipCount, { color: colors.warning }]}>{binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length}</Text>
+                            <Text style={[styles.diffChipCount, { color: colors.warning }]}>{activeReplacementCount(binDiff.willReplaceBins, skipBinRows, binDiff.rows)}</Text>
                             <Text style={[styles.diffChipLabel, { color: colors.warning }]}>will replace bins</Text>
                           </View>
                         ) : null}
@@ -1082,7 +1056,7 @@ export default function UploadScreen() {
                         ) : null}
                         {binDiff.willPreserveBins > 0 ? (
                           <View style={[styles.diffChip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-                            <Text style={[styles.diffChipCount, { color: colors.mutedForeground }]}>{binDiff.willPreserveBins + [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length}</Text>
+                            <Text style={[styles.diffChipCount, { color: colors.mutedForeground }]}>{preservedBinCount(binDiff.willPreserveBins, skipBinRows, binDiff.rows)}</Text>
                             <Text style={[styles.diffChipLabel, { color: colors.mutedForeground }]}>bins preserved</Text>
                           </View>
                         ) : null}
@@ -1169,11 +1143,7 @@ export default function UploadScreen() {
                                     </View>
                                     <Pressable
                                       onPress={() => {
-                                        setSkipBinRows(prev => {
-                                          const next = new Set(prev);
-                                          if (next.has(idx)) next.delete(idx); else next.add(idx);
-                                          return next;
-                                        });
+                                        setSkipBinRows(prev => toggleSkipRow(prev, idx));
                                         setReplaceConfirmed(false);
                                       }}
                                       style={[styles.skipToggle, { backgroundColor: isSkipped ? colors.success + "22" : colors.warning + "22", borderColor: isSkipped ? colors.success : colors.warning }]}
@@ -1190,12 +1160,10 @@ export default function UploadScreen() {
 
                           <Pressable
                             onPress={() => {
-                              const replaceIndices = binDiff.rows
-                                .map((r, i) => r.status === "replace" ? i : -1)
-                                .filter(i => i >= 0);
-                              const allSkipped = replaceIndices.every(i => skipBinRows.has(i));
-                              setSkipBinRows(allSkipped ? new Set() : new Set(replaceIndices));
-                              if (!allSkipped) setReplaceConfirmed(false);
+                              const next = toggleSkipAll(binDiff.rows, skipBinRows);
+                              const wasRestoreAll = next.size === 0;
+                              setSkipBinRows(next);
+                              if (!wasRestoreAll) setReplaceConfirmed(false);
                             }}
                             style={[styles.skipAllBtn, { borderColor: colors.warning }]}
                           >
@@ -1207,7 +1175,7 @@ export default function UploadScreen() {
                           </Pressable>
 
                           {/* Explicit confirmation checkbox */}
-                          {binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length > 0 ? (
+                          {activeReplacementCount(binDiff.willReplaceBins, skipBinRows, binDiff.rows) > 0 ? (
                             <Pressable
                               onPress={() => setReplaceConfirmed(v => !v)}
                               style={styles.confirmRow}
@@ -1217,8 +1185,8 @@ export default function UploadScreen() {
                               </View>
                               <Text style={[styles.confirmLabel, { color: colors.foreground }]}>
                                 I understand{" "}
-                                {binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length}{" "}
-                                existing bin assignment{binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length !== 1 ? "s" : ""} will be overwritten
+                                {activeReplacementCount(binDiff.willReplaceBins, skipBinRows, binDiff.rows)}{" "}
+                                existing bin assignment{activeReplacementCount(binDiff.willReplaceBins, skipBinRows, binDiff.rows) !== 1 ? "s" : ""} will be overwritten
                               </Text>
                             </Pressable>
                           ) : null}
@@ -1240,7 +1208,7 @@ export default function UploadScreen() {
                       and blocked entirely until preview has been successfully loaded */}
                   {(() => {
                     const pendingReplacements = binDiff
-                      ? binDiff.willReplaceBins - [...skipBinRows].filter(idx => binDiff.rows[idx]?.status === "replace").length
+                      ? activeReplacementCount(binDiff.willReplaceBins, skipBinRows, binDiff.rows)
                       : 0;
                     const needsConfirm = pendingReplacements > 0 && !replaceConfirmed;
                     // Block upload if preview hasn't been fetched yet (pending or failed)
