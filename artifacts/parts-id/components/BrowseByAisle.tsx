@@ -26,6 +26,7 @@ import {
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
+import { useWebDragScroll } from "@/hooks/useWebDragScroll";
 import { ResultCard } from "@/components/ResultCard";
 import { AddPartModal } from "@/components/AddPartModal";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
@@ -348,12 +349,14 @@ function ShelfRow({
   onSelectPart: (part: PartOnShelf) => void;
   colors: ReturnType<typeof useColors>;
 }) {
+  const scrollRef = useRef<ScrollView>(null);
+  useWebDragScroll(scrollRef);
   return (
     <View>
       <Text style={[shelfRowStyles.label, { color: colors.mutedForeground }]}>
         {shelf.label}
       </Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={shelfRowStyles.row} contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 4, gap: 0 }}>
+      <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false} style={shelfRowStyles.row} contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 4, gap: 0 }}>
         {shelf.parts.map((part, idx) => {
           const nextPart = shelf.parts[idx + 1];
           const gap = nextPart
