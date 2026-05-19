@@ -35,6 +35,8 @@ export function useWebDragScroll(ref: React.RefObject<ScrollView | null>) {
 
     const state = drag.current;
 
+    node.style.cursor = "grab";
+
     function onMouseDown(e: MouseEvent) {
       if (e.button !== 0) return;
       state.active = true;
@@ -61,7 +63,7 @@ export function useWebDragScroll(ref: React.RefObject<ScrollView | null>) {
       if (!state.active) return;
       state.active = false;
       state.moved = false;
-      node!.style.cursor = "";
+      node!.style.cursor = "grab";
       node!.style.userSelect = "";
     }
 
@@ -75,6 +77,7 @@ export function useWebDragScroll(ref: React.RefObject<ScrollView | null>) {
       node.removeEventListener("mousemove", onMouseMove);
       node.removeEventListener("mouseup", onRelease);
       node.removeEventListener("mouseleave", onRelease);
+      node.style.cursor = "";
     };
   }, [ref]);
 }
