@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { retryAsync } from "@/utils/retryAsync";
 
 const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
 
@@ -50,9 +51,11 @@ export function useWarehouseZones() {
     if (fetchingRef.current) return; // already in flight — skip
     fetchingRef.current = true;
     try {
-      const res = await fetch(`${API_BASE}/warehouse-zones`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: { zones: ApiWarehouseZone[] } = await res.json();
+      const data: { zones: ApiWarehouseZone[] } = await retryAsync(async () => {
+        const res = await fetch(`${API_BASE}/warehouse-zones`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      });
       if (mountedRef.current) {
         setZones(data.zones);
         setError(false);

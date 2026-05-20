@@ -26,6 +26,7 @@ import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/conte
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
 import { reportStorageError } from "@/utils/storageErrorReporter";
+import { retryAsync } from "@/utils/retryAsync";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AddPartModal } from "@/components/AddPartModal";
@@ -277,9 +278,11 @@ export default function SearchScreen() {
     setSyncError(false);
     try {
       do {
-        const res = await fetch(`${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`);
-        if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
-        const data: { items: InventoryItem[]; total: number } = await res.json();
+        const data: { items: InventoryItem[]; total: number } = await retryAsync(async () => {
+          const res = await fetch(`${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`);
+          if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
+          return res.json();
+        });
         // Guard: if the page returned zero items, the server total may be inconsistent —
         // stop looping to prevent an infinite loop.
         if (data.items.length === 0) break;

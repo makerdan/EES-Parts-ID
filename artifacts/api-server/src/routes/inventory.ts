@@ -39,7 +39,7 @@ const router = Router();
 router.get("/", async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query["page"] as string) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query["limit"] as string) || 50));
+    const limit = Math.min(500, Math.max(1, parseInt(req.query["limit"] as string) || 50));
     const offset = (page - 1) * limit;
 
     const [items, countResult] = await Promise.all([
