@@ -1084,7 +1084,7 @@ export default function SearchScreen() {
               <Feather name="x" size={12} color={colors.primary} />
             </Pressable>
           ) : null}
-          <View style={[styles.filterOverlay, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={[styles.filterOverlay, { backgroundColor: colors.card }]}>
             <FilterPanel
               values={filters}
               onChange={handleChange}
@@ -1239,7 +1239,6 @@ const styles = StyleSheet.create({
   filterOverlay: {
     alignSelf: "stretch",
     borderRadius: 12,
-    borderWidth: 1,
     padding: 16,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
