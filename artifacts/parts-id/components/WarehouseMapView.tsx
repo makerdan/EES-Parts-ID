@@ -40,7 +40,7 @@ const SVG_VIEWBOX_H = 2457.41;
 const SVG_ASPECT = SVG_VIEWBOX_W / SVG_VIEWBOX_H;
 
 const MIN_SCALE = 0.8;
-const MAX_SCALE = 20;
+const MAX_SCALE = 50;
 
 // Standalone worklet — no closure over JS values
 function clamp(val: number, min: number, max: number) {
