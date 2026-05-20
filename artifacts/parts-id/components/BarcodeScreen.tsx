@@ -86,6 +86,11 @@ function CatalogPickerModal({
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+  // Inline "new item" form state
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newVendor, setNewVendor] = useState("");
+  const [newBinLocation, setNewBinLocation] = useState("");
+  const [vendorError, setVendorError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchMutation = useSearchInventory();
   const createMutation = useUpsertInventoryBatch();
@@ -99,7 +104,11 @@ function CatalogPickerModal({
   }, [query]);
 
   useEffect(() => {
-    if (!visible) { setQuery(""); setDebouncedQuery(""); setCreateError(null); return; }
+    if (!visible) {
+      setQuery(""); setDebouncedQuery(""); setCreateError(null);
+      setShowCreateForm(false); setNewVendor(""); setNewBinLocation(""); setVendorError(null);
+      return;
+    }
   }, [visible]);
 
   useEffect(() => {
@@ -107,13 +116,31 @@ function CatalogPickerModal({
     searchMutation.mutate({ data: { keywords: debouncedQuery, confidenceThreshold: 20 } });
   }, [debouncedQuery, visible]);
 
-  const handleCreateNew = useCallback(async () => {
-    const catalogCode = query.trim();
-    if (!catalogCode) return;
+  const handleOpenCreateForm = useCallback(() => {
+    setShowCreateForm(true);
+    setNewVendor("");
+    setNewBinLocation("");
+    setVendorError(null);
     setCreateError(null);
+  }, []);
+
+  const handleCancelCreateForm = useCallback(() => {
+    setShowCreateForm(false);
+    setVendorError(null);
+    setCreateError(null);
+  }, []);
+
+  const handleConfirmCreate = useCallback(async () => {
+    const catalogCode = query.trim();
+    const vendorCode = newVendor.trim();
+    if (!catalogCode) return;
+    if (!vendorCode) { setVendorError("Vendor code is required"); return; }
+    setVendorError(null);
+    setCreateError(null);
+    const bins = newBinLocation.trim() ? [newBinLocation.trim()] : [];
     try {
       await createMutation.mutateAsync({
-        data: { items: [{ catalog: catalogCode, vendor: "" }] },
+        data: { items: [{ catalog: catalogCode, vendor: vendorCode, binLocations: bins }] },
       });
       queryClient.invalidateQueries({ queryKey: getListInventoryQueryKey() });
       // Look up the just-created item to get its full record (including id)
@@ -131,7 +158,7 @@ function CatalogPickerModal({
     } catch {
       setCreateError("Failed to create item. Please try again.");
     }
-  }, [query, createMutation, lookupMutation, queryClient, onAssign]);
+  }, [query, newVendor, newBinLocation, createMutation, lookupMutation, queryClient, onAssign]);
 
   const isCreating = createMutation.isPending || lookupMutation.isPending;
 
@@ -183,22 +210,96 @@ function CatalogPickerModal({
           />
         </View>
 
-        {createError ? (
+        {/* ── Inline "new item" form ── */}
+        {showCreateForm ? (
+          <View style={[pickerStyles.createForm, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+            <Text style={[pickerStyles.createFormTitle, { color: colors.foreground }]}>
+              New item — catalog: <Text style={{ color: colors.primary }}>{query.trim()}</Text>
+            </Text>
+
+            <Text style={[pickerStyles.createFormLabel, { color: colors.mutedForeground }]}>
+              Vendor code <Text style={{ color: "#ef4444" }}>*</Text>
+            </Text>
+            <TextInput
+              value={newVendor}
+              onChangeText={(t) => { setNewVendor(t); setVendorError(null); }}
+              placeholder="e.g. HUBBELL"
+              placeholderTextColor={colors.mutedForeground}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              style={[pickerStyles.createFormInput, {
+                backgroundColor: colors.background,
+                borderColor: vendorError ? "#ef4444" : colors.border,
+                color: colors.foreground,
+              }]}
+            />
+            {vendorError ? (
+              <Text style={{ color: "#ef4444", fontSize: 11, marginBottom: 6, fontFamily: "Inter_400Regular" }}>{vendorError}</Text>
+            ) : null}
+
+            <Text style={[pickerStyles.createFormLabel, { color: colors.mutedForeground }]}>
+              Primary bin location <Text style={{ color: colors.mutedForeground }}>(optional)</Text>
+            </Text>
+            <TextInput
+              value={newBinLocation}
+              onChangeText={setNewBinLocation}
+              placeholder="e.g. A-12-3"
+              placeholderTextColor={colors.mutedForeground}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              style={[pickerStyles.createFormInput, {
+                backgroundColor: colors.background,
+                borderColor: colors.border,
+                color: colors.foreground,
+              }]}
+            />
+
+            {createError ? (
+              <Text style={{ color: "#ef4444", fontSize: 12, marginBottom: 6, fontFamily: "Inter_400Regular" }}>{createError}</Text>
+            ) : null}
+
+            {isCreating ? (
+              <View style={{ alignItems: "center", paddingVertical: 12 }}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={{ color: colors.mutedForeground, fontSize: 13, marginTop: 8, fontFamily: "Inter_400Regular" }}>
+                  Creating new item…
+                </Text>
+              </View>
+            ) : (
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                <Pressable
+                  onPress={handleCancelCreateForm}
+                  style={[pickerStyles.createFormBtn, { backgroundColor: colors.background, borderColor: colors.border, flex: 1 }]}
+                >
+                  <Text style={{ color: colors.foreground, fontSize: 13, fontFamily: "Inter_500Medium" }}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleConfirmCreate}
+                  style={[pickerStyles.createFormBtn, { backgroundColor: colors.primary, borderColor: colors.primary, flex: 2 }]}
+                >
+                  <Text style={{ color: colors.primaryForeground, fontSize: 13, fontFamily: "Inter_500Medium" }}>Create & assign</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        ) : null}
+
+        {!showCreateForm && createError ? (
           <Text style={[pickerStyles.errorText, { color: "#ef4444" }]}>{createError}</Text>
         ) : null}
 
-        {isCreating ? (
+        {isCreating && !showCreateForm ? (
           <View style={{ padding: 24, alignItems: "center" }}>
             <ActivityIndicator color={colors.primary} />
             <Text style={[{ color: colors.mutedForeground, fontSize: 13, marginTop: 8, fontFamily: "Inter_400Regular" }]}>
               Creating new item…
             </Text>
           </View>
-        ) : searchMutation.isPending ? (
+        ) : !showCreateForm && searchMutation.isPending ? (
           <View style={{ padding: 24, alignItems: "center" }}>
             <ActivityIndicator color={colors.primary} />
           </View>
-        ) : (
+        ) : !showCreateForm ? (
           <FlatList
             data={results}
             keyExtractor={(r) => String(r.item.id)}
@@ -206,7 +307,7 @@ function CatalogPickerModal({
             ListHeaderComponent={
               debouncedQuery.trim() ? (
                 <Pressable
-                  onPress={handleCreateNew}
+                  onPress={handleOpenCreateForm}
                   style={[pickerStyles.createRow, { backgroundColor: colors.primary + "15", borderColor: colors.primary + "44" }]}
                 >
                   <Text style={[pickerStyles.createIcon, { color: colors.primary }]}>＋</Text>
@@ -260,7 +361,7 @@ function CatalogPickerModal({
               ) : null
             }
           />
-        )}
+        ) : null}
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -1257,4 +1358,39 @@ const pickerStyles = StyleSheet.create({
   createLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.4, textTransform: "uppercase" },
   createCatalog: { fontSize: 14, fontFamily: "Inter_700Bold", marginTop: 2 },
   errorText: { fontSize: 12, fontFamily: "Inter_400Regular", paddingHorizontal: 16, paddingBottom: 4 },
+  createForm: {
+    margin: 12,
+    marginTop: 4,
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  createFormTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    marginBottom: 12,
+  },
+  createFormLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    marginBottom: 4,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  createFormInput: {
+    borderWidth: 1,
+    borderRadius: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    marginBottom: 10,
+  },
+  createFormBtn: {
+    borderWidth: 1,
+    borderRadius: 7,
+    paddingVertical: 10,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  },
 });
