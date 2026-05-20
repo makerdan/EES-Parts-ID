@@ -1065,8 +1065,8 @@ export default function SearchScreen() {
                   },
                 ]}
               >
-                <Feather name={m.icon} size={13} color={mode === m.key ? colors.primary : colors.mutedForeground} />
-                <Text style={[styles.modeToggleBtnText, { color: mode === m.key ? colors.primary : colors.mutedForeground }]}>
+                <Feather name={m.icon} size={13} color="#fff" />
+                <Text style={[styles.modeToggleBtnText, { color: "#fff" }]}>
                   {m.label}
                 </Text>
               </Pressable>
