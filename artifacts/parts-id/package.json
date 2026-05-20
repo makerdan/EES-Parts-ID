@@ -70,7 +70,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
-    "expo-asset": "^55.0.17",
+    "expo-asset": "^12.0.13",
     "expo-file-system": "~19.0.22",
     "expo-image-manipulator": "~14.0.8",
     "expo-sharing": "~14.0.8"
