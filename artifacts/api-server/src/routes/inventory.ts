@@ -164,8 +164,15 @@ router.post("/search", async (req, res) => {
     const synonymMapLookup = new Map(synonyms.map(s => [s.term, s.synonyms]));
     const slangMap = new Map(slang.map(s => [s.slangTerm, s.standardTerms]));
 
+    // Build reverse map with primary vendors last so they overwrite extended
+    // entries on name conflicts — authoritative 68 always win.
     const reverseVendorMap = new Map<string, string>();
-    for (const v of vendors) {
+    const extendedVendors = vendors.filter(v => !v.isPrimary);
+    const primaryVendors = vendors.filter(v => v.isPrimary);
+    for (const v of extendedVendors) {
+      for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
+    }
+    for (const v of primaryVendors) {
       for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
     }
 
