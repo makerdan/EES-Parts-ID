@@ -301,6 +301,34 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
   });
 });
 
+// ── GET /admin/catalog-pdf/failed-jobs ────────────────────────────────────────
+// Returns jobs that are in `failed` status, ordered newest-first.
+router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
+  try {
+    const rows = await db
+      .select({
+        id: catalogPdfJobTable.id,
+        vendor: catalogPdfJobTable.vendor,
+        filename: catalogPdfJobTable.filename,
+        status: catalogPdfJobTable.status,
+        errorMessage: catalogPdfJobTable.errorMessage,
+        createdAt: catalogPdfJobTable.createdAt,
+        finishedAt: catalogPdfJobTable.finishedAt,
+        processedPages: catalogPdfJobTable.processedPages,
+        totalPages: catalogPdfJobTable.totalPages,
+        matchedParts: catalogPdfJobTable.matchedParts,
+      })
+      .from(catalogPdfJobTable)
+      .where(eq(catalogPdfJobTable.status, "failed"))
+      .orderBy(desc(catalogPdfJobTable.createdAt));
+
+    res.json({ jobs: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch failed jobs" });
+  }
+});
+
 // ── GET /admin/catalog-pdf/reviews ────────────────────────────────────────────
 // Returns inventory items updated by PDF extraction, with the job metadata
 // and the before/after description for review.
