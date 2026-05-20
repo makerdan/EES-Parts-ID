@@ -34,10 +34,16 @@ import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { BrowseByCategory } from "@/components/BrowseByCategory";
 import { AddPartModal } from "@/components/AddPartModal";
 import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
+import {
+  QUERY_CACHE_KEY,
+  buildQueryKey,
+  buildSearchBody,
+  pruneExpired,
+  formatStaleCacheWarning,
+  formatRelativeAge,
+} from "@/utils/searchHelpers";
+import type { QueryCache } from "@/utils/searchHelpers";
 
-
-const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -45,21 +51,16 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
 
 
 type QueryCacheEntry = { timestamp: number; results: SearchResult[] };
-type QueryCache = Record<string, QueryCacheEntry>;
 
-function buildQueryKey(f: FilterValues): string {
-  return JSON.stringify(buildSearchBody(f));
-}
-
-async function loadQueryCache(): Promise<QueryCache> {
+async function loadQueryCache(): Promise<QueryCache<SearchResult>> {
   try {
     const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
     if (!raw) return {};
-    return JSON.parse(raw) as QueryCache;
+    return JSON.parse(raw) as QueryCache<SearchResult>;
   } catch { return {}; }
 }
 
-async function saveQueryCache(cache: QueryCache): Promise<void> {
+async function saveQueryCache(cache: QueryCache<SearchResult>): Promise<void> {
   // Bound the cache so a long session of unique searches can't grow it without
   // limit. Evict by LRU (oldest timestamp first) before persisting.
   const bounded = evictLRU(cache, QUERY_CACHE_MAX_ENTRIES);
@@ -70,47 +71,18 @@ async function saveQueryCache(cache: QueryCache): Promise<void> {
   }
 }
 
-function formatStaleCacheWarning(syncedAt: number | null): string {
-  if (syncedAt == null) return "Data may be outdated — sync time unknown";
-  const diffMs = Date.now() - syncedAt;
-  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
-  if (days < 1) return "Data may be outdated — last synced today";
-  if (days === 1) return "Data may be outdated — last synced 1 day ago";
-  return `Data may be outdated — last synced ${days} days ago`;
-}
-
-function formatRelativeAge(ts: number): string {
-  const diffMs = Date.now() - ts;
-  const mins = Math.floor(diffMs / 60_000);
-  if (mins < 1) return "Last updated just now";
-  if (mins < 60) return `Last updated ${mins} minute${mins === 1 ? "" : "s"} ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `Last updated ${hrs} hour${hrs === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hrs / 24);
-  return `Last updated ${days} day${days === 1 ? "" : "s"} ago`;
-}
-
 async function readNewestCacheTimestamp(): Promise<string> {
   try {
     const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
     if (!raw) return "No cached data";
-    const cache = JSON.parse(raw) as QueryCache;
+    const cache = JSON.parse(raw) as QueryCache<SearchResult>;
     const entries = Object.values(cache);
     if (entries.length === 0) return "No cached data";
-    const newest = Math.max(...entries.map(e => e.timestamp));
+    const newest = Math.max(...entries.map((e: QueryCacheEntry) => e.timestamp));
     return formatRelativeAge(newest);
   } catch {
     return "No cached data";
   }
-}
-
-function pruneExpired(cache: QueryCache): QueryCache {
-  const now = Date.now();
-  const out: QueryCache = {};
-  for (const [k, v] of Object.entries(cache)) {
-    if (now - v.timestamp < CACHE_TTL_MS) out[k] = v;
-  }
-  return out;
 }
 
 const DEFAULT_FILTERS: FilterValues = {
@@ -140,38 +112,6 @@ const DEFAULT_FILTERS: FilterValues = {
   voltage: "",
   poleCount: "",
 };
-
-// Build structured search body — chip dimensions passed as separate AND-filter fields
-function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
-  return {
-    keywords: f.keywords,
-    catalog: f.catalog,
-    vendor: f.vendor,
-    color: f.color,
-    size: f.size,
-    material: f.material,
-    textNumbers: f.textNumbers,
-    confidenceThreshold: f.confidenceThreshold,
-    // 16 structured chip dimensions
-    category: f.category,
-    amperage: f.amperage,
-    colorChip: f.colorChip,
-    manufacturer: f.manufacturer,
-    sizeChip: f.sizeChip,
-    rating: f.rating,
-    wireType: f.wireType,
-    wireGauge: f.wireGauge,
-    conduitType: f.conduitType,
-    conduitSize: f.conduitSize,
-    boxType: f.boxType,
-    boxGangCount: f.boxGangCount,
-    mountingType: f.mountingType,
-    environment: f.environment,
-    voltage: f.voltage,
-    poleCount: f.poleCount,
-    ...(categorySlug ? { categorySlug } : {}),
-  };
-}
 
 export default function SearchScreen() {
   const colors = useColors();
