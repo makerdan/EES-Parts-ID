@@ -612,7 +612,7 @@ const VENDORS: Array<{ code: string; names: string[]; notes: string }> = [
 // ── PRIMARY VENDOR MAP (68 authoritative entries) ─────────────────────────────
 // These are the real inventory vendors. They take priority over the extended
 // VENDORS list above during lookup/seed. isPrimary: true marks them as canonical.
-const PRIMARY_VENDORS: Array<{ code: string; names: string[]; notes: string; isPrimary: true }> = [
+export const PRIMARY_VENDORS: Array<{ code: string; names: string[]; notes: string; isPrimary: true }> = [
   { code: "COP", names: ["copper", "copper wire", "bare copper"], notes: "Copper (wire material)", isPrimary: true },
   { code: "ALU", names: ["aluminum", "aluminium", "aluminum wire"], notes: "Aluminum (wire material)", isPrimary: true },
   { code: "COR", names: ["cord", "power cord", "extension cord"], notes: "Cord (wire type)", isPrimary: true },
@@ -2132,7 +2132,7 @@ async function seedAbbreviations() {
   console.log(`✓ Seeded ${ABBREVIATIONS.length} abbreviations`);
 }
 
-async function seedVendors() {
+export async function seedVendors() {
   console.log("Seeding vendor map...");
   for (const entry of VENDORS) {
     await db
