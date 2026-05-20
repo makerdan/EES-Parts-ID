@@ -1237,7 +1237,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   filterOverlay: {
-    alignSelf: "stretch",
+    alignSelf: "center",
+    width: "50%",
     borderRadius: 12,
     borderWidth: 1,
     padding: 16,
