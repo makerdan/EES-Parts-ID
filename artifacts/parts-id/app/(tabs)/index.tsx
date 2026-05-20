@@ -7,6 +7,7 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -706,6 +707,22 @@ export default function SearchScreen() {
               </Pressable>
             </View>
 
+            {/* Shelf view row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Shelf view</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Show visual shelf planks when browsing by aisle.
+                </Text>
+              </View>
+              <Switch
+                value={settings.shelfViewEnabled}
+                onValueChange={v => updateSetting("shelfViewEnabled", v)}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor={settings.shelfViewEnabled ? colors.primaryForeground : colors.mutedForeground}
+              />
+            </View>
+
             {/* Text size row */}
             <View style={[styles.settingsRow, { borderColor: colors.border }]}>
               <View style={{ flex: 1 }}>
@@ -1108,7 +1125,7 @@ export default function SearchScreen() {
         <BrowseByAisle
           inventory={fuseItemsRef.current}
           isSyncing={syncProgress !== null}
-          shelfViewEnabled={true}
+          shelfViewEnabled={settings.shelfViewEnabled}
           fontScale={textFontScale}
           onClose={() => setMode("search")}
           onEditKeywords={setEditItem}
