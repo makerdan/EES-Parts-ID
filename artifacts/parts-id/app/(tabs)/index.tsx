@@ -854,7 +854,7 @@ export default function SearchScreen() {
             placeholderTextColor={colors.mutedForeground}
             style={[styles.searchBarInput, {
               backgroundColor: colors.muted,
-              borderColor: '#000',
+              borderColor: '#555',
               color: colors.foreground,
               paddingRight: filters.keywords ? 36 : 12,
             }]}
