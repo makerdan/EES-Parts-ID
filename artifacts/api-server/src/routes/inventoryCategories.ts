@@ -1,112 +1,117 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { inventoryTable } from "@workspace/db";
-import { itemFullText } from "../utils/searchHelpers";
-import {
-  TAXONOMY,
-  collectKeywords,
-  getAllTaxonomyKeywords,
-  type TaxonomyCategory,
-  type TaxonomySubcategory,
-  type TaxonomyItemType,
-} from "@workspace/db";
+import { sql } from "drizzle-orm";
+import { TAXONOMY, getAllTaxonomyKeywords } from "@workspace/db";
 
 const router = Router();
 
-type ItemRow = {
-  vendor: string;
-  catalog: string;
-  description: string;
-  aiKeywords: string[] | null;
-};
+// Matches the chip-text expression used in chip-filter WHERE clauses
+const CHIP_FN = `inventory_chip_text(vendor, catalog, description, ai_keywords)`;
 
-function buildKeywordRegex(keywords: string[]): RegExp | null {
-  if (keywords.length === 0) return null;
-  const escaped = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return new RegExp(escaped.join("|"), "i");
+function escapeForPattern(kw: string): string {
+  return kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function countForNode(items: ItemRow[], keywords: string[]): number {
-  const re = buildKeywordRegex(keywords);
-  if (!re) return 0;
-  return items.filter(item => re.test(itemFullText(item))).length;
+function buildPattern(keywords: string[]): string | null {
+  if (!keywords || keywords.length === 0) return null;
+  return keywords.map(escapeForPattern).join("|");
 }
 
 // ── GET /inventory/categories ─────────────────────────────────────────────────
-// Returns the full taxonomy tree as a uniform categories array.
-// The uncategorized catch-all is appended last as a full 3-level node:
-//   uncategorized → needs-review → unclassified-items
+// Strategy: single SQL pass to materialise chip text for every row, then
+// classify entirely in JS using the same regex patterns as chip filters.
+// This is equivalent to one COUNT(*) FILTER (WHERE chip ~* pat) per item type
+// but avoids evaluating 132 separate regex patterns inside PostgreSQL for every
+// of the 7 000+ rows (which times out at ~14 s).
 router.get("/categories", async (_req, res) => {
   try {
-    const rows = await db
-      .select({
-        vendor: inventoryTable.vendor,
-        catalog: inventoryTable.catalog,
-        description: inventoryTable.description,
-        aiKeywords: inventoryTable.aiKeywords,
-      })
-      .from(inventoryTable);
+    // ── Step 1: fetch all chip texts in one SQL query ─────────────────────────
+    const raw = await db.execute(
+      sql`SELECT ${sql.raw(CHIP_FN)} AS chip FROM inventory`
+    );
+    const chips = (raw.rows as { chip: string | null }[]).map(r => r.chip ?? "");
 
-    const allTaxonomyKeywords = getAllTaxonomyKeywords(TAXONOMY);
-    const allTaxRe = buildKeywordRegex(allTaxonomyKeywords);
+    // ── Step 2: compile all item-type regex patterns (JS RegExp, same semantics
+    //            as PostgreSQL ~* for simple keyword alternation patterns) ──────
+    type ItemEntry = { slug: string; re: RegExp | null };
+    const itemEntries: ItemEntry[] = [];
 
-    const categories = TAXONOMY.map((cat: TaxonomyCategory) => {
-      const catKeywords = collectKeywords(cat);
+    for (const cat of TAXONOMY) {
+      for (const sub of cat.subcategories) {
+        for (const it of sub.itemTypes) {
+          const pat = buildPattern(it.keywords);
+          itemEntries.push({ slug: it.slug, re: pat ? new RegExp(pat, "i") : null });
+        }
+      }
+    }
 
-      const subcategories = cat.subcategories.map((sub: TaxonomySubcategory) => {
-        const subKeywords = collectKeywords(sub);
+    // Also compile the inverse-match set for uncategorized
+    const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
+    const allTaxRe = allTaxKws.length > 0
+      ? new RegExp(buildPattern(allTaxKws)!, "i")
+      : null;
 
-        const itemTypes = sub.itemTypes.map((it: TaxonomyItemType) => {
-          const itKeywords = collectKeywords(it);
-          return {
-            slug: it.slug,
-            label: it.label,
-            count: countForNode(rows, itKeywords),
-          };
+    // ── Step 3: single-pass classification ───────────────────────────────────
+    // Each item can match multiple item types (same as independent SQL FILTER
+    // clauses — no first-match-wins logic).  Uncategorized = no taxonomy match.
+    const counts = new Int32Array(itemEntries.length); // zero-initialised
+    let uncatCount = 0;
+
+    for (const chip of chips) {
+      let anyMatch = false;
+      for (let i = 0; i < itemEntries.length; i++) {
+        const { re } = itemEntries[i];
+        if (re && re.test(chip)) {
+          counts[i]++;
+          anyMatch = true;
+        }
+      }
+      // Verify against combined taxonomy pattern (same semantics as SQL inverse)
+      if (allTaxRe && !allTaxRe.test(chip)) {
+        uncatCount++;
+      } else if (!allTaxRe && !anyMatch) {
+        uncatCount++;
+      }
+    }
+
+    // ── Step 4: build item-type count map ────────────────────────────────────
+    const itemCountMap = new Map<string, number>();
+    itemEntries.forEach((e, i) => itemCountMap.set(e.slug, counts[i]));
+
+    // ── Step 5: aggregate sub/category counts ────────────────────────────────
+    const mainCategories = TAXONOMY.filter(c => c.slug !== "uncategorized");
+    const uncatTax = TAXONOMY.find(c => c.slug === "uncategorized")!;
+
+    const categories = mainCategories.map(cat => {
+      let catCount = 0;
+      const subcategories = cat.subcategories.map(sub => {
+        let subCount = 0;
+        const itemTypes = sub.itemTypes.map(it => {
+          const cnt = itemCountMap.get(it.slug) ?? 0;
+          subCount += cnt;
+          return { slug: it.slug, label: it.label, count: cnt };
         });
-
-        return {
-          slug: sub.slug,
-          label: sub.label,
-          count: countForNode(rows, subKeywords),
-          itemTypes,
-        };
+        catCount += subCount;
+        return { slug: sub.slug, label: sub.label, count: subCount, itemTypes };
       });
-
-      return {
-        slug: cat.slug,
-        label: cat.label,
-        color: cat.color,
-        count: countForNode(rows, catKeywords),
-        subcategories,
-      };
+      return { slug: cat.slug, label: cat.label, color: cat.color, count: catCount, subcategories };
     });
 
-    // Compute uncategorized count: items matching no taxonomy keyword
-    const uncategorizedCount = allTaxRe
-      ? rows.filter(item => !allTaxRe.test(itemFullText(item))).length
-      : rows.length;
-
-    // Append uncategorized as a full 3-level node (same shape as other categories)
     const uncategorizedNode = {
       slug: "uncategorized",
       label: "Uncategorized",
       color: "#9CA3AF",
-      count: uncategorizedCount,
-      subcategories: [
-        {
-          slug: "needs-review",
-          label: "Needs Review",
-          count: uncategorizedCount,
-          itemTypes: [
-            {
-              slug: "unclassified-items",
-              label: "Unclassified Items",
-              count: uncategorizedCount,
-            },
-          ],
-        },
-      ],
+      count: uncatCount,
+      subcategories: uncatTax.subcategories.map(sub => ({
+        slug: sub.slug,
+        label: sub.label,
+        count: uncatCount,
+        itemTypes: sub.itemTypes.map(it => ({
+          slug: it.slug,
+          label: it.label,
+          count: uncatCount,
+        })),
+      })),
     };
 
     res.json({ categories: [...categories, uncategorizedNode] });

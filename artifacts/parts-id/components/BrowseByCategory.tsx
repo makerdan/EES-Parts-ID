@@ -141,8 +141,12 @@ export function BrowseByCategory({ onSelectCategory, onClose }: BrowseByCategory
           accentColor={accentColor}
           colors={colors}
           onSelect={(sub) => {
-            setSelectedSubcategory(sub);
-            setLevel("itemTypes");
+            if (sub.itemTypes.length === 0) {
+              onSelectCategory(sub.slug, sub.label);
+            } else {
+              setSelectedSubcategory(sub);
+              setLevel("itemTypes");
+            }
           }}
           onSelectAll={() => {
             onSelectCategory(selectedCategory.slug, selectedCategory.label);
