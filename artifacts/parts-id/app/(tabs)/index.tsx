@@ -29,6 +29,7 @@ import { reportStorageError } from "@/utils/storageErrorReporter";
 import { retryAsync } from "@/utils/retryAsync";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
+import { BrowseByCategory } from "@/components/BrowseByCategory";
 import { AddPartModal } from "@/components/AddPartModal";
 import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, getFuseCacheSyncedAt } from "@/utils/offlineBarcode";
 
@@ -134,7 +135,7 @@ const DEFAULT_FILTERS: FilterValues = {
 };
 
 // Build structured search body — chip dimensions passed as separate AND-filter fields
-function buildSearchBody(f: FilterValues) {
+function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
   return {
     keywords: f.keywords,
     catalog: f.catalog,
@@ -161,6 +162,7 @@ function buildSearchBody(f: FilterValues) {
     environment: f.environment,
     voltage: f.voltage,
     poleCount: f.poleCount,
+    ...(categorySlug ? { categorySlug } : {}),
   };
 }
 
@@ -169,6 +171,11 @@ export default function SearchScreen() {
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [aisleBrowseOpen, setAisleBrowseOpen] = useState(false);
+  const [categoryBrowseOpen, setCategoryBrowseOpen] = useState(false);
+  const [activeCategorySlug, setActiveCategorySlug] = useState<string | null>(null);
+  const [activeCategoryLabel, setActiveCategoryLabel] = useState<string | null>(null);
+  const activeCategorySlugRef = useRef<string | null>(null);
+  useEffect(() => { activeCategorySlugRef.current = activeCategorySlug; }, [activeCategorySlug]);
   const [showAddPartModal, setShowAddPartModal] = useState(false);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
@@ -237,6 +244,10 @@ export default function SearchScreen() {
       }
       searchAbortedRef.current = false;
       setAisleBrowseOpen(false);
+      setCategoryBrowseOpen(false);
+      setActiveCategorySlug(null);
+      setActiveCategoryLabel(null);
+      activeCategorySlugRef.current = null;
       setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
       setEditItem(null);
       setBinEditItem(null);
@@ -449,7 +460,7 @@ export default function SearchScreen() {
     setOfflineCacheType(null);
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    const body = buildSearchBody(filters);
+    const body = buildSearchBody(filters, activeCategorySlugRef.current);
     searchMutation.mutate({ data: body });
     // Fall back to offline if API hasn't responded within the timeout
     searchTimeoutRef.current = setTimeout(() => {
@@ -460,10 +471,34 @@ export default function SearchScreen() {
     }, SEARCH_TIMEOUT_MS);
   };
 
+  const handleCategorySelect = useCallback((slug: string, label: string) => {
+    setCategoryBrowseOpen(false);
+    setActiveCategorySlug(slug);
+    setActiveCategoryLabel(label);
+    activeCategorySlugRef.current = slug;
+    setOfflineResults(null);
+    setIsOffline(false);
+    setOfflineCacheType(null);
+    searchAbortedRef.current = false;
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    const body = buildSearchBody(filtersRef.current, slug);
+    searchMutation.mutate({ data: body });
+    searchTimeoutRef.current = setTimeout(() => {
+      searchTimeoutRef.current = null;
+      searchAbortedRef.current = true;
+      searchMutation.reset();
+      runOfflineFallback();
+    }, SEARCH_TIMEOUT_MS);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchMutation, runOfflineFallback]);
+
   const handleClear = () => {
     if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
     searchAbortedRef.current = false;
     setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settings.defaultConfidenceThreshold });
+    setActiveCategorySlug(null);
+    setActiveCategoryLabel(null);
+    activeCategorySlugRef.current = null;
     searchMutation.reset();
     setOfflineResults(null);
     setIsOffline(false);
@@ -761,7 +796,7 @@ export default function SearchScreen() {
         </View>
       </Modal>
 
-      {!aisleBrowseOpen ? (
+      {!aisleBrowseOpen && !categoryBrowseOpen ? (
         <>
       {/* Offline banner */}
       {isOffline ? (
@@ -975,21 +1010,38 @@ export default function SearchScreen() {
         keyboardDismissMode="none"
       />
 
-        {/* Browse by Aisle + Floating filter overlay — stacked above results */}
+        {/* Browse by Aisle / Category + Floating filter overlay — stacked above results */}
         <View style={styles.filterOverlayWrapper}>
-          <Pressable
-            onPress={() => setAisleBrowseOpen(true)}
-            style={[styles.browseAisleBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
-          >
-            <Feather name="map-pin" size={20} color={colors.primary} />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.browseAisleBtnTitle, { color: colors.foreground }]}>Browse by Aisle</Text>
-              <Text style={[styles.browseAisleBtnSub, { color: colors.mutedForeground }]}>
-                Walk the warehouse: Aisle › Section › Shelf
+          <View style={styles.browseBtnRow}>
+            <Pressable
+              onPress={() => setAisleBrowseOpen(true)}
+              style={[styles.browseBtnHalf, { backgroundColor: colors.card, borderColor: colors.border }]}
+            >
+              <Feather name="map-pin" size={16} color={colors.primary} />
+              <Text style={[styles.browseAisleBtnTitle, { color: colors.foreground }]}>By Aisle</Text>
+              <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+            </Pressable>
+            <Pressable
+              onPress={() => setCategoryBrowseOpen(true)}
+              style={[styles.browseBtnHalf, { backgroundColor: colors.card, borderColor: colors.border }]}
+            >
+              <Feather name="tag" size={16} color={colors.primary} />
+              <Text style={[styles.browseAisleBtnTitle, { color: colors.foreground }]}>By Category</Text>
+              <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
+            </Pressable>
+          </View>
+          {activeCategorySlug && activeCategoryLabel ? (
+            <Pressable
+              onPress={handleClear}
+              style={[styles.activeCategoryBadge, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+            >
+              <Feather name="tag" size={12} color={colors.primary} />
+              <Text style={[styles.activeCategoryBadgeText, { color: colors.primary }]} numberOfLines={1}>
+                {activeCategoryLabel}
               </Text>
-            </View>
-            <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-          </Pressable>
+              <Feather name="x" size={12} color={colors.primary} />
+            </Pressable>
+          ) : null}
           <View style={[styles.filterOverlay, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <FilterPanel
               values={filters}
@@ -1000,7 +1052,7 @@ export default function SearchScreen() {
         </View>
       </View>
         </>
-      ) : (
+      ) : aisleBrowseOpen ? (
         <BrowseByAisle
           inventory={fuseItemsRef.current}
           isSyncing={syncProgress !== null}
@@ -1012,6 +1064,11 @@ export default function SearchScreen() {
           isAdmin={isAdmin}
           adminToken={adminToken}
           onPartAdded={() => syncAllInventory()}
+        />
+      ) : (
+        <BrowseByCategory
+          onSelectCategory={handleCategorySelect}
+          onClose={() => setCategoryBrowseOpen(false)}
         />
       )}
 
@@ -1220,6 +1277,38 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
   },
-  browseAisleBtnTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  browseBtnRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 8,
+    alignSelf: "stretch",
+  },
+  browseBtnHalf: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  activeCategoryBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 6,
+    maxWidth: "90%",
+  },
+  activeCategoryBadgeText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    flexShrink: 1,
+  },
+  browseAisleBtnTitle: { fontSize: 13, fontFamily: "Inter_700Bold", flex: 1 },
   browseAisleBtnSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
 });

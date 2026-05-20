@@ -55,6 +55,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/InventoryListResponse"
 
+  /inventory/categories:
+    get:
+      operationId: listInventoryCategories
+      tags: [inventory]
+      summary: Get the taxonomy category tree with live item counts
+      responses:
+        "200":
+          description: Category tree with counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CategoryTreeResponse"
+
   /inventory/search:
     post:
       operationId: searchInventory
@@ -411,6 +424,55 @@ components:
       required:
         - status
 
+    TaxonomyItemTypeNode:
+      type: object
+      properties:
+        slug: { type: string }
+        label: { type: string }
+        count: { type: integer }
+      required: [slug, label, count]
+
+    TaxonomySubcategoryNode:
+      type: object
+      properties:
+        slug: { type: string }
+        label: { type: string }
+        count: { type: integer }
+        itemTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxonomyItemTypeNode"
+      required: [slug, label, count, itemTypes]
+
+    TaxonomyCategoryNode:
+      type: object
+      properties:
+        slug: { type: string }
+        label: { type: string }
+        color: { type: string }
+        count: { type: integer }
+        subcategories:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxonomySubcategoryNode"
+      required: [slug, label, color, count, subcategories]
+
+    CategoryTreeResponse:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaxonomyCategoryNode"
+        uncategorized:
+          type: object
+          properties:
+            slug: { type: string }
+            label: { type: string }
+            count: { type: integer }
+          required: [slug, label, count]
+      required: [categories, uncategorized]
+
     InventoryItem:
       type: object
       properties:
@@ -551,6 +613,9 @@ components:
         poleCount:
           type: string
           description: Pole count chip filter (breakers/switches)
+        categorySlug:
+          type: string
+          description: Taxonomy category/subcategory/item-type slug to pre-filter results
       required: []
 
     SearchResult:
