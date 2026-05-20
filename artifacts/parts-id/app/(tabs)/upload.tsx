@@ -1042,18 +1042,29 @@ export default function UploadScreen() {
                 <Text style={[styles.pasteLabel, { color: colors.mutedForeground }]}>
                   Paste rows from a spreadsheet
                 </Text>
-                <TextInput
-                  value={pasteText}
-                  onChangeText={handlePasteChange}
-                  placeholder={"Vendor,Catalog,Description,BinLocation\nEATON,BR120,1 Pole Breaker,A1"}
-                  placeholderTextColor={colors.mutedForeground}
-                  multiline
-                  scrollEnabled
-                  style={[styles.pasteInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
-                  autoCorrect={false}
-                  autoCapitalize="none"
-                  textAlignVertical="top"
-                />
+                <View style={styles.pasteInputWrapper}>
+                  <TextInput
+                    value={pasteText}
+                    onChangeText={handlePasteChange}
+                    placeholder={"Vendor,Catalog,Description,BinLocation\nEATON,BR120,1 Pole Breaker,A1"}
+                    placeholderTextColor={colors.mutedForeground}
+                    multiline
+                    scrollEnabled
+                    style={[styles.pasteInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                    textAlignVertical="top"
+                  />
+                  {pasteText.length > 0 ? (
+                    <Pressable
+                      onPress={() => handlePasteChange("")}
+                      style={[styles.pasteClearBtn, { backgroundColor: colors.mutedForeground + "33" }]}
+                      hitSlop={8}
+                    >
+                      <Text style={[styles.pasteClearBtnText, { color: colors.mutedForeground }]}>✕</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
 
               {/* Preview */}
@@ -1774,7 +1785,10 @@ const styles = StyleSheet.create({
   pasteDividerLine: { position: "absolute", left: 0, right: 0, height: 1 },
   pasteDividerLabel: { paddingHorizontal: 10, fontSize: 12, fontFamily: "Inter_400Regular" },
   pasteLabel: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  pasteInputWrapper: { position: "relative" },
   pasteInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 12, fontFamily: "SpaceMono_400Regular", height: 148, lineHeight: 18 },
+  pasteClearBtn: { position: "absolute", top: 6, right: 6, width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  pasteClearBtnText: { fontSize: 11, fontFamily: "Inter_600SemiBold", lineHeight: 14 },
   inlineBanner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
   errorBanner: {},
   successBanner: {},
