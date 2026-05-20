@@ -44,9 +44,10 @@ type Level = "categories" | "subcategories" | "itemTypes";
 interface BrowseByCategoryProps {
   onSelectCategory: (slug: string, label: string) => void;
   onClose: () => void;
+  fontScale?: number;
 }
 
-export function BrowseByCategory({ onSelectCategory, onClose }: BrowseByCategoryProps) {
+export function BrowseByCategory({ onSelectCategory, onClose, fontScale = 1.0 }: BrowseByCategoryProps) {
   const colors = useColors();
   const [data, setData] = useState<CategoriesResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -130,6 +131,7 @@ export function BrowseByCategory({ onSelectCategory, onClose }: BrowseByCategory
         <CategoryGrid
           categories={data.categories}
           colors={colors}
+          fontScale={fontScale}
           onSelect={(cat) => {
             setSelectedCategory(cat);
             setLevel("subcategories");
@@ -140,6 +142,7 @@ export function BrowseByCategory({ onSelectCategory, onClose }: BrowseByCategory
           subcategories={selectedCategory.subcategories}
           accentColor={accentColor}
           colors={colors}
+          fontScale={fontScale}
           onSelect={(sub) => {
             if (sub.itemTypes.length === 0) {
               onSelectCategory(sub.slug, sub.label);
@@ -159,6 +162,7 @@ export function BrowseByCategory({ onSelectCategory, onClose }: BrowseByCategory
           itemTypes={selectedSubcategory.itemTypes}
           accentColor={accentColor}
           colors={colors}
+          fontScale={fontScale}
           onSelect={(it) => {
             onSelectCategory(it.slug, it.label);
           }}
@@ -185,10 +189,10 @@ interface ColorMap {
   destructive: string;
 }
 
-function CountBadge({ count, color }: { count: number; color: string }) {
+function CountBadge({ count, color, fontScale = 1.0 }: { count: number; color: string; fontScale?: number }) {
   return (
     <View style={[styles.countBadge, { backgroundColor: count > 0 ? color + "22" : "#9CA3AF22" }]}>
-      <Text style={[styles.countBadgeText, { color: count > 0 ? color : "#9CA3AF" }]}>
+      <Text style={[styles.countBadgeText, { color: count > 0 ? color : "#9CA3AF", fontSize: Math.round(11 * fontScale) }]}>
         {count > 0 ? count : "0 items"}
       </Text>
     </View>
@@ -199,10 +203,12 @@ function CategoryGrid({
   categories,
   colors,
   onSelect,
+  fontScale = 1.0,
 }: {
   categories: CategoryNode[];
   colors: ColorMap;
   onSelect: (cat: CategoryNode) => void;
+  fontScale?: number;
 }) {
   return (
     <FlatList
@@ -228,12 +234,13 @@ function CategoryGrid({
             <Text
               style={[styles.categoryTileLabel, {
                 color: isEmpty ? colors.mutedForeground : colors.foreground,
+                fontSize: Math.round(13 * fontScale),
               }]}
               numberOfLines={2}
             >
               {item.label}
             </Text>
-            <CountBadge count={item.count} color={item.color} />
+            <CountBadge count={item.count} color={item.color} fontScale={fontScale} />
           </Pressable>
         );
       }}
@@ -249,6 +256,7 @@ function SubcategoryList({
   onSelectAll,
   parentLabel,
   parentCount,
+  fontScale = 1.0,
 }: {
   subcategories: SubcategoryNode[];
   accentColor: string;
@@ -257,6 +265,7 @@ function SubcategoryList({
   onSelectAll: () => void;
   parentLabel: string;
   parentCount: number;
+  fontScale?: number;
 }) {
   return (
     <FlatList
@@ -273,10 +282,10 @@ function SubcategoryList({
           onPress={onSelectAll}
         >
           <View style={{ flex: 1 }}>
-            <Text style={[styles.listRowLabel, { color: accentColor, fontFamily: "Inter_700Bold" }]}>
+            <Text style={[styles.listRowLabel, { color: accentColor, fontFamily: "Inter_700Bold", fontSize: Math.round(14 * fontScale) }]}>
               All {parentLabel}
             </Text>
-            <Text style={[styles.listRowSub, { color: colors.mutedForeground }]}>
+            <Text style={[styles.listRowSub, { color: colors.mutedForeground, fontSize: Math.round(12 * fontScale) }]}>
               Show all {parentCount} items in this category
             </Text>
           </View>
@@ -293,13 +302,13 @@ function SubcategoryList({
           onPress={() => onSelect(item)}
         >
           <View style={{ flex: 1 }}>
-            <Text style={[styles.listRowLabel, { color: colors.foreground }]}>{item.label}</Text>
-            <Text style={[styles.listRowSub, { color: colors.mutedForeground }]}>
+            <Text style={[styles.listRowLabel, { color: colors.foreground, fontSize: Math.round(14 * fontScale) }]}>{item.label}</Text>
+            <Text style={[styles.listRowSub, { color: colors.mutedForeground, fontSize: Math.round(12 * fontScale) }]}>
               {item.itemTypes.length} type{item.itemTypes.length !== 1 ? "s" : ""}
             </Text>
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <CountBadge count={item.count} color={accentColor} />
+            <CountBadge count={item.count} color={accentColor} fontScale={fontScale} />
             <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
           </View>
         </Pressable>
@@ -316,6 +325,7 @@ function ItemTypeList({
   onSelectAll,
   parentLabel,
   parentCount,
+  fontScale = 1.0,
 }: {
   itemTypes: ItemTypeNode[];
   accentColor: string;
@@ -324,6 +334,7 @@ function ItemTypeList({
   onSelectAll: () => void;
   parentLabel: string;
   parentCount: number;
+  fontScale?: number;
 }) {
   return (
     <FlatList
@@ -340,10 +351,10 @@ function ItemTypeList({
           onPress={onSelectAll}
         >
           <View style={{ flex: 1 }}>
-            <Text style={[styles.listRowLabel, { color: accentColor, fontFamily: "Inter_700Bold" }]}>
+            <Text style={[styles.listRowLabel, { color: accentColor, fontFamily: "Inter_700Bold", fontSize: Math.round(14 * fontScale) }]}>
               All {parentLabel}
             </Text>
-            <Text style={[styles.listRowSub, { color: colors.mutedForeground }]}>
+            <Text style={[styles.listRowSub, { color: colors.mutedForeground, fontSize: Math.round(12 * fontScale) }]}>
               Show all {parentCount} items
             </Text>
           </View>
@@ -360,10 +371,10 @@ function ItemTypeList({
           onPress={() => onSelect(item)}
         >
           <View style={{ flex: 1 }}>
-            <Text style={[styles.listRowLabel, { color: colors.foreground }]}>{item.label}</Text>
+            <Text style={[styles.listRowLabel, { color: colors.foreground, fontSize: Math.round(14 * fontScale) }]}>{item.label}</Text>
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <CountBadge count={item.count} color={accentColor} />
+            <CountBadge count={item.count} color={accentColor} fontScale={fontScale} />
             <Feather name="search" size={16} color={colors.mutedForeground} />
           </View>
         </Pressable>

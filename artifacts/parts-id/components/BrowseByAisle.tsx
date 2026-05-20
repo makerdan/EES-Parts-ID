@@ -180,12 +180,14 @@ function DrillRow({
   count,
   onPress,
   colors,
+  fontScale = 1.0,
 }: {
   label: string;
   hint?: string;
   count: number;
   onPress: () => void;
   colors: ReturnType<typeof useColors>;
+  fontScale?: number;
 }) {
   return (
     <Pressable
@@ -196,13 +198,13 @@ function DrillRow({
       ]}
     >
       <View style={{ flex: 1 }}>
-        <Text style={[drillStyles.label, { color: colors.foreground }]}>{label}</Text>
+        <Text style={[drillStyles.label, { color: colors.foreground, fontSize: Math.round(15 * fontScale) }]}>{label}</Text>
         {hint ? (
-          <Text style={[drillStyles.hint, { color: colors.mutedForeground }]}>{hint}</Text>
+          <Text style={[drillStyles.hint, { color: colors.mutedForeground, fontSize: Math.round(12 * fontScale) }]}>{hint}</Text>
         ) : null}
       </View>
       <View style={[drillStyles.countBadge, { backgroundColor: colors.primary + "22" }]}>
-        <Text style={[drillStyles.countText, { color: colors.primary }]}>{count}</Text>
+        <Text style={[drillStyles.countText, { color: colors.primary, fontSize: Math.round(12 * fontScale) }]}>{count}</Text>
       </View>
       <Feather name="chevron-right" size={18} color={colors.mutedForeground} style={{ marginLeft: 4 }} />
     </Pressable>
@@ -858,6 +860,7 @@ export function BrowseByAisle({
               hint={`${aisle.sections.length} section${aisle.sections.length !== 1 ? "s" : ""}`}
               onPress={() => setCrumbs({ aisle, section: null })}
               colors={colors}
+              fontScale={fontScale}
             />
           )}
           contentContainerStyle={{ paddingBottom: 80 }}
@@ -914,6 +917,7 @@ export function BrowseByAisle({
                   setCrumbs(prev => ({ ...prev, section }));
                 }}
                 colors={colors}
+                fontScale={fontScale}
               />
             )}
             contentContainerStyle={{ paddingBottom: 80 }}

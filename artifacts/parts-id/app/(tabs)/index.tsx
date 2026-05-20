@@ -588,7 +588,7 @@ export default function SearchScreen() {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>⚡ Parts ID</Text>
+          <Text style={[styles.headerTitle, { color: colors.foreground, fontSize: Math.round(20 * textFontScale) }]}>⚡ Parts ID</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
             {/* Sync progress — while fetching all inventory for offline cache */}
             {syncProgress ? (
@@ -1121,6 +1121,7 @@ export default function SearchScreen() {
         <BrowseByCategory
           onSelectCategory={handleCategorySelect}
           onClose={() => setMode("search")}
+          fontScale={textFontScale}
         />
       )}
 
