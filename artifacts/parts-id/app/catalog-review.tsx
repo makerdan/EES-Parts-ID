@@ -35,6 +35,19 @@ type JobMeta = {
   createdAt: string;
 };
 
+type FailedJob = {
+  id: number;
+  vendor: string;
+  filename: string;
+  status: string;
+  errorMessage: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  processedPages: number;
+  totalPages: number | null;
+  matchedParts: number;
+};
+
 type ReviewItem = {
   id: number;
   vendor: string;
@@ -62,6 +75,7 @@ export default function CatalogReviewScreen() {
   const { adminToken, logoutAdmin } = useApp();
 
   const [groups, setGroups] = useState<SessionGroup[]>([]);
+  const [failedJobs, setFailedJobs] = useState<FailedJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revertingId, setRevertingId] = useState<number | null>(null);
@@ -79,10 +93,14 @@ export default function CatalogReviewScreen() {
       const url = jobId
         ? `${API_BASE}/admin/catalog-pdf/reviews?jobId=${jobId}`
         : `${API_BASE}/admin/catalog-pdf/reviews`;
-      const r = await fetch(url, { headers: authHeaders });
-      if (r.status === 401) { logoutAdmin(); return; }
-      if (!r.ok) throw new Error("Failed to load");
-      const data = await r.json() as { items: ReviewItem[] };
+      const [reviewRes, failedRes] = await Promise.all([
+        fetch(url, { headers: authHeaders }),
+        jobId ? Promise.resolve(null) : fetch(`${API_BASE}/admin/catalog-pdf/failed-jobs`, { headers: authHeaders }),
+      ]);
+
+      if (reviewRes.status === 401) { logoutAdmin(); return; }
+      if (!reviewRes.ok) throw new Error("Failed to load");
+      const data = await reviewRes.json() as { items: ReviewItem[] };
 
       // Group by upload session (catalogPdfJobId)
       const groupMap = new Map<number | null, SessionGroup>();
@@ -97,6 +115,14 @@ export default function CatalogReviewScreen() {
       setGroups(
         [...groupMap.values()].sort((a, b) => (b.jobId ?? 0) - (a.jobId ?? 0)),
       );
+
+      if (failedRes) {
+        if (failedRes.status === 401) { logoutAdmin(); return; }
+        if (failedRes.ok) {
+          const failedData = await failedRes.json() as { jobs: FailedJob[] };
+          setFailedJobs(failedData.jobs);
+        }
+      }
     } catch {
       setError("Could not load review data. Check your connection.");
     } finally {
@@ -264,7 +290,7 @@ export default function CatalogReviewScreen() {
             <Text style={[s.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
           </Pressable>
         </View>
-      ) : listData.length === 0 ? (
+      ) : listData.length === 0 && failedJobs.length === 0 ? (
         <View style={s.center}>
           <Text style={[s.emptyTitle, { color: colors.foreground }]}>
             {revertedIds.size > 0 ? "All reverted" : "No items to review"}
@@ -277,12 +303,14 @@ export default function CatalogReviewScreen() {
         </View>
       ) : (
         <>
-          <View style={[s.summaryBar, { borderBottomColor: colors.border }]}>
-            <Text style={[s.summaryText, { color: colors.mutedForeground }]}>
-              {totalActive} item{totalActive !== 1 ? "s" : ""} across {groups.filter(g => g.items.filter(i => !revertedIds.has(i.id)).length > 0).length} session{groups.length !== 1 ? "s" : ""}
-              {revertedIds.size > 0 ? ` · ${revertedIds.size} reverted` : ""}
-            </Text>
-          </View>
+          {(listData.length > 0) ? (
+            <View style={[s.summaryBar, { borderBottomColor: colors.border }]}>
+              <Text style={[s.summaryText, { color: colors.mutedForeground }]}>
+                {totalActive} item{totalActive !== 1 ? "s" : ""} across {groups.filter(g => g.items.filter(i => !revertedIds.has(i.id)).length > 0).length} session{groups.length !== 1 ? "s" : ""}
+                {revertedIds.size > 0 ? ` · ${revertedIds.size} reverted` : ""}
+              </Text>
+            </View>
+          ) : null}
           <FlatList
             data={listData}
             keyExtractor={(row, i) =>
@@ -291,6 +319,55 @@ export default function CatalogReviewScreen() {
                 : `item-${row.item.id}-${i}`
             }
             renderItem={renderRow}
+            ListHeaderComponent={
+              failedJobs.length > 0 ? (
+                <View style={s.failedSection}>
+                  <View style={[s.failedSectionHeader, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44" }]}>
+                    <Text style={[s.failedSectionTitle, { color: colors.destructive }]}>
+                      {failedJobs.length} Failed Job{failedJobs.length !== 1 ? "s" : ""}
+                    </Text>
+                    <Text style={[s.failedSectionHint, { color: colors.mutedForeground }]}>
+                      These jobs did not complete. Go to the Upload tab to resubmit each PDF.
+                    </Text>
+                  </View>
+                  {failedJobs.map((job) => (
+                    <View
+                      key={job.id}
+                      style={[s.failedCard, { backgroundColor: colors.card, borderColor: colors.destructive + "55" }]}
+                    >
+                      <View style={s.failedCardTop}>
+                        <View style={s.failedCardIdent}>
+                          <Text style={[s.failedCardVendor, { color: colors.foreground }]}>
+                            {job.vendor}
+                          </Text>
+                          <Text style={[s.failedCardFile, { color: colors.mutedForeground }]} numberOfLines={1}>
+                            {job.filename}
+                          </Text>
+                        </View>
+                        <View style={[s.failedBadge, { backgroundColor: colors.destructive + "18" }]}>
+                          <Text style={[s.failedBadgeText, { color: colors.destructive }]}>Failed</Text>
+                        </View>
+                      </View>
+                      <View style={[s.failedErrorBox, { backgroundColor: colors.destructive + "0e", borderColor: colors.destructive + "33" }]}>
+                        <Text style={[s.failedErrorLabel, { color: colors.destructive }]}>Error</Text>
+                        <Text style={[s.failedErrorMsg, { color: colors.foreground }]}>
+                          {job.errorMessage ?? "Unknown error"}
+                        </Text>
+                      </View>
+                      <Text style={[s.failedMeta, { color: colors.mutedForeground }]}>
+                        Job #{job.id} · {new Date(job.createdAt).toLocaleDateString()}
+                        {job.processedPages > 0 ? ` · ${job.processedPages}${job.totalPages ? `/${job.totalPages}` : ""} pages processed` : ""}
+                      </Text>
+                      <View style={[s.resubmitBox, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "44" }]}>
+                        <Text style={[s.resubmitText, { color: colors.primary }]}>
+                          To resubmit: go to the Upload tab, enter the vendor name, select the same PDF, and tap "Start Extraction".
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ) : null
+            }
             contentContainerStyle={{ paddingBottom: 100 }}
           />
         </>
@@ -339,4 +416,30 @@ const s = StyleSheet.create({
   revertBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   imageBlock: { borderRadius: 8, overflow: "hidden", alignSelf: "flex-start" },
   partImage: { width: 120, height: 90 },
+  failedSection: { paddingBottom: 4 },
+  failedSectionHeader: {
+    marginHorizontal: 12, marginTop: 12, marginBottom: 4,
+    borderRadius: 10, borderWidth: 1, padding: 14, gap: 4,
+  },
+  failedSectionTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  failedSectionHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  failedCard: {
+    marginHorizontal: 12, marginTop: 8, borderRadius: 12, borderWidth: 1, padding: 14, gap: 10,
+  },
+  failedCardTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  failedCardIdent: { flex: 1, gap: 2 },
+  failedCardVendor: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  failedCardFile: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  failedBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  failedBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  failedErrorBox: {
+    borderRadius: 8, borderWidth: 1, padding: 10, gap: 4,
+  },
+  failedErrorLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", textTransform: "uppercase", letterSpacing: 0.5 },
+  failedErrorMsg: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  failedMeta: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  resubmitBox: {
+    borderRadius: 8, borderWidth: 1, padding: 10,
+  },
+  resubmitText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
 });
