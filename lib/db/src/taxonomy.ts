@@ -17,6 +17,12 @@ export interface TaxonomyCategory {
   subcategories: TaxonomySubcategory[];
 }
 
+/**
+ * Canonical 3-level electrical taxonomy.
+ * 17 top-level categories · 44 sub-categories · 131 item types (per spec).
+ * Does NOT include the "Uncategorized" catch-all — that is handled separately
+ * so it does not interfere with getAllTaxonomyKeywords() inverse matching.
+ */
 export const TAXONOMY: TaxonomyCategory[] = [
   // ── 1. Anchors & Connectors ──────────────────────────────────────────────
   {
@@ -41,8 +47,8 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "toggle-hollow-wall-anchors",
             label: "Toggle Bolts & Hollow-Wall Anchors",
             keywords: [
-              "toggle bolt", "hollow wall anchor", "toggle", "molly bolt",
-              "butterfly anchor", "snap toggle", "wall anchor hollow",
+              "toggle bolt", "hollow wall anchor", "molly bolt",
+              "butterfly anchor", "snap toggle",
             ],
           },
           {
@@ -50,14 +56,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Threaded Rod & Studs",
             keywords: [
               "threaded rod", "all-thread", "all thread rod", "threaded stud",
-              "rod hanger", "B7 rod", "galvanized rod", "ATR", "redi-rod",
-            ],
-          },
-          {
-            slug: "other-anchors-fasteners",
-            label: "Other Anchors & Fasteners",
-            keywords: [
-              "anchor", "fastener", "screw anchor", "drywall anchor",
+              "redi-rod", "ATR", "galvanized rod",
             ],
           },
         ],
@@ -71,7 +70,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Beam Clamps & Pipe Clamps",
             keywords: [
               "beam clamp", "pipe clamp", "C clamp", "I-beam clamp",
-              "flange clamp", "beam trolley", "cable beam clamp",
+              "flange clamp", "cable beam clamp",
             ],
           },
           {
@@ -79,7 +78,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Cable Tray Connectors",
             keywords: [
               "cable tray connector", "tray connector", "tray splice",
-              "cable tray coupler", "tray hardware",
+              "cable tray coupler",
             ],
           },
           {
@@ -87,14 +86,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Strut/Unistrut Connectors",
             keywords: [
               "strut connector", "unistrut connector", "channel connector",
-              "strut splice", "channel splice plate", "strut cross",
-            ],
-          },
-          {
-            slug: "other-structural-connectors",
-            label: "Other Structural Connectors",
-            keywords: [
-              "structural connector", "beam connector", "joist clamp",
+              "strut splice", "channel splice plate",
             ],
           },
         ],
@@ -118,7 +110,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "device box", "switch box", "single gang box", "two gang box",
               "outlet box", "old work box", "new work box", "remodel box",
-              "plastic box", "switch gang", "electrical box device",
+              "switch gang",
             ],
           },
           {
@@ -126,7 +118,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Junction/Pull Boxes",
             keywords: [
               "junction box", "pull box", "j-box", "4 square", "4S box",
-              "4-11/16 box", "draw box", "pulling box", "square box",
+              "4-11/16 box", "draw box", "pulling box",
             ],
           },
           {
@@ -134,7 +126,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Weatherproof Boxes",
             keywords: [
               "weatherproof box", "outdoor box", "WP box", "wet location box",
-              "rain tight box", "outdoor outlet box",
+              "rain tight box",
             ],
           },
           {
@@ -142,22 +134,15 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Floor Boxes",
             keywords: [
               "floor box", "floor outlet", "in-floor box", "raised floor box",
-              "flush floor", "carpet floor box",
+              "flush floor",
             ],
           },
           {
             slug: "fan-rated-boxes",
             label: "Fan-Rated Boxes",
             keywords: [
-              "fan box", "fan-rated box", "ceiling fan box", "fan support box",
-              "pancake box fan", "brace fan", "fan rated",
-            ],
-          },
-          {
-            slug: "other-boxes-enclosures",
-            label: "Other Boxes & Enclosures",
-            keywords: [
-              "electrical box", "metal box", "plastic electrical box",
+              "fan box", "fan-rated box", "ceiling fan box", "pancake box fan",
+              "fan rated",
             ],
           },
         ],
@@ -170,8 +155,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "blank-covers",
             label: "Blank Covers",
             keywords: [
-              "blank cover", "blank plate", "blank face plate", "cover blank",
-              "solid cover", "junction box cover blank",
+              "blank cover", "blank plate", "cover blank", "solid cover",
             ],
           },
           {
@@ -180,7 +164,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "wall plate", "device plate", "cover plate", "switch plate",
               "outlet cover", "face plate", "decorator plate", "duplex cover",
-              "single gang plate", "double gang plate",
             ],
           },
           {
@@ -188,7 +171,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Weatherproof In-Use Covers",
             keywords: [
               "weatherproof cover", "in-use cover", "while-in-use cover",
-              "bubble cover", "outdoor cover", "WP cover", "extra deep cover",
+              "bubble cover", "WP cover",
             ],
           },
           {
@@ -196,14 +179,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Box Covers & Extension Rings",
             keywords: [
               "box cover", "extension ring", "mud ring", "plaster ring",
-              "tile ring", "depth ring", "raised cover", "4S cover",
-            ],
-          },
-          {
-            slug: "other-covers-plates",
-            label: "Other Covers & Plates",
-            keywords: [
-              "cover", "plate", "knockout seal", "KO seal", "snap-in",
+              "tile ring", "raised cover",
             ],
           },
         ],
@@ -217,7 +193,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "NEMA 1 (Indoor)",
             keywords: [
               "NEMA 1", "NEMA type 1", "general purpose enclosure",
-              "indoor enclosure", "steel enclosure indoor",
+              "indoor enclosure",
             ],
           },
           {
@@ -225,7 +201,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "NEMA 3R (Rainproof)",
             keywords: [
               "NEMA 3R", "NEMA type 3R", "rainproof enclosure",
-              "outdoor enclosure raintight", "3R enclosure",
+              "outdoor enclosure raintight",
             ],
           },
           {
@@ -233,14 +209,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "NEMA 4/4X (Watertight)",
             keywords: [
               "NEMA 4", "NEMA 4X", "watertight enclosure", "stainless enclosure",
-              "fiberglass enclosure", "washdown enclosure", "4X enclosure",
-            ],
-          },
-          {
-            slug: "other-nema-enclosures",
-            label: "Other NEMA Enclosures",
-            keywords: [
-              "NEMA enclosure", "NEMA 12", "NEMA 7", "hazardous location enclosure",
+              "fiberglass enclosure", "washdown enclosure",
             ],
           },
         ],
@@ -263,8 +232,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Strut Channel",
             keywords: [
               "strut channel", "unistrut", "Kindorf", "Superstrut", "B-Line",
-              "framing channel", "slotted channel", "1-5/8 channel",
-              "3/4 strut", "half slot strut", "strut rail",
+              "framing channel", "slotted channel", "1-5/8 channel", "strut rail",
             ],
           },
           {
@@ -272,15 +240,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Strut Fittings & Nuts",
             keywords: [
               "strut fitting", "strut nut", "channel nut", "strut splice",
-              "strut bracket", "strut plate", "strut angle", "strut post base",
-              "channel connector nut", "spring nut",
-            ],
-          },
-          {
-            slug: "other-strut-framing",
-            label: "Other Strut & Framing",
-            keywords: [
-              "strut framing", "framing hardware", "strut accessory",
+              "strut bracket", "spring nut", "strut angle",
             ],
           },
         ],
@@ -294,7 +254,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Cable Ties & Zip Ties",
             keywords: [
               "cable tie", "zip tie", "ty-rap", "ty rap", "nylon tie",
-              "locking tie", "cable strap tie",
+              "locking tie",
             ],
           },
           {
@@ -302,7 +262,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Cable Staples & Clips",
             keywords: [
               "cable staple", "cable clip", "wire staple", "romex staple",
-              "NM staple", "cable cleat", "cable fastener clip",
+              "NM staple", "cable cleat",
             ],
           },
           {
@@ -310,14 +270,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Cable Duct & Wiring Duct",
             keywords: [
               "cable duct", "wiring duct", "panduit duct", "wire management duct",
-              "slotted duct", "louvered duct",
-            ],
-          },
-          {
-            slug: "other-cable-management",
-            label: "Other Cable Management",
-            keywords: [
-              "cable management", "cable lacing", "hook and loop",
+              "slotted duct",
             ],
           },
         ],
@@ -330,8 +283,8 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "hanger-rods-all-thread",
             label: "Hanger Rods & All-Thread",
             keywords: [
-              "hanger rod", "all-thread hanger", "threaded rod hanger",
-              "ATR hanger", "rod coupling", "hanger coupler",
+              "hanger rod", "all-thread hanger", "rod coupling",
+              "hanger coupler",
             ],
           },
           {
@@ -339,22 +292,15 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Beam/Trapeze Hangers",
             keywords: [
               "beam hanger", "trapeze hanger", "trapeze assembly",
-              "trapeze support", "conduit trapeze", "beam hanger strap",
+              "trapeze support", "conduit trapeze",
             ],
           },
           {
             slug: "pipe-hangers-clamps",
             label: "Pipe Hangers & Clamps",
             keywords: [
-              "pipe hanger", "pipe clamp", "conduit hanger", "conduit clamp",
-              "pipe support", "clevis hanger", "J hook", "split ring hanger",
-            ],
-          },
-          {
-            slug: "other-supports-hangers",
-            label: "Other Supports & Hangers",
-            keywords: [
-              "support hanger", "suspension", "wiring support",
+              "pipe hanger", "conduit hanger", "conduit clamp",
+              "clevis hanger", "J hook", "split ring hanger",
             ],
           },
         ],
@@ -377,16 +323,15 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "EMT",
             keywords: [
               "EMT", "electrical metallic tubing", "thin wall",
-              "thin-wall conduit", "steel conduit EMT", "EMT conduit",
-              "thinwall conduit",
+              "thinwall conduit", "EMT conduit",
             ],
           },
           {
             slug: "pvc-conduit",
             label: "PVC",
             keywords: [
-              "PVC conduit", "PVC pipe conduit", "schedule 40 conduit",
-              "schedule 80 conduit", "rigid PVC conduit",
+              "PVC conduit", "schedule 40 conduit", "schedule 80 conduit",
+              "rigid PVC conduit",
             ],
           },
           {
@@ -394,16 +339,14 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "RMC/Rigid Metal",
             keywords: [
               "RMC", "GRS", "rigid metallic conduit", "rigid steel conduit",
-              "rigid threaded conduit", "galvanized rigid conduit",
-              "heavy wall conduit", "rigid conduit",
+              "galvanized rigid conduit", "rigid conduit",
             ],
           },
           {
             slug: "imc",
             label: "IMC",
             keywords: [
-              "IMC", "intermediate metal conduit", "rigid steel IMC",
-              "intermediate conduit",
+              "IMC", "intermediate metal conduit", "intermediate conduit",
             ],
           },
           {
@@ -411,23 +354,15 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "FMC/Flexible Metal",
             keywords: [
               "FMC", "flex conduit", "flexible metal conduit", "Greenfield",
-              "steel flex", "LFMC", "liquidtight metallic conduit",
-              "liquidtight flex metallic", "flexible metallic",
+              "LFMC", "liquidtight flex metallic",
             ],
           },
           {
             slug: "ent-smurf-tube",
             label: "ENT/Smurf Tube",
             keywords: [
-              "ENT", "smurf tube", "corrugated conduit", "blue flex",
-              "electrical non-metallic tubing", "Carlon ENT",
-            ],
-          },
-          {
-            slug: "other-conduit",
-            label: "Other Conduit",
-            keywords: [
-              "LFNC", "non-metallic liquid tight", "conduit",
+              "ENT", "smurf tube", "corrugated conduit",
+              "electrical non-metallic tubing",
             ],
           },
         ],
@@ -440,8 +375,8 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "couplings",
             label: "Couplings",
             keywords: [
-              "coupling", "EMT coupling", "PVC coupling", "conduit coupling",
-              "compression coupling", "set screw coupling",
+              "coupling", "EMT coupling", "PVC coupling", "compression coupling",
+              "set screw coupling",
             ],
           },
           {
@@ -449,7 +384,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Elbows",
             keywords: [
               "elbow", "90 degree elbow", "LB", "sweep elbow",
-              "45 elbow", "conduit elbow", "EMT elbow", "PVC elbow",
+              "45 elbow", "conduit elbow",
             ],
           },
           {
@@ -457,15 +392,14 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Connectors",
             keywords: [
               "conduit connector", "EMT connector", "set screw connector",
-              "compression connector", "snap-in connector", "flex connector",
-              "liquidtight connector",
+              "compression connector", "flex connector",
             ],
           },
           {
             slug: "condulets-conduit-bodies",
             label: "Condulets/Conduit Bodies",
             keywords: [
-              "condulet", "conduit body", "LB fitting", "LL fitting", "LR fitting",
+              "condulet", "conduit body", "LB fitting", "LL fitting",
               "T body", "C body", "conduit body cover",
             ],
           },
@@ -474,15 +408,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Straps & Hangers",
             keywords: [
               "conduit strap", "one-hole strap", "two-hole strap",
-              "EMT strap", "PVC strap", "conduit clamp strap",
-              "rigid strap",
-            ],
-          },
-          {
-            slug: "other-conduit-fittings",
-            label: "Other Fittings",
-            keywords: [
-              "conduit fitting", "offset", "conduit saddle", "conduit locator",
+              "EMT strap", "conduit clamp strap",
             ],
           },
         ],
@@ -503,7 +429,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "ladder-cable-tray",
             label: "Ladder Cable Tray",
             keywords: [
-              "ladder tray", "cable ladder", "ladder rack", "cable tray ladder",
+              "ladder tray", "cable ladder", "ladder rack",
             ],
           },
           {
@@ -512,13 +438,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "solid bottom tray", "solid tray", "solid cable tray",
               "perforated tray", "ventilated tray",
-            ],
-          },
-          {
-            slug: "other-wireways-cable-tray",
-            label: "Other Wireways & Cable Tray",
-            keywords: [
-              "cable tray", "wire tray", "tray fitting",
             ],
           },
         ],
@@ -540,8 +459,8 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "starters-contactors-vfds",
             label: "Starters/Contactors/VFDs",
             keywords: [
-              "starter", "contactor", "VFD", "motor starter", "variable frequency drive",
-              "AC drive", "motor drive", "soft starter", "across-the-line starter",
+              "starter", "contactor", "VFD", "motor starter",
+              "variable frequency drive", "AC drive", "soft starter",
             ],
           },
         ],
@@ -555,7 +474,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Control Relays",
             keywords: [
               "relay", "control relay", "ice cube relay", "DPDT relay",
-              "latching relay", "coil relay", "general purpose relay",
+              "latching relay", "general purpose relay",
             ],
           },
           {
@@ -563,14 +482,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Timer Switches & Astronomic Timers",
             keywords: [
               "timer", "timer switch", "astronomic timer", "time clock",
-              "digital timer", "mechanical timer", "7-day timer",
-            ],
-          },
-          {
-            slug: "other-relays-timers",
-            label: "Other Relays & Timers",
-            keywords: [
-              "relay module", "solid state relay", "sequencer",
+              "digital timer", "7-day timer",
             ],
           },
         ],
@@ -584,15 +496,15 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Photocells/Light Sensors",
             keywords: [
               "photocell", "photo sensor", "light sensor", "dusk-to-dawn",
-              "photocontrol", "daylight sensor", "photoeye",
+              "photocontrol", "photoeye",
             ],
           },
           {
             slug: "temp-sensors-thermostats",
             label: "Temperature Sensors & Thermostats",
             keywords: [
-              "temperature sensor", "thermostat sensor", "temp sensor",
-              "RTD sensor", "thermocouple", "temperature transmitter",
+              "temperature sensor", "RTD sensor", "thermocouple",
+              "temperature transmitter",
             ],
           },
           {
@@ -600,15 +512,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Current Sensors & CT Clamps",
             keywords: [
               "current sensor", "CT clamp", "current transformer",
-              "split core CT", "solid core CT", "current transducer",
-            ],
-          },
-          {
-            slug: "other-sensors",
-            label: "Other Sensors",
-            keywords: [
-              "proximity sensor", "pressure sensor", "flow sensor",
-              "level sensor", "sensor module",
+              "split core CT", "current transducer",
             ],
           },
         ],
@@ -622,7 +526,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Push Buttons",
             keywords: [
               "push button", "pushbutton", "momentary switch",
-              "start button", "stop button", "E-stop", "emergency stop button",
+              "start button", "stop button", "E-stop",
             ],
           },
           {
@@ -630,7 +534,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Pilot Lights & Indicators",
             keywords: [
               "pilot light", "indicator light", "LED indicator",
-              "tower light", "stack light", "signal light",
+              "tower light", "stack light",
             ],
           },
           {
@@ -639,13 +543,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "selector switch", "rotary switch", "key switch",
               "hand-off-auto", "HOA switch",
-            ],
-          },
-          {
-            slug: "other-pilot-devices",
-            label: "Other Pilot Devices",
-            keywords: [
-              "pilot device", "control station", "pendant station",
             ],
           },
         ],
@@ -669,8 +566,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "circuit breaker", "breaker", "QO breaker", "HOM breaker",
               "BR breaker", "Eaton breaker", "Square D breaker",
-              "Siemens breaker", "GE breaker", "Murray breaker",
-              "thermal magnetic breaker", "single pole breaker", "double pole breaker",
+              "Siemens breaker", "single pole breaker", "double pole breaker",
             ],
           },
           {
@@ -678,15 +574,15 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "GFCI Breakers",
             keywords: [
               "GFCI breaker", "ground fault breaker", "GFI breaker",
-              "GFCI circuit breaker", "ground fault circuit interrupter breaker",
+              "GFCI circuit breaker",
             ],
           },
           {
             slug: "afci-breakers",
             label: "AFCI Breakers",
             keywords: [
-              "AFCI breaker", "arc fault breaker", "arc fault circuit interrupter",
-              "AFCI circuit breaker", "dual function breaker",
+              "AFCI breaker", "arc fault breaker",
+              "arc fault circuit interrupter", "dual function breaker",
             ],
           },
         ],
@@ -709,8 +605,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Load Centers/Panelboards",
             keywords: [
               "load center", "panelboard", "main panel", "sub panel", "subpanel",
-              "residential panel", "commercial panel", "main breaker panel",
-              "main lug panel", "distribution panel",
+              "residential panel", "main breaker panel", "main lug panel",
             ],
           },
           {
@@ -718,14 +613,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Meter Sockets/Meter Mains",
             keywords: [
               "meter socket", "meter main", "meter base", "meter enclosure",
-              "ringless meter", "lever bypass meter", "meter combo",
-            ],
-          },
-          {
-            slug: "other-panels",
-            label: "Other Panels",
-            keywords: [
-              "switchboard", "switchgear", "distribution board", "PDU",
+              "ringless meter", "meter combo",
             ],
           },
         ],
@@ -739,7 +627,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Fusible Safety Switches",
             keywords: [
               "fusible safety switch", "fused disconnect", "fusible disconnect",
-              "safety switch fused", "HD fusible", "DH fusible", "GD fusible",
+              "HD fusible", "DH fusible",
             ],
           },
           {
@@ -747,14 +635,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Non-Fusible Safety Switches",
             keywords: [
               "non-fusible safety switch", "non fusible disconnect",
-              "safety switch non-fused", "HD non-fusible", "AC disconnect switch",
-            ],
-          },
-          {
-            slug: "other-disconnects",
-            label: "Other Disconnects",
-            keywords: [
-              "disconnect switch", "motor disconnect", "enclosed disconnect",
+              "safety switch non-fused", "HD non-fusible",
             ],
           },
         ],
@@ -769,7 +650,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "SPD", "surge protective device", "whole house surge",
               "panel surge protector", "type 1 SPD", "type 2 SPD",
-              "service entrance surge",
             ],
           },
           {
@@ -777,14 +657,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Point-of-Use Surge Protectors",
             keywords: [
               "surge protector", "point of use surge", "outlet surge strip",
-              "power strip surge",
-            ],
-          },
-          {
-            slug: "other-surge-protection",
-            label: "Other Surge Protection",
-            keywords: [
-              "transient voltage suppressor", "MOV", "TVS diode",
             ],
           },
         ],
@@ -798,16 +670,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Control/Buck-Boost Transformers",
             keywords: [
               "transformer", "control transformer", "buck boost transformer",
-              "step down transformer", "isolation transformer",
-              "machine tool transformer", "CPT",
-            ],
-          },
-          {
-            slug: "other-transformers",
-            label: "Other Transformers",
-            keywords: [
-              "dry type transformer", "distribution transformer",
-              "autotransformer",
+              "step down transformer", "isolation transformer", "CPT",
             ],
           },
         ],
@@ -821,8 +684,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Cartridge Fuses",
             keywords: [
               "fuse", "cartridge fuse", "fusetron", "time delay fuse",
-              "fast acting fuse", "current limiting fuse", "RK5 fuse",
-              "Class J fuse", "Class CC fuse", "Fusetron fuse",
+              "fast acting fuse", "current limiting fuse", "Class J fuse",
             ],
           },
           {
@@ -830,14 +692,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Glass/Automotive Fuses",
             keywords: [
               "glass fuse", "automotive fuse", "mini fuse", "blade fuse",
-              "AGC fuse", "MDL fuse", "ABC fuse",
-            ],
-          },
-          {
-            slug: "other-fuses",
-            label: "Other Fuses",
-            keywords: [
-              "fuse block replacement", "fuse kit",
+              "AGC fuse", "MDL fuse",
             ],
           },
         ],
@@ -859,8 +714,8 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "ground-rods-clamps",
             label: "Ground Rods & Clamps",
             keywords: [
-              "ground rod", "grounding rod", "ground clamp", "earth rod",
-              "copper ground rod", "ground rod clamp", "rod to wire clamp",
+              "ground rod", "grounding rod", "ground clamp",
+              "copper ground rod", "rod to wire clamp",
             ],
           },
           {
@@ -868,15 +723,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Grounding Connectors & Clamps",
             keywords: [
               "grounding connector", "grounding clamp", "ground lug",
-              "ground bushing", "grounding wedge clamp", "acorn connector",
-              "grounding coupling",
-            ],
-          },
-          {
-            slug: "other-grounding-fittings",
-            label: "Other Grounding Fittings",
-            keywords: [
-              "grounding fitting", "ground pigtail", "EGB",
+              "ground bushing", "acorn connector", "grounding coupling",
             ],
           },
         ],
@@ -891,14 +738,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "liquidtight connector", "liquid tight connector",
               "LFMC connector", "LFNC connector", "straight liquidtight",
-              "90 liquidtight", "flex liquidtight",
-            ],
-          },
-          {
-            slug: "other-liquidtight-fittings",
-            label: "Other Liquidtight Fittings",
-            keywords: [
-              "liquidtight fitting", "liquid tight fitting",
+              "90 liquidtight",
             ],
           },
         ],
@@ -912,7 +752,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Conduit Reducers & Adapters",
             keywords: [
               "conduit reducer", "conduit adapter", "reducing bushing",
-              "conduit bushing", "knockout adapter", "conduit chase nipple",
+              "conduit bushing", "knockout adapter",
             ],
           },
           {
@@ -920,14 +760,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Nipples & Extensions",
             keywords: [
               "nipple", "conduit nipple", "close nipple",
-              "extension nipple", "conduit extension",
-            ],
-          },
-          {
-            slug: "other-reducers-adapters",
-            label: "Other Reducers & Adapters",
-            keywords: [
-              "conduit union", "conduit offset", "offset fitting",
+              "extension nipple",
             ],
           },
         ],
@@ -950,8 +783,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Thermostats",
             keywords: [
               "thermostat", "HVAC thermostat", "programmable thermostat",
-              "smart thermostat", "line voltage thermostat", "Honeywell thermostat",
-              "White Rodgers thermostat",
+              "line voltage thermostat",
             ],
           },
           {
@@ -960,13 +792,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "HVAC contactor", "air conditioner contactor", "AC contactor",
               "condenser contactor", "compressor contactor",
-            ],
-          },
-          {
-            slug: "other-hvac-controls",
-            label: "Other HVAC Controls",
-            keywords: [
-              "HVAC control board", "defrost timer", "sequencer HVAC",
             ],
           },
         ],
@@ -981,7 +806,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "fan motor", "blower motor", "condenser fan motor",
               "furnace blower motor", "ECM motor", "draft inducer motor",
-              "HVAC motor",
             ],
           },
           {
@@ -989,15 +813,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Capacitors (Run/Start)",
             keywords: [
               "capacitor", "run capacitor", "start capacitor",
-              "HVAC capacitor", "dual run capacitor", "round capacitor",
-              "oval capacitor", "AC capacitor",
-            ],
-          },
-          {
-            slug: "other-hvac-components",
-            label: "Other HVAC Components",
-            keywords: [
-              "HVAC component", "crankcase heater", "hard start kit",
+              "HVAC capacitor", "dual run capacitor", "AC capacitor",
             ],
           },
         ],
@@ -1011,22 +827,15 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "AC Disconnect Switches",
             keywords: [
               "AC disconnect", "air conditioner disconnect", "pull-out disconnect",
-              "HVAC disconnect", "air handler disconnect", "heat pump disconnect",
+              "HVAC disconnect", "heat pump disconnect",
             ],
           },
           {
             slug: "fuse-holders-blocks",
             label: "Fuse Holders & Blocks",
             keywords: [
-              "fuse holder", "fuse block", "fuse holder block",
-              "inline fuse holder", "fuse clip", "class R fuse block",
-            ],
-          },
-          {
-            slug: "other-hvac-protection",
-            label: "Other HVAC Protection",
-            keywords: [
-              "HVAC protection", "surge protection HVAC", "overvoltage HVAC",
+              "fuse holder", "fuse block", "inline fuse holder",
+              "fuse clip",
             ],
           },
         ],
@@ -1049,7 +858,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "LED Bulbs",
             keywords: [
               "LED bulb", "LED lamp", "LED A19", "LED PAR", "LED MR16",
-              "LED GU10", "LED filament", "LED retrofit", "LED light bulb",
+              "LED retrofit", "LED light bulb",
             ],
           },
           {
@@ -1057,7 +866,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Fluorescent",
             keywords: [
               "fluorescent", "fluorescent lamp", "T8 lamp", "T12 lamp",
-              "CFL", "compact fluorescent", "T5 lamp", "F32T8",
+              "CFL", "compact fluorescent", "T5 lamp",
             ],
           },
           {
@@ -1065,8 +874,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Fixtures",
             keywords: [
               "fixture", "light fixture", "luminaire", "LED fixture",
-              "wraparound", "strip fixture", "vapor tight", "high bay",
-              "low bay", "wall pack", "area light",
+              "wraparound", "vapor tight", "high bay", "wall pack",
             ],
           },
           {
@@ -1074,14 +882,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Recessed/Cans",
             keywords: [
               "recessed", "can light", "recessed fixture", "downlight",
-              "pot light", "recess housing", "LED can", "IC rated recessed",
-            ],
-          },
-          {
-            slug: "other-lighting",
-            label: "Other Lighting",
-            keywords: [
-              "HID lamp", "metal halide", "high pressure sodium", "ballast",
+              "pot light", "IC rated recessed",
             ],
           },
         ],
@@ -1094,8 +895,8 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "daylight-photocell-controls",
             label: "Daylight/Photocell Controls",
             keywords: [
-              "photocell control", "daylight sensor", "photocontrol switch",
-              "dusk to dawn control", "light sensitive switch",
+              "photocontrol switch", "daylight sensor", "dusk to dawn control",
+              "light sensitive switch",
             ],
           },
           {
@@ -1103,7 +904,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Motion & Occupancy Controls",
             keywords: [
               "motion sensor switch", "occupancy sensor switch",
-              "vacancy sensor", "PIR switch", "motion lighting switch",
+              "vacancy sensor", "PIR switch",
             ],
           },
           {
@@ -1111,14 +912,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Dimmer Controls",
             keywords: [
               "dimmer", "dimmer switch", "0-10V dimmer", "LED dimmer",
-              "Lutron dimmer", "Leviton dimmer", "slide dimmer",
-            ],
-          },
-          {
-            slug: "other-lighting-controls",
-            label: "Other Lighting Controls",
-            keywords: [
-              "lighting control system", "relay panel lighting",
+              "Lutron dimmer", "slide dimmer",
             ],
           },
         ],
@@ -1132,7 +926,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Exit Signs",
             keywords: [
               "exit sign", "LED exit", "exit light", "combination exit",
-              "exit sign battery", "illuminated exit",
             ],
           },
           {
@@ -1140,15 +933,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Emergency Lighting Units",
             keywords: [
               "emergency light", "emergency lighting", "inverter backup",
-              "bug eye light", "emergency light fixture",
-              "emergency ballast", "self-contained emergency",
-            ],
-          },
-          {
-            slug: "other-emergency-lighting",
-            label: "Other Emergency Lighting",
-            keywords: [
-              "emergency backup", "central inverter", "emergency transfer",
+              "bug eye light", "emergency ballast",
             ],
           },
         ],
@@ -1171,7 +956,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Triplex/Quadruplex URD",
             keywords: [
               "triplex", "quadruplex", "duplex URD", "overhead triplex",
-              "aerial cable", "service drop triplex",
+              "aerial cable",
             ],
           },
           {
@@ -1179,15 +964,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "AAC/ACSR Overhead Conductors",
             keywords: [
               "AAC", "ACSR", "overhead conductor", "bare conductor",
-              "aluminum conductor steel reinforced", "all aluminum conductor",
-              "stranded overhead",
-            ],
-          },
-          {
-            slug: "other-overhead-wire",
-            label: "Other Overhead Wire",
-            keywords: [
-              "messenger cable", "overhead wire", "aerial bundled cable",
+              "aluminum conductor steel reinforced",
             ],
           },
         ],
@@ -1201,22 +978,15 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Insulators",
             keywords: [
               "insulator", "strain insulator", "line insulator",
-              "pin insulator", "disc insulator", "suspension insulator",
+              "pin insulator",
             ],
           },
           {
             slug: "deadend-strain-clamps",
             label: "Deadend & Strain Clamps",
             keywords: [
-              "deadend", "dead end clamp", "strain clamp", "preformed deadend",
-              "compression deadend",
-            ],
-          },
-          {
-            slug: "other-pole-hardware",
-            label: "Other Pole Hardware",
-            keywords: [
-              "pole hardware", "cross arm", "pole band", "guy wire",
+              "deadend", "dead end clamp", "strain clamp",
+              "preformed deadend", "compression deadend",
             ],
           },
         ],
@@ -1230,7 +1000,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "URD Cable",
             keywords: [
               "URD cable", "underground residential distribution",
-              "secondary URD", "underground distribution cable",
               "15kV URD", "25kV URD",
             ],
           },
@@ -1239,15 +1008,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "URD Splices & Terminations",
             keywords: [
               "URD splice", "URD termination", "underground splice",
-              "cold shrink splice", "heat shrink splice",
-              "elbow termination", "loadbreak elbow",
-            ],
-          },
-          {
-            slug: "other-underground-distribution",
-            label: "Other Underground Distribution",
-            keywords: [
-              "underground distribution", "duct bank", "cable vault",
+              "cold shrink splice", "loadbreak elbow",
             ],
           },
         ],
@@ -1268,18 +1029,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
           {
             slug: "cat-5e",
             label: "Cat 5e",
-            keywords: [
-              "Cat 5e", "Cat5e", "category 5e", "CAT5e cable",
-              "UTP Cat5e", "STP Cat5e",
-            ],
+            keywords: ["Cat 5e", "Cat5e", "category 5e", "CAT5e cable"],
           },
           {
             slug: "cat-6-6a",
             label: "Cat 6/6A",
-            keywords: [
-              "Cat 6", "Cat 6A", "Cat6", "Cat6A", "category 6",
-              "CAT6 cable", "10GbE cable",
-            ],
+            keywords: ["Cat 6", "Cat 6A", "Cat6", "Cat6A", "CAT6 cable"],
           },
           {
             slug: "fiber-optic",
@@ -1294,15 +1049,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Coaxial",
             keywords: [
               "coaxial cable", "coax", "RG6", "RG11", "RG59",
-              "quad shield coax", "CATV cable",
-            ],
-          },
-          {
-            slug: "other-telecom-cable",
-            label: "Other Telecom Cable",
-            keywords: [
-              "alarm cable", "security cable", "speaker wire",
-              "telephone cable", "Cat 3",
+              "CATV cable",
             ],
           },
         ],
@@ -1316,7 +1063,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "RJ45 Jacks & Keystone Modules",
             keywords: [
               "RJ45 jack", "keystone jack", "keystone module",
-              "Cat6 jack", "Cat5e jack", "patch panel jack",
+              "Cat6 jack", "Cat5e jack",
             ],
           },
           {
@@ -1324,15 +1071,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Coax Connectors & Splitters",
             keywords: [
               "coax connector", "coax splitter", "F connector",
-              "BNC connector", "coax coupler", "CATV splitter",
-            ],
-          },
-          {
-            slug: "other-data-jacks-connectors",
-            label: "Other Data Jacks & Connectors",
-            keywords: [
-              "data connector", "data jack", "LC connector", "SC connector",
-              "ST connector", "fiber connector",
+              "BNC connector", "CATV splitter",
             ],
           },
         ],
@@ -1345,8 +1084,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "patch-panels",
             label: "Patch Panels",
             keywords: [
-              "patch panel", "Cat6 patch panel", "24 port patch",
-              "48 port patch", "1U patch", "2U patch",
+              "patch panel", "Cat6 patch panel", "24 port patch", "48 port patch",
             ],
           },
           {
@@ -1354,14 +1092,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Telecom Enclosures & Brackets",
             keywords: [
               "telecom enclosure", "network enclosure", "rack enclosure",
-              "wall mount rack", "IDF enclosure", "data rack",
-            ],
-          },
-          {
-            slug: "other-telecom-enclosures",
-            label: "Other Telecom Enclosures",
-            keywords: [
-              "patch panel enclosure", "telecom bracket",
+              "wall mount rack", "IDF enclosure",
             ],
           },
         ],
@@ -1384,7 +1115,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Pliers & Cutters",
             keywords: [
               "pliers", "cutter", "linesman pliers", "diagonal cutters",
-              "needle nose", "wire cutter", "side cutters", "crimping pliers",
+              "needle nose", "wire cutter", "crimping pliers",
             ],
           },
           {
@@ -1392,7 +1123,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Screwdrivers & Nut Drivers",
             keywords: [
               "screwdriver", "nut driver", "insulated screwdriver",
-              "flathead screwdriver", "Phillips screwdriver", "cabinet tip",
+              "flathead screwdriver", "Phillips screwdriver",
             ],
           },
           {
@@ -1400,7 +1131,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Fish Tape & Pull Line",
             keywords: [
               "fish tape", "pull line", "fish line", "cable puller",
-              "wire pulling line", "conduit fish tape", "fiberglass fish stick",
+              "conduit fish tape",
             ],
           },
           {
@@ -1408,15 +1139,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Conduit Benders",
             keywords: [
               "conduit bender", "bender", "hickey", "hand bender",
-              "EMT bender", "mechanical bender",
-            ],
-          },
-          {
-            slug: "other-hand-tools",
-            label: "Other Hand Tools",
-            keywords: [
-              "wire stripper", "cable stripper", "BX cutter",
-              "knockout punch", "reaming tool",
+              "EMT bender",
             ],
           },
         ],
@@ -1430,15 +1153,14 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Multimeters",
             keywords: [
               "multimeter", "volt meter", "digital multimeter", "DMM",
-              "Fluke multimeter", "Klein multimeter",
+              "Fluke multimeter",
             ],
           },
           {
             slug: "clamp-meters",
             label: "Clamp Meters",
             keywords: [
-              "clamp meter", "clamp ammeter", "amp clamp",
-              "clamp on meter", "Fluke clamp",
+              "clamp meter", "clamp ammeter", "amp clamp", "Fluke clamp",
             ],
           },
           {
@@ -1446,7 +1168,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Circuit Testers & Voltage Detectors",
             keywords: [
               "circuit tester", "voltage tester", "non-contact tester",
-              "tick tracer", "solenoid tester", "wiggy",
+              "tick tracer", "solenoid tester",
             ],
           },
           {
@@ -1454,15 +1176,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Continuity & Wire Testers",
             keywords: [
               "continuity tester", "wire tracer", "tone generator",
-              "cable tester", "wire locator",
-            ],
-          },
-          {
-            slug: "other-test-equipment",
-            label: "Other Test Equipment",
-            keywords: [
-              "power quality meter", "oscilloscope", "insulation tester",
-              "megger", "ground tester",
+              "cable tester",
             ],
           },
         ],
@@ -1476,7 +1190,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Drill Bits & Hole Saws",
             keywords: [
               "drill bit", "hole saw", "spade bit", "ship auger",
-              "self-feed bit", "step bit", "knockout set",
+              "step bit", "knockout set",
             ],
           },
           {
@@ -1484,15 +1198,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Saw Blades & Cutting Accessories",
             keywords: [
               "saw blade", "jig saw blade", "reciprocating blade",
-              "Sawzall blade", "metal cutting blade",
-            ],
-          },
-          {
-            slug: "other-power-tool-accessories",
-            label: "Other Power Tool Accessories",
-            keywords: [
-              "right angle drill", "right angle attachment",
-              "flexible extension", "impact driver bit",
+              "Sawzall blade",
             ],
           },
         ],
@@ -1515,7 +1221,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "THHN/THWN Building Wire",
             keywords: [
               "THHN", "THWN", "THWN-2", "building wire", "stranded wire",
-              "solid wire", "copper wire THHN", "aluminum THHN",
+              "copper wire THHN", "aluminum THHN",
             ],
           },
           {
@@ -1523,7 +1229,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Romex/NM-B Cable",
             keywords: [
               "Romex", "NM-B", "NM cable", "non-metallic sheathed cable",
-              "12-2 NM", "14-2 NM", "10-2 NM", "14-3 NM", "12-3 NM",
+              "12-2 NM", "14-2 NM", "10-2 NM",
             ],
           },
           {
@@ -1531,7 +1237,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "MC/Armored Cable",
             keywords: [
               "MC cable", "armored cable", "AC cable", "BX cable",
-              "metal clad cable", "12-2 MC", "12-3 MC", "14-2 MC",
+              "metal clad cable",
             ],
           },
           {
@@ -1539,7 +1245,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "UF Underground Feeder",
             keywords: [
               "UF cable", "underground feeder", "UF-B cable",
-              "direct burial cable", "burial wire",
+              "direct burial cable",
             ],
           },
           {
@@ -1547,14 +1253,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "SER/Service Entrance",
             keywords: [
               "SER cable", "service entrance cable", "SER aluminum",
-              "service entrance conductor", "SEU cable",
-            ],
-          },
-          {
-            slug: "other-wire-cable",
-            label: "Other Wire & Cable",
-            keywords: [
-              "SO cord", "SOOW", "flexible cord", "extension cord cable",
+              "SEU cable",
             ],
           },
         ],
@@ -1567,16 +1266,15 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "control-cable",
             label: "Control Cable",
             keywords: [
-              "control cable", "multi-conductor cable", "control wire",
-              "shielded control cable", "instrumentation cable",
+              "control cable", "multi-conductor cable", "shielded control cable",
+              "instrumentation cable",
             ],
           },
           {
             slug: "tray-cable",
             label: "Tray Cable (TC)",
             keywords: [
-              "tray cable", "TC cable", "TC-ER cable",
-              "cable tray wire", "power limited tray cable", "PLTC",
+              "tray cable", "TC cable", "TC-ER cable", "power limited tray cable",
             ],
           },
           {
@@ -1584,7 +1282,6 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Welding Cable",
             keywords: [
               "welding cable", "welding wire", "battery cable",
-              "booster cable wire",
             ],
           },
           {
@@ -1592,14 +1289,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Low-Voltage/Thermostat Wire",
             keywords: [
               "thermostat wire", "low voltage wire", "18/2 wire", "18/5 wire",
-              "bell wire", "doorbell wire", "irrigation wire",
-            ],
-          },
-          {
-            slug: "other-specialty-cable",
-            label: "Other Specialty Cable",
-            keywords: [
-              "interlock armored", "fire alarm cable", "security cable specialty",
+              "bell wire", "doorbell wire",
             ],
           },
         ],
@@ -1622,8 +1312,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Duplex Receptacles",
             keywords: [
               "duplex receptacle", "duplex outlet", "15 amp outlet",
-              "20 amp outlet", "standard outlet", "tamper resistant outlet",
-              "TR receptacle",
+              "20 amp outlet", "standard outlet", "TR receptacle",
             ],
           },
           {
@@ -1631,7 +1320,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "GFCI Receptacles",
             keywords: [
               "GFCI receptacle", "GFCI outlet", "ground fault receptacle",
-              "GFI outlet", "GFCI duplex", "tamper resistant GFCI",
+              "tamper resistant GFCI",
             ],
           },
           {
@@ -1639,7 +1328,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "USB Receptacles",
             keywords: [
               "USB receptacle", "USB outlet", "USB charger outlet",
-              "USB-A outlet", "USB-C outlet", "dual USB outlet",
+              "USB-C outlet",
             ],
           },
           {
@@ -1647,8 +1336,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Twist-Lock Receptacles",
             keywords: [
               "twist lock", "twistlock", "locking receptacle",
-              "NEMA L5", "NEMA L6", "NEMA L14", "NEMA L15",
-              "30 amp locking", "20 amp locking",
+              "NEMA L5", "NEMA L6", "NEMA L14",
             ],
           },
           {
@@ -1656,16 +1344,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Range/Dryer Receptacles",
             keywords: [
               "range receptacle", "dryer receptacle", "30 amp dryer",
-              "50 amp range", "NEMA 10-30", "NEMA 14-30", "NEMA 14-50",
-              "dryer outlet", "range outlet",
-            ],
-          },
-          {
-            slug: "other-receptacles",
-            label: "Other Receptacles",
-            keywords: [
-              "isolated ground receptacle", "hospital grade outlet",
-              "single receptacle", "flush mount receptacle",
+              "50 amp range", "NEMA 14-30", "NEMA 14-50",
             ],
           },
         ],
@@ -1688,32 +1367,25 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Toggle Switches",
             keywords: [
               "toggle switch", "single pole switch", "wall switch",
-              "15 amp switch", "20 amp switch", "standard switch",
-              "tamper resistant switch",
+              "15 amp switch", "standard switch",
             ],
           },
           {
             slug: "3-way-switches",
             label: "3-Way Switches",
-            keywords: [
-              "3-way switch", "three way switch", "3 way",
-              "three-way toggle",
-            ],
+            keywords: ["3-way switch", "three way switch", "3 way"],
           },
           {
             slug: "4-way-switches",
             label: "4-Way Switches",
-            keywords: [
-              "4-way switch", "four way switch", "4 way",
-              "four-way toggle",
-            ],
+            keywords: ["4-way switch", "four way switch", "4 way"],
           },
           {
             slug: "dimmers",
             label: "Dimmers",
             keywords: [
               "dimmer switch", "dimmer", "slide dimmer", "rotary dimmer",
-              "LED dimmer switch", "0-10V dim switch",
+              "LED dimmer switch",
             ],
           },
           {
@@ -1721,15 +1393,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Occupancy Sensors",
             keywords: [
               "occupancy sensor", "motion switch", "vacancy sensor",
-              "PIR switch sensor", "occupancy sensor switch",
-            ],
-          },
-          {
-            slug: "other-switches",
-            label: "Other Switches",
-            keywords: [
-              "double pole switch", "DPST switch", "SPST switch",
-              "combination switch", "decorator switch",
+              "PIR switch sensor",
             ],
           },
         ],
@@ -1752,7 +1416,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Wire Nuts",
             keywords: [
               "wire nut", "wire connector", "wire-nut", "twist-on connector",
-              "wire cap", "Ideal wire nut", "3M scotchlok",
+              "wire cap",
             ],
           },
           {
@@ -1760,8 +1424,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Lugs",
             keywords: [
               "lug", "compression lug", "cable lug", "mechanical lug",
-              "aluminum lug", "copper lug", "ring terminal lug",
-              "set screw lug",
+              "aluminum lug", "ring terminal lug",
             ],
           },
           {
@@ -1769,36 +1432,8 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Terminal Blocks",
             keywords: [
               "terminal block", "DIN rail terminal", "barrier terminal",
-              "screw terminal block", "feed through terminal",
+              "feed through terminal",
             ],
-          },
-          {
-            slug: "other-connectors",
-            label: "Other Connectors",
-            keywords: [
-              "connector", "termination", "splice", "butt splice",
-              "push-in connector", "WAGO connector",
-            ],
-          },
-        ],
-      },
-    ],
-  },
-
-  // ── 18. Uncategorized (catch-all) ─────────────────────────────────────────
-  {
-    slug: "uncategorized",
-    label: "Uncategorized",
-    color: "#9CA3AF",
-    subcategories: [
-      {
-        slug: "needs-review",
-        label: "Needs Review",
-        itemTypes: [
-          {
-            slug: "unclassified-items",
-            label: "Unclassified Items",
-            keywords: [], // No keywords — items that match NOTHING else
           },
         ],
       },
@@ -1835,11 +1470,10 @@ export function collectKeywords(
   return Array.from(kws);
 }
 
-/** Returns all keywords from the taxonomy, excluding the uncategorized catch-all. */
+/** Returns all keywords from the full taxonomy (uncategorized excluded). */
 export function getAllTaxonomyKeywords(taxonomy: TaxonomyCategory[]): string[] {
   const all = new Set<string>();
   for (const cat of taxonomy) {
-    if (cat.slug === "uncategorized") continue;
     for (const kw of collectKeywords(cat)) all.add(kw);
   }
   return Array.from(all);

@@ -459,19 +459,16 @@ components:
 
     CategoryTreeResponse:
       type: object
+      description: >
+        Full taxonomy tree. The last element in `categories` is always the
+        uncategorized catch-all node (slug: "uncategorized") with a single
+        sub-category "needs-review" containing item type "unclassified-items".
       properties:
         categories:
           type: array
           items:
             $ref: "#/components/schemas/TaxonomyCategoryNode"
-        uncategorized:
-          type: object
-          properties:
-            slug: { type: string }
-            label: { type: string }
-            count: { type: integer }
-          required: [slug, label, count]
-      required: [categories, uncategorized]
+      required: [categories]
 
     InventoryItem:
       type: object

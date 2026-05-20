@@ -35,15 +35,8 @@ interface CategoryNode {
   subcategories: SubcategoryNode[];
 }
 
-interface UncategorizedNode {
-  slug: string;
-  label: string;
-  count: number;
-}
-
 interface CategoriesResponse {
   categories: CategoryNode[];
-  uncategorized: UncategorizedNode;
 }
 
 type Level = "categories" | "subcategories" | "itemTypes";
@@ -136,14 +129,9 @@ export function BrowseByCategory({ onSelectCategory, onClose }: BrowseByCategory
       ) : !data ? null : level === "categories" ? (
         <CategoryGrid
           categories={data.categories}
-          uncategorized={data.uncategorized}
           colors={colors}
           onSelect={(cat) => {
-            if (cat.slug === "uncategorized") {
-              onSelectCategory("uncategorized", "Uncategorized");
-              return;
-            }
-            setSelectedCategory(cat as CategoryNode);
+            setSelectedCategory(cat);
             setLevel("subcategories");
           }}
         />
@@ -205,46 +193,43 @@ function CountBadge({ count, color }: { count: number; color: string }) {
 
 function CategoryGrid({
   categories,
-  uncategorized,
   colors,
   onSelect,
 }: {
   categories: CategoryNode[];
-  uncategorized: UncategorizedNode;
   colors: ColorMap;
-  onSelect: (cat: CategoryNode | UncategorizedNode) => void;
+  onSelect: (cat: CategoryNode) => void;
 }) {
-  const all: (CategoryNode | UncategorizedNode)[] = [
-    ...categories,
-    uncategorized,
-  ];
-
   return (
     <FlatList
-      data={all}
+      data={categories}
       keyExtractor={item => item.slug}
       numColumns={2}
       contentContainerStyle={styles.gridContent}
       columnWrapperStyle={styles.gridRow}
       showsVerticalScrollIndicator={false}
       renderItem={({ item }) => {
-        const color = "color" in item ? item.color : colors.mutedForeground;
         const isEmpty = item.count === 0;
         return (
           <Pressable
             style={[styles.categoryTile, {
               backgroundColor: colors.card,
-              borderColor: color + (isEmpty ? "22" : "44"),
-              borderLeftColor: isEmpty ? color + "55" : color,
+              borderColor: item.color + (isEmpty ? "22" : "44"),
+              borderLeftColor: isEmpty ? item.color + "55" : item.color,
               opacity: isEmpty ? 0.5 : 1,
             }]}
             onPress={() => onSelect(item)}
           >
-            <View style={[styles.categoryTileAccent, { backgroundColor: color }]} />
-            <Text style={[styles.categoryTileLabel, { color: isEmpty ? colors.mutedForeground : colors.foreground }]} numberOfLines={2}>
+            <View style={[styles.categoryTileAccent, { backgroundColor: item.color }]} />
+            <Text
+              style={[styles.categoryTileLabel, {
+                color: isEmpty ? colors.mutedForeground : colors.foreground,
+              }]}
+              numberOfLines={2}
+            >
               {item.label}
             </Text>
-            <CountBadge count={item.count} color={color} />
+            <CountBadge count={item.count} color={item.color} />
           </Pressable>
         );
       }}
@@ -299,6 +284,7 @@ function SubcategoryList({
           style={[styles.listRow, {
             backgroundColor: colors.card,
             borderColor: colors.border,
+            opacity: item.count === 0 ? 0.5 : 1,
           }]}
           onPress={() => onSelect(item)}
         >
@@ -365,6 +351,7 @@ function ItemTypeList({
           style={[styles.listRow, {
             backgroundColor: colors.card,
             borderColor: colors.border,
+            opacity: item.count === 0 ? 0.5 : 1,
           }]}
           onPress={() => onSelect(item)}
         >
