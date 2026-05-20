@@ -7,6 +7,7 @@ export interface TaxonomyItemType {
 export interface TaxonomySubcategory {
   slug: string;
   label: string;
+  keywords: string[];
   itemTypes: TaxonomyItemType[];
 }
 
@@ -14,6 +15,7 @@ export interface TaxonomyCategory {
   slug: string;
   label: string;
   color: string;
+  keywords: string[];
   subcategories: TaxonomySubcategory[];
 }
 
@@ -29,10 +31,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "anchors-connectors",
     label: "Anchors & Connectors",
     color: "#8B5CF6",
+    keywords: [],
     subcategories: [
       {
         slug: "anchors-fasteners",
         label: "Anchors & Fasteners",
+        keywords: [],
         itemTypes: [
           {
             slug: "concrete-masonry-anchors",
@@ -64,6 +68,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "structural-connectors",
         label: "Structural Connectors",
+        keywords: [],
         itemTypes: [
           {
             slug: "beam-pipe-clamps",
@@ -99,10 +104,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "boxes-enclosures",
     label: "Boxes & Enclosures",
     color: "#EC4899",
+    keywords: [],
     subcategories: [
       {
         slug: "boxes-by-type",
         label: "By Type",
+        keywords: [],
         itemTypes: [
           {
             slug: "device-switch-boxes",
@@ -150,6 +157,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "covers-plates",
         label: "Covers & Plates",
+        keywords: [],
         itemTypes: [
           {
             slug: "blank-covers",
@@ -187,6 +195,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "nema-enclosures",
         label: "NEMA Enclosures",
+        keywords: [],
         itemTypes: [
           {
             slug: "nema-1-indoor",
@@ -222,10 +231,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "builders-products",
     label: "Builders Products",
     color: "#10B981",
+    keywords: [],
     subcategories: [
       {
         slug: "strut-framing",
         label: "Strut & Framing",
+        keywords: [],
         itemTypes: [
           {
             slug: "strut-channel",
@@ -248,6 +259,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "cable-management",
         label: "Cable Management",
+        keywords: [],
         itemTypes: [
           {
             slug: "cable-ties-zip-ties",
@@ -278,6 +290,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "supports-hangers",
         label: "Supports & Hangers",
+        keywords: [],
         itemTypes: [
           {
             slug: "hanger-rods-all-thread",
@@ -313,10 +326,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "conduit-raceway",
     label: "Conduit & Raceway",
     color: "#3B82F6",
+    keywords: [],
     subcategories: [
       {
         slug: "conduit-by-material",
         label: "By Material",
+        keywords: [],
         itemTypes: [
           {
             slug: "emt",
@@ -370,6 +385,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "conduit-fittings",
         label: "Fittings",
+        keywords: [],
         itemTypes: [
           {
             slug: "couplings",
@@ -416,6 +432,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "wireways-cable-tray",
         label: "Wireways & Cable Tray",
+        keywords: [],
         itemTypes: [
           {
             slug: "metal-wireways-panduit",
@@ -450,10 +467,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "motors-controls-sensors",
     label: "Motors, Controls & Sensors",
     color: "#F59E0B",
+    keywords: [],
     subcategories: [
       {
         slug: "motor-controls",
         label: "Motor Controls",
+        keywords: [],
         itemTypes: [
           {
             slug: "starters-contactors-vfds",
@@ -463,11 +482,17 @@ export const TAXONOMY: TaxonomyCategory[] = [
               "variable frequency drive", "AC drive", "soft starter",
             ],
           },
+          {
+            slug: "other-motor-controls",
+            label: "Other Motor Controls",
+            keywords: [],
+          },
         ],
       },
       {
         slug: "relays-timers",
         label: "Relays & Timers",
+        keywords: [],
         itemTypes: [
           {
             slug: "control-relays",
@@ -490,6 +515,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "sensors",
         label: "Sensors",
+        keywords: [],
         itemTypes: [
           {
             slug: "photocells-light-sensors",
@@ -520,6 +546,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "pilot-devices",
         label: "Pilot Devices",
+        keywords: [],
         itemTypes: [
           {
             slug: "push-buttons",
@@ -555,10 +582,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "breakers-panels",
     label: "Breakers",
     color: "#EF4444",
+    keywords: [],
     subcategories: [
       {
         slug: "breakers-by-type",
         label: "By Type",
+        keywords: [],
         itemTypes: [
           {
             slug: "standard-circuit-breakers",
@@ -595,10 +624,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "panels-distribution",
     label: "Panels & Distribution",
     color: "#14B8A6",
+    keywords: [],
     subcategories: [
       {
         slug: "panels-by-type",
         label: "By Type",
+        keywords: [],
         itemTypes: [
           {
             slug: "load-centers-panelboards",
@@ -616,11 +647,17 @@ export const TAXONOMY: TaxonomyCategory[] = [
               "ringless meter", "meter combo",
             ],
           },
+          {
+            slug: "other-panels",
+            label: "Other Panels",
+            keywords: [],
+          },
         ],
       },
       {
         slug: "disconnects-safety-switches",
         label: "Disconnects & Safety Switches",
+        keywords: [],
         itemTypes: [
           {
             slug: "fusible-safety-switches",
@@ -643,6 +680,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "surge-protection",
         label: "Surge Protection",
+        keywords: [],
         itemTypes: [
           {
             slug: "whole-house-panel-spds",
@@ -664,6 +702,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "transformers",
         label: "Transformers",
+        keywords: [],
         itemTypes: [
           {
             slug: "control-buck-boost-transformers",
@@ -673,11 +712,17 @@ export const TAXONOMY: TaxonomyCategory[] = [
               "step down transformer", "isolation transformer", "CPT",
             ],
           },
+          {
+            slug: "other-transformers",
+            label: "Other Transformers",
+            keywords: [],
+          },
         ],
       },
       {
         slug: "fuses",
         label: "Fuses",
+        keywords: [],
         itemTypes: [
           {
             slug: "cartridge-fuses",
@@ -705,10 +750,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "fittings",
     label: "Fittings",
     color: "#6366F1",
+    keywords: [],
     subcategories: [
       {
         slug: "grounding-fittings",
         label: "Grounding Fittings",
+        keywords: [],
         itemTypes: [
           {
             slug: "ground-rods-clamps",
@@ -731,6 +778,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "liquidtight-fittings",
         label: "Liquidtight Fittings",
+        keywords: [],
         itemTypes: [
           {
             slug: "liquidtight-connectors",
@@ -741,11 +789,17 @@ export const TAXONOMY: TaxonomyCategory[] = [
               "90 liquidtight",
             ],
           },
+          {
+            slug: "other-liquidtight-fittings",
+            label: "Other Liquidtight Fittings",
+            keywords: [],
+          },
         ],
       },
       {
         slug: "reducers-adapters",
         label: "Reducers & Adapters",
+        keywords: [],
         itemTypes: [
           {
             slug: "conduit-reducers-adapters",
@@ -773,10 +827,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "hvac",
     label: "HVAC",
     color: "#22D3EE",
+    keywords: [],
     subcategories: [
       {
         slug: "hvac-controls",
         label: "HVAC Controls",
+        keywords: [],
         itemTypes: [
           {
             slug: "thermostats",
@@ -799,6 +855,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "hvac-motors-components",
         label: "HVAC Motors & Components",
+        keywords: [],
         itemTypes: [
           {
             slug: "hvac-fan-blower-motors",
@@ -821,6 +878,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "hvac-disconnects-protection",
         label: "HVAC Disconnects & Protection",
+        keywords: [],
         itemTypes: [
           {
             slug: "ac-disconnect-switches",
@@ -848,10 +906,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "lighting",
     label: "Lighting",
     color: "#FBBF24",
+    keywords: [],
     subcategories: [
       {
         slug: "lighting-by-type",
         label: "By Type",
+        keywords: [],
         itemTypes: [
           {
             slug: "led-bulbs",
@@ -890,6 +950,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "lighting-controls",
         label: "Lighting Controls",
+        keywords: [],
         itemTypes: [
           {
             slug: "daylight-photocell-controls",
@@ -920,6 +981,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "emergency-exit-lighting",
         label: "Emergency & Exit Lighting",
+        keywords: [],
         itemTypes: [
           {
             slug: "exit-signs",
@@ -946,10 +1008,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "line-construction",
     label: "Line Construction Material",
     color: "#84CC16",
+    keywords: [],
     subcategories: [
       {
         slug: "overhead-wire-cable",
         label: "Overhead Wire & Cable",
+        keywords: [],
         itemTypes: [
           {
             slug: "triplex-quadruplex-urd",
@@ -972,6 +1036,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "pole-hardware-insulators",
         label: "Pole Hardware & Insulators",
+        keywords: [],
         itemTypes: [
           {
             slug: "insulators",
@@ -994,6 +1059,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "underground-distribution",
         label: "Underground Distribution",
+        keywords: [],
         itemTypes: [
           {
             slug: "urd-cable",
@@ -1021,10 +1087,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "telecom",
     label: "Telecom",
     color: "#F97316",
+    keywords: [],
     subcategories: [
       {
         slug: "data-telecom-cable",
         label: "Data & Telecom Cable",
+        keywords: [],
         itemTypes: [
           {
             slug: "cat-5e",
@@ -1057,6 +1125,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "data-connectors-jacks",
         label: "Data Connectors & Jacks",
+        keywords: [],
         itemTypes: [
           {
             slug: "rj45-jacks-keystone",
@@ -1079,6 +1148,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "telecom-enclosures-patch-panels",
         label: "Telecom Enclosures & Patch Panels",
+        keywords: [],
         itemTypes: [
           {
             slug: "patch-panels",
@@ -1105,10 +1175,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "tools-testers",
     label: "Tools & Testers",
     color: "#64748B",
+    keywords: [],
     subcategories: [
       {
         slug: "hand-tools",
         label: "Hand Tools",
+        keywords: [],
         itemTypes: [
           {
             slug: "pliers-cutters",
@@ -1147,6 +1219,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "test-measurement",
         label: "Test & Measurement",
+        keywords: [],
         itemTypes: [
           {
             slug: "multimeters",
@@ -1184,6 +1257,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "power-tool-accessories",
         label: "Power Tool Accessories",
+        keywords: [],
         itemTypes: [
           {
             slug: "drill-bits-hole-saws",
@@ -1211,10 +1285,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "wire-cable",
     label: "Wire & Cable",
     color: "#DC2626",
+    keywords: [],
     subcategories: [
       {
         slug: "wire-cable-by-type",
         label: "By Type",
+        keywords: [],
         itemTypes: [
           {
             slug: "thhn-thwn",
@@ -1261,6 +1337,7 @@ export const TAXONOMY: TaxonomyCategory[] = [
       {
         slug: "specialty-wire-cable",
         label: "Specialty Wire & Cable",
+        keywords: [],
         itemTypes: [
           {
             slug: "control-cable",
@@ -1302,10 +1379,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "receptacles",
     label: "Receptacles",
     color: "#7C3AED",
+    keywords: [],
     subcategories: [
       {
         slug: "receptacles-by-type",
         label: "By Type",
+        keywords: [],
         itemTypes: [
           {
             slug: "duplex-receptacles",
@@ -1357,10 +1436,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "switches-dimmers",
     label: "Switches & Dimmers",
     color: "#0EA5E9",
+    keywords: [],
     subcategories: [
       {
         slug: "switches-by-type",
         label: "By Type",
+        keywords: [],
         itemTypes: [
           {
             slug: "toggle-switches",
@@ -1406,10 +1487,12 @@ export const TAXONOMY: TaxonomyCategory[] = [
     slug: "connectors-terminations",
     label: "Connectors & Terminations",
     color: "#D97706",
+    keywords: [],
     subcategories: [
       {
         slug: "connectors-by-type",
         label: "By Type",
+        keywords: [],
         itemTypes: [
           {
             slug: "wire-nuts",
@@ -1434,6 +1517,29 @@ export const TAXONOMY: TaxonomyCategory[] = [
               "terminal block", "DIN rail terminal", "barrier terminal",
               "feed through terminal",
             ],
+          },
+        ],
+      },
+    ],
+  },
+
+  // ── 18. Uncategorized (catch-all) ────────────────────────────────────────
+  // Keywords are empty so getAllTaxonomyKeywords() naturally skips it.
+  {
+    slug: "uncategorized",
+    label: "Uncategorized",
+    color: "#9CA3AF",
+    keywords: [],
+    subcategories: [
+      {
+        slug: "needs-review",
+        label: "Needs Review",
+        keywords: [],
+        itemTypes: [
+          {
+            slug: "unclassified-items",
+            label: "Unclassified Items",
+            keywords: [],
           },
         ],
       },
@@ -1474,6 +1580,7 @@ export function collectKeywords(
 export function getAllTaxonomyKeywords(taxonomy: TaxonomyCategory[]): string[] {
   const all = new Set<string>();
   for (const cat of taxonomy) {
+    if (cat.slug === "uncategorized") continue;
     for (const kw of collectKeywords(cat)) all.add(kw);
   }
   return Array.from(all);
