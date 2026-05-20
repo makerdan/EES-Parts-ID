@@ -1219,7 +1219,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   filterOverlay: {
-    alignSelf: "stretch",
+    alignSelf: "flex-start",
     borderRadius: 12,
     padding: 16,
     shadowColor: "#000",
