@@ -61,9 +61,35 @@ afterEach(async () => {
   await cleanupUploads();
 });
 
-// ── Helper ─────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function buildCsv(rows: string[][]): string {
   return ["Vendor,Catalog,Description,BinLocation", ...rows.map(r => r.join(","))].join("\n");
+}
+
+function buildBarcodeCsv(rows: Array<{ vendor: string; catalog: string; barcodes: string }>): string {
+  const header = "Vendor,Catalog,Description,Barcodes";
+  const lines = rows.map(r => `${r.vendor},${r.catalog},Test,"${r.barcodes}"`);
+  return [header, ...lines].join("\n");
+}
+
+async function seedInventoryWithBarcodes(
+  catalog: string,
+  barcodes: string[],
+): Promise<void> {
+  await db
+    .insert(inventoryTable)
+    .values({
+      vendor: "JEST-VENDOR",
+      catalog,
+      description: "Seed item for conflict test",
+      binLocations: [],
+      barcodes,
+      aiKeywords: [],
+    })
+    .onConflictDoUpdate({
+      target: [inventoryTable.vendor, inventoryTable.catalog],
+      set: { barcodes: sql`EXCLUDED.barcodes` },
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -439,5 +465,140 @@ describe("POST /api/admin/upload", () => {
     expect(rows.length).toBe(1);
     // Existing barcodes must not have been cleared.
     expect(rows[0]!.barcodes).toEqual(["012345678901"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/admin/upload/preview — cross-item barcode conflict detection
+// (Task #532)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/admin/upload/preview — barcode conflict detection", () => {
+  const CONFLICT_BARCODE = "JEST-BC-77777777";
+
+  afterEach(async () => {
+    await cleanupUploads();
+  });
+
+  it("returns barcodeStatus:'conflict' when an incoming barcode belongs to a different item", async () => {
+    // Seed ITEM-A with the barcode that the CSV will try to assign to ITEM-B.
+    const ownerCatalog = `${UPLOAD_PREFIX}CONFLICT-OWNER`;
+    const incomingCatalog = `${UPLOAD_PREFIX}CONFLICT-INCOMING`;
+    await seedInventoryWithBarcodes(ownerCatalog, [CONFLICT_BARCODE]);
+
+    const csv = buildBarcodeCsv([
+      { vendor: "JEST-VENDOR", catalog: incomingCatalog, barcodes: CONFLICT_BARCODE },
+    ]);
+
+    const res = await supertest(app)
+      .post("/api/admin/upload/preview")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    expect(res.body.willBarcodeConflicts).toBe(1);
+    const row = res.body.rows[0];
+    expect(row.barcodeStatus).toBe("conflict");
+    expect(row.conflictingItem).toBeDefined();
+    expect(row.conflictingItem.catalog).toBe(ownerCatalog);
+  });
+
+  it("does NOT flag a conflict when the barcode belongs to the same item being re-uploaded", async () => {
+    const catalog = `${UPLOAD_PREFIX}CONFLICT-SAME-ITEM`;
+    await seedInventoryWithBarcodes(catalog, [CONFLICT_BARCODE]);
+
+    // Re-uploading the same item with the same barcode — not a conflict.
+    const csv = buildBarcodeCsv([
+      { vendor: "JEST-VENDOR", catalog, barcodes: CONFLICT_BARCODE },
+    ]);
+
+    const res = await supertest(app)
+      .post("/api/admin/upload/preview")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    expect(res.body.willBarcodeConflicts).toBe(0);
+    const row = res.body.rows[0];
+    expect(row.barcodeStatus).not.toBe("conflict");
+    expect(row.conflictingItem).toBeUndefined();
+  });
+
+  it("reports no conflicts when the CSV has barcodes not present in the database", async () => {
+    const catalog = `${UPLOAD_PREFIX}CONFLICT-NO-MATCH`;
+    const csv = buildBarcodeCsv([
+      { vendor: "JEST-VENDOR", catalog, barcodes: "JEST-BC-NEW-99999" },
+    ]);
+
+    const res = await supertest(app)
+      .post("/api/admin/upload/preview")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    expect(res.body.willBarcodeConflicts).toBe(0);
+    expect(res.body.rows[0].barcodeStatus).not.toBe("conflict");
+  });
+
+  it("flags each conflicting row individually when multiple rows conflict", async () => {
+    const ownerA = `${UPLOAD_PREFIX}CONFLICT-OWN-A`;
+    const ownerB = `${UPLOAD_PREFIX}CONFLICT-OWN-B`;
+    await seedInventoryWithBarcodes(ownerA, ["JEST-BC-MULTI-A"]);
+    await seedInventoryWithBarcodes(ownerB, ["JEST-BC-MULTI-B"]);
+
+    const csv = buildBarcodeCsv([
+      { vendor: "JEST-VENDOR", catalog: `${UPLOAD_PREFIX}CONFLICT-INC-A`, barcodes: "JEST-BC-MULTI-A" },
+      { vendor: "JEST-VENDOR", catalog: `${UPLOAD_PREFIX}CONFLICT-INC-B`, barcodes: "JEST-BC-MULTI-B" },
+      { vendor: "JEST-VENDOR", catalog: `${UPLOAD_PREFIX}CONFLICT-INC-C`, barcodes: "JEST-BC-FRESH-001" },
+    ]);
+
+    const res = await supertest(app)
+      .post("/api/admin/upload/preview")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    expect(res.body.willBarcodeConflicts).toBe(2);
+    expect(res.body.rows[0].barcodeStatus).toBe("conflict");
+    expect(res.body.rows[1].barcodeStatus).toBe("conflict");
+    expect(res.body.rows[2].barcodeStatus).not.toBe("conflict");
+  });
+
+  it("finds a conflict when the barcode is already duplicated across DB items (multi-owner edge case)", async () => {
+    // Barcode assigned to TWO different DB items (data-integrity anomaly).
+    // The incoming CSV targets a third item — should still detect conflict.
+    const ownerA = `${UPLOAD_PREFIX}CONFLICT-DUP-A`;
+    const ownerB = `${UPLOAD_PREFIX}CONFLICT-DUP-B`;
+    const incoming = `${UPLOAD_PREFIX}CONFLICT-DUP-INC`;
+    const dupBarcode = "JEST-BC-DUP-99001";
+
+    await seedInventoryWithBarcodes(ownerA, [dupBarcode]);
+    await seedInventoryWithBarcodes(ownerB, [dupBarcode]);
+
+    const csv = buildBarcodeCsv([
+      { vendor: "JEST-VENDOR", catalog: incoming, barcodes: dupBarcode },
+    ]);
+
+    const res = await supertest(app)
+      .post("/api/admin/upload/preview")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ csv })
+      .expect(200);
+
+    expect(res.body.willBarcodeConflicts).toBe(1);
+    expect(res.body.rows[0].barcodeStatus).toBe("conflict");
+    expect(res.body.rows[0].conflictingItem).toBeDefined();
+  });
+
+  it("returns 401 without a valid admin token", async () => {
+    const csv = buildBarcodeCsv([
+      { vendor: "JEST-VENDOR", catalog: `${UPLOAD_PREFIX}CONFLICT-AUTH`, barcodes: "JEST-BC-X" },
+    ]);
+    const res = await supertest(app)
+      .post("/api/admin/upload/preview")
+      .send({ csv })
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
   });
 });

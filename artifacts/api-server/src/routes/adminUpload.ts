@@ -244,7 +244,11 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
     // Query the full inventory for any item whose barcodes array overlaps the
     // incoming set. We use "b = ANY(barcodes)" per barcode value so the query
     // is fully parameterized without raw string interpolation.
-    const barcodeToItemMap = new Map<string, { vendor: string; catalog: string }>();
+    //
+    // We track ALL owners per barcode (not just the first) so that even if a
+    // barcode is already duplicated across multiple DB items we can still find
+    // a conflicting owner that differs from the current CSV row.
+    const barcodeToItemMap = new Map<string, { vendor: string; catalog: string }[]>();
     if (allIncomingBarcodes.length > 0) {
       const conflictRows = await db
         .select({
@@ -257,8 +261,11 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
 
       for (const item of conflictRows) {
         for (const bc of item.barcodes ?? []) {
-          if (!barcodeToItemMap.has(bc)) {
-            barcodeToItemMap.set(bc, { vendor: item.vendor, catalog: item.catalog });
+          const owners = barcodeToItemMap.get(bc);
+          if (owners) {
+            owners.push({ vendor: item.vendor, catalog: item.catalog });
+          } else {
+            barcodeToItemMap.set(bc, [{ vendor: item.vendor, catalog: item.catalog }]);
           }
         }
       }
@@ -308,17 +315,21 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
       let conflictingItem: { vendor: string; catalog: string } | undefined;
 
       // Check for cross-item conflict first — takes priority over replace/add.
+      // We scan all owners per barcode (not just the first) so the check is
+      // correct even when a barcode is already duplicated across DB items.
       if (hasIncomingBarcodes) {
-        for (const bc of incomingBarcodes) {
-          const owner = barcodeToItemMap.get(bc);
-          if (owner) {
-            const ownerKey = `${owner.vendor.toUpperCase()}\0${owner.catalog}`;
-            if (ownerKey !== key) {
-              // A different item already owns this barcode.
-              barcodeStatus = "conflict";
-              conflictingItem = owner;
-              willBarcodeConflicts++;
-              break;
+        outer: for (const bc of incomingBarcodes) {
+          const owners = barcodeToItemMap.get(bc);
+          if (owners) {
+            for (const owner of owners) {
+              const ownerKey = `${owner.vendor.toUpperCase()}\0${owner.catalog}`;
+              if (ownerKey !== key) {
+                // A different item already owns this barcode.
+                barcodeStatus = "conflict";
+                conflictingItem = owner;
+                willBarcodeConflicts++;
+                break outer;
+              }
             }
           }
         }
