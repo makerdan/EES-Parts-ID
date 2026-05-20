@@ -266,6 +266,41 @@ export function ZoneEditor() {
     }
   };
 
+  const handleDuplicate = async () => {
+    if (!selectedZone) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/warehouse-zones`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          aisleId: form.aisleId.trim(),
+          label: form.label.trim() || form.aisleId.trim(),
+          sectionParity: form.sectionParity,
+          isInventory: form.isInventory,
+          svgX: selectedZone.svgX + 80,
+          svgY: selectedZone.svgY + 80,
+          svgWidth: selectedZone.svgWidth,
+          svgHeight: selectedZone.svgHeight,
+          sortOrder: 0,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const { zone } = await res.json() as { zone: Zone };
+      toast.success(`Duplicated → drag to new position`);
+      setSelectedId(zone.id);
+      setForm({ aisleId: zone.aisleId, label: zone.label, sectionParity: zone.sectionParity, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
+      await fetchZones();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const copyCoords = () => {
     const zone = zones.find((z) => z.id === selectedId);
     if (!zone) return;
@@ -524,11 +559,11 @@ export function ZoneEditor() {
               {displayZones.map((zone) => {
                 const sel = zone.id === selectedId;
                 const fill = zone.isInventory
-                  ? "rgba(0,0,0,0.06)"
-                  : "rgba(0,0,0,0.03)";
+                  ? "rgba(0, 112, 255, 0.14)"
+                  : "rgba(0, 112, 255, 0.06)";
                 const stroke = sel
                   ? "#f59e0b"
-                  : "#000";
+                  : "#0070ff";
                 return (
                   <g key={zone.id}>
                     <rect
@@ -677,6 +712,13 @@ export function ZoneEditor() {
                     {saving ? "Saving…" : "Save"}
                   </Btn>
                   <Btn
+                    color="#0070ff"
+                    onClick={handleDuplicate}
+                    disabled={saving}
+                  >
+                    Duplicate
+                  </Btn>
+                  <Btn
                     color="#7c3aed"
                     onClick={copyCoords}
                   >
@@ -779,11 +821,11 @@ function ZoneForm({
         />
       </div>
       <div>
-        <Label>Label</Label>
+        <Label>Section #</Label>
         <input
           value={form.label}
           onChange={(e) => onChange({ ...form, label: e.target.value })}
-          placeholder="e.g. Aisle 12"
+          placeholder="e.g. 12A"
           style={styles.input}
         />
       </div>
@@ -814,21 +856,10 @@ function ZoneForm({
         />
         <label
           htmlFor="isInv"
-          style={{ fontSize: 12, color: "#d1d5db", cursor: "pointer" }}
+          style={{ fontSize: 12, color: "#6b7280", cursor: "pointer" }}
         >
           Inventory zone (interactive in mobile app)
         </label>
-      </div>
-      <div>
-        <Label>Sort order</Label>
-        <input
-          type="number"
-          value={form.sortOrder}
-          onChange={(e) =>
-            onChange({ ...form, sortOrder: parseInt(e.target.value) || 0 })
-          }
-          style={styles.input}
-        />
       </div>
     </div>
   );
