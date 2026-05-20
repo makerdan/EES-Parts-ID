@@ -5,6 +5,7 @@ import {
   Modal,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -661,6 +662,13 @@ export default function SearchScreen() {
           <View style={[styles.logoutModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.logoutModalTitle, { color: colors.foreground }]}>Settings</Text>
 
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              style={{ maxHeight: 480 }}
+              contentContainerStyle={{ paddingBottom: 4 }}
+              keyboardShouldPersistTaps="handled"
+            >
+
             {/* Clear cache row */}
             <View style={[styles.settingsRow, { borderColor: colors.border }]}>
               <View style={{ flex: 1 }}>
@@ -812,6 +820,9 @@ export default function SearchScreen() {
             <Text style={[styles.logoutModalHint, { color: colors.mutedForeground, marginTop: 16 }]}>
               Changes are saved automatically.
             </Text>
+
+            </ScrollView>
+
             <View style={styles.logoutModalBtns}>
               <Pressable
                 onPress={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); }}
