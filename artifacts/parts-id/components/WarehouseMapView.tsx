@@ -23,9 +23,12 @@ import {
 import { Asset } from "expo-asset";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
+  withRepeat,
   withSpring,
+  withTiming,
 } from "react-native-reanimated";
 import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml } from "react-native-svg";
 import { useColors } from "@/hooks/useColors";
@@ -136,6 +139,32 @@ export function WarehouseMapView({
       setSvgLoading(false);
     });
   }, []);
+
+  // Skeleton shimmer — pulsing opacity while SVG is fetching
+  const [skeletonMounted, setSkeletonMounted] = useState(true);
+  const skeletonOpacity = useSharedValue(1);
+  const shimmerPulse = useSharedValue(0.45);
+  useEffect(() => {
+    shimmerPulse.value = withRepeat(
+      withTiming(0.9, { duration: 850 }),
+      -1,
+      true,
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!svgLoading) {
+      skeletonOpacity.value = withTiming(0, { duration: 350 }, (finished) => {
+        if (finished) runOnJS(setSkeletonMounted)(false);
+      });
+    }
+  }, [svgLoading, skeletonOpacity]);
+  const skeletonStyle = useAnimatedStyle(() => ({
+    opacity: skeletonOpacity.value,
+  }));
+  const shimmerStyle = useAnimatedStyle(() => ({
+    opacity: shimmerPulse.value,
+  }));
 
   // ── Pinch gesture ──────────────────────────────────────────────────────────
   const pinchGesture = Gesture.Pinch()
@@ -300,21 +329,74 @@ export function WarehouseMapView({
                 <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
               )}
             </View>
-          ) : (
+          ) : !svgLoading ? (
             <View
               style={[
                 styles.svgFallback,
                 { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
               ]}
             >
-              {svgLoading ? (
-                <ActivityIndicator size="small" color={colors.mutedForeground} />
-              ) : (
-                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
-                  Map unavailable
-                </Text>
-              )}
+              <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
+                Map unavailable
+              </Text>
             </View>
+          ) : (
+            <View style={{ width: svgRenderW, height: svgRenderH }} />
+          )}
+
+          {/* Skeleton placeholder — visible while SVG is fetching, fades out on load */}
+          {skeletonMounted && (
+            <Animated.View
+              style={[
+                StyleSheet.absoluteFill,
+                { width: svgRenderW, height: svgRenderH },
+                skeletonStyle,
+              ]}
+              pointerEvents="none"
+            >
+              <View
+                style={[
+                  styles.skeletonBase,
+                  { backgroundColor: isDark ? "#2a2a2e" : "#e8e8ec" },
+                ]}
+              >
+                {/* Sheen strip that pulses to simulate a shimmer */}
+                <Animated.View
+                  style={[
+                    styles.skeletonSheen,
+                    { backgroundColor: isDark ? "#3a3a40" : "#f0f0f4" },
+                    shimmerStyle,
+                  ]}
+                />
+                {/* Faint grid lines to hint at a floor-plan structure */}
+                <View style={styles.skeletonGrid} pointerEvents="none">
+                  {[0.2, 0.4, 0.6, 0.8].map((frac) => (
+                    <View
+                      key={frac}
+                      style={[
+                        styles.skeletonGridLine,
+                        {
+                          top: `${frac * 100}%` as unknown as number,
+                          backgroundColor: isDark ? "#ffffff10" : "#00000008",
+                        },
+                      ]}
+                    />
+                  ))}
+                  {[0.25, 0.5, 0.75].map((frac) => (
+                    <View
+                      key={frac}
+                      style={[
+                        styles.skeletonGridLineV,
+                        {
+                          left: `${frac * 100}%` as unknown as number,
+                          backgroundColor: isDark ? "#ffffff10" : "#00000008",
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
+            </Animated.View>
           )}
 
           {/* Zone overlays — same viewBox as base SVG → exact coordinate alignment */}
@@ -451,4 +533,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   hintText: { fontSize: 11, fontFamily: "Inter_400Regular" },
+  skeletonBase: {
+    flex: 1,
+    overflow: "hidden",
+  },
+  skeletonSheen: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  skeletonGrid: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  skeletonGridLine: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 1,
+  },
+  skeletonGridLineV: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    width: 1,
+  },
 });
