@@ -27,7 +27,7 @@ import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
-import BarcodeScreen from "./barcode";
+import BarcodeScreen from "@/components/BarcodeScreen";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 

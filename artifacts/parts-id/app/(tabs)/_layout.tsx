@@ -63,10 +63,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="barcode"
-        options={{ href: null }}
-      />
-      <Tabs.Screen
         name="upload"
         options={{
           title: "Upload",
