@@ -13,6 +13,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   LayoutChangeEvent,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -26,7 +27,7 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from "react-native-reanimated";
-import { Svg, Rect, G, Text as SvgText, SvgUri } from "react-native-svg";
+import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml } from "react-native-svg";
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 
@@ -108,18 +109,29 @@ export function WarehouseMapView({
   const savedTX = useSharedValue(0);
   const savedTY = useSharedValue(0);
 
-  // Resolve the bundled SVG asset URI via expo-asset, which works correctly
-  // on both native and web (unlike Image.resolveAssetSource which fails on web).
+  // Resolve the bundled SVG asset.
+  // On native: use the localUri/uri directly with SvgUri (reads from filesystem).
+  // On web:    SvgUri fetches over HTTP; the proxied URI silently fails, so we
+  //            fetch the SVG text ourselves and pass it to SvgXml instead.
   const [svgUri, setSvgUri] = useState("");
+  const [svgXml, setSvgXml] = useState("");
   const [svgLoading, setSvgLoading] = useState(true);
   useEffect(() => {
     Asset.loadAsync(
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       require("../assets/warehouse-map.svg"),
-    ).then(([asset]) => {
-      setSvgUri(asset.localUri ?? asset.uri ?? "");
+    ).then(async ([asset]) => {
+      const uri = asset.localUri ?? asset.uri ?? "";
+      if (Platform.OS === "web") {
+        const res = await fetch(uri);
+        const xml = await res.text();
+        setSvgXml(xml);
+      } else {
+        setSvgUri(uri);
+      }
     }).catch(() => {
       setSvgUri("");
+      setSvgXml("");
     }).finally(() => {
       setSvgLoading(false);
     });
@@ -275,14 +287,18 @@ export function WarehouseMapView({
       <GestureDetector gesture={mainGesture}>
         <Animated.View style={animatedStyle}>
           {/* Base floor plan SVG — dark mode: invert + darken for readable contrast */}
-          {svgUri ? (
+          {(svgUri || svgXml) ? (
             <View
               style={[
                 { width: svgRenderW, height: svgRenderH },
                 isDark && styles.svgDarkFilter,
               ]}
             >
-              <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
+              {svgXml ? (
+                <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
+              ) : (
+                <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
+              )}
             </View>
           ) : (
             <View
