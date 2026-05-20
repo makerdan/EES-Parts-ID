@@ -1,4 +1,4 @@
-import { pgTable, text, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { sql } from "drizzle-orm";
@@ -11,6 +11,7 @@ export const vendorMapTable = pgTable("vendor_map", {
     .notNull()
     .default(sql`ARRAY[]::text[]`),
   notes: text("notes").notNull().default(""),
+  isPrimary: boolean("is_primary").notNull().default(false),
 });
 
 export const insertVendorMapSchema = createInsertSchema(vendorMapTable).omit({

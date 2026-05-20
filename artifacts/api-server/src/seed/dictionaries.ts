@@ -609,6 +609,80 @@ const VENDORS: Array<{ code: string; names: string[]; notes: string }> = [
   { code: "UNK", names: ["unknown", "unidentified", "not specified", "n/a", "na"], notes: "Unknown" },
 ];
 
+// ── PRIMARY VENDOR MAP (68 authoritative entries) ─────────────────────────────
+// These are the real inventory vendors. They take priority over the extended
+// VENDORS list above during lookup/seed. isPrimary: true marks them as canonical.
+const PRIMARY_VENDORS: Array<{ code: string; names: string[]; notes: string; isPrimary: true }> = [
+  { code: "COP", names: ["copper", "copper wire", "bare copper"], notes: "Copper (wire material)", isPrimary: true },
+  { code: "ALU", names: ["aluminum", "aluminium", "aluminum wire"], notes: "Aluminum (wire material)", isPrimary: true },
+  { code: "COR", names: ["cord", "power cord", "extension cord"], notes: "Cord (wire type)", isPrimary: true },
+  { code: "ABB", names: ["abb", "thomas betts", "thomas & betts", "t&b", "tnb", "abb inc"], notes: "ABB (Thomas & Betts)", isPrimary: true },
+  { code: "ALF", names: ["aluminum flex conduit", "aluminum flexible conduit", "aluflex"], notes: "Aluminum Flex Conduit", isPrimary: true },
+  { code: "A-T", names: ["a-z lighting", "az lighting", "a to z lighting"], notes: "A-Z Lighting", isPrimary: true },
+  { code: "ARL", names: ["arlington", "arlington industries"], notes: "Arlington Industries", isPrimary: true },
+  { code: "ADV", names: ["advance", "advance by signify", "advance transformer", "signify advance"], notes: "Advance by Signify", isPrimary: true },
+  { code: "BRI", names: ["bridgeport", "bridgeport fittings"], notes: "Bridgeport", isPrimary: true },
+  { code: "BRA", names: ["brady", "brady worldwide", "brady corporation"], notes: "Brady Worldwide, Inc.", isPrimary: true },
+  { code: "BLI", names: ["b-line", "bline", "b line", "eaton b-line"], notes: "B-Line", isPrimary: true },
+  { code: "BUS", names: ["bussmann", "eaton bussmann", "cooper bussmann", "buss fuse", "edison fuse", "bussmann fuse"], notes: "Bussman/Edison Fuses", isPrimary: true },
+  { code: "BRO", names: ["broan", "nutone", "broan-nutone", "broan nutone"], notes: "Broan-NuTone LLC", isPrimary: true },
+  { code: "CAN", names: ["cantex", "cantex inc", "cantex conduit"], notes: "CANTEX, Inc.", isPrimary: true },
+  { code: "CHC", names: ["crouse-hinds", "crouse hinds", "cooper crouse-hinds", "eaton crouse-hinds"], notes: "Crouse-Hinds", isPrimary: true },
+  { code: "CDW", names: ["cadwell", "cadwell industries"], notes: "Cadwell", isPrimary: true },
+  { code: "CHD", names: ["eaton", "cutler hammer", "cutler-hammer", "c-h", "ch", "eaton electrical"], notes: "Eaton", isPrimary: true },
+  { code: "CIS", names: ["cisco", "cisco systems", "cisco networking"], notes: "Cisco Systems", isPrimary: true },
+  { code: "CON", names: ["colonial wire", "colonial wire & cable", "colonial wire and cable"], notes: "Colonial Wire & Cable Co., Inc.", isPrimary: true },
+  { code: "COO", names: ["cooper lighting", "cooper lighting solutions", "eaton cooper lighting"], notes: "Cooper Lighting Solutions", isPrimary: true },
+  { code: "CPO", names: ["cooper power", "cooper power systems", "eaton cooper power"], notes: "Cooper Power Systems", isPrimary: true },
+  { code: "DCT", names: ["duct", "wire duct", "cable duct"], notes: "Duct (product category)", isPrimary: true },
+  { code: "DIO", names: ["diode led", "diode lighting", "elemental led"], notes: "Diode LED", isPrimary: true },
+  { code: "DOT", names: ["dottie", "l.h. dottie", "lh dottie", "lhd"], notes: "L. H. Dottie", isPrimary: true },
+  { code: "DVV", names: ["diversitech", "diversitech corporation"], notes: "Diversitech Corporation", isPrimary: true },
+  { code: "EAT", names: ["eaton corp", "eaton corporation", "eaton electrical"], notes: "Eaton", isPrimary: true },
+  { code: "EDN", names: ["edison fuses", "edison fuse", "bussmann edison"], notes: "Edison Fuses", isPrimary: true },
+  { code: "EDW", names: ["edwards", "edwards signaling", "edwards systems"], notes: "Edwards Signaling", isPrimary: true },
+  { code: "EDX", names: ["edx", "edx industry", "edx industry inc"], notes: "EDX Industry Inc.", isPrimary: true },
+  { code: "EPQ", names: ["eaton power quality", "eaton power", "powerware"], notes: "Eaton Power Quality", isPrimary: true },
+  { code: "ETL", names: ["metalux", "metalux lighting", "acuity metalux"], notes: "Metalux", isPrimary: true },
+  { code: "ETN", names: ["eaton", "cutler hammer", "cutler-hammer", "c-h", "westinghouse", "eaton electrical", "eaton corporation"], notes: "Eaton Corp.", isPrimary: true },
+  { code: "EWD", names: ["eaton wiring", "eaton wiring devices", "arrow hart", "arrowhart"], notes: "Eaton Wiring Devices", isPrimary: true },
+  { code: "FUS", names: ["fuses", "fuse", "general fuse"], notes: "Fuses (general product category)", isPrimary: true },
+  { code: "FXD", names: ["flex duct", "flexible duct", "flexduct"], notes: "Flex Duct (general product category)", isPrimary: true },
+  { code: "FLU", names: ["fluke", "fluke electronics", "fluke corporation"], notes: "Fluke Electronics", isPrimary: true },
+  { code: "GAR", names: ["garvin", "garvin industries"], notes: "Garvin Industries", isPrimary: true },
+  { code: "GEL", names: ["ge lighting", "ge current", "current by ge"], notes: "GE Lighting", isPrimary: true },
+  { code: "GEN", names: ["generac", "generac power systems", "generac generator"], notes: "Generac Power Systems", isPrimary: true },
+  { code: "GBL", names: ["gilbert", "gilbert industries", "gilbert connectors"], notes: "Gilbert Industries", isPrimary: true },
+  { code: "HBL", names: ["hubbell lighting", "hubbell lighting inc", "hubbell"], notes: "Hubbell Lighting Inc.", isPrimary: true },
+  { code: "HOF", names: ["hoffman", "hoffman enclosures", "hoffman a-b", "pentair hoffman"], notes: "Hoffman Enclosures, Inc.", isPrimary: true },
+  { code: "IDE", names: ["ideal", "ideal industries", "ideal electrical"], notes: "Ideal Industries", isPrimary: true },
+  { code: "INT", names: ["intermatic", "intermatic incorporated"], notes: "Intermatic", isPrimary: true },
+  { code: "KLE", names: ["klein", "klein tools", "klein tools inc"], notes: "Klein Tools", isPrimary: true },
+  { code: "KST", names: ["keystone", "keystone technologies", "keystone lighting"], notes: "Keystone Technologies", isPrimary: true },
+  { code: "LUT", names: ["lutron", "lutron electronics", "lutron shading"], notes: "Lutron", isPrimary: true },
+  { code: "MAI", names: ["mars", "mars air", "mars motors", "mars controls"], notes: "Mars", isPrimary: true },
+  { code: "MIL", names: ["milwaukee", "milwaukee electric tool", "milwaukee tool"], notes: "Milwaukee Electric Tool", isPrimary: true },
+  { code: "MOR", names: ["morris", "morris products"], notes: "Morris Products", isPrimary: true },
+  { code: "MPD", names: ["malco", "malco tools", "malco tools inc"], notes: "Malco Tools, Inc.", isPrimary: true },
+  { code: "NDL", names: ["ndl", "ndl industries"], notes: "NDL Industries", isPrimary: true },
+  { code: "NSI", names: ["nsi", "nsi industries", "nsi electrical"], notes: "NSI Industries", isPrimary: true },
+  { code: "PAS", names: ["pass seymour", "pass & seymour", "pass and seymour", "legrand pass seymour"], notes: "Pass & Seymour Legrand", isPrimary: true },
+  { code: "PMC", names: ["precision multi controls", "pmc controls"], notes: "Precision Multi Controls", isPrimary: true },
+  { code: "PVC", names: ["pvc", "polyvinyl chloride", "pvc conduit", "pvc pipe"], notes: "PVC (material)", isPrimary: true },
+  { code: "RAB", names: ["rab", "rab lighting", "rab design"], notes: "RAB Lighting", isPrimary: true },
+  { code: "RAT", names: ["rack-a-tiers", "rack a tiers", "rackatiers"], notes: "Rack-A-Tiers", isPrimary: true },
+  { code: "ROB", names: ["robroy", "robroy industries", "robroy pvc"], notes: "Robroy", isPrimary: true },
+  { code: "SAT", names: ["satco", "satco products", "satco lighting"], notes: "SATCO", isPrimary: true },
+  { code: "SCO", names: ["scotch", "scotch 3m", "3m scotch", "scotchlok", "scotchlock"], notes: "Scotch/3M", isPrimary: true },
+  { code: "SPX", names: ["superflex", "superflex ltd", "superflex conduit"], notes: "Superflex Ltd.", isPrimary: true },
+  { code: "SYL", names: ["sylvania", "osram sylvania", "sylvania lighting"], notes: "Sylvania", isPrimary: true },
+  { code: "TAB", names: ["thomas betts", "thomas & betts", "t&b", "abb thomas betts"], notes: "Thomas & Betts", isPrimary: true },
+  { code: "UNI", names: ["unity", "unity manufacturing", "unity flag"], notes: "Unity Manufacturing", isPrimary: true },
+  { code: "WIR", names: ["wiremold", "legrand wiremold", "wiremold legrand"], notes: "Wiremold/Legrand", isPrimary: true },
+  { code: "SQD", names: ["square d", "schneider electric", "schneider", "squared", "sq d"], notes: "Square D / Schneider Electric", isPrimary: true },
+  { code: "YIN", names: ["york", "york international", "york hvac", "york air conditioning"], notes: "York International", isPrimary: true },
+];
+
 // ── SYNONYM MAP (~2000 entries, organized by category) ───────────────────────
 const SYNONYMS: Array<{ term: string; synonyms: string[]; category: string }> = [
   // ── Receptacles/Outlets ──
@@ -2063,13 +2137,22 @@ async function seedVendors() {
   for (const entry of VENDORS) {
     await db
       .insert(vendorMapTable)
+      .values({ ...entry, isPrimary: false })
+      .onConflictDoUpdate({
+        target: vendorMapTable.code,
+        set: { names: entry.names, notes: entry.notes, isPrimary: false },
+      });
+  }
+  for (const entry of PRIMARY_VENDORS) {
+    await db
+      .insert(vendorMapTable)
       .values(entry)
       .onConflictDoUpdate({
         target: vendorMapTable.code,
-        set: { names: entry.names, notes: entry.notes },
+        set: { names: entry.names, notes: entry.notes, isPrimary: true },
       });
   }
-  console.log(`✓ Seeded ${VENDORS.length} vendors`);
+  console.log(`✓ Seeded ${PRIMARY_VENDORS.length} primary vendors + ${VENDORS.length} extended vendors`);
 }
 
 async function seedSynonyms() {
