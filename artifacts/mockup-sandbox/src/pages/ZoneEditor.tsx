@@ -524,13 +524,11 @@ export function ZoneEditor() {
               {displayZones.map((zone) => {
                 const sel = zone.id === selectedId;
                 const fill = zone.isInventory
-                  ? "rgba(59,130,246,0.18)"
-                  : "rgba(120,120,120,0.15)";
+                  ? "rgba(0,0,0,0.06)"
+                  : "rgba(0,0,0,0.03)";
                 const stroke = sel
                   ? "#f59e0b"
-                  : zone.isInventory
-                    ? "#3b82f6"
-                    : "#888";
+                  : "#000";
                 return (
                   <g key={zone.id}>
                     <rect
@@ -555,8 +553,8 @@ export function ZoneEditor() {
                       fontSize={
                         Math.min(zone.svgWidth, zone.svgHeight) * 0.18
                       }
-                      fill={sel ? "#f59e0b" : "#fff"}
-                      stroke="#000"
+                      fill={sel ? "#f59e0b" : "#000"}
+                      stroke="#fff"
                       strokeWidth={3 / tf.s}
                       paintOrder="stroke"
                       style={{ pointerEvents: "none", userSelect: "none" }}
@@ -582,7 +580,7 @@ export function ZoneEditor() {
                               width={hs}
                               height={hs}
                               fill="#f59e0b"
-                              stroke="#fff"
+                              stroke="#000"
                               strokeWidth={1.5 / tf.s}
                               onMouseDown={(e) =>
                                 onHandleMouseDown(e, zone, h)
@@ -1027,10 +1025,10 @@ const styles = {
   },
   input: {
     width: "100%",
-    background: "#1a1a2e",
-    border: "1px solid #2d2d4e",
+    background: "#fff",
+    border: "1px solid #d1d5db",
     borderRadius: 4,
-    color: "#e5e7eb",
+    color: "#111",
     padding: "5px 8px",
     fontSize: 12,
     boxSizing: "border-box" as const,
@@ -1039,7 +1037,7 @@ const styles = {
   formTitle: {
     fontSize: 12,
     fontWeight: 600,
-    color: "#fbbf24",
+    color: "#374151",
     marginBottom: 8,
   },
   coordInfo: {
@@ -1080,7 +1078,7 @@ const styles = {
   zoneItemLabel: {
     fontSize: 13,
     fontWeight: 500,
-    color: "#e5e7eb",
+    color: "#111",
   },
   zoneItemMeta: {
     fontSize: 11,
