@@ -12,6 +12,7 @@ import React, {
   useState,
 } from "react";
 import {
+  Animated,
   BackHandler,
   FlatList,
   PanResponder,
@@ -181,6 +182,7 @@ function DrillRow({
   onPress,
   colors,
   fontScale = 1.0,
+  highlighted = false,
 }: {
   label: string;
   hint?: string;
@@ -188,26 +190,49 @@ function DrillRow({
   onPress: () => void;
   colors: ReturnType<typeof useColors>;
   fontScale?: number;
+  highlighted?: boolean;
 }) {
+  const glowOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!highlighted) return;
+    glowOpacity.setValue(1);
+    Animated.timing(glowOpacity, {
+      toValue: 0,
+      duration: 1200,
+      useNativeDriver: true,
+    }).start();
+  }, [highlighted]);
+
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        drillStyles.row,
-        { backgroundColor: pressed ? colors.muted : colors.card, borderBottomColor: colors.border },
-      ]}
-    >
-      <View style={{ flex: 1 }}>
-        <Text style={[drillStyles.label, { color: colors.foreground, fontSize: Math.round(15 * fontScale) }]}>{label}</Text>
-        {hint ? (
-          <Text style={[drillStyles.hint, { color: colors.mutedForeground, fontSize: Math.round(12 * fontScale) }]}>{hint}</Text>
-        ) : null}
-      </View>
-      <View style={[drillStyles.countBadge, { backgroundColor: colors.primary + "22" }]}>
-        <Text style={[drillStyles.countText, { color: colors.primary, fontSize: Math.round(12 * fontScale) }]}>{count}</Text>
-      </View>
-      <Feather name="chevron-right" size={18} color={colors.mutedForeground} style={{ marginLeft: 4 }} />
-    </Pressable>
+    <View style={{ position: "relative" }}>
+      <Animated.View
+        style={{
+          position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: colors.primary + "44",
+          opacity: glowOpacity,
+          pointerEvents: "none",
+        }}
+      />
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [
+          drillStyles.row,
+          { backgroundColor: pressed ? colors.muted : colors.card, borderBottomColor: colors.border },
+        ]}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={[drillStyles.label, { color: colors.foreground, fontSize: Math.round(15 * fontScale) }]}>{label}</Text>
+          {hint ? (
+            <Text style={[drillStyles.hint, { color: colors.mutedForeground, fontSize: Math.round(12 * fontScale) }]}>{hint}</Text>
+          ) : null}
+        </View>
+        <View style={[drillStyles.countBadge, { backgroundColor: colors.primary + "22" }]}>
+          <Text style={[drillStyles.countText, { color: colors.primary, fontSize: Math.round(12 * fontScale) }]}>{count}</Text>
+        </View>
+        <Feather name="chevron-right" size={18} color={colors.mutedForeground} style={{ marginLeft: 4 }} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -525,6 +550,7 @@ function SectionShelfView({
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedPart, setSelectedPart] = useState<PartOnShelf | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
 
   const handleSelectPart = useCallback((part: PartOnShelf) => {
     const key = `${part.item.id}-${part.bin.raw}`;
@@ -537,6 +563,14 @@ function SectionShelfView({
       return key;
     });
   }, []);
+
+  useEffect(() => {
+    if (!selectedPart) return;
+    const timer = setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [selectedPart]);
 
   const breadcrumb = `${section.label} · ${selectedPart?.bin.raw ?? ""}`;
 
@@ -557,6 +591,7 @@ function SectionShelfView({
         colors={colors}
       />
       <ScrollView
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 160 }}
         {...cardItemPanHandlers}
@@ -704,6 +739,7 @@ export function BrowseByAisle({
   );
 
   const [crumbs, setCrumbs] = useState<CrumbState>({ aisle: null, section: null });
+  const [highlightedSectionNum, setHighlightedSectionNum] = useState<number | null>(null);
 
   const level = crumbs.aisle === null ? "aisles" : crumbs.section === null ? "sections" : "parts";
 
@@ -727,12 +763,15 @@ export function BrowseByAisle({
   }, [initialAisle, sectionParity, sectionNumbers, hierarchy]);
 
   const goBack = useCallback(() => {
-    setCrumbs(prev => {
-      if (prev.section !== null) return { ...prev, section: null };
-      if (prev.aisle !== null) return { aisle: null, section: null };
-      return prev;
-    });
-  }, []);
+    if (crumbs.section !== null) {
+      const sectionNum = crumbs.section.sectionNum;
+      setCrumbs(prev => ({ ...prev, section: null }));
+      setHighlightedSectionNum(sectionNum);
+      setTimeout(() => setHighlightedSectionNum(null), 1400);
+    } else if (crumbs.aisle !== null) {
+      setCrumbs({ aisle: null, section: null });
+    }
+  }, [crumbs]);
 
   const goHome = useCallback(() => {
     setCrumbs({ aisle: null, section: null });
@@ -913,11 +952,11 @@ export function BrowseByAisle({
                 count={section.partCount}
                 hint={`${section.shelves.length} shelf row${section.shelves.length !== 1 ? "s" : ""}`}
                 onPress={() => {
-                  sectionsScrollOffset.current = 0;
                   setCrumbs(prev => ({ ...prev, section }));
                 }}
                 colors={colors}
                 fontScale={fontScale}
+                highlighted={section.sectionNum === highlightedSectionNum}
               />
             )}
             contentContainerStyle={{ paddingBottom: 80 }}
