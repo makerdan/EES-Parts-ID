@@ -476,11 +476,33 @@ export function ZoneEditor() {
       {/* ── Content area (below banner) ─────────────────────────────────────── */}
       <div style={styles.content}>
         {/* SVG canvas */}
-        <div style={styles.canvas}>
+        <div style={{ ...styles.canvas, position: "relative" }}>
+          {/* Floor plan — plain <img> behind the SVG overlay.
+              Using a separate layer avoids all SVG <image> / foreignObject
+              rendering quirks. The CSS transform mirrors the SVG <g> transform
+              so the floor plan always stays aligned with zone overlays. */}
+          <img
+            src={`${import.meta.env.BASE_URL}warehouse-map.svg`}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: SVG_W,
+              height: SVG_H,
+              transformOrigin: "0 0",
+              transform: `translate(${tf.x}px,${tf.y}px) scale(${tf.s})`,
+              pointerEvents: "none",
+              userSelect: "none",
+              display: "block",
+            }}
+            draggable={false}
+          />
+
           <svg
             ref={svgRef}
             style={{
               ...styles.svg,
+              background: "transparent",
               cursor:
                 mode === "pan"
                   ? ixRef.current.t === "pan"
@@ -492,19 +514,6 @@ export function ZoneEditor() {
             onWheel={onWheel}
           >
             <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
-              {/* Floor plan — <foreignObject> avoids SVG-image intrinsic-size
-                  restrictions; the inner <img> loads the file as a browser
-                  image (same as <img src="...svg">) which always renders. */}
-              <foreignObject x={0} y={0} width={SVG_W} height={SVG_H}>
-                <img
-                  // @ts-expect-error xmlns required for SVG foreignObject HTML
-                  xmlns="http://www.w3.org/1999/xhtml"
-                  src={`${import.meta.env.BASE_URL}warehouse-map.svg`}
-                  style={{ width: SVG_W, height: SVG_H, display: "block" }}
-                  draggable={false}
-                />
-              </foreignObject>
-
               {/* Zone overlays */}
               {displayZones.map((zone) => {
                 const sel = zone.id === selectedId;
