@@ -412,12 +412,12 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
   return (
     <View>
       {/* ── Advanced Filters collapsible card ── */}
-      <View style={[chipAreaStyles.container, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      <View style={[chipAreaStyles.container, { backgroundColor: colors.card }]}>
         <Pressable
-          style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12, borderWidth: 1, borderRadius: 8, borderColor: 'rgba(0,0,0,0.75)', padding: 10 }]}
+          style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12, padding: 10 }]}
           onPress={toggleDimensions}
         >
-          <Text style={[chipAreaStyles.title, { color: colors.foreground }]}>Advanced Filters</Text>
+          <Text style={[chipAreaStyles.title, { color: colors.foreground, flex: 1, textAlign: "center" }]}>Advanced Filters</Text>
           <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
             {activeChipCount > 0 && (
               <View style={[chipAreaStyles.badge, { backgroundColor: colors.primary }]}>
@@ -579,7 +579,6 @@ const chipStyles = StyleSheet.create({
 
 const chipAreaStyles = StyleSheet.create({
   container: {
-    borderWidth: 1,
     borderRadius: 10,
     padding: 12,
     marginBottom: 12,
