@@ -963,8 +963,8 @@ const styles = {
     overflow: "hidden",
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    background: "#0d0d0d",
-    color: "#e5e7eb",
+    background: "#fff",
+    color: "#111",
   },
   banner: {
     display: "flex",
@@ -997,7 +997,7 @@ const styles = {
     flex: 1,
     position: "relative" as const,
     overflow: "hidden",
-    background: "#111",
+    background: "#fff",
   },
   svg: {
     position: "absolute" as const,
@@ -1021,8 +1021,8 @@ const styles = {
     width: 288,
     display: "flex",
     flexDirection: "column" as const,
-    borderLeft: "1px solid #2a2a2a",
-    background: "#0f0f0f",
+    borderLeft: "1px solid #e0e0e0",
+    background: "#fafafa",
     overflow: "hidden",
   },
   input: {
