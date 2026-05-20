@@ -40,7 +40,7 @@ const SVG_VIEWBOX_H = 2457.41;
 const SVG_ASPECT = SVG_VIEWBOX_W / SVG_VIEWBOX_H;
 
 const MIN_SCALE = 0.8;
-const MAX_SCALE = 6;
+const MAX_SCALE = 20;
 
 // Standalone worklet — no closure over JS values
 function clamp(val: number, min: number, max: number) {
@@ -81,6 +81,17 @@ export function WarehouseMapView({
   // JS state for rendering (drives SVG dimensions)
   const [containerW, setContainerW] = useState(0);
   const [containerH, setContainerH] = useState(0);
+
+  // Auto-dismiss empty-state banner after 3 s
+  const [emptyDismissed, setEmptyDismissed] = useState(false);
+  useEffect(() => {
+    if (!zonesLoading && !zonesError && zones.length === 0) {
+      setEmptyDismissed(false);
+      const t = setTimeout(() => setEmptyDismissed(true), 3000);
+      return () => clearTimeout(t);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zonesLoading, zonesError, zones.length]);
   const svgRenderW = containerW;
   const svgRenderH = containerW > 0 ? containerW / SVG_ASPECT : 0;
 
@@ -238,7 +249,7 @@ export function WarehouseMapView({
   }, [svgRenderW, svgRenderH, containerW, containerH]);
 
   const handleZoomIn = useCallback(() => {
-    applyZoom(scale.value * 1.5);
+    applyZoom(scale.value * 10);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyZoom]);
 
@@ -475,8 +486,8 @@ export function WarehouseMapView({
         </Pressable>
       )}
 
-      {/* Empty state: no zones defined yet */}
-      {!zonesLoading && !zonesError && zones.length === 0 && (
+      {/* Empty state: no zones defined yet — auto-hides after 3 s */}
+      {!zonesLoading && !zonesError && zones.length === 0 && !emptyDismissed && (
         <View style={styles.emptyOverlay} pointerEvents="none">
           <View
             style={[
@@ -496,18 +507,18 @@ export function WarehouseMapView({
         </View>
       )}
 
-      {/* Zoom controls — bottom-right cluster */}
+      {/* Zoom controls — bottom-right cluster (zoom-out on top, zoom-in on bottom) */}
       <View style={styles.zoomControls}>
         <Pressable
-          onPress={handleZoomIn}
+          onPress={handleZoomOut}
           style={({ pressed }) => [
             styles.zoomBtn,
             styles.zoomBtnTop,
             { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
           ]}
-          accessibilityLabel="Zoom in"
+          accessibilityLabel="Zoom out"
         >
-          <Feather name="plus" size={16} color={colors.foreground} />
+          <Feather name="minus" size={16} color={colors.foreground} />
         </Pressable>
         <Pressable
           onPress={handleFitScreen}
@@ -521,15 +532,15 @@ export function WarehouseMapView({
           <Feather name="maximize" size={14} color={colors.mutedForeground} />
         </Pressable>
         <Pressable
-          onPress={handleZoomOut}
+          onPress={handleZoomIn}
           style={({ pressed }) => [
             styles.zoomBtn,
             styles.zoomBtnBottom,
             { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
           ]}
-          accessibilityLabel="Zoom out"
+          accessibilityLabel="Zoom in"
         >
-          <Feather name="minus" size={16} color={colors.foreground} />
+          <Feather name="plus" size={16} color={colors.foreground} />
         </Pressable>
       </View>
 
