@@ -296,6 +296,14 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const lastScannedRef = useRef<string | null>(null);
   const scanCooldownRef = useRef(false);
 
+  // Pre-scan delay: hold a barcode steady for SCAN_DELAY_MS before registering
+  const SCAN_DELAY_MS = 2000;
+  const [pendingCode, setPendingCode] = useState<string | null>(null);
+  const [scanDelaySeconds, setScanDelaySeconds] = useState<number | null>(null);
+  const pendingCodeRef = useRef<string | null>(null);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // ── Bin location suggestions (for shelf picker step 1) ───────────────────────
   const { data: inventoryPage } = useListInventory({ limit: 500 });
   const allBinLocations = React.useMemo(() => {
@@ -334,62 +342,102 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     });
   }, []);
 
+  // ── Pre-scan delay helpers ────────────────────────────────────────────────────
+  const clearPendingScan = useCallback(() => {
+    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
+    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+    pendingCodeRef.current = null;
+    setPendingCode(null);
+    setScanDelaySeconds(null);
+  }, []);
+
   // ── Scan handler ─────────────────────────────────────────────────────────────
   const handleBarcodeScanned = useCallback(
-    async (data: { data: string }) => {
+    (data: { data: string }) => {
       const code = data.data;
 
-      // Shelf mode: capture and show catalog picker
-      if (shelfMode && shelfStep === "scanning") {
-        if (scanCooldownRef.current || code === lastScannedRef.current) return;
-        lastScannedRef.current = code;
+      // Already in a non-idle phase — ignore
+      if (scanPhase !== "idle") return;
+      if (scanCooldownRef.current) return;
+
+      // Same barcode already pending — let the existing countdown run
+      if (pendingCodeRef.current === code) return;
+
+      // New or different barcode — cancel existing countdown and start fresh
+      clearPendingScan();
+      pendingCodeRef.current = code;
+      setPendingCode(code);
+
+      const totalSeconds = Math.round(SCAN_DELAY_MS / 1000);
+      setScanDelaySeconds(totalSeconds);
+      let secondsLeft = totalSeconds;
+
+      countdownIntervalRef.current = setInterval(() => {
+        secondsLeft -= 1;
+        setScanDelaySeconds(secondsLeft);
+        if (secondsLeft <= 0) {
+          clearInterval(countdownIntervalRef.current!);
+          countdownIntervalRef.current = null;
+        }
+      }, 1000);
+
+      pendingTimerRef.current = setTimeout(async () => {
+        pendingCodeRef.current = null;
+        setPendingCode(null);
+        setScanDelaySeconds(null);
+
+        // Shelf mode: capture and show catalog picker
+        if (shelfMode && shelfStep === "scanning") {
+          if (code === lastScannedRef.current) return;
+          lastScannedRef.current = code;
+          scanCooldownRef.current = true;
+          setTimeout(() => { scanCooldownRef.current = false; }, 2000);
+          setShelfScannedCode(code);
+          setShelfAssignPicker(true);
+          return;
+        }
+
+        // Normal lookup mode
+        if (code === scannedCode) return;
         scanCooldownRef.current = true;
         setTimeout(() => { scanCooldownRef.current = false; }, 2000);
-        setShelfScannedCode(code);
-        setShelfAssignPicker(true);
-        return;
-      }
 
-      // Normal lookup mode
-      if (scanCooldownRef.current || code === scannedCode) return;
-      scanCooldownRef.current = true;
-      setTimeout(() => { scanCooldownRef.current = false; }, 2000);
+        setScannedCode(code);
+        lastScannedRef.current = code;
+        setScanPhase("looking");
+        setScanError(null);
+        setMatchedItem(null);
+        setIsOfflineMatch(false);
 
-      setScannedCode(code);
-      lastScannedRef.current = code;
-      setScanPhase("looking");
-      setScanError(null);
-      setMatchedItem(null);
-      setIsOfflineMatch(false);
-
-      const resolution = await resolveBarcodeCode(code);
-      if (resolution.phase === "found") {
-        setMatchedItem(resolution.item);
-        setScanPhase("found");
-        if (!resolution.isOffline) {
-          addEntry({
-            barcode: code,
-            found: true,
-            itemId: resolution.item.id,
-            catalog: resolution.item.catalog,
-            vendor: resolution.item.vendor,
-            timestamp: new Date().toISOString(),
-          });
+        const resolution = await resolveBarcodeCode(code);
+        if (resolution.phase === "found") {
+          setMatchedItem(resolution.item);
+          setScanPhase("found");
+          if (!resolution.isOffline) {
+            addEntry({
+              barcode: code,
+              found: true,
+              itemId: resolution.item.id,
+              catalog: resolution.item.catalog,
+              vendor: resolution.item.vendor,
+              timestamp: new Date().toISOString(),
+            });
+          } else {
+            setIsOfflineMatch(true);
+            getFuseCacheSyncedAt().then(setFuseSyncedAt).catch(() => setFuseSyncedAt(null));
+          }
+        } else if (resolution.phase === "notfound") {
+          setScanPhase("notfound");
+          addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
+        } else if (resolution.phase === "offline_miss") {
+          setScanPhase("offline_miss");
         } else {
-          setIsOfflineMatch(true);
-          getFuseCacheSyncedAt().then(setFuseSyncedAt).catch(() => setFuseSyncedAt(null));
+          setScanError(resolution.message);
+          setScanPhase("idle");
         }
-      } else if (resolution.phase === "notfound") {
-        setScanPhase("notfound");
-        addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
-      } else if (resolution.phase === "offline_miss") {
-        setScanPhase("offline_miss");
-      } else {
-        setScanError(resolution.message);
-        setScanPhase("idle");
-      }
+      }, SCAN_DELAY_MS);
     },
-    [shelfMode, shelfStep, scannedCode, addEntry],
+    [shelfMode, shelfStep, scannedCode, addEntry, scanPhase, clearPendingScan],
   );
 
   const handleRecentTap = useCallback(async (entry: ScanEntry) => {
@@ -408,6 +456,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   }, []);
 
   const resetScan = () => {
+    clearPendingScan();
     setScannedCode(null);
     setMatchedItem(null);
     setScanPhase("idle");
@@ -659,6 +708,12 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
               <View style={[styles.scanStatus, { backgroundColor: colors.primary + "cc" }]}>
                 <ActivityIndicator color="#fff" size="small" />
                 <Text style={styles.scanStatusText}>Looking up…</Text>
+              </View>
+            ) : pendingCode ? (
+              <View style={[styles.scanStatus, { backgroundColor: "#000000bb" }]}>
+                <Text style={styles.scanStatusText}>
+                  Hold steady… {scanDelaySeconds != null && scanDelaySeconds > 0 ? `${scanDelaySeconds}s` : ""}
+                </Text>
               </View>
             ) : scanPhase === "idle" && !shelfMode ? (
               <View style={[styles.scanStatus, { backgroundColor: "#00000088" }]}>
