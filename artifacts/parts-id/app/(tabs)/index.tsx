@@ -732,8 +732,8 @@ export default function SearchScreen() {
             </View>
 
             {/* Theme row */}
-            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
-              <View style={{ flex: 1 }}>
+            <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 8 }]}>
+              <View>
                 <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Theme</Text>
                 <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
                   Override the system appearance preference.
@@ -749,7 +749,7 @@ export default function SearchScreen() {
                       styles.textSizeBtn,
                       {
                         width: "auto",
-                        paddingHorizontal: 12,
+                        paddingHorizontal: 16,
                         backgroundColor: settings.themeMode === mode ? colors.primary : colors.muted,
                         borderColor: settings.themeMode === mode ? colors.primary : colors.border,
                       },
