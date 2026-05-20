@@ -20,17 +20,16 @@ type ItemRow = {
   aiKeywords: string[] | null;
 };
 
-function itemMatchesKeywords(item: ItemRow, keywords: string[]): boolean {
-  const text = itemFullText(item);
-  return keywords.some(kw => text.includes(kw.toLowerCase()));
+function buildKeywordRegex(keywords: string[]): RegExp | null {
+  if (keywords.length === 0) return null;
+  const escaped = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(escaped.join("|"), "i");
 }
 
-function countForNode(
-  items: ItemRow[],
-  keywords: string[],
-): number {
-  if (keywords.length === 0) return 0;
-  return items.filter(item => itemMatchesKeywords(item, keywords)).length;
+function countForNode(items: ItemRow[], keywords: string[]): number {
+  const re = buildKeywordRegex(keywords);
+  if (!re) return 0;
+  return items.filter(item => re.test(itemFullText(item))).length;
 }
 
 // ── GET /inventory/categories ─────────────────────────────────────────────────
@@ -46,42 +45,45 @@ router.get("/categories", async (_req, res) => {
       .from(inventoryTable);
 
     const allTaxonomyKeywords = getAllTaxonomyKeywords(TAXONOMY);
+    const allTaxRe = buildKeywordRegex(allTaxonomyKeywords);
 
-    const categories = TAXONOMY.map((cat: TaxonomyCategory) => {
-      const catKeywords = collectKeywords(cat);
+    const categories = TAXONOMY
+      .filter((cat: TaxonomyCategory) => cat.slug !== "uncategorized")
+      .map((cat: TaxonomyCategory) => {
+        const catKeywords = collectKeywords(cat);
 
-      const subcategories = cat.subcategories.map((sub: TaxonomySubcategory) => {
-        const subKeywords = collectKeywords(sub);
+        const subcategories = cat.subcategories.map((sub: TaxonomySubcategory) => {
+          const subKeywords = collectKeywords(sub);
 
-        const itemTypes = sub.itemTypes.map((it: TaxonomyItemType) => {
-          const itKeywords = collectKeywords(it);
+          const itemTypes = sub.itemTypes.map((it: TaxonomyItemType) => {
+            const itKeywords = collectKeywords(it);
+            return {
+              slug: it.slug,
+              label: it.label,
+              count: countForNode(rows, itKeywords),
+            };
+          });
+
           return {
-            slug: it.slug,
-            label: it.label,
-            count: countForNode(rows, itKeywords),
+            slug: sub.slug,
+            label: sub.label,
+            count: countForNode(rows, subKeywords),
+            itemTypes,
           };
         });
 
         return {
-          slug: sub.slug,
-          label: sub.label,
-          count: countForNode(rows, subKeywords),
-          itemTypes,
+          slug: cat.slug,
+          label: cat.label,
+          color: cat.color,
+          count: countForNode(rows, catKeywords),
+          subcategories,
         };
       });
 
-      return {
-        slug: cat.slug,
-        label: cat.label,
-        color: cat.color,
-        count: countForNode(rows, catKeywords),
-        subcategories,
-      };
-    });
-
-    const uncategorizedCount = rows.filter(
-      item => !itemMatchesKeywords(item, allTaxonomyKeywords),
-    ).length;
+    const uncategorizedCount = allTaxRe
+      ? rows.filter(item => !allTaxRe.test(itemFullText(item))).length
+      : rows.length;
 
     res.json({
       categories,
