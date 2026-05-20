@@ -180,23 +180,43 @@ router.post("/search", async (req, res) => {
       : null;
     const categoryKeywords = categoryNode ? collectKeywords(categoryNode) : [];
 
-    // When browsing by category with no text, use a sample of category keywords
-    // as the implicit search query so the FTS pipeline has something to work with.
-    const effectiveKeywords = (!keywords.trim() && categorySlug && !isCategoryUncategorized && categoryKeywords.length > 0)
-      ? categoryKeywords.slice(0, 10).join(" ")
-      : keywords;
-
-    const allSearchText = [effectiveKeywords, catalogInput, vendorInput, color, size, material, textNumbers]
+    // allSearchText uses the raw keywords — no sampling heuristic for category browse
+    const allSearchText = [keywords, catalogInput, vendorInput, color, size, material, textNumbers]
       .filter(Boolean).join(" ");
 
     // Build category regex for SQL pre-filter (non-uncategorized categories)
     const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapeSql  = (s: string) => s.replace(/'/g, "''");
     const catSqlRegex = (!isCategoryUncategorized && categoryKeywords.length > 0)
       ? categoryKeywords.map(escapeRegex).join("|")
       : null;
 
     if (!allSearchText.trim() && !categorySlug) {
       return void res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
+    }
+
+    // Dedicated path: non-uncategorized category browse with no text query.
+    // Returns every item whose chip text matches the node's keyword union via
+    // a SQL-literal regex so the GIN trigram index can be used.
+    if (categorySlug && !isCategoryUncategorized && catSqlRegex && !allSearchText.trim()) {
+      const catItems = await db
+        .select()
+        .from(inventoryTable)
+        .where(sql.raw(`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* '${escapeSql(catSqlRegex)}'`))
+        .orderBy(inventoryTable.vendor, inventoryTable.catalog)
+        .limit(200);
+      return void res.json({
+        results: catItems.map(item => ({
+          item,
+          confidence: 1.0,
+          matchReason: "category browse",
+          seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
+          seriesLabel: getSeriesBase(item.vendor, item.catalog, item.description)?.label ?? null,
+          variants: [],
+        })),
+        totalMatches: catItems.length,
+        belowThreshold: 0,
+      });
     }
 
     // Special path: uncategorized browse with no search text — return all items that

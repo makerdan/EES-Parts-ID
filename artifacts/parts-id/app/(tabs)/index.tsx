@@ -170,8 +170,8 @@ export default function SearchScreen() {
   const colors = useColors();
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
-  const [aisleBrowseOpen, setAisleBrowseOpen] = useState(false);
-  const [categoryBrowseOpen, setCategoryBrowseOpen] = useState(false);
+  type SearchMode = "search" | "aisle" | "category";
+  const [mode, setMode] = useState<SearchMode>("search");
   const [activeCategorySlug, setActiveCategorySlug] = useState<string | null>(null);
   const [activeCategoryLabel, setActiveCategoryLabel] = useState<string | null>(null);
   const activeCategorySlugRef = useRef<string | null>(null);
@@ -243,8 +243,7 @@ export default function SearchScreen() {
         searchTimeoutRef.current = null;
       }
       searchAbortedRef.current = false;
-      setAisleBrowseOpen(false);
-      setCategoryBrowseOpen(false);
+      setMode("search");
       setActiveCategorySlug(null);
       setActiveCategoryLabel(null);
       activeCategorySlugRef.current = null;
@@ -472,7 +471,7 @@ export default function SearchScreen() {
   };
 
   const handleCategorySelect = useCallback((slug: string, label: string) => {
-    setCategoryBrowseOpen(false);
+    setMode("search");
     setActiveCategorySlug(slug);
     setActiveCategoryLabel(label);
     activeCategorySlugRef.current = slug;
@@ -796,7 +795,7 @@ export default function SearchScreen() {
         </View>
       </Modal>
 
-      {!aisleBrowseOpen && !categoryBrowseOpen ? (
+      {mode === "search" ? (
         <>
       {/* Offline banner */}
       {isOffline ? (
@@ -1010,25 +1009,32 @@ export default function SearchScreen() {
         keyboardDismissMode="none"
       />
 
-        {/* Browse by Aisle / Category + Floating filter overlay — stacked above results */}
+        {/* 3-mode toggle + Floating filter overlay — stacked above results */}
         <View style={styles.filterOverlayWrapper}>
-          <View style={styles.browseBtnRow}>
-            <Pressable
-              onPress={() => setAisleBrowseOpen(true)}
-              style={[styles.browseBtnHalf, { backgroundColor: colors.card, borderColor: colors.border }]}
-            >
-              <Feather name="map-pin" size={16} color={colors.primary} />
-              <Text style={[styles.browseAisleBtnTitle, { color: colors.foreground }]}>By Aisle</Text>
-              <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
-            </Pressable>
-            <Pressable
-              onPress={() => setCategoryBrowseOpen(true)}
-              style={[styles.browseBtnHalf, { backgroundColor: colors.card, borderColor: colors.border }]}
-            >
-              <Feather name="tag" size={16} color={colors.primary} />
-              <Text style={[styles.browseAisleBtnTitle, { color: colors.foreground }]}>By Category</Text>
-              <Feather name="chevron-right" size={14} color={colors.mutedForeground} />
-            </Pressable>
+          {/* Search | By Aisle | By Category toggle */}
+          <View style={styles.modeToggleRow}>
+            {([
+              { key: "search",   label: "Search",      icon: "search"  },
+              { key: "aisle",    label: "By Aisle",    icon: "map-pin" },
+              { key: "category", label: "By Category", icon: "tag"     },
+            ] as const).map(m => (
+              <Pressable
+                key={m.key}
+                onPress={() => setMode(m.key)}
+                style={[
+                  styles.modeToggleBtn,
+                  {
+                    backgroundColor: mode === m.key ? colors.primary + "22" : colors.card,
+                    borderColor:     mode === m.key ? colors.primary + "88" : colors.border,
+                  },
+                ]}
+              >
+                <Feather name={m.icon} size={13} color={mode === m.key ? colors.primary : colors.mutedForeground} />
+                <Text style={[styles.modeToggleBtnText, { color: mode === m.key ? colors.primary : colors.mutedForeground }]}>
+                  {m.label}
+                </Text>
+              </Pressable>
+            ))}
           </View>
           {activeCategorySlug && activeCategoryLabel ? (
             <Pressable
@@ -1052,13 +1058,13 @@ export default function SearchScreen() {
         </View>
       </View>
         </>
-      ) : aisleBrowseOpen ? (
+      ) : mode === "aisle" ? (
         <BrowseByAisle
           inventory={fuseItemsRef.current}
           isSyncing={syncProgress !== null}
           shelfViewEnabled={settings.shelfViewEnabled}
           fontScale={textFontScale}
-          onClose={() => setAisleBrowseOpen(false)}
+          onClose={() => setMode("search")}
           onEditKeywords={setEditItem}
           onEditBins={isAdmin ? setBinEditItem : undefined}
           isAdmin={isAdmin}
@@ -1068,7 +1074,7 @@ export default function SearchScreen() {
       ) : (
         <BrowseByCategory
           onSelectCategory={handleCategorySelect}
-          onClose={() => setCategoryBrowseOpen(false)}
+          onClose={() => setMode("search")}
         />
       )}
 
@@ -1266,32 +1272,24 @@ const styles = StyleSheet.create({
   textSizePicker: { flexDirection: "row", gap: 6, alignSelf: "center" },
   textSizeBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
   textSizeBtnLabel: { fontSize: 13, fontFamily: "Inter_700Bold" },
-  browseAisleBtn: {
+  modeToggleRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 8,
-    alignSelf: "center",
-    width: "80%",
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  browseBtnRow: {
-    flexDirection: "row",
-    gap: 8,
+    gap: 6,
     marginBottom: 8,
     alignSelf: "stretch",
   },
-  browseBtnHalf: {
+  modeToggleBtn: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    padding: 12,
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     borderRadius: 10,
     borderWidth: 1,
   },
+  modeToggleBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   activeCategoryBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1309,6 +1307,4 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     flexShrink: 1,
   },
-  browseAisleBtnTitle: { fontSize: 13, fontFamily: "Inter_700Bold", flex: 1 },
-  browseAisleBtnSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
