@@ -201,6 +201,9 @@ export default function SearchScreen() {
   const [cachedCount, setCachedCount] = useState(0);
   const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [syncError, setSyncError] = useState(false);
+  const [syncRetryPending, setSyncRetryPending] = useState(false);
+  const syncRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncRetryAttemptRef = useRef(0);
   // Track latest filters in a ref so the onError closure always reads current values
   const filtersRef = useRef<FilterValues>(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -279,13 +282,23 @@ export default function SearchScreen() {
     });
   }, []);
 
+  // Auto-retry constants
+  const SYNC_RETRY_INITIAL_MS = 30_000;   // 30 s first retry
+  const SYNC_RETRY_MAX_MS     = 300_000;  // 5 min ceiling
+
   // Fetch all inventory items in pages and build the Fuse cache
   const syncAllInventory = useCallback(async () => {
+    // Cancel any pending auto-retry before starting a new attempt
+    if (syncRetryTimerRef.current !== null) {
+      clearTimeout(syncRetryTimerRef.current);
+      syncRetryTimerRef.current = null;
+    }
+    setSyncError(false);
+    setSyncRetryPending(false);
     const PAGE_SIZE = 500;
     let page = 1;
     let total = 0;
     const allItems: InventoryItem[] = [];
-    setSyncError(false);
     try {
       do {
         const data: { items: InventoryItem[]; total: number } = await retryAsync(async () => {
@@ -302,6 +315,7 @@ export default function SearchScreen() {
         page++;
       } while (allItems.length < total);
       buildFuseIndex(allItems);
+      syncRetryAttemptRef.current = 0; // success — reset backoff counter
       try {
         await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
         // Record when this authoritative full sync completed. The mount effect
@@ -313,10 +327,32 @@ export default function SearchScreen() {
       }
     } catch {
       setSyncError(true);
+      // Schedule an automatic retry with exponential backoff (30 s → doubles → 5 min cap)
+      const delay = Math.min(
+        SYNC_RETRY_INITIAL_MS * Math.pow(2, syncRetryAttemptRef.current),
+        SYNC_RETRY_MAX_MS,
+      );
+      syncRetryAttemptRef.current += 1;
+      setSyncRetryPending(true);
+      syncRetryTimerRef.current = setTimeout(() => {
+        syncRetryTimerRef.current = null;
+        syncAllInventory();
+      }, delay);
     } finally {
       setSyncProgress(null);
     }
   }, [buildFuseIndex]);
+
+  // Cancel pending auto-retry timer on unmount to prevent state updates
+  // after the component is destroyed (e.g. user logs out mid-countdown).
+  useEffect(() => {
+    return () => {
+      if (syncRetryTimerRef.current !== null) {
+        clearTimeout(syncRetryTimerRef.current);
+        syncRetryTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Seed local Fuse index from AsyncStorage on mount; sync from API if cache is
   // empty or stale. A stale cache (older than FUSE_SYNC_MAX_AGE_MS) is served
@@ -568,7 +604,7 @@ export default function SearchScreen() {
                 style={[styles.statusBadge, { backgroundColor: colors.destructive + "18" }]}
               >
                 <Text style={[styles.statusBadgeText, { color: colors.destructive }]}>
-                  ⚠ Sync failed — tap to retry
+                  {syncRetryPending ? "⚠ Sync failed — retrying…" : "⚠ Sync failed — tap to retry"}
                 </Text>
               </Pressable>
             ) : cachedCount > 0 ? (
