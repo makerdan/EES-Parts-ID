@@ -194,10 +194,11 @@ interface ColorMap {
 }
 
 function CountBadge({ count, color }: { count: number; color: string }) {
-  if (count === 0) return null;
   return (
-    <View style={[styles.countBadge, { backgroundColor: color + "22" }]}>
-      <Text style={[styles.countBadgeText, { color }]}>{count}</Text>
+    <View style={[styles.countBadge, { backgroundColor: count > 0 ? color + "22" : "#9CA3AF22" }]}>
+      <Text style={[styles.countBadgeText, { color: count > 0 ? color : "#9CA3AF" }]}>
+        {count > 0 ? count : "0 items"}
+      </Text>
     </View>
   );
 }
@@ -215,7 +216,7 @@ function CategoryGrid({
 }) {
   const all: (CategoryNode | UncategorizedNode)[] = [
     ...categories,
-    ...(uncategorized.count > 0 ? [uncategorized] : []),
+    uncategorized,
   ];
 
   return (
@@ -228,17 +229,19 @@ function CategoryGrid({
       showsVerticalScrollIndicator={false}
       renderItem={({ item }) => {
         const color = "color" in item ? item.color : colors.mutedForeground;
+        const isEmpty = item.count === 0;
         return (
           <Pressable
             style={[styles.categoryTile, {
               backgroundColor: colors.card,
-              borderColor: color + "44",
-              borderLeftColor: color,
+              borderColor: color + (isEmpty ? "22" : "44"),
+              borderLeftColor: isEmpty ? color + "55" : color,
+              opacity: isEmpty ? 0.5 : 1,
             }]}
             onPress={() => onSelect(item)}
           >
             <View style={[styles.categoryTileAccent, { backgroundColor: color }]} />
-            <Text style={[styles.categoryTileLabel, { color: colors.foreground }]} numberOfLines={2}>
+            <Text style={[styles.categoryTileLabel, { color: isEmpty ? colors.mutedForeground : colors.foreground }]} numberOfLines={2}>
               {item.label}
             </Text>
             <CountBadge count={item.count} color={color} />
@@ -306,9 +309,7 @@ function SubcategoryList({
             </Text>
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            {item.count > 0 ? (
-              <CountBadge count={item.count} color={accentColor} />
-            ) : null}
+            <CountBadge count={item.count} color={accentColor} />
             <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
           </View>
         </Pressable>
@@ -371,9 +372,7 @@ function ItemTypeList({
             <Text style={[styles.listRowLabel, { color: colors.foreground }]}>{item.label}</Text>
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            {item.count > 0 ? (
-              <CountBadge count={item.count} color={accentColor} />
-            ) : null}
+            <CountBadge count={item.count} color={accentColor} />
             <Feather name="search" size={16} color={colors.mutedForeground} />
           </View>
         </Pressable>

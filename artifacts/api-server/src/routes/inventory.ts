@@ -185,8 +185,37 @@ router.post("/search", async (req, res) => {
     const allSearchText = [effectiveKeywords, catalogInput, vendorInput, color, size, material, textNumbers]
       .filter(Boolean).join(" ");
 
-    if (!allSearchText.trim()) {
+    // Build category regex for SQL pre-filter (non-uncategorized categories)
+    const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const catSqlRegex = (!isCategoryUncategorized && categoryKeywords.length > 0)
+      ? categoryKeywords.map(escapeRegex).join("|")
+      : null;
+
+    if (!allSearchText.trim() && !categorySlug) {
       return void res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
+    }
+
+    // Special path: uncategorized browse with no search text — return all items that
+    // don't match any taxonomy keyword (same inverse-regex logic as the post-filter).
+    if (isCategoryUncategorized && !allSearchText.trim()) {
+      const allItems = await db.select().from(inventoryTable);
+      const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
+      const uncatItems = allItems.filter(item => {
+        const text = itemFullText(item);
+        return !allTaxKws.some(kw => text.includes(kw));
+      });
+      return void res.json({
+        results: uncatItems.map(item => ({
+          item,
+          confidence: 1.0,
+          matchReason: "uncategorized browse",
+          seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
+          seriesLabel: getSeriesBase(item.vendor, item.catalog, item.description)?.label ?? null,
+          variants: [],
+        })),
+        totalMatches: uncatItems.length,
+        belowThreshold: 0,
+      });
     }
 
     // Normalize, correct misspellings, expand terms
@@ -272,6 +301,10 @@ router.post("/search", async (req, res) => {
             )}`
           : sql``;
 
+        const catClause = catSqlRegex
+          ? sql`AND (${chipText} ~* ${catSqlRegex})`
+          : sql``;
+
         // Wrap in a subquery so ORDER BY can reference the computed column aliases.
         // PostgreSQL only resolves aliases in ORDER BY when used as direct references
         // (not inside arithmetic expressions like fts_rank * 0.6 + trgm_sim * 0.4).
@@ -306,6 +339,7 @@ router.post("/search", async (req, res) => {
               ${vendorFilter ? sql`OR upper(i.vendor) = ${vendorFilter}` : sql``}
             )
             ${chipClauses}
+            ${catClause}
           ) AS __ranked
           ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
           LIMIT 200

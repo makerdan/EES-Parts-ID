@@ -18,6 +18,7 @@ export interface TaxonomyCategory {
 }
 
 export const TAXONOMY: TaxonomyCategory[] = [
+  // ── 1. Anchors & Connectors ──────────────────────────────────────────────
   {
     slug: "anchors-connectors",
     label: "Anchors & Connectors",
@@ -32,276 +33,344 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "Concrete/Masonry Anchors",
             keywords: [
               "concrete anchor", "masonry anchor", "wedge anchor", "sleeve anchor",
-              "drop-in anchor", "strike anchor", "Tapcon", "expansion anchor",
-              "hilti", "ramset", "concrete screw", "masonry screw",
+              "drop-in anchor", "expansion anchor", "concrete screw", "tapcon",
+              "lag shield", "anchor bolt", "masonry bolt",
             ],
           },
           {
-            slug: "wood-screws-anchors",
-            label: "Wood Screws & Anchors",
+            slug: "toggle-hollow-wall-anchors",
+            label: "Toggle Bolts & Hollow-Wall Anchors",
             keywords: [
-              "wood screw", "lag bolt", "lag screw", "structural screw",
-              "hex head wood screw", "self-tapping screw", "sheet metal screw",
+              "toggle bolt", "hollow wall anchor", "toggle", "molly bolt",
+              "butterfly anchor", "snap toggle", "wall anchor hollow",
             ],
           },
           {
-            slug: "hollow-wall-anchors",
-            label: "Hollow Wall Anchors",
+            slug: "threaded-rod-studs",
+            label: "Threaded Rod & Studs",
             keywords: [
-              "hollow wall anchor", "drywall anchor", "toggle bolt", "molly bolt",
-              "SnapToggle", "wall anchor", "plastic anchor",
+              "threaded rod", "all-thread", "all thread rod", "threaded stud",
+              "rod hanger", "B7 rod", "galvanized rod", "ATR", "redi-rod",
             ],
           },
           {
-            slug: "strut-nuts-bolts",
-            label: "Strut Nuts & Bolts",
+            slug: "other-anchors-fasteners",
+            label: "Other Anchors & Fasteners",
             keywords: [
-              "strut nut", "channel nut", "spring nut", "strut bolt",
-              "framing fastener", "Kindorf nut", "Unistrut nut", "channel bolt",
+              "anchor", "fastener", "screw anchor", "drywall anchor",
             ],
           },
         ],
       },
       {
-        slug: "hangers-supports",
-        label: "Hangers & Supports",
+        slug: "structural-connectors",
+        label: "Structural Connectors",
         itemTypes: [
           {
-            slug: "pipe-conduit-hangers",
-            label: "Pipe & Conduit Hangers",
+            slug: "beam-pipe-clamps",
+            label: "Beam Clamps & Pipe Clamps",
             keywords: [
-              "conduit hanger", "pipe hanger", "strut clamp", "conduit strap",
-              "one-hole strap", "two-hole strap", "EMT strap", "IMC strap",
-              "RMC strap", "pipe strap", "conduit clamp", "hanger strap",
+              "beam clamp", "pipe clamp", "C clamp", "I-beam clamp",
+              "flange clamp", "beam trolley", "cable beam clamp",
             ],
           },
           {
-            slug: "j-hooks-cable-support",
-            label: "J-Hooks & Cable Support",
+            slug: "cable-tray-connectors",
+            label: "Cable Tray Connectors",
             keywords: [
-              "J-hook", "cable hook", "cable support", "wire support",
-              "bridle ring", "cable J hook", "cable tray hook",
+              "cable tray connector", "tray connector", "tray splice",
+              "cable tray coupler", "tray hardware",
             ],
           },
           {
-            slug: "beam-clamps",
-            label: "Beam Clamps",
+            slug: "strut-unistrut-connectors",
+            label: "Strut/Unistrut Connectors",
             keywords: [
-              "beam clamp", "I-beam clamp", "C-clamp beam", "flange clamp",
-              "beam attachment", "structural beam clamp",
+              "strut connector", "unistrut connector", "channel connector",
+              "strut splice", "channel splice plate", "strut cross",
             ],
           },
           {
-            slug: "threaded-rod-kits",
-            label: "Threaded Rod & Hanger Kits",
+            slug: "other-structural-connectors",
+            label: "Other Structural Connectors",
             keywords: [
-              "threaded rod", "hanger kit", "all-thread rod", "rod hanger",
-              "hanger rod", "drop rod", "conduit hanger kit",
+              "structural connector", "beam connector", "joist clamp",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 2. Boxes & Enclosures ────────────────────────────────────────────────
   {
     slug: "boxes-enclosures",
     label: "Boxes & Enclosures",
-    color: "#F59E0B",
+    color: "#EC4899",
     subcategories: [
       {
-        slug: "electrical-boxes",
-        label: "Electrical Boxes",
+        slug: "boxes-by-type",
+        label: "By Type",
         itemTypes: [
           {
-            slug: "single-gang-boxes",
-            label: "Single Gang Device Boxes",
+            slug: "device-switch-boxes",
+            label: "Device/Switch Boxes",
             keywords: [
-              "old work box", "cut-in box", "remodel box", "new work box",
-              "single gang box", "plastic device box", "1 gang box",
-              "device box single", "blue box single gang",
+              "device box", "switch box", "single gang box", "two gang box",
+              "outlet box", "old work box", "new work box", "remodel box",
+              "plastic box", "switch gang", "electrical box device",
             ],
           },
           {
-            slug: "multi-gang-boxes",
-            label: "Multi-Gang Device Boxes",
+            slug: "junction-pull-boxes",
+            label: "Junction/Pull Boxes",
             keywords: [
-              "two gang box", "three gang box", "multi gang box",
-              "2 gang box", "3 gang box", "4 gang box", "multi-gang device box",
+              "junction box", "pull box", "j-box", "4 square", "4S box",
+              "4-11/16 box", "draw box", "pulling box", "square box",
             ],
           },
           {
             slug: "weatherproof-boxes",
             label: "Weatherproof Boxes",
             keywords: [
-              "weatherproof box", "outdoor box", "in-use box",
-              "WP box", "outdoor device box", "wet location box",
-              "exterior box", "RACO outdoor",
+              "weatherproof box", "outdoor box", "WP box", "wet location box",
+              "rain tight box", "outdoor outlet box",
             ],
           },
           {
-            slug: "octagon-boxes",
-            label: "Octagon & Ceiling Boxes",
+            slug: "floor-boxes",
+            label: "Floor Boxes",
             keywords: [
-              "octagon box", "round box", "4-inch round box", "4 inch octagon",
-              "fixture box", "pancake box", "ceiling box", "round pan",
-              "4 octagon", "ceiling fixture box",
+              "floor box", "floor outlet", "in-floor box", "raised floor box",
+              "flush floor", "carpet floor box",
             ],
           },
           {
-            slug: "square-boxes-mud-rings",
-            label: "Square Boxes & Mud Rings",
+            slug: "fan-rated-boxes",
+            label: "Fan-Rated Boxes",
             keywords: [
-              "square box", "4-inch square box", "4 square", "4-11/16 square",
-              "plaster ring", "mud ring", "extension ring", "raised cover",
-              "4S box", "flat box square",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "enclosures-cabinets",
-        label: "Enclosures & Cabinets",
-        itemTypes: [
-          {
-            slug: "nema1-enclosures",
-            label: "NEMA 1 Enclosures",
-            keywords: [
-              "NEMA 1 enclosure", "indoor enclosure", "pull box",
-              "splice box", "hinged cover enclosure", "junction box enclosure",
-              "sheet metal enclosure", "surface mount enclosure",
+              "fan box", "fan-rated box", "ceiling fan box", "fan support box",
+              "pancake box fan", "brace fan", "fan rated",
             ],
           },
           {
-            slug: "nema3r-4x-enclosures",
-            label: "NEMA 3R / 4 / 4X Enclosures",
+            slug: "other-boxes-enclosures",
+            label: "Other Boxes & Enclosures",
             keywords: [
-              "NEMA 3R", "NEMA 4", "NEMA 4X", "weatherproof enclosure",
-              "outdoor enclosure", "fiberglass enclosure", "stainless enclosure",
-              "rainproof enclosure", "IP66 enclosure",
-            ],
-          },
-          {
-            slug: "underground-boxes",
-            label: "Underground & Concrete Boxes",
-            keywords: [
-              "underground box", "concrete box", "direct burial box",
-              "tier 15", "polymer concrete box", "handhole",
-              "underground pull box", "in-ground box",
+              "electrical box", "metal box", "plastic electrical box",
             ],
           },
         ],
       },
       {
-        slug: "covers-accessories",
-        label: "Covers & Accessories",
+        slug: "covers-plates",
+        label: "Covers & Plates",
         itemTypes: [
           {
-            slug: "device-box-covers",
-            label: "Device Box Covers & Wall Plates",
+            slug: "blank-covers",
+            label: "Blank Covers",
             keywords: [
-              "blank cover", "device cover", "outlet cover", "switch plate",
-              "wall plate", "face plate", "cover plate single gang",
-              "cover plate two gang", "decorator plate", "duplex cover",
+              "blank cover", "blank plate", "blank face plate", "cover blank",
+              "solid cover", "junction box cover blank",
             ],
           },
           {
-            slug: "weatherproof-covers",
-            label: "Weatherproof Covers",
+            slug: "wall-device-plates",
+            label: "Wall Plates & Device Plates",
             keywords: [
-              "weatherproof cover", "while-in-use cover", "in-use cover",
-              "extra deep cover", "outdoor outlet cover", "WP cover",
-              "in-use weatherproof cover",
+              "wall plate", "device plate", "cover plate", "switch plate",
+              "outlet cover", "face plate", "decorator plate", "duplex cover",
+              "single gang plate", "double gang plate",
             ],
           },
           {
-            slug: "knockout-seals-plugs",
-            label: "Knockout Seals & Plugs",
+            slug: "weatherproof-in-use-covers",
+            label: "Weatherproof In-Use Covers",
             keywords: [
-              "knockout seal", "KO seal", "knockout plug", "snap-in connector",
-              "blank plug", "conduit knockout seal", "Romex connector",
+              "weatherproof cover", "in-use cover", "while-in-use cover",
+              "bubble cover", "outdoor cover", "WP cover", "extra deep cover",
+            ],
+          },
+          {
+            slug: "box-covers-extension-rings",
+            label: "Box Covers & Extension Rings",
+            keywords: [
+              "box cover", "extension ring", "mud ring", "plaster ring",
+              "tile ring", "depth ring", "raised cover", "4S cover",
+            ],
+          },
+          {
+            slug: "other-covers-plates",
+            label: "Other Covers & Plates",
+            keywords: [
+              "cover", "plate", "knockout seal", "KO seal", "snap-in",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "nema-enclosures",
+        label: "NEMA Enclosures",
+        itemTypes: [
+          {
+            slug: "nema-1-indoor",
+            label: "NEMA 1 (Indoor)",
+            keywords: [
+              "NEMA 1", "NEMA type 1", "general purpose enclosure",
+              "indoor enclosure", "steel enclosure indoor",
+            ],
+          },
+          {
+            slug: "nema-3r-rainproof",
+            label: "NEMA 3R (Rainproof)",
+            keywords: [
+              "NEMA 3R", "NEMA type 3R", "rainproof enclosure",
+              "outdoor enclosure raintight", "3R enclosure",
+            ],
+          },
+          {
+            slug: "nema-4-4x-watertight",
+            label: "NEMA 4/4X (Watertight)",
+            keywords: [
+              "NEMA 4", "NEMA 4X", "watertight enclosure", "stainless enclosure",
+              "fiberglass enclosure", "washdown enclosure", "4X enclosure",
+            ],
+          },
+          {
+            slug: "other-nema-enclosures",
+            label: "Other NEMA Enclosures",
+            keywords: [
+              "NEMA enclosure", "NEMA 12", "NEMA 7", "hazardous location enclosure",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 3. Builders Products ─────────────────────────────────────────────────
   {
     slug: "builders-products",
     label: "Builders Products",
     color: "#10B981",
     subcategories: [
       {
-        slug: "residential-construction",
-        label: "Residential Construction",
-        itemTypes: [
-          {
-            slug: "vapor-barriers-wrap",
-            label: "Vapor Barriers & Wrap",
-            keywords: [
-              "vapor barrier", "house wrap", "poly sheeting", "plastic sheeting",
-              "Tyvek", "water resistive barrier", "WRB",
-            ],
-          },
-          {
-            slug: "sealants-flashing",
-            label: "Sealants & Flashing",
-            keywords: [
-              "electrical tape", "silicone sealant", "caulk", "mastic sealant",
-              "sealing tape", "waterproof tape", "flashing tape",
-            ],
-          },
-          {
-            slug: "mud-plates",
-            label: "Mud Rings & Plaster Rings",
-            keywords: [
-              "mud ring", "plaster ring", "tile ring", "ceramic tile ring",
-              "mud plate", "depth ring", "tile adapter",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "strut-support-systems",
-        label: "Strut & Support Systems",
+        slug: "strut-framing",
+        label: "Strut & Framing",
         itemTypes: [
           {
             slug: "strut-channel",
             label: "Strut Channel",
             keywords: [
-              "strut channel", "Unistrut", "Kindorf", "Superstrut",
-              "framing channel", "slotted channel", "B-Line", "1-5/8 channel",
+              "strut channel", "unistrut", "Kindorf", "Superstrut", "B-Line",
+              "framing channel", "slotted channel", "1-5/8 channel",
               "3/4 strut", "half slot strut", "strut rail",
             ],
           },
           {
-            slug: "strut-fittings",
-            label: "Strut Fittings",
+            slug: "strut-fittings-nuts",
+            label: "Strut Fittings & Nuts",
             keywords: [
-              "strut fitting", "strut bracket", "strut plate", "strut angle",
-              "channel connector", "pipe clamp strut", "beam fitting",
-              "strut post base", "channel nut plate",
+              "strut fitting", "strut nut", "channel nut", "strut splice",
+              "strut bracket", "strut plate", "strut angle", "strut post base",
+              "channel connector nut", "spring nut",
             ],
           },
           {
-            slug: "seismic-bracing",
-            label: "Seismic Bracing",
+            slug: "other-strut-framing",
+            label: "Other Strut & Framing",
             keywords: [
-              "seismic brace", "sway brace", "earthquake brace",
-              "seismic clamp", "seismic strap", "sway strut", "seismic support",
+              "strut framing", "framing hardware", "strut accessory",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "cable-management",
+        label: "Cable Management",
+        itemTypes: [
+          {
+            slug: "cable-ties-zip-ties",
+            label: "Cable Ties & Zip Ties",
+            keywords: [
+              "cable tie", "zip tie", "ty-rap", "ty rap", "nylon tie",
+              "locking tie", "cable strap tie",
+            ],
+          },
+          {
+            slug: "cable-staples-clips",
+            label: "Cable Staples & Clips",
+            keywords: [
+              "cable staple", "cable clip", "wire staple", "romex staple",
+              "NM staple", "cable cleat", "cable fastener clip",
+            ],
+          },
+          {
+            slug: "cable-duct-wiring-duct",
+            label: "Cable Duct & Wiring Duct",
+            keywords: [
+              "cable duct", "wiring duct", "panduit duct", "wire management duct",
+              "slotted duct", "louvered duct",
+            ],
+          },
+          {
+            slug: "other-cable-management",
+            label: "Other Cable Management",
+            keywords: [
+              "cable management", "cable lacing", "hook and loop",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "supports-hangers",
+        label: "Supports & Hangers",
+        itemTypes: [
+          {
+            slug: "hanger-rods-all-thread",
+            label: "Hanger Rods & All-Thread",
+            keywords: [
+              "hanger rod", "all-thread hanger", "threaded rod hanger",
+              "ATR hanger", "rod coupling", "hanger coupler",
+            ],
+          },
+          {
+            slug: "beam-trapeze-hangers",
+            label: "Beam/Trapeze Hangers",
+            keywords: [
+              "beam hanger", "trapeze hanger", "trapeze assembly",
+              "trapeze support", "conduit trapeze", "beam hanger strap",
+            ],
+          },
+          {
+            slug: "pipe-hangers-clamps",
+            label: "Pipe Hangers & Clamps",
+            keywords: [
+              "pipe hanger", "pipe clamp", "conduit hanger", "conduit clamp",
+              "pipe support", "clevis hanger", "J hook", "split ring hanger",
+            ],
+          },
+          {
+            slug: "other-supports-hangers",
+            label: "Other Supports & Hangers",
+            keywords: [
+              "support hanger", "suspension", "wiring support",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 4. Conduit & Raceway ─────────────────────────────────────────────────
   {
     slug: "conduit-raceway",
     label: "Conduit & Raceway",
     color: "#3B82F6",
     subcategories: [
       {
-        slug: "metal-conduit",
-        label: "Metal Conduit",
+        slug: "conduit-by-material",
+        label: "By Material",
         itemTypes: [
           {
             slug: "emt",
@@ -309,6 +378,24 @@ export const TAXONOMY: TaxonomyCategory[] = [
             keywords: [
               "EMT", "electrical metallic tubing", "thin wall",
               "thin-wall conduit", "steel conduit EMT", "EMT conduit",
+              "thinwall conduit",
+            ],
+          },
+          {
+            slug: "pvc-conduit",
+            label: "PVC",
+            keywords: [
+              "PVC conduit", "PVC pipe conduit", "schedule 40 conduit",
+              "schedule 80 conduit", "rigid PVC conduit",
+            ],
+          },
+          {
+            slug: "rmc-rigid-metal",
+            label: "RMC/Rigid Metal",
+            keywords: [
+              "RMC", "GRS", "rigid metallic conduit", "rigid steel conduit",
+              "rigid threaded conduit", "galvanized rigid conduit",
+              "heavy wall conduit", "rigid conduit",
             ],
           },
           {
@@ -320,255 +407,278 @@ export const TAXONOMY: TaxonomyCategory[] = [
             ],
           },
           {
-            slug: "rigid-grs-rmc",
-            label: "Rigid (GRS/RMC)",
-            keywords: [
-              "RMC", "GRS", "rigid metallic conduit", "rigid steel conduit",
-              "rigid threaded conduit", "galvanized rigid conduit",
-              "heavy wall conduit", "rigid conduit",
-            ],
-          },
-          {
-            slug: "flexible-metallic",
-            label: "Flexible Metallic Conduit",
+            slug: "fmc-flexible-metal",
+            label: "FMC/Flexible Metal",
             keywords: [
               "FMC", "flex conduit", "flexible metal conduit", "Greenfield",
               "steel flex", "LFMC", "liquidtight metallic conduit",
-              "liquidtight flex metallic",
+              "liquidtight flex metallic", "flexible metallic",
+            ],
+          },
+          {
+            slug: "ent-smurf-tube",
+            label: "ENT/Smurf Tube",
+            keywords: [
+              "ENT", "smurf tube", "corrugated conduit", "blue flex",
+              "electrical non-metallic tubing", "Carlon ENT",
+            ],
+          },
+          {
+            slug: "other-conduit",
+            label: "Other Conduit",
+            keywords: [
+              "LFNC", "non-metallic liquid tight", "conduit",
             ],
           },
         ],
       },
       {
-        slug: "non-metallic-conduit",
-        label: "Non-Metallic Conduit",
+        slug: "conduit-fittings",
+        label: "Fittings",
         itemTypes: [
           {
-            slug: "ent",
-            label: "ENT",
+            slug: "couplings",
+            label: "Couplings",
             keywords: [
-              "ENT", "smurf tube", "corrugated ENT", "non-metallic flex",
-              "coil conduit", "flexible ENT", "orange flex conduit",
-              "electrical non-metallic tubing",
+              "coupling", "EMT coupling", "PVC coupling", "conduit coupling",
+              "compression coupling", "set screw coupling",
             ],
           },
           {
-            slug: "pvc-conduit",
-            label: "PVC Conduit",
+            slug: "elbows",
+            label: "Elbows",
             keywords: [
-              "PVC conduit", "schedule 40 PVC", "schedule 80 PVC",
-              "gray PVC", "rigid PVC conduit", "sch 40 PVC", "sch 80 PVC",
+              "elbow", "90 degree elbow", "LB", "sweep elbow",
+              "45 elbow", "conduit elbow", "EMT elbow", "PVC elbow",
             ],
           },
           {
-            slug: "hdpe-cpvc",
-            label: "HDPE / CPVC / DB Conduit",
+            slug: "conduit-connectors",
+            label: "Connectors",
             keywords: [
-              "HDPE conduit", "CPVC conduit", "direct burial conduit",
-              "underground conduit", "DB60", "DB120", "plastic duct",
+              "conduit connector", "EMT connector", "set screw connector",
+              "compression connector", "snap-in connector", "flex connector",
+              "liquidtight connector",
             ],
           },
           {
-            slug: "lfnc",
-            label: "LFNC",
+            slug: "condulets-conduit-bodies",
+            label: "Condulets/Conduit Bodies",
             keywords: [
-              "LFNC", "liquidtight non-metallic", "non-metallic liquidtight",
-              "liquid tight non-metallic flex",
+              "condulet", "conduit body", "LB fitting", "LL fitting", "LR fitting",
+              "T body", "C body", "conduit body cover",
+            ],
+          },
+          {
+            slug: "straps-hangers",
+            label: "Straps & Hangers",
+            keywords: [
+              "conduit strap", "one-hole strap", "two-hole strap",
+              "EMT strap", "PVC strap", "conduit clamp strap",
+              "rigid strap",
+            ],
+          },
+          {
+            slug: "other-conduit-fittings",
+            label: "Other Fittings",
+            keywords: [
+              "conduit fitting", "offset", "conduit saddle", "conduit locator",
             ],
           },
         ],
       },
       {
-        slug: "raceway-duct",
-        label: "Raceway & Duct",
+        slug: "wireways-cable-tray",
+        label: "Wireways & Cable Tray",
         itemTypes: [
           {
-            slug: "wireway-gutter",
-            label: "Wireway & Gutter",
+            slug: "metal-wireways-panduit",
+            label: "Metal Wireways/Panduit Duct",
             keywords: [
-              "wireway", "wire gutter", "lay-in wireway", "hinged wireway",
-              "screw-cover wireway", "auxiliary gutter", "pull-through",
-              "trough wireway",
+              "wireway", "wireway fitting", "sheet metal wireway",
+              "panduit wireway", "lay-in wireway", "auxiliary gutter",
             ],
           },
           {
-            slug: "cable-tray",
-            label: "Cable Tray",
+            slug: "ladder-cable-tray",
+            label: "Ladder Cable Tray",
             keywords: [
-              "cable tray", "ladder tray", "ventilated trough",
-              "perforated tray", "cable tray section", "wire basket tray",
-              "center spine tray",
+              "ladder tray", "cable ladder", "ladder rack", "cable tray ladder",
             ],
           },
           {
-            slug: "surface-raceway",
-            label: "Surface Raceway",
+            slug: "solid-bottom-cable-tray",
+            label: "Solid Bottom Cable Tray",
             keywords: [
-              "surface raceway", "Wiremold", "raceway duct", "pvc raceway",
-              "floor raceway", "cord cover", "cable cover", "baseboard raceway",
+              "solid bottom tray", "solid tray", "solid cable tray",
+              "perforated tray", "ventilated tray",
+            ],
+          },
+          {
+            slug: "other-wireways-cable-tray",
+            label: "Other Wireways & Cable Tray",
+            keywords: [
+              "cable tray", "wire tray", "tray fitting",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 5. Motors, Controls & Sensors ───────────────────────────────────────
   {
     slug: "motors-controls-sensors",
     label: "Motors, Controls & Sensors",
-    color: "#EF4444",
+    color: "#F59E0B",
     subcategories: [
       {
-        slug: "starters-contactors",
-        label: "Motor Starters & Contactors",
+        slug: "motor-controls",
+        label: "Motor Controls",
         itemTypes: [
           {
-            slug: "manual-motor-starters",
-            label: "Manual Motor Starters",
+            slug: "starters-contactors-vfds",
+            label: "Starters/Contactors/VFDs",
             keywords: [
-              "manual motor starter", "motor disconnect switch",
-              "motor protection switch", "pushbutton motor starter",
-              "manual starter", "fractional motor starter",
-            ],
-          },
-          {
-            slug: "magnetic-motor-starters",
-            label: "Magnetic Motor Starters",
-            keywords: [
-              "magnetic motor starter", "NEMA motor starter",
-              "full voltage starter", "across-the-line starter",
-              "motor starter", "motor starter kit", "combination starter",
-            ],
-          },
-          {
-            slug: "contactors",
-            label: "Contactors",
-            keywords: [
-              "contactor", "definite purpose contactor", "lighting contactor",
-              "IEC contactor", "NEMA contactor", "3-pole contactor",
-              "power contactor", "DP contactor",
+              "starter", "contactor", "VFD", "motor starter", "variable frequency drive",
+              "AC drive", "motor drive", "soft starter", "across-the-line starter",
             ],
           },
         ],
       },
       {
-        slug: "variable-frequency-drives",
-        label: "Variable Frequency Drives",
+        slug: "relays-timers",
+        label: "Relays & Timers",
         itemTypes: [
           {
-            slug: "vfd",
-            label: "Variable Frequency Drives",
+            slug: "control-relays",
+            label: "Control Relays",
             keywords: [
-              "variable frequency drive", "VFD", "variable speed drive",
-              "AC drive", "inverter drive", "frequency inverter",
-              "adjustable speed drive", "soft starter",
+              "relay", "control relay", "ice cube relay", "DPDT relay",
+              "latching relay", "coil relay", "general purpose relay",
+            ],
+          },
+          {
+            slug: "timer-switches-astronomic",
+            label: "Timer Switches & Astronomic Timers",
+            keywords: [
+              "timer", "timer switch", "astronomic timer", "time clock",
+              "digital timer", "mechanical timer", "7-day timer",
+            ],
+          },
+          {
+            slug: "other-relays-timers",
+            label: "Other Relays & Timers",
+            keywords: [
+              "relay module", "solid state relay", "sequencer",
             ],
           },
         ],
       },
       {
-        slug: "push-buttons-pilot",
-        label: "Push Buttons & Pilot Devices",
+        slug: "sensors",
+        label: "Sensors",
+        itemTypes: [
+          {
+            slug: "photocells-light-sensors",
+            label: "Photocells/Light Sensors",
+            keywords: [
+              "photocell", "photo sensor", "light sensor", "dusk-to-dawn",
+              "photocontrol", "daylight sensor", "photoeye",
+            ],
+          },
+          {
+            slug: "temp-sensors-thermostats",
+            label: "Temperature Sensors & Thermostats",
+            keywords: [
+              "temperature sensor", "thermostat sensor", "temp sensor",
+              "RTD sensor", "thermocouple", "temperature transmitter",
+            ],
+          },
+          {
+            slug: "current-sensors-ct-clamps",
+            label: "Current Sensors & CT Clamps",
+            keywords: [
+              "current sensor", "CT clamp", "current transformer",
+              "split core CT", "solid core CT", "current transducer",
+            ],
+          },
+          {
+            slug: "other-sensors",
+            label: "Other Sensors",
+            keywords: [
+              "proximity sensor", "pressure sensor", "flow sensor",
+              "level sensor", "sensor module",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "pilot-devices",
+        label: "Pilot Devices",
         itemTypes: [
           {
             slug: "push-buttons",
-            label: "Push Buttons & Operator Stations",
+            label: "Push Buttons",
             keywords: [
-              "push button", "pushbutton", "pilot light", "selector switch",
-              "pilot device", "stop start button", "pushbutton station",
-              "operator station",
+              "push button", "pushbutton", "momentary switch",
+              "start button", "stop button", "E-stop", "emergency stop button",
             ],
           },
           {
-            slug: "estop-operators",
-            label: "E-Stop & Enclosure Operators",
+            slug: "pilot-lights-indicators",
+            label: "Pilot Lights & Indicators",
             keywords: [
-              "E-stop", "emergency stop", "maintained contact",
-              "indicating light", "selector", "operator", "enclosure operator",
-              "mushroom head", "palm button",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "sensors-timers",
-        label: "Sensors & Timers",
-        itemTypes: [
-          {
-            slug: "occupancy-sensors",
-            label: "Occupancy & Motion Sensors",
-            keywords: [
-              "occupancy sensor", "motion sensor", "PIR sensor",
-              "passive infrared", "vacancy sensor", "dual tech sensor",
-              "wall switch sensor", "ceiling sensor", "line voltage sensor",
+              "pilot light", "indicator light", "LED indicator",
+              "tower light", "stack light", "signal light",
             ],
           },
           {
-            slug: "timers-clocks",
-            label: "Timers & Time Clocks",
+            slug: "selector-switches",
+            label: "Selector Switches",
             keywords: [
-              "timer", "time clock", "astronomical timer",
-              "mechanical timer", "digital timer", "7-day timer",
-              "24-hour timer", "NSI timer", "outdoor timer",
+              "selector switch", "rotary switch", "key switch",
+              "hand-off-auto", "HOA switch",
             ],
           },
           {
-            slug: "photocontrols",
-            label: "Photocontrols & Photocells",
+            slug: "other-pilot-devices",
+            label: "Other Pilot Devices",
             keywords: [
-              "photocell", "photocontrol", "dusk to dawn",
-              "twist-lock photocell", "photoelectric control",
-              "dusk-to-dawn control", "photo eye",
-            ],
-          },
-          {
-            slug: "proximity-limit-switches",
-            label: "Proximity & Limit Switches",
-            keywords: [
-              "proximity switch", "limit switch", "float switch",
-              "level switch", "reed switch", "snap action switch",
-              "prox switch",
+              "pilot device", "control station", "pendant station",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 6. Breakers ─────────────────────────────────────────────────────────
   {
-    slug: "breakers-fuses",
-    label: "Breakers & Fuses",
-    color: "#F97316",
+    slug: "breakers-panels",
+    label: "Breakers",
+    color: "#EF4444",
     subcategories: [
       {
-        slug: "circuit-breakers",
-        label: "Circuit Breakers",
+        slug: "breakers-by-type",
+        label: "By Type",
         itemTypes: [
           {
-            slug: "single-pole-breakers",
-            label: "Single Pole Breakers",
+            slug: "standard-circuit-breakers",
+            label: "Standard Circuit Breakers",
             keywords: [
-              "single pole breaker", "1 pole breaker", "1P breaker",
-              "single pole circuit breaker", "SP breaker",
-              "BR120", "BR115", "QO120", "QO115", "CH120", "CH115",
-              "HOM115", "HOM120",
+              "circuit breaker", "breaker", "QO breaker", "HOM breaker",
+              "BR breaker", "Eaton breaker", "Square D breaker",
+              "Siemens breaker", "GE breaker", "Murray breaker",
+              "thermal magnetic breaker", "single pole breaker", "double pole breaker",
             ],
           },
           {
-            slug: "double-pole-breakers",
-            label: "Double Pole Breakers",
+            slug: "gfci-breakers",
+            label: "GFCI Breakers",
             keywords: [
-              "double pole breaker", "2 pole breaker", "2P breaker",
-              "240V breaker", "double pole circuit breaker",
-              "BR230", "BR240", "QO230", "QO240", "CH230", "CH240",
-              "HOM230", "HOM260",
-            ],
-          },
-          {
-            slug: "three-pole-breakers",
-            label: "3-Pole Breakers",
-            keywords: [
-              "3 pole breaker", "three pole breaker", "3P breaker",
-              "motor branch breaker", "three phase breaker",
-              "3 pole circuit breaker", "3P circuit breaker",
+              "GFCI breaker", "ground fault breaker", "GFI breaker",
+              "GFCI circuit breaker", "ground fault circuit interrupter breaker",
             ],
           },
           {
@@ -576,40 +686,128 @@ export const TAXONOMY: TaxonomyCategory[] = [
             label: "AFCI Breakers",
             keywords: [
               "AFCI breaker", "arc fault breaker", "arc fault circuit interrupter",
-              "CAFCI", "combination arc fault", "arc fault breaker",
+              "AFCI circuit breaker", "dual function breaker",
+            ],
+          },
+        ],
+      },
+    ],
+  },
+
+  // ── 7. Panels & Distribution ─────────────────────────────────────────────
+  {
+    slug: "panels-distribution",
+    label: "Panels & Distribution",
+    color: "#14B8A6",
+    subcategories: [
+      {
+        slug: "panels-by-type",
+        label: "By Type",
+        itemTypes: [
+          {
+            slug: "load-centers-panelboards",
+            label: "Load Centers/Panelboards",
+            keywords: [
+              "load center", "panelboard", "main panel", "sub panel", "subpanel",
+              "residential panel", "commercial panel", "main breaker panel",
+              "main lug panel", "distribution panel",
             ],
           },
           {
-            slug: "gfci-breakers",
-            label: "GFCI Breakers",
+            slug: "meter-sockets-meter-mains",
+            label: "Meter Sockets/Meter Mains",
             keywords: [
-              "GFCI breaker", "GFCI circuit breaker", "ground fault breaker",
-              "GF breaker", "ground fault circuit interrupter breaker",
+              "meter socket", "meter main", "meter base", "meter enclosure",
+              "ringless meter", "lever bypass meter", "meter combo",
             ],
           },
           {
-            slug: "afci-gfci-combo-breakers",
-            label: "Dual Function AFCI/GFCI Breakers",
+            slug: "other-panels",
+            label: "Other Panels",
             keywords: [
-              "dual function breaker", "AFCI GFCI breaker",
-              "combination AFCI GFCI", "dual function circuit interrupter",
+              "switchboard", "switchgear", "distribution board", "PDU",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "disconnects-safety-switches",
+        label: "Disconnects & Safety Switches",
+        itemTypes: [
+          {
+            slug: "fusible-safety-switches",
+            label: "Fusible Safety Switches",
+            keywords: [
+              "fusible safety switch", "fused disconnect", "fusible disconnect",
+              "safety switch fused", "HD fusible", "DH fusible", "GD fusible",
             ],
           },
           {
-            slug: "tandem-breakers",
-            label: "Tandem / Duplex Breakers",
+            slug: "non-fusible-safety-switches",
+            label: "Non-Fusible Safety Switches",
             keywords: [
-              "tandem breaker", "duplex breaker", "slimline breaker",
-              "twin breaker", "half-size breaker", "CTL breaker",
+              "non-fusible safety switch", "non fusible disconnect",
+              "safety switch non-fused", "HD non-fusible", "AC disconnect switch",
             ],
           },
           {
-            slug: "main-breakers",
-            label: "Main Breakers",
+            slug: "other-disconnects",
+            label: "Other Disconnects",
             keywords: [
-              "main breaker", "main circuit breaker", "main lug breaker",
-              "200A main breaker", "100A main breaker", "main disconnect breaker",
-              "service entrance breaker",
+              "disconnect switch", "motor disconnect", "enclosed disconnect",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "surge-protection",
+        label: "Surge Protection",
+        itemTypes: [
+          {
+            slug: "whole-house-panel-spds",
+            label: "Whole-House/Panel SPDs",
+            keywords: [
+              "SPD", "surge protective device", "whole house surge",
+              "panel surge protector", "type 1 SPD", "type 2 SPD",
+              "service entrance surge",
+            ],
+          },
+          {
+            slug: "point-of-use-surge-protectors",
+            label: "Point-of-Use Surge Protectors",
+            keywords: [
+              "surge protector", "point of use surge", "outlet surge strip",
+              "power strip surge",
+            ],
+          },
+          {
+            slug: "other-surge-protection",
+            label: "Other Surge Protection",
+            keywords: [
+              "transient voltage suppressor", "MOV", "TVS diode",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "transformers",
+        label: "Transformers",
+        itemTypes: [
+          {
+            slug: "control-buck-boost-transformers",
+            label: "Control/Buck-Boost Transformers",
+            keywords: [
+              "transformer", "control transformer", "buck boost transformer",
+              "step down transformer", "isolation transformer",
+              "machine tool transformer", "CPT",
+            ],
+          },
+          {
+            slug: "other-transformers",
+            label: "Other Transformers",
+            keywords: [
+              "dry type transformer", "distribution transformer",
+              "autotransformer",
             ],
           },
         ],
@@ -622,1049 +820,985 @@ export const TAXONOMY: TaxonomyCategory[] = [
             slug: "cartridge-fuses",
             label: "Cartridge Fuses",
             keywords: [
-              "cartridge fuse", "Class J fuse", "Class CC fuse",
-              "Class RK1 fuse", "Class RK5 fuse", "Buss fuse",
-              "LPS fuse", "LPN fuse", "Fusetron fuse",
-              "current limiting fuse", "time delay fuse",
+              "fuse", "cartridge fuse", "fusetron", "time delay fuse",
+              "fast acting fuse", "current limiting fuse", "RK5 fuse",
+              "Class J fuse", "Class CC fuse", "Fusetron fuse",
             ],
           },
           {
-            slug: "plug-fuses",
-            label: "Plug Fuses",
+            slug: "glass-automotive-fuses",
+            label: "Glass/Automotive Fuses",
             keywords: [
-              "plug fuse", "Edison fuse", "type T fuse", "type P fuse",
-              "rejection fuse", "S-type fuse", "tamper-proof fuse",
-              "screw in fuse",
+              "glass fuse", "automotive fuse", "mini fuse", "blade fuse",
+              "AGC fuse", "MDL fuse", "ABC fuse",
             ],
           },
           {
-            slug: "fuse-holders",
-            label: "Fuse Holders & Pullers",
+            slug: "other-fuses",
+            label: "Other Fuses",
             keywords: [
-              "fuse holder", "fuse block", "fuse puller", "fuse clip",
-              "fuse panel holder", "cartridge fuse holder", "midget fuse block",
+              "fuse block replacement", "fuse kit",
             ],
           },
         ],
       },
     ],
   },
-  {
-    slug: "panels-distribution",
-    label: "Panels & Distribution",
-    color: "#06B6D4",
-    subcategories: [
-      {
-        slug: "load-centers",
-        label: "Load Centers & Panelboards",
-        itemTypes: [
-          {
-            slug: "residential-load-centers",
-            label: "Residential Load Centers",
-            keywords: [
-              "load center", "electrical panel", "breaker panel",
-              "main panel", "sub panel", "subpanel",
-              "200A panel", "100A panel", "main breaker load center",
-              "main lug panel", "QO panel", "BR panel", "CH panel", "HOM panel",
-            ],
-          },
-          {
-            slug: "commercial-panelboards",
-            label: "Commercial Panelboards",
-            keywords: [
-              "NEMA 1 panel", "lighting and appliance panelboard",
-              "panelboard", "NQ panel", "NF panel", "LP panel",
-              "circuit directory panel", "commercial panel",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "meter-service",
-        label: "Meter Sockets & Service Entrance",
-        itemTypes: [
-          {
-            slug: "meter-sockets",
-            label: "Meter Sockets",
-            keywords: [
-              "meter socket", "meter base", "meter can", "meter box",
-              "ringless meter socket", "overhead meter socket",
-              "underground meter socket", "200A meter base", "200A meter socket",
-            ],
-          },
-          {
-            slug: "ct-cabinets",
-            label: "CT Cabinets",
-            keywords: [
-              "CT cabinet", "current transformer cabinet",
-              "metering cabinet", "CT metering enclosure",
-            ],
-          },
-          {
-            slug: "service-entrance",
-            label: "Service Entrance Equipment",
-            keywords: [
-              "service entrance equipment", "service disconnect",
-              "main service", "utility meter disconnect",
-              "master disconnect", "weatherhead assembly",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "transfer-accessories",
-        label: "Transfer Switches & Bus Accessories",
-        itemTypes: [
-          {
-            slug: "transfer-switches",
-            label: "Transfer Switches",
-            keywords: [
-              "transfer switch", "automatic transfer switch", "ATS",
-              "manual transfer switch", "generator transfer switch",
-              "interlock kit", "generator interlock", "MTS",
-            ],
-          },
-          {
-            slug: "bus-bars",
-            label: "Bus Bars & Neutral Kits",
-            keywords: [
-              "bus bar", "neutral bar", "ground bar", "neutral kit",
-              "grounding bar", "main bonding jumper", "bonding screw",
-              "neutral assembly",
-            ],
-          },
-        ],
-      },
-    ],
-  },
+
+  // ── 8. Fittings ─────────────────────────────────────────────────────────
   {
     slug: "fittings",
     label: "Fittings",
-    color: "#84CC16",
+    color: "#6366F1",
     subcategories: [
       {
-        slug: "emt-fittings",
-        label: "EMT Fittings",
+        slug: "grounding-fittings",
+        label: "Grounding Fittings",
         itemTypes: [
           {
-            slug: "emt-couplings",
-            label: "EMT Couplings",
+            slug: "ground-rods-clamps",
+            label: "Ground Rods & Clamps",
             keywords: [
-              "EMT coupling", "set screw coupling EMT", "compression coupling EMT",
-              "EMT set screw coupling", "EMT compression coupling",
+              "ground rod", "grounding rod", "ground clamp", "earth rod",
+              "copper ground rod", "ground rod clamp", "rod to wire clamp",
             ],
           },
           {
-            slug: "emt-connectors",
-            label: "EMT Connectors",
+            slug: "grounding-connectors-clamps",
+            label: "Grounding Connectors & Clamps",
             keywords: [
-              "EMT connector", "EMT set screw connector",
-              "EMT compression connector", "snap-in connector EMT",
-              "EMT connector for box",
+              "grounding connector", "grounding clamp", "ground lug",
+              "ground bushing", "grounding wedge clamp", "acorn connector",
+              "grounding coupling",
             ],
           },
           {
-            slug: "conduit-nipples",
-            label: "Conduit Nipples & Chase",
+            slug: "other-grounding-fittings",
+            label: "Other Grounding Fittings",
             keywords: [
-              "conduit nipple", "close nipple", "chase nipple",
-              "offset nipple", "hex nipple conduit",
-              "chase conduit", "all-thread nipple",
+              "grounding fitting", "ground pigtail", "EGB",
             ],
           },
         ],
       },
       {
-        slug: "rigid-imc-fittings",
-        label: "Rigid / IMC Fittings",
-        itemTypes: [
-          {
-            slug: "rigid-couplings",
-            label: "Rigid / IMC Couplings",
-            keywords: [
-              "rigid coupling", "IMC coupling", "GRS coupling",
-              "threaded coupling rigid", "threaded IMC coupling",
-            ],
-          },
-          {
-            slug: "rigid-connectors",
-            label: "Rigid / IMC Connectors",
-            keywords: [
-              "rigid connector", "IMC connector",
-              "insulated throat connector rigid",
-              "rigid conduit connector",
-            ],
-          },
-          {
-            slug: "erickson-couplings",
-            label: "Erickson / Union Couplings",
-            keywords: [
-              "Erickson coupling", "union coupling",
-              "three-piece coupling", "3-piece coupling", "raintight coupling",
-            ],
-          },
-          {
-            slug: "rigid-elbows-bodies",
-            label: "Rigid Elbows & Bodies",
-            keywords: [
-              "rigid elbow", "IMC elbow", "GRS elbow",
-              "90 degree rigid", "45 degree rigid", "condulet rigid",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "pvc-fittings",
-        label: "PVC Fittings",
-        itemTypes: [
-          {
-            slug: "pvc-couplings-adapters",
-            label: "PVC Couplings & Adapters",
-            keywords: [
-              "PVC coupling", "PVC conduit coupling", "PVC male adapter",
-              "PVC female adapter", "PVC terminal adapter",
-            ],
-          },
-          {
-            slug: "pvc-bodies",
-            label: "PVC Conduit Bodies",
-            keywords: [
-              "PVC LB", "conduit body PVC", "LB body PVC", "LR body PVC",
-              "LL body PVC", "T body PVC", "condulet PVC", "PVC conduit body",
-            ],
-          },
-          {
-            slug: "pvc-elbows",
-            label: "PVC Elbows",
-            keywords: [
-              "PVC elbow", "PVC conduit elbow", "PVC 90", "PVC sweep elbow",
-              "bell end elbow PVC", "PVC 45 elbow", "sch 40 elbow PVC",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "flexible-fittings",
-        label: "Flexible Fittings",
+        slug: "liquidtight-fittings",
+        label: "Liquidtight Fittings",
         itemTypes: [
           {
             slug: "liquidtight-connectors",
-            label: "Liquid-Tight Connectors",
+            label: "Liquidtight Connectors",
             keywords: [
-              "liquidtight connector", "liquid tight fitting",
-              "LFMC connector", "LFNC connector",
-              "flex conduit connector liquidtight",
-              "liquidtight straight connector", "liquidtight 90 connector",
+              "liquidtight connector", "liquid tight connector",
+              "LFMC connector", "LFNC connector", "straight liquidtight",
+              "90 liquidtight", "flex liquidtight",
             ],
           },
           {
-            slug: "fmc-connectors",
-            label: "FMC Connectors",
+            slug: "other-liquidtight-fittings",
+            label: "Other Liquidtight Fittings",
             keywords: [
-              "FMC connector", "flexible conduit connector",
-              "Greenfield connector", "flex conduit fitting",
-              "flexible metallic connector",
-            ],
-          },
-          {
-            slug: "strain-relief",
-            label: "Strain Relief & Cord Grips",
-            keywords: [
-              "strain relief", "cord grip", "cable grip",
-              "kellems grip", "wire mesh grip", "cord connector strain",
-              "nylon strain relief", "metal strain relief",
+              "liquidtight fitting", "liquid tight fitting",
             ],
           },
         ],
       },
       {
-        slug: "conduit-bodies-seals",
-        label: "Conduit Bodies & Seals",
+        slug: "reducers-adapters",
+        label: "Reducers & Adapters",
         itemTypes: [
           {
-            slug: "lb-lr-ll-bodies",
-            label: "LB / LR / LL Bodies",
+            slug: "conduit-reducers-adapters",
+            label: "Conduit Reducers & Adapters",
             keywords: [
-              "LB body", "LR body", "LL body", "condulet",
-              "conduit body", "Form 35", "Form 8", "unilet body",
-              "mogul conduit body", "conduit elbow body",
+              "conduit reducer", "conduit adapter", "reducing bushing",
+              "conduit bushing", "knockout adapter", "conduit chase nipple",
             ],
           },
           {
-            slug: "t-c-bodies",
-            label: "T & C Bodies",
+            slug: "nipples-extensions",
+            label: "Nipples & Extensions",
             keywords: [
-              "T body", "C body", "condulet T", "condulet C",
-              "straight pull body", "conduit body T", "conduit body C",
+              "nipple", "conduit nipple", "close nipple",
+              "extension nipple", "conduit extension",
             ],
           },
           {
-            slug: "sealing-fittings",
-            label: "Sealing Fittings",
+            slug: "other-reducers-adapters",
+            label: "Other Reducers & Adapters",
             keywords: [
-              "sealing fitting", "sealtite", "EYS sealing fitting",
-              "EYD sealing fitting", "explosionproof sealing fitting",
-              "drain seal", "mogul seal", "EZS seal",
+              "conduit union", "conduit offset", "offset fitting",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 9. HVAC ──────────────────────────────────────────────────────────────
   {
     slug: "hvac",
-    label: "HVAC Electrical",
-    color: "#EC4899",
+    label: "HVAC",
+    color: "#22D3EE",
     subcategories: [
       {
-        slug: "hvac-electrical",
-        label: "HVAC Controls & Wiring",
+        slug: "hvac-controls",
+        label: "HVAC Controls",
         itemTypes: [
           {
-            slug: "hvac-disconnects",
-            label: "HVAC Disconnect Switches",
+            slug: "thermostats",
+            label: "Thermostats",
             keywords: [
-              "HVAC disconnect", "AC disconnect", "air conditioner disconnect",
-              "non-fused disconnect", "fused disconnect", "pull-out disconnect",
-              "60A disconnect", "30A disconnect", "safety switch HVAC",
-              "air conditioner safety switch",
+              "thermostat", "HVAC thermostat", "programmable thermostat",
+              "smart thermostat", "line voltage thermostat", "Honeywell thermostat",
+              "White Rodgers thermostat",
             ],
           },
           {
-            slug: "hvac-contactors-capacitors",
-            label: "Contactors & Capacitors",
+            slug: "hvac-contactors",
+            label: "HVAC Contactors",
             keywords: [
-              "HVAC contactor", "run capacitor", "start capacitor",
-              "motor capacitor", "dual run capacitor", "run and start capacitor",
-              "AC capacitor", "HVAC run capacitor",
+              "HVAC contactor", "air conditioner contactor", "AC contactor",
+              "condenser contactor", "compressor contactor",
             ],
           },
           {
-            slug: "thermostat-wire",
-            label: "Thermostat Wire & Cable",
+            slug: "other-hvac-controls",
+            label: "Other HVAC Controls",
             keywords: [
-              "thermostat wire", "thermostat cable",
-              "18-5 thermostat", "18-8 thermostat", "low voltage wire",
-              "stat wire", "2 wire thermostat", "thermostat control wire",
+              "HVAC control board", "defrost timer", "sequencer HVAC",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "hvac-motors-components",
+        label: "HVAC Motors & Components",
+        itemTypes: [
+          {
+            slug: "hvac-fan-blower-motors",
+            label: "HVAC Fan & Blower Motors",
+            keywords: [
+              "fan motor", "blower motor", "condenser fan motor",
+              "furnace blower motor", "ECM motor", "draft inducer motor",
+              "HVAC motor",
             ],
           },
           {
-            slug: "low-voltage-controls",
-            label: "Low Voltage Controls",
+            slug: "capacitors-run-start",
+            label: "Capacitors (Run/Start)",
             keywords: [
-              "thermostat relay", "24V relay", "HVAC relay",
-              "low voltage control", "zone valve", "zone controller",
-              "24 volt relay", "low voltage switching relay",
+              "capacitor", "run capacitor", "start capacitor",
+              "HVAC capacitor", "dual run capacitor", "round capacitor",
+              "oval capacitor", "AC capacitor",
+            ],
+          },
+          {
+            slug: "other-hvac-components",
+            label: "Other HVAC Components",
+            keywords: [
+              "HVAC component", "crankcase heater", "hard start kit",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "hvac-disconnects-protection",
+        label: "HVAC Disconnects & Protection",
+        itemTypes: [
+          {
+            slug: "ac-disconnect-switches",
+            label: "AC Disconnect Switches",
+            keywords: [
+              "AC disconnect", "air conditioner disconnect", "pull-out disconnect",
+              "HVAC disconnect", "air handler disconnect", "heat pump disconnect",
+            ],
+          },
+          {
+            slug: "fuse-holders-blocks",
+            label: "Fuse Holders & Blocks",
+            keywords: [
+              "fuse holder", "fuse block", "fuse holder block",
+              "inline fuse holder", "fuse clip", "class R fuse block",
+            ],
+          },
+          {
+            slug: "other-hvac-protection",
+            label: "Other HVAC Protection",
+            keywords: [
+              "HVAC protection", "surge protection HVAC", "overvoltage HVAC",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 10. Lighting ─────────────────────────────────────────────────────────
   {
     slug: "lighting",
     label: "Lighting",
     color: "#FBBF24",
     subcategories: [
       {
-        slug: "commercial-luminaires",
-        label: "Commercial Luminaires",
+        slug: "lighting-by-type",
+        label: "By Type",
         itemTypes: [
           {
-            slug: "led-fixtures",
-            label: "LED Fixtures",
+            slug: "led-bulbs",
+            label: "LED Bulbs",
             keywords: [
-              "LED fixture", "LED luminaire", "LED troffer", "LED panel light",
-              "LED wrap", "LED strip light fixture", "LED high bay",
-              "vapor tight LED", "LED shop light", "LED area light",
-              "LED flood light",
+              "LED bulb", "LED lamp", "LED A19", "LED PAR", "LED MR16",
+              "LED GU10", "LED filament", "LED retrofit", "LED light bulb",
             ],
           },
           {
-            slug: "hid-fixtures",
-            label: "HID Fixtures",
+            slug: "fluorescent",
+            label: "Fluorescent",
             keywords: [
-              "HID fixture", "metal halide fixture", "high pressure sodium fixture",
-              "HPS fixture", "MH fixture", "high bay HID", "shoebox fixture HID",
-              "HID area light",
+              "fluorescent", "fluorescent lamp", "T8 lamp", "T12 lamp",
+              "CFL", "compact fluorescent", "T5 lamp", "F32T8",
             ],
           },
           {
-            slug: "fluorescent-fixtures",
-            label: "Fluorescent Fixtures",
+            slug: "fixtures",
+            label: "Fixtures",
             keywords: [
-              "fluorescent fixture", "T8 fixture", "T5 fixture",
-              "shop light fluorescent", "strip fixture",
-              "vapor tight fluorescent", "2x4 fluorescent", "4ft fluorescent",
+              "fixture", "light fixture", "luminaire", "LED fixture",
+              "wraparound", "strip fixture", "vapor tight", "high bay",
+              "low bay", "wall pack", "area light",
             ],
           },
           {
-            slug: "exit-emergency-lights",
-            label: "Exit & Emergency Lights",
+            slug: "recessed-cans",
+            label: "Recessed/Cans",
             keywords: [
-              "exit light", "emergency light", "exit sign",
-              "combo exit emergency", "LED exit sign", "bug eye emergency",
-              "twin head emergency", "emergency unit",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "lamps-bulbs",
-        label: "Lamps & Bulbs",
-        itemTypes: [
-          {
-            slug: "led-lamps",
-            label: "LED Lamps",
-            keywords: [
-              "LED bulb", "LED lamp", "A19 LED", "BR30 LED", "PAR38 LED",
-              "LED tube", "T8 LED tube", "LED retrofit lamp", "LED MR16",
-              "LED corn lamp",
+              "recessed", "can light", "recessed fixture", "downlight",
+              "pot light", "recess housing", "LED can", "IC rated recessed",
             ],
           },
           {
-            slug: "hid-lamps",
-            label: "HID Lamps",
+            slug: "other-lighting",
+            label: "Other Lighting",
             keywords: [
-              "metal halide lamp", "high pressure sodium lamp",
-              "mercury vapor lamp", "HID lamp", "MH lamp", "HPS lamp", "MV lamp",
-              "ED28 lamp", "ED37 lamp",
-            ],
-          },
-          {
-            slug: "fluorescent-lamps",
-            label: "Fluorescent Lamps",
-            keywords: [
-              "fluorescent lamp", "T8 lamp", "T12 lamp", "T5 lamp",
-              "linear fluorescent", "CFL lamp", "compact fluorescent",
-              "F32T8 lamp", "F40T12 lamp",
+              "HID lamp", "metal halide", "high pressure sodium", "ballast",
             ],
           },
         ],
       },
       {
         slug: "lighting-controls",
-        label: "Lighting Controls & Ballasts",
+        label: "Lighting Controls",
         itemTypes: [
           {
-            slug: "led-drivers",
-            label: "LED Drivers",
+            slug: "daylight-photocell-controls",
+            label: "Daylight/Photocell Controls",
             keywords: [
-              "LED driver", "constant current driver", "constant voltage driver",
-              "emergency driver", "LED power supply", "dimmable LED driver",
+              "photocell control", "daylight sensor", "photocontrol switch",
+              "dusk to dawn control", "light sensitive switch",
             ],
           },
           {
-            slug: "ballasts",
-            label: "Ballasts",
+            slug: "motion-occupancy-controls",
+            label: "Motion & Occupancy Controls",
             keywords: [
-              "ballast", "T8 ballast", "fluorescent ballast",
-              "electronic ballast", "magnetic ballast", "HID ballast",
-              "CWA ballast", "HX-HPF ballast", "F32T8 ballast",
+              "motion sensor switch", "occupancy sensor switch",
+              "vacancy sensor", "PIR switch", "motion lighting switch",
+            ],
+          },
+          {
+            slug: "dimmer-controls",
+            label: "Dimmer Controls",
+            keywords: [
+              "dimmer", "dimmer switch", "0-10V dimmer", "LED dimmer",
+              "Lutron dimmer", "Leviton dimmer", "slide dimmer",
+            ],
+          },
+          {
+            slug: "other-lighting-controls",
+            label: "Other Lighting Controls",
+            keywords: [
+              "lighting control system", "relay panel lighting",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "emergency-exit-lighting",
+        label: "Emergency & Exit Lighting",
+        itemTypes: [
+          {
+            slug: "exit-signs",
+            label: "Exit Signs",
+            keywords: [
+              "exit sign", "LED exit", "exit light", "combination exit",
+              "exit sign battery", "illuminated exit",
+            ],
+          },
+          {
+            slug: "emergency-lighting-units",
+            label: "Emergency Lighting Units",
+            keywords: [
+              "emergency light", "emergency lighting", "inverter backup",
+              "bug eye light", "emergency light fixture",
+              "emergency ballast", "self-contained emergency",
+            ],
+          },
+          {
+            slug: "other-emergency-lighting",
+            label: "Other Emergency Lighting",
+            keywords: [
+              "emergency backup", "central inverter", "emergency transfer",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 11. Line Construction Material ───────────────────────────────────────
   {
     slug: "line-construction",
-    label: "Line Construction",
-    color: "#6366F1",
+    label: "Line Construction Material",
+    color: "#84CC16",
     subcategories: [
       {
-        slug: "utility-hardware",
-        label: "Utility Hardware",
+        slug: "overhead-wire-cable",
+        label: "Overhead Wire & Cable",
+        itemTypes: [
+          {
+            slug: "triplex-quadruplex-urd",
+            label: "Triplex/Quadruplex URD",
+            keywords: [
+              "triplex", "quadruplex", "duplex URD", "overhead triplex",
+              "aerial cable", "service drop triplex",
+            ],
+          },
+          {
+            slug: "aac-acsr-overhead",
+            label: "AAC/ACSR Overhead Conductors",
+            keywords: [
+              "AAC", "ACSR", "overhead conductor", "bare conductor",
+              "aluminum conductor steel reinforced", "all aluminum conductor",
+              "stranded overhead",
+            ],
+          },
+          {
+            slug: "other-overhead-wire",
+            label: "Other Overhead Wire",
+            keywords: [
+              "messenger cable", "overhead wire", "aerial bundled cable",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "pole-hardware-insulators",
+        label: "Pole Hardware & Insulators",
         itemTypes: [
           {
             slug: "insulators",
             label: "Insulators",
             keywords: [
-              "insulator", "dead end insulator", "strain insulator",
-              "suspension insulator", "porcelain insulator", "glass insulator",
-              "standoff insulator", "guy insulator",
+              "insulator", "strain insulator", "line insulator",
+              "pin insulator", "disc insulator", "suspension insulator",
             ],
           },
           {
-            slug: "crossarms-hardware",
-            label: "Crossarms & Hardware",
+            slug: "deadend-strain-clamps",
+            label: "Deadend & Strain Clamps",
             keywords: [
-              "crossarm", "crossarm brace", "cross arm bolt", "gain mounting",
-              "lag screw insulator", "rack insulator", "crossarm strap",
+              "deadend", "dead end clamp", "strain clamp", "preformed deadend",
+              "compression deadend",
             ],
           },
           {
-            slug: "cutouts-arresters",
-            label: "Cutouts & Arresters",
+            slug: "other-pole-hardware",
+            label: "Other Pole Hardware",
             keywords: [
-              "cutout", "fuse cutout", "dropout fuse", "expulsion fuse",
-              "lightning arrester", "surge arrester", "MOV arrester",
-              "dead front arrester", "distribution arrester",
+              "pole hardware", "cross arm", "pole band", "guy wire",
             ],
           },
         ],
       },
       {
-        slug: "service-entry",
-        label: "Service Entry",
+        slug: "underground-distribution",
+        label: "Underground Distribution",
         itemTypes: [
           {
-            slug: "weatherheads-risers",
-            label: "Weatherheads & Risers",
+            slug: "urd-cable",
+            label: "URD Cable",
             keywords: [
-              "weatherhead", "mast head", "service head",
-              "service entrance cap", "service mast", "EMT mast",
-              "riser conduit", "service entrance conduit", "service riser",
+              "URD cable", "underground residential distribution",
+              "secondary URD", "underground distribution cable",
+              "15kV URD", "25kV URD",
             ],
           },
           {
-            slug: "service-entry-conductors",
-            label: "Service Entrance Conductors",
+            slug: "urd-splices-terminations",
+            label: "URD Splices & Terminations",
             keywords: [
-              "service entrance cable", "SE cable", "SER cable",
-              "SER aluminum cable", "service entrance wire", "URD cable",
-              "SEU cable", "underground service conductor",
+              "URD splice", "URD termination", "underground splice",
+              "cold shrink splice", "heat shrink splice",
+              "elbow termination", "loadbreak elbow",
+            ],
+          },
+          {
+            slug: "other-underground-distribution",
+            label: "Other Underground Distribution",
+            keywords: [
+              "underground distribution", "duct bank", "cable vault",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 12. Telecom ──────────────────────────────────────────────────────────
   {
-    slug: "telecom-data",
-    label: "Telecom & Data",
-    color: "#14B8A6",
+    slug: "telecom",
+    label: "Telecom",
+    color: "#F97316",
     subcategories: [
       {
-        slug: "low-voltage-cable",
-        label: "Low Voltage Cable",
+        slug: "data-telecom-cable",
+        label: "Data & Telecom Cable",
         itemTypes: [
           {
-            slug: "data-cables",
-            label: "Data & Network Cables",
+            slug: "cat-5e",
+            label: "Cat 5e",
             keywords: [
-              "Cat5e", "Cat6", "Cat6A", "ethernet cable", "network cable",
-              "patch cable", "data cable", "structured wiring cable",
-              "plenum data cable", "Cat5", "UTP cable",
+              "Cat 5e", "Cat5e", "category 5e", "CAT5e cable",
+              "UTP Cat5e", "STP Cat5e",
             ],
           },
           {
-            slug: "coaxial-cable",
-            label: "Coaxial Cable",
+            slug: "cat-6-6a",
+            label: "Cat 6/6A",
             keywords: [
-              "coaxial cable", "RG6 cable", "RG11 cable", "coax cable",
-              "CATV cable", "satellite cable", "quad shield coax",
+              "Cat 6", "Cat 6A", "Cat6", "Cat6A", "category 6",
+              "CAT6 cable", "10GbE cable",
             ],
           },
           {
-            slug: "av-speaker-wire",
-            label: "AV & Speaker Wire",
+            slug: "fiber-optic",
+            label: "Fiber Optic",
             keywords: [
-              "speaker wire", "AV cable", "16/2 speaker", "18/2 speaker",
-              "lamp cord", "parallel cord", "audio cable",
+              "fiber optic", "fiber cable", "optical fiber", "fibre",
+              "OM3", "OM4", "OS2", "singlemode", "multimode fiber",
+            ],
+          },
+          {
+            slug: "coaxial",
+            label: "Coaxial",
+            keywords: [
+              "coaxial cable", "coax", "RG6", "RG11", "RG59",
+              "quad shield coax", "CATV cable",
+            ],
+          },
+          {
+            slug: "other-telecom-cable",
+            label: "Other Telecom Cable",
+            keywords: [
+              "alarm cable", "security cable", "speaker wire",
+              "telephone cable", "Cat 3",
             ],
           },
         ],
       },
       {
-        slug: "telecom-hardware",
-        label: "Telecom Hardware",
+        slug: "data-connectors-jacks",
+        label: "Data Connectors & Jacks",
         itemTypes: [
           {
-            slug: "faceplates-jacks",
-            label: "Faceplates & Data Jacks",
+            slug: "rj45-jacks-keystone",
+            label: "RJ45 Jacks & Keystone Modules",
             keywords: [
-              "data jack", "keystone jack", "data faceplate", "RJ45 jack",
-              "Cat6 jack", "data outlet", "telecommunication outlet",
-              "low voltage faceplate",
+              "RJ45 jack", "keystone jack", "keystone module",
+              "Cat6 jack", "Cat5e jack", "patch panel jack",
             ],
           },
           {
-            slug: "low-voltage-boxes",
-            label: "Low Voltage Brackets & Boxes",
+            slug: "coax-connectors-splitters",
+            label: "Coax Connectors & Splitters",
             keywords: [
-              "low voltage bracket", "low voltage ring", "old work bracket",
-              "low voltage box", "data mounting bracket", "comm bracket",
-              "LV mounting bracket",
+              "coax connector", "coax splitter", "F connector",
+              "BNC connector", "coax coupler", "CATV splitter",
+            ],
+          },
+          {
+            slug: "other-data-jacks-connectors",
+            label: "Other Data Jacks & Connectors",
+            keywords: [
+              "data connector", "data jack", "LC connector", "SC connector",
+              "ST connector", "fiber connector",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "telecom-enclosures-patch-panels",
+        label: "Telecom Enclosures & Patch Panels",
+        itemTypes: [
+          {
+            slug: "patch-panels",
+            label: "Patch Panels",
+            keywords: [
+              "patch panel", "Cat6 patch panel", "24 port patch",
+              "48 port patch", "1U patch", "2U patch",
+            ],
+          },
+          {
+            slug: "telecom-enclosures-brackets",
+            label: "Telecom Enclosures & Brackets",
+            keywords: [
+              "telecom enclosure", "network enclosure", "rack enclosure",
+              "wall mount rack", "IDF enclosure", "data rack",
+            ],
+          },
+          {
+            slug: "other-telecom-enclosures",
+            label: "Other Telecom Enclosures",
+            keywords: [
+              "patch panel enclosure", "telecom bracket",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 13. Tools & Testers ──────────────────────────────────────────────────
   {
     slug: "tools-testers",
     label: "Tools & Testers",
     color: "#64748B",
     subcategories: [
       {
-        slug: "test-equipment",
-        label: "Test Equipment",
-        itemTypes: [
-          {
-            slug: "multimeters-clamp-meters",
-            label: "Multimeters & Clamp Meters",
-            keywords: [
-              "multimeter", "clamp meter", "digital multimeter", "volt meter",
-              "current clamp", "DMM", "ampere clamp", "Fluke meter",
-              "clamp ammeter", "True RMS meter",
-            ],
-          },
-          {
-            slug: "circuit-voltage-testers",
-            label: "Voltage & Circuit Testers",
-            keywords: [
-              "circuit tester", "non-contact voltage tester", "voltage tester",
-              "wiggy tester", "circuit tracer", "Solenoid tester",
-              "outlet tester", "GFCI tester", "receptacle tester",
-            ],
-          },
-          {
-            slug: "cable-identifiers",
-            label: "Cable Identifiers & Tracers",
-            keywords: [
-              "cable identifier", "cable tracer", "tone generator",
-              "tone probe", "circuit identifier", "cable locator",
-              "fox and hound", "wire tracing kit",
-            ],
-          },
-        ],
-      },
-      {
         slug: "hand-tools",
         label: "Hand Tools",
         itemTypes: [
           {
-            slug: "wire-strippers-cutters",
-            label: "Wire Strippers & Cutters",
+            slug: "pliers-cutters",
+            label: "Pliers & Cutters",
             keywords: [
-              "wire stripper", "wire cutter", "lineman pliers",
-              "diagonal cutter", "Romex stripper", "cable ripper",
-              "multi-stripper", "Klein stripper", "stripping tool",
+              "pliers", "cutter", "linesman pliers", "diagonal cutters",
+              "needle nose", "wire cutter", "side cutters", "crimping pliers",
             ],
           },
           {
-            slug: "punch-crimp-tools",
-            label: "Punch Down & Crimp Tools",
+            slug: "screwdrivers-nut-drivers",
+            label: "Screwdrivers & Nut Drivers",
             keywords: [
-              "punch down tool", "crimp tool", "ratchet crimper",
-              "impact tool", "RJ45 crimper", "modular crimper",
-              "wire termination tool", "Krone tool",
+              "screwdriver", "nut driver", "insulated screwdriver",
+              "flathead screwdriver", "Phillips screwdriver", "cabinet tip",
             ],
           },
           {
-            slug: "conduit-tools",
-            label: "Conduit Tools",
+            slug: "fish-tape-pull-line",
+            label: "Fish Tape & Pull Line",
             keywords: [
-              "conduit bender", "hickey bender", "half saddle bender",
-              "mechanical bender", "hydraulic bender", "knockout punch",
-              "slug buster", "conduit reamer", "pipe threader",
+              "fish tape", "pull line", "fish line", "cable puller",
+              "wire pulling line", "conduit fish tape", "fiberglass fish stick",
+            ],
+          },
+          {
+            slug: "conduit-benders",
+            label: "Conduit Benders",
+            keywords: [
+              "conduit bender", "bender", "hickey", "hand bender",
+              "EMT bender", "mechanical bender",
+            ],
+          },
+          {
+            slug: "other-hand-tools",
+            label: "Other Hand Tools",
+            keywords: [
+              "wire stripper", "cable stripper", "BX cutter",
+              "knockout punch", "reaming tool",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "test-measurement",
+        label: "Test & Measurement",
+        itemTypes: [
+          {
+            slug: "multimeters",
+            label: "Multimeters",
+            keywords: [
+              "multimeter", "volt meter", "digital multimeter", "DMM",
+              "Fluke multimeter", "Klein multimeter",
+            ],
+          },
+          {
+            slug: "clamp-meters",
+            label: "Clamp Meters",
+            keywords: [
+              "clamp meter", "clamp ammeter", "amp clamp",
+              "clamp on meter", "Fluke clamp",
+            ],
+          },
+          {
+            slug: "circuit-testers-voltage-detectors",
+            label: "Circuit Testers & Voltage Detectors",
+            keywords: [
+              "circuit tester", "voltage tester", "non-contact tester",
+              "tick tracer", "solenoid tester", "wiggy",
+            ],
+          },
+          {
+            slug: "continuity-wire-testers",
+            label: "Continuity & Wire Testers",
+            keywords: [
+              "continuity tester", "wire tracer", "tone generator",
+              "cable tester", "wire locator",
+            ],
+          },
+          {
+            slug: "other-test-equipment",
+            label: "Other Test Equipment",
+            keywords: [
+              "power quality meter", "oscilloscope", "insulation tester",
+              "megger", "ground tester",
+            ],
+          },
+        ],
+      },
+      {
+        slug: "power-tool-accessories",
+        label: "Power Tool Accessories",
+        itemTypes: [
+          {
+            slug: "drill-bits-hole-saws",
+            label: "Drill Bits & Hole Saws",
+            keywords: [
+              "drill bit", "hole saw", "spade bit", "ship auger",
+              "self-feed bit", "step bit", "knockout set",
+            ],
+          },
+          {
+            slug: "saw-blades-cutting-accessories",
+            label: "Saw Blades & Cutting Accessories",
+            keywords: [
+              "saw blade", "jig saw blade", "reciprocating blade",
+              "Sawzall blade", "metal cutting blade",
+            ],
+          },
+          {
+            slug: "other-power-tool-accessories",
+            label: "Other Power Tool Accessories",
+            keywords: [
+              "right angle drill", "right angle attachment",
+              "flexible extension", "impact driver bit",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 14. Wire & Cable ─────────────────────────────────────────────────────
   {
     slug: "wire-cable",
     label: "Wire & Cable",
-    color: "#D97706",
+    color: "#DC2626",
     subcategories: [
       {
-        slug: "building-wire",
-        label: "Building Wire",
+        slug: "wire-cable-by-type",
+        label: "By Type",
         itemTypes: [
           {
             slug: "thhn-thwn",
-            label: "THHN / THWN Building Wire",
+            label: "THHN/THWN Building Wire",
             keywords: [
-              "THHN", "THWN", "building wire", "THHN wire", "THWN wire",
-              "MTW wire", "600V wire", "THHN copper wire",
-              "stranded THHN", "solid THHN",
+              "THHN", "THWN", "THWN-2", "building wire", "stranded wire",
+              "solid wire", "copper wire THHN", "aluminum THHN",
             ],
           },
           {
-            slug: "nm-b",
-            label: "NM-B (Romex)",
+            slug: "romex-nm-b",
+            label: "Romex/NM-B Cable",
             keywords: [
-              "NM-B", "Romex", "non-metallic sheathed cable", "NMC cable",
-              "house wire", "NM cable", "12/2 NM", "14/2 NM", "10/2 NM",
-              "12/3 NM", "14/3 NM",
+              "Romex", "NM-B", "NM cable", "non-metallic sheathed cable",
+              "12-2 NM", "14-2 NM", "10-2 NM", "14-3 NM", "12-3 NM",
             ],
           },
           {
-            slug: "uf-b",
-            label: "UF-B Underground Feeder",
+            slug: "mc-armored-cable",
+            label: "MC/Armored Cable",
             keywords: [
-              "UF-B cable", "underground feeder cable", "UF cable",
-              "direct burial cable", "underground cable UF",
-              "12/2 UF", "14/2 UF",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "flexible-cord-cable",
-        label: "Flexible Cord & Cable",
-        itemTypes: [
-          {
-            slug: "so-soow-cord",
-            label: "SO / SOOW Cord",
-            keywords: [
-              "SOOW cord", "SO cord", "portable cord", "flexible cord",
-              "SJO cord", "SJOW cord", "rubber cord", "extension cord wire",
-              "portable power cord",
+              "MC cable", "armored cable", "AC cable", "BX cable",
+              "metal clad cable", "12-2 MC", "12-3 MC", "14-2 MC",
             ],
           },
           {
-            slug: "mc-cable",
-            label: "MC Cable",
+            slug: "uf-underground-feeder",
+            label: "UF Underground Feeder",
             keywords: [
-              "MC cable", "metal clad cable", "armored cable", "BX cable",
-              "MC Luminary", "12/2 MC", "14/2 MC", "12/3 MC", "14/3 MC",
-              "10/3 MC", "AC90 cable",
+              "UF cable", "underground feeder", "UF-B cable",
+              "direct burial cable", "burial wire",
             ],
           },
           {
-            slug: "tc-cable",
-            label: "TC Cable",
+            slug: "ser-service-entrance",
+            label: "SER/Service Entrance",
             keywords: [
-              "TC cable", "tray cable", "power control tray cable",
-              "multiconductor tray cable", "600V tray cable",
+              "SER cable", "service entrance cable", "SER aluminum",
+              "service entrance conductor", "SEU cable",
+            ],
+          },
+          {
+            slug: "other-wire-cable",
+            label: "Other Wire & Cable",
+            keywords: [
+              "SO cord", "SOOW", "flexible cord", "extension cord cable",
             ],
           },
         ],
       },
       {
-        slug: "special-purpose-cable",
-        label: "Special Purpose Cable",
+        slug: "specialty-wire-cable",
+        label: "Specialty Wire & Cable",
         itemTypes: [
           {
-            slug: "fire-alarm-cable",
-            label: "Fire Alarm Cable",
+            slug: "control-cable",
+            label: "Control Cable",
             keywords: [
-              "fire alarm cable", "FPLR cable", "FPLT cable", "FPL cable",
-              "fire alarm wire", "2 conductor fire alarm", "4 conductor fire alarm",
-              "18 AWG fire alarm", "14 AWG fire alarm",
+              "control cable", "multi-conductor cable", "control wire",
+              "shielded control cable", "instrumentation cable",
             ],
           },
           {
-            slug: "security-control-cable",
-            label: "Security & Control Cable",
+            slug: "tray-cable",
+            label: "Tray Cable (TC)",
             keywords: [
-              "security cable", "control cable", "security alarm cable",
-              "multipair control cable", "plenum control cable",
-              "alarm cable", "8 conductor security cable",
+              "tray cable", "TC cable", "TC-ER cable",
+              "cable tray wire", "power limited tray cable", "PLTC",
             ],
           },
           {
-            slug: "vfd-cable",
-            label: "VFD Cable",
+            slug: "welding-cable",
+            label: "Welding Cable",
             keywords: [
-              "VFD cable", "variable frequency drive cable",
-              "shielded control cable", "inverter duty cable",
-              "drive cable", "VFD rated cable",
+              "welding cable", "welding wire", "battery cable",
+              "booster cable wire",
+            ],
+          },
+          {
+            slug: "low-voltage-thermostat-wire",
+            label: "Low-Voltage/Thermostat Wire",
+            keywords: [
+              "thermostat wire", "low voltage wire", "18/2 wire", "18/5 wire",
+              "bell wire", "doorbell wire", "irrigation wire",
+            ],
+          },
+          {
+            slug: "other-specialty-cable",
+            label: "Other Specialty Cable",
+            keywords: [
+              "interlock armored", "fire alarm cable", "security cable specialty",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 15. Receptacles ──────────────────────────────────────────────────────
   {
     slug: "receptacles",
-    label: "Receptacles & GFCI",
+    label: "Receptacles",
     color: "#7C3AED",
     subcategories: [
       {
-        slug: "standard-receptacles",
-        label: "Standard Receptacles",
+        slug: "receptacles-by-type",
+        label: "By Type",
         itemTypes: [
           {
-            slug: "15a-duplex",
-            label: "15A Duplex Outlets",
+            slug: "duplex-receptacles",
+            label: "Duplex Receptacles",
             keywords: [
-              "15A duplex", "15 amp duplex", "15A outlet",
-              "NEMA 5-15R", "standard duplex white", "standard duplex ivory",
-              "straight blade 15A", "15 amp receptacle",
+              "duplex receptacle", "duplex outlet", "15 amp outlet",
+              "20 amp outlet", "standard outlet", "tamper resistant outlet",
+              "TR receptacle",
             ],
           },
           {
-            slug: "20a-duplex",
-            label: "20A Duplex Outlets",
+            slug: "gfci-receptacles",
+            label: "GFCI Receptacles",
             keywords: [
-              "20A duplex", "20 amp duplex", "20A outlet",
-              "NEMA 5-20R", "20A T-slot", "20 amp receptacle",
-              "20A straight blade outlet",
-            ],
-          },
-          {
-            slug: "single-outlets",
-            label: "Single Outlets",
-            keywords: [
-              "single outlet", "single receptacle", "single flush",
-              "15A single", "20A single", "NEMA 5-15 single", "NEMA 5-20 single",
-              "single pole outlet",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "gfci-afci-receptacles",
-        label: "GFCI & AFCI Receptacles",
-        itemTypes: [
-          {
-            slug: "gfci-outlets",
-            label: "GFCI Outlets",
-            keywords: [
-              "GFCI outlet", "GFCI receptacle", "ground fault outlet",
-              "GFCI 15A", "GFCI 20A", "GFCI duplex",
-              "tamper resistant GFCI", "weather resistant GFCI",
-            ],
-          },
-          {
-            slug: "afci-outlets",
-            label: "AFCI Outlets",
-            keywords: [
-              "AFCI outlet", "AFCI receptacle", "arc fault outlet",
-              "AFCI 15A", "AFCI 20A",
-            ],
-          },
-          {
-            slug: "combo-afci-gfci-receptacles",
-            label: "Dual Function AFCI/GFCI Outlets",
-            keywords: [
-              "dual function receptacle", "combination AFCI GFCI outlet",
-              "AFCI GFCI receptacle", "dual function outlet",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "special-purpose-receptacles",
-        label: "Special Purpose Receptacles",
-        itemTypes: [
-          {
-            slug: "30a-higher",
-            label: "30A & Higher Power Outlets",
-            keywords: [
-              "30A outlet", "30A receptacle", "NEMA 14-30", "NEMA 6-30",
-              "dryer outlet", "range outlet", "50A outlet", "NEMA 14-50",
-              "3-pole outlet", "4-wire outlet",
-            ],
-          },
-          {
-            slug: "twist-lock",
-            label: "Twist-Lock Receptacles & Plugs",
-            keywords: [
-              "twist lock outlet", "twist-lock receptacle", "locking outlet",
-              "NEMA L5-30", "NEMA L6-20", "NEMA L14-30",
-              "locking connector", "locking plug", "hubbell twist lock",
+              "GFCI receptacle", "GFCI outlet", "ground fault receptacle",
+              "GFI outlet", "GFCI duplex", "tamper resistant GFCI",
             ],
           },
           {
             slug: "usb-receptacles",
             label: "USB Receptacles",
             keywords: [
-              "USB outlet", "USB receptacle", "USB charging outlet",
-              "USB A outlet", "USB C outlet", "USB duplex",
-              "USB combo outlet",
+              "USB receptacle", "USB outlet", "USB charger outlet",
+              "USB-A outlet", "USB-C outlet", "dual USB outlet",
             ],
           },
           {
-            slug: "weather-resistant-outlets",
-            label: "Weather Resistant Outlets",
+            slug: "twist-lock-receptacles",
+            label: "Twist-Lock Receptacles",
             keywords: [
-              "weather resistant outlet", "WR outlet", "WR GFCI",
-              "outdoor receptacle", "outdoor outlet",
-              "weather resistant receptacle",
+              "twist lock", "twistlock", "locking receptacle",
+              "NEMA L5", "NEMA L6", "NEMA L14", "NEMA L15",
+              "30 amp locking", "20 amp locking",
+            ],
+          },
+          {
+            slug: "range-dryer-receptacles",
+            label: "Range/Dryer Receptacles",
+            keywords: [
+              "range receptacle", "dryer receptacle", "30 amp dryer",
+              "50 amp range", "NEMA 10-30", "NEMA 14-30", "NEMA 14-50",
+              "dryer outlet", "range outlet",
+            ],
+          },
+          {
+            slug: "other-receptacles",
+            label: "Other Receptacles",
+            keywords: [
+              "isolated ground receptacle", "hospital grade outlet",
+              "single receptacle", "flush mount receptacle",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 16. Switches & Dimmers ───────────────────────────────────────────────
   {
     slug: "switches-dimmers",
     label: "Switches & Dimmers",
-    color: "#059669",
+    color: "#0EA5E9",
     subcategories: [
       {
-        slug: "general-purpose-switches",
-        label: "General Purpose Switches",
+        slug: "switches-by-type",
+        label: "By Type",
         itemTypes: [
           {
-            slug: "single-pole-switches",
-            label: "Single Pole Switches",
+            slug: "toggle-switches",
+            label: "Toggle Switches",
             keywords: [
-              "single pole switch", "on/off switch", "toggle switch 15A",
-              "SP switch", "15A single pole switch",
-              "20A single pole", "light switch", "wall switch",
+              "toggle switch", "single pole switch", "wall switch",
+              "15 amp switch", "20 amp switch", "standard switch",
+              "tamper resistant switch",
             ],
           },
           {
-            slug: "3-way-4-way-switches",
-            label: "3-Way & 4-Way Switches",
+            slug: "3-way-switches",
+            label: "3-Way Switches",
             keywords: [
-              "3-way switch", "three way switch", "4-way switch",
-              "four way switch", "traveler switch", "3 way toggle",
+              "3-way switch", "three way switch", "3 way",
+              "three-way toggle",
             ],
           },
           {
-            slug: "double-pole-switches",
-            label: "Double Pole Switches",
+            slug: "4-way-switches",
+            label: "4-Way Switches",
             keywords: [
-              "double pole switch", "DP switch", "double throw switch",
-              "DP 20A switch", "double pole toggle", "DP toggle switch",
+              "4-way switch", "four way switch", "4 way",
+              "four-way toggle",
             ],
           },
           {
-            slug: "specialty-switches",
-            label: "Specialty Switches",
+            slug: "dimmers",
+            label: "Dimmers",
             keywords: [
-              "pilot light switch", "combination switch outlet",
-              "switch outlet combo", "decorator switch",
-              "lighted switch", "fan switch", "switch receptacle combo",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "dimmers-fan-controls",
-        label: "Dimmers & Fan Controls",
-        itemTypes: [
-          {
-            slug: "standard-dimmers",
-            label: "Standard Dimmers",
-            keywords: [
-              "dimmer", "wall dimmer", "incandescent dimmer",
-              "CFL LED dimmer", "single pole dimmer", "3-way dimmer",
-              "Lutron dimmer", "Leviton dimmer", "slide dimmer",
+              "dimmer switch", "dimmer", "slide dimmer", "rotary dimmer",
+              "LED dimmer switch", "0-10V dim switch",
             ],
           },
           {
-            slug: "smart-dimmers-switches",
-            label: "Smart Dimmers & Switches",
+            slug: "occupancy-sensors",
+            label: "Occupancy Sensors",
             keywords: [
-              "smart dimmer", "wi-fi dimmer", "Z-wave dimmer",
-              "ZigBee dimmer", "smart switch", "smart lighting control",
-              "wifi switch", "app controlled dimmer",
+              "occupancy sensor", "motion switch", "vacancy sensor",
+              "PIR switch sensor", "occupancy sensor switch",
             ],
           },
           {
-            slug: "fan-speed-controls",
-            label: "Fan Speed Controls",
+            slug: "other-switches",
+            label: "Other Switches",
             keywords: [
-              "fan speed control", "fan control", "ceiling fan switch",
-              "3-speed fan control", "fan controller", "fan dimmer",
-              "ceiling fan control",
+              "double pole switch", "DPST switch", "SPST switch",
+              "combination switch", "decorator switch",
             ],
           },
         ],
       },
     ],
   },
+
+  // ── 17. Connectors & Terminations ────────────────────────────────────────
   {
-    slug: "wire-connectors-terminations",
-    label: "Wire Connectors & Terminations",
-    color: "#DC2626",
+    slug: "connectors-terminations",
+    label: "Connectors & Terminations",
+    color: "#D97706",
     subcategories: [
       {
-        slug: "wire-connectors",
-        label: "Wire Connectors",
+        slug: "connectors-by-type",
+        label: "By Type",
         itemTypes: [
           {
             slug: "wire-nuts",
             label: "Wire Nuts",
             keywords: [
-              "wire nut", "wire connector", "twist-on connector",
-              "marrette", "Ideal wire nut", "3M connector",
-              "orange wire nut", "red wire nut", "yellow wire nut", "gray wire nut",
+              "wire nut", "wire connector", "wire-nut", "twist-on connector",
+              "wire cap", "Ideal wire nut", "3M scotchlok",
             ],
           },
           {
-            slug: "push-in-connectors",
-            label: "Push-In Connectors",
+            slug: "lugs",
+            label: "Lugs",
             keywords: [
-              "push-in connector", "lever nut", "WAGO connector",
-              "Ideal In-Sure", "push wire connector", "backstab connector",
-              "quick connect", "push in wire", "push-in terminal",
-            ],
-          },
-          {
-            slug: "butt-splices",
-            label: "Butt Splices",
-            keywords: [
-              "butt splice", "butt connector", "crimp butt splice",
-              "insulated butt connector", "nylon butt splice",
-              "heat shrink butt splice",
-            ],
-          },
-        ],
-      },
-      {
-        slug: "lugs-terminals",
-        label: "Lugs & Terminals",
-        itemTypes: [
-          {
-            slug: "compression-lugs",
-            label: "Compression Lugs",
-            keywords: [
-              "compression lug", "copper lug", "aluminum lug",
-              "crimp lug", "solderless lug", "terminal lug",
-              "two-hole lug", "one-hole lug", "Burndy lug", "ILSCO lug",
-            ],
-          },
-          {
-            slug: "set-screw-lugs",
-            label: "Set Screw Lugs & Mechanical Connectors",
-            keywords: [
-              "set screw lug", "mechanical lug", "set screw connector",
-              "mechanical connector", "split bolt", "split bolt connector",
-              "Burndy connector", "ILSCO mechanical",
+              "lug", "compression lug", "cable lug", "mechanical lug",
+              "aluminum lug", "copper lug", "ring terminal lug",
+              "set screw lug",
             ],
           },
           {
             slug: "terminal-blocks",
             label: "Terminal Blocks",
             keywords: [
-              "terminal block", "terminal strip", "DIN rail terminal",
-              "wire terminal", "ground terminal block", "neutral terminal block",
-              "terminal barrier", "rail mount terminal",
+              "terminal block", "DIN rail terminal", "barrier terminal",
+              "screw terminal block", "feed through terminal",
+            ],
+          },
+          {
+            slug: "other-connectors",
+            label: "Other Connectors",
+            keywords: [
+              "connector", "termination", "splice", "butt splice",
+              "push-in connector", "WAGO connector",
             ],
           },
         ],
       },
+    ],
+  },
+
+  // ── 18. Uncategorized (catch-all) ─────────────────────────────────────────
+  {
+    slug: "uncategorized",
+    label: "Uncategorized",
+    color: "#9CA3AF",
+    subcategories: [
       {
-        slug: "grounding-accessories",
-        label: "Grounding Accessories",
+        slug: "needs-review",
+        label: "Needs Review",
         itemTypes: [
           {
-            slug: "grounding-clamps",
-            label: "Grounding Clamps",
-            keywords: [
-              "grounding clamp", "ground clamp", "GRC clamp",
-              "grounding connector", "concrete encased grounding clamp",
-              "rod clamp ground", "pipe clamp ground", "rebar clamp",
-              "acorn clamp",
-            ],
-          },
-          {
-            slug: "grounding-bushings",
-            label: "Grounding Bushings",
-            keywords: [
-              "grounding bushing", "insulated grounding bushing",
-              "GIB bushing", "grounding locknut bushing",
-              "bonding bushing", "bonding locknut", "insulated bushing ground",
-            ],
-          },
-          {
-            slug: "ground-rods",
-            label: "Ground Rods & Accessories",
-            keywords: [
-              "ground rod", "copper ground rod", "galvanized rod",
-              "driven rod", "8 foot ground rod", "5/8 ground rod",
-              "1/2 ground rod", "ground rod clamp", "ground rod coupler",
-            ],
+            slug: "unclassified-items",
+            label: "Unclassified Items",
+            keywords: [], // No keywords — items that match NOTHING else
           },
         ],
       },
@@ -1701,9 +1835,11 @@ export function collectKeywords(
   return Array.from(kws);
 }
 
+/** Returns all keywords from the taxonomy, excluding the uncategorized catch-all. */
 export function getAllTaxonomyKeywords(taxonomy: TaxonomyCategory[]): string[] {
   const all = new Set<string>();
   for (const cat of taxonomy) {
+    if (cat.slug === "uncategorized") continue;
     for (const kw of collectKeywords(cat)) all.add(kw);
   }
   return Array.from(all);
