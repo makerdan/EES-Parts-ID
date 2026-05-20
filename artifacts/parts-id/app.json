@@ -3,7 +3,7 @@
     "name": "RDC34 Parts ID",
     "slug": "parts-id",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "parts-id",
     "userInterfaceStyle": "automatic",
@@ -36,7 +36,8 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-asset"
+      "expo-asset",
+      "expo-screen-orientation"
     ],
     "experiments": {
       "typedRoutes": true,

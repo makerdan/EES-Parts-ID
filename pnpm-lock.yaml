@@ -443,6 +443,9 @@ importers:
       expo-image-manipulator:
         specifier: ~14.0.8
         version: 14.0.8(expo@54.0.34)
+      expo-screen-orientation:
+        specifier: ^55.0.16
+        version: 55.0.16(expo@54.0.34)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))
       expo-sharing:
         specifier: ~14.0.8
         version: 14.0.8(expo@54.0.34)
@@ -4399,6 +4402,12 @@ packages:
         optional: true
       react-server-dom-webpack:
         optional: true
+
+  expo-screen-orientation@55.0.16:
+    resolution: {integrity: sha512-I9NIqb2zAkHsK/CxdmMdmgSFP7E1v++8z/Mj2X9j1AuK6l55yOma/JHo905KU3x2zPm9/l1BTzmMA320tiBebg==}
+    peerDependencies:
+      expo: '*'
+      react-native: '*'
 
   expo-secure-store@15.0.8:
     resolution: {integrity: sha512-lHnzvRajBu4u+P99+0GEMijQMFCOYpWRO4dWsXSuMt77+THPIGjzNvVKrGSl6mMrLsfVaKL8BpwYZLGlgA+zAw==}
@@ -11885,6 +11894,11 @@ snapshots:
       - '@types/react'
       - '@types/react-dom'
       - supports-color
+
+  expo-screen-orientation@55.0.16(expo@54.0.34)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)):
+    dependencies:
+      expo: 54.0.34(@babel/core@7.29.0)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
+      react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)
 
   expo-secure-store@15.0.8(expo@54.0.34):
     dependencies:
