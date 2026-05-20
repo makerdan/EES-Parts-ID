@@ -582,6 +582,7 @@ const chipAreaStyles = StyleSheet.create({
     borderRadius: 10,
     padding: 12,
     marginBottom: 12,
+    alignSelf: "flex-start",
   },
   header: {
     flexDirection: "row",
