@@ -507,13 +507,24 @@ export function WarehouseMapView({
         </View>
       )}
 
-      {/* Zoom controls — bottom-right cluster (zoom-out on top, zoom-in on bottom) */}
+      {/* Zoom controls — bottom-right cluster: + on top, − below, fit at bottom */}
       <View style={styles.zoomControls}>
+        <Pressable
+          onPress={handleZoomIn}
+          style={({ pressed }) => [
+            styles.zoomBtn,
+            styles.zoomBtnTop,
+            { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+          ]}
+          accessibilityLabel="Zoom in"
+        >
+          <Feather name="plus" size={16} color={colors.foreground} />
+        </Pressable>
         <Pressable
           onPress={handleZoomOut}
           style={({ pressed }) => [
             styles.zoomBtn,
-            styles.zoomBtnTop,
+            styles.zoomBtnMid,
             { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
           ]}
           accessibilityLabel="Zoom out"
@@ -524,23 +535,12 @@ export function WarehouseMapView({
           onPress={handleFitScreen}
           style={({ pressed }) => [
             styles.zoomBtn,
-            styles.zoomBtnMid,
+            styles.zoomBtnBottom,
             { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
           ]}
           accessibilityLabel="Fit to screen"
         >
           <Feather name="maximize" size={14} color={colors.mutedForeground} />
-        </Pressable>
-        <Pressable
-          onPress={handleZoomIn}
-          style={({ pressed }) => [
-            styles.zoomBtn,
-            styles.zoomBtnBottom,
-            { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
-          ]}
-          accessibilityLabel="Zoom in"
-        >
-          <Feather name="plus" size={16} color={colors.foreground} />
         </Pressable>
       </View>
 
