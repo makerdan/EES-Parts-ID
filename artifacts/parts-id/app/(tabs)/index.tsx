@@ -272,7 +272,6 @@ export default function SearchScreen() {
         { name: "description", weight: 0.30 },
         { name: "vendor", weight: 0.10 },
         { name: "aiKeywords", weight: 0.25 },
-        { name: "barcodes", weight: 0.00 },
       ],
       threshold: 0.45,
       ignoreLocation: true,
