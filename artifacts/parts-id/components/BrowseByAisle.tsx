@@ -611,7 +611,7 @@ function SectionShelfView({
               result={{
                 item: selectedPart.item,
                 confidence: 1,
-                matchReason: breadcrumb,
+                matchReason: undefined,
                 seriesLabel: undefined,
                 variants: [],
               }}
