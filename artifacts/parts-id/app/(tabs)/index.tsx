@@ -1231,7 +1231,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 0,
     left: 12,
-    right: "52%",
+    right: 12,
     zIndex: 20,
     flexDirection: "column",
     alignItems: "center",
