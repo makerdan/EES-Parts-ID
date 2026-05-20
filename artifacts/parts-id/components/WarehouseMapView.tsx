@@ -20,6 +20,7 @@ import {
   useColorScheme,
   View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { Asset } from "expo-asset";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -217,6 +218,44 @@ export function WarehouseMapView({
     doubleTapGesture,
     Gesture.Simultaneous(pinchGesture, panGesture),
   );
+
+  // ── Programmatic zoom helpers (zoom buttons) ────────────────────────────────
+  const applyZoom = useCallback((targetScale: number) => {
+    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, targetScale));
+    const scaledW = svgRenderW * newScale;
+    const scaledH = svgRenderH * newScale;
+    const maxX = Math.max(0, (scaledW - containerW) / 2);
+    const maxY = Math.max(0, (scaledH - containerH) / 2);
+    const newTX = Math.max(-maxX, Math.min(maxX, translateX.value));
+    const newTY = Math.max(-maxY, Math.min(maxY, translateY.value));
+    scale.value = withSpring(newScale, { damping: 18, stiffness: 200 });
+    translateX.value = withSpring(newTX, { damping: 18, stiffness: 200 });
+    translateY.value = withSpring(newTY, { damping: 18, stiffness: 200 });
+    savedScale.value = newScale;
+    savedTX.value = newTX;
+    savedTY.value = newTY;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svgRenderW, svgRenderH, containerW, containerH]);
+
+  const handleZoomIn = useCallback(() => {
+    applyZoom(scale.value * 1.5);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyZoom]);
+
+  const handleZoomOut = useCallback(() => {
+    applyZoom(scale.value / 1.5);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyZoom]);
+
+  const handleFitScreen = useCallback(() => {
+    scale.value = withSpring(1, { damping: 18, stiffness: 200 });
+    translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
+    translateY.value = withSpring(0, { damping: 18, stiffness: 200 });
+    savedScale.value = 1;
+    savedTX.value = 0;
+    savedTY.value = 0;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -457,6 +496,43 @@ export function WarehouseMapView({
         </View>
       )}
 
+      {/* Zoom controls — bottom-right cluster */}
+      <View style={styles.zoomControls}>
+        <Pressable
+          onPress={handleZoomIn}
+          style={({ pressed }) => [
+            styles.zoomBtn,
+            styles.zoomBtnTop,
+            { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+          ]}
+          accessibilityLabel="Zoom in"
+        >
+          <Feather name="plus" size={16} color={colors.foreground} />
+        </Pressable>
+        <Pressable
+          onPress={handleFitScreen}
+          style={({ pressed }) => [
+            styles.zoomBtn,
+            styles.zoomBtnMid,
+            { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+          ]}
+          accessibilityLabel="Fit to screen"
+        >
+          <Feather name="maximize" size={14} color={colors.mutedForeground} />
+        </Pressable>
+        <Pressable
+          onPress={handleZoomOut}
+          style={({ pressed }) => [
+            styles.zoomBtn,
+            styles.zoomBtnBottom,
+            { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
+          ]}
+          accessibilityLabel="Zoom out"
+        >
+          <Feather name="minus" size={16} color={colors.foreground} />
+        </Pressable>
+      </View>
+
       {/* Hint: double-tap to reset zoom / cycle layer instructions */}
       <View
         style={[
@@ -533,6 +609,36 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   hintText: { fontSize: 11, fontFamily: "Inter_400Regular" },
+  zoomControls: {
+    position: "absolute",
+    right: 12,
+    bottom: 44,
+    borderRadius: 8,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  zoomBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  zoomBtnTop: {
+    borderBottomWidth: 0,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+  },
+  zoomBtnMid: {
+    borderBottomWidth: 0,
+  },
+  zoomBtnBottom: {
+    borderBottomLeftRadius: 8,
+    borderBottomRightRadius: 8,
+  },
   skeletonBase: {
     flex: 1,
     overflow: "hidden",
