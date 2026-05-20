@@ -249,12 +249,12 @@ export function WarehouseMapView({
   }, [svgRenderW, svgRenderH, containerW, containerH]);
 
   const handleZoomIn = useCallback(() => {
-    applyZoom(scale.value * 10);
+    applyZoom(scale.value * 2);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyZoom]);
 
   const handleZoomOut = useCallback(() => {
-    applyZoom(scale.value / 1.5);
+    applyZoom(scale.value / 2);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyZoom]);
 
