@@ -9,6 +9,7 @@
  */
 import React, { useCallback, useRef, useState } from "react";
 import {
+  Linking,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -29,6 +30,10 @@ import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZo
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
 
 const CYCLE_COUNTED_KEY = "CYCLE_COUNTED_IDS";
+
+const ZONE_EDITOR_URL = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/__mockup/zone-editor`
+  : "http://localhost:8081/__mockup/zone-editor";
 
 function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
   return {
@@ -179,6 +184,15 @@ export default function MapScreen() {
           >
             <Feather name="list" size={15} color={colors.foreground} />
           </Pressable>
+          {isAdmin && (
+            <Pressable
+              onPress={() => Linking.openURL(ZONE_EDITOR_URL)}
+              style={[styles.iconBtn, { borderColor: colors.border }]}
+              accessibilityLabel="Open Zone Editor"
+            >
+              <Feather name="edit-2" size={15} color={colors.mutedForeground} />
+            </Pressable>
+          )}
         </View>
       </View>
 
