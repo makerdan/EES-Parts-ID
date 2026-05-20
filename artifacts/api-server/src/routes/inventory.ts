@@ -24,6 +24,7 @@ import {
   matchesChipFilters,
   buildChipFilterRegexes,
 } from "../utils/searchHelpers";
+import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
 import { generateKeywords } from "../utils/generateKeywords";
 import {
   blendPgScore,
@@ -112,6 +113,7 @@ router.post("/search", async (req, res) => {
       environment = "",
       voltage = "",
       poleCount = "",
+      categorySlug = "",
     } = req.body as {
       keywords?: string;
       catalog?: string;
@@ -125,6 +127,7 @@ router.post("/search", async (req, res) => {
       sizeChip?: string; rating?: string; wireType?: string; wireGauge?: string;
       conduitType?: string; conduitSize?: string; boxType?: string; boxGangCount?: string;
       mountingType?: string; environment?: string; voltage?: string; poleCount?: string;
+      categorySlug?: string;
     };
 
     const activeChipFilters: Array<{ key: string; value: string }> = [
@@ -166,7 +169,20 @@ router.post("/search", async (req, res) => {
       for (const name of v.names) reverseVendorMap.set(name.toLowerCase(), v.code);
     }
 
-    const allSearchText = [keywords, catalogInput, vendorInput, color, size, material, textNumbers]
+    // Resolve taxonomy category if categorySlug is provided
+    const isCategoryUncategorized = categorySlug === "uncategorized";
+    const categoryNode = (categorySlug && !isCategoryUncategorized)
+      ? findNodeBySlug(TAXONOMY, categorySlug)
+      : null;
+    const categoryKeywords = categoryNode ? collectKeywords(categoryNode) : [];
+
+    // When browsing by category with no text, use a sample of category keywords
+    // as the implicit search query so the FTS pipeline has something to work with.
+    const effectiveKeywords = (!keywords.trim() && categorySlug && !isCategoryUncategorized && categoryKeywords.length > 0)
+      ? categoryKeywords.slice(0, 10).join(" ")
+      : keywords;
+
+    const allSearchText = [effectiveKeywords, catalogInput, vendorInput, color, size, material, textNumbers]
       .filter(Boolean).join(" ");
 
     if (!allSearchText.trim()) {
@@ -438,10 +454,23 @@ router.post("/search", async (req, res) => {
       }
     }
 
+    // ── Apply taxonomy category pre-filter ───────────────────────────────────
+    const catPreFiltered = (() => {
+      if (!categorySlug) return results;
+      if (isCategoryUncategorized) {
+        const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
+        return results.filter(r => !allTaxKws.some(kw => itemFullText(r.item).includes(kw)));
+      }
+      if (categoryKeywords.length > 0) {
+        return results.filter(r => categoryKeywords.some(kw => itemFullText(r.item).includes(kw)));
+      }
+      return results;
+    })();
+
     // ── Apply structured chip AND-filters to narrow results ─────────────────
     const chipFiltered = activeChipFilters.length > 0
-      ? results.filter(r => matchesChipFilters(r.item, activeChipFilters))
-      : results;
+      ? catPreFiltered.filter(r => matchesChipFilters(r.item, activeChipFilters))
+      : catPreFiltered;
 
     // Group into series + find variants
     const seriesGroups = new Map<string, { label: string; items: typeof inventoryTable.$inferSelect[] }>();
