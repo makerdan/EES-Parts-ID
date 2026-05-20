@@ -7,3 +7,4 @@ export * from "./misspelling_map";
 export * from "./electrical_slang_map";
 export * from "./conversations";
 export * from "./messages";
+export * from "./quick_lookup_cache";

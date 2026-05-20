@@ -3,7 +3,7 @@ import { logger } from "./lib/logger";
 import { startServer, MAX_RETRIES } from "./lib/startServer";
 import { db } from "@workspace/db";
 import { catalogPdfJobTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 const rawPort = process.env["PORT"];
 
@@ -42,6 +42,20 @@ async function recoverOrphanedJobs(): Promise<void> {
   }
 }
 
-recoverOrphanedJobs().then(() => {
+async function initQuickLookupCache(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS quick_lookup_cache (
+        label TEXT PRIMARY KEY,
+        answer TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+  } catch (err) {
+    logger.error({ err }, "Failed to initialize quick_lookup_cache table");
+  }
+}
+
+Promise.all([recoverOrphanedJobs(), initQuickLookupCache()]).then(() => {
   startServer(app, port, MAX_RETRIES);
 });

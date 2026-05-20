@@ -14,7 +14,6 @@ import {
 } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
-import { parseSseLine, parseFinalBuffer, type SseEvent } from "@/utils/sseParser";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -22,29 +21,93 @@ const API_BASE =
     : "";
 
 type Props = {
-  /** Controlled mode: when provided, the FAB is hidden and this value drives
-   *  Modal visibility. Pair with `onClose` to handle dismiss requests. */
   open?: boolean;
   onClose?: () => void;
 };
 
+const QUICK_LOOKUP_CHIPS = [
+  { label: "1G",               question: "What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?" },
+  { label: "GFCI",             question: "What does GFCI stand for, how does it work, and where is it required by the NEC?" },
+  { label: "AFCI",             question: "What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?" },
+  { label: "TRWR",             question: "What does TRWR mean on a receptacle — what is Tamper Resistant and Weather Resistant, and where is each required?" },
+  { label: "Decora",           question: "What is a Decora style switch or receptacle, who makes them, and how do they differ from standard toggle style?" },
+  { label: "Romex",            question: "What is Romex (NM-B cable), what do the numbers on the sheath mean, and when is it allowed by code?" },
+  { label: "MC Cable",         question: "What is MC cable (Metal Clad armored cable), how does it differ from Romex, and when should it be used?" },
+  { label: "EMT",              question: "What is EMT (Electrical Metallic Tubing) conduit, what are its common uses, and how does it differ from rigid conduit?" },
+  { label: "Toggle vs Rocker", question: "What is the difference between a toggle switch and a rocker (paddle) switch — are they interchangeable?" },
+  { label: "Duplex",           question: "What is a duplex receptacle, how does it differ from simplex and quadplex outlets, and what are standard amperage ratings?" },
+  { label: "15A vs 20A",       question: "What is the difference between 15 amp and 20 amp circuits, receptacles, and breakers — how do I tell them apart?" },
+  { label: "AWG",              question: "What does AWG mean, how does wire gauge numbering work, and which gauge should I use for common circuits?" },
+] as const;
+
+const BREAKER_ATTRIBUTE_CHIPS: { label: string; answer: string }[] = [
+  {
+    label: "Amp Rating",
+    answer: "**Amp Rating** is the maximum continuous current the breaker will carry without tripping. Common residential ratings are **15A** and **20A**; commercial/industrial panels use 30A, 60A, 100A, and higher. Always match the breaker amp rating to the wire gauge — 15A for 14 AWG, 20A for 12 AWG.",
+  },
+  {
+    label: "Poles",
+    answer: "**Poles** indicate how many hot conductors the breaker controls.\n- **1-Pole (1P):** 120 V circuits (lights, receptacles)\n- **2-Pole (2P):** 240 V circuits (dryers, HVAC, ranges)\n- **3-Pole (3P):** Three-phase 208/480 V circuits (commercial motors, large equipment)",
+  },
+  {
+    label: "Voltage Rating",
+    answer: "**Voltage Rating** is the maximum system voltage the breaker is listed for. Common ratings:\n- **120/240 V** — standard residential single-phase\n- **120/208 V** — commercial three-phase wye\n- **277/480 V** — industrial three-phase\nNever install a breaker in a panel whose voltage exceeds the breaker's rating.",
+  },
+  {
+    label: "Frame Size",
+    answer: "**Frame Size** is a physical size classification that determines the maximum ampere rating available in that frame. For example, a 100A frame can hold breakers from 15A up to 100A. Common frame sizes: 100A, 225A, 400A, 600A, 800A. Frame size must match the panel's bus bar mounting.",
+  },
+  {
+    label: "AIC Rating",
+    answer: "**AIC (Ampere Interrupting Capacity)** is the maximum fault current the breaker can safely interrupt without damage. Residential panels typically require **10,000 AIC**; commercial applications may need 22,000–65,000 AIC or higher. Under-rated breakers can explode during a fault. Always verify AIC meets the available fault current at the panel.",
+  },
+  {
+    label: "Mount Type",
+    answer: "**Mount Type** describes how the breaker attaches to the panel bus:\n- **Plug-in:** Snaps onto bus stabs (most residential panels — Square D QO, Eaton BR, Siemens)\n- **Bolt-on:** Bolted to bus bar (industrial panels, higher vibration applications)\nPlug-in and bolt-on breakers are NOT interchangeable even if they look similar.",
+  },
+  {
+    label: "Physical Footprint",
+    answer: "**Physical Footprint** refers to how many panel spaces (slots) the breaker occupies.\n- **Full-size (1\" wide):** Takes 1 slot per pole\n- **Tandem / Twin:** Two 1-pole breakers in one slot space (where panel and local code allow)\n- **Double-pole:** Takes 2 adjacent slots\nAlways check the panel's loadcenter directory for approved tandem positions.",
+  },
+  {
+    label: "Series Codes",
+    answer: "**Series Codes** are manufacturer-specific identifiers that indicate the breaker family and compatibility:\n- **Eaton:** BR, CH, BAB, HQP\n- **Square D:** QO, HOM, FA, KA\n- **Siemens/ITE:** QP, QPF, EQ\n- **GE:** THQL, THQP\nBreakers are only listed for specific panel series — mixing series can void listings and create safety hazards.",
+  },
+  {
+    label: "Trade Size",
+    answer: "**Trade Size** in the context of breakers refers to the common industry shorthand combining poles and amps, e.g. **1P-20A**, **2P-30A**, **3P-60A**. When ordering, specifying trade size plus series code (e.g., \"BR 1P-20A\") ensures you get the correct breaker for the panel family. Some vendors use it interchangeably with frame size.",
+  },
+];
+
 export function ReferenceModal({ open, onClose }: Props = {}) {
   const colors = useColors();
   const controlled = open !== undefined;
-  // In uncontrolled mode this state drives visibility; in controlled mode it
-  // is ignored and `open` prop is used instead.
   const [visible, setVisible] = useState(false);
   const isVisible = controlled ? open : visible;
   const handleClose = controlled ? (onClose ?? (() => {})) : () => setVisible(false);
+
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  // `loading` — typed question in flight; drives send-button spinner
   const [loading, setLoading] = useState(false);
+  // `chipLoading` — chip tap in flight; never drives the send-button spinner
+  const [chipLoading, setChipLoading] = useState(false);
   const [isError, setIsError] = useState(false);
   const [history, setHistory] = useState<Array<{ q: string; a: string }>>([]);
+  const [inputCollapsed, setInputCollapsed] = useState(false);
+  const [activeBreakerChip, setActiveBreakerChip] = useState<string | null>(null);
+
   const scrollRef = useRef<ScrollView>(null);
   const pulse = useRef(new Animated.Value(1)).current;
-  // Stores the question text that was sent so the error bubble can show it
   const askedQuestionRef = useRef("");
+  const answerCacheRef = useRef<Map<string, string>>(new Map());
+  const lastTapRef = useRef<number>(0);
+  // Stores the full chip context needed for retry when a chip call fails
+  const failedChipRef = useRef<{ label: string; question: string } | null>(null);
+
+  const isBusy = loading || chipLoading;
+  const answerLoading = loading || chipLoading;
+  const hasActiveAnswerArea = answer || isError || answerLoading;
 
   const pulseButton = useCallback(() => {
     Animated.sequence([
@@ -53,69 +116,100 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
     ]).start();
   }, [pulse]);
 
-  const askQuestion = async () => {
-    if (!question.trim() || loading) return;
-    askedQuestionRef.current = question.trim();
+  const prefetchQuickLookups = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/reference/quick-lookups`);
+      if (!res.ok) return;
+      const rows: { label: string; answer: string }[] = await res.json();
+      for (const row of rows) {
+        answerCacheRef.current.set(row.label, row.answer);
+      }
+    } catch {
+      // Non-fatal — cache will be populated on demand
+    }
+  }, []);
+
+  const handleModalShow = useCallback(() => {
+    prefetchQuickLookups();
+  }, [prefetchQuickLookups]);
+
+  const fetchChipAnswer = async (label: string, chipQuestion: string): Promise<string> => {
+    // Layer 1: in-memory session cache
+    const cached = answerCacheRef.current.get(label);
+    if (cached) return cached;
+
+    // Layer 2: DB cache via GET endpoint
+    try {
+      const res = await fetch(`${API_BASE}/reference/quick-lookups/${encodeURIComponent(label)}`);
+      if (res.ok) {
+        const data: { answer: string } = await res.json();
+        answerCacheRef.current.set(label, data.answer);
+        return data.answer;
+      }
+    } catch {
+      // fall through to AI
+    }
+
+    // Layer 3: AI fallback — POST with write-back
+    const res = await fetch(`${API_BASE}/reference/quick-lookups/${encodeURIComponent(label)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: chipQuestion }),
+    });
+    if (!res.ok) throw new Error("AI fallback failed");
+    const data: { answer: string } = await res.json();
+    answerCacheRef.current.set(label, data.answer);
+    return data.answer;
+  };
+
+  const onChipTap = async (label: string, chipQuestion: string) => {
+    if (isBusy) return;
+    askedQuestionRef.current = label;
+    failedChipRef.current = null;
+    setChipLoading(true);
+    setIsError(false);
+    setAnswer("");
+    setQuestion("");
+
+    try {
+      const a = await fetchChipAnswer(label, chipQuestion);
+      setAnswer(a);
+      setHistory(h => [...h, { q: label, a }]);
+    } catch {
+      failedChipRef.current = { label, question: chipQuestion };
+      setIsError(true);
+    } finally {
+      setChipLoading(false);
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }
+  };
+
+  const askQuestion = async (overrideQuestion?: string) => {
+    const q = (overrideQuestion ?? question).trim();
+    if (!q || isBusy) return;
+    askedQuestionRef.current = q;
+    failedChipRef.current = null;
     setLoading(true);
     setIsError(false);
     setAnswer("");
     pulseButton();
 
     try {
-      const res = await fetch(`${API_BASE}/reference/ask`, {
+      const res = await fetch(`${API_BASE}/reference/ask?stream=false`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: question.trim() }),
+        body: JSON.stringify({ question: q }),
       });
 
       if (!res.ok) {
-        // Server returned a normal HTTP error before the stream started.
         setIsError(true);
         return;
       }
 
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
-      let streamErrored = false;
-
-      const handleEvent = (event: SseEvent | null) => {
-        if (!event) return;
-        if (event.kind === "content") {
-          fullText += event.content;
-          setAnswer(fullText);
-          scrollRef.current?.scrollToEnd({ animated: true });
-        } else if (event.kind === "error" || event.kind === "unparseable") {
-          streamErrored = true;
-        }
-      };
-
-      if (reader) {
-        // Buffer partial lines across chunk boundaries so SSE frames split
-        // across network packets are never passed to JSON.parse half-complete.
-        let sseBuffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          sseBuffer += decoder.decode(value, { stream: true });
-          const lines = sseBuffer.split("\n");
-          // Keep the last (possibly incomplete) line in the buffer
-          sseBuffer = lines.pop() ?? "";
-          for (const line of lines) handleEvent(parseSseLine(line));
-        }
-        // Final flush in case the stream ended on a multibyte UTF-8 boundary.
-        sseBuffer += decoder.decode();
-        // Surface any leftover content when the stream closes — either parse
-        // it cleanly or flag the stream as ending unexpectedly.
-        handleEvent(parseFinalBuffer(sseBuffer));
-      }
-
-      if (streamErrored) {
-        setIsError(true);
-      }
-      if (fullText && !streamErrored) {
-        setHistory(h => [...h, { q: askedQuestionRef.current, a: fullText }]);
-      }
+      const data: { answer: string } = await res.json();
+      setAnswer(data.answer);
+      setHistory(h => [...h, { q: askedQuestionRef.current, a: data.answer }]);
+      scrollRef.current?.scrollToEnd({ animated: true });
     } catch {
       setIsError(true);
     } finally {
@@ -123,14 +217,41 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
     }
   };
 
+  const retryLastRequest = () => {
+    if (failedChipRef.current) {
+      // Chip failure — replay the exact chip label + full question
+      const { label, question: chipQ } = failedChipRef.current;
+      onChipTap(label, chipQ);
+    } else {
+      // Typed question failure — replay using stored question text
+      askQuestion(askedQuestionRef.current);
+    }
+  };
+
+  const dismissActiveAnswer = () => {
+    setAnswer("");
+    setIsError(false);
+    failedChipRef.current = null;
+  };
+
+  const handleAnswerDoubleTap = () => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 350) {
+      setInputCollapsed(c => !c);
+    }
+    lastTapRef.current = now;
+  };
+
   const clearAll = () => {
     setQuestion("");
     setAnswer("");
     setIsError(false);
     setHistory([]);
+    setInputCollapsed(false);
+    setActiveBreakerChip(null);
+    failedChipRef.current = null;
   };
 
-  // Simple markdown bold renderer
   const renderAnswer = (text: string) => {
     const parts = text.split(/(\*\*[^*]+\*\*)/g);
     return parts.map((part, i) => {
@@ -151,7 +272,6 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
 
   return (
     <>
-      {/* Floating button — hidden in controlled mode (header button takes its place) */}
       {!controlled && (
         <Animated.View style={[fabStyles.fab, { transform: [{ scale: pulse }] }]}>
           <Pressable
@@ -164,12 +284,12 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
         </Animated.View>
       )}
 
-      {/* Modal */}
       <Modal
         visible={isVisible}
         animationType="slide"
         presentationStyle="pageSheet"
         onRequestClose={handleClose}
+        onShow={handleModalShow}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -179,7 +299,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
           <View style={[modalStyles.header, { borderBottomColor: colors.border }]}>
             <View>
               <Text style={[modalStyles.title, { color: colors.foreground }]}>
-                ⚡ Reference AI
+                🤖 Ask the AI
               </Text>
               <Text style={[modalStyles.subtitle, { color: colors.mutedForeground }]}>
                 Ask about electrical terms & codes
@@ -200,15 +320,16 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
             </View>
           </View>
 
-          {/* History */}
+          {/* Scrollable body */}
           <ScrollView
             ref={scrollRef}
             style={{ flex: 1 }}
             contentContainerStyle={{ padding: 16 }}
             keyboardShouldPersistTaps="handled"
           >
+            {/* History bubbles */}
             {history.map((h, i) => (
-              <View key={i} style={{ marginBottom: 16 }}>
+              <Pressable key={i} onPress={handleAnswerDoubleTap} style={{ marginBottom: 16 }}>
                 <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + "22" }]}>
                   <Text style={[msgStyles.qText, { color: colors.foreground }]}>Q: {h.q}</Text>
                 </View>
@@ -217,11 +338,12 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                     {renderAnswer(h.a)}
                   </Text>
                 </View>
-              </View>
+              </Pressable>
             ))}
 
-            {answer || isError ? (
-              <View style={{ marginBottom: 16 }}>
+            {/* Active answer bubble */}
+            {hasActiveAnswerArea ? (
+              <Pressable onPress={handleAnswerDoubleTap} style={{ marginBottom: 16 }}>
                 <View style={[msgStyles.qBubble, { backgroundColor: colors.primary + "22" }]}>
                   <Text style={[msgStyles.qText, { color: colors.foreground }]}>
                     Q: {askedQuestionRef.current || question}
@@ -230,10 +352,10 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                 {isError ? (
                   <View style={[msgStyles.aBubble, { backgroundColor: colors.destructive + "0f", borderColor: colors.destructive + "44" }]}>
                     <Text style={{ fontSize: 14, lineHeight: 22, color: colors.destructive }}>
-                      Failed to get an answer — check your connection and try again.
+                      No answer — check your connection and try again.
                     </Text>
                     <Pressable
-                      onPress={askQuestion}
+                      onPress={retryLastRequest}
                       style={[msgStyles.retryBtn, { borderColor: colors.primary }]}
                     >
                       <Text style={{ fontSize: 13, color: colors.primary, fontFamily: "Inter_600SemiBold" }}>
@@ -241,77 +363,155 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                       </Text>
                     </Pressable>
                   </View>
+                ) : answerLoading && !answer ? (
+                  <View style={[msgStyles.aBubble, { backgroundColor: colors.card, borderColor: colors.border, alignItems: "center", justifyContent: "center", minHeight: 48 }]}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  </View>
                 ) : (
                   <View style={[msgStyles.aBubble, { backgroundColor: colors.card, borderColor: colors.border }]}>
                     <Text style={{ fontSize: 14, lineHeight: 22 }}>
                       {renderAnswer(answer)}
                     </Text>
-                    {loading ? (
-                      <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 4 }} />
+                    {!answerLoading && answer ? (
+                      <Pressable
+                        onPress={dismissActiveAnswer}
+                        style={[msgStyles.dismissBtn, { backgroundColor: colors.muted }]}
+                        hitSlop={8}
+                      >
+                        <Text style={{ fontSize: 11, color: colors.mutedForeground, fontFamily: "Inter_500Medium" }}>✕</Text>
+                      </Pressable>
                     ) : null}
                   </View>
                 )}
-              </View>
+              </Pressable>
             ) : null}
 
-            {!history.length && !answer && !isError ? (
+            {/* Empty state */}
+            {!history.length && !hasActiveAnswerArea ? (
               <View style={emptyStyles.container}>
-                <Text style={emptyStyles.emoji}>📖</Text>
-                <Text style={[emptyStyles.title, { color: colors.foreground }]}>Electrical Reference</Text>
+                <Text style={emptyStyles.emoji}>🤖</Text>
+                <Text style={[emptyStyles.title, { color: colors.foreground }]}>Ask the AI</Text>
                 <Text style={[emptyStyles.hint, { color: colors.mutedForeground }]}>
                   Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical term.
                 </Text>
-                <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>QUICK LOOKUPS</Text>
-                {([
-                  { label: "1G",              question: "What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?" },
-                  { label: "GFCI",            question: "What does GFCI stand for, how does it work, and where is it required by the NEC?" },
-                  { label: "AFCI",            question: "What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?" },
-                  { label: "TRWR",            question: "What does TRWR mean on a receptacle — what is Tamper Resistant and Weather Resistant, and where is each required?" },
-                  { label: "Decora",          question: "What is a Decora style switch or receptacle, who makes them, and how do they differ from standard toggle style?" },
-                  { label: "Romex",           question: "What is Romex (NM-B cable), what do the numbers on the sheath mean, and when is it allowed by code?" },
-                  { label: "MC Cable",        question: "What is MC cable (Metal Clad armored cable), how does it differ from Romex, and when should it be used?" },
-                  { label: "EMT",             question: "What is EMT (Electrical Metallic Tubing) conduit, what are its common uses, and how does it differ from rigid conduit?" },
-                  { label: "Toggle vs Rocker",question: "What is the difference between a toggle switch and a rocker (paddle) switch — are they interchangeable?" },
-                  { label: "Duplex",          question: "What is a duplex receptacle, how does it differ from simplex and quadplex outlets, and what are standard amperage ratings?" },
-                  { label: "15A vs 20A",      question: "What is the difference between 15 amp and 20 amp circuits, receptacles, and breakers — how do I tell them apart?" },
-                  { label: "AWG",             question: "What does AWG mean, how does wire gauge numbering work, and which gauge should I use for common circuits?" },
-                ] as const).map(({ label, question: q }) => (
+
+                {/* Inline text input in empty state */}
+                <View style={[emptyStyles.inputRow, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                  <TextInput
+                    value={question}
+                    onChangeText={setQuestion}
+                    placeholder="Ask about any electrical term..."
+                    placeholderTextColor={colors.mutedForeground}
+                    style={[emptyStyles.inlineInput, { color: colors.foreground }]}
+                    returnKeyType="send"
+                    onSubmitEditing={() => askQuestion()}
+                  />
                   <Pressable
-                    key={label}
-                    onPress={() => setQuestion(q)}
-                    style={[emptyStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                    onPress={() => askQuestion()}
+                    disabled={!question.trim()}
+                    style={[emptyStyles.inlineSendBtn, { backgroundColor: question.trim() ? colors.primary : colors.border }]}
                   >
-                    <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{label}</Text>
+                    <Text style={[emptyStyles.inlineSendText, { color: colors.primaryForeground }]}>→</Text>
                   </Pressable>
-                ))}
+                </View>
+
+                {/* Quick Lookups — horizontal pill row */}
+                <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>QUICK LOOKUPS</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={emptyStyles.chipRow}
+                >
+                  {QUICK_LOOKUP_CHIPS.map(({ label, question: q }) => (
+                    <Pressable
+                      key={label}
+                      onPress={() => onChipTap(label, q)}
+                      style={[emptyStyles.chip, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                    >
+                      <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{label}</Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+
+                {/* Breaker Attributes — horizontal pill row with inline expansion */}
+                <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground, marginTop: 16 }]}>BREAKER ATTRIBUTES</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={emptyStyles.chipRow}
+                >
+                  {BREAKER_ATTRIBUTE_CHIPS.map(({ label }) => (
+                    <Pressable
+                      key={label}
+                      onPress={() => setActiveBreakerChip(c => c === label ? null : label)}
+                      style={[
+                        emptyStyles.chip,
+                        {
+                          backgroundColor: activeBreakerChip === label ? colors.primary : colors.muted,
+                          borderColor: activeBreakerChip === label ? colors.primary : colors.border,
+                        },
+                      ]}
+                    >
+                      <Text style={[
+                        emptyStyles.chipText,
+                        { color: activeBreakerChip === label ? colors.primaryForeground : colors.foreground },
+                      ]}>
+                        {label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+
+                {activeBreakerChip ? (
+                  <View style={[breakerStyles.answerBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                    <Text style={[breakerStyles.answerLabel, { color: colors.mutedForeground }]}>
+                      {activeBreakerChip}
+                    </Text>
+                    <Text style={{ fontSize: 14, lineHeight: 22 }}>
+                      {renderAnswer(
+                        BREAKER_ATTRIBUTE_CHIPS.find(c => c.label === activeBreakerChip)?.answer ?? ""
+                      )}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             ) : null}
           </ScrollView>
 
-          {/* Input bar */}
-          <View style={[inputStyles.bar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-            <TextInput
-              value={question}
-              onChangeText={setQuestion}
-              placeholder="Ask about any electrical term..."
-              placeholderTextColor={colors.mutedForeground}
-              style={[inputStyles.input, { backgroundColor: colors.muted, color: colors.foreground, borderColor: colors.border }]}
-              multiline
-              returnKeyType="send"
-              onSubmitEditing={askQuestion}
-            />
-            <Pressable
-              onPress={askQuestion}
-              disabled={loading || !question.trim()}
-              style={[inputStyles.sendBtn, { backgroundColor: loading ? colors.muted : colors.primary }]}
-            >
-              {loading ? (
-                <ActivityIndicator size="small" color={colors.primaryForeground} />
-              ) : (
-                <Text style={[inputStyles.sendText, { color: colors.primaryForeground }]}>→</Text>
-              )}
-            </Pressable>
-          </View>
+          {/* Persistent bottom input bar — visible once conversation has started */}
+          {(history.length > 0 || hasActiveAnswerArea) ? (
+            <View style={[inputStyles.bar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+              <TextInput
+                value={question}
+                onChangeText={t => { setQuestion(t); if (inputCollapsed) setInputCollapsed(false); }}
+                placeholder="Ask about any electrical term..."
+                placeholderTextColor={colors.mutedForeground}
+                style={[
+                  inputStyles.input,
+                  {
+                    backgroundColor: colors.muted,
+                    color: colors.foreground,
+                    borderColor: colors.border,
+                  },
+                ]}
+                multiline={!inputCollapsed}
+                numberOfLines={inputCollapsed ? 1 : undefined}
+                returnKeyType="send"
+                onSubmitEditing={() => askQuestion()}
+              />
+              <Pressable
+                onPress={() => askQuestion()}
+                disabled={loading || !question.trim()}
+                style={[inputStyles.sendBtn, { backgroundColor: loading ? colors.muted : colors.primary }]}
+              >
+                {loading ? (
+                  <ActivityIndicator size="small" color={colors.primaryForeground} />
+                ) : (
+                  <Text style={[inputStyles.sendText, { color: colors.primaryForeground }]}>→</Text>
+                )}
+              </Pressable>
+            </View>
+          ) : null}
         </KeyboardAvoidingView>
       </Modal>
     </>
@@ -364,6 +564,16 @@ const msgStyles = StyleSheet.create({
   qText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   aBubble: { ...secondaryBtnBase, padding: 12 },
   retryBtn: { alignSelf: "flex-start", marginTop: 10, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 6, borderWidth: 1 },
+  dismissBtn: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });
 
 const emptyStyles = StyleSheet.create({
@@ -371,9 +581,51 @@ const emptyStyles = StyleSheet.create({
   emoji: { fontSize: 40, marginBottom: 12 },
   title: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   hint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 16 },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    width: "100%",
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginBottom: 20,
+    gap: 8,
+  },
+  inlineInput: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    paddingVertical: 8,
+  },
+  inlineSendBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inlineSendText: { fontSize: 16, fontFamily: "Inter_700Bold" },
   sectionLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 1, textTransform: "uppercase", marginBottom: 10, alignSelf: "flex-start" },
-  chip: { ...secondaryBtnBase, width: "100%", padding: 12, marginBottom: 8 },
+  chipRow: { paddingBottom: 4, gap: 8, flexDirection: "row" },
+  chip: { ...secondaryBtnBase, paddingHorizontal: 14, paddingVertical: 8 },
   chipText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+});
+
+const breakerStyles = StyleSheet.create({
+  answerBox: {
+    ...secondaryBtnBase,
+    width: "100%",
+    padding: 14,
+    marginTop: 12,
+  },
+  answerLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 6,
+  },
 });
 
 const inputStyles = StyleSheet.create({
