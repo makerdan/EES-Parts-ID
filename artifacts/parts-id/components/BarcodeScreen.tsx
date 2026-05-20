@@ -20,6 +20,7 @@ import {
   lookupByBarcode,
   useUpdateItemBarcodes,
   useSearchInventory,
+  useUpsertInventoryBatch,
   useListInventory,
   getListInventoryQueryKey,
 } from "@workspace/api-client-react";
@@ -84,8 +85,12 @@ function CatalogPickerModal({
   const colors = useColors();
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchMutation = useSearchInventory();
+  const createMutation = useUpsertInventoryBatch();
+  const lookupMutation = useSearchInventory();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -94,13 +99,41 @@ function CatalogPickerModal({
   }, [query]);
 
   useEffect(() => {
-    if (!visible) { setQuery(""); setDebouncedQuery(""); return; }
+    if (!visible) { setQuery(""); setDebouncedQuery(""); setCreateError(null); return; }
   }, [visible]);
 
   useEffect(() => {
     if (!visible || !debouncedQuery.trim()) return;
     searchMutation.mutate({ data: { keywords: debouncedQuery, confidenceThreshold: 20 } });
   }, [debouncedQuery, visible]);
+
+  const handleCreateNew = useCallback(async () => {
+    const catalogCode = query.trim();
+    if (!catalogCode) return;
+    setCreateError(null);
+    try {
+      await createMutation.mutateAsync({
+        data: { items: [{ catalog: catalogCode, vendor: "" }] },
+      });
+      queryClient.invalidateQueries({ queryKey: getListInventoryQueryKey() });
+      // Look up the just-created item to get its full record (including id)
+      const result = await lookupMutation.mutateAsync({
+        data: { keywords: catalogCode, catalog: catalogCode, confidenceThreshold: 0 },
+      });
+      const created = result.results.find(
+        (r) => r.item.catalog.toLowerCase() === catalogCode.toLowerCase(),
+      );
+      if (created) {
+        onAssign(created.item);
+      } else {
+        setCreateError("Item created but could not be retrieved. Search for it manually.");
+      }
+    } catch {
+      setCreateError("Failed to create item. Please try again.");
+    }
+  }, [query, createMutation, lookupMutation, queryClient, onAssign]);
+
+  const isCreating = createMutation.isPending || lookupMutation.isPending;
 
   const prefix = shelfPrefix?.trim().toLowerCase() ?? "";
   const allResults = searchMutation.data?.results ?? [];
@@ -141,7 +174,7 @@ function CatalogPickerModal({
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder={prefix ? `Search parts on shelf ${shelfPrefix}…` : "Search catalog…"}
+            placeholder={prefix ? `Search parts on shelf ${shelfPrefix}…` : "Search or enter new catalog #…"}
             placeholderTextColor={colors.mutedForeground}
             autoFocus
             style={[pickerStyles.searchInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
@@ -150,7 +183,18 @@ function CatalogPickerModal({
           />
         </View>
 
-        {searchMutation.isPending ? (
+        {createError ? (
+          <Text style={[pickerStyles.errorText, { color: "#ef4444" }]}>{createError}</Text>
+        ) : null}
+
+        {isCreating ? (
+          <View style={{ padding: 24, alignItems: "center" }}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={[{ color: colors.mutedForeground, fontSize: 13, marginTop: 8, fontFamily: "Inter_400Regular" }]}>
+              Creating new item…
+            </Text>
+          </View>
+        ) : searchMutation.isPending ? (
           <View style={{ padding: 24, alignItems: "center" }}>
             <ActivityIndicator color={colors.primary} />
           </View>
@@ -159,6 +203,24 @@ function CatalogPickerModal({
             data={results}
             keyExtractor={(r) => String(r.item.id)}
             keyboardShouldPersistTaps="handled"
+            ListHeaderComponent={
+              debouncedQuery.trim() ? (
+                <Pressable
+                  onPress={handleCreateNew}
+                  style={[pickerStyles.createRow, { backgroundColor: colors.primary + "15", borderColor: colors.primary + "44" }]}
+                >
+                  <Text style={[pickerStyles.createIcon, { color: colors.primary }]}>＋</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[pickerStyles.createLabel, { color: colors.primary }]}>
+                      Add as new item
+                    </Text>
+                    <Text style={[pickerStyles.createCatalog, { color: colors.foreground }]} numberOfLines={1}>
+                      {debouncedQuery.trim()}
+                    </Text>
+                  </View>
+                </Pressable>
+              ) : null
+            }
             renderItem={({ item: r }) => (
               <Pressable
                 onPress={() => onAssign(r.item)}
@@ -189,11 +251,11 @@ function CatalogPickerModal({
             ListEmptyComponent={
               debouncedQuery.trim() && !searchMutation.isPending ? (
                 <Text style={[pickerStyles.emptyText, { color: colors.mutedForeground }]}>
-                  No results — try different keywords.
+                  No existing items match — use "Add as new item" above.
                 </Text>
               ) : !debouncedQuery.trim() ? (
                 <Text style={[pickerStyles.emptyText, { color: colors.mutedForeground }]}>
-                  Type to search the catalog…
+                  Type a catalog # to search or add a new item…
                 </Text>
               ) : null
             }
@@ -1126,4 +1188,18 @@ const pickerStyles = StyleSheet.create({
     flexShrink: 1,
   },
   shelfBadgeText: { fontSize: 11, fontFamily: "Inter_500Medium" },
+  createRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginHorizontal: 12,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  createIcon: { fontSize: 22, lineHeight: 26 },
+  createLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.4, textTransform: "uppercase" },
+  createCatalog: { fontSize: 14, fontFamily: "Inter_700Bold", marginTop: 2 },
+  errorText: { fontSize: 12, fontFamily: "Inter_400Regular", paddingHorizontal: 16, paddingBottom: 4 },
 });
