@@ -492,14 +492,18 @@ export function ZoneEditor() {
             onWheel={onWheel}
           >
             <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
-              {/* Floor plan */}
-              <image
-                href={`${import.meta.env.BASE_URL}warehouse-map.svg`}
-                x={0}
-                y={0}
-                width={SVG_W}
-                height={SVG_H}
-              />
+              {/* Floor plan — <foreignObject> avoids SVG-image intrinsic-size
+                  restrictions; the inner <img> loads the file as a browser
+                  image (same as <img src="...svg">) which always renders. */}
+              <foreignObject x={0} y={0} width={SVG_W} height={SVG_H}>
+                <img
+                  // @ts-expect-error xmlns required for SVG foreignObject HTML
+                  xmlns="http://www.w3.org/1999/xhtml"
+                  src={`${import.meta.env.BASE_URL}warehouse-map.svg`}
+                  style={{ width: SVG_W, height: SVG_H, display: "block" }}
+                  draggable={false}
+                />
+              </foreignObject>
 
               {/* Zone overlays */}
               {displayZones.map((zone) => {
