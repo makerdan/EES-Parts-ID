@@ -1049,7 +1049,7 @@ export default function SearchScreen() {
         <View style={styles.filterOverlayWrapper}>
           {/* Browse: [By Aisle] [By Category] */}
           <View style={styles.modeToggleRow}>
-            <Text style={[styles.modeToggleLabel, { color: colors.mutedForeground }]}>Browse:</Text>
+            <Text style={styles.modeToggleLabel}>Browse:</Text>
             {([ 
               { key: "aisle"    as SearchMode, label: "By Aisle",    icon: "map-pin" as const },
               { key: "category" as SearchMode, label: "By Category", icon: "tag"     as const },
@@ -1315,7 +1315,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     alignSelf: "stretch",
   },
-  modeToggleLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  modeToggleLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff", textDecorationLine: "underline" },
   modeToggleBtn: {
     flex: 1,
     flexDirection: "row",
