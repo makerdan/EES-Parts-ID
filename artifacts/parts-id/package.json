@@ -73,7 +73,7 @@
     "expo-asset": "^12.0.13",
     "expo-file-system": "~19.0.22",
     "expo-image-manipulator": "~14.0.8",
-    "expo-screen-orientation": "^55.0.16",
+    "expo-screen-orientation": "^9.0.9",
     "expo-sharing": "~14.0.8"
   }
 }
