@@ -14,8 +14,11 @@ import {
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { resizeImage } from "@/utils/resizeImage";
-import { useSearchInventory, useAiIdentifyPart } from "@workspace/api-client-react";
+import { useSearchInventory, useAiIdentifyPart, lookupByBarcode } from "@workspace/api-client-react";
 import type { SearchResult } from "@workspace/api-client-react";
+import { lookupByBarcodeOffline } from "@/utils/offlineBarcode";
+import { useScanHistory } from "@/hooks/useScanHistory";
+import type { ScanEntry } from "@/utils/scanHistory";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
@@ -51,6 +54,30 @@ export default function PhotoScreen() {
   // Tracks which phase of the multi-step AI identification flow we are in.
   type ProgressPhase = "uploading" | "analysing" | "searching" | null;
   const [progressPhase, setProgressPhase] = useState<ProgressPhase>(null);
+
+  const { history } = useScanHistory();
+  const [recentTapLoading, setRecentTapLoading] = useState<string | null>(null);
+
+  // Last 5 scans that actually found an item
+  const recentFoundScans = React.useMemo(
+    () => history.filter((e) => e.found && e.catalog).slice(0, 5),
+    [history],
+  );
+
+  const handleRecentTap = React.useCallback(async (entry: ScanEntry) => {
+    if (!entry.found || recentTapLoading) return;
+    setRecentTapLoading(entry.barcode);
+    try {
+      const offline = await lookupByBarcodeOffline(entry.barcode);
+      if (offline) { setBarcodeResult(offline); return; }
+      const item = await lookupByBarcode(encodeURIComponent(entry.barcode));
+      setBarcodeResult(item);
+    } catch {
+      // Item may have been deleted — silently ignore
+    } finally {
+      setRecentTapLoading(null);
+    }
+  }, [recentTapLoading]);
 
   const identifyMutation = useAiIdentifyPart();
   const searchMutation = useSearchInventory();
@@ -320,6 +347,49 @@ export default function PhotoScreen() {
               <Text style={{ color: colors.primary, fontSize: 13 }}>›</Text>
             </Pressable>
           </View>
+
+          {/* Recent scans strip */}
+          {recentFoundScans.length > 0 ? (
+            <View>
+              <Text style={[styles.recentScansTitle, { color: colors.mutedForeground }]}>Recent scans</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentScansRow}>
+                {recentFoundScans.map((entry) => {
+                  const isLoading = recentTapLoading === entry.barcode;
+                  return (
+                    <Pressable
+                      key={entry.barcode}
+                      onPress={() => handleRecentTap(entry)}
+                      disabled={!!recentTapLoading}
+                      style={({ pressed }) => [
+                        styles.recentScanChip,
+                        {
+                          backgroundColor: pressed && !recentTapLoading ? colors.muted : colors.card,
+                          borderColor: colors.border,
+                          opacity: recentTapLoading && !isLoading ? 0.5 : 1,
+                        },
+                      ]}
+                    >
+                      {isLoading ? (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      ) : (
+                        <Feather name="maximize" size={12} color={colors.mutedForeground} />
+                      )}
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.recentScanCatalog, { color: colors.foreground }]} numberOfLines={1}>
+                          {entry.catalog}
+                        </Text>
+                        {entry.vendor ? (
+                          <Text style={[styles.recentScanVendor, { color: colors.mutedForeground }]} numberOfLines={1}>
+                            {entry.vendor}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          ) : null}
 
           {/* Optional context */}
           <View style={[styles.contextCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -621,6 +691,20 @@ const styles = StyleSheet.create({
   photoCounter: { fontSize: 12, fontFamily: "Inter_500Medium" },
   historyLink: { flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start" },
   historyLinkText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  recentScansTitle: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 8 },
+  recentScansRow: { flexDirection: "row", gap: 8, paddingBottom: 2 },
+  recentScanChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    maxWidth: 160,
+  },
+  recentScanCatalog: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  recentScanVendor: { fontSize: 11, fontFamily: "Inter_400Regular" },
   contextCard: { borderRadius: 12, padding: 14, borderWidth: 1 },
   contextTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 12 },
   fieldLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 5 },
