@@ -21,6 +21,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -39,6 +40,7 @@ const CELL_BASE = 120;
 
 export function WarehouseMapWeb({ inventory, onAislePress }: Props) {
   const colors = useColors();
+  const { height: windowHeight } = useWindowDimensions();
   const [cellSize, setCellSize] = useState(CELL_BASE);
 
   const { aisles } = useMemo(() => buildAisleHierarchy(inventory), [inventory]);
@@ -88,7 +90,7 @@ export function WarehouseMapWeb({ inventory, onAislePress }: Props) {
 
       {/* Map canvas */}
       <ScrollView
-        contentContainerStyle={styles.canvas}
+        contentContainerStyle={[styles.canvas, { paddingBottom: windowHeight / 2 }]}
         showsVerticalScrollIndicator
         showsHorizontalScrollIndicator
       >
