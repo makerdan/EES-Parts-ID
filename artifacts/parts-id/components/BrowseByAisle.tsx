@@ -613,7 +613,7 @@ function SectionShelfView({
               result={{
                 item: selectedPart.item,
                 confidence: 1,
-                matchReason: undefined,
+                matchReason: "",
                 seriesLabel: undefined,
                 variants: [],
               }}
