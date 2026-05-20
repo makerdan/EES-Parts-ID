@@ -929,12 +929,6 @@ export function BrowseByAisle({
       {/* ── Parts level ── */}
       {level === "parts" ? (
         <View style={{ flex: 1 }}>
-          <SectionPillRow
-            sections={filteredSections}
-            currentSectionNum={crumbs.section!.sectionNum}
-            onSelect={section => setCrumbs(prev => ({ ...prev, section }))}
-            colors={colors}
-          />
           {shelfViewEnabled ? (
             <SectionShelfView
               section={crumbs.section!}
