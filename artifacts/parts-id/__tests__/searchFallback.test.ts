@@ -26,6 +26,7 @@
 import {
   resolveOfflineFallback,
   fetchInventoryPages,
+  runSearchPipeline,
   buildQueryKey,
   pruneExpired,
   CACHE_TTL_MS,
@@ -283,6 +284,147 @@ describe("fetchInventoryPages — background cache refresh", () => {
     const fetchPage = jest.fn().mockResolvedValue({ items, total: 1 });
 
     await expect(fetchInventoryPages(fetchPage)).resolves.toEqual(items);
+  });
+});
+
+// ── runSearchPipeline — end-to-end 3-tier sequence ───────────────────────────
+
+describe("runSearchPipeline — full 3-tier search sequence", () => {
+  type MockResult = { id: number };
+
+  const BLANK: FilterValues = {
+    keywords: "", catalog: "", vendor: "", color: "", size: "", material: "",
+    textNumbers: "", confidenceThreshold: 50, category: "", amperage: "",
+    colorChip: "", manufacturer: "", sizeChip: "", rating: "", wireType: "",
+    wireGauge: "", conduitType: "", conduitSize: "", boxType: "", boxGangCount: "",
+    mountingType: "", environment: "", voltage: "", poleCount: "",
+  };
+
+  it("tier 1 (remote success) — returns remote results without touching cache or Fuse", async () => {
+    const remoteResults: MockResult[] = [{ id: 1 }, { id: 2 }];
+    const searchFn = jest.fn().mockResolvedValue(remoteResults);
+    const fuseSearch = jest.fn().mockReturnValue([{ id: 99 }]);
+    const queryKey = buildQueryKey(BLANK);
+
+    const result = await runSearchPipeline({
+      searchFn,
+      queryKey,
+      cache: {},
+      fuseSearch,
+      keywords: "",
+    });
+
+    expect(result.tier).toBe("remote");
+    expect(result.results).toEqual(remoteResults);
+    expect(fuseSearch).not.toHaveBeenCalled();
+  });
+
+  it("tier 2 (remote failure + exact cache hit) — returns cached results", async () => {
+    const searchFn = jest.fn().mockRejectedValue(new Error("network error"));
+    const cachedResults: MockResult[] = [{ id: 3 }, { id: 4 }];
+    const f: FilterValues = { ...BLANK, keywords: "wire" };
+    const queryKey = buildQueryKey(f);
+    const cache: QueryCache<MockResult> = {
+      [queryKey]: { timestamp: Date.now(), results: cachedResults },
+    };
+    const fuseSearch = jest.fn().mockReturnValue([]);
+
+    const result = await runSearchPipeline({
+      searchFn,
+      queryKey,
+      cache,
+      fuseSearch,
+      keywords: "wire",
+    });
+
+    expect(result.tier).toBe("exact");
+    expect(result.results).toEqual(cachedResults);
+    expect(fuseSearch).not.toHaveBeenCalled();
+  });
+
+  it("tier 3 (remote failure + cache miss) — returns Fuse results", async () => {
+    const searchFn = jest.fn().mockRejectedValue(new Error("timeout"));
+    const fuseResults: MockResult[] = [{ id: 5 }];
+    const f: FilterValues = { ...BLANK, keywords: "conduit" };
+    const queryKey = buildQueryKey(f);
+    const fuseSearch = jest.fn().mockReturnValue(fuseResults);
+
+    const result = await runSearchPipeline({
+      searchFn,
+      queryKey,
+      cache: {}, // no cache
+      fuseSearch,
+      keywords: "conduit",
+    });
+
+    expect(result.tier).toBe("fuse");
+    expect(result.results).toEqual(fuseResults);
+    expect(fuseSearch).toHaveBeenCalledWith("conduit");
+  });
+
+  it("tier 3 fallback — returns empty results when both cache and Fuse miss", async () => {
+    const searchFn = jest.fn().mockRejectedValue(new Error("offline"));
+    const fuseSearch = jest.fn().mockReturnValue([]);
+    const f: FilterValues = { ...BLANK, keywords: "unobtainium" };
+    const queryKey = buildQueryKey(f);
+
+    const result = await runSearchPipeline({
+      searchFn,
+      queryKey,
+      cache: {},
+      fuseSearch,
+      keywords: "unobtainium",
+    });
+
+    expect(result.tier).toBe("fuse");
+    expect(result.results).toEqual([]);
+  });
+
+  it("cache with a different query key is not used (wrong key → falls to Fuse)", async () => {
+    const searchFn = jest.fn().mockRejectedValue(new Error("offline"));
+    const cachedResults: MockResult[] = [{ id: 7 }];
+    const wrongKey = buildQueryKey({ ...BLANK, keywords: "relay" });
+    const lookupKey = buildQueryKey({ ...BLANK, keywords: "switch" });
+    const fuseResults: MockResult[] = [{ id: 8 }];
+    const cache: QueryCache<MockResult> = {
+      [wrongKey]: { timestamp: Date.now(), results: cachedResults },
+    };
+    const fuseSearch = jest.fn().mockReturnValue(fuseResults);
+
+    const result = await runSearchPipeline({
+      searchFn,
+      queryKey: lookupKey,
+      cache,
+      fuseSearch,
+      keywords: "switch",
+    });
+
+    expect(result.tier).toBe("fuse");
+    expect(result.results).toEqual(fuseResults);
+  });
+
+  it("remote success supersedes a populated cache entry", async () => {
+    const remoteResults: MockResult[] = [{ id: 10 }];
+    const cachedResults: MockResult[] = [{ id: 11 }]; // stale
+    const f: FilterValues = { ...BLANK, keywords: "breaker" };
+    const queryKey = buildQueryKey(f);
+    const cache: QueryCache<MockResult> = {
+      [queryKey]: { timestamp: Date.now(), results: cachedResults },
+    };
+    const searchFn = jest.fn().mockResolvedValue(remoteResults);
+    const fuseSearch = jest.fn();
+
+    const result = await runSearchPipeline({
+      searchFn,
+      queryKey,
+      cache,
+      fuseSearch,
+      keywords: "breaker",
+    });
+
+    expect(result.tier).toBe("remote");
+    expect(result.results).toEqual(remoteResults);
+    expect(fuseSearch).not.toHaveBeenCalled();
   });
 });
 

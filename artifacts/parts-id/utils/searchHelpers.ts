@@ -112,6 +112,43 @@ export function resolveOfflineFallback<R>(opts: {
   return { cacheType: "fuse", results: fuseHits };
 }
 
+// ── 3-tier search pipeline ────────────────────────────────────────────────────
+
+export type SearchTier = "remote" | "exact" | "fuse";
+export type SearchPipelineResult<R> = {
+  tier: SearchTier;
+  results: R[];
+};
+
+/**
+ * Execute the full 3-tier search pipeline:
+ *   1. Remote  — call the API via `searchFn`; on success return results
+ *   2. Exact   — if the remote call fails, try an exact cache entry
+ *   3. Fuse    — if there is no cache entry, fall back to the local Fuse index
+ *
+ * The caller is responsible for pruning the cache before passing it in.
+ */
+export async function runSearchPipeline<R>(opts: {
+  searchFn: () => Promise<R[]>;
+  queryKey: string;
+  cache: QueryCache<R>;
+  fuseSearch: (kw: string) => R[];
+  keywords: string;
+}): Promise<SearchPipelineResult<R>> {
+  try {
+    const results = await opts.searchFn();
+    return { tier: "remote", results };
+  } catch {
+    const fallback = resolveOfflineFallback({
+      queryKey: opts.queryKey,
+      cache: opts.cache,
+      fuseSearch: opts.fuseSearch,
+      keywords: opts.keywords,
+    });
+    return { tier: fallback.cacheType, results: fallback.results };
+  }
+}
+
 // ── Background inventory sync ─────────────────────────────────────────────────
 
 export type PageFetcher<T> = (
