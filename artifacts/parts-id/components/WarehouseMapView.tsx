@@ -9,10 +9,9 @@
  * isInventory=false → muted, non-interactive label overlay
  * Empty zones       → instructional empty state card over the map
  */
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   LayoutChangeEvent,
   Pressable,
   StyleSheet,
@@ -20,6 +19,7 @@ import {
   useColorScheme,
   View,
 } from "react-native";
+import { Asset } from "expo-asset";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   useAnimatedStyle,
@@ -43,16 +43,6 @@ function clamp(val: number, min: number, max: number) {
   return val < min ? min : val > max ? max : val;
 }
 
-// Gets the bundled SVG asset URI via React Native's asset resolver
-function getSvgUri(): string {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const src = Image.resolveAssetSource(require("../assets/warehouse-map.svg"));
-    return src.uri;
-  } catch {
-    return "";
-  }
-}
 
 export interface WarehouseMapViewProps {
   zones: ApiWarehouseZone[];
@@ -118,7 +108,22 @@ export function WarehouseMapView({
   const savedTX = useSharedValue(0);
   const savedTY = useSharedValue(0);
 
-  const svgUri = useMemo(() => getSvgUri(), []);
+  // Resolve the bundled SVG asset URI via expo-asset, which works correctly
+  // on both native and web (unlike Image.resolveAssetSource which fails on web).
+  const [svgUri, setSvgUri] = useState("");
+  const [svgLoading, setSvgLoading] = useState(true);
+  useEffect(() => {
+    Asset.loadAsync(
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      require("../assets/warehouse-map.svg"),
+    ).then(([asset]) => {
+      setSvgUri(asset.localUri ?? asset.uri ?? "");
+    }).catch(() => {
+      setSvgUri("");
+    }).finally(() => {
+      setSvgLoading(false);
+    });
+  }, []);
 
   // ── Pinch gesture ──────────────────────────────────────────────────────────
   const pinchGesture = Gesture.Pinch()
@@ -286,9 +291,13 @@ export function WarehouseMapView({
                 { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
               ]}
             >
-              <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
-                Map unavailable
-              </Text>
+              {svgLoading ? (
+                <ActivityIndicator size="small" color={colors.mutedForeground} />
+              ) : (
+                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
+                  Map unavailable
+                </Text>
+              )}
             </View>
           )}
 
