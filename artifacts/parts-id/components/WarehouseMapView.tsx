@@ -565,7 +565,7 @@ export function WarehouseMapView({
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1, overflow: "hidden" },
+  fill: { flex: 1, overflow: "hidden", justifyContent: "center" },
   svgFallback: { alignItems: "center", justifyContent: "center" },
   // Invert + slight brightness reduction for dark-mode floor plan legibility.
   // filter is supported in RN 0.76+ (Expo SDK 52+); type augmented in
