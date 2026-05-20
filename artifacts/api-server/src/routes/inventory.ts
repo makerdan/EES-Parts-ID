@@ -170,7 +170,11 @@ router.post("/search", async (req, res) => {
     }
 
     // Resolve taxonomy category if categorySlug is provided
-    const isCategoryUncategorized = categorySlug === "uncategorized";
+    // All three slugs in the uncategorized branch trigger inverse-match logic
+    const isCategoryUncategorized =
+      categorySlug === "uncategorized" ||
+      categorySlug === "needs-review" ||
+      categorySlug === "unclassified-items";
     const categoryNode = (categorySlug && !isCategoryUncategorized)
       ? findNodeBySlug(TAXONOMY, categorySlug)
       : null;
