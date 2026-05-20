@@ -1,0 +1,120 @@
+Parts ID — Reference AI Feature
+Overview
+The Reference feature is a modal-based electrical reference assistant built into a React Native (Expo) mobile app. It gives warehouse workers instant answers about electrical parts, terminology, NEC codes, and breaker specifications. It has two interaction modes: tappable quick-lookup chips for common topics, and a free-form AI chat input for arbitrary questions.
+
+How It Is Triggered
+A "Ref" button (book-open icon, labeled "Ref") sits in the top header bar of the main Search screen, and is also present in the Photo and Upload tab headers. Tapping it opens the Reference modal.
+
+Modal Structure and Layout
+The modal slides up as a pageSheet (partial-screen sheet on iOS). It has three main zones stacked vertically:
+
+Header bar — fixed at the top
+Scrollable content area — chat history, active answer, and empty state
+Input area — fixed at the bottom (keyboard-aware)
+Header Bar
+Left side: a colored accent bar, then the title "⚡ Reference AI" and a subtitle "Ask about electrical terms & codes"
+Right side: a "Clear" button (only visible when there is chat history), and a "✕" close button
+Tapping Clear wipes all history, the active answer, and the text input
+Tapping ✕ closes the modal
+Empty State
+When there is no history and no active answer, the scrollable area shows:
+
+A robot emoji (🤖)
+The heading "Ask the AI"
+A hint: "Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical term and it will generate an answer for you."
+An inline text input row (same as the persistent bottom input, rendered inline here only in the empty state)
+The Quick Lookup chips and Breaker Attributes chips appear below this inline input
+Chat History (Non-Empty State)
+Once a question has been answered, the modal switches from the empty state to a chat-style layout:
+
+Each past exchange is rendered as a pair of bubbles:
+Question bubble: light tinted background (primary color at 22% opacity), prefixed with "Q: "
+Answer bubble: card background with a border, renders markdown bold (**text** → bold) and bullet lists as plain text with line breaks
+The active (most recent) exchange appears below all history entries and shows the question bubble immediately when a question is submitted, before the answer arrives
+Double-tapping any answer bubble collapses the text input back to a single line
+Active Answer Bubble Behavior
+As soon as a question is submitted, the question bubble appears and a spinner (ActivityIndicator) shows inside the answer bubble area
+When the answer arrives, the text replaces the spinner (rendered with markdown bold support)
+A small "✕" dismiss button appears in the top-right corner of the answer bubble once loading is complete; tapping it clears only the active answer (history is preserved)
+On error, the answer bubble area shows an error banner ("No answer — check your connection and try again.") and a "↺ Retry" button that re-submits the same question
+Text Input (Bottom Bar)
+A multi-line TextInput that auto-grows as the user types
+Typing re-enables auto-grow even if it was previously collapsed by a double-tap
+A send button (arrow icon) sits to the right of the input; it shows a spinner while a question is in flight
+The input and send button are wrapped in a KeyboardAvoidingView so they stay above the keyboard on both iOS and Android
+Submitting clears the input field immediately and begins the fetch
+Quick Lookup Chips (Standard Section)
+A horizontally scrollable row of pill-shaped chips. Each chip label maps to a pre-written full question sent to the AI. The chips and their underlying questions are:
+
+Chip Label	Full Question Sent
+1G	What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?
+GFCI	What does GFCI stand for, how does it work, and where is it required by the NEC?
+AFCI	What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?
+TRWR	What does TRWR mean on a receptacle — what is Tamper Resistant and Weather Resistant, and where is each required?
+Decora	What is a Decora style switch or receptacle, who makes them, and how do they differ from standard toggle style?
+Romex	What is Romex (NM-B cable), what do the numbers on the sheath mean, and when is it allowed by code?
+MC Cable	What is MC cable (Metal Clad armored cable), how does it differ from Romex, and when should it be used?
+EMT	What is EMT (Electrical Metallic Tubing) conduit, what are its common uses, and how does it differ from rigid conduit?
+Toggle vs Rocker	What is the difference between a toggle switch and a rocker (paddle) switch — are they interchangeable?
+Duplex	What is a duplex receptacle, how does it differ from simplex and quadplex outlets, and what are standard amperage ratings?
+15A vs 20A	What is the difference between 15 amp and 20 amp circuits, receptacles, and breakers — how do I tell them apart?
+AWG	What does AWG mean, how does wire gauge numbering work, and which gauge should I use for common circuits?
+Chip tap behavior (three-layer cache):
+
+Check an in-memory session cache (a Map keyed by the full question string). If found, display instantly.
+If not in memory, fetch from the server's database cache endpoint (GET /api/reference/quick-lookups/:label). If a cached answer is returned, display it and store it in the in-memory cache.
+If the database returns a 404 or an empty answer, fall back to the full AI endpoint (POST /api/reference/ask?stream=false) just like a typed question.
+Chips never show the send-button spinner. The in-memory cache is pre-populated when the modal opens by fetching all cached entries at once (GET /api/reference/quick-lookups).
+
+Breaker Attributes Chips (Static Section)
+A second labeled section titled "Breaker Attributes" with a separate set of chips. These chips are fully static — they never call the server. Tapping a chip expands its pre-written answer inline in the modal (no API call, no spinner). Only one Breaker Attributes chip can be expanded at a time. The chips and their static answers are:
+
+Amp Rating — Explains that amp rating is the trip current, shows how it is encoded in catalog numbers (e.g., BR120 = 20 A), and lists common residential ratings (15 A, 20 A, 30 A, 50 A).
+
+Poles — Explains 1-pole (120 V), 2-pole (240 V), and 3-pole (3-phase/480 V), how to read the pole digit from catalog numbers, and that a 2-pole breaker occupies two adjacent panel slots.
+
+Voltage Rating — Explains the maximum system voltage the breaker can interrupt, lists common ratings (120/240 V, 277 V, 480 V, 600 V), and warns that using an under-rated breaker is a safety violation.
+
+Frame Size (AF) — Explains that AF (Ampere Frame) is the maximum capacity of the physical body, lists common frame sizes (100 AF, 225 AF, 400 AF, 800 AF, 1200 AF), and notes that the frame determines the physical slot size in the panel.
+
+AIC Rating — Explains Ampere Interrupting Capacity, the hazard of exceeding it, and lists common ratings (10 kAIC, 22 kAIC, 65 kAIC, 200 kAIC).
+
+Mount Type — Explains plug-in (residential load centers), bolt-on (commercial/industrial panels), and DIN Rail (control panels/European-style boards), and notes they are not interchangeable.
+
+Physical Footprint — Explains standard full-size (1 inch, 1 slot), tandem/duplex (two circuits in one slot), slim 3/4-inch, and commercial full-size formats. Notes that not all panels accept tandem breakers.
+
+Series Codes — A reference table decoding common breaker series codes:
+
+Eaton: BR/BRN (residential plug-in), CH/CHF (commercial), BAB (bolt-on), GFCB/GFTCB (GFCI/AFCI)
+Square D: QO (residential), HOM (Homeline economy), I-Line (commercial bolt-on)
+Siemens/GE: GHB/GHQ (Siemens residential), THQL (GE residential), BJ/BJH (Siemens commercial), MP (Murray/Siemens-compatible)
+Common suffixes: GF (GFCI), AF (AFCI), PC (plug-on neutral), WHI (white handle), H (high-interrupt), SP (surge protection)
+Trade Size (N/A) — A clarifying chip explaining that "trade size" applies to conduit/fittings, not breakers, and redirecting to the correct breaker attributes.
+
+Backend API
+POST /api/reference/ask
+
+Body: { question: string }
+Query param ?stream=false (or Accept: application/json header) returns { answer: string } as JSON (used by the mobile app)
+Default behavior (without that param) streams the response as Server-Sent Events with data: { content } chunks and a final data: { done: true } event
+Uses OpenAI gpt-4o-mini, max 512 tokens
+System prompt: "You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use bold for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical."
+GET /api/reference/quick-lookups
+
+Returns all rows from the quick_lookup_cache database table as [{ label, answer }]
+GET /api/reference/quick-lookups/:label
+
+Returns { answer } for a single chip label, or 404 if not cached
+Markdown Rendering
+Answers are rendered with a simple inline parser: text wrapped in **double asterisks** is rendered as bold. Everything else is plain text. Bullet points (hyphens with spaces) are rendered as plain text with line breaks — there is no full markdown renderer, just bold support.
+
+State Management
+All state is local to the modal component (no global store). Key state:
+
+history: array of { q, a } pairs for past exchanges
+answer: string for the current active answer
+loading: boolean controlling the send-button spinner
+isError: boolean controlling the error/retry UI
+activeBreakerChip: the label of the expanded Breaker Attributes chip (or null)
+inputCollapsed: boolean that collapses the text input to a single line on double-tap of an answer bubble
+answerCacheRef: in-memory Map<string, string> for session-scoped caching (not persisted across modal opens)

@@ -17,6 +17,8 @@ interface ResultCardProps {
   onEditBins?: (item: InventoryItem) => void;
   /** Admin-only: opens the barcode editor for this part. */
   onEditBarcodes?: (item: InventoryItem) => void;
+  /** Admin-only: opens the full part details editor. */
+  onEditItem?: (item: InventoryItem) => void;
   rank: number;
   fontScale?: number;
 }
@@ -77,7 +79,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, rank, fontScale = 1.0 }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, rank, fontScale = 1.0 }: ResultCardProps) {
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
@@ -124,6 +126,15 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
               />
             ) : null}
             <ConfidenceBadge confidence={confidence} />
+            {onEditItem ? (
+              <Pressable
+                onPress={(e) => { e.stopPropagation?.(); onEditItem(item); }}
+                hitSlop={8}
+                style={[cardStyles.editItemBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+              >
+                <Text style={[cardStyles.editItemBtnText, { color: colors.primary }]}>✏️ Edit</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
 
@@ -310,7 +321,15 @@ const cardStyles = StyleSheet.create({
     marginBottom: 8,
   },
   headerLeft: { flexDirection: "row", alignItems: "flex-start", flex: 1 },
-  headerRight: { marginLeft: 8 },
+  headerRight: { marginLeft: 8, alignItems: "flex-end", gap: 6 },
+  editItemBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  editItemBtnText: { fontSize: 11, fontFamily: "Inter_500Medium" },
   rankBadge: {
     width: 26,
     height: 26,

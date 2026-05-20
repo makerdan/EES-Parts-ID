@@ -27,6 +27,7 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { lookupByBarcodeOffline, upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { ResultCard } from "@/components/ResultCard";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { useQueryClient } from "@tanstack/react-query";
 import { useScanHistory } from "@/hooks/useScanHistory";
 import type { ScanEntry } from "@/utils/scanHistory";
@@ -201,7 +202,7 @@ interface BarcodeScreenProps {
 
 export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const colors = useColors();
-  const { isAdmin, textFontScale } = useApp();
+  const { isAdmin, textFontScale, adminToken } = useApp();
   const queryClient = useQueryClient();
 
   const [permission, requestPermission] = useCameraPermissions();
@@ -214,6 +215,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const [isOfflineMatch, setIsOfflineMatch] = useState(false);
   const [showAssignPicker, setShowAssignPicker] = useState(false);
   const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
+  const [detailsEditItem, setDetailsEditItem] = useState<InventoryItem | null>(null);
   const [historyPreviewItem, setHistoryPreviewItem] = useState<InventoryItem | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
@@ -733,6 +735,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
             <ResultCard
               result={{ item: matchedItem, confidence: 1.0, matchReason: isOfflineMatch ? "offline match" : "barcode match", seriesBase: null, seriesLabel: null, variants: [] }}
               onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
+              onEditItem={isAdmin ? setDetailsEditItem : undefined}
               rank={0}
               fontScale={textFontScale}
             />
@@ -824,6 +827,13 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
         }}
       />
 
+      {/* ── Part details editor modal ─────────────────────────────────────────── */}
+      <PartDetailsEditor
+        item={detailsEditItem}
+        adminToken={adminToken}
+        onClose={() => setDetailsEditItem(null)}
+      />
+
       {/* ── History item preview modal ────────────────────────────────────────── */}
       <Modal
         visible={!!historyPreviewItem}
@@ -850,6 +860,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                   variants: [],
                 }}
                 onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
+                onEditItem={isAdmin ? setDetailsEditItem : undefined}
                 rank={0}
                 fontScale={textFontScale}
               />

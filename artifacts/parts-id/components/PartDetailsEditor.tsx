@@ -177,7 +177,7 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Text style={[styles.title, { color: colors.foreground }]}>Add Details</Text>
+              <Text style={[styles.title, { color: colors.foreground }]}>Edit Part</Text>
               {saveStatus !== "idle" && (
                 <View style={[styles.statusBadge, { backgroundColor: statusColor + "22" }]}>
                   {isSaving ? (
@@ -205,7 +205,7 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
           keyboardShouldPersistTaps="handled"
         >
           <Text style={[styles.hint, { color: colors.mutedForeground }]}>
-            Enrich this part with a description, bin locations, and searchable keywords.
+            Edit this part's description, bin locations, and searchable keywords.
           </Text>
 
           {/* Description */}
@@ -343,7 +343,7 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
             onPress={onClose}
             style={[styles.cancelBtn, { borderColor: colors.border }]}
           >
-            <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Skip</Text>
+            <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
           </Pressable>
           <Pressable
             onPress={handleSave}
