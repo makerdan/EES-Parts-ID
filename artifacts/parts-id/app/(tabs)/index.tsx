@@ -33,12 +33,8 @@ import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { BrowseByCategory } from "@/components/BrowseByCategory";
 import { AddPartModal } from "@/components/AddPartModal";
-import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, getFuseCacheSyncedAt } from "@/utils/offlineBarcode";
+import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
 
-// Trigger a background full sync if the cache is older than this. The full
-// sync replaces the cache with the authoritative server list, naturally pruning
-// items deleted server-side since the last sync.
-const FUSE_SYNC_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
 const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -72,6 +68,15 @@ async function saveQueryCache(cache: QueryCache): Promise<void> {
   } catch (err) {
     reportStorageError("Could not save offline search cache", err);
   }
+}
+
+function formatStaleCacheWarning(syncedAt: number | null): string {
+  if (syncedAt == null) return "Data may be outdated — sync time unknown";
+  const diffMs = Date.now() - syncedAt;
+  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  if (days < 1) return "Data may be outdated — last synced today";
+  if (days === 1) return "Data may be outdated — last synced 1 day ago";
+  return `Data may be outdated — last synced ${days} days ago`;
 }
 
 function formatRelativeAge(ts: number): string {
@@ -192,6 +197,7 @@ export default function SearchScreen() {
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
   const [isOffline, setIsOffline] = useState(false);
   const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
+  const [fuseSyncedAt, setFuseSyncedAt] = useState<number | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
   const [cacheAge, setCacheAge] = useState<string | null>(null);
@@ -259,6 +265,7 @@ export default function SearchScreen() {
       setOfflineResults(null);
       setIsOffline(false);
       setOfflineCacheType(null);
+      setFuseSyncedAt(null);
       setDimensionCounts(undefined);
       searchMutationRef.current?.reset();
     });
@@ -318,11 +325,15 @@ export default function SearchScreen() {
       buildFuseIndex(allItems);
       syncRetryAttemptRef.current = 0; // success — reset backoff counter
       try {
+        const syncedAt = Date.now();
         await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
         // Record when this authoritative full sync completed. The mount effect
         // uses this to trigger a background re-sync when the cache is stale,
         // which prunes items deleted server-side since the last sync.
-        await AsyncStorage.setItem(FUSE_CACHE_SYNCED_AT_KEY, String(Date.now()));
+        await AsyncStorage.setItem(FUSE_CACHE_SYNCED_AT_KEY, String(syncedAt));
+        // Update in-memory state so any active offline warning clears immediately
+        // without requiring a remount.
+        setFuseSyncedAt(syncedAt);
       } catch (err) {
         reportStorageError("Could not save offline inventory cache", err);
       }
@@ -385,6 +396,7 @@ export default function SearchScreen() {
         // background full sync. The sync will replace the cache with the
         // authoritative server list and record a fresh timestamp.
         getFuseCacheSyncedAt().then(syncedAt => {
+          setFuseSyncedAt(syncedAt);
           const age = syncedAt == null ? Infinity : Date.now() - syncedAt;
           if (age > FUSE_SYNC_MAX_AGE_MS) {
             syncAllInventory();
@@ -996,6 +1008,13 @@ export default function SearchScreen() {
                 </Text>
               </View>
             ) : null}
+            {isOffline && offlineResults !== null && offlineResults.length > 0 && (fuseSyncedAt == null || Date.now() - fuseSyncedAt > FUSE_SYNC_MAX_AGE_MS) ? (
+              <View style={[styles.staleCacheNote, { backgroundColor: colors.warning + "15", borderColor: colors.warning + "44" }]}>
+                <Text style={[styles.staleCacheNoteText, { color: colors.warning }]}>
+                  ⚠ {formatStaleCacheWarning(fuseSyncedAt)}
+                </Text>
+              </View>
+            ) : null}
 
             {/* Empty state */}
             {hasResults && results.length === 0 && !isOffline ? (
@@ -1300,6 +1319,11 @@ const styles = StyleSheet.create({
   loadingText: { fontSize: 14, fontFamily: "Inter_400Regular" },
   errorCard: { margin: 16, padding: 16, borderRadius: 8, borderWidth: 1 },
   errorText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  staleCacheNote: {
+    marginHorizontal: 16, marginBottom: 8, padding: 10,
+    borderRadius: 8, borderWidth: 1,
+  },
+  staleCacheNoteText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   emptyContainer: { alignItems: "center", padding: 40 },
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },

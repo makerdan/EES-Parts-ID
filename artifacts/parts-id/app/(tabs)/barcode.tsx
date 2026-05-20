@@ -24,7 +24,7 @@ import {
   getListInventoryQueryKey,
 } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
-import { lookupByBarcodeOffline, upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
+import { lookupByBarcodeOffline, upsertItemInBarcodeCache, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
 import { ResultCard } from "@/components/ResultCard";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
@@ -34,6 +34,15 @@ import type { ScanEntry } from "@/utils/scanHistory";
 import { groupScansByDate } from "@/utils/scanHistory";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatStaleCacheWarning(syncedAt: number | null): string {
+  if (syncedAt == null) return "Data may be outdated — sync time unknown";
+  const diffMs = Date.now() - syncedAt;
+  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  if (days < 1) return "Data may be outdated — last synced today";
+  if (days === 1) return "Data may be outdated — last synced 1 day ago";
+  return `Data may be outdated — last synced ${days} days ago`;
+}
 
 function formatRelativeTime(isoString: string): string {
   const ts = new Date(isoString).getTime();
@@ -213,6 +222,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const [matchedItem, setMatchedItem] = useState<InventoryItem | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [isOfflineMatch, setIsOfflineMatch] = useState(false);
+  const [fuseSyncedAt, setFuseSyncedAt] = useState<number | null>(null);
   const [showAssignPicker, setShowAssignPicker] = useState(false);
   const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
   const [detailsEditItem, setDetailsEditItem] = useState<InventoryItem | null>(null);
@@ -315,6 +325,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
             setMatchedItem(offlineItem);
             setIsOfflineMatch(true);
             setScanPhase("found");
+            getFuseCacheSyncedAt().then(setFuseSyncedAt).catch(() => setFuseSyncedAt(null));
           } else {
             setScanPhase("offline_miss");
           }
@@ -348,6 +359,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     setScanPhase("idle");
     setScanError(null);
     setIsOfflineMatch(false);
+    setFuseSyncedAt(null);
     lastScannedRef.current = null;
     scanCooldownRef.current = false;
   };
@@ -739,6 +751,13 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
               rank={0}
               fontScale={textFontScale}
             />
+            {isOfflineMatch && (fuseSyncedAt == null || Date.now() - fuseSyncedAt > FUSE_SYNC_MAX_AGE_MS) ? (
+              <View style={[styles.staleCacheNote, { backgroundColor: colors.warning + "15", borderColor: colors.warning + "44" }]}>
+                <Text style={[styles.staleCacheNoteText, { color: colors.warning }]}>
+                  ⚠ {formatStaleCacheWarning(fuseSyncedAt)}
+                </Text>
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -1067,6 +1086,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   previewTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
+  staleCacheNote: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  staleCacheNoteText: { fontSize: 12, fontFamily: "Inter_500Medium" },
 });
 
 const pickerStyles = StyleSheet.create({

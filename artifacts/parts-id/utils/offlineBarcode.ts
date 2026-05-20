@@ -7,6 +7,11 @@ export const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 // Used to detect stale caches so deleted items are periodically pruned.
 export const FUSE_CACHE_SYNCED_AT_KEY = "parts_id_fuse_cache_synced_at";
 
+// Maximum age for the offline cache before it is considered stale. A stale
+// cache may contain items that were deleted server-side since the last sync.
+// Exported so barcode and search screens can show a consistent staleness warning.
+export const FUSE_SYNC_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
 // Hard cap on the number of items stored in the offline cache. Items merged
 // from individual search results could accumulate indefinitely without a bound.
 // On a full sync the cache is replaced entirely, so this cap mainly guards the
