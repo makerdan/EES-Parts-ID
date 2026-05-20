@@ -79,3 +79,74 @@ export function formatRelativeAge(ts: number): string {
   const days = Math.floor(hrs / 24);
   return `Last updated ${days} day${days === 1 ? "" : "s"} ago`;
 }
+
+// ── Offline fallback resolution ───────────────────────────────────────────────
+
+export type OfflineFallbackResult<R = unknown> =
+  /** A previous result for this exact query key was found in the TTL-pruned cache. */
+  | { cacheType: "exact"; results: R[] }
+  /** No exact cache match — results come from the local Fuse full-text index. */
+  | { cacheType: "fuse"; results: R[] };
+
+/**
+ * Determine which offline result source to use for the given query.
+ *
+ * @param queryKey   The cache key for the current filter set (from buildQueryKey).
+ * @param cache      The already-TTL-pruned query cache.
+ * @param fuseSearch Synchronous Fuse.js search function; receives the combined
+ *                   keyword string and returns matching items.
+ * @param keywords   Space-joined keyword string passed to fuseSearch when there
+ *                   is no exact cache match.
+ */
+export function resolveOfflineFallback<R>(opts: {
+  queryKey: string;
+  cache: QueryCache<R>;
+  fuseSearch: (kw: string) => R[];
+  keywords: string;
+}): OfflineFallbackResult<R> {
+  const exactEntry = opts.cache[opts.queryKey];
+  if (exactEntry) {
+    return { cacheType: "exact", results: exactEntry.results };
+  }
+  const fuseHits = opts.fuseSearch(opts.keywords);
+  return { cacheType: "fuse", results: fuseHits };
+}
+
+// ── Background inventory sync ─────────────────────────────────────────────────
+
+export type PageFetcher<T> = (
+  page: number,
+  pageSize: number,
+) => Promise<{ items: T[]; total: number }>;
+
+/**
+ * Fetch all pages of inventory from the server, returning the combined list.
+ *
+ * Stops early if a page returns zero items (guards against an infinite loop
+ * when the server's reported total is inconsistent).
+ *
+ * @param fetchPage  Async function that fetches a single page; receives the
+ *                   1-based page number and page size and must return
+ *                   `{ items, total }`.
+ * @param pageSize   Number of items per page (default 500).
+ * @param onProgress Optional callback invoked after each page with
+ *                   `(loadedSoFar, total)`.
+ */
+export async function fetchInventoryPages<T>(
+  fetchPage: PageFetcher<T>,
+  pageSize = 500,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<T[]> {
+  let page = 1;
+  let total = 0;
+  const allItems: T[] = [];
+  do {
+    const data = await fetchPage(page, pageSize);
+    if (data.items.length === 0) break;
+    total = data.total;
+    allItems.push(...data.items);
+    onProgress?.(allItems.length, total);
+    page++;
+  } while (allItems.length < total);
+  return allItems;
+}
