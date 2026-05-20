@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "expo-router";
+import * as ScreenOrientation from "expo-screen-orientation";
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -53,10 +54,16 @@ export default function MapScreen() {
   // Zone data — owned at this level so useFocusEffect can trigger refetch
   const { zones, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
 
-  // Re-sync zones every time the tab comes into focus
+  // Re-sync zones every time the tab comes into focus; unlock landscape orientation
   useFocusEffect(
     useCallback(() => {
       refetchZones();
+      void ScreenOrientation.unlockAsync();
+      return () => {
+        void ScreenOrientation.lockAsync(
+          ScreenOrientation.OrientationLock.PORTRAIT_UP,
+        );
+      };
     }, [refetchZones]),
   );
 
