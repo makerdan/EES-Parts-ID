@@ -530,6 +530,7 @@ function SectionShelfView({
   fontScale,
   onEditKeywords,
   onEditBins,
+  onEditItem,
   colors,
   cardItemPanHandlers,
   sectionPanHandlers,
@@ -544,6 +545,7 @@ function SectionShelfView({
   fontScale: number;
   onEditKeywords?: (item: InventoryItem) => void;
   onEditBins?: (item: InventoryItem) => void;
+  onEditItem?: (item: InventoryItem) => void;
   colors: ReturnType<typeof useColors>;
   cardItemPanHandlers: ReturnType<typeof PanResponder.create>["panHandlers"];
   sectionPanHandlers: ReturnType<typeof PanResponder.create>["panHandlers"];
@@ -617,6 +619,7 @@ function SectionShelfView({
               }}
               onEditKeywords={onEditKeywords}
               onEditBins={onEditBins}
+              onEditItem={onEditItem}
               rank={0}
               fontScale={fontScale}
             />
@@ -644,6 +647,7 @@ function PartsListView({
   fontScale,
   onEditKeywords,
   onEditBins,
+  onEditItem,
   colors,
   sectionPanHandlers,
 }: {
@@ -657,6 +661,7 @@ function PartsListView({
   fontScale: number;
   onEditKeywords?: (item: InventoryItem) => void;
   onEditBins?: (item: InventoryItem) => void;
+  onEditItem?: (item: InventoryItem) => void;
   colors: ReturnType<typeof useColors>;
   sectionPanHandlers: ReturnType<typeof PanResponder.create>["panHandlers"];
 }) {
@@ -700,6 +705,7 @@ function PartsListView({
               }}
               onEditKeywords={onEditKeywords}
               onEditBins={onEditBins}
+              onEditItem={onEditItem}
               rank={0}
               fontScale={fontScale}
             />
@@ -980,6 +986,7 @@ export function BrowseByAisle({
               fontScale={fontScale}
               onEditKeywords={onEditKeywords}
               onEditBins={onEditBins}
+              onEditItem={isAdmin ? setDetailsItem : undefined}
               colors={colors}
               cardItemPanHandlers={cardItemSwipe.panHandlers}
               sectionPanHandlers={sectionSwipe.panHandlers}
@@ -996,6 +1003,7 @@ export function BrowseByAisle({
               fontScale={fontScale}
               onEditKeywords={onEditKeywords}
               onEditBins={onEditBins}
+              onEditItem={isAdmin ? setDetailsItem : undefined}
               colors={colors}
               sectionPanHandlers={sectionSwipe.panHandlers}
             />

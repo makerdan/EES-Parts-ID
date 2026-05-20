@@ -21,6 +21,7 @@ import { useApp } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
 import { BinEditor } from "@/components/BinEditor";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
 import BarcodeScreen from "./barcode";
@@ -29,9 +30,10 @@ import { secondaryBtnBase } from "@/styles/shared";
 
 export default function PhotoScreen() {
   const colors = useColors();
-  const { textFontScale, isAdmin } = useApp();
+  const { textFontScale, isAdmin, adminToken } = useApp();
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
   const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
+  const [detailsEditItem, setDetailsEditItem] = useState<InventoryItem | null>(null);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");
@@ -444,6 +446,7 @@ export default function PhotoScreen() {
                 result={{ item: barcodeResult, confidence: 1.0, matchReason: "barcode scan", seriesBase: null, seriesLabel: null, variants: [] }}
                 onEditBins={isAdmin ? setBinEditItem : undefined}
                 onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
+                onEditItem={isAdmin ? setDetailsEditItem : undefined}
                 rank={0}
                 fontScale={textFontScale}
               />
@@ -482,6 +485,7 @@ export default function PhotoScreen() {
                   result={result}
                   onEditBins={isAdmin ? setBinEditItem : undefined}
                   onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
+                  onEditItem={isAdmin ? setDetailsEditItem : undefined}
                   rank={index}
                   fontScale={textFontScale}
                 />
@@ -550,6 +554,12 @@ export default function PhotoScreen() {
             r.item.id === id ? { ...r, item: { ...r.item, barcodes } } : r,
           ));
         }}
+      />
+
+      <PartDetailsEditor
+        item={detailsEditItem}
+        adminToken={adminToken}
+        onClose={() => setDetailsEditItem(null)}
       />
 
       <BinEditor

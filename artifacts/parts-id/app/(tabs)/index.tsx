@@ -1061,6 +1061,7 @@ export default function SearchScreen() {
               onEditKeywords={setEditItem}
               onEditBins={isAdmin ? setBinEditItem : undefined}
               onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
+              onEditItem={isAdmin ? setDetailsItem : undefined}
               rank={index}
               fontScale={textFontScale}
             />
