@@ -18,8 +18,10 @@ export type BinDiffRow = {
   status: "replace" | "add" | "preserve" | "none";
   existingBins: string[];
   incomingBins: string[];
-  barcodeStatus?: "replace" | "add" | "preserve" | "none";
+  barcodeStatus?: "replace" | "add" | "preserve" | "none" | "conflict";
   existingBarcodes?: string[];
+  /** Set when barcodeStatus === "conflict": the item that already owns one of the incoming barcodes. */
+  conflictingItem?: { vendor: string; catalog: string };
 };
 
 /**

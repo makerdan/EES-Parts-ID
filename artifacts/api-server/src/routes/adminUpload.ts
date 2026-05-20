@@ -212,6 +212,7 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
     }
 
     type RowStatus = "replace" | "add" | "preserve" | "none";
+    type BarcodeStatus = RowStatus | "conflict";
 
     interface BinDiffRow {
       vendor: string;
@@ -219,8 +220,9 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
       status: RowStatus;
       existingBins: string[];
       incomingBins: string[];
-      barcodeStatus: RowStatus;
+      barcodeStatus: BarcodeStatus;
       existingBarcodes: string[];
+      conflictingItem?: { vendor: string; catalog: string };
     }
 
     const diffRows: BinDiffRow[] = [];
@@ -231,6 +233,36 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
     let willReplaceBarcodes = 0;
     let willAddBarcodes = 0;
     let willPreserveBarcodes = 0;
+    let willBarcodeConflicts = 0;
+
+    // ── Cross-item barcode conflict detection ─────────────────────────────────
+    // Collect every non-empty barcode that appears in the incoming CSV.
+    const allIncomingBarcodes = [
+      ...new Set(rows.flatMap(r => r.barcodes).filter(b => b.length > 0)),
+    ];
+
+    // Query the full inventory for any item whose barcodes array overlaps the
+    // incoming set. We use "b = ANY(barcodes)" per barcode value so the query
+    // is fully parameterized without raw string interpolation.
+    const barcodeToItemMap = new Map<string, { vendor: string; catalog: string }>();
+    if (allIncomingBarcodes.length > 0) {
+      const conflictRows = await db
+        .select({
+          vendor: inventoryTable.vendor,
+          catalog: inventoryTable.catalog,
+          barcodes: inventoryTable.barcodes,
+        })
+        .from(inventoryTable)
+        .where(or(...allIncomingBarcodes.map(b => sql`${b} = ANY(${inventoryTable.barcodes})`)));
+
+      for (const item of conflictRows) {
+        for (const bc of item.barcodes ?? []) {
+          if (!barcodeToItemMap.has(bc)) {
+            barcodeToItemMap.set(bc, { vendor: item.vendor, catalog: item.catalog });
+          }
+        }
+      }
+    }
 
     for (const row of rows) {
       const key = `${row.vendor.toUpperCase()}\0${row.catalog}`;
@@ -260,7 +292,7 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
         noChange++;
       }
 
-      // Barcode diff
+      // ── Barcode diff ────────────────────────────────────────────────────────
       const existingBarcodes = existingBarcodesMap.get(key) ?? [];
       const incomingBarcodes = row.barcodes;
       const hasIncomingBarcodes = incomingBarcodes.length > 0;
@@ -272,24 +304,45 @@ router.post("/upload/preview", requireAdminAuth, async (req, res) => {
         incomingBarcodes.length === existingBarcodes.length &&
         [...incomingBarcodes].sort().join("\0") === [...existingBarcodes].sort().join("\0");
 
-      let barcodeStatus: RowStatus;
-      if (hasIncomingBarcodes && hasExistingBarcodes && !barcodesIdentical) {
-        barcodeStatus = "replace";
-        willReplaceBarcodes++;
-      } else if (hasIncomingBarcodes && !hasExistingBarcodes) {
-        barcodeStatus = "add";
-        willAddBarcodes++;
-      } else if (!hasIncomingBarcodes && hasExistingBarcodes) {
-        barcodeStatus = "preserve";
-        willPreserveBarcodes++;
-      } else {
-        barcodeStatus = "none";
+      let barcodeStatus: BarcodeStatus;
+      let conflictingItem: { vendor: string; catalog: string } | undefined;
+
+      // Check for cross-item conflict first — takes priority over replace/add.
+      if (hasIncomingBarcodes) {
+        for (const bc of incomingBarcodes) {
+          const owner = barcodeToItemMap.get(bc);
+          if (owner) {
+            const ownerKey = `${owner.vendor.toUpperCase()}\0${owner.catalog}`;
+            if (ownerKey !== key) {
+              // A different item already owns this barcode.
+              barcodeStatus = "conflict";
+              conflictingItem = owner;
+              willBarcodeConflicts++;
+              break;
+            }
+          }
+        }
       }
 
-      diffRows.push({ vendor: row.vendor, catalog: row.catalog, status, existingBins, incomingBins, barcodeStatus, existingBarcodes });
+      if (!conflictingItem) {
+        if (hasIncomingBarcodes && hasExistingBarcodes && !barcodesIdentical) {
+          barcodeStatus = "replace";
+          willReplaceBarcodes++;
+        } else if (hasIncomingBarcodes && !hasExistingBarcodes) {
+          barcodeStatus = "add";
+          willAddBarcodes++;
+        } else if (!hasIncomingBarcodes && hasExistingBarcodes) {
+          barcodeStatus = "preserve";
+          willPreserveBarcodes++;
+        } else {
+          barcodeStatus = "none";
+        }
+      }
+
+      diffRows.push({ vendor: row.vendor, catalog: row.catalog, status, existingBins, incomingBins, barcodeStatus: barcodeStatus!, existingBarcodes, conflictingItem });
     }
 
-    res.json({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows: diffRows, willReplaceBarcodes, willAddBarcodes, willPreserveBarcodes });
+    res.json({ willReplaceBins, willAddBins, willPreserveBins, noChange, rows: diffRows, willReplaceBarcodes, willAddBarcodes, willPreserveBarcodes, willBarcodeConflicts });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Preview failed" });

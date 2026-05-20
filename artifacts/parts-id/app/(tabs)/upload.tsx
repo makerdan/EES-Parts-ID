@@ -51,6 +51,7 @@ type BinDiffSummary = {
   willReplaceBarcodes: number;
   willAddBarcodes: number;
   willPreserveBarcodes: number;
+  willBarcodeConflicts: number;
 };
 
 // CSV/XLSX cell may pack multiple bins separated by ; or | — split, trim, drop blanks.
@@ -1101,9 +1102,15 @@ export default function UploadScreen() {
                           const diffRow = binDiff?.rows[i];
                           const isReplace = diffRow?.status === "replace";
                           const isBarcodeReplace = diffRow?.barcodeStatus === "replace";
+                          const isBarcodeConflict = diffRow?.barcodeStatus === "conflict";
                           const isSkipped = skipBinRows.has(i);
+                          const rowBg = isBarcodeConflict
+                            ? colors.destructive + "18"
+                            : (isReplace && !isSkipped) || isBarcodeReplace
+                              ? colors.warning + "18"
+                              : undefined;
                           return (
-                            <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border, backgroundColor: (isReplace && !isSkipped) || isBarcodeReplace ? colors.warning + "18" : undefined }]}>
+                            <View key={i} style={[styles.previewRow, { borderBottomColor: colors.border, backgroundColor: rowBg }]}>
                               <Text style={[styles.previewCell, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
                                 {row.vendor}
                               </Text>
@@ -1131,12 +1138,23 @@ export default function UploadScreen() {
                               </View>
                               {hasBarcodes ? (
                                 <View style={{ flex: 1 }}>
-                                  {isBarcodeReplace && diffRow?.existingBarcodes && diffRow.existingBarcodes.length > 0 ? (
+                                  {isBarcodeConflict ? (
+                                    <>
+                                      <Text style={[styles.previewCell, { color: colors.destructive, fontSize: 10, fontFamily: "Inter_600SemiBold" }]} numberOfLines={1}>
+                                        ✕ conflict
+                                      </Text>
+                                      {diffRow?.conflictingItem ? (
+                                        <Text style={[styles.previewCell, { color: colors.destructive, fontSize: 9, opacity: 0.8 }]} numberOfLines={1}>
+                                          used by {diffRow.conflictingItem.vendor} {diffRow.conflictingItem.catalog}
+                                        </Text>
+                                      ) : null}
+                                    </>
+                                  ) : isBarcodeReplace && diffRow?.existingBarcodes && diffRow.existingBarcodes.length > 0 ? (
                                     <Text style={[styles.previewCell, { color: colors.warning, textDecorationLine: "line-through", fontSize: 10 }]} numberOfLines={1}>
                                       {diffRow.existingBarcodes.join(", ")}
                                     </Text>
                                   ) : null}
-                                  <Text style={[styles.previewCell, { color: colors.mutedForeground, fontSize: 11 }]} numberOfLines={1}>
+                                  <Text style={[styles.previewCell, { color: isBarcodeConflict ? colors.destructive : colors.mutedForeground, fontSize: 11 }]} numberOfLines={1}>
                                     {row.barcodes.join(", ")}
                                   </Text>
                                 </View>
@@ -1214,7 +1232,45 @@ export default function UploadScreen() {
                             <Text style={[styles.diffChipLabel, { color: colors.mutedForeground }]}>barcodes preserved</Text>
                           </View>
                         ) : null}
+                        {binDiff.willBarcodeConflicts > 0 ? (
+                          <View style={[styles.diffChip, { backgroundColor: colors.destructive + "20", borderColor: colors.destructive + "55" }]}>
+                            <Text style={[styles.diffChipCount, { color: colors.destructive }]}>{binDiff.willBarcodeConflicts}</Text>
+                            <Text style={[styles.diffChipLabel, { color: colors.destructive }]}>barcode conflict{binDiff.willBarcodeConflicts !== 1 ? "s" : ""}</Text>
+                          </View>
+                        ) : null}
                       </View>
+
+                      {/* Barcode conflict error — blocks upload until the CSV is fixed */}
+                      {binDiff.willBarcodeConflicts > 0 ? (
+                        <View style={[styles.replaceWarning, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "55" }]}>
+                          <Text style={[styles.replaceWarningTitle, { color: colors.destructive }]}>
+                            ✕ {binDiff.willBarcodeConflicts} row{binDiff.willBarcodeConflicts !== 1 ? "s have" : " has"} a barcode conflict
+                          </Text>
+                          <Text style={[styles.replaceWarningHint, { color: colors.mutedForeground }]}>
+                            One or more barcodes in your CSV are already assigned to a different inventory item. Upload is blocked — fix the CSV by removing or correcting those barcodes, then re-upload.
+                          </Text>
+                          <View style={{ marginTop: 8 }}>
+                            {binDiff.rows.map((diffRow, idx) => {
+                              if (diffRow.barcodeStatus !== "conflict") return null;
+                              return (
+                                <View key={idx} style={{ flexDirection: "row", alignItems: "flex-start", marginBottom: 4, gap: 6 }}>
+                                  <Text style={{ color: colors.destructive, fontSize: 11, fontFamily: "Inter_600SemiBold", marginTop: 1 }}>✕</Text>
+                                  <View style={{ flex: 1 }}>
+                                    <Text style={{ color: colors.foreground, fontSize: 12, fontFamily: "Inter_600SemiBold" }} numberOfLines={1}>
+                                      {diffRow.vendor} {diffRow.catalog}
+                                    </Text>
+                                    {diffRow.conflictingItem ? (
+                                      <Text style={{ color: colors.mutedForeground, fontSize: 11 }} numberOfLines={1}>
+                                        barcode in use by {diffRow.conflictingItem.vendor} {diffRow.conflictingItem.catalog}
+                                      </Text>
+                                    ) : null}
+                                  </View>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        </View>
+                      ) : null}
 
                       {/* Replace warning with skip-all and confirmation */}
                       {binDiff.willReplaceBins > 0 ? (
@@ -1365,20 +1421,28 @@ export default function UploadScreen() {
                       ? activeReplacementCount(binDiff.willReplaceBins, skipBinRows, binDiff.rows)
                       : 0;
                     const needsConfirm = pendingReplacements > 0 && !replaceConfirmed;
+                    const hasConflicts = binDiff ? binDiff.willBarcodeConflicts > 0 : false;
                     // Block upload if preview hasn't been fetched yet (pending or failed)
                     const previewRequired = binDiffPending || binDiffFailed || binDiff === null;
-                    const isDisabled = uploadPending || previewRequired || needsConfirm;
+                    const isDisabled = uploadPending || previewRequired || needsConfirm || hasConflicts;
+                    const btnLabel = binDiffPending
+                      ? "Checking conflicts…"
+                      : hasConflicts
+                        ? `✕ Fix ${binDiff!.willBarcodeConflicts} barcode conflict${binDiff!.willBarcodeConflicts !== 1 ? "s" : ""} to upload`
+                        : needsConfirm
+                          ? "✓ Confirm replacement to upload"
+                          : `⬆️ Upload ${parsedRows.length} Items`;
                     return (
                       <Pressable
                         onPress={handleUpload}
                         disabled={isDisabled}
-                        style={[styles.uploadBtn, { backgroundColor: isDisabled ? colors.muted : colors.primary }]}
+                        style={[styles.uploadBtn, { backgroundColor: hasConflicts ? colors.destructive + "22" : isDisabled ? colors.muted : colors.primary }]}
                       >
                         {uploadPending ? (
                           <ActivityIndicator color={colors.primaryForeground} />
                         ) : (
-                          <Text style={[styles.uploadBtnText, { color: isDisabled ? colors.mutedForeground : colors.primaryForeground }]}>
-                            {binDiffPending ? "Checking bin conflicts…" : needsConfirm ? "✓ Confirm replacement to upload" : `⬆️ Upload ${parsedRows.length} Items`}
+                          <Text style={[styles.uploadBtnText, { color: hasConflicts ? colors.destructive : isDisabled ? colors.mutedForeground : colors.primaryForeground }]}>
+                            {btnLabel}
                           </Text>
                         )}
                       </Pressable>
