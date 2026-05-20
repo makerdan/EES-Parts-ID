@@ -101,6 +101,7 @@ function getPreviewExamplePath(): string {
 }
 
 function Gallery() {
+  const zoneEditorHref = `${getBasePath()}/zone-editor`;
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
       <div className="text-center max-w-md">
@@ -110,12 +111,18 @@ function Gallery() {
         <p className="text-gray-500 mb-4">
           This server renders individual components for the workspace canvas.
         </p>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-400 mb-6">
           Access component previews at{" "}
           <code className="bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">
             {getPreviewExamplePath()}
           </code>
         </p>
+        <a
+          href={zoneEditorHref}
+          className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors"
+        >
+          Open Zone Editor
+        </a>
       </div>
     </div>
   );
