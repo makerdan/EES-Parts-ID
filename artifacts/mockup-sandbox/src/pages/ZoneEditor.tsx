@@ -17,6 +17,14 @@ import React, {
   useState,
 } from "react";
 import { Toaster, toast } from "sonner";
+import warehouseMapRaw from "../../public/warehouse-map.svg?raw";
+
+// Inject explicit width/height so the SVG fills its container correctly
+// (the file only has a viewBox attribute — no width/height).
+const warehouseMapHtml = warehouseMapRaw.replace(
+  "<svg",
+  `<svg width="${3592.55}" height="${2457.41}"`,
+);
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SVG_W = 3592.55;
@@ -477,12 +485,11 @@ export function ZoneEditor() {
       <div style={styles.content}>
         {/* SVG canvas */}
         <div style={{ ...styles.canvas, position: "relative" }}>
-          {/* Floor plan — plain <img> behind the SVG overlay.
-              Using a separate layer avoids all SVG <image> / foreignObject
-              rendering quirks. The CSS transform mirrors the SVG <g> transform
-              so the floor plan always stays aligned with zone overlays. */}
-          <img
-            src={`${import.meta.env.BASE_URL}warehouse-map.svg`}
+          {/* Floor plan — inlined SVG so there are no URL / CORS / sizing
+              issues. The CSS transform mirrors the SVG <g> transform so the
+              floor plan stays perfectly aligned with zone overlays. */}
+          <div
+            dangerouslySetInnerHTML={{ __html: warehouseMapHtml }}
             style={{
               position: "absolute",
               top: 0,
@@ -493,9 +500,8 @@ export function ZoneEditor() {
               transform: `translate(${tf.x}px,${tf.y}px) scale(${tf.s})`,
               pointerEvents: "none",
               userSelect: "none",
-              display: "block",
+              overflow: "visible",
             }}
-            draggable={false}
           />
 
           <svg
