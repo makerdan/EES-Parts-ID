@@ -623,7 +623,7 @@ const styles = StyleSheet.create({
   zoomControls: {
     position: "absolute",
     right: 12,
-    bottom: 44,
+    bottom: 96,
     borderRadius: 8,
     overflow: "hidden",
     shadowColor: "#000",
