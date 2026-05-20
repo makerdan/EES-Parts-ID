@@ -12,7 +12,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Pressable,
   SafeAreaView,
   StyleSheet,
@@ -22,6 +21,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
+import { RetryImage } from "@/components/RetryImage";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -208,10 +208,10 @@ export default function CatalogReviewScreen() {
         {/* Extracted part image */}
         {item.imageUrl ? (
           <View style={s.imageBlock}>
-            <Image
-              source={{ uri: item.imageUrl.startsWith("/objects/")
+            <RetryImage
+              uri={item.imageUrl.startsWith("/objects/")
                 ? `${API_BASE.replace("/api", "")}${item.imageUrl}`
-                : item.imageUrl }}
+                : item.imageUrl}
               style={s.partImage}
               resizeMode="contain"
             />

@@ -1,13 +1,13 @@
 import React, { useState } from "react";
 import {
   Animated,
-  Image,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
+import { RetryImage } from "@/components/RetryImage";
 import { useColors } from "@/hooks/useColors";
 
 interface ResultCardProps {
@@ -119,8 +119,8 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
           </View>
           <View style={cardStyles.headerRight}>
             {item.imageUrl ? (
-              <Image
-                source={{ uri: item.imageUrl }}
+              <RetryImage
+                uri={item.imageUrl}
                 style={cardStyles.thumbnail}
                 resizeMode="contain"
               />
@@ -190,8 +190,8 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
                 <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
                   CATALOG IMAGE
                 </Text>
-                <Image
-                  source={{ uri: item.imageUrl }}
+                <RetryImage
+                  uri={item.imageUrl}
                   style={[cardStyles.catalogImage, { backgroundColor: colors.muted }]}
                   resizeMode="contain"
                 />
