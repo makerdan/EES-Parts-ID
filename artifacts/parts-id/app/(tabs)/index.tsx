@@ -1039,7 +1039,7 @@ export default function SearchScreen() {
             />
           </View>
         )}
-        contentContainerStyle={[styles.listContent, { paddingTop: 76 }]}
+        contentContainerStyle={[styles.listContent, { paddingTop: 120 }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
