@@ -48,24 +48,6 @@ function requireAdminAuth(
   next();
 }
 
-// ── In-memory job progress store ──────────────────────────────────────────────
-// Jobs are identified by their DB row id (as string) so they survive restarts
-// for status queries, but in-memory progress is lost on restart.
-interface JobProgress {
-  dbId: number;
-  vendor: string;
-  filename: string;
-  status: "pending" | "processing" | "done" | "failed";
-  totalPages: number;
-  processedPages: number;
-  matchedParts: number;
-  startedAt: Date;
-  finishedAt: Date | null;
-  errorMessage: string | null;
-}
-
-const activeJobs = new Map<string, JobProgress>();
-
 // ── POST /admin/catalog-pdf ───────────────────────────────────────────────────
 router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   const {
@@ -107,26 +89,13 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   }
 
   const jobId = String(jobRow.id);
-  const progress: JobProgress = {
-    dbId: jobRow.id,
-    vendor: vendor.trim().toUpperCase(),
-    filename: filename.trim(),
-    status: "pending",
-    totalPages: 0,
-    processedPages: 0,
-    matchedParts: 0,
-    startedAt: new Date(),
-    finishedAt: null,
-    errorMessage: null,
-  };
-  activeJobs.set(jobId, progress);
+  const normalizedVendor = vendor.trim().toUpperCase();
 
   // Respond immediately with the job ID — processing is async
   res.json({ jobId, message: "Job started" });
 
   // ── Async processing ──────────────────────────────────────────────────────
   setImmediate(async () => {
-    progress.status = "processing";
     await db
       .update(catalogPdfJobTable)
       .set({ status: "processing", startedAt: new Date() })
@@ -136,20 +105,22 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
       const pdfBuffer = Buffer.from(pdfBase64, "base64");
       const pages = await extractPdfPages(pdfBuffer);
 
-      progress.totalPages = pages.length;
       await db
         .update(catalogPdfJobTable)
         .set({ totalPages: pages.length })
         .where(eq(catalogPdfJobTable.id, jobRow.id));
 
+      let processedPages = 0;
+      let matchedParts = 0;
+
       for (const page of pages) {
         // Extract catalog entries from this page
-        const entries = await extractCatalogPage(page.text, page.images, progress.vendor);
+        const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
 
         for (const entry of entries) {
           if (entry.confidence < 0.4) continue;
 
-          const match = await matchCatalogNumber(progress.vendor, entry.catalogNumber);
+          const match = await matchCatalogNumber(normalizedVendor, entry.catalogNumber);
           if (!match) continue;
 
           // Fetch the current inventory row (to save previousDescription)
@@ -214,42 +185,35 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
             })
             .where(eq(inventoryTable.id, match.inventoryId));
 
-          progress.matchedParts++;
+          matchedParts++;
         }
 
-        progress.processedPages++;
-        // Update DB progress every 5 pages to reduce write load
-        if (progress.processedPages % 5 === 0 || progress.processedPages === pages.length) {
-          await db
-            .update(catalogPdfJobTable)
-            .set({
-              processedPages: progress.processedPages,
-              matchedParts: progress.matchedParts,
-            })
-            .where(eq(catalogPdfJobTable.id, jobRow.id));
-        }
+        processedPages++;
+        // Persist progress to DB on every page so a restart can recover
+        await db
+          .update(catalogPdfJobTable)
+          .set({
+            processedPages,
+            matchedParts,
+          })
+          .where(eq(catalogPdfJobTable.id, jobRow.id));
       }
 
-      progress.status = "done";
-      progress.finishedAt = new Date();
       await db
         .update(catalogPdfJobTable)
         .set({
           status: "done",
-          processedPages: progress.processedPages,
-          matchedParts: progress.matchedParts,
+          processedPages,
+          matchedParts,
           finishedAt: new Date(),
         })
         .where(eq(catalogPdfJobTable.id, jobRow.id));
 
       console.log(
-        `[catalog-pdf] job=${jobId} done — pages=${progress.processedPages} matched=${progress.matchedParts}`,
+        `[catalog-pdf] job=${jobId} done — pages=${processedPages} matched=${matchedParts}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      progress.status = "failed";
-      progress.errorMessage = msg;
-      progress.finishedAt = new Date();
       await db
         .update(catalogPdfJobTable)
         .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
@@ -263,22 +227,6 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
 router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
   const jobId = String(req.params["jobId"] ?? "");
 
-  // Try in-memory first (faster, more current)
-  const progress = activeJobs.get(jobId);
-  if (progress) {
-    return void res.json({
-      jobId,
-      status: progress.status,
-      totalPages: progress.totalPages,
-      processedPages: progress.processedPages,
-      matchedParts: progress.matchedParts,
-      startedAt: progress.startedAt,
-      finishedAt: progress.finishedAt,
-      errorMessage: progress.errorMessage,
-    });
-  }
-
-  // Fall back to DB (handles server restarts)
   const [row] = await db
     .select()
     .from(catalogPdfJobTable)
