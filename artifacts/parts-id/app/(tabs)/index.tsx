@@ -1098,7 +1098,7 @@ export default function SearchScreen() {
         <BrowseByAisle
           inventory={fuseItemsRef.current}
           isSyncing={syncProgress !== null}
-          shelfViewEnabled={settings.shelfViewEnabled}
+          shelfViewEnabled={false}
           fontScale={textFontScale}
           onClose={() => setMode("search")}
           onEditKeywords={setEditItem}
