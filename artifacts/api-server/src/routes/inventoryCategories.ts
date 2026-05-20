@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { TAXONOMY, getAllTaxonomyKeywords } from "@workspace/db";
+import { TAXONOMY, getAllTaxonomyKeywords, collectKeywords } from "@workspace/db";
 
 const router = Router();
 
@@ -51,47 +51,60 @@ router.get("/categories", async (_req, res) => {
       ? new RegExp(buildPattern(allTaxKws)!, "i")
       : null;
 
-    // ── Step 3: single-pass classification ───────────────────────────────────
-    // Each item can match multiple item types (same as independent SQL FILTER
-    // clauses — no first-match-wins logic).  Uncategorized = no taxonomy match.
-    const counts = new Int32Array(itemEntries.length); // zero-initialised
-    let uncatCount = 0;
-
-    for (const chip of chips) {
-      let anyMatch = false;
-      for (let i = 0; i < itemEntries.length; i++) {
-        const { re } = itemEntries[i];
-        if (re && re.test(chip)) {
-          counts[i]++;
-          anyMatch = true;
-        }
-      }
-      // Verify against combined taxonomy pattern (same semantics as SQL inverse)
-      if (allTaxRe && !allTaxRe.test(chip)) {
-        uncatCount++;
-      } else if (!allTaxRe && !anyMatch) {
-        uncatCount++;
-      }
-    }
-
-    // ── Step 4: build item-type count map ────────────────────────────────────
-    const itemCountMap = new Map<string, number>();
-    itemEntries.forEach((e, i) => itemCountMap.set(e.slug, counts[i]));
-
-    // ── Step 5: aggregate sub/category counts ────────────────────────────────
+    // ── Step 3: pre-compile per-node regexes for categories and subcategories ─
+    // Using collectKeywords(node) gives each parent node its own keyword union,
+    // producing unique per-node counts (not child-sum aggregation).
     const mainCategories = TAXONOMY.filter(c => c.slug !== "uncategorized");
     const uncatTax = TAXONOMY.find(c => c.slug === "uncategorized")!;
 
+    const catRegexMap = new Map<string, RegExp | null>();
+    const subRegexMap = new Map<string, RegExp | null>();
+
+    for (const cat of mainCategories) {
+      const catPat = buildPattern(collectKeywords(cat));
+      catRegexMap.set(cat.slug, catPat ? new RegExp(catPat, "i") : null);
+      for (const sub of cat.subcategories) {
+        const subPat = buildPattern(collectKeywords(sub));
+        subRegexMap.set(sub.slug, subPat ? new RegExp(subPat, "i") : null);
+      }
+    }
+
+    // ── Step 4: single-pass classification ───────────────────────────────────
+    const itemCounts  = new Int32Array(itemEntries.length); // item-type counts
+    const catCountMap = new Map<string, number>();
+    const subCountMap = new Map<string, number>();
+    let uncatCount = 0;
+
+    for (const chip of chips) {
+      // Item-type counts (each item can match multiple types)
+      for (let i = 0; i < itemEntries.length; i++) {
+        const { re } = itemEntries[i];
+        if (re && re.test(chip)) itemCounts[i]++;
+      }
+      // Per-node unique counts via node's own keyword union
+      for (const [slug, re] of catRegexMap) {
+        if (re && re.test(chip)) catCountMap.set(slug, (catCountMap.get(slug) ?? 0) + 1);
+      }
+      for (const [slug, re] of subRegexMap) {
+        if (re && re.test(chip)) subCountMap.set(slug, (subCountMap.get(slug) ?? 0) + 1);
+      }
+      // Uncategorized: no taxonomy keyword matches
+      if (allTaxRe && !allTaxRe.test(chip)) uncatCount++;
+      else if (!allTaxRe) uncatCount++;
+    }
+
+    // ── Step 5: build item-type count map ────────────────────────────────────
+    const itemCountMap = new Map<string, number>();
+    itemEntries.forEach((e, i) => itemCountMap.set(e.slug, itemCounts[i]));
+
+    // ── Step 6: assemble response ─────────────────────────────────────────────
     const categories = mainCategories.map(cat => {
-      let catCount = 0;
+      const catCount = catCountMap.get(cat.slug) ?? 0;
       const subcategories = cat.subcategories.map(sub => {
-        let subCount = 0;
-        const itemTypes = sub.itemTypes.map(it => {
-          const cnt = itemCountMap.get(it.slug) ?? 0;
-          subCount += cnt;
-          return { slug: it.slug, label: it.label, count: cnt };
-        });
-        catCount += subCount;
+        const subCount = subCountMap.get(sub.slug) ?? 0;
+        const itemTypes = sub.itemTypes.map(it => ({
+          slug: it.slug, label: it.label, count: itemCountMap.get(it.slug) ?? 0,
+        }));
         return { slug: sub.slug, label: sub.label, count: subCount, itemTypes };
       });
       return { slug: cat.slug, label: cat.label, color: cat.color, count: catCount, subcategories };
