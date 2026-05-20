@@ -1084,12 +1084,18 @@ export default function SearchScreen() {
               <Feather name="x" size={12} color={colors.primary} />
             </Pressable>
           ) : null}
-          <View style={[styles.filterOverlay, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <FilterPanel
-              values={filters}
-              onChange={handleChange}
-              dimensionCounts={dimensionCounts}
-            />
+          {/* Row mirrors the toggle structure so filterOverlay occupies the same
+              space as the "By Aisle" button: invisible Browse: label + flex:1 overlay + flex:1 spacer */}
+          <View style={styles.filterAlignRow}>
+            <Text style={[styles.modeToggleLabel, { opacity: 0 }]}>Browse:</Text>
+            <View style={[styles.filterOverlay, { flex: 1, backgroundColor: colors.card, borderColor: colors.border }]}>
+              <FilterPanel
+                values={filters}
+                onChange={handleChange}
+                dimensionCounts={dimensionCounts}
+              />
+            </View>
+            <View style={{ flex: 1 }} />
           </View>
         </View>
       </View>
@@ -1236,8 +1242,13 @@ const styles = StyleSheet.create({
     flexDirection: "column",
     alignItems: "center",
   },
-  filterOverlay: {
+  filterAlignRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
     alignSelf: "stretch",
+  },
+  filterOverlay: {
     borderRadius: 12,
     borderWidth: 1,
     padding: 16,
