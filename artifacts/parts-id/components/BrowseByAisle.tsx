@@ -865,7 +865,7 @@ export function BrowseByAisle({
         />
       ) : null}
 
-      {/* ── Sections level — flat parts list across all sections ── */}
+      {/* ── Sections level ── */}
       {level === "sections" ? (
         <View style={{ flex: 1 }} {...sectionSwipe.panHandlers}>
           <SectionNavBar
@@ -883,51 +883,39 @@ export function BrowseByAisle({
             onSelect={aisle => setCrumbs({ aisle, section: null })}
             colors={colors}
           />
-          <FlatList<{ type: "header"; label: string } | { type: "part"; part: PartOnShelf; sectionLabel: string }>
-            data={(() => {
-              const seen = new Set<number>();
-              const rows: ({ type: "header"; label: string } | { type: "part"; part: PartOnShelf; sectionLabel: string })[] = [];
-              for (const section of filteredSections) {
-                rows.push({ type: "header", label: section.label });
-                for (const shelf of section.shelves) {
-                  for (const part of shelf.parts) {
-                    if (!seen.has(part.item.id)) {
-                      seen.add(part.item.id);
-                      rows.push({ type: "part", part, sectionLabel: section.label });
-                    }
-                  }
-                }
+          <FlatList
+            ref={sectionsListRef}
+            data={filteredSections}
+            keyExtractor={s => String(s.sectionNum)}
+            onScroll={e => { sectionsScrollOffset.current = e.nativeEvent.contentOffset.y; }}
+            scrollEventThrottle={16}
+            onLayout={() => {
+              if (sectionsScrollOffset.current > 0) {
+                sectionsListRef.current?.scrollToOffset({
+                  offset: sectionsScrollOffset.current,
+                  animated: false,
+                });
               }
-              return rows;
-            })()}
-            keyExtractor={(row, i) => row.type === "header" ? `hdr-${row.label}` : `part-${i}-${row.part.item.id}`}
+            }}
             ListEmptyComponent={
               <View style={{ padding: 32, alignItems: "center" }}>
                 <Text style={{ color: colors.mutedForeground, fontFamily: "Inter_400Regular" }}>
-                  No parts in this aisle.
+                  No sections match the current filter.
                 </Text>
               </View>
             }
-            renderItem={({ item: row }) => {
-              if (row.type === "header") {
-                return (
-                  <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.8, color: colors.mutedForeground, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 4 }}>
-                    {row.label}
-                  </Text>
-                );
-              }
-              return (
-                <View style={{ paddingHorizontal: 12, paddingTop: 4 }}>
-                  <ResultCard
-                    result={{ item: row.part.item, confidence: 1, matchReason: `${row.sectionLabel} · ${row.part.bin.raw}`, seriesLabel: undefined, variants: [] }}
-                    onEditKeywords={onEditKeywords}
-                    onEditBins={onEditBins}
-                    rank={0}
-                    fontScale={fontScale}
-                  />
-                </View>
-              );
-            }}
+            renderItem={({ item: section }) => (
+              <DrillRow
+                label={section.label}
+                count={section.partCount}
+                hint={`${section.shelves.length} shelf row${section.shelves.length !== 1 ? "s" : ""}`}
+                onPress={() => {
+                  sectionsScrollOffset.current = 0;
+                  setCrumbs(prev => ({ ...prev, section }));
+                }}
+                colors={colors}
+              />
+            )}
             contentContainerStyle={{ paddingBottom: 80 }}
             showsVerticalScrollIndicator={false}
           />
