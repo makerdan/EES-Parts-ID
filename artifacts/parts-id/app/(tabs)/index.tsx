@@ -1283,7 +1283,7 @@ const styles = StyleSheet.create({
   tipTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 8 },
   tipText: { fontSize: 13, fontFamily: "Inter_400Regular", marginBottom: 4, lineHeight: 18 },
   resultItem: { paddingHorizontal: 12 },
-  listContent: { paddingBottom: 120 },
+  listContent: { paddingBottom: 0 },
   settingsRow: {
     flexDirection: "row",
     alignItems: "flex-start",
