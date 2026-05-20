@@ -1047,13 +1047,13 @@ export default function SearchScreen() {
 
         {/* 3-mode toggle + Floating filter overlay — stacked above results */}
         <View style={styles.filterOverlayWrapper}>
-          {/* Search | By Aisle | By Category toggle */}
+          {/* Browse: [By Aisle] [By Category] */}
           <View style={styles.modeToggleRow}>
-            {([
-              { key: "search",   label: "Search",      icon: "search"  },
-              { key: "aisle",    label: "By Aisle",    icon: "map-pin" },
-              { key: "category", label: "By Category", icon: "tag"     },
-            ] as const).map(m => (
+            <Text style={[styles.modeToggleLabel, { color: colors.mutedForeground }]}>Browse:</Text>
+            {([ 
+              { key: "aisle"    as SearchMode, label: "By Aisle",    icon: "map-pin" as const },
+              { key: "category" as SearchMode, label: "By Category", icon: "tag"     as const },
+            ]).map(m => (
               <Pressable
                 key={m.key}
                 onPress={() => setMode(m.key)}
@@ -1310,10 +1310,12 @@ const styles = StyleSheet.create({
   textSizeBtnLabel: { fontSize: 13, fontFamily: "Inter_700Bold" },
   modeToggleRow: {
     flexDirection: "row",
+    alignItems: "center",
     gap: 6,
     marginBottom: 8,
     alignSelf: "stretch",
   },
+  modeToggleLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   modeToggleBtn: {
     flex: 1,
     flexDirection: "row",
