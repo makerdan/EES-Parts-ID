@@ -130,6 +130,7 @@ export default function PhotoScreen() {
     const thisRequestId = ++requestIdRef.current;
 
     setInlineError(null);
+    setBarcodeResult(null);
     identifyMutation.reset();
     searchMutation.reset();
     setResults([]);
