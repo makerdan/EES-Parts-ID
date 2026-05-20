@@ -15,11 +15,12 @@ import {
   setStorageErrorHandler,
 } from "@/utils/storageErrorReporter";
 import { LogoutRegistry, type LogoutHandler } from "@/utils/logoutRegistry";
-
-const SEARCH_CACHE_KEYS = ["parts_id_fuse_cache_v2", "parts_id_query_cache_v1"];
-
-const SESSION_KEY = "parts_id_session";
-const ADMIN_TOKEN_KEY = "parts_id_admin_token";
+import {
+  SEARCH_CACHE_KEYS,
+  SESSION_KEY,
+  ADMIN_TOKEN_KEY,
+  clearSessionStorage,
+} from "@/utils/sessionStorage";
 
 // ── App Settings ─────────────────────────────────────────────────────────────
 export const SETTINGS_KEY = "parts_id_settings_v1";
@@ -237,12 +238,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await secureDelete(SESSION_KEY);
-    await secureDelete(ADMIN_TOKEN_KEY);
     try {
-      await AsyncStorage.multiRemove(SEARCH_CACHE_KEYS);
+      await clearSessionStorage(secureDelete, AsyncStorage.multiRemove);
     } catch (err) {
-      reportStorageError("Could not clear search cache on logout", err);
+      reportStorageError("Could not clear session storage on logout", err);
     }
     // Fire in-memory reset handlers so screens drop the prior session's state
     logoutRegistryRef.current.fire();
