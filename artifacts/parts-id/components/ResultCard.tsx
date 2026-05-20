@@ -164,9 +164,11 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
         ) : null}
 
         {/* Match reason */}
-        <Text style={[cardStyles.reason, { color: colors.mutedForeground }]}>
-          ↑ {matchReason}
-        </Text>
+        {matchReason ? (
+          <Text style={[cardStyles.reason, { color: colors.mutedForeground }]}>
+            ↑ {matchReason}
+          </Text>
+        ) : null}
 
         {/* Expanded content */}
         {expanded ? (
