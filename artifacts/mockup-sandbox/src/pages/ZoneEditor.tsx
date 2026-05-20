@@ -19,12 +19,12 @@ import React, {
 import { Toaster, toast } from "sonner";
 import warehouseMapRaw from "../../public/warehouse-map.svg?raw";
 
-// Inject explicit width/height so the SVG fills its container correctly
-// (the file only has a viewBox attribute — no width/height).
-const warehouseMapHtml = warehouseMapRaw.replace(
-  "<svg",
-  `<svg width="${3592.55}" height="${2457.41}"`,
-);
+// Extract the inner SVG content (strip the outer <svg> wrapper) so it can be
+// embedded directly inside the main SVG canvas as a child <g>. This keeps
+// everything in the same SVG viewport and stays crisp at any zoom level.
+const svgInnerContent = warehouseMapRaw
+  .replace(/^[\s\S]*?<svg[^>]*>/, "")
+  .replace(/<\/svg>\s*$/, "");
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SVG_W = 3592.55;
@@ -135,6 +135,7 @@ export function ZoneEditor() {
 
   // Refs — updated every render so event handlers never go stale
   const svgRef = useRef<SVGSVGElement>(null);
+  const floorPlanRef = useRef<SVGGElement>(null);
   const ixRef = useRef<IxState>({ t: "idle" });
   const tfRef = useRef(tf);
   const zonesRef = useRef(zones);
@@ -145,6 +146,14 @@ export function ZoneEditor() {
   useEffect(() => { zonesRef.current = zones; }, [zones]);
   useEffect(() => { dragZoneRef.current = dragZone; }, [dragZone]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+
+  // Inject the warehouse floor plan SVG directly into the SVG DOM so it shares
+  // the same coordinate system as the zone overlays and stays crisp at any zoom.
+  useEffect(() => {
+    if (floorPlanRef.current) {
+      floorPlanRef.current.innerHTML = svgInnerContent;
+    }
+  }, []);
 
   // ── API helpers ─────────────────────────────────────────────────────────────
   const headers = useCallback(
@@ -520,30 +529,10 @@ export function ZoneEditor() {
       <div style={styles.content}>
         {/* SVG canvas */}
         <div style={{ ...styles.canvas, position: "relative" }}>
-          {/* Floor plan — inlined SVG so there are no URL / CORS / sizing
-              issues. The CSS transform mirrors the SVG <g> transform so the
-              floor plan stays perfectly aligned with zone overlays. */}
-          <div
-            dangerouslySetInnerHTML={{ __html: warehouseMapHtml }}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: SVG_W,
-              height: SVG_H,
-              transformOrigin: "0 0",
-              transform: `translate(${tf.x}px,${tf.y}px) scale(${tf.s})`,
-              pointerEvents: "none",
-              userSelect: "none",
-              overflow: "visible",
-            }}
-          />
-
           <svg
             ref={svgRef}
             style={{
               ...styles.svg,
-              background: "transparent",
               cursor:
                 mode === "pan"
                   ? ixRef.current.t === "pan"
@@ -555,6 +544,10 @@ export function ZoneEditor() {
             onWheel={onWheel}
           >
             <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
+              {/* Floor plan — embedded as a child <g> inside the SVG so it
+                  shares the same coordinate system as zone overlays and stays
+                  perfectly crisp at any zoom level (no rasterisation). */}
+              <g ref={floorPlanRef} pointerEvents="none" />
               {/* Zone overlays */}
               {displayZones.map((zone) => {
                 const sel = zone.id === selectedId;
