@@ -422,7 +422,7 @@ function BinSlot({
         {part.bin.raw}
       </Text>
       <Text
-        style={[slotStyles.catalog, { color: selected ? colors.primaryForeground + "cc" : colors.mutedForeground }]}
+        style={[slotStyles.catalog, { color: selected ? colors.primaryForeground : colors.primary }]}
         numberOfLines={1}
       >
         {part.item.catalog}
@@ -439,10 +439,10 @@ const slotStyles = StyleSheet.create({
     borderWidth: 1.5,
     padding: 6,
     justifyContent: "space-between",
-    alignItems: "flex-start",
+    alignItems: "center",
   },
-  binCode: { fontSize: 10, fontFamily: "SpaceMono_400Regular", letterSpacing: 0.3 },
-  catalog: { fontSize: 10, fontFamily: "Inter_500Medium" },
+  binCode: { fontSize: 10, fontFamily: "SpaceMono_400Regular", letterSpacing: 0.3, textAlign: "center" },
+  catalog: { fontSize: 10, fontFamily: "Inter_500Medium", textAlign: "center" },
 });
 
 function ShelfRow({
