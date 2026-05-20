@@ -1046,8 +1046,8 @@ export default function SearchScreen() {
                   },
                 ]}
               >
-                <Feather name={m.icon} size={13} color="#fff" />
-                <Text style={[styles.modeToggleBtnText, { color: "#fff" }]}>
+                <Feather name={m.icon} size={13} color="#000" />
+                <Text style={[styles.modeToggleBtnText, { color: "#000" }]}>
                   {m.label}
                 </Text>
               </Pressable>
@@ -1301,7 +1301,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     alignSelf: "stretch",
   },
-  modeToggleLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff", textDecorationLine: "underline" },
+  modeToggleLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#000", textDecorationLine: "underline" },
   modeToggleBtn: {
     flex: 1,
     flexDirection: "row",
