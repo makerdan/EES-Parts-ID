@@ -25,6 +25,7 @@ import {
 } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { lookupByBarcodeOffline, upsertItemInBarcodeCache, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
+import { resolveBarcodeCode, resolveShelfAssign } from "@/utils/barcodeResolver";
 import { ResultCard } from "@/components/ResultCard";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
@@ -299,40 +300,31 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
       setMatchedItem(null);
       setIsOfflineMatch(false);
 
-      try {
-        const result = await lookupByBarcode(encodeURIComponent(code));
-        setMatchedItem(result);
+      const resolution = await resolveBarcodeCode(code);
+      if (resolution.phase === "found") {
+        setMatchedItem(resolution.item);
         setScanPhase("found");
-        addEntry({
-          barcode: code,
-          found: true,
-          itemId: result.id,
-          catalog: result.catalog,
-          vendor: result.vendor,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (err: unknown) {
-        const status =
-          err && typeof err === "object" && "status" in err
-            ? (err as { status: number }).status
-            : null;
-        if (status === 404) {
-          setScanPhase("notfound");
-          addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
-        } else if (status === null) {
-          const offlineItem = await lookupByBarcodeOffline(code);
-          if (offlineItem) {
-            setMatchedItem(offlineItem);
-            setIsOfflineMatch(true);
-            setScanPhase("found");
-            getFuseCacheSyncedAt().then(setFuseSyncedAt).catch(() => setFuseSyncedAt(null));
-          } else {
-            setScanPhase("offline_miss");
-          }
+        if (!resolution.isOffline) {
+          addEntry({
+            barcode: code,
+            found: true,
+            itemId: resolution.item.id,
+            catalog: resolution.item.catalog,
+            vendor: resolution.item.vendor,
+            timestamp: new Date().toISOString(),
+          });
         } else {
-          setScanError("Lookup failed — please try again.");
-          setScanPhase("idle");
+          setIsOfflineMatch(true);
+          getFuseCacheSyncedAt().then(setFuseSyncedAt).catch(() => setFuseSyncedAt(null));
         }
+      } else if (resolution.phase === "notfound") {
+        setScanPhase("notfound");
+        addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
+      } else if (resolution.phase === "offline_miss") {
+        setScanPhase("offline_miss");
+      } else {
+        setScanError(resolution.message);
+        setScanPhase("idle");
       }
     },
     [shelfMode, shelfStep, scannedCode, addEntry],
@@ -398,17 +390,18 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
       if (!shelfScannedCode) return;
       setShelfAssignPicker(false);
       try {
-        const existing = item.barcodes ?? [];
-        if (!existing.includes(shelfScannedCode)) {
-          const updated = await updateBarcodesMutation.mutateAsync({
-            id: item.id,
-            data: { barcodes: [...existing, shelfScannedCode] },
-          });
+        const result = await resolveShelfAssign(
+          shelfScannedCode,
+          item,
+          (id, barcodes) =>
+            updateBarcodesMutation.mutateAsync({ id, data: { barcodes } }),
+          upsertItemInBarcodeCache,
+        );
+        if (result.wasNew) {
           const listKeyPrefix = getListInventoryQueryKey()[0];
           await queryClient.invalidateQueries({
             predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
           });
-          await upsertItemInBarcodeCache(updated);
         }
         setAssignments((prev) => [
           { barcode: shelfScannedCode, item, timestamp: new Date() },

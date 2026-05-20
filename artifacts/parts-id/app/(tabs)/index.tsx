@@ -41,6 +41,8 @@ import {
   pruneExpired,
   formatStaleCacheWarning,
   formatRelativeAge,
+  resolveOfflineFallback,
+  fetchInventoryPages,
 } from "@/utils/searchHelpers";
 import type { QueryCache } from "@/utils/searchHelpers";
 
@@ -243,25 +245,19 @@ export default function SearchScreen() {
     }
     setSyncError(false);
     setSyncRetryPending(false);
-    const PAGE_SIZE = 500;
-    let page = 1;
-    let total = 0;
-    const allItems: InventoryItem[] = [];
     try {
-      do {
-        const data: { items: InventoryItem[]; total: number } = await retryAsync(async () => {
-          const res = await fetch(`${API_BASE}/inventory?page=${page}&limit=${PAGE_SIZE}`);
-          if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
-          return res.json();
-        });
-        // Guard: if the page returned zero items, the server total may be inconsistent —
-        // stop looping to prevent an infinite loop.
-        if (data.items.length === 0) break;
-        total = data.total;
-        allItems.push(...data.items);
-        setSyncProgress({ loaded: allItems.length, total });
-        page++;
-      } while (allItems.length < total);
+      const allItems = await fetchInventoryPages(
+        async (page, pageSize) => {
+          const data: { items: InventoryItem[]; total: number } = await retryAsync(async () => {
+            const res = await fetch(`${API_BASE}/inventory?page=${page}&limit=${pageSize}`);
+            if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
+            return res.json();
+          });
+          return data;
+        },
+        500,
+        (loaded, total) => setSyncProgress({ loaded, total }),
+      );
       buildFuseIndex(allItems);
       syncRetryAttemptRef.current = 0; // success — reset backoff counter
       try {
@@ -372,19 +368,17 @@ export default function SearchScreen() {
     loadQueryCache().then(cache => {
       const pruned = pruneExpired(cache);
       if (Object.keys(pruned).length !== Object.keys(cache).length) saveQueryCache(pruned);
-      const exactEntry = pruned[queryKey];
-      if (exactEntry) {
-        setIsOffline(true);
-        setOfflineCacheType("exact");
-        setOfflineResults(exactEntry.results);
-        return;
-      }
       const kw = [f.keywords, f.catalog, f.vendor, f.category, f.voltage, f.amperage]
         .filter(Boolean).join(" ");
-      const fuseHits = runFuseSearch(kw);
+      const result = resolveOfflineFallback({
+        queryKey,
+        cache: pruned,
+        fuseSearch: runFuseSearch,
+        keywords: kw,
+      });
       setIsOffline(true);
-      setOfflineCacheType("fuse");
-      setOfflineResults(fuseHits.length > 0 ? fuseHits : []);
+      setOfflineCacheType(result.cacheType);
+      setOfflineResults(result.results);
     });
   }, [runFuseSearch]);
 
