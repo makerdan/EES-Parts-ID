@@ -2,6 +2,7 @@
  * Three-layer chip answer resolution used by the Reference Modal.
  *
  * Layer 1 — in-memory cache   : return immediately, zero network calls
+ *                               (skipped if the entry is older than MAX_AGE_MS)
  * Layer 2 — DB cache (GET)    : return server-cached answer, no AI call
  * Layer 3 — AI fallback (POST): call AI, write result back to DB + cache
  *
@@ -9,14 +10,30 @@
  * they are pure and fully testable without a mounted component.
  */
 
+/** Maximum age for an in-memory cache entry before it is considered stale. */
+export const MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+/** Shape stored in the caller-owned cache Map. */
+export interface CacheEntry {
+  answer: string;
+  /** Unix timestamp (ms) when this entry was written into the cache. */
+  fetchedAt: number;
+}
+
 export async function fetchChipAnswer(
   label: string,
   chipQuestion: string,
-  cache: Map<string, string>,
+  cache: Map<string, CacheEntry>,
   apiBase: string,
 ): Promise<string> {
-  const cached = cache.get(label);
-  if (cached !== undefined) return cached;
+  const entry = cache.get(label);
+  if (entry !== undefined) {
+    if (Date.now() - entry.fetchedAt <= MAX_AGE_MS) {
+      return entry.answer;
+    }
+    // Entry is stale — remove it and fall through to Layer 2/3.
+    cache.delete(label);
+  }
 
   try {
     const res = await fetch(
@@ -24,7 +41,7 @@ export async function fetchChipAnswer(
     );
     if (res.ok) {
       const data: { answer: string } = await res.json();
-      cache.set(label, data.answer);
+      cache.set(label, { answer: data.answer, fetchedAt: Date.now() });
       return data.answer;
     }
   } catch {
@@ -41,20 +58,21 @@ export async function fetchChipAnswer(
   );
   if (!res.ok) throw new Error("AI fallback failed");
   const data: { answer: string } = await res.json();
-  cache.set(label, data.answer);
+  cache.set(label, { answer: data.answer, fetchedAt: Date.now() });
   return data.answer;
 }
 
 export async function prefetchQuickLookups(
-  cache: Map<string, string>,
+  cache: Map<string, CacheEntry>,
   apiBase: string,
 ): Promise<void> {
   try {
     const res = await fetch(`${apiBase}/reference/quick-lookups`);
     if (!res.ok) return;
     const rows: { label: string; answer: string }[] = await res.json();
+    const now = Date.now();
     for (const row of rows) {
-      cache.set(row.label, row.answer);
+      cache.set(row.label, { answer: row.answer, fetchedAt: now });
     }
   } catch {
     // Non-fatal — cache will be populated on demand

@@ -6,7 +6,7 @@
  * the implementation reads (ok, json()).
  */
 
-import { fetchChipAnswer, prefetchQuickLookups } from "../utils/chipCache";
+import { fetchChipAnswer, prefetchQuickLookups, MAX_AGE_MS, type CacheEntry } from "../utils/chipCache";
 
 const API_BASE = "https://test.example/api";
 const LABEL = "GFCI";
@@ -21,6 +21,10 @@ function makeResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
+function freshEntry(answer: string): CacheEntry {
+  return { answer, fetchedAt: Date.now() };
+}
+
 let mockFetch: jest.Mock;
 
 beforeEach(() => {
@@ -32,18 +36,52 @@ afterEach(() => {
   jest.resetAllMocks();
 });
 
-// ── fetchChipAnswer ────────────────────────────────────────────────────────────
+// ── fetchChipAnswer — TTL / expiry ──────────────────────────────────────────
+
+describe("fetchChipAnswer — TTL expiry", () => {
+  it("serves a fresh entry (within MAX_AGE_MS) from the in-memory cache without fetching", async () => {
+    const cache = new Map<string, CacheEntry>([[LABEL, freshEntry(ANSWER)]]);
+
+    const result = await fetchChipAnswer(LABEL, QUESTION, cache, API_BASE);
+
+    expect(result).toBe(ANSWER);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("treats an entry older than MAX_AGE_MS as a miss and falls through to Layer 2", async () => {
+    const staleEntry: CacheEntry = { answer: ANSWER, fetchedAt: Date.now() - MAX_AGE_MS - 1 };
+    const cache = new Map<string, CacheEntry>([[LABEL, staleEntry]]);
+    mockFetch.mockResolvedValueOnce(makeResponse(200, { answer: "fresh answer" }));
+
+    const result = await fetchChipAnswer(LABEL, QUESTION, cache, API_BASE);
+
+    expect(result).toBe("fresh answer");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes a stale entry from the cache before re-fetching", async () => {
+    const staleEntry: CacheEntry = { answer: ANSWER, fetchedAt: Date.now() - MAX_AGE_MS - 1 };
+    const cache = new Map<string, CacheEntry>([[LABEL, staleEntry]]);
+    mockFetch.mockResolvedValueOnce(makeResponse(200, { answer: "fresh answer" }));
+
+    await fetchChipAnswer(LABEL, QUESTION, cache, API_BASE);
+
+    expect(cache.get(LABEL)?.answer).toBe("fresh answer");
+  });
+});
+
+// ── fetchChipAnswer — Layer 1 (in-memory cache) ────────────────────────────────
 
 describe("fetchChipAnswer — Layer 1 (in-memory cache)", () => {
   it("returns the cached value immediately without calling fetch", async () => {
-    const cache = new Map([[LABEL, ANSWER]]);
+    const cache = new Map<string, CacheEntry>([[LABEL, freshEntry(ANSWER)]]);
     const result = await fetchChipAnswer(LABEL, QUESTION, cache, API_BASE);
     expect(result).toBe(ANSWER);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("treats an empty-string cache entry as cached (no network call)", async () => {
-    const cache = new Map([[LABEL, ""]]);
+    const cache = new Map<string, CacheEntry>([[LABEL, freshEntry("")]]);
     const result = await fetchChipAnswer(LABEL, QUESTION, cache, API_BASE);
     expect(result).toBe("");
     expect(mockFetch).not.toHaveBeenCalled();
@@ -52,20 +90,20 @@ describe("fetchChipAnswer — Layer 1 (in-memory cache)", () => {
 
 describe("fetchChipAnswer — Layer 2 (DB cache via GET)", () => {
   it("returns the DB answer on a 200 GET and stores it in the cache", async () => {
-    const cache = new Map<string, string>();
+    const cache = new Map<string, CacheEntry>();
     mockFetch.mockResolvedValueOnce(makeResponse(200, { answer: ANSWER }));
 
     const result = await fetchChipAnswer(LABEL, QUESTION, cache, API_BASE);
 
     expect(result).toBe(ANSWER);
-    expect(cache.get(LABEL)).toBe(ANSWER);
+    expect(cache.get(LABEL)?.answer).toBe(ANSWER);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch.mock.calls[0][0]).toContain(`quick-lookups/${encodeURIComponent(LABEL)}`);
     expect(mockFetch.mock.calls[0][1]).toBeUndefined();
   });
 
   it("does NOT call the AI (POST) when GET returns 200", async () => {
-    const cache = new Map<string, string>();
+    const cache = new Map<string, CacheEntry>();
     mockFetch.mockResolvedValueOnce(makeResponse(200, { answer: ANSWER }));
 
     await fetchChipAnswer(LABEL, QUESTION, cache, API_BASE);
@@ -79,7 +117,7 @@ describe("fetchChipAnswer — Layer 2 (DB cache via GET)", () => {
 
 describe("fetchChipAnswer — Layer 3 (AI fallback via POST)", () => {
   it("falls through to POST when GET returns 404 and caches the result", async () => {
-    const cache = new Map<string, string>();
+    const cache = new Map<string, CacheEntry>();
     mockFetch
       .mockResolvedValueOnce(makeResponse(404, {}))
       .mockResolvedValueOnce(makeResponse(200, { answer: ANSWER }));
@@ -87,7 +125,7 @@ describe("fetchChipAnswer — Layer 3 (AI fallback via POST)", () => {
     const result = await fetchChipAnswer(LABEL, QUESTION, cache, API_BASE);
 
     expect(result).toBe(ANSWER);
-    expect(cache.get(LABEL)).toBe(ANSWER);
+    expect(cache.get(LABEL)?.answer).toBe(ANSWER);
     expect(mockFetch).toHaveBeenCalledTimes(2);
     const [, postCall] = mockFetch.mock.calls as [unknown[], [string, RequestInit]];
     expect(postCall[1].method).toBe("POST");
@@ -95,7 +133,7 @@ describe("fetchChipAnswer — Layer 3 (AI fallback via POST)", () => {
   });
 
   it("falls through to POST when GET throws a network error", async () => {
-    const cache = new Map<string, string>();
+    const cache = new Map<string, CacheEntry>();
     mockFetch
       .mockRejectedValueOnce(new Error("Network error"))
       .mockResolvedValueOnce(makeResponse(200, { answer: ANSWER }));
@@ -107,7 +145,7 @@ describe("fetchChipAnswer — Layer 3 (AI fallback via POST)", () => {
   });
 
   it("throws when the POST (AI fallback) returns a non-OK status", async () => {
-    const cache = new Map<string, string>();
+    const cache = new Map<string, CacheEntry>();
     mockFetch
       .mockResolvedValueOnce(makeResponse(404, {}))
       .mockResolvedValueOnce(makeResponse(500, {}));
@@ -123,7 +161,7 @@ describe("fetchChipAnswer — Layer 3 (AI fallback via POST)", () => {
 
 describe("prefetchQuickLookups", () => {
   it("populates the cache from the list endpoint", async () => {
-    const cache = new Map<string, string>();
+    const cache = new Map<string, CacheEntry>();
     mockFetch.mockResolvedValueOnce(
       makeResponse(200, [
         { label: "GFCI", answer: "Ground fault interrupter." },
@@ -133,13 +171,28 @@ describe("prefetchQuickLookups", () => {
 
     await prefetchQuickLookups(cache, API_BASE);
 
-    expect(cache.get("GFCI")).toBe("Ground fault interrupter.");
-    expect(cache.get("AWG")).toBe("American Wire Gauge.");
+    expect(cache.get("GFCI")?.answer).toBe("Ground fault interrupter.");
+    expect(cache.get("AWG")?.answer).toBe("American Wire Gauge.");
     expect(mockFetch).toHaveBeenCalledWith(`${API_BASE}/reference/quick-lookups`);
   });
 
+  it("stores a fetchedAt timestamp within each prefetched entry", async () => {
+    const before = Date.now();
+    const cache = new Map<string, CacheEntry>();
+    mockFetch.mockResolvedValueOnce(
+      makeResponse(200, [{ label: LABEL, answer: ANSWER }]),
+    );
+
+    await prefetchQuickLookups(cache, API_BASE);
+
+    const entry = cache.get(LABEL);
+    expect(entry).toBeDefined();
+    expect(entry!.fetchedAt).toBeGreaterThanOrEqual(before);
+    expect(entry!.fetchedAt).toBeLessThanOrEqual(Date.now());
+  });
+
   it("after prefetch, fetchChipAnswer is a Layer-1 hit and makes no further fetch calls", async () => {
-    const cache = new Map<string, string>();
+    const cache = new Map<string, CacheEntry>();
     mockFetch.mockResolvedValueOnce(
       makeResponse(200, [{ label: LABEL, answer: ANSWER }]),
     );
@@ -153,7 +206,7 @@ describe("prefetchQuickLookups", () => {
   });
 
   it("ignores a non-OK response from the list endpoint without throwing", async () => {
-    const cache = new Map<string, string>();
+    const cache = new Map<string, CacheEntry>();
     mockFetch.mockResolvedValueOnce(makeResponse(503, {}));
 
     await expect(prefetchQuickLookups(cache, API_BASE)).resolves.toBeUndefined();
@@ -161,7 +214,7 @@ describe("prefetchQuickLookups", () => {
   });
 
   it("ignores a fetch error from the list endpoint without throwing", async () => {
-    const cache = new Map<string, string>();
+    const cache = new Map<string, CacheEntry>();
     mockFetch.mockRejectedValueOnce(new Error("offline"));
 
     await expect(prefetchQuickLookups(cache, API_BASE)).resolves.toBeUndefined();
