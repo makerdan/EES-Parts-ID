@@ -80,6 +80,7 @@ export default function CatalogReviewScreen() {
   const [error, setError] = useState<string | null>(null);
   const [revertingId, setRevertingId] = useState<number | null>(null);
   const [revertedIds, setRevertedIds] = useState<Set<number>>(new Set());
+  const [dismissingId, setDismissingId] = useState<number | null>(null);
 
   const authHeaders: Record<string, string> = adminToken
     ? { Authorization: `Bearer ${adminToken}` }
@@ -132,6 +133,22 @@ export default function CatalogReviewScreen() {
   }, [adminToken, jobId]);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
+
+  const handleDismiss = async (jobId: number) => {
+    if (dismissingId) return;
+    setDismissingId(jobId);
+    try {
+      const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/dismiss`, {
+        method: "POST",
+        headers: authHeaders,
+      });
+      if (r.status === 401) { logoutAdmin(); return; }
+      if (r.ok) {
+        setFailedJobs((prev) => prev.filter((j) => j.id !== jobId));
+      }
+    } catch { /* silent */ }
+    finally { setDismissingId(null); }
+  };
 
   const handleRevert = async (item: ReviewItem) => {
     if (revertingId) return;
@@ -363,6 +380,15 @@ export default function CatalogReviewScreen() {
                           To resubmit: go to the Upload tab, enter the vendor name, select the same PDF, and tap "Start Extraction".
                         </Text>
                       </View>
+                      <Pressable
+                        onPress={() => handleDismiss(job.id)}
+                        disabled={dismissingId === job.id}
+                        style={[s.dismissBtn, { borderColor: colors.mutedForeground + "55" }]}
+                      >
+                        <Text style={[s.dismissBtnText, { color: colors.mutedForeground }]}>
+                          {dismissingId === job.id ? "Dismissing…" : "Dismiss"}
+                        </Text>
+                      </Pressable>
                     </View>
                   ))}
                 </View>
@@ -442,4 +468,12 @@ const s = StyleSheet.create({
     borderRadius: 8, borderWidth: 1, padding: 10,
   },
   resubmitText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
+  dismissBtn: {
+    alignSelf: "flex-end",
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+  },
+  dismissBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
 });
