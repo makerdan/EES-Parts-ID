@@ -29,6 +29,20 @@
       "when": 1747699200000,
       "tag": "0003_barcodes_column",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1747785600000,
+      "tag": "0004_vendor_map_is_primary",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1748217600000,
+      "tag": "0005_dismissed_column",
+      "breakpoints": true
     }
   ]
 }
