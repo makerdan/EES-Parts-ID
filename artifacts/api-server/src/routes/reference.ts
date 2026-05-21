@@ -96,11 +96,15 @@ router.post("/ask", async (req, res) => {
   }
 });
 
-// GET /reference/quick-lookups — return all cached rows
+// GET /reference/quick-lookups — return all cached rows (includes updatedAt for client-side TTL)
 router.get("/quick-lookups", async (_req, res) => {
   try {
     const rows = await db
-      .select({ label: quickLookupCacheTable.label, answer: quickLookupCacheTable.answer })
+      .select({
+        label: quickLookupCacheTable.label,
+        answer: quickLookupCacheTable.answer,
+        updatedAt: quickLookupCacheTable.updatedAt,
+      })
       .from(quickLookupCacheTable);
     res.json(rows);
   } catch (err) {

@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
-import { fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl } from "@/utils/chipCache";
+import { fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl, type CacheEntry } from "@/utils/chipCache";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -101,7 +101,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   const scrollRef = useRef<ScrollView>(null);
   const pulse = useRef(new Animated.Value(1)).current;
   const askedQuestionRef = useRef("");
-  const answerCacheRef = useRef<Map<string, string>>(new Map());
+  const answerCacheRef = useRef<Map<string, CacheEntry>>(new Map());
   const lastTapRef = useRef<number>(0);
   // Stores the full chip context needed for retry when a chip call fails
   const failedChipRef = useRef<{ label: string; question: string } | null>(null);
