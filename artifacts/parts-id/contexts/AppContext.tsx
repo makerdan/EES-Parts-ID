@@ -309,7 +309,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }}>
       {children}
       {toastMessage ? (
-        <View pointerEvents="none" style={toastStyles.wrap}>
+        <View style={[toastStyles.wrap, { pointerEvents: "none" }]}>
           <View style={toastStyles.toast}>
             <Text style={toastStyles.text} numberOfLines={3}>{toastMessage}</Text>
           </View>
