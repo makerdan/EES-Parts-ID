@@ -382,13 +382,9 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                   </Pressable>
                 </View>
 
-                {/* Quick Lookups — horizontal pill row */}
+                {/* Quick Lookups — wrapping pill row */}
                 <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground }]}>QUICK LOOKUPS</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={emptyStyles.chipRow}
-                >
+                <View style={emptyStyles.chipRow}>
                   {QUICK_LOOKUP_CHIPS.map(({ label, question: q }) => (
                     <Pressable
                       key={label}
@@ -398,15 +394,11 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                       <Text style={[emptyStyles.chipText, { color: colors.foreground }]}>{label}</Text>
                     </Pressable>
                   ))}
-                </ScrollView>
+                </View>
 
-                {/* Breaker Attributes — horizontal pill row with inline expansion */}
+                {/* Breaker Attributes — wrapping pill row with inline expansion */}
                 <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground, marginTop: 16 }]}>BREAKER ATTRIBUTES</Text>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={emptyStyles.chipRow}
-                >
+                <View style={emptyStyles.chipRow}>
                   {BREAKER_ATTRIBUTE_CHIPS.map(({ label }) => (
                     <Pressable
                       key={label}
@@ -427,7 +419,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                       </Text>
                     </Pressable>
                   ))}
-                </ScrollView>
+                </View>
 
                 {activeBreakerChip ? (
                   <View style={[breakerStyles.answerBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -574,7 +566,7 @@ const emptyStyles = StyleSheet.create({
   },
   inlineSendText: { fontSize: 16, fontFamily: "Inter_700Bold" },
   sectionLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 1, textTransform: "uppercase", marginBottom: 10, alignSelf: "flex-start" },
-  chipRow: { paddingBottom: 4, gap: 8, flexDirection: "row" },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, width: "100%", paddingBottom: 4 },
   chip: { ...secondaryBtnBase, paddingHorizontal: 14, paddingVertical: 8 },
   chipText: { fontSize: 13, fontFamily: "Inter_400Regular" },
 });
