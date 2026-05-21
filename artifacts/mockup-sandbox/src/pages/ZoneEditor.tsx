@@ -415,11 +415,25 @@ export function ZoneEditor() {
       const state = ixRef.current;
       ixRef.current = { t: "idle" };
 
+      if (state.t === "pan") {
+        const dx = e.clientX - state.sx;
+        const dy = e.clientY - state.sy;
+        if (Math.hypot(dx, dy) < 5) {
+          setSelectedId(null);
+          setPendingRect(null);
+        }
+        return;
+      }
+
       if (state.t === "draw") {
         const r = normRect(state.x1, state.y1, state.x2, state.y2);
         const minSvg = MIN_ZONE_PX / tfRef.current.s;
         setDraftRect(null);
-        if (r.svgWidth < minSvg || r.svgHeight < minSvg) return;
+        if (r.svgWidth < minSvg || r.svgHeight < minSvg) {
+          setSelectedId(null);
+          setPendingRect(null);
+          return;
+        }
         setPendingRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
         setSelectedId(null);
         setForm({ aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0 });
