@@ -25,6 +25,8 @@ import { BinEditor } from "@/components/BinEditor";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
+import { parseBin } from "@/lib/aisleHierarchy";
+import { router } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
 import { reportStorageError } from "@/utils/storageErrorReporter";
@@ -117,7 +119,7 @@ const DEFAULT_FILTERS: FilterValues = {
 
 export default function SearchScreen() {
   const colors = useColors();
-  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler } = useApp();
+  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   type SearchMode = "search" | "aisle" | "category";
   const [mode, setMode] = useState<SearchMode>("search");
@@ -131,6 +133,22 @@ export default function SearchScreen() {
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
   const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
+
+  const handleShowOnMap = useCallback((item: InventoryItem) => {
+    const bins = item.binLocations ?? [];
+    for (const bin of bins) {
+      const parsed = parseBin(bin);
+      if (parsed) {
+        setPendingMapFocus({
+          aisleNum: parsed.aisle,
+          sectionNumbers: [parsed.section],
+          label: `Aisle ${String(parsed.aisle).padStart(2, "0")} · Section ${parsed.section}`,
+        });
+        router.navigate("/(tabs)/map");
+        return;
+      }
+    }
+  }, [setPendingMapFocus]);
   // Local override of bin lists keyed by item.id, applied on top of whatever
   // results are currently displayed (online searchMutation.data, offlineResults,
   // or Fuse fallback). Lets bin edits show up immediately without a re-search.
@@ -1016,6 +1034,7 @@ export default function SearchScreen() {
               onEditBins={isAdmin ? setBinEditItem : undefined}
               onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
               onEditItem={isAdmin ? setDetailsItem : undefined}
+              onShowOnMap={handleShowOnMap}
               rank={index}
               fontScale={textFontScale}
             />

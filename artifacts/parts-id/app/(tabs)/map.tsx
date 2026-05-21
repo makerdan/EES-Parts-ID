@@ -7,7 +7,7 @@
  *   - useWarehouseZones fetches on mount, on tab focus, and on app foreground.
  *   - Cached data is served immediately; background refresh keeps it fresh.
  */
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Linking,
   Pressable,
@@ -49,22 +49,39 @@ function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
 
 export default function MapScreen() {
   const colors = useColors();
-  const { settings, isAdmin, textFontScale } = useApp();
+  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus } = useApp();
 
   // Zone data — owned at this level so useFocusEffect can trigger refetch
   const { zones, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
 
-  // Re-sync zones every time the tab comes into focus; unlock landscape orientation
+  // Mirror pendingMapFocus into a ref so useFocusEffect can read it without
+  // re-registering the effect every time the value changes.
+  const pendingMapFocusRef = useRef(pendingMapFocus);
+  useEffect(() => { pendingMapFocusRef.current = pendingMapFocus; }, [pendingMapFocus]);
+
+  // Re-sync zones every time the tab comes into focus; unlock landscape orientation.
+  // Also consume any pending map focus set from the Search tab ("Show on map").
   useFocusEffect(
     useCallback(() => {
       refetchZones();
       void ScreenOrientation.unlockAsync();
+
+      const focus = pendingMapFocusRef.current;
+      if (focus) {
+        setDrilldown({
+          aisleNum: focus.aisleNum,
+          sectionNumbers: focus.sectionNumbers,
+          label: focus.label ?? `Aisle ${String(focus.aisleNum).padStart(2, "0")}`,
+        });
+        setPendingMapFocus(null);
+      }
+
       return () => {
         void ScreenOrientation.lockAsync(
           ScreenOrientation.OrientationLock.PORTRAIT_UP,
         );
       };
-    }, [refetchZones]),
+    }, [refetchZones, setPendingMapFocus]),
   );
 
   const [browseOpen, setBrowseOpen] = useState(false);
