@@ -8,9 +8,10 @@
  * Route: /catalog-review?jobId=<n>  (jobId optional — omit to show all)
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   SafeAreaView,
@@ -19,6 +20,8 @@ import {
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { RetryImage } from "@/components/RetryImage";
@@ -82,6 +85,8 @@ export default function CatalogReviewScreen() {
   const [revertingId, setRevertingId] = useState<number | null>(null);
   const [revertedIds, setRevertedIds] = useState<Set<number>>(new Set());
   const [dismissingId, setDismissingId] = useState<number | null>(null);
+  const [resumingId, setResumingId] = useState<number | null>(null);
+  const resumePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const authHeaders: Record<string, string> = adminToken
     ? { Authorization: `Bearer ${adminToken}` }
@@ -149,6 +154,77 @@ export default function CatalogReviewScreen() {
       }
     } catch { /* silent */ }
     finally { setDismissingId(null); }
+  };
+
+  const handleResume = async (jobId: number) => {
+    if (resumingId) return;
+
+    // Pick the PDF file
+    let result: DocumentPicker.DocumentPickerResult;
+    try {
+      result = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true });
+    } catch {
+      Alert.alert("Error", "Could not open the file picker.");
+      return;
+    }
+
+    if (result.canceled || !result.assets?.[0]) return;
+
+    const asset = result.assets[0];
+    const uri = asset.uri;
+
+    // Validate file size (max ~25 MB)
+    const MAX_PDF_BYTES = 25 * 1024 * 1024;
+    try {
+      const info = await FileSystem.getInfoAsync(uri);
+      if (info.exists && "size" in info && info.size > MAX_PDF_BYTES) {
+        Alert.alert("File too large", "Please select a PDF under 25 MB.");
+        return;
+      }
+    } catch { /* proceed even if size check fails */ }
+
+    setResumingId(jobId);
+
+    try {
+      const pdfBase64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ pdfBase64 }),
+      });
+
+      if (r.status === 401) { logoutAdmin(); return; }
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({})) as { error?: string };
+        Alert.alert("Resume failed", body.error ?? "Could not resume the job.");
+        return;
+      }
+
+      // Remove from failed list — job is now processing again
+      setFailedJobs((prev) => prev.filter((j) => j.id !== jobId));
+
+      // Poll until the job finishes, then refresh the review list
+      if (resumePollRef.current) clearInterval(resumePollRef.current);
+      resumePollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, { headers: authHeaders });
+          if (!statusRes.ok) return;
+          const status = await statusRes.json() as { status: string };
+          if (status.status === "done" || status.status === "failed") {
+            clearInterval(resumePollRef.current!);
+            resumePollRef.current = null;
+            setResumingId(null);
+            fetchItems();
+          }
+        } catch { /* silent */ }
+      }, 3000);
+    } catch {
+      Alert.alert("Error", "Could not read or send the PDF file.");
+      setResumingId(null);
+    }
   };
 
   const handleRevert = async (item: ReviewItem) => {
@@ -341,7 +417,9 @@ export default function CatalogReviewScreen() {
               <FailedJobsSection
                 failedJobs={failedJobs}
                 dismissingId={dismissingId}
+                resumingId={resumingId}
                 onDismiss={handleDismiss}
+                onResume={handleResume}
                 colors={colors}
               />
             }

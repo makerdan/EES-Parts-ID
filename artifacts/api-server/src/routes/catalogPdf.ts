@@ -280,6 +280,167 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
   }
 });
 
+// ── POST /admin/catalog-pdf/:jobId/resume ─────────────────────────────────────
+// Resume a failed (or stuck-processing) job from the last persisted page.
+// Body: { pdfBase64: string }
+router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => {
+  const jobId = Number(req.params["jobId"]);
+  if (!Number.isFinite(jobId)) {
+    res.status(400).json({ error: "Invalid jobId" });
+    return;
+  }
+
+  const { pdfBase64 } = req.body as { pdfBase64?: string };
+  if (!pdfBase64 || typeof pdfBase64 !== "string") {
+    res.status(400).json({ error: "Missing pdfBase64 field" });
+    return;
+  }
+  if (pdfBase64.length > 35_000_000) {
+    res.status(413).json({ error: "PDF too large (max ~25 MB)" });
+    return;
+  }
+
+  // Fetch the existing job
+  const [jobRow] = await db
+    .select()
+    .from(catalogPdfJobTable)
+    .where(eq(catalogPdfJobTable.id, jobId))
+    .limit(1);
+
+  if (!jobRow) {
+    res.status(404).json({ error: "Job not found" });
+    return;
+  }
+
+  if (jobRow.status !== "failed" && jobRow.status !== "processing") {
+    res.status(409).json({
+      error: `Cannot resume a job with status "${jobRow.status}". Only failed or processing jobs can be resumed.`,
+    });
+    return;
+  }
+
+  const resumeFromPage = jobRow.processedPages ?? 0;
+  const normalizedVendor = jobRow.vendor;
+
+  // Transition back to processing
+  await db
+    .update(catalogPdfJobTable)
+    .set({ status: "processing", errorMessage: null, finishedAt: null })
+    .where(eq(catalogPdfJobTable.id, jobId));
+
+  res.json({ jobId: String(jobId), message: "Job resuming", resumeFromPage });
+
+  // ── Async resume processing ────────────────────────────────────────────────
+  setImmediate(async () => {
+    try {
+      const pdfBuffer = Buffer.from(pdfBase64, "base64");
+      const pages = await extractPdfPages(pdfBuffer);
+
+      // Update total pages in case it was unknown
+      await db
+        .update(catalogPdfJobTable)
+        .set({ totalPages: pages.length })
+        .where(eq(catalogPdfJobTable.id, jobId));
+
+      // Skip already-processed pages
+      const remainingPages = pages.slice(resumeFromPage);
+
+      let processedPages = resumeFromPage;
+      let matchedParts = jobRow.matchedParts ?? 0;
+
+      for (const page of remainingPages) {
+        const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
+
+        for (const entry of entries) {
+          if (entry.confidence < 0.4) continue;
+
+          const match = await matchCatalogNumber(normalizedVendor, entry.catalogNumber);
+          if (!match) continue;
+
+          const [existing] = await db
+            .select({
+              id: inventoryTable.id,
+              description: inventoryTable.description,
+              imageSource: inventoryTable.imageSource,
+            })
+            .from(inventoryTable)
+            .where(eq(inventoryTable.id, match.inventoryId))
+            .limit(1);
+
+          if (!existing) continue;
+
+          let imageUrl: string | null = null;
+          if (entry.hasPartImage && page.images.length > 0) {
+            const srcImg = page.images[0];
+            if (srcImg) {
+              let imgToBuf: Buffer = srcImg;
+              if (page.isRendered && entry.imageRegion && page.pageWidth > 0 && page.pageHeight > 0) {
+                try {
+                  const { x, y, width, height } = entry.imageRegion;
+                  const left = Math.max(0, Math.round(x * page.pageWidth));
+                  const top = Math.max(0, Math.round(y * page.pageHeight));
+                  const w = Math.min(page.pageWidth - left, Math.max(1, Math.round(width * page.pageWidth)));
+                  const h = Math.min(page.pageHeight - top, Math.max(1, Math.round(height * page.pageHeight)));
+                  const sharp = await import("sharp");
+                  imgToBuf = await (sharp.default ?? sharp)(srcImg)
+                    .extract({ left, top, width: w, height: h })
+                    .png()
+                    .toBuffer();
+                } catch (cropErr) {
+                  console.warn("[catalog-pdf] Crop failed, using full page:", cropErr);
+                  imgToBuf = srcImg;
+                }
+              }
+              try {
+                imageUrl = await uploadCatalogImage(imgToBuf, "image/png");
+              } catch (imgErr) {
+                console.warn("[catalog-pdf] Image upload failed:", imgErr);
+              }
+            }
+          }
+
+          await db
+            .update(inventoryTable)
+            .set({
+              description: entry.description || existing.description,
+              previousDescription: existing.description,
+              imageUrl,
+              imageSource: "pdf_extraction",
+              imageConfidence: match.similarityScore * entry.confidence,
+              catalogPdfJobId: jobId,
+              updatedAt: new Date(),
+            })
+            .where(eq(inventoryTable.id, match.inventoryId));
+
+          matchedParts++;
+        }
+
+        processedPages++;
+        await db
+          .update(catalogPdfJobTable)
+          .set({ processedPages, matchedParts })
+          .where(eq(catalogPdfJobTable.id, jobId));
+      }
+
+      await db
+        .update(catalogPdfJobTable)
+        .set({ status: "done", processedPages, matchedParts, finishedAt: new Date() })
+        .where(eq(catalogPdfJobTable.id, jobId));
+
+      console.log(
+        `[catalog-pdf] job=${jobId} resumed and done — pages=${processedPages} matched=${matchedParts}`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await db
+        .update(catalogPdfJobTable)
+        .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
+        .where(eq(catalogPdfJobTable.id, jobId));
+      console.error(`[catalog-pdf] job=${jobId} resume failed:`, err);
+    }
+  });
+});
+
 // ── POST /admin/catalog-pdf/:jobId/dismiss ────────────────────────────────────
 // Marks a failed job as dismissed so it no longer appears in the failed list.
 router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) => {
