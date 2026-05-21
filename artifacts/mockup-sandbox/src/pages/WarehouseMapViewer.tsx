@@ -1,0 +1,175 @@
+/**
+ * Warehouse Map Viewer — DEV-ONLY internal tool for viewing the warehouse
+ * floor plan SVG. Read-only pan/zoom view; no editing capabilities.
+ *
+ * Interaction model:
+ *   Pan  : drag background to pan, scroll wheel to zoom
+ *   Zoom : mouse wheel or pinch gesture
+ */
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import warehouseMapRaw from "../../public/warehouse-map.svg?raw";
+
+const svgInnerContent = warehouseMapRaw
+  .replace(/^[\s\S]*?<svg[^>]*>/, "")
+  .replace(/<\/svg>\s*$/, "");
+
+const SVG_W = 3592.55;
+const SVG_H = 2457.41;
+const INITIAL_SCALE = 0.18;
+
+interface Transform {
+  x: number;
+  y: number;
+  s: number;
+}
+
+function clampScale(s: number): number {
+  return Math.max(0.05, Math.min(4, s));
+}
+
+export function WarehouseMapViewer() {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [tf, setTf] = useState<Transform>({
+    x: 40,
+    y: 40,
+    s: INITIAL_SCALE,
+  });
+
+  const panRef = useRef<{ active: boolean; startX: number; startY: number; originTf: Transform }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    originTf: { x: 40, y: 40, s: INITIAL_SCALE },
+  });
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    panRef.current = {
+      active: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      originTf: { ...tf },
+    };
+    e.preventDefault();
+  }, [tf]);
+
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!panRef.current.active) return;
+    const dx = e.clientX - panRef.current.startX;
+    const dy = e.clientY - panRef.current.startY;
+    setTf({
+      ...panRef.current.originTf,
+      x: panRef.current.originTf.x + dx,
+      y: panRef.current.originTf.y + dy,
+    });
+  }, []);
+
+  const onMouseUp = useCallback(() => {
+    panRef.current.active = false;
+  }, []);
+
+  const onWheel = useCallback((e: WheelEvent) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    setTf((prev) => {
+      const newS = clampScale(prev.s * factor);
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (!rect) return prev;
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      return {
+        s: newS,
+        x: cx - (cx - prev.x) * (newS / prev.s),
+        y: cy - (cy - prev.y) * (newS / prev.s),
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [onWheel]);
+
+  return (
+    <div style={styles.root}>
+      {/* ── Banner ──────────────────────────────────────────────────────────── */}
+      <div style={styles.banner}>
+        <a href="/__mockup" style={styles.backLink}>← Internal Tools</a>
+        <span style={{ fontWeight: 600 }}>
+          ⚠ DEV TOOL — Warehouse Map Viewer — internal use only
+        </span>
+        <span style={styles.hint}>
+          scroll to zoom · drag to pan · {(tf.s * 100).toFixed(0)}%
+        </span>
+      </div>
+
+      {/* ── SVG canvas ──────────────────────────────────────────────────────── */}
+      <svg
+        ref={svgRef}
+        style={{ ...styles.svg, cursor: panRef.current.active ? "grabbing" : "grab" }}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseUp}
+      >
+        <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
+          <g dangerouslySetInnerHTML={{ __html: svgInnerContent }} />
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const styles = {
+  root: {
+    display: "flex",
+    flexDirection: "column" as const,
+    height: "100vh",
+    overflow: "hidden",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    background: "#fff",
+    color: "#111",
+  },
+  banner: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "6px 16px",
+    background: "#7c3aed",
+    color: "white",
+    fontSize: 12,
+    flexShrink: 0,
+    zIndex: 10,
+  },
+  backLink: {
+    color: "rgba(255,255,255,0.85)",
+    textDecoration: "none",
+    fontSize: 12,
+    fontWeight: 500,
+    padding: "2px 8px",
+    borderRadius: 4,
+    border: "1px solid rgba(255,255,255,0.3)",
+    whiteSpace: "nowrap" as const,
+    marginRight: 4,
+  },
+  hint: {
+    marginLeft: "auto",
+    opacity: 0.7,
+    whiteSpace: "nowrap" as const,
+  },
+  svg: {
+    flex: 1,
+    width: "100%",
+    display: "block",
+    background: "#f8f8f8",
+    userSelect: "none" as const,
+  },
+};
