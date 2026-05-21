@@ -173,7 +173,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
                   scanPhase === "looking" || scanPhase === "found" ? undefined : handleBarcodeScanned
                 }
               />
-              <View style={scanStyles.viewfinderOverlay} pointerEvents="none">
+              <View style={[scanStyles.viewfinderOverlay, { pointerEvents: "none" }]}>
                 <View style={[scanStyles.viewfinderFrame, { borderColor: colors.primary }]} />
               </View>
               <View style={[scanStyles.statusBar, { backgroundColor: statusBg }]}>

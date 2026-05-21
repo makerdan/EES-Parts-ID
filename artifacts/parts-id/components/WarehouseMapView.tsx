@@ -399,10 +399,9 @@ export function WarehouseMapView({
             <Animated.View
               style={[
                 StyleSheet.absoluteFill,
-                { width: svgRenderW, height: svgRenderH },
+                { width: svgRenderW, height: svgRenderH, pointerEvents: "none" },
                 skeletonStyle,
               ]}
-              pointerEvents="none"
             >
               <View
                 style={[
@@ -419,7 +418,7 @@ export function WarehouseMapView({
                   ]}
                 />
                 {/* Faint grid lines to hint at a floor-plan structure */}
-                <View style={styles.skeletonGrid} pointerEvents="none">
+                <View style={[styles.skeletonGrid, { pointerEvents: "none" }]}>
                   {[0.2, 0.4, 0.6, 0.8].map((frac) => (
                     <View
                       key={frac}
@@ -464,8 +463,7 @@ export function WarehouseMapView({
       {/* Zone loading spinner */}
       {zonesLoading && (
         <View
-          style={[styles.floatingBadge, { backgroundColor: colors.card }]}
-          pointerEvents="none"
+          style={[styles.floatingBadge, { backgroundColor: colors.card, pointerEvents: "none" }]}
         >
           <ActivityIndicator size="small" color={colors.primary} />
           <Text style={[styles.badgeText, { color: colors.mutedForeground }]}>
@@ -488,7 +486,7 @@ export function WarehouseMapView({
 
       {/* Empty state: no zones defined yet — auto-hides after 3 s */}
       {!zonesLoading && !zonesError && zones.length === 0 && !emptyDismissed && (
-        <View style={styles.emptyOverlay} pointerEvents="none">
+        <View style={[styles.emptyOverlay, { pointerEvents: "none" }]}>
           <View
             style={[
               styles.emptyCard,
@@ -548,9 +546,8 @@ export function WarehouseMapView({
       <View
         style={[
           styles.hintBadge,
-          { backgroundColor: colors.card + "cc", borderColor: colors.border },
+          { backgroundColor: colors.card + "cc", borderColor: colors.border, pointerEvents: "none" },
         ]}
-        pointerEvents="none"
       >
         <Text style={[styles.hintText, { color: colors.mutedForeground }]}>
           {cycleMode

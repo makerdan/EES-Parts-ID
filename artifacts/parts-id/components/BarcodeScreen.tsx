@@ -800,7 +800,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
             )}
 
             {/* Viewfinder overlay */}
-            <View style={styles.viewfinderOverlay} pointerEvents="none">
+            <View style={[styles.viewfinderOverlay, { pointerEvents: "none" }]}>
               <View style={[styles.viewfinderFrame, { borderColor: colors.primary }]} />
             </View>
 
