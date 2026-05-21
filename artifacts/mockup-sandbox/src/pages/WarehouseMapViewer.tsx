@@ -1,6 +1,6 @@
 /**
  * Warehouse Map Viewer — DEV-ONLY internal tool for viewing the warehouse
- * floor plan SVG. Read-only pan/zoom view; no editing capabilities.
+ * floor plan SVG. Read-only pan/zoom view with zone overlays; no editing.
  *
  * Interaction model:
  *   Pan  : drag background to pan, scroll wheel to zoom
@@ -21,11 +21,25 @@ const svgInnerContent = warehouseMapRaw
 const SVG_W = 3592.55;
 const SVG_H = 2457.41;
 const INITIAL_SCALE = 0.18;
+const API_BASE = `${window.location.origin}/api`;
 
 interface Transform {
   x: number;
   y: number;
   s: number;
+}
+
+interface Zone {
+  id: number;
+  aisleId: string;
+  label: string;
+  sectionParity: "all" | "odd" | "even";
+  isInventory: boolean;
+  svgX: number;
+  svgY: number;
+  svgWidth: number;
+  svgHeight: number;
+  sortOrder: number;
 }
 
 function clampScale(s: number): number {
@@ -34,11 +48,14 @@ function clampScale(s: number): number {
 
 export function WarehouseMapViewer() {
   const svgRef = useRef<SVGSVGElement>(null);
+  const floorPlanRef = useRef<SVGGElement>(null);
   const [tf, setTf] = useState<Transform>({
     x: 40,
     y: 40,
     s: INITIAL_SCALE,
   });
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [zonesError, setZonesError] = useState(false);
 
   const panRef = useRef<{ active: boolean; startX: number; startY: number; originTf: Transform }>({
     active: false,
@@ -46,6 +63,27 @@ export function WarehouseMapViewer() {
     startY: 0,
     originTf: { x: 40, y: 40, s: INITIAL_SCALE },
   });
+
+  // Inject floor plan SVG into same coordinate space as zone overlays
+  useEffect(() => {
+    if (floorPlanRef.current) {
+      floorPlanRef.current.innerHTML = svgInnerContent;
+    }
+  }, []);
+
+  // Fetch zones from API on mount
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/warehouse-zones`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json() as { zones?: Zone[] };
+        setZones(data.zones ?? []);
+      } catch {
+        setZonesError(true);
+      }
+    })();
+  }, []);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -97,6 +135,9 @@ export function WarehouseMapViewer() {
     return () => el.removeEventListener("wheel", onWheel);
   }, [onWheel]);
 
+  // Stroke width that stays visually consistent regardless of zoom
+  const sw = 2 / tf.s;
+
   return (
     <div style={styles.root}>
       {/* ── Banner ──────────────────────────────────────────────────────────── */}
@@ -105,7 +146,13 @@ export function WarehouseMapViewer() {
         <span style={{ fontWeight: 600 }}>
           ⚠ DEV TOOL — Warehouse Map Viewer — internal use only
         </span>
+        {zonesError && (
+          <span style={styles.zoneError}>
+            ⚠ zones unavailable
+          </span>
+        )}
         <span style={styles.hint}>
+          {zones.length > 0 ? `${zones.length} zone${zones.length === 1 ? "" : "s"} · ` : ""}
           scroll to zoom · drag to pan · {(tf.s * 100).toFixed(0)}%
         </span>
       </div>
@@ -120,7 +167,46 @@ export function WarehouseMapViewer() {
         onMouseLeave={onMouseUp}
       >
         <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
-          <g dangerouslySetInnerHTML={{ __html: svgInnerContent }} />
+          {/* Floor plan embedded in the same coordinate space */}
+          <g ref={floorPlanRef} pointerEvents="none" />
+
+          {/* Zone overlays — read-only, no interaction */}
+          {zones.map((zone) => {
+            const fill = zone.isInventory
+              ? "rgba(0, 112, 255, 0.12)"
+              : "rgba(0, 112, 255, 0.05)";
+            const fontSize = Math.min(zone.svgWidth, zone.svgHeight) * 0.18;
+            return (
+              <g key={zone.id} pointerEvents="none">
+                <rect
+                  x={zone.svgX}
+                  y={zone.svgY}
+                  width={zone.svgWidth}
+                  height={zone.svgHeight}
+                  fill={fill}
+                  stroke="#0070ff"
+                  strokeWidth={sw}
+                  strokeDasharray={
+                    zone.isInventory ? undefined : `${12 / tf.s} ${6 / tf.s}`
+                  }
+                />
+                <text
+                  x={zone.svgX + zone.svgWidth / 2}
+                  y={zone.svgY + zone.svgHeight / 2}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize={fontSize}
+                  fill="#0050cc"
+                  stroke="#fff"
+                  strokeWidth={3 / tf.s}
+                  paintOrder="stroke"
+                  style={{ userSelect: "none" }}
+                >
+                  {zone.label}
+                </text>
+              </g>
+            );
+          })}
         </g>
       </svg>
     </div>
@@ -159,6 +245,13 @@ const styles = {
     border: "1px solid rgba(255,255,255,0.3)",
     whiteSpace: "nowrap" as const,
     marginRight: 4,
+  },
+  zoneError: {
+    background: "rgba(255,100,0,0.25)",
+    padding: "1px 8px",
+    borderRadius: 4,
+    fontSize: 11,
+    whiteSpace: "nowrap" as const,
   },
   hint: {
     marginLeft: "auto",
