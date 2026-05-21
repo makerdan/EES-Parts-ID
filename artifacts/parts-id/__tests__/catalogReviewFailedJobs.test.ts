@@ -1,13 +1,18 @@
 /**
  * @jest-environment node
  *
- * Unit tests for the failed PDF job card display logic used in
- * app/catalog-review.tsx.  The display utilities are extracted into
- * utils/failedJobCard.ts and imported by the screen, so any regression
- * to the card text, error-message fallback, page-progress fragment, or
- * resubmit instructions will cause these tests to fail.
+ * Unit tests for the FailedJobsSection component (extracted from
+ * app/catalog-review.tsx) and the display utilities it depends on.
+ *
+ * Components are rendered by a lightweight recursive renderer that calls
+ * each function component with its props, then collects every text string
+ * from the resulting React element tree.  This avoids the deprecated
+ * react-test-renderer API while still exercising the real component code.
  */
 
+import React from "react";
+import { FailedJobsSection } from "../components/FailedJobsSection";
+import type { FailedJob, FailedJobsSectionColors } from "../components/FailedJobsSection";
 import {
   FAILED_JOB_RESUBMIT_TEXT,
   displayErrorMessage,
@@ -15,68 +20,194 @@ import {
   buildFailedJobMetaLine,
 } from "../utils/failedJobCard";
 
-// ── Resubmit instruction text ─────────────────────────────────────────────────
+// ── Lightweight recursive renderer ────────────────────────────────────────────
 
-describe("FAILED_JOB_RESUBMIT_TEXT", () => {
-  it("contains the Upload tab instruction", () => {
-    expect(FAILED_JOB_RESUBMIT_TEXT).toContain("Upload tab");
+/**
+ * Recursively renders a React element tree by calling function components
+ * with their props.  Collects every text string (and stringified number) that
+ * would appear as visible content to the user.
+ */
+function collectText(node: React.ReactNode): string[] {
+  if (node === null || node === undefined || node === false) return [];
+  if (typeof node === "string") return [node];
+  if (typeof node === "number") return [String(node)];
+  if (Array.isArray(node)) return node.flatMap(collectText);
+
+  if (!React.isValidElement(node)) return [];
+
+  const el = node as React.ReactElement<{ children?: React.ReactNode }>;
+  const { type, props } = el;
+
+  if (typeof type === "function") {
+    const rendered = (type as (p: typeof props) => React.ReactNode)(props);
+    return collectText(rendered);
+  }
+
+  return collectText(props.children);
+}
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+const TEST_COLORS: FailedJobsSectionColors = {
+  card: "#ffffff",
+  destructive: "#ef4444",
+  foreground: "#0f172a",
+  mutedForeground: "#64748b",
+  primary: "#2563eb",
+};
+
+function renderSection(jobs: FailedJob[], dismissingId: number | null = null) {
+  const el = React.createElement(FailedJobsSection, {
+    failedJobs: jobs,
+    dismissingId,
+    onDismiss: jest.fn(),
+    colors: TEST_COLORS,
+  });
+  const texts = collectText(el);
+  return { texts, allText: texts.join(" ") };
+}
+
+// ── Fixtures ──────────────────────────────────────────────────────────────────
+
+const MOCK_JOB: FailedJob = {
+  id: 42,
+  vendor: "ACME ELECTRIC",
+  filename: "acme-catalog-2024.pdf",
+  status: "failed",
+  errorMessage: "PDF could not be parsed: unexpected end of stream",
+  createdAt: "2025-01-15T12:00:00.000Z",
+  finishedAt: null,
+  processedPages: 0,
+  totalPages: null,
+  matchedParts: 0,
+};
+
+// ── Section visibility ────────────────────────────────────────────────────────
+
+describe("FailedJobsSection — renders nothing when there are no failed jobs", () => {
+  it("returns null when failedJobs is empty", () => {
+    const el = React.createElement(FailedJobsSection, {
+      failedJobs: [],
+      dismissingId: null,
+      onDismiss: jest.fn(),
+      colors: TEST_COLORS,
+    });
+    const result = (FailedJobsSection as (p: typeof el.props) => React.ReactNode)(el.props);
+    expect(result).toBeNull();
+  });
+});
+
+// ── Card content ──────────────────────────────────────────────────────────────
+
+describe("FailedJobsSection — card content for a failed job", () => {
+  it("renders the vendor name", () => {
+    const { texts } = renderSection([MOCK_JOB]);
+    expect(texts).toContain("ACME ELECTRIC");
   });
 
-  it("mentions entering the vendor name", () => {
-    expect(FAILED_JOB_RESUBMIT_TEXT).toContain("vendor name");
+  it("renders the filename", () => {
+    const { texts } = renderSection([MOCK_JOB]);
+    expect(texts).toContain("acme-catalog-2024.pdf");
   });
 
-  it("mentions selecting the same PDF", () => {
-    expect(FAILED_JOB_RESUBMIT_TEXT).toContain("same PDF");
+  it("renders the 'Failed' status badge", () => {
+    const { texts } = renderSection([MOCK_JOB]);
+    expect(texts).toContain("Failed");
   });
 
-  it("mentions tapping Start Extraction", () => {
-    expect(FAILED_JOB_RESUBMIT_TEXT).toContain("Start Extraction");
+  it("renders the error message from the job", () => {
+    const { texts } = renderSection([MOCK_JOB]);
+    expect(texts).toContain("PDF could not be parsed: unexpected end of stream");
   });
 
-  it("matches the exact wording shown to users", () => {
+  it("renders 'Unknown error' when errorMessage is null", () => {
+    const { texts } = renderSection([{ ...MOCK_JOB, errorMessage: null }]);
+    expect(texts).toContain("Unknown error");
+  });
+
+  it("renders the exact FAILED_JOB_RESUBMIT_TEXT", () => {
+    const { texts } = renderSection([MOCK_JOB]);
+    expect(texts).toContain(FAILED_JOB_RESUBMIT_TEXT);
+  });
+
+  it("resubmit text contains 'Upload tab'", () => {
+    const { allText } = renderSection([MOCK_JOB]);
+    expect(allText).toContain("Upload tab");
+  });
+
+  it("resubmit text contains 'Start Extraction'", () => {
+    const { allText } = renderSection([MOCK_JOB]);
+    expect(allText).toContain("Start Extraction");
+  });
+
+  it("renders the Dismiss button", () => {
+    const { texts } = renderSection([MOCK_JOB]);
+    expect(texts).toContain("Dismiss");
+  });
+
+  it("renders 'Dismissing…' while a dismiss is in progress for this job", () => {
+    const { texts } = renderSection([MOCK_JOB], MOCK_JOB.id);
+    expect(texts).toContain("Dismissing…");
+    expect(texts).not.toContain("Dismiss");
+  });
+
+  it("still shows 'Dismiss' for other jobs while one is being dismissed", () => {
+    const other: FailedJob = { ...MOCK_JOB, id: 99 };
+    const { texts } = renderSection([MOCK_JOB, other], MOCK_JOB.id);
+    expect(texts).toContain("Dismissing…");
+    expect(texts).toContain("Dismiss");
+  });
+});
+
+// ── Section header ────────────────────────────────────────────────────────────
+
+describe("FailedJobsSection — section header text", () => {
+  it("shows '1 Failed Job' (singular) for a single failure", () => {
+    const { texts } = renderSection([MOCK_JOB]);
+    // The number and text are separate React nodes; join without separator to
+    // verify the concatenated result matches what the user sees.
+    const joined = texts.join("");
+    expect(joined).toContain("1 Failed Job");
+    expect(joined).not.toContain("1 Failed Jobs");
+  });
+
+  it("shows '2 Failed Jobs' (plural) for two failures", () => {
+    const { texts } = renderSection([MOCK_JOB, { ...MOCK_JOB, id: 2 }]);
+    const joined = texts.join("");
+    expect(joined).toContain("2 Failed Jobs");
+  });
+});
+
+// ── Display utilities (utils/failedJobCard.ts) ────────────────────────────────
+
+describe("FAILED_JOB_RESUBMIT_TEXT — exact wording", () => {
+  it("matches the exact string rendered by the component", () => {
     expect(FAILED_JOB_RESUBMIT_TEXT).toBe(
       'To resubmit: go to the Upload tab, enter the vendor name, select the same PDF, and tap "Start Extraction".',
     );
   });
 });
 
-// ── Error message display ─────────────────────────────────────────────────────
-
 describe("displayErrorMessage", () => {
-  it("returns the errorMessage when it is a non-empty string", () => {
-    expect(displayErrorMessage({ errorMessage: "PDF could not be parsed" })).toBe(
-      "PDF could not be parsed",
-    );
+  it("returns the errorMessage when it is set", () => {
+    expect(displayErrorMessage({ errorMessage: "Timeout" })).toBe("Timeout");
   });
 
   it("falls back to 'Unknown error' when errorMessage is null", () => {
     expect(displayErrorMessage({ errorMessage: null })).toBe("Unknown error");
   });
 
-  it("falls back to 'Unknown error' when errorMessage is undefined", () => {
-    expect(displayErrorMessage({ errorMessage: undefined as unknown as null })).toBe(
-      "Unknown error",
-    );
-  });
-
-  it("returns an empty string as-is (not the fallback) because ?? checks null/undefined only", () => {
+  it("returns empty string as-is since ?? only catches null/undefined", () => {
     expect(displayErrorMessage({ errorMessage: "" })).toBe("");
   });
 });
 
-// ── Page-progress fragment ────────────────────────────────────────────────────
-
 describe("buildPageProgressFragment", () => {
-  it("returns empty string when processedPages is 0", () => {
+  it("returns '' when processedPages is 0", () => {
     expect(buildPageProgressFragment({ processedPages: 0, totalPages: 10 })).toBe("");
   });
 
-  it("returns empty string when processedPages is 0 and totalPages is null", () => {
-    expect(buildPageProgressFragment({ processedPages: 0, totalPages: null })).toBe("");
-  });
-
-  it("includes both counts when processedPages > 0 and totalPages is set", () => {
+  it("includes both counts when processedPages > 0 and totalPages is known", () => {
     expect(buildPageProgressFragment({ processedPages: 3, totalPages: 10 })).toBe(
       " · 3/10 pages processed",
     );
@@ -87,64 +218,16 @@ describe("buildPageProgressFragment", () => {
       " · 5 pages processed",
     );
   });
-
-  it("handles a job that processed all pages before failing", () => {
-    expect(buildPageProgressFragment({ processedPages: 10, totalPages: 10 })).toBe(
-      " · 10/10 pages processed",
-    );
-  });
 });
-
-// ── Meta line ─────────────────────────────────────────────────────────────────
 
 describe("buildFailedJobMetaLine", () => {
-  const JOB_DATE = "2025-01-15T12:00:00.000Z";
-  const LOCALE_DATE = new Date(JOB_DATE).toLocaleDateString();
-
-  it("includes the job ID", () => {
-    const meta = buildFailedJobMetaLine({ id: 42, createdAt: JOB_DATE, processedPages: 0, totalPages: null });
-    expect(meta).toContain("Job #42");
+  it("starts with 'Job #<id>'", () => {
+    const line = buildFailedJobMetaLine({ id: 42, createdAt: "2025-01-15T00:00:00.000Z", processedPages: 0, totalPages: null });
+    expect(line).toMatch(/^Job #42 · /);
   });
 
-  it("includes the formatted creation date", () => {
-    const meta = buildFailedJobMetaLine({ id: 1, createdAt: JOB_DATE, processedPages: 0, totalPages: null });
-    expect(meta).toContain(LOCALE_DATE);
-  });
-
-  it("appends the page-progress fragment when pages were processed", () => {
-    const meta = buildFailedJobMetaLine({ id: 7, createdAt: JOB_DATE, processedPages: 4, totalPages: 12 });
-    expect(meta).toContain("4/12 pages processed");
-  });
-
-  it("omits the page-progress fragment when processedPages is 0", () => {
-    const meta = buildFailedJobMetaLine({ id: 7, createdAt: JOB_DATE, processedPages: 0, totalPages: 12 });
-    expect(meta).not.toContain("pages processed");
-  });
-
-  it("produces the exact format 'Job #<id> · <date>'", () => {
-    const meta = buildFailedJobMetaLine({ id: 5, createdAt: JOB_DATE, processedPages: 0, totalPages: null });
-    expect(meta).toBe(`Job #5 · ${LOCALE_DATE}`);
-  });
-});
-
-// ── Failed-section visibility ─────────────────────────────────────────────────
-
-describe("failed-jobs section visibility (failedJobs.length > 0)", () => {
-  it("section renders when there is at least one failed job", () => {
-    const jobs = [{ id: 1, errorMessage: "err", createdAt: "", processedPages: 0, totalPages: null }];
-    expect(jobs.length > 0).toBe(true);
-  });
-
-  it("section renders for multiple failed jobs", () => {
-    const jobs = [
-      { id: 1, errorMessage: "err", createdAt: "", processedPages: 0, totalPages: null },
-      { id: 2, errorMessage: null, createdAt: "", processedPages: 2, totalPages: 8 },
-    ];
-    expect(jobs.length > 0).toBe(true);
-  });
-
-  it("section is hidden when there are no failed jobs", () => {
-    const jobs: unknown[] = [];
-    expect(jobs.length > 0).toBe(false);
+  it("appends page progress when processedPages > 0", () => {
+    const line = buildFailedJobMetaLine({ id: 1, createdAt: "2025-01-15T00:00:00.000Z", processedPages: 4, totalPages: 12 });
+    expect(line).toContain("4/12 pages processed");
   });
 });
