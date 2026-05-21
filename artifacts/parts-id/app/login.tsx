@@ -52,6 +52,7 @@ export default function LoginScreen() {
       padding: 32,
       borderWidth: 1,
       borderColor: colors.border,
+      flexDirection: "row",
     },
     logo: {
       fontSize: 40,
