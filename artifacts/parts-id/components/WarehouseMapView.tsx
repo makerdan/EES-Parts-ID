@@ -8,6 +8,18 @@
  * isInventory=true  → interactive (tap → browse, long-press → summary)
  * isInventory=false → muted, non-interactive label overlay
  * Empty zones       → instructional empty state card over the map
+ *
+ * Floor-plan rendering strategy (crisp at any zoom level):
+ *   Web    — The fetched SVG XML is stripped of its outer <svg> wrapper and the
+ *            inner content is injected via dangerouslySetInnerHTML into a <g>
+ *            element that lives inside the zone-overlay <Svg>.  Both the floor
+ *            plan and the zone rectangles therefore share one SVG viewport;
+ *            no separate CSS-scaled layer exists, so there is no rasterisation
+ *            blur however far the user zooms in.
+ *   Native — <SvgUri> renders the floor plan through the platform's native
+ *            vector engine (Core Graphics / Android hardware canvas).  The
+ *            Animated.View scale transform triggers a native redraw at the
+ *            correct resolution on each frame, so the output is already crisp.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -31,7 +43,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml } from "react-native-svg";
+import { Svg, Rect, G, Text as SvgText, SvgUri } from "react-native-svg";
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 
@@ -53,8 +65,10 @@ function clamp(val: number, min: number, max: number) {
 // mount (tab revisit).  The variable lives in module scope so it is cleared
 // automatically when the JS bundle reloads (i.e. after an app update).
 interface SvgData {
-  xml: string;  // web: fetched SVG text (passed to <SvgXml>)
-  uri: string;  // native: resolved local URI  (passed to <SvgUri>)
+  xml: string;      // web: full fetched SVG text (kept for reference)
+  innerXml: string; // web: inner SVG content with outer <svg> wrapper stripped,
+                    //      injected via dangerouslySetInnerHTML into the canvas
+  uri: string;      // native: resolved local URI  (passed to <SvgUri>)
 }
 let _svgCache: SvgData | null = null;
 
@@ -72,15 +86,23 @@ function loadSvgAsset(): Promise<void> {
       if (Platform.OS === "web") {
         const res = await fetch(uri);
         const xml = await res.text();
-        _svgCache = { xml, uri: "" };
+        // Strip the outer <svg> wrapper so the content can be embedded
+        // directly inside the main SVG canvas as a child <g> element.
+        // This matches the approach used in the Zone Editor and keeps the
+        // floor plan and zone overlays in the same SVG viewport, eliminating
+        // any CSS-transform rasterisation blur at high zoom levels.
+        const innerXml = xml
+          .replace(/^[\s\S]*?<svg[^>]*>/, "")
+          .replace(/<\/svg>\s*$/, "");
+        _svgCache = { xml, innerXml, uri: "" };
       } else {
-        _svgCache = { xml: "", uri };
+        _svgCache = { xml: "", innerXml: "", uri };
       }
     })
     .catch(() => {
       // Populate cache with empty values so subsequent mounts skip the load
       // and show the "Map unavailable" fallback immediately.
-      _svgCache = { xml: "", uri: "" };
+      _svgCache = { xml: "", innerXml: "", uri: "" };
     });
   return _svgLoadPromise;
 }
@@ -162,22 +184,25 @@ export function WarehouseMapView({
   const savedTY = useSharedValue(0);
 
   // Resolve the bundled SVG asset.
-  // On native: use the localUri/uri directly with SvgUri (reads from filesystem).
-  // On web:    SvgUri fetches over HTTP; the proxied URI silently fails, so we
-  //            fetch the SVG text ourselves and pass it to SvgXml instead.
   //
-  // _svgCache is a module-level variable populated after the first load.
-  // On repeat tab visits it is already set, so state initialises with the
-  // cached values and svgLoading starts as false — no skeleton, no fetch.
+  // Web path  — fetches the SVG text, strips the outer <svg> wrapper, and
+  //             stores the inner content in _svgCache.innerXml.  The content
+  //             is later injected via dangerouslySetInnerHTML into a <g> element
+  //             inside the main SVG canvas so everything shares one viewport.
+  // Native path — stores only the local file URI; <SvgUri> reads it directly.
+  //
+  // _svgCache is module-level; on repeat tab visits it is already populated so
+  // state initialises with cached values and svgLoading starts as false —
+  // no skeleton, no fetch.
   const [svgUri, setSvgUri] = useState(() => _svgCache?.uri ?? "");
-  const [svgXml, setSvgXml] = useState(() => _svgCache?.xml ?? "");
+  const [innerXml, setInnerXml] = useState(() => _svgCache?.innerXml ?? "");
   const [svgLoading, setSvgLoading] = useState(() => _svgCache === null);
   useEffect(() => {
     if (_svgCache !== null) return; // already cached — nothing to do
     loadSvgAsset().then(() => {
       if (_svgCache) {
-        setSvgXml(_svgCache.xml);
         setSvgUri(_svgCache.uri);
+        setInnerXml(_svgCache.innerXml);
       }
       setSvgLoading(false);
     });
@@ -399,33 +424,54 @@ export function WarehouseMapView({
     <View style={styles.fill} onLayout={onLayout}>
       <GestureDetector gesture={mainGesture}>
         <Animated.View style={animatedStyle}>
-          {/* Base floor plan SVG — dark mode: invert + darken for readable contrast */}
-          {(svgUri || svgXml) ? (
-            <View
-              style={[
-                { width: svgRenderW, height: svgRenderH },
-                isDark && styles.svgDarkFilter,
-              ]}
-            >
-              {svgXml ? (
-                <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
-              ) : (
+          {/* ── Native floor plan layer ──────────────────────────────────────
+              On web the floor plan is embedded inside the SVG canvas below so
+              that both layers share one SVG viewport (no separate CSS-scaled
+              div, therefore no rasterisation blur at any zoom level).
+              On native, <SvgUri> renders through the platform's vector engine
+              and the Animated.View transform triggers a native redraw each
+              frame, so there is no persistent rasterised texture to blur. */}
+          {Platform.OS !== "web" ? (
+            svgUri ? (
+              <View
+                style={[
+                  { width: svgRenderW, height: svgRenderH },
+                  isDark && styles.svgDarkFilter,
+                ]}
+              >
                 <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
-              )}
-            </View>
-          ) : !svgLoading ? (
-            <View
-              style={[
-                styles.svgFallback,
-                { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
-              ]}
-            >
-              <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
-                Map unavailable
-              </Text>
-            </View>
+              </View>
+            ) : !svgLoading ? (
+              <View
+                style={[
+                  styles.svgFallback,
+                  { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
+                ]}
+              >
+                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
+                  Map unavailable
+                </Text>
+              </View>
+            ) : (
+              <View style={{ width: svgRenderW, height: svgRenderH }} />
+            )
           ) : (
-            <View style={{ width: svgRenderW, height: svgRenderH }} />
+            /* Web: no separate floor plan div — floor plan is inside the SVG
+               below.  Show "Map unavailable" only if the fetch failed. */
+            !svgLoading && !innerXml ? (
+              <View
+                style={[
+                  styles.svgFallback,
+                  { width: svgRenderW, height: svgRenderH, backgroundColor: colors.muted },
+                ]}
+              >
+                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
+                  Map unavailable
+                </Text>
+              </View>
+            ) : (
+              <View style={{ width: svgRenderW, height: svgRenderH }} />
+            )
           )}
 
           {/* Skeleton placeholder — visible while SVG is fetching, fades out on load */}
@@ -482,13 +528,28 @@ export function WarehouseMapView({
             </Animated.View>
           )}
 
-          {/* Zone overlays — same viewBox as base SVG → exact coordinate alignment */}
+          {/* Zone overlay SVG — shares the same viewBox as the floor plan so
+              zone coordinates align exactly.
+              On web: the floor plan inner content is embedded here as the first
+              child <g> element (dangerouslySetInnerHTML), keeping floor plan
+              and zones in one SVG viewport for crisp rendering at any zoom.
+              On native: the zone rects are layered on top of the <SvgUri>
+              rendered above via absoluteFill. */}
           <Svg
             style={StyleSheet.absoluteFill}
             viewBox={`0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
             width={svgRenderW}
             height={svgRenderH}
           >
+            {Platform.OS === "web" && innerXml
+              ? React.createElement(
+                  "g" as unknown as React.ElementType,
+                  {
+                    dangerouslySetInnerHTML: { __html: innerXml },
+                    ...(isDark && { style: { filter: "invert(1) brightness(0.88)" } }),
+                  },
+                )
+              : null}
             {zoneOverlays}
           </Svg>
         </Animated.View>
