@@ -320,13 +320,44 @@ export function ZoneEditor() {
   };
 
   // Sync form fields when selected zone changes
+  const lastSavedFormRef = useRef<FormState | null>(null);
   useEffect(() => {
     if (!selectedId) return;
     const z = zones.find((z) => z.id === selectedId);
     if (z) {
-      setForm({ aisleId: z.aisleId, label: z.label, sectionParity: z.sectionParity, isInventory: z.isInventory, sortOrder: z.sortOrder });
+      const synced: FormState = { aisleId: z.aisleId, label: z.label, sectionParity: z.sectionParity, isInventory: z.isInventory, sortOrder: z.sortOrder };
+      setForm(synced);
+      lastSavedFormRef.current = synced;
     }
   }, [selectedId, zones]);
+
+  // Auto-save when form fields change (debounced 600 ms)
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!selectedId || !lastSavedFormRef.current) return;
+    if (pendingRect) return;
+    if (!form.aisleId.trim()) return;
+    if (JSON.stringify(form) === JSON.stringify(lastSavedFormRef.current)) return;
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        await patchZone(selectedId, {
+          aisleId: form.aisleId.trim(),
+          label: form.label.trim() || form.aisleId.trim(),
+          sectionParity: form.sectionParity,
+          isInventory: form.isInventory,
+          sortOrder: form.sortOrder,
+        });
+        lastSavedFormRef.current = { ...form };
+        toast.success("Saved");
+        await fetchZones();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+      }
+    }, 600);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+  }, [form, selectedId, pendingRect]);
 
   // ── SVG coordinate utility ──────────────────────────────────────────────────
   const getSvgPt = useCallback((clientX: number, clientY: number): Pt => {
@@ -698,13 +729,6 @@ export function ZoneEditor() {
                 </div>
                 <ZoneForm form={form} onChange={setForm} />
                 <Row style={{ flexWrap: "wrap" }}>
-                  <Btn
-                    color="#3b82f6"
-                    onClick={handleSaveEdit}
-                    disabled={saving}
-                  >
-                    {saving ? "Saving…" : "Save"}
-                  </Btn>
                   <Btn
                     color="#0070ff"
                     onClick={handleDuplicate}
