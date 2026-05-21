@@ -238,6 +238,49 @@ describe("GET /api/reference/quick-lookups/:label", () => {
 
     expect(res.body).toEqual({ answer: "Stored answer" });
   });
+
+  it("does NOT call the AI when the answer is already in the DB", async () => {
+    await db
+      .insert(quickLookupCacheTable)
+      .values({ label: TEST_LABEL, answer: "Pre-seeded answer" })
+      .onConflictDoUpdate({
+        target: quickLookupCacheTable.label,
+        set: { answer: "Pre-seeded answer", updatedAt: new Date() },
+      });
+
+    const res = await supertest(app)
+      .get(`/api/reference/quick-lookups/${TEST_LABEL}`)
+      .expect(200);
+
+    expect(res.body).toEqual({ answer: "Pre-seeded answer" });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("DB miss falls through to AI (POST); subsequent GET returns from DB without another AI call", async () => {
+    await cleanupTestLabel();
+
+    mockCreate.mockResolvedValueOnce({
+      async *[Symbol.asyncIterator]() {
+        yield { choices: [{ delta: { content: "Fresh AI answer." } }] };
+      },
+    });
+
+    // Layer 3: POST triggers AI and writes the answer to DB
+    await supertest(app)
+      .post(`/api/reference/quick-lookups/${TEST_LABEL}`)
+      .send({ question: "What is this?" })
+      .expect(200);
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+
+    // Layer 2: subsequent GET reads from DB — AI must NOT be called again
+    const res = await supertest(app)
+      .get(`/api/reference/quick-lookups/${TEST_LABEL}`)
+      .expect(200);
+
+    expect(res.body).toEqual({ answer: "Fresh AI answer." });
+    expect(mockCreate).toHaveBeenCalledTimes(1); // still exactly 1 — no second AI call
+  });
 });
 
 // ── POST /api/reference/quick-lookups/:label ──────────────────────────────────
