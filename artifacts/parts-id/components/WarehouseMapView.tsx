@@ -318,10 +318,11 @@ export function WarehouseMapView({
         );
       }
 
-      const fillColor = isActive ? colors.primary + "30" : colors.mutedForeground + "18";
-      const strokeColor = isActive ? colors.primary : colors.mutedForeground;
+      const ZONE_GAP = 5;
+      const fillColor = isActive ? "rgba(0, 112, 255, 0.14)" : "rgba(0, 112, 255, 0.06)";
+      const strokeColor = "#0070ff";
       const strokeWidth = isActive ? 8 : 4;
-      const labelColor = isActive ? colors.primary : colors.mutedForeground;
+      const labelColor = "#0070ff";
 
       return (
         <G
@@ -331,10 +332,10 @@ export function WarehouseMapView({
           delayLongPress={400}
         >
           <Rect
-            x={zone.svgX}
-            y={zone.svgY}
-            width={zone.svgWidth}
-            height={zone.svgHeight}
+            x={zone.svgX + ZONE_GAP}
+            y={zone.svgY + ZONE_GAP}
+            width={zone.svgWidth - ZONE_GAP * 2}
+            height={zone.svgHeight - ZONE_GAP * 2}
             fill={fillColor}
             stroke={strokeColor}
             strokeWidth={strokeWidth}
