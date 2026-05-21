@@ -508,6 +508,7 @@ export function ZoneEditor() {
 
       {/* ── Dev-tool banner ─────────────────────────────────────────────────── */}
       <div style={styles.banner}>
+        <a href="/__mockup" style={styles.backLink}>← Internal Tools</a>
         <span style={{ fontWeight: 600 }}>
           ⚠ DEV TOOL — Warehouse Zone Editor — internal use only
         </span>
@@ -998,6 +999,17 @@ const styles = {
     fontSize: 12,
     flexShrink: 0,
     zIndex: 10,
+  },
+  backLink: {
+    color: "rgba(255,255,255,0.85)",
+    textDecoration: "none",
+    fontSize: 12,
+    fontWeight: 500,
+    padding: "2px 8px",
+    borderRadius: 4,
+    border: "1px solid rgba(255,255,255,0.3)",
+    whiteSpace: "nowrap" as const,
+    marginRight: 4,
   },
   modeBar: {
     display: "flex",
