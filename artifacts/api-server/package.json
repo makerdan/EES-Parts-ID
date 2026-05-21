@@ -8,7 +8,9 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "seed": "tsx src/seed/run.ts",
+    "seed:reference": "tsx src/seed/runQuickLookupChips.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",

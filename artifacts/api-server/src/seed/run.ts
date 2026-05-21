@@ -1,6 +1,9 @@
 import { seedAllDictionaries } from "./dictionaries";
+import { seedQuickLookupChips } from "./quickLookupChips";
 
-seedAllDictionaries()
+Promise.resolve()
+  .then(() => seedAllDictionaries())
+  .then(() => seedQuickLookupChips())
   .then(() => {
     console.log("Seed complete");
     process.exit(0);
