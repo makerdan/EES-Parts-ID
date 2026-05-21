@@ -95,34 +95,51 @@ function getBasePath(): string {
   return import.meta.env.BASE_URL.replace(/\/$/, "");
 }
 
-function getPreviewExamplePath(): string {
-  const basePath = getBasePath();
-  return `${basePath}/preview/ComponentName`;
-}
+const TOOLS = [
+  {
+    name: "Zone Editor",
+    description:
+      "Draw and manage warehouse zone boundaries on the floor plan. Zones are saved directly to the database.",
+    path: "/zone-editor",
+  },
+];
 
 function Gallery() {
-  const zoneEditorHref = `${getBasePath()}/zone-editor`;
+  const basePath = getBasePath();
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
-      <div className="text-center max-w-md">
-        <h1 className="text-2xl font-semibold text-gray-900 mb-3">
-          Component Preview Server
-        </h1>
-        <p className="text-gray-500 mb-4">
-          This server renders individual components for the workspace canvas.
-        </p>
-        <p className="text-sm text-gray-400 mb-6">
-          Access component previews at{" "}
-          <code className="bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">
-            {getPreviewExamplePath()}
-          </code>
-        </p>
-        <a
-          href={zoneEditorHref}
-          className="inline-block px-5 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors"
-        >
-          Open Zone Editor
-        </a>
+    <div className="min-h-screen bg-gray-50 p-8">
+      <div className="max-w-2xl mx-auto">
+        <header className="mb-10">
+          <h1 className="text-2xl font-semibold text-gray-900 mb-1">
+            Internal Admin Tools
+          </h1>
+          <p className="text-gray-500 text-sm">
+            Bookmark this page to quickly reach any admin tool.
+          </p>
+        </header>
+
+        <ul className="space-y-3">
+          {TOOLS.map((tool) => (
+            <li key={tool.path}>
+              <a
+                href={`${basePath}${tool.path}`}
+                className="flex items-center justify-between p-5 bg-white rounded-xl border border-gray-200 hover:border-gray-400 hover:shadow-sm transition-all group"
+              >
+                <div>
+                  <p className="font-medium text-gray-900 group-hover:text-black">
+                    {tool.name}
+                  </p>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    {tool.description}
+                  </p>
+                </div>
+                <span className="text-gray-400 group-hover:text-gray-700 ml-4 text-lg leading-none">
+                  →
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );
