@@ -90,6 +90,12 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
 
 export type { LogoutHandler };
 
+export type MapFocus = {
+  aisleNum: number;
+  sectionNumbers?: number[];
+  label?: string;
+};
+
 interface AppContextValue {
   isAuthenticated: boolean;
   isAdmin: boolean;
@@ -108,6 +114,9 @@ interface AppContextValue {
   showToast: (message: string) => void;
   // Allow screens to register an in-memory reset that fires on logout
   registerLogoutHandler: (handler: LogoutHandler) => () => void;
+  // Cross-tab navigation: pending zone to open on the Map tab
+  pendingMapFocus: MapFocus | null;
+  setPendingMapFocus: (focus: MapFocus | null) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -149,6 +158,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep adminToken accessible to the generated API client (which calls a
@@ -306,6 +316,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       textFontScale,
       showToast,
       registerLogoutHandler,
+      pendingMapFocus,
+      setPendingMapFocus,
     }}>
       {children}
       {toastMessage ? (

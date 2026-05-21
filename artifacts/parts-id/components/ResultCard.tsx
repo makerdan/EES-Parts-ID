@@ -19,6 +19,8 @@ interface ResultCardProps {
   onEditBarcodes?: (item: InventoryItem) => void;
   /** Admin-only: opens the full part details editor. */
   onEditItem?: (item: InventoryItem) => void;
+  /** Navigate to warehouse map and open this part's zone. */
+  onShowOnMap?: (item: InventoryItem) => void;
   rank: number;
   fontScale?: number;
 }
@@ -79,7 +81,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, rank, fontScale = 1.0 }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, onShowOnMap, rank, fontScale = 1.0 }: ResultCardProps) {
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
@@ -151,6 +153,15 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
               {item.binLocations.length === 1 ? "Bin: " : "Bins: "}
               {item.binLocations.join(", ")}
             </Text>
+            {onShowOnMap ? (
+              <Pressable
+                onPress={(e) => { e.stopPropagation?.(); onShowOnMap(item); }}
+                hitSlop={8}
+                style={[cardStyles.binEditBtn, { borderColor: colors.accentForeground + "44", marginRight: onEditBins ? 4 : 0 }]}
+              >
+                <Text style={[cardStyles.binEditText, { color: colors.accentForeground }]}>🗺 Map</Text>
+              </Pressable>
+            ) : null}
             {onEditBins ? (
               <Pressable
                 onPress={(e) => { e.stopPropagation?.(); onEditBins(item); }}
