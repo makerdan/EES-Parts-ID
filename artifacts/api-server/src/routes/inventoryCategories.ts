@@ -27,7 +27,7 @@ router.get("/categories", async (_req, res) => {
   try {
     // ── Step 1: fetch all chip texts in one SQL query ─────────────────────────
     const raw = await db.execute(
-      sql`SELECT ${sql.raw(CHIP_FN)} AS chip FROM inventory`
+      sql`SELECT inventory_chip_text(vendor, catalog, description, ai_keywords) AS chip FROM inventory`
     );
     const chips = (raw.rows as { chip: string | null }[]).map(r => r.chip ?? "");
 

@@ -16,10 +16,9 @@
  *   Final DB count:    7397
  */
 
-import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -30,25 +29,40 @@ const XLSX_PATH = resolve(__dirname, "../../../../attached_assets/Master_INC_Rep
 const BATCH_SIZE = 250;
 
 interface SpreadsheetRow {
-  vendor?: string;
-  catalog?: string;
-  description?: string;
-  binlocation?: string;
-  [key: string]: unknown;
+  [key: string]: string;
 }
 
 async function importSpreadsheet() {
   console.log("Reading spreadsheet:", XLSX_PATH);
-  const buffer = readFileSync(XLSX_PATH);
-  const workbook = XLSX.read(buffer, { type: "buffer" });
 
-  const sheetName = workbook.SheetNames[0];
-  console.log(`Using sheet: ${sheetName}`);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(XLSX_PATH);
 
-  const sheet = workbook.Sheets[sheetName!]!;
-  const rawRows: SpreadsheetRow[] = XLSX.utils.sheet_to_json(sheet, {
-    defval: "",
-    raw: false,
+  const sheet = workbook.worksheets[0];
+  if (!sheet) {
+    console.error("No worksheets found in spreadsheet");
+    process.exit(1);
+  }
+  console.log(`Using sheet: ${sheet.name}`);
+
+  // Read header row
+  const headerRow = sheet.getRow(1);
+  const headers: string[] = [];
+  headerRow.eachCell({ includeEmpty: false }, (cell, colIdx) => {
+    headers[colIdx - 1] = String(cell.value ?? "").trim();
+  });
+  console.log("Columns found:", headers.filter(Boolean));
+
+  // Build object rows keyed by header name
+  const rawRows: SpreadsheetRow[] = [];
+  sheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (rowNum === 1) return;
+    const obj: SpreadsheetRow = {};
+    row.eachCell({ includeEmpty: true }, (cell, colIdx) => {
+      const header = headers[colIdx - 1];
+      if (header) obj[header] = String(cell.value ?? "").trim();
+    });
+    rawRows.push(obj);
   });
 
   console.log(`Total rows read: ${rawRows.length}`);
@@ -58,16 +72,12 @@ async function importSpreadsheet() {
     process.exit(1);
   }
 
-  // Inspect column names
-  const firstRow = rawRows[0]!;
-  console.log("Columns found:", Object.keys(firstRow));
-
   // Normalize column names (lowercase, strip spaces)
   function normalizeKey(row: SpreadsheetRow, ...candidates: string[]): string {
     for (const key of Object.keys(row)) {
       const normalized = key.toLowerCase().replace(/\s+/g, "");
       if (candidates.some(c => normalized === c || normalized.includes(c))) {
-        return row[key] as string ?? "";
+        return row[key] ?? "";
       }
     }
     return "";
@@ -76,14 +86,14 @@ async function importSpreadsheet() {
   // Map rows to inventory schema
   const items = rawRows
     .map((row) => {
-      const binCell = (normalizeKey(row, "binlocation", "bin", "location", "binloc") || "").toString().trim();
+      const binCell = (normalizeKey(row, "binlocation", "bin", "location", "binloc") || "").trim();
       const binLocations = binCell
         ? binCell.split(/[;|]/).map(b => b.trim()).filter(b => b.length > 0)
         : [];
       return {
-        vendor: (normalizeKey(row, "vendor") || "").toString().trim().toUpperCase(),
-        catalog: (normalizeKey(row, "catalog", "catalognumber", "part", "partnumber", "item") || "").toString().trim(),
-        description: (normalizeKey(row, "description", "desc") || "").toString().trim(),
+        vendor: (normalizeKey(row, "vendor") || "").trim().toUpperCase(),
+        catalog: (normalizeKey(row, "catalog", "catalognumber", "part", "partnumber", "item") || "").trim(),
+        description: (normalizeKey(row, "description", "desc") || "").trim(),
         binLocations,
       };
     })
@@ -114,8 +124,6 @@ async function importSpreadsheet() {
           target: [inventoryTable.vendor, inventoryTable.catalog],
           set: {
             description: sql`EXCLUDED.description`,
-            // Preserve existing bins when the import row carries no bin data —
-            // avoids wiping multi-bin assignments during partial re-imports.
             binLocations: sql`CASE WHEN coalesce(array_length(EXCLUDED.bin_locations, 1), 0) > 0 THEN EXCLUDED.bin_locations ELSE ${inventoryTable.binLocations} END`,
             updatedAt: sql`now()`,
           },

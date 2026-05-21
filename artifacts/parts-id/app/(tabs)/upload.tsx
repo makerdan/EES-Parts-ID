@@ -14,7 +14,8 @@ import {
 import * as DocumentPicker from "expo-document-picker";
 import { File as FsFile, Paths as FsPaths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import * as XLSX from "xlsx";
+import { readSheet } from "read-excel-file/universal";
+import type { SheetData } from "read-excel-file/universal";
 import { useListInventory } from "@workspace/api-client-react";
 
 import { useColors } from "@/hooks/useColors";
@@ -158,38 +159,32 @@ function splitCSVLine(line: string): string[] {
   return cells.map(c => c.replace(/^"|"$/g, ""));
 }
 
-// ── Parse xlsx/xls/ods via SheetJS ────────────────────────────────────────
+// ── Parse .xlsx/.xlsm via read-excel-file ─────────────────────────────────
 async function parseXlsx(uri: string): Promise<ParsedRow[]> {
   const response = await fetch(uri);
   const arrayBuffer = await response.arrayBuffer();
-  const uint8 = new Uint8Array(arrayBuffer);
-  const workbook = XLSX.read(uint8, { type: "array" });
 
-  // Find the sheet with a Vendor or Catalog column
-  let bestSheet: XLSX.WorkSheet | null = null;
+  // Try sheets 1-5, pick the one with the best Vendor/Catalog header match
+  let bestRows: SheetData | null = null;
   let bestScore = -1;
-  for (const sheetName of workbook.SheetNames) {
-    const ws = workbook.Sheets[sheetName];
-    if (!ws) continue;
-    const rows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as string[][];
-    if (!rows[0]) continue;
-    const headers = rows[0].map(h => String(h).trim().toLowerCase());
-    let score = 0;
-    if (VENDOR_ALIASES.some(a => headers.includes(a))) score += 2;
-    if (CATALOG_ALIASES.some(a => headers.includes(a))) score += 2;
-    if (score > bestScore) { bestScore = score; bestSheet = ws; }
+  for (let sheetNum = 1; sheetNum <= 5; sheetNum++) {
+    try {
+      const rows = await readSheet(arrayBuffer, sheetNum);
+      if (!rows || rows.length === 0) break;
+      const hdrs = rows[0].map(h => String(h ?? "").trim().toLowerCase());
+      let score = 0;
+      if (VENDOR_ALIASES.some(a => hdrs.includes(a))) score += 2;
+      if (CATALOG_ALIASES.some(a => hdrs.includes(a))) score += 2;
+      if (score > bestScore) { bestScore = score; bestRows = rows; }
+      if (bestScore >= 4) break;
+    } catch {
+      break;
+    }
   }
 
-  if (!bestSheet) {
-    const firstSheet = workbook.Sheets[workbook.SheetNames[0]!];
-    if (!firstSheet) return [];
-    bestSheet = firstSheet;
-  }
+  if (!bestRows || bestRows.length < 2) return [];
 
-  const rawRows: string[][] = XLSX.utils.sheet_to_json(bestSheet, { header: 1, defval: "" }) as string[][];
-  if (rawRows.length < 2) return [];
-
-  const headers = rawRows[0]!.map(h => String(h).trim().toLowerCase());
+  const headers = bestRows[0]!.map(h => String(h ?? "").trim().toLowerCase());
   const vendorCol = findCol(headers, VENDOR_ALIASES);
   const catalogCol = findCol(headers, CATALOG_ALIASES);
   const descCol = findCol(headers, DESC_ALIASES);
@@ -197,8 +192,8 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
   const barcodeCol = findCol(headers, BARCODE_ALIASES);
 
   const rows: ParsedRow[] = [];
-  for (let i = 1; i < rawRows.length; i++) {
-    const cells = rawRows[i]!.map(c => String(c ?? "").trim());
+  for (let i = 1; i < bestRows.length; i++) {
+    const cells = bestRows[i]!.map(c => String(c ?? "").trim());
     const vendor = vendorCol >= 0 ? cells[vendorCol] ?? "" : "";
     const catalog = catalogCol >= 0 ? cells[catalogCol] ?? "" : "";
     if (!vendor && !catalog) continue;
@@ -717,7 +712,7 @@ export default function UploadScreen() {
         // "part#", etc. that the server-side parser wouldn't recognise.
         rawText = serializeToCsv(rows, new Set());
         setFileType("csv");
-      } else if (["xlsx", "xls", "xlsm", "ods"].includes(ext)) {
+      } else if (["xlsx", "xlsm"].includes(ext)) {
         rows = await parseXlsx(asset.uri);
         // Serialize to CSV so we can send it to admin/upload/preview and
         // admin/upload which only accept raw CSV text. skipBinRows is empty
@@ -1014,7 +1009,7 @@ export default function UploadScreen() {
               <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>📁 Import File</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Accepts: CSV, Excel (.xlsx/.xls), ODS{"\n"}
+                  Accepts: CSV, Excel (.xlsx/.xlsm){"\n"}
                   Required columns: vendor, catalog{"\n"}
                   Optional: description, bin (or binLocation), barcodes (upc/ean/gtin){"\n"}
                   Multiple bins per row: separate with ; or |{"\n"}
