@@ -4,6 +4,12 @@ const ZoneEditorPage = lazy(() =>
   import("./pages/ZoneEditor").then((m) => ({ default: m.ZoneEditor }))
 );
 
+const WarehouseMapViewerPage = lazy(() =>
+  import("./pages/WarehouseMapViewer").then((m) => ({
+    default: m.WarehouseMapViewer,
+  }))
+);
+
 import { modules as discoveredModules } from "./.generated/mockup-components";
 
 type ModuleMap = Record<string, () => Promise<Record<string, unknown>>>;
@@ -102,6 +108,12 @@ const TOOLS = [
       "Draw and manage warehouse zone boundaries on the floor plan. Zones are saved directly to the database.",
     path: "/zone-editor",
   },
+  {
+    name: "Warehouse Map",
+    description:
+      "Read-only pan/zoom view of the warehouse floor plan SVG. Useful for reviewing the layout without editing zones.",
+    path: "/warehouse-map",
+  },
 ];
 
 function Gallery() {
@@ -166,6 +178,16 @@ function isZoneEditorPath(): boolean {
   return local === "/zone-editor" || local.startsWith("/zone-editor/");
 }
 
+function isWarehouseMapPath(): boolean {
+  const basePath = getBasePath();
+  const { pathname } = window.location;
+  const local =
+    basePath && pathname.startsWith(basePath)
+      ? pathname.slice(basePath.length) || "/"
+      : pathname;
+  return local === "/warehouse-map" || local.startsWith("/warehouse-map/");
+}
+
 function App() {
   const previewPath = getPreviewPath();
 
@@ -182,6 +204,14 @@ function App() {
     return (
       <Suspense fallback={null}>
         <ZoneEditorPage />
+      </Suspense>
+    );
+  }
+
+  if (isWarehouseMapPath()) {
+    return (
+      <Suspense fallback={null}>
+        <WarehouseMapViewerPage />
       </Suspense>
     );
   }
