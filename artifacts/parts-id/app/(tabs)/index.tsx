@@ -123,6 +123,7 @@ export default function SearchScreen() {
   const [mode, setMode] = useState<SearchMode>("search");
   const [activeCategorySlug, setActiveCategorySlug] = useState<string | null>(null);
   const [activeCategoryLabel, setActiveCategoryLabel] = useState<string | null>(null);
+  const [filterOverlayWidth, setFilterOverlayWidth] = useState<number | undefined>(undefined);
   const activeCategorySlugRef = useRef<string | null>(null);
   useEffect(() => { activeCategorySlugRef.current = activeCategorySlug; }, [activeCategorySlug]);
   const [showAddPartModal, setShowAddPartModal] = useState(false);
@@ -1038,6 +1039,7 @@ export default function SearchScreen() {
               <Pressable
                 key={m.key}
                 onPress={() => setMode(m.key)}
+                onLayout={m.key === "category" ? (e) => setFilterOverlayWidth(e.nativeEvent.layout.width) : undefined}
                 style={[
                   styles.modeToggleBtn,
                   {
@@ -1065,7 +1067,7 @@ export default function SearchScreen() {
               <Feather name="x" size={12} color={colors.primary} />
             </Pressable>
           ) : null}
-          <View style={[styles.filterOverlay, { backgroundColor: colors.card }]}>
+          <View style={[styles.filterOverlay, { backgroundColor: colors.card, alignSelf: "center", width: filterOverlayWidth }]}>
             <FilterPanel
               values={filters}
               onChange={handleChange}
@@ -1219,7 +1221,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   filterOverlay: {
-    alignSelf: "flex-start",
+    alignSelf: "center",
     borderRadius: 12,
     padding: 16,
     shadowColor: "#000",
