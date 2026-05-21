@@ -250,7 +250,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
 });
 
 // ── GET /admin/catalog-pdf/failed-jobs ────────────────────────────────────────
-// Returns jobs that are in `failed` status, ordered newest-first.
+// Returns jobs that are in `failed` status and not dismissed, ordered newest-first.
 router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
   try {
     const rows = await db
@@ -267,13 +267,45 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
         matchedParts: catalogPdfJobTable.matchedParts,
       })
       .from(catalogPdfJobTable)
-      .where(eq(catalogPdfJobTable.status, "failed"))
+      .where(and(
+        eq(catalogPdfJobTable.status, "failed"),
+        eq(catalogPdfJobTable.dismissed, false),
+      ))
       .orderBy(desc(catalogPdfJobTable.createdAt));
 
     res.json({ jobs: rows });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch failed jobs" });
+  }
+});
+
+// ── POST /admin/catalog-pdf/:jobId/dismiss ────────────────────────────────────
+// Marks a failed job as dismissed so it no longer appears in the failed list.
+router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) => {
+  const jobId = Number(req.params["jobId"]);
+  if (!Number.isFinite(jobId)) {
+    res.status(400).json({ error: "Invalid jobId" });
+    return;
+  }
+  try {
+    const updated = await db
+      .update(catalogPdfJobTable)
+      .set({ dismissed: true })
+      .where(and(
+        eq(catalogPdfJobTable.id, jobId),
+        eq(catalogPdfJobTable.status, "failed"),
+      ))
+      .returning({ id: catalogPdfJobTable.id });
+
+    if (updated.length === 0) {
+      res.status(404).json({ error: "Job not found or not in failed state" });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to dismiss job" });
   }
 });
 

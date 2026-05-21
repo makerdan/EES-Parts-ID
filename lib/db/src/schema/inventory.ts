@@ -77,6 +77,7 @@ export const catalogPdfJobTable = pgTable("catalog_pdf_job", {
   finishedAt: timestamp("finished_at"),
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  dismissed: boolean("dismissed").notNull().default(false),
 });
 
 export const insertCatalogPdfJobSchema = createInsertSchema(catalogPdfJobTable).omit({
