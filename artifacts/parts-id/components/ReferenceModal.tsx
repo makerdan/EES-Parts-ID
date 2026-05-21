@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
+import { fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl } from "@/utils/chipCache";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -117,16 +118,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   }, [pulse]);
 
   const prefetchQuickLookups = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/reference/quick-lookups`);
-      if (!res.ok) return;
-      const rows: { label: string; answer: string }[] = await res.json();
-      for (const row of rows) {
-        answerCacheRef.current.set(row.label, row.answer);
-      }
-    } catch {
-      // Non-fatal — cache will be populated on demand
-    }
+    await prefetchQuickLookupsImpl(answerCacheRef.current, API_BASE);
   }, []);
 
   const handleModalShow = useCallback(() => {
@@ -134,32 +126,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   }, [prefetchQuickLookups]);
 
   const fetchChipAnswer = async (label: string, chipQuestion: string): Promise<string> => {
-    // Layer 1: in-memory session cache
-    const cached = answerCacheRef.current.get(label);
-    if (cached) return cached;
-
-    // Layer 2: DB cache via GET endpoint
-    try {
-      const res = await fetch(`${API_BASE}/reference/quick-lookups/${encodeURIComponent(label)}`);
-      if (res.ok) {
-        const data: { answer: string } = await res.json();
-        answerCacheRef.current.set(label, data.answer);
-        return data.answer;
-      }
-    } catch {
-      // fall through to AI
-    }
-
-    // Layer 3: AI fallback — POST with write-back
-    const res = await fetch(`${API_BASE}/reference/quick-lookups/${encodeURIComponent(label)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: chipQuestion }),
-    });
-    if (!res.ok) throw new Error("AI fallback failed");
-    const data: { answer: string } = await res.json();
-    answerCacheRef.current.set(label, data.answer);
-    return data.answer;
+    return fetchChipAnswerImpl(label, chipQuestion, answerCacheRef.current, API_BASE);
   };
 
   const onChipTap = async (label: string, chipQuestion: string) => {
