@@ -287,7 +287,7 @@ export function ZoneEditor() {
           label: form.label.trim() || form.aisleId.trim(),
           sectionParity: form.sectionParity,
           isInventory: form.isInventory,
-          svgX: selectedZone.svgX + selectedZone.svgWidth + 10,
+          svgX: selectedZone.svgX + selectedZone.svgWidth + 5,
           svgY: selectedZone.svgY,
           svgWidth: selectedZone.svgWidth,
           svgHeight: selectedZone.svgHeight,
