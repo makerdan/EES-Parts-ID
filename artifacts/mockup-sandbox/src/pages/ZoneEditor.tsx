@@ -287,8 +287,8 @@ export function ZoneEditor() {
           label: form.label.trim() || form.aisleId.trim(),
           sectionParity: form.sectionParity,
           isInventory: form.isInventory,
-          svgX: selectedZone.svgX + 80,
-          svgY: selectedZone.svgY + 80,
+          svgX: selectedZone.svgX + selectedZone.svgWidth + 10,
+          svgY: selectedZone.svgY,
           svgWidth: selectedZone.svgWidth,
           svgHeight: selectedZone.svgHeight,
           sortOrder: 0,
@@ -299,7 +299,7 @@ export function ZoneEditor() {
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
       const { zone } = await res.json() as { zone: Zone };
-      toast.success(`Duplicated → drag to new position`);
+      toast.success(`Duplicated → placed to the right`);
       setSelectedId(zone.id);
       setForm({ aisleId: zone.aisleId, label: zone.label, sectionParity: zone.sectionParity, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
