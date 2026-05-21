@@ -33,8 +33,16 @@ import {
   View,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Asset } from "expo-asset";
+import {
+  getCachedData,
+  getIfValid,
+  hasCachedData,
+  initPersistRead,
+  setCached,
+  setFallbackEmpty,
+  type SvgData,
+} from "@/utils/floorPlanCache";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
@@ -62,54 +70,14 @@ function clamp(val: number, min: number, max: number) {
 }
 
 // ── Module-level SVG cache ────────────────────────────────────────────────────
-// Two-tier cache:
-//   1. In-memory (_svgCache): survives tab switches within the same session.
-//      Cleared on JS bundle reload (i.e. after an app update / dev reload).
-//   2. AsyncStorage (STORAGE_KEY): survives force-quit and cold restarts.
-//      Keyed by the Expo asset hash; stale entries are automatically
-//      discarded when a new app build ships a different floor-plan SVG.
-//
-// Both tiers are written after the first successful network fetch.  Subsequent
-// mounts read from whichever tier is available and skip the fetch entirely.
-interface SvgData {
-  xml: string;      // web: full fetched SVG text (kept for reference)
-  innerXml: string; // web: inner SVG content with outer <svg> wrapper stripped,
-                    //      injected via dangerouslySetInnerHTML into the canvas
-  uri: string;      // native: resolved local URI  (passed to <SvgUri>)
-}
-
-const STORAGE_KEY = "@rdc34/warehouse_map_svg_v1";
-
-let _svgCache: SvgData | null = null;
-// Single in-flight promise so concurrent mounts don't issue duplicate fetches.
-let _svgLoadPromise: Promise<void> | null = null;
-// Hash from the persisted AsyncStorage entry — compared against the current
-// asset hash to detect a new app build with an updated floor-plan SVG.
-let _persistedHash: string | null = null;
-
+// Managed by utils/floorPlanCache (two-tier: in-memory + AsyncStorage).
 // Kick off the AsyncStorage read immediately at module load so the data is
-// typically ready before the first component mount.  Awaiting this promise in
-// useEffect is cheap — usually a resolved microtick by the time the component
-// renders (fonts, navigation, and the component tree take longer to initialise
-// than a local AsyncStorage read).
-const _persistReadPromise: Promise<void> = AsyncStorage.getItem(STORAGE_KEY)
-  .then((raw) => {
-    if (!raw || _svgCache !== null) return;
-    try {
-      const stored = JSON.parse(raw) as {
-        hash: string;
-        xml: string;
-        innerXml: string;
-        uri: string;
-      };
-      if (typeof stored.hash !== "string") return; // malformed — discard
-      _persistedHash = stored.hash;
-      _svgCache = { xml: stored.xml, innerXml: stored.innerXml, uri: stored.uri };
-    } catch {
-      // Corrupted entry — silently discard; will re-fetch below.
-    }
-  })
-  .catch(() => {}); // Non-fatal; falls back to the normal network load.
+// typically ready before the first component mount.
+const _persistReadPromise = initPersistRead();
+
+// Single in-flight asset-load promise so concurrent mounts don't issue
+// duplicate network requests.
+let _svgLoadPromise: Promise<void> | null = null;
 
 function loadSvgAsset(): Promise<void> {
   if (_svgLoadPromise) return _svgLoadPromise;
@@ -119,10 +87,11 @@ function loadSvgAsset(): Promise<void> {
   )
     .then(async ([asset]) => {
       const currentHash = asset.hash ?? "";
-      // If the persisted (or in-memory) cache is still valid, skip the fetch.
-      if (_svgCache !== null && _persistedHash === currentHash) return;
+      // Cache hit — persisted hash matches; skip the network fetch entirely.
+      if (getIfValid(currentHash) !== null) return;
 
       const uri = asset.localUri ?? asset.uri ?? "";
+      let newData: SvgData;
       if (Platform.OS === "web") {
         const res = await fetch(uri);
         const xml = await res.text();
@@ -134,21 +103,20 @@ function loadSvgAsset(): Promise<void> {
         const innerXml = xml
           .replace(/^[\s\S]*?<svg[^>]*>/, "")
           .replace(/<\/svg>\s*$/, "");
-        _svgCache = { xml, innerXml, uri: "" };
+        newData = { xml, innerXml, uri: "" };
       } else {
-        _svgCache = { xml: "", innerXml: "", uri };
+        newData = { xml: "", innerXml: "", uri };
       }
-      // Persist the fresh data so the next cold start skips the network fetch.
-      // Fire-and-forget — a write failure is non-fatal.
-      AsyncStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ hash: currentHash, ..._svgCache }),
-      ).catch(() => {});
+      // Write to both in-memory cache and AsyncStorage so the next cold start
+      // skips the network fetch.  Also updates the stored hash so subsequent
+      // getIfValid calls are correct.
+      setCached(currentHash, newData);
     })
     .catch(() => {
-      // Populate cache with empty values so subsequent mounts skip the load
-      // and show the "Map unavailable" fallback immediately.
-      if (!_svgCache) _svgCache = { xml: "", innerXml: "", uri: "" };
+      // On load failure, set an empty fallback so subsequent mounts skip the
+      // fetch attempt and render the "Map unavailable" UI immediately.
+      // setFallbackEmpty is a no-op when valid data is already cached.
+      setFallbackEmpty();
     });
   return _svgLoadPromise;
 }
@@ -232,19 +200,20 @@ export function WarehouseMapView({
   // Resolve the bundled SVG asset.
   //
   // Web path  — fetches the SVG text, strips the outer <svg> wrapper, and
-  //             stores the inner content in _svgCache.innerXml.  The content
-  //             is later injected via dangerouslySetInnerHTML into a <g> element
-  //             inside the main SVG canvas so everything shares one viewport.
+  //             stores the inner content via floorPlanCache.  The content is
+  //             injected via dangerouslySetInnerHTML into a <g> element inside
+  //             the main SVG canvas so everything shares one viewport.
   // Native path — stores only the local file URI; <SvgUri> reads it directly.
   //
-  // _svgCache is module-level; on repeat tab visits it is already populated so
+  // getCachedData() reads the module-level cache in utils/floorPlanCache.
+  // On repeat tab visits within the same session it is already populated so
   // state initialises with cached values and svgLoading starts as false —
   // no skeleton, no fetch.
-  const [svgUri, setSvgUri] = useState(() => _svgCache?.uri ?? "");
-  const [innerXml, setInnerXml] = useState(() => _svgCache?.innerXml ?? "");
-  const [svgLoading, setSvgLoading] = useState(() => _svgCache === null);
+  const [svgUri, setSvgUri] = useState(() => getCachedData()?.uri ?? "");
+  const [innerXml, setInnerXml] = useState(() => getCachedData()?.innerXml ?? "");
+  const [svgLoading, setSvgLoading] = useState(() => !hasCachedData());
   useEffect(() => {
-    if (_svgCache !== null) return; // already cached (in-memory) — nothing to do
+    if (hasCachedData()) return; // already cached (in-memory) — nothing to do
 
     (async () => {
       // Wait for the AsyncStorage read that was kicked off at module load.
@@ -252,10 +221,9 @@ export function WarehouseMapView({
       // the component mounts, so it costs at most one microtick.
       await _persistReadPromise;
 
-      // The early return guard above narrows `_svgCache` to `null` in
-      // TypeScript's control-flow analysis; re-widen with a cast so the
-      // conditional checks below work correctly after the async await.
-      const afterPersist = _svgCache as SvgData | null;
+      // getCachedData() returns SvgData | null — no cast needed here since it
+      // is a function call (TypeScript narrows const locals correctly).
+      const afterPersist = getCachedData();
       if (afterPersist !== null) {
         // Persisted data available — update state right away so the skeleton
         // never appears for returning users.
@@ -269,7 +237,7 @@ export function WarehouseMapView({
       // no network fetch.  If the hash has changed (new build), it re-fetches
       // and writes the updated entry back to AsyncStorage.
       await loadSvgAsset();
-      const afterLoad = _svgCache as SvgData | null;
+      const afterLoad = getCachedData();
       if (afterLoad) {
         setSvgUri(afterLoad.uri);
         setInnerXml(afterLoad.innerXml);
@@ -281,7 +249,7 @@ export function WarehouseMapView({
   // Skeleton shimmer — pulsing opacity while SVG is fetching.
   // Starts unmounted when the cache is already populated so there is no
   // visible skeleton flash on repeat visits.
-  const [skeletonMounted, setSkeletonMounted] = useState(() => _svgCache === null);
+  const [skeletonMounted, setSkeletonMounted] = useState(() => !hasCachedData());
   const skeletonOpacity = useSharedValue(1);
   const shimmerPulse = useSharedValue(0.45);
   useEffect(() => {
