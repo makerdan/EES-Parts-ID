@@ -22,11 +22,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { RetryImage } from "@/components/RetryImage";
-import {
-  FAILED_JOB_RESUBMIT_TEXT,
-  displayErrorMessage,
-  buildPageProgressFragment,
-} from "@/utils/failedJobCard";
+import { FailedJobsSection } from "@/components/FailedJobsSection";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -342,62 +338,12 @@ export default function CatalogReviewScreen() {
             }
             renderItem={renderRow}
             ListHeaderComponent={
-              failedJobs.length > 0 ? (
-                <View style={s.failedSection}>
-                  <View style={[s.failedSectionHeader, { backgroundColor: colors.destructive + "18", borderColor: colors.destructive + "44" }]}>
-                    <Text style={[s.failedSectionTitle, { color: colors.destructive }]}>
-                      {failedJobs.length} Failed Job{failedJobs.length !== 1 ? "s" : ""}
-                    </Text>
-                    <Text style={[s.failedSectionHint, { color: colors.mutedForeground }]}>
-                      These jobs did not complete. Go to the Upload tab to resubmit each PDF.
-                    </Text>
-                  </View>
-                  {failedJobs.map((job) => (
-                    <View
-                      key={job.id}
-                      style={[s.failedCard, { backgroundColor: colors.card, borderColor: colors.destructive + "55" }]}
-                    >
-                      <View style={s.failedCardTop}>
-                        <View style={s.failedCardIdent}>
-                          <Text style={[s.failedCardVendor, { color: colors.foreground }]}>
-                            {job.vendor}
-                          </Text>
-                          <Text style={[s.failedCardFile, { color: colors.mutedForeground }]} numberOfLines={1}>
-                            {job.filename}
-                          </Text>
-                        </View>
-                        <View style={[s.failedBadge, { backgroundColor: colors.destructive + "18" }]}>
-                          <Text style={[s.failedBadgeText, { color: colors.destructive }]}>Failed</Text>
-                        </View>
-                      </View>
-                      <View style={[s.failedErrorBox, { backgroundColor: colors.destructive + "0e", borderColor: colors.destructive + "33" }]}>
-                        <Text style={[s.failedErrorLabel, { color: colors.destructive }]}>Error</Text>
-                        <Text style={[s.failedErrorMsg, { color: colors.foreground }]}>
-                          {displayErrorMessage(job)}
-                        </Text>
-                      </View>
-                      <Text style={[s.failedMeta, { color: colors.mutedForeground }]}>
-                        Job #{job.id} · {new Date(job.createdAt).toLocaleDateString()}
-                        {buildPageProgressFragment(job)}
-                      </Text>
-                      <View style={[s.resubmitBox, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "44" }]}>
-                        <Text style={[s.resubmitText, { color: colors.primary }]}>
-                          {FAILED_JOB_RESUBMIT_TEXT}
-                        </Text>
-                      </View>
-                      <Pressable
-                        onPress={() => handleDismiss(job.id)}
-                        disabled={dismissingId === job.id}
-                        style={[s.dismissBtn, { borderColor: colors.mutedForeground + "55" }]}
-                      >
-                        <Text style={[s.dismissBtnText, { color: colors.mutedForeground }]}>
-                          {dismissingId === job.id ? "Dismissing…" : "Dismiss"}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  ))}
-                </View>
-              ) : null
+              <FailedJobsSection
+                failedJobs={failedJobs}
+                dismissingId={dismissingId}
+                onDismiss={handleDismiss}
+                colors={colors}
+              />
             }
             contentContainerStyle={{ paddingBottom: 100 }}
           />
@@ -447,38 +393,4 @@ const s = StyleSheet.create({
   revertBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   imageBlock: { borderRadius: 8, overflow: "hidden", alignSelf: "flex-start" },
   partImage: { width: 120, height: 90 },
-  failedSection: { paddingBottom: 4 },
-  failedSectionHeader: {
-    marginHorizontal: 12, marginTop: 12, marginBottom: 4,
-    borderRadius: 10, borderWidth: 1, padding: 14, gap: 4,
-  },
-  failedSectionTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
-  failedSectionHint: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
-  failedCard: {
-    marginHorizontal: 12, marginTop: 8, borderRadius: 12, borderWidth: 1, padding: 14, gap: 10,
-  },
-  failedCardTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
-  failedCardIdent: { flex: 1, gap: 2 },
-  failedCardVendor: { fontSize: 15, fontFamily: "Inter_700Bold" },
-  failedCardFile: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  failedBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  failedBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
-  failedErrorBox: {
-    borderRadius: 8, borderWidth: 1, padding: 10, gap: 4,
-  },
-  failedErrorLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", textTransform: "uppercase", letterSpacing: 0.5 },
-  failedErrorMsg: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
-  failedMeta: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  resubmitBox: {
-    borderRadius: 8, borderWidth: 1, padding: 10,
-  },
-  resubmitText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
-  dismissBtn: {
-    alignSelf: "flex-end",
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 7,
-    paddingHorizontal: 16,
-  },
-  dismissBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
 });
