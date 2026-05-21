@@ -48,6 +48,43 @@ function clamp(val: number, min: number, max: number) {
   return val < min ? min : val > max ? max : val;
 }
 
+// ── Module-level SVG cache ────────────────────────────────────────────────────
+// Populated after the first successful load and reused by every subsequent
+// mount (tab revisit).  The variable lives in module scope so it is cleared
+// automatically when the JS bundle reloads (i.e. after an app update).
+interface SvgData {
+  xml: string;  // web: fetched SVG text (passed to <SvgXml>)
+  uri: string;  // native: resolved local URI  (passed to <SvgUri>)
+}
+let _svgCache: SvgData | null = null;
+
+// Single in-flight promise so concurrent mounts don't issue duplicate requests.
+let _svgLoadPromise: Promise<void> | null = null;
+
+function loadSvgAsset(): Promise<void> {
+  if (_svgLoadPromise) return _svgLoadPromise;
+  _svgLoadPromise = Asset.loadAsync(
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require("../assets/warehouse-map.svg"),
+  )
+    .then(async ([asset]) => {
+      const uri = asset.localUri ?? asset.uri ?? "";
+      if (Platform.OS === "web") {
+        const res = await fetch(uri);
+        const xml = await res.text();
+        _svgCache = { xml, uri: "" };
+      } else {
+        _svgCache = { xml: "", uri };
+      }
+    })
+    .catch(() => {
+      // Populate cache with empty values so subsequent mounts skip the load
+      // and show the "Map unavailable" fallback immediately.
+      _svgCache = { xml: "", uri: "" };
+    });
+  return _svgLoadPromise;
+}
+
 
 export interface WarehouseMapViewProps {
   zones: ApiWarehouseZone[];
@@ -128,32 +165,28 @@ export function WarehouseMapView({
   // On native: use the localUri/uri directly with SvgUri (reads from filesystem).
   // On web:    SvgUri fetches over HTTP; the proxied URI silently fails, so we
   //            fetch the SVG text ourselves and pass it to SvgXml instead.
-  const [svgUri, setSvgUri] = useState("");
-  const [svgXml, setSvgXml] = useState("");
-  const [svgLoading, setSvgLoading] = useState(true);
+  //
+  // _svgCache is a module-level variable populated after the first load.
+  // On repeat tab visits it is already set, so state initialises with the
+  // cached values and svgLoading starts as false — no skeleton, no fetch.
+  const [svgUri, setSvgUri] = useState(() => _svgCache?.uri ?? "");
+  const [svgXml, setSvgXml] = useState(() => _svgCache?.xml ?? "");
+  const [svgLoading, setSvgLoading] = useState(() => _svgCache === null);
   useEffect(() => {
-    Asset.loadAsync(
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      require("../assets/warehouse-map.svg"),
-    ).then(async ([asset]) => {
-      const uri = asset.localUri ?? asset.uri ?? "";
-      if (Platform.OS === "web") {
-        const res = await fetch(uri);
-        const xml = await res.text();
-        setSvgXml(xml);
-      } else {
-        setSvgUri(uri);
+    if (_svgCache !== null) return; // already cached — nothing to do
+    loadSvgAsset().then(() => {
+      if (_svgCache) {
+        setSvgXml(_svgCache.xml);
+        setSvgUri(_svgCache.uri);
       }
-    }).catch(() => {
-      setSvgUri("");
-      setSvgXml("");
-    }).finally(() => {
       setSvgLoading(false);
     });
   }, []);
 
-  // Skeleton shimmer — pulsing opacity while SVG is fetching
-  const [skeletonMounted, setSkeletonMounted] = useState(true);
+  // Skeleton shimmer — pulsing opacity while SVG is fetching.
+  // Starts unmounted when the cache is already populated so there is no
+  // visible skeleton flash on repeat visits.
+  const [skeletonMounted, setSkeletonMounted] = useState(() => _svgCache === null);
   const skeletonOpacity = useSharedValue(1);
   const shimmerPulse = useSharedValue(0.45);
   useEffect(() => {
