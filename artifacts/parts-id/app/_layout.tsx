@@ -10,6 +10,7 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { Platform } from "react-native";
+import NetInfo from "@react-native-community/netinfo";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { setBaseUrl } from "@workspace/api-client-react";
@@ -17,6 +18,7 @@ import { setBaseUrl } from "@workspace/api-client-react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 import { FEATHER_FONT_B64 } from "@/assets/fonts/featherBase64";
+import { prefetchSvgAsset } from "@/components/WarehouseMapView";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -86,6 +88,13 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (fontsLoaded || fontError) SplashScreen.hideAsync();
+  }, [fontsLoaded, fontError]);
+
+  useEffect(() => {
+    if (!fontsLoaded && !fontError) return;
+    NetInfo.fetch().then((state) => {
+      if (state.isConnected) prefetchSvgAsset();
+    });
   }, [fontsLoaded, fontError]);
 
   if (!fontsLoaded && !fontError) return null;

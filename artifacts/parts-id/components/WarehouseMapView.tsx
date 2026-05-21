@@ -79,6 +79,11 @@ const _persistReadPromise = initPersistRead();
 // duplicate network requests.
 let _svgLoadPromise: Promise<void> | null = null;
 
+export function prefetchSvgAsset(): Promise<void> {
+  if (_svgCache !== null) return Promise.resolve();
+  return loadSvgAsset();
+}
+
 function loadSvgAsset(): Promise<void> {
   if (_svgLoadPromise) return _svgLoadPromise;
   _svgLoadPromise = Asset.loadAsync(
