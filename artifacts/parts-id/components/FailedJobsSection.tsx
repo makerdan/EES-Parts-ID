@@ -8,14 +8,15 @@
  * Props mirror the slice of state the parent already owns:
  *   failedJobs   — jobs with status "failed" and dismissed=false
  *   dismissingId — id of the job currently being dismissed (shows spinner text)
+ *   resumingId   — id of the job currently being resumed (shows spinner)
  *   onDismiss    — callback when the Dismiss button is pressed
+ *   onResume     — callback when the Resume button is pressed
  *   colors       — theme tokens forwarded from useColors()
  */
 
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import {
-  FAILED_JOB_RESUBMIT_TEXT,
   displayErrorMessage,
   buildFailedJobMetaLine,
 } from "@/utils/failedJobCard";
@@ -44,11 +45,13 @@ export interface FailedJobsSectionColors {
 interface Props {
   failedJobs: FailedJob[];
   dismissingId: number | null;
+  resumingId: number | null;
   onDismiss: (id: number) => void;
+  onResume: (id: number) => void;
   colors: FailedJobsSectionColors;
 }
 
-export function FailedJobsSection({ failedJobs, dismissingId, onDismiss, colors }: Props) {
+export function FailedJobsSection({ failedJobs, dismissingId, resumingId, onDismiss, onResume, colors }: Props) {
   if (failedJobs.length === 0) return null;
 
   return (
@@ -66,7 +69,7 @@ export function FailedJobsSection({ failedJobs, dismissingId, onDismiss, colors 
           {failedJobs.length} Failed Job{failedJobs.length !== 1 ? "s" : ""}
         </Text>
         <Text style={[s.sectionHint, { color: colors.mutedForeground }]}>
-          These jobs did not complete. Go to the Upload tab to resubmit each PDF.
+          Tap Resume to continue from where it stopped, or go to the Upload tab to start fresh.
         </Text>
       </View>
 
@@ -123,29 +126,28 @@ export function FailedJobsSection({ failedJobs, dismissingId, onDismiss, colors 
             {buildFailedJobMetaLine(job)}
           </Text>
 
-          <View
-            style={[
-              s.resubmitBox,
-              {
-                backgroundColor: colors.primary + "12",
-                borderColor: colors.primary + "44",
-              },
-            ]}
-          >
-            <Text style={[s.resubmitText, { color: colors.primary }]}>
-              {FAILED_JOB_RESUBMIT_TEXT}
-            </Text>
+          <View style={s.actions}>
+            <Pressable
+              onPress={() => onResume(job.id)}
+              disabled={resumingId === job.id || dismissingId === job.id}
+              style={[s.resumeBtn, { backgroundColor: colors.primary + (resumingId === job.id ? "88" : "ff") }]}
+            >
+              {resumingId === job.id ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={s.resumeBtnText}>Resume</Text>
+              )}
+            </Pressable>
+            <Pressable
+              onPress={() => onDismiss(job.id)}
+              disabled={dismissingId === job.id || resumingId === job.id}
+              style={[s.dismissBtn, { borderColor: colors.mutedForeground + "55" }]}
+            >
+              <Text style={[s.dismissBtnText, { color: colors.mutedForeground }]}>
+                {dismissingId === job.id ? "Dismissing…" : "Dismiss"}
+              </Text>
+            </Pressable>
           </View>
-
-          <Pressable
-            onPress={() => onDismiss(job.id)}
-            disabled={dismissingId === job.id}
-            style={[s.dismissBtn, { borderColor: colors.mutedForeground + "55" }]}
-          >
-            <Text style={[s.dismissBtnText, { color: colors.mutedForeground }]}>
-              {dismissingId === job.id ? "Dismissing…" : "Dismiss"}
-            </Text>
-          </Pressable>
         </View>
       ))}
     </View>
@@ -192,10 +194,23 @@ const s = StyleSheet.create({
   },
   errorMsg: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
   meta: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  resubmitBox: { borderRadius: 8, borderWidth: 1, padding: 10 },
-  resubmitText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  resumeBtn: {
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+    minWidth: 80,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 34,
+  },
+  resumeBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#fff" },
   dismissBtn: {
-    alignSelf: "flex-end",
     borderWidth: 1,
     borderRadius: 8,
     paddingVertical: 7,

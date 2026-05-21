@@ -56,11 +56,13 @@ const TEST_COLORS: FailedJobsSectionColors = {
   primary: "#2563eb",
 };
 
-function renderSection(jobs: FailedJob[], dismissingId: number | null = null) {
+function renderSection(jobs: FailedJob[], dismissingId: number | null = null, resumingId: number | null = null) {
   const el = React.createElement(FailedJobsSection, {
     failedJobs: jobs,
     dismissingId,
+    resumingId,
     onDismiss: jest.fn(),
+    onResume: jest.fn(),
     colors: TEST_COLORS,
   });
   const texts = collectText(el);
@@ -89,7 +91,9 @@ describe("FailedJobsSection — renders nothing when there are no failed jobs", 
     const el = React.createElement(FailedJobsSection, {
       failedJobs: [],
       dismissingId: null,
+      resumingId: null,
       onDismiss: jest.fn(),
+      onResume: jest.fn(),
       colors: TEST_COLORS,
     });
     const result = (FailedJobsSection as (p: typeof el.props) => React.ReactNode)(el.props);
@@ -125,19 +129,9 @@ describe("FailedJobsSection — card content for a failed job", () => {
     expect(texts).toContain("Unknown error");
   });
 
-  it("renders the exact FAILED_JOB_RESUBMIT_TEXT", () => {
+  it("renders the Resume button", () => {
     const { texts } = renderSection([MOCK_JOB]);
-    expect(texts).toContain(FAILED_JOB_RESUBMIT_TEXT);
-  });
-
-  it("resubmit text contains 'Upload tab'", () => {
-    const { allText } = renderSection([MOCK_JOB]);
-    expect(allText).toContain("Upload tab");
-  });
-
-  it("resubmit text contains 'Start Extraction'", () => {
-    const { allText } = renderSection([MOCK_JOB]);
-    expect(allText).toContain("Start Extraction");
+    expect(texts).toContain("Resume");
   });
 
   it("renders the Dismiss button", () => {
@@ -175,6 +169,16 @@ describe("FailedJobsSection — section header text", () => {
     const { texts } = renderSection([MOCK_JOB, { ...MOCK_JOB, id: 2 }]);
     const joined = texts.join("");
     expect(joined).toContain("2 Failed Jobs");
+  });
+
+  it("section hint mentions 'Resume'", () => {
+    const { allText } = renderSection([MOCK_JOB]);
+    expect(allText).toContain("Resume");
+  });
+
+  it("section hint mentions 'Upload tab'", () => {
+    const { allText } = renderSection([MOCK_JOB]);
+    expect(allText).toContain("Upload tab");
   });
 });
 
