@@ -22,6 +22,11 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { RetryImage } from "@/components/RetryImage";
+import {
+  FAILED_JOB_RESUBMIT_TEXT,
+  displayErrorMessage,
+  buildPageProgressFragment,
+} from "@/utils/failedJobCard";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -368,16 +373,16 @@ export default function CatalogReviewScreen() {
                       <View style={[s.failedErrorBox, { backgroundColor: colors.destructive + "0e", borderColor: colors.destructive + "33" }]}>
                         <Text style={[s.failedErrorLabel, { color: colors.destructive }]}>Error</Text>
                         <Text style={[s.failedErrorMsg, { color: colors.foreground }]}>
-                          {job.errorMessage ?? "Unknown error"}
+                          {displayErrorMessage(job)}
                         </Text>
                       </View>
                       <Text style={[s.failedMeta, { color: colors.mutedForeground }]}>
                         Job #{job.id} · {new Date(job.createdAt).toLocaleDateString()}
-                        {job.processedPages > 0 ? ` · ${job.processedPages}${job.totalPages ? `/${job.totalPages}` : ""} pages processed` : ""}
+                        {buildPageProgressFragment(job)}
                       </Text>
                       <View style={[s.resubmitBox, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "44" }]}>
                         <Text style={[s.resubmitText, { color: colors.primary }]}>
-                          To resubmit: go to the Upload tab, enter the vendor name, select the same PDF, and tap "Start Extraction".
+                          {FAILED_JOB_RESUBMIT_TEXT}
                         </Text>
                       </View>
                       <Pressable

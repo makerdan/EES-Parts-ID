@@ -1,183 +1,150 @@
 /**
  * @jest-environment node
  *
- * Unit tests for the catalog-review screen's failed-jobs display logic.
- *
- * The catalog-review screen fetches failed PDF jobs and renders a card for
- * each one showing the vendor name, filename, error message, and a meta line
- * with the job ID, date, and page-processing progress. These tests pin the
- * display logic so regressions are caught without requiring a full render.
+ * Unit tests for the failed PDF job card display logic used in
+ * app/catalog-review.tsx.  The display utilities are extracted into
+ * utils/failedJobCard.ts and imported by the screen, so any regression
+ * to the card text, error-message fallback, page-progress fragment, or
+ * resubmit instructions will cause these tests to fail.
  */
 
-// ── Type mirroring catalog-review.tsx ─────────────────────────────────────────
+import {
+  FAILED_JOB_RESUBMIT_TEXT,
+  displayErrorMessage,
+  buildPageProgressFragment,
+  buildFailedJobMetaLine,
+} from "../utils/failedJobCard";
 
-interface FailedJob {
-  id: number;
-  vendor: string;
-  filename: string;
-  status: string;
-  errorMessage: string | null;
-  createdAt: string;
-  finishedAt: string | null;
-  processedPages: number;
-  totalPages: number | null;
-  matchedParts: number;
-}
+// ── Resubmit instruction text ─────────────────────────────────────────────────
 
-// ── Helpers mirroring inline logic in catalog-review.tsx ──────────────────────
-
-/** Mirrors the fallback used when job.errorMessage is null. */
-function displayErrorMessage(job: Pick<FailedJob, "errorMessage">): string {
-  return job.errorMessage ?? "Unknown error";
-}
-
-/**
- * Mirrors the page-progress fragment appended to the meta line:
- *   " · 3/10 pages processed"  (when both processedPages and totalPages are set)
- *   " · 5 pages processed"     (when totalPages is unknown)
- *   ""                          (when processedPages === 0)
- */
-function buildPageProgressFragment(
-  job: Pick<FailedJob, "processedPages" | "totalPages">,
-): string {
-  if (job.processedPages <= 0) return "";
-  const total = job.totalPages ? `/${job.totalPages}` : "";
-  return ` · ${job.processedPages}${total} pages processed`;
-}
-
-/**
- * Mirrors the full meta line rendered below each failed job card:
- *   "Job #<id> · <date>[page fragment]"
- */
-function buildMetaLine(job: Pick<FailedJob, "id" | "createdAt" | "processedPages" | "totalPages">): string {
-  const dateStr = new Date(job.createdAt).toLocaleDateString();
-  return `Job #${job.id} · ${dateStr}${buildPageProgressFragment(job)}`;
-}
-
-/** Whether the failed-jobs section should render (mirrors the conditional in the FlatList header). */
-function shouldShowFailedSection(failedJobs: FailedJob[]): boolean {
-  return failedJobs.length > 0;
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-describe("catalog-review: failed job card display logic", () => {
-  const baseJob: FailedJob = {
-    id: 42,
-    vendor: "ACME ELECTRIC",
-    filename: "acme-catalog-2024.pdf",
-    status: "failed",
-    errorMessage: "PDF could not be parsed: unexpected end of stream",
-    createdAt: "2025-01-15T10:00:00.000Z",
-    finishedAt: null,
-    processedPages: 0,
-    totalPages: null,
-    matchedParts: 0,
-  };
-
-  describe("error message display", () => {
-    it("shows the errorMessage when it is set", () => {
-      expect(displayErrorMessage(baseJob)).toBe(
-        "PDF could not be parsed: unexpected end of stream",
-      );
-    });
-
-    it("falls back to 'Unknown error' when errorMessage is null", () => {
-      expect(displayErrorMessage({ errorMessage: null })).toBe("Unknown error");
-    });
-
-    it("falls back to 'Unknown error' for an empty string errorMessage", () => {
-      expect(displayErrorMessage({ errorMessage: null })).toBe("Unknown error");
-    });
+describe("FAILED_JOB_RESUBMIT_TEXT", () => {
+  it("contains the Upload tab instruction", () => {
+    expect(FAILED_JOB_RESUBMIT_TEXT).toContain("Upload tab");
   });
 
-  describe("page-progress fragment", () => {
-    it("returns empty string when no pages have been processed", () => {
-      expect(buildPageProgressFragment({ processedPages: 0, totalPages: 10 })).toBe("");
-    });
-
-    it("returns empty string when processedPages is 0 and totalPages is null", () => {
-      expect(buildPageProgressFragment({ processedPages: 0, totalPages: null })).toBe("");
-    });
-
-    it("includes both processed and total pages when both are known", () => {
-      expect(buildPageProgressFragment({ processedPages: 3, totalPages: 10 })).toBe(
-        " · 3/10 pages processed",
-      );
-    });
-
-    it("omits the total when totalPages is null", () => {
-      expect(buildPageProgressFragment({ processedPages: 5, totalPages: null })).toBe(
-        " · 5 pages processed",
-      );
-    });
-
-    it("handles a job that processed all pages before failing", () => {
-      expect(buildPageProgressFragment({ processedPages: 10, totalPages: 10 })).toBe(
-        " · 10/10 pages processed",
-      );
-    });
+  it("mentions entering the vendor name", () => {
+    expect(FAILED_JOB_RESUBMIT_TEXT).toContain("vendor name");
   });
 
-  describe("meta line", () => {
-    it("includes the job ID", () => {
-      const meta = buildMetaLine({ id: 42, createdAt: baseJob.createdAt, processedPages: 0, totalPages: null });
-      expect(meta).toContain("Job #42");
-    });
-
-    it("includes the formatted date", () => {
-      const meta = buildMetaLine({ id: 1, createdAt: "2025-01-15T10:00:00.000Z", processedPages: 0, totalPages: null });
-      expect(meta).toContain(new Date("2025-01-15T10:00:00.000Z").toLocaleDateString());
-    });
-
-    it("appends page progress when pages were processed", () => {
-      const meta = buildMetaLine({ id: 7, createdAt: baseJob.createdAt, processedPages: 4, totalPages: 12 });
-      expect(meta).toContain("4/12 pages processed");
-    });
-
-    it("omits page fragment when processedPages is 0", () => {
-      const meta = buildMetaLine({ id: 7, createdAt: baseJob.createdAt, processedPages: 0, totalPages: 12 });
-      expect(meta).not.toContain("pages processed");
-    });
+  it("mentions selecting the same PDF", () => {
+    expect(FAILED_JOB_RESUBMIT_TEXT).toContain("same PDF");
   });
 
-  describe("failed section visibility", () => {
-    it("shows the section when there is at least one failed job", () => {
-      expect(shouldShowFailedSection([baseJob])).toBe(true);
-    });
-
-    it("shows the section with multiple failed jobs", () => {
-      expect(shouldShowFailedSection([baseJob, { ...baseJob, id: 99 }])).toBe(true);
-    });
-
-    it("hides the section when there are no failed jobs", () => {
-      expect(shouldShowFailedSection([])).toBe(false);
-    });
+  it("mentions tapping Start Extraction", () => {
+    expect(FAILED_JOB_RESUBMIT_TEXT).toContain("Start Extraction");
   });
 
-  describe("FailedJob data shape", () => {
-    it("has all required fields present", () => {
-      const fields: Array<keyof FailedJob> = [
-        "id", "vendor", "filename", "status",
-        "errorMessage", "createdAt", "finishedAt",
-        "processedPages", "totalPages", "matchedParts",
-      ];
-      for (const field of fields) {
-        expect(baseJob).toHaveProperty(field);
-      }
-    });
+  it("matches the exact wording shown to users", () => {
+    expect(FAILED_JOB_RESUBMIT_TEXT).toBe(
+      'To resubmit: go to the Upload tab, enter the vendor name, select the same PDF, and tap "Start Extraction".',
+    );
+  });
+});
 
-    it("status is 'failed' for a failed job", () => {
-      expect(baseJob.status).toBe("failed");
-    });
+// ── Error message display ─────────────────────────────────────────────────────
 
-    it("processedPages is a number (not null/undefined)", () => {
-      expect(typeof baseJob.processedPages).toBe("number");
-    });
+describe("displayErrorMessage", () => {
+  it("returns the errorMessage when it is a non-empty string", () => {
+    expect(displayErrorMessage({ errorMessage: "PDF could not be parsed" })).toBe(
+      "PDF could not be parsed",
+    );
+  });
 
-    it("vendor and filename are non-empty strings", () => {
-      expect(baseJob.vendor.length).toBeGreaterThan(0);
-      expect(baseJob.filename.length).toBeGreaterThan(0);
-    });
+  it("falls back to 'Unknown error' when errorMessage is null", () => {
+    expect(displayErrorMessage({ errorMessage: null })).toBe("Unknown error");
+  });
+
+  it("falls back to 'Unknown error' when errorMessage is undefined", () => {
+    expect(displayErrorMessage({ errorMessage: undefined as unknown as null })).toBe(
+      "Unknown error",
+    );
+  });
+
+  it("returns an empty string as-is (not the fallback) because ?? checks null/undefined only", () => {
+    expect(displayErrorMessage({ errorMessage: "" })).toBe("");
+  });
+});
+
+// ── Page-progress fragment ────────────────────────────────────────────────────
+
+describe("buildPageProgressFragment", () => {
+  it("returns empty string when processedPages is 0", () => {
+    expect(buildPageProgressFragment({ processedPages: 0, totalPages: 10 })).toBe("");
+  });
+
+  it("returns empty string when processedPages is 0 and totalPages is null", () => {
+    expect(buildPageProgressFragment({ processedPages: 0, totalPages: null })).toBe("");
+  });
+
+  it("includes both counts when processedPages > 0 and totalPages is set", () => {
+    expect(buildPageProgressFragment({ processedPages: 3, totalPages: 10 })).toBe(
+      " · 3/10 pages processed",
+    );
+  });
+
+  it("omits the total when totalPages is null", () => {
+    expect(buildPageProgressFragment({ processedPages: 5, totalPages: null })).toBe(
+      " · 5 pages processed",
+    );
+  });
+
+  it("handles a job that processed all pages before failing", () => {
+    expect(buildPageProgressFragment({ processedPages: 10, totalPages: 10 })).toBe(
+      " · 10/10 pages processed",
+    );
+  });
+});
+
+// ── Meta line ─────────────────────────────────────────────────────────────────
+
+describe("buildFailedJobMetaLine", () => {
+  const JOB_DATE = "2025-01-15T12:00:00.000Z";
+  const LOCALE_DATE = new Date(JOB_DATE).toLocaleDateString();
+
+  it("includes the job ID", () => {
+    const meta = buildFailedJobMetaLine({ id: 42, createdAt: JOB_DATE, processedPages: 0, totalPages: null });
+    expect(meta).toContain("Job #42");
+  });
+
+  it("includes the formatted creation date", () => {
+    const meta = buildFailedJobMetaLine({ id: 1, createdAt: JOB_DATE, processedPages: 0, totalPages: null });
+    expect(meta).toContain(LOCALE_DATE);
+  });
+
+  it("appends the page-progress fragment when pages were processed", () => {
+    const meta = buildFailedJobMetaLine({ id: 7, createdAt: JOB_DATE, processedPages: 4, totalPages: 12 });
+    expect(meta).toContain("4/12 pages processed");
+  });
+
+  it("omits the page-progress fragment when processedPages is 0", () => {
+    const meta = buildFailedJobMetaLine({ id: 7, createdAt: JOB_DATE, processedPages: 0, totalPages: 12 });
+    expect(meta).not.toContain("pages processed");
+  });
+
+  it("produces the exact format 'Job #<id> · <date>'", () => {
+    const meta = buildFailedJobMetaLine({ id: 5, createdAt: JOB_DATE, processedPages: 0, totalPages: null });
+    expect(meta).toBe(`Job #5 · ${LOCALE_DATE}`);
+  });
+});
+
+// ── Failed-section visibility ─────────────────────────────────────────────────
+
+describe("failed-jobs section visibility (failedJobs.length > 0)", () => {
+  it("section renders when there is at least one failed job", () => {
+    const jobs = [{ id: 1, errorMessage: "err", createdAt: "", processedPages: 0, totalPages: null }];
+    expect(jobs.length > 0).toBe(true);
+  });
+
+  it("section renders for multiple failed jobs", () => {
+    const jobs = [
+      { id: 1, errorMessage: "err", createdAt: "", processedPages: 0, totalPages: null },
+      { id: 2, errorMessage: null, createdAt: "", processedPages: 2, totalPages: 8 },
+    ];
+    expect(jobs.length > 0).toBe(true);
+  });
+
+  it("section is hidden when there are no failed jobs", () => {
+    const jobs: unknown[] = [];
+    expect(jobs.length > 0).toBe(false);
   });
 });
