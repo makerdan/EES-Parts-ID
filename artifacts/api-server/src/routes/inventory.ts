@@ -193,7 +193,6 @@ router.post("/search", async (req, res) => {
 
     // Build category regex for SQL pre-filter (non-uncategorized categories)
     const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapeSql  = (s: string) => s.replace(/'/g, "''");
     const catSqlRegex = (!isCategoryUncategorized && categoryKeywords.length > 0)
       ? categoryKeywords.map(escapeRegex).join("|")
       : null;
@@ -209,7 +208,7 @@ router.post("/search", async (req, res) => {
       const catItems = await db
         .select()
         .from(inventoryTable)
-        .where(sql.raw(`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* '${escapeSql(catSqlRegex)}'`))
+        .where(sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex}`)
         .orderBy(inventoryTable.vendor, inventoryTable.catalog)
         .limit(200);
       return void res.json({
