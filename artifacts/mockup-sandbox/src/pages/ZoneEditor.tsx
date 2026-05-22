@@ -32,7 +32,7 @@ const svgInnerContent = warehouseMapRaw
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SVG_W = 3592.55;
 const SVG_H = 2457.41;
-const HANDLE_PX = 10; // handle visual size in screen pixels
+const HANDLE_PX = 6; // handle visual size in screen pixels
 const MIN_ZONE_PX = 8; // minimum zone size in screen pixels before it's discarded
 const API_BASE = `${window.location.origin}/api`;
 const INITIAL_SCALE = 0.18; // start zoomed out to show whole floor plan
