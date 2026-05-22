@@ -19,6 +19,8 @@ interface ResultCardProps {
   onEditBarcodes?: (item: InventoryItem) => void;
   /** Admin-only: opens the full part details editor. */
   onEditItem?: (item: InventoryItem) => void;
+  /** Admin-only: navigates to the dedicated Edit Details screen. */
+  onEditDetails?: (item: InventoryItem) => void;
   /** Navigate to warehouse map and open this part's zone. */
   onShowOnMap?: (item: InventoryItem) => void;
   rank: number;
@@ -81,7 +83,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, onShowOnMap, rank, fontScale = 1.0 }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, onEditDetails, onShowOnMap, rank, fontScale = 1.0 }: ResultCardProps) {
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
@@ -285,6 +287,18 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
               </View>
             ) : null}
 
+            {/* Edit Details button — admin-only, bottom of expanded card */}
+            {onEditDetails ? (
+              <Pressable
+                onPress={(e) => { e.stopPropagation?.(); onEditDetails(item); }}
+                style={[cardStyles.editDetailsBtn, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "55" }]}
+              >
+                <Text style={[cardStyles.editDetailsBtnText, { color: colors.primary }]}>
+                  ✏️ Edit Details
+                </Text>
+              </Pressable>
+            ) : null}
+
             {/* Last enriched */}
             {item.enrichedAt ? (
               <Text style={[cardStyles.enrichedAt, { color: colors.mutedForeground }]}>
@@ -396,6 +410,15 @@ const cardStyles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   editBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  editDetailsBtn: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: "center",
+  },
+  editDetailsBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   enrichedAt: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
   moreText: { fontSize: 12, fontFamily: "Inter_400Regular", alignSelf: "center", marginBottom: 6 },
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },

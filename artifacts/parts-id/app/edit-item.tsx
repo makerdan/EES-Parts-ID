@@ -43,6 +43,12 @@ export default function EditItemScreen() {
     catch { return null; }
   })();
 
+  // Admin guard — redirect non-admins back immediately
+  useEffect(() => {
+    if (!adminToken) { router.replace("/(tabs)"); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken]);
+
   const [description, setDescription] = useState(item?.description ?? "");
   const [bins, setBins] = useState<string[]>(item?.binLocations ?? []);
   const [newBin, setNewBin] = useState("");

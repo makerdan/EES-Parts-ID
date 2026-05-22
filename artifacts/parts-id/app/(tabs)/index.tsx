@@ -1052,6 +1052,7 @@ export default function SearchScreen() {
               onEditBins={isAdmin ? setBinEditItem : undefined}
               onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
               onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+              onEditDetails={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
               onShowOnMap={handleShowOnMap}
               rank={index}
               fontScale={textFontScale}
