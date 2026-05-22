@@ -32,8 +32,6 @@ import { secondaryBtnBase } from "@/styles/shared";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import { retryAsync } from "@/utils/retryAsync";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
-import { BrowseByAisle } from "@/components/BrowseByAisle";
-import { BrowseByCategory } from "@/components/BrowseByCategory";
 import { AddPartModal } from "@/components/AddPartModal";
 import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
 import {
@@ -121,13 +119,7 @@ export default function SearchScreen() {
   const colors = useColors();
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus } = useApp();
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
-  type SearchMode = "search" | "aisle" | "category";
-  const [mode, setMode] = useState<SearchMode>("search");
-  const [activeCategorySlug, setActiveCategorySlug] = useState<string | null>(null);
-  const [activeCategoryLabel, setActiveCategoryLabel] = useState<string | null>(null);
-  const [filterOverlayWidth, setFilterOverlayWidth] = useState<number | undefined>(undefined);
-  const activeCategorySlugRef = useRef<string | null>(null);
-  useEffect(() => { activeCategorySlugRef.current = activeCategorySlug; }, [activeCategorySlug]);
+  const [filterHeaderHeight, setFilterHeaderHeight] = useState(120);
   const [showAddPartModal, setShowAddPartModal] = useState(false);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
@@ -215,10 +207,6 @@ export default function SearchScreen() {
         searchTimeoutRef.current = null;
       }
       searchAbortedRef.current = false;
-      setMode("search");
-      setActiveCategorySlug(null);
-      setActiveCategoryLabel(null);
-      activeCategorySlugRef.current = null;
       setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
       setEditItem(null);
       setBinEditItem(null);
@@ -461,7 +449,7 @@ export default function SearchScreen() {
     setOfflineCacheType(null);
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    const body = buildSearchBody(filters, activeCategorySlugRef.current);
+    const body = buildSearchBody(filters, null);
     searchMutation.mutate({ data: body });
     // Fall back to offline if API hasn't responded within the timeout
     searchTimeoutRef.current = setTimeout(() => {
@@ -472,34 +460,10 @@ export default function SearchScreen() {
     }, SEARCH_TIMEOUT_MS);
   };
 
-  const handleCategorySelect = useCallback((slug: string, label: string) => {
-    setMode("search");
-    setActiveCategorySlug(slug);
-    setActiveCategoryLabel(label);
-    activeCategorySlugRef.current = slug;
-    setOfflineResults(null);
-    setIsOffline(false);
-    setOfflineCacheType(null);
-    searchAbortedRef.current = false;
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    const body = buildSearchBody(filtersRef.current, slug);
-    searchMutation.mutate({ data: body });
-    searchTimeoutRef.current = setTimeout(() => {
-      searchTimeoutRef.current = null;
-      searchAbortedRef.current = true;
-      searchMutation.reset();
-      runOfflineFallback();
-    }, SEARCH_TIMEOUT_MS);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchMutation, runOfflineFallback]);
-
   const handleClear = () => {
     if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
     searchAbortedRef.current = false;
     setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settings.defaultConfidenceThreshold });
-    setActiveCategorySlug(null);
-    setActiveCategoryLabel(null);
-    activeCategorySlugRef.current = null;
     searchMutation.reset();
     setOfflineResults(null);
     setIsOffline(false);
@@ -823,8 +787,6 @@ export default function SearchScreen() {
         </View>
       </Modal>
 
-      {mode === "search" ? (
-        <>
       {/* Offline banner */}
       {isOffline ? (
         <View style={[styles.offlineBanner, { backgroundColor: colors.warning + "15", borderBottomColor: colors.warning + "44" }]}>
@@ -1040,53 +1002,18 @@ export default function SearchScreen() {
             />
           </View>
         )}
-        contentContainerStyle={[styles.listContent, { paddingTop: 120 }]}
+        contentContainerStyle={[styles.listContent, { paddingTop: filterHeaderHeight + 8 }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
       />
 
-        {/* 3-mode toggle + Floating filter overlay — stacked above results */}
-        <View style={styles.filterOverlayWrapper}>
-          {/* Browse: [By Aisle] [By Category] */}
-          <View style={styles.modeToggleRow}>
-            <Text style={styles.modeToggleLabel}>Browse:</Text>
-            {([ 
-              { key: "aisle"    as SearchMode, label: "By Aisle",    icon: "map-pin" as const },
-              { key: "category" as SearchMode, label: "By Category", icon: "tag"     as const },
-            ]).map(m => (
-              <Pressable
-                key={m.key}
-                onPress={() => setMode(m.key)}
-                onLayout={m.key === "category" ? (e) => setFilterOverlayWidth(e.nativeEvent.layout.width) : undefined}
-                style={[
-                  styles.modeToggleBtn,
-                  {
-                    backgroundColor: mode === m.key ? colors.primary + "22" : colors.card,
-                    borderColor:     mode === m.key ? colors.primary + "88" : colors.border,
-                  },
-                ]}
-              >
-                <Feather name={m.icon} size={13} color="#000" />
-                <Text style={[styles.modeToggleBtnText, { color: "#000" }]}>
-                  {m.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-          {activeCategorySlug && activeCategoryLabel ? (
-            <Pressable
-              onPress={handleClear}
-              style={[styles.activeCategoryBadge, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-            >
-              <Feather name="tag" size={12} color={colors.primary} />
-              <Text style={[styles.activeCategoryBadgeText, { color: colors.primary }]} numberOfLines={1}>
-                {activeCategoryLabel}
-              </Text>
-              <Feather name="x" size={12} color={colors.primary} />
-            </Pressable>
-          ) : null}
-          <View style={[styles.filterOverlay, { backgroundColor: colors.card, alignSelf: "center", width: filterOverlayWidth }]}>
+        {/* Floating filter overlay — stacked above results */}
+        <View
+          style={styles.filterOverlayWrapper}
+          onLayout={(e) => setFilterHeaderHeight(e.nativeEvent.layout.height)}
+        >
+          <View style={[styles.filterOverlay, { backgroundColor: colors.card }]}>
             <FilterPanel
               values={filters}
               onChange={handleChange}
@@ -1095,27 +1022,6 @@ export default function SearchScreen() {
           </View>
         </View>
       </View>
-        </>
-      ) : mode === "aisle" ? (
-        <BrowseByAisle
-          inventory={fuseItemsRef.current}
-          isSyncing={syncProgress !== null}
-          shelfViewEnabled={settings.shelfViewEnabled}
-          fontScale={textFontScale}
-          onClose={() => setMode("search")}
-          onEditKeywords={setEditItem}
-          onEditBins={isAdmin ? setBinEditItem : undefined}
-          isAdmin={isAdmin}
-          adminToken={adminToken}
-          onPartAdded={() => syncAllInventory()}
-        />
-      ) : (
-        <BrowseByCategory
-          onSelectCategory={handleCategorySelect}
-          onClose={() => setMode("search")}
-          fontScale={textFontScale}
-        />
-      )}
 
       <AddPartModal
         visible={showAddPartModal}
@@ -1236,11 +1142,8 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     zIndex: 20,
-    flexDirection: "column",
-    alignItems: "center",
   },
   filterOverlay: {
-    alignSelf: "center",
     borderRadius: 12,
     padding: 16,
     shadowColor: "#000",
@@ -1315,41 +1218,4 @@ const styles = StyleSheet.create({
   textSizePicker: { flexDirection: "row", gap: 6, alignSelf: "center" },
   textSizeBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
   textSizeBtnLabel: { fontSize: 13, fontFamily: "Inter_700Bold" },
-  modeToggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 8,
-    alignSelf: "stretch",
-  },
-  modeToggleLabel: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#000", textDecorationLine: "underline" },
-  modeToggleBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
-  modeToggleBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
-  activeCategoryBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    alignSelf: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
-    borderWidth: 1,
-    marginBottom: 6,
-    maxWidth: "90%",
-  },
-  activeCategoryBadgeText: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    flexShrink: 1,
-  },
 });
