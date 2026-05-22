@@ -19,6 +19,7 @@ import type { SheetData } from "read-excel-file/universal";
 import { useListInventory } from "@workspace/api-client-react";
 
 import { useColors } from "@/hooks/useColors";
+import { AddPartModal } from "@/components/AddPartModal";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BinEditor } from "@/components/BinEditor";
 import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
@@ -355,6 +356,7 @@ export default function UploadScreen() {
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [tab, setTab] = useState<"import" | "enrichment">("import");
+  const [addPartVisible, setAddPartVisible] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -1048,7 +1050,23 @@ export default function UploadScreen() {
                 </Text>
               </Pressable>
             ))}
+            <Pressable
+              onPress={() => setAddPartVisible(true)}
+              style={[styles.tabItem, { borderBottomColor: "transparent" }]}
+            >
+              <Text style={[styles.tabLabel, { color: colors.primary }]}>+ Add Part</Text>
+            </Pressable>
           </View>
+
+          <AddPartModal
+            visible={addPartVisible}
+            adminToken={adminToken}
+            onClose={() => setAddPartVisible(false)}
+            onSuccess={() => {
+              setAddPartVisible(false);
+              inventoryQuery.refetch();
+            }}
+          />
 
           {tab === "import" ? (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
