@@ -71,7 +71,8 @@ type IxState =
   | { t: "draw"; x1: number; y1: number; x2: number; y2: number }
   | { t: "move"; id: number; ox: number; oy: number }
   | { t: "resize"; id: number; handle: Handle; ax: number; ay: number }
-  | { t: "rubber"; x1: number; y1: number; x2: number; y2: number; shift: boolean };
+  | { t: "rubber"; x1: number; y1: number; x2: number; y2: number; shift: boolean }
+  | { t: "multiMove"; startX: number; startY: number };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function screenToSvg(
@@ -137,8 +138,12 @@ export function ZoneEditor() {
   const [rubberRect, setRubberRect] = useState<{
     x: number; y: number; w: number; h: number;
   } | null>(null);
-  // dragZone: live zone position during move/resize
+  // dragZone: live zone position during move/resize (single-select)
   const [dragZone, setDragZone] = useState<Zone | null>(null);
+  // multiDragDelta: live offset applied to all selected zones during multi-move
+  const [multiDragDelta, setMultiDragDelta] = useState<Pt | null>(null);
+  // Original positions of every selected zone at the start of a multi-move drag
+  const multiDragOriginsRef = useRef<Map<number, Pt>>(new Map());
   const [form, setForm] = useState<FormState>({
     aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0,
   });
@@ -341,6 +346,46 @@ export function ZoneEditor() {
     }
   };
 
+  const handleMultiDuplicate = async () => {
+    if (selectedZoneList.length === 0) return;
+    setSaving(true);
+    try {
+      const results = await Promise.all(
+        selectedZoneList.map((z) =>
+          fetch(`${API_BASE}/warehouse-zones`, {
+            method: "POST",
+            headers: headers(),
+            body: JSON.stringify({
+              aisleId: z.aisleId,
+              label: z.label,
+              sectionParity: z.sectionParity,
+              isInventory: z.isInventory,
+              sortOrder: z.sortOrder,
+              svgX: z.svgX,
+              svgY: z.svgY + z.svgHeight + 4,
+              svgWidth: z.svgWidth,
+              svgHeight: z.svgHeight,
+            }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({})) as { error?: string };
+              throw new Error(err.error ?? `HTTP ${res.status}`);
+            }
+            return res.json() as Promise<{ zone: Zone }>;
+          }),
+        ),
+      );
+      const newIds = new Set(results.map((r) => r.zone.id));
+      toast.success(`Duplicated ${newIds.size} zone${newIds.size !== 1 ? "s" : ""} — drag to reposition`);
+      setSelectedIds(newIds);
+      await fetchZones();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleMultiSave = async (updates: Partial<Zone>) => {
     setMultiSaving(true);
     try {
@@ -471,6 +516,12 @@ export function ZoneEditor() {
         const updated = { ...base, ...r };
         dragZoneRef.current = updated;
         setDragZone(updated);
+        return;
+      }
+
+      if (state.t === "multiMove") {
+        const delta = { x: p.x - state.startX, y: p.y - state.startY };
+        setMultiDragDelta(delta);
       }
     };
 
@@ -546,7 +597,41 @@ export function ZoneEditor() {
         } catch (err) {
           toast.error(err instanceof Error ? err.message : String(err));
         }
+        return;
       }
+
+      if (state.t === "multiMove") {
+        const origins = multiDragOriginsRef.current;
+        // Only save if there was actual movement
+        const dx = e.clientX;
+        void dx; // used via getSvgPt below
+        const currentDelta = (() => {
+          if (!svgRef.current) return null;
+          const rect = svgRef.current.getBoundingClientRect();
+          const p = screenToSvg(e.clientX, e.clientY, rect, tfRef.current);
+          return { x: p.x - state.startX, y: p.y - state.startY };
+        })();
+        setMultiDragDelta(null);
+        if (!currentDelta || (Math.abs(currentDelta.x) < 0.5 && Math.abs(currentDelta.y) < 0.5)) return;
+        try {
+          await Promise.all(
+            [...origins.entries()].map(([id, orig]) =>
+              patchZone(id, { svgX: orig.x + currentDelta.x, svgY: orig.y + currentDelta.y }),
+            ),
+          );
+          toast.success(`Moved ${origins.size} zone${origins.size !== 1 ? "s" : ""}`);
+          await fetch(`${API_BASE}/warehouse-zones`)
+            .then((r) => r.json())
+            .then((d) => { setZones(d.zones ?? []); });
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : String(err));
+          await fetch(`${API_BASE}/warehouse-zones`)
+            .then((r) => r.json())
+            .then((d) => { setZones(d.zones ?? []); });
+        }
+        return;
+      }
+
       void e; // suppress unused warning
     };
 
@@ -598,6 +683,23 @@ export function ZoneEditor() {
       return; // don't start move for shift-clicks
     }
 
+    // If clicking a zone that's already part of the multi-selection, start
+    // a multi-move drag so all selected zones move together.
+    if (selectedIdsRef.current.size > 1 && selectedIdsRef.current.has(zone.id)) {
+      const p = getSvgPt(e.clientX, e.clientY);
+      // Snapshot the current positions of all selected zones
+      const origins = new Map<number, Pt>();
+      for (const z of zonesRef.current) {
+        if (selectedIdsRef.current.has(z.id)) {
+          origins.set(z.id, { x: z.svgX, y: z.svgY });
+        }
+      }
+      multiDragOriginsRef.current = origins;
+      setMultiDragDelta(null);
+      ixRef.current = { t: "multiMove", startX: p.x, startY: p.y };
+      return;
+    }
+
     // Plain click: single-select and start move
     setSelectedIds(new Set([zone.id]));
     setPendingRect(null);
@@ -647,10 +749,19 @@ export function ZoneEditor() {
   const hs = HANDLE_PX / tf.s; // handle size in SVG user units (constant screen pixels)
   const sw = 2.5 / tf.s; // stroke width in SVG user units
 
-  // Merge drag-modified zone into the zone list for rendering
-  const displayZones = dragZone
-    ? zones.map((z) => (z.id === dragZone.id ? dragZone : z))
-    : zones;
+  // Merge drag-modified zone(s) into the zone list for rendering
+  const displayZones = useMemo(() => {
+    if (dragZone) return zones.map((z) => (z.id === dragZone.id ? dragZone : z));
+    if (multiDragDelta) {
+      return zones.map((z) => {
+        if (!selectedIds.has(z.id)) return z;
+        const orig = multiDragOriginsRef.current.get(z.id);
+        if (!orig) return z;
+        return { ...z, svgX: orig.x + multiDragDelta.x, svgY: orig.y + multiDragDelta.y };
+      });
+    }
+    return zones;
+  }, [zones, dragZone, multiDragDelta, selectedIds]);
 
   // Mixed-value indicators for multi-select form
   const multiAisleIds = useMemo(
@@ -683,7 +794,7 @@ export function ZoneEditor() {
         </div>
         <span style={styles.hint}>
           scroll-zoom · {mode === "pan"
-            ? "drag to pan · Shift+drag to select · Shift+click to multi-select"
+            ? "drag to pan · Shift+drag to select · Shift+click to multi-select · drag selected to move all"
             : "drag to draw"}
           {" "}· {(tf.s * 100).toFixed(0)}%
         </span>
@@ -736,7 +847,7 @@ export function ZoneEditor() {
                         zone.isInventory ? undefined : `${12 / tf.s} ${6 / tf.s}`
                       }
                       onMouseDown={(e) => onZoneMouseDown(e, zone)}
-                      style={{ cursor: "pointer" }}
+                      style={{ cursor: sel && selectedIds.size > 1 ? "move" : "pointer" }}
                     />
                     <text
                       x={zone.svgX + zone.svgWidth / 2}
@@ -922,6 +1033,13 @@ export function ZoneEditor() {
                     }}
                   >
                     {multiSaving ? "Saving…" : `Save ${selectedIds.size} zones`}
+                  </Btn>
+                  <Btn
+                    color="#0070ff"
+                    disabled={saving}
+                    onClick={() => void handleMultiDuplicate()}
+                  >
+                    {saving ? "Duplicating…" : `Duplicate ${selectedIds.size}`}
                   </Btn>
                   <Btn color="#6b7280" onClick={() => setSelectedIds(new Set())}>
                     Clear
