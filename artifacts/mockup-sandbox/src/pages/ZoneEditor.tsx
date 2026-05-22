@@ -842,7 +842,7 @@ export function ZoneEditor() {
                       height={zone.svgHeight}
                       fill={fill}
                       stroke={stroke}
-                      strokeWidth={sel ? sw * 2 : sw}
+                      strokeWidth={sel ? sw * 1.5 : sw}
                       strokeDasharray={
                         zone.isInventory ? undefined : `${12 / tf.s} ${6 / tf.s}`
                       }
