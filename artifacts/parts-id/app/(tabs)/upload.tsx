@@ -996,7 +996,7 @@ export default function UploadScreen() {
           </View>
           {isAdmin ? (
             <Pressable onPress={logoutAdmin} style={[styles.lockBtn, { borderColor: colors.border }]}>
-              <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>🔓 Lock</Text>
+              <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>🔓 Log Out</Text>
             </Pressable>
           ) : null}
         </View>
