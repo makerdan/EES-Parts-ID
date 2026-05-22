@@ -54,15 +54,24 @@ const TEST_COLORS: FailedJobsSectionColors = {
   foreground: "#0f172a",
   mutedForeground: "#64748b",
   primary: "#2563eb",
+  muted: "#f1f5f9",
+  border: "#e2e8f0",
 };
 
-function renderSection(jobs: FailedJob[], dismissingId: number | null = null, resumingId: number | null = null) {
+function renderSection(
+  jobs: FailedJob[],
+  dismissingId: number | null = null,
+  resumingId: number | null = null,
+  resumeProgress: Record<number, import("../app/catalog-review").ResumeProgress> = {},
+) {
   const el = React.createElement(FailedJobsSection, {
     failedJobs: jobs,
     dismissingId,
     resumingId,
+    resumeProgress,
     onDismiss: jest.fn(),
     onResume: jest.fn(),
+    onReviewChanges: jest.fn(),
     colors: TEST_COLORS,
   });
   const texts = collectText(el);
@@ -87,13 +96,15 @@ const MOCK_JOB: FailedJob = {
 // ── Section visibility ────────────────────────────────────────────────────────
 
 describe("FailedJobsSection — renders nothing when there are no failed jobs", () => {
-  it("returns null when failedJobs is empty", () => {
+  it("returns null when failedJobs is empty and no resume progress", () => {
     const el = React.createElement(FailedJobsSection, {
       failedJobs: [],
       dismissingId: null,
       resumingId: null,
+      resumeProgress: {},
       onDismiss: jest.fn(),
       onResume: jest.fn(),
+      onReviewChanges: jest.fn(),
       colors: TEST_COLORS,
     });
     const result = (FailedJobsSection as (p: typeof el.props) => React.ReactNode)(el.props);
