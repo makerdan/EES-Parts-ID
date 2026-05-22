@@ -999,7 +999,7 @@ export function ZoneEditor() {
         {/* ── Sidebar ───────────────────────────────────────────────────────── */}
         <div style={styles.sidebar}>
           {/* Context-sensitive form area */}
-          <SideSection style={{ flex: "0 0 auto" }}>
+          <SideSection style={{ flex: "0 1 auto", overflowY: "auto", minHeight: 0 }}>
             {pendingRect ? (
               <>
                 <div style={styles.formTitle}>New Zone</div>
@@ -1457,6 +1457,7 @@ const styles = {
   },
   sidebar: {
     width: 288,
+    flexShrink: 0,
     display: "flex",
     flexDirection: "column" as const,
     borderLeft: "1px solid #e0e0e0",
