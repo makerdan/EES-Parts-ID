@@ -96,7 +96,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   const [isError, setIsError] = useState(false);
   const [history, setHistory] = useState<Array<{ q: string; a: string }>>([]);
   const [inputCollapsed, setInputCollapsed] = useState(false);
-  const [activeBreakerChip, setActiveBreakerChip] = useState<string | null>(null);
+  const [activeBreakerChips, setActiveBreakerChips] = useState<string[]>([]);
 
   const scrollRef = useRef<ScrollView>(null);
   const pulse = useRef(new Animated.Value(1)).current;
@@ -215,7 +215,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
     setIsError(false);
     setHistory([]);
     setInputCollapsed(false);
-    setActiveBreakerChip(null);
+    setActiveBreakerChips([]);
     failedChipRef.current = null;
   };
 
@@ -399,39 +399,48 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                 {/* Breaker Attributes — wrapping pill row with inline expansion */}
                 <Text style={[emptyStyles.sectionLabel, { color: colors.mutedForeground, marginTop: 16 }]}>BREAKER ATTRIBUTES</Text>
                 <View style={emptyStyles.chipRow}>
-                  {BREAKER_ATTRIBUTE_CHIPS.map(({ label }) => (
-                    <Pressable
-                      key={label}
-                      onPress={() => setActiveBreakerChip(c => c === label ? null : label)}
-                      style={[
-                        emptyStyles.chip,
-                        {
-                          backgroundColor: activeBreakerChip === label ? colors.primary : colors.muted,
-                          borderColor: activeBreakerChip === label ? colors.primary : colors.border,
-                        },
-                      ]}
-                    >
-                      <Text style={[
-                        emptyStyles.chipText,
-                        { color: activeBreakerChip === label ? colors.primaryForeground : colors.foreground },
-                      ]}>
-                        {label}
-                      </Text>
-                    </Pressable>
-                  ))}
+                  {BREAKER_ATTRIBUTE_CHIPS.map(({ label }) => {
+                    const isActive = activeBreakerChips.includes(label);
+                    return (
+                      <Pressable
+                        key={label}
+                        onPress={() => setActiveBreakerChips(prev =>
+                          prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label]
+                        )}
+                        style={[
+                          emptyStyles.chip,
+                          {
+                            backgroundColor: isActive ? colors.primary : colors.muted,
+                            borderColor: isActive ? colors.primary : colors.border,
+                          },
+                        ]}
+                      >
+                        <Text style={[
+                          emptyStyles.chipText,
+                          { color: isActive ? colors.primaryForeground : colors.foreground },
+                        ]}>
+                          {label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
                 </View>
 
-                {activeBreakerChip ? (
-                  <View style={[breakerStyles.answerBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                    <Text style={[breakerStyles.answerLabel, { color: colors.mutedForeground }]}>
-                      {activeBreakerChip}
-                    </Text>
-                    <Text style={{ fontSize: 14, lineHeight: 22 }}>
-                      {renderAnswer(
-                        BREAKER_ATTRIBUTE_CHIPS.find(c => c.label === activeBreakerChip)?.answer ?? ""
-                      )}
-                    </Text>
-                  </View>
+                {activeBreakerChips.length > 0 ? (
+                  <>
+                    {activeBreakerChips.map(label => (
+                      <View key={label} style={[breakerStyles.answerBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                        <Text style={[breakerStyles.answerLabel, { color: colors.mutedForeground }]}>
+                          {label}
+                        </Text>
+                        <Text style={{ fontSize: 14, lineHeight: 22 }}>
+                          {renderAnswer(
+                            BREAKER_ATTRIBUTE_CHIPS.find(c => c.label === label)?.answer ?? ""
+                          )}
+                        </Text>
+                      </View>
+                    ))}
+                  </>
                 ) : null}
               </View>
             ) : null}
