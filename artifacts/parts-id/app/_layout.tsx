@@ -25,7 +25,7 @@ SplashScreen.preventAutoHideAsync();
 // Configure API base URL from env
 const domain = process.env.EXPO_PUBLIC_DOMAIN;
 if (domain) {
-  setBaseUrl(`https://${domain}/api`);
+  setBaseUrl(`https://${domain}`);
 }
 
 // On web: inject the Feather @font-face rule directly into expo-font's own
