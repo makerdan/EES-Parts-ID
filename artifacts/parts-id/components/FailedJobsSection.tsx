@@ -6,12 +6,14 @@
  * mounting the full screen (which depends on routing, auth, and other context).
  *
  * Props mirror the slice of state the parent already owns:
- *   failedJobs   — jobs with status "failed" and dismissed=false
- *   dismissingId — id of the job currently being dismissed (shows spinner text)
- *   resumingId   — id of the job currently being resumed (shows spinner)
- *   onDismiss    — callback when the Dismiss button is pressed
- *   onResume     — callback when the Resume button is pressed
- *   colors       — theme tokens forwarded from useColors()
+ *   failedJobs      — jobs with status "failed" and dismissed=false
+ *   dismissingId    — id of the job currently being dismissed (shows spinner text)
+ *   resumingId      — id of the job currently being resumed (shows spinner)
+ *   resumeProgress  — live progress keyed by jobId while a resume is running
+ *   onDismiss       — callback when the Dismiss button is pressed
+ *   onResume        — callback when the Resume button is pressed
+ *   onReviewChanges — callback when "Review changes" is pressed on a completed resume
+ *   colors          — theme tokens forwarded from useColors()
  */
 
 import React from "react";
@@ -20,6 +22,7 @@ import {
   displayErrorMessage,
   buildFailedJobMetaLine,
 } from "@/utils/failedJobCard";
+import type { ResumeProgress } from "@/app/catalog-review";
 
 export interface FailedJob {
   id: number;
@@ -40,40 +43,115 @@ export interface FailedJobsSectionColors {
   foreground: string;
   mutedForeground: string;
   primary: string;
+  muted: string;
+  border: string;
 }
 
 interface Props {
   failedJobs: FailedJob[];
   dismissingId: number | null;
   resumingId: number | null;
+  resumeProgress: Record<number, ResumeProgress>;
   onDismiss: (id: number) => void;
   onResume: (id: number) => void;
+  onReviewChanges: (id: number) => void;
   colors: FailedJobsSectionColors;
 }
 
-export function FailedJobsSection({ failedJobs, dismissingId, resumingId, onDismiss, onResume, colors }: Props) {
-  if (failedJobs.length === 0) return null;
+export function FailedJobsSection({
+  failedJobs,
+  dismissingId,
+  resumingId,
+  resumeProgress,
+  onDismiss,
+  onResume,
+  onReviewChanges,
+  colors,
+}: Props) {
+  // Jobs shown as in-progress or done come from resumeProgress entries not
+  // yet removed from failedJobs (i.e., still failed status in the list) plus
+  // any "done" progress entries whose job was already removed.
+  const inProgressIds = new Set(
+    Object.entries(resumeProgress)
+      .filter(([, p]) => p.status !== "failed")
+      .map(([id]) => Number(id)),
+  );
+
+  // Count only jobs that are truly still in the failed state (not resuming)
+  const stillFailedJobs = failedJobs.filter((j) => !inProgressIds.has(j.id));
+
+  // Collect in-progress / done cards: jobs that have a resumeProgress entry
+  // with status != "failed". These may still be in failedJobs (processing) or
+  // may have been removed (done). We render them from the original failedJobs
+  // list while progress is live, or solely from resumeProgress when done.
+  const resumingJobs = failedJobs.filter((j) => inProgressIds.has(j.id));
+
+  // Also synthesise "done" cards for jobs removed from failedJobs after finishing
+  const doneOnlyIds = Object.keys(resumeProgress)
+    .map(Number)
+    .filter(
+      (id) =>
+        resumeProgress[id].status === "done" &&
+        !failedJobs.find((j) => j.id === id),
+    );
+
+  const hasSomething =
+    stillFailedJobs.length > 0 || resumingJobs.length > 0 || doneOnlyIds.length > 0;
+
+  if (!hasSomething) return null;
 
   return (
     <View style={s.section}>
-      <View
-        style={[
-          s.sectionHeader,
-          {
-            backgroundColor: colors.destructive + "18",
-            borderColor: colors.destructive + "44",
-          },
-        ]}
-      >
-        <Text style={[s.sectionTitle, { color: colors.destructive }]}>
-          {failedJobs.length} Failed Job{failedJobs.length !== 1 ? "s" : ""}
-        </Text>
-        <Text style={[s.sectionHint, { color: colors.mutedForeground }]}>
-          Tap Resume to continue from where it stopped, or go to the Upload tab to start fresh.
-        </Text>
-      </View>
+      {stillFailedJobs.length > 0 && (
+        <View
+          style={[
+            s.sectionHeader,
+            {
+              backgroundColor: colors.destructive + "18",
+              borderColor: colors.destructive + "44",
+            },
+          ]}
+        >
+          <Text style={[s.sectionTitle, { color: colors.destructive }]}>
+            {stillFailedJobs.length} Failed Job{stillFailedJobs.length !== 1 ? "s" : ""}
+          </Text>
+          <Text style={[s.sectionHint, { color: colors.mutedForeground }]}>
+            Tap Resume to continue from where it stopped, or go to the Upload tab to start fresh.
+          </Text>
+        </View>
+      )}
 
-      {failedJobs.map((job) => (
+      {/* In-progress resume cards */}
+      {resumingJobs.map((job) => {
+        const progress = resumeProgress[job.id];
+        return (
+          <ResumeProgressCard
+            key={`resume-${job.id}`}
+            job={job}
+            progress={progress}
+            onReviewChanges={onReviewChanges}
+            colors={colors}
+          />
+        );
+      })}
+
+      {/* Done cards for jobs already removed from failedJobs */}
+      {doneOnlyIds.map((id) => {
+        const progress = resumeProgress[id];
+        return (
+          <ResumeProgressCard
+            key={`done-${id}`}
+            job={null}
+            jobId={id}
+            progress={progress}
+            onReviewChanges={onReviewChanges}
+            colors={colors}
+          />
+        );
+      })}
+
+      {/* Still-failed cards */}
+      {stillFailedJobs.map((job) => (
         <View
           key={job.id}
           style={[
@@ -154,6 +232,86 @@ export function FailedJobsSection({ failedJobs, dismissingId, resumingId, onDism
   );
 }
 
+interface ResumeProgressCardProps {
+  job: FailedJob | null;
+  jobId?: number;
+  progress: ResumeProgress;
+  onReviewChanges: (id: number) => void;
+  colors: FailedJobsSectionColors;
+}
+
+function ResumeProgressCard({ job, jobId, progress, onReviewChanges, colors }: ResumeProgressCardProps) {
+  const id = job?.id ?? jobId!;
+  const vendor = job?.vendor ?? "Unknown vendor";
+  const filename = job?.filename ?? "catalog.pdf";
+
+  const isDone = progress.status === "done";
+  const isUploading = progress.status === "uploading";
+  const pct =
+    progress.totalPages && progress.totalPages > 0
+      ? Math.min(100, Math.round((progress.processedPages / progress.totalPages) * 100))
+      : 0;
+
+  return (
+    <View
+      style={[
+        s.card,
+        {
+          backgroundColor: colors.card,
+          borderColor: isDone ? colors.primary + "55" : colors.primary + "33",
+        },
+      ]}
+    >
+      <View style={s.cardTop}>
+        <View style={s.cardIdent}>
+          <Text style={[s.cardVendor, { color: colors.foreground }]}>{vendor}</Text>
+          <Text style={[s.cardFile, { color: colors.mutedForeground }]} numberOfLines={1}>
+            {filename}
+          </Text>
+        </View>
+        <View style={[s.badge, { backgroundColor: isDone ? colors.primary + "22" : colors.primary + "18" }]}>
+          {!isDone && <ActivityIndicator size="small" color={colors.primary} style={s.badgeSpinner} />}
+          <Text style={[s.badgeText, { color: colors.primary }]}>
+            {isDone ? "Done" : isUploading ? "Starting…" : "Processing…"}
+          </Text>
+        </View>
+      </View>
+
+      {!isDone && (
+        <>
+          <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
+            <View
+              style={[
+                s.progressFill,
+                { width: pct > 0 ? `${pct}%` : "4%", backgroundColor: colors.primary },
+              ]}
+            />
+          </View>
+          <Text style={[s.progressText, { color: colors.mutedForeground }]}>
+            {isUploading || progress.totalPages == null
+              ? "Starting…"
+              : `${progress.processedPages} / ${progress.totalPages} pages — ${progress.matchedParts} parts matched`}
+          </Text>
+        </>
+      )}
+
+      {isDone && (
+        <>
+          <Text style={[s.progressText, { color: colors.mutedForeground }]}>
+            Done — {progress.matchedParts} part{progress.matchedParts !== 1 ? "s" : ""} updated across {progress.processedPages} pages
+          </Text>
+          <Pressable
+            onPress={() => onReviewChanges(id)}
+            style={[s.reviewBtn, { borderColor: colors.primary + "88" }]}
+          >
+            <Text style={[s.reviewBtnText, { color: colors.primary }]}>Review changes →</Text>
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   section: { paddingBottom: 4 },
   sectionHeader: {
@@ -183,7 +341,15 @@ const s = StyleSheet.create({
   cardIdent: { flex: 1, gap: 2 },
   cardVendor: { fontSize: 15, fontFamily: "Inter_700Bold" },
   cardFile: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 4,
+  },
+  badgeSpinner: { width: 12, height: 12 },
   badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   errorBox: { borderRadius: 8, borderWidth: 1, padding: 10, gap: 4 },
   errorLabel: {
@@ -217,4 +383,16 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
   },
   dismissBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  progressBar: { height: 8, borderRadius: 4, overflow: "hidden" },
+  progressFill: { height: "100%", borderRadius: 4 },
+  progressText: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  reviewBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    alignSelf: "flex-start",
+    alignItems: "center",
+  },
+  reviewBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
 });

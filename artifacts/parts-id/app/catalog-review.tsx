@@ -52,6 +52,14 @@ type FailedJob = {
   matchedParts: number;
 };
 
+export type ResumeProgress = {
+  status: "uploading" | "processing" | "done" | "failed";
+  processedPages: number;
+  totalPages: number | null;
+  matchedParts: number;
+  errorMessage: string | null;
+};
+
 type ReviewItem = {
   id: number;
   vendor: string;
@@ -86,6 +94,7 @@ export default function CatalogReviewScreen() {
   const [revertedIds, setRevertedIds] = useState<Set<number>>(new Set());
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const [resumingId, setResumingId] = useState<number | null>(null);
+  const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const resumePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const authHeaders: Record<string, string> = adminToken
@@ -203,8 +212,11 @@ export default function CatalogReviewScreen() {
         return;
       }
 
-      // Remove from failed list — job is now processing again
-      setFailedJobs((prev) => prev.filter((j) => j.id !== jobId));
+      // Mark job as in-progress (keep it visible with a progress card)
+      setResumeProgress((prev) => ({
+        ...prev,
+        [jobId]: { status: "uploading", processedPages: 0, totalPages: null, matchedParts: 0, errorMessage: null },
+      }));
 
       // Poll until the job finishes, then refresh the review list
       if (resumePollRef.current) clearInterval(resumePollRef.current);
@@ -212,11 +224,31 @@ export default function CatalogReviewScreen() {
         try {
           const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, { headers: authHeaders });
           if (!statusRes.ok) return;
-          const status = await statusRes.json() as { status: string };
-          if (status.status === "done" || status.status === "failed") {
+          const body = await statusRes.json() as {
+            status: string;
+            processedPages: number;
+            totalPages: number | null;
+            matchedParts: number;
+            errorMessage: string | null;
+          };
+          setResumeProgress((prev) => ({
+            ...prev,
+            [jobId]: {
+              status: (body.status === "pending" ? "uploading" : body.status) as ResumeProgress["status"],
+              processedPages: body.processedPages ?? 0,
+              totalPages: body.totalPages ?? null,
+              matchedParts: body.matchedParts ?? 0,
+              errorMessage: body.errorMessage ?? null,
+            },
+          }));
+          if (body.status === "done" || body.status === "failed") {
             clearInterval(resumePollRef.current!);
             resumePollRef.current = null;
             setResumingId(null);
+            if (body.status === "done") {
+              // Remove from the failed list now that the card shows "Review changes"
+              setFailedJobs((prev) => prev.filter((j) => j.id !== jobId));
+            }
             fetchItems();
           }
         } catch { /* silent */ }
@@ -384,7 +416,7 @@ export default function CatalogReviewScreen() {
             <Text style={[s.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
           </Pressable>
         </View>
-      ) : listData.length === 0 && failedJobs.length === 0 ? (
+      ) : listData.length === 0 && failedJobs.length === 0 && Object.keys(resumeProgress).length === 0 ? (
         <View style={s.center}>
           <Text style={[s.emptyTitle, { color: colors.foreground }]}>
             {revertedIds.size > 0 ? "All reverted" : "No items to review"}
@@ -418,8 +450,10 @@ export default function CatalogReviewScreen() {
                 failedJobs={failedJobs}
                 dismissingId={dismissingId}
                 resumingId={resumingId}
+                resumeProgress={resumeProgress}
                 onDismiss={handleDismiss}
                 onResume={handleResume}
+                onReviewChanges={(id) => router.push(`/catalog-review?jobId=${id}`)}
                 colors={colors}
               />
             }
