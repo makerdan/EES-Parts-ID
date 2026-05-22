@@ -211,10 +211,11 @@ export default function MapScreen() {
           {isAdmin && (
             <Pressable
               onPress={() => Linking.openURL(ZONE_EDITOR_URL)}
-              style={[styles.iconBtn, { borderColor: colors.border }]}
+              style={[styles.zoneEditorBtn, { backgroundColor: colors.primary }]}
               accessibilityLabel="Open Zone Editor"
             >
-              <Feather name="edit-2" size={15} color={colors.mutedForeground} />
+              <Feather name="edit-2" size={13} color="#fff" />
+              <Text style={styles.zoneEditorBtnText}>Zone Editor</Text>
             </Pressable>
           )}
         </View>
@@ -265,5 +266,18 @@ const styles = StyleSheet.create({
     padding: 7,
     alignItems: "center",
     justifyContent: "center",
+  },
+  zoneEditorBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  zoneEditorBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: "#fff",
   },
 });
