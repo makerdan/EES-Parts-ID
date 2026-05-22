@@ -747,7 +747,7 @@ export function ZoneEditor() {
 
   // ── Derived rendering values ─────────────────────────────────────────────────
   const hs = HANDLE_PX / tf.s; // handle size in SVG user units (constant screen pixels)
-  const sw = 2.5 / tf.s; // stroke width in SVG user units
+  const sw = 1.2 / tf.s; // stroke width in SVG user units
 
   // Merge drag-modified zone(s) into the zone list for rendering
   const displayZones = useMemo(() => {
