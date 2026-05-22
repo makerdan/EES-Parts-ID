@@ -53,7 +53,7 @@ interface Zone {
 
 interface Tf { x: number; y: number; s: number }
 interface Pt { x: number; y: number }
-type Handle = "nw" | "ne" | "sw" | "se";
+type Handle = "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
 type Mode = "pan" | "draw";
 
 interface FormState {
@@ -106,6 +106,11 @@ const ANCHOR: Record<Handle, (z: Zone) => Pt> = {
   ne: (z) => ({ x: z.svgX, y: z.svgY + z.svgHeight }),
   sw: (z) => ({ x: z.svgX + z.svgWidth, y: z.svgY }),
   se: (z) => ({ x: z.svgX, y: z.svgY }),
+  // Edge handles — ax/ay unused for edge resize; set to zone center as placeholder
+  n:  (z) => ({ x: z.svgX + z.svgWidth / 2, y: z.svgY + z.svgHeight }),
+  s:  (z) => ({ x: z.svgX + z.svgWidth / 2, y: z.svgY }),
+  e:  (z) => ({ x: z.svgX, y: z.svgY + z.svgHeight / 2 }),
+  w:  (z) => ({ x: z.svgX + z.svgWidth, y: z.svgY + z.svgHeight / 2 }),
 };
 
 const HANDLE_CURSOR: Record<Handle, string> = {
@@ -113,6 +118,10 @@ const HANDLE_CURSOR: Record<Handle, string> = {
   se: "nwse-resize",
   ne: "nesw-resize",
   sw: "nesw-resize",
+  n:  "ns-resize",
+  s:  "ns-resize",
+  e:  "ew-resize",
+  w:  "ew-resize",
 };
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -512,8 +521,25 @@ export function ZoneEditor() {
       if (state.t === "resize") {
         const base = zonesRef.current.find((z) => z.id === state.id);
         if (!base) return;
-        const r = normRect(state.ax, state.ay, p.x, p.y);
-        const updated = { ...base, ...r };
+        const minSvg = MIN_ZONE_PX / tfRef.current.s;
+        let updated: Zone;
+        const h = state.handle;
+        if (h === "n") {
+          const bottom = base.svgY + base.svgHeight;
+          const newY = Math.min(p.y, bottom - minSvg);
+          updated = { ...base, svgY: newY, svgHeight: bottom - newY };
+        } else if (h === "s") {
+          updated = { ...base, svgHeight: Math.max(minSvg, p.y - base.svgY) };
+        } else if (h === "e") {
+          updated = { ...base, svgWidth: Math.max(minSvg, p.x - base.svgX) };
+        } else if (h === "w") {
+          const right = base.svgX + base.svgWidth;
+          const newX = Math.min(p.x, right - minSvg);
+          updated = { ...base, svgX: newX, svgWidth: right - newX };
+        } else {
+          const r = normRect(state.ax, state.ay, p.x, p.y);
+          updated = { ...base, ...r };
+        }
         dragZoneRef.current = updated;
         setDragZone(updated);
         return;
@@ -869,6 +895,7 @@ export function ZoneEditor() {
                     {/* Corner handles (single-selected zone only) */}
                     {showHandles && (
                       <>
+                        {/* Corner handles */}
                         {(["nw", "ne", "sw", "se"] as Handle[]).map((h) => {
                           const hx = h.includes("e")
                             ? zone.svgX + zone.svgWidth
@@ -886,13 +913,31 @@ export function ZoneEditor() {
                               fill="#f59e0b"
                               stroke="#000"
                               strokeWidth={1.5 / tf.s}
-                              onMouseDown={(e) =>
-                                onHandleMouseDown(e, zone, h)
-                              }
+                              onMouseDown={(e) => onHandleMouseDown(e, zone, h)}
                               style={{ cursor: HANDLE_CURSOR[h] }}
                             />
                           );
                         })}
+                        {/* Edge handles — wider/taller bars to distinguish from corners */}
+                        {([
+                          { h: "n" as Handle, cx: zone.svgX + zone.svgWidth / 2, cy: zone.svgY,                  w: hs * 2.5, ht: hs },
+                          { h: "s" as Handle, cx: zone.svgX + zone.svgWidth / 2, cy: zone.svgY + zone.svgHeight, w: hs * 2.5, ht: hs },
+                          { h: "e" as Handle, cx: zone.svgX + zone.svgWidth,     cy: zone.svgY + zone.svgHeight / 2, w: hs, ht: hs * 2.5 },
+                          { h: "w" as Handle, cx: zone.svgX,                     cy: zone.svgY + zone.svgHeight / 2, w: hs, ht: hs * 2.5 },
+                        ]).map(({ h, cx, cy, w, ht }) => (
+                          <rect
+                            key={h}
+                            x={cx - w / 2}
+                            y={cy - ht / 2}
+                            width={w}
+                            height={ht}
+                            fill="#f59e0b"
+                            stroke="#000"
+                            strokeWidth={1.5 / tf.s}
+                            onMouseDown={(e) => onHandleMouseDown(e, zone, h)}
+                            style={{ cursor: HANDLE_CURSOR[h] }}
+                          />
+                        ))}
                       </>
                     )}
                   </g>
