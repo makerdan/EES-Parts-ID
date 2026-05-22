@@ -791,9 +791,7 @@ export default function SearchScreen() {
       {isOffline ? (
         <View style={[styles.offlineBanner, { backgroundColor: colors.warning + "15", borderBottomColor: colors.warning + "44" }]}>
           <Text style={[styles.offlineBannerText, { color: colors.warning }]}>
-            {offlineCacheType === "exact"
-              ? "Offline — showing cached results"
-              : `Offline — showing ${cachedCount} cached items via local search`}
+            Internet Offline—using local search
           </Text>
         </View>
       ) : null}
