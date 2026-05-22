@@ -1,0 +1,467 @@
+import React, { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import type { InventoryItem } from "@workspace/api-client-react";
+import {
+  useUpdateItemBins,
+  useUpdateItemBarcodes,
+  useUpdateItemKeywords,
+  getListInventoryQueryKey,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useColors } from "@/hooks/useColors";
+import { useApp } from "@/contexts/AppContext";
+
+const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+  : "http://localhost:8080/api";
+
+export default function EditItemScreen() {
+  const colors = useColors();
+  const router = useRouter();
+  const { adminToken } = useApp();
+  const { item: itemParam } = useLocalSearchParams<{ item: string }>();
+  const queryClient = useQueryClient();
+
+  const updateBinsMutation = useUpdateItemBins();
+  const updateBarcodesMutation = useUpdateItemBarcodes();
+  const updateKeywordsMutation = useUpdateItemKeywords();
+
+  const item: InventoryItem | null = (() => {
+    try { return itemParam ? (JSON.parse(itemParam) as InventoryItem) : null; }
+    catch { return null; }
+  })();
+
+  const [description, setDescription] = useState(item?.description ?? "");
+  const [bins, setBins] = useState<string[]>(item?.binLocations ?? []);
+  const [newBin, setNewBin] = useState("");
+  const [barcodes, setBarcodes] = useState<string[]>(item?.barcodes ?? []);
+  const [newBarcode, setNewBarcode] = useState("");
+  const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
+  const [newKeyword, setNewKeyword] = useState("");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const itemRef = useRef(item);
+
+  const addBin = () => {
+    const t = newBin.trim();
+    if (!t) { setNewBin(""); return; }
+    if (bins.some(b => b.toLowerCase() === t.toLowerCase())) { setNewBin(""); return; }
+    setBins([...bins, t]);
+    setNewBin("");
+    setSaveStatus("idle");
+  };
+
+  const addBarcode = () => {
+    const t = newBarcode.trim();
+    if (!t || barcodes.includes(t)) { setNewBarcode(""); return; }
+    setBarcodes([...barcodes, t]);
+    setNewBarcode("");
+    setSaveStatus("idle");
+  };
+
+  const addKeyword = () => {
+    const t = newKeyword.trim().toLowerCase();
+    if (!t || keywords.includes(t)) { setNewKeyword(""); return; }
+    setKeywords([...keywords, t]);
+    setNewKeyword("");
+    setSaveStatus("idle");
+  };
+
+  const handleSave = async () => {
+    const current = itemRef.current;
+    if (!current || !adminToken) return;
+    setSaveStatus("saving");
+    setErrorMsg(null);
+
+    try {
+      const saves: Promise<unknown>[] = [];
+
+      if (description.trim() !== (current.description ?? "").trim()) {
+        saves.push(
+          fetch(`${API_BASE}/inventory/${current.id}/description`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+            body: JSON.stringify({ description: description.trim() }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const d = await res.json().catch(() => ({})) as { error?: string };
+              throw new Error(d.error ?? `HTTP ${res.status}`);
+            }
+          }),
+        );
+      }
+
+      if (JSON.stringify(bins) !== JSON.stringify(current.binLocations ?? [])) {
+        saves.push(updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: bins } }));
+      }
+
+      if (JSON.stringify(barcodes) !== JSON.stringify(current.barcodes ?? [])) {
+        saves.push(updateBarcodesMutation.mutateAsync({ id: current.id, data: { barcodes } }));
+      }
+
+      if (JSON.stringify(keywords) !== JSON.stringify(current.aiKeywords ?? [])) {
+        saves.push(updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords } }));
+      }
+
+      if (saves.length > 0) {
+        await Promise.all(saves);
+        const listKeyPrefix = getListInventoryQueryKey()[0];
+        await queryClient.invalidateQueries({
+          predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+        });
+      }
+
+      setSaveStatus("saved");
+      setTimeout(() => router.back(), 500);
+    } catch (err) {
+      const msg = err && typeof err === "object" && "message" in err
+        ? String((err as { message: unknown }).message) : "Save failed";
+      setErrorMsg(
+        msg.includes("401")
+          ? "Admin session expired. Re-unlock and try again."
+          : "Could not save changes. Check connection and try again.",
+      );
+      setSaveStatus("error");
+    }
+  };
+
+  if (!item) {
+    return (
+      <SafeAreaView style={[s.safe, { backgroundColor: colors.background }]}>
+        <View style={s.center}>
+          <Text style={[s.errorText, { color: colors.destructive }]}>Item not found.</Text>
+          <Pressable onPress={() => router.back()} style={[s.backBtn, { backgroundColor: colors.primary }]}>
+            <Text style={[s.backBtnText, { color: colors.primaryForeground }]}>Go Back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const isSaving = saveStatus === "saving";
+  const isSaved = saveStatus === "saved";
+
+  const hasChanges =
+    description.trim() !== (item.description ?? "").trim() ||
+    JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
+    JSON.stringify(barcodes) !== JSON.stringify(item.barcodes ?? []) ||
+    JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []);
+
+  const statusColor =
+    isSaving ? colors.warning
+    : isSaved ? colors.success
+    : saveStatus === "error" ? colors.destructive
+    : "transparent";
+  const statusLabel =
+    isSaving ? "Saving…" : isSaved ? "✓ Saved" : saveStatus === "error" ? "Save failed" : "";
+
+  return (
+    <SafeAreaView style={[s.safe, { backgroundColor: colors.background }]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={{ flex: 1 }}
+      >
+        {/* Header */}
+        <View style={[s.header, { borderBottomColor: colors.border }]}>
+          <Pressable onPress={() => router.back()} style={s.headerBack}>
+            <Text style={[s.headerBackText, { color: colors.primary }]}>← Back</Text>
+          </Pressable>
+          <View style={s.headerCenter}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Text style={[s.headerTitle, { color: colors.foreground }]}>Edit Part</Text>
+              {saveStatus !== "idle" ? (
+                <View style={[s.statusBadge, { backgroundColor: statusColor + "22" }]}>
+                  {isSaving ? <ActivityIndicator size="small" color={statusColor} style={{ marginRight: 4 }} /> : null}
+                  <Text style={[s.statusText, { color: statusColor }]}>{statusLabel}</Text>
+                </View>
+              ) : null}
+            </View>
+            <Text style={[s.headerSub, { color: colors.mutedForeground }]} numberOfLines={1}>
+              {item.vendor} · {item.catalog}
+            </Text>
+          </View>
+          <View style={{ minWidth: 60 }} />
+        </View>
+
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={s.scroll}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Description */}
+          <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+          <TextInput
+            value={description}
+            onChangeText={(v) => { setDescription(v); setSaveStatus("idle"); }}
+            placeholder="Brief description of the part…"
+            placeholderTextColor={colors.mutedForeground}
+            multiline
+            numberOfLines={3}
+            style={[s.descInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+            autoCorrect
+            autoCapitalize="sentences"
+          />
+
+          {/* Bins */}
+          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
+            BIN LOCATIONS ({bins.length})
+          </Text>
+          <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>Tap a bin to remove it.</Text>
+          <View style={s.chipRow}>
+            {bins.map((b) => (
+              <Pressable
+                key={b}
+                onPress={() => { setBins(bins.filter(x => x !== b)); setSaveStatus("idle"); }}
+                style={[s.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
+              >
+                <Text style={[s.chipText, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>{b}</Text>
+                <Text style={[s.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
+              </Pressable>
+            ))}
+          </View>
+          {bins.length === 0 ? (
+            <Text style={[s.emptyHint, { color: colors.mutedForeground }]}>No bins assigned.</Text>
+          ) : null}
+          <View style={[s.addRow, { marginTop: 10 }]}>
+            <TextInput
+              value={newBin}
+              onChangeText={setNewBin}
+              placeholder="e.g. A1-04"
+              placeholderTextColor={colors.mutedForeground}
+              style={[s.addInput, { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+              onSubmitEditing={addBin}
+              returnKeyType="done"
+              autoCorrect={false}
+              autoCapitalize="characters"
+            />
+            <Pressable
+              onPress={addBin}
+              disabled={!newBin.trim()}
+              style={[s.addBtn, { backgroundColor: newBin.trim() ? colors.primary : colors.muted }]}
+            >
+              <Text style={[s.addBtnText, { color: newBin.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
+                + Add
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Barcodes */}
+          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
+            BARCODES ({barcodes.length})
+          </Text>
+          <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>Tap a barcode to remove it.</Text>
+          <View style={s.chipRow}>
+            {barcodes.map((bc) => (
+              <Pressable
+                key={bc}
+                onPress={() => { setBarcodes(barcodes.filter(x => x !== bc)); setSaveStatus("idle"); }}
+                style={[s.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
+              >
+                <Text style={[s.chipText, { color: colors.foreground }]}>{bc}</Text>
+                <Text style={[s.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
+              </Pressable>
+            ))}
+          </View>
+          {barcodes.length === 0 ? (
+            <Text style={[s.emptyHint, { color: colors.mutedForeground }]}>No barcodes assigned.</Text>
+          ) : null}
+          <View style={[s.addRow, { marginTop: 10 }]}>
+            <TextInput
+              value={newBarcode}
+              onChangeText={setNewBarcode}
+              placeholder="Type or paste barcode…"
+              placeholderTextColor={colors.mutedForeground}
+              style={[s.addInput, { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+              onSubmitEditing={addBarcode}
+              returnKeyType="done"
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            <Pressable
+              onPress={addBarcode}
+              disabled={!newBarcode.trim()}
+              style={[s.addBtn, { backgroundColor: newBarcode.trim() ? colors.primary : colors.muted }]}
+            >
+              <Text style={[s.addBtnText, { color: newBarcode.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
+                + Add
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Keywords */}
+          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
+            AI KEYWORDS ({keywords.length})
+          </Text>
+          <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>Tap a keyword to remove it.</Text>
+          <View style={s.chipRow}>
+            {keywords.map((kw) => (
+              <Pressable
+                key={kw}
+                onPress={() => { setKeywords(keywords.filter(k => k !== kw)); setSaveStatus("idle"); }}
+                style={[s.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
+              >
+                <Text style={[s.chipText, { color: colors.foreground }]}>{kw}</Text>
+                <Text style={[s.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
+              </Pressable>
+            ))}
+          </View>
+          {keywords.length === 0 ? (
+            <Text style={[s.emptyHint, { color: colors.mutedForeground }]}>No keywords yet. Add some below.</Text>
+          ) : null}
+          <View style={[s.addRow, { marginTop: 10 }]}>
+            <TextInput
+              value={newKeyword}
+              onChangeText={setNewKeyword}
+              placeholder="Type keyword and press Add…"
+              placeholderTextColor={colors.mutedForeground}
+              style={[s.addInput, { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+              onSubmitEditing={addKeyword}
+              returnKeyType="done"
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            <Pressable
+              onPress={addKeyword}
+              disabled={!newKeyword.trim()}
+              style={[s.addBtn, { backgroundColor: newKeyword.trim() ? colors.primary : colors.muted }]}
+            >
+              <Text style={[s.addBtnText, { color: newKeyword.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
+                + Add
+              </Text>
+            </Pressable>
+          </View>
+
+          {errorMsg ? (
+            <View style={[s.errorBanner, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "55" }]}>
+              <Text style={[s.errorText, { color: colors.destructive }]}>{errorMsg}</Text>
+            </View>
+          ) : null}
+        </ScrollView>
+
+        {/* Footer */}
+        <View style={[s.footer, { borderTopColor: colors.border }]}>
+          <Pressable
+            onPress={() => router.back()}
+            style={[s.cancelBtn, { borderColor: colors.border }]}
+          >
+            <Text style={[s.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            onPress={handleSave}
+            disabled={isSaving || (!hasChanges && saveStatus !== "error")}
+            style={[
+              s.saveBtn,
+              { backgroundColor: isSaving || (!hasChanges && saveStatus !== "error") ? colors.muted : colors.primary },
+            ]}
+          >
+            {isSaving ? (
+              <ActivityIndicator color={colors.primaryForeground} />
+            ) : (
+              <Text
+                style={[
+                  s.saveBtnText,
+                  { color: isSaving || (!hasChanges && saveStatus !== "error") ? colors.mutedForeground : colors.primaryForeground },
+                ]}
+              >
+                Save Details
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+const s = StyleSheet.create({
+  safe: { flex: 1 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 16 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    gap: 8,
+  },
+  headerBack: { minWidth: 60 },
+  headerBackText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  headerCenter: { flex: 1, alignItems: "center" },
+  headerTitle: { fontSize: 17, fontFamily: "Inter_700Bold" },
+  headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 3,
+  },
+  statusText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  scroll: { padding: 16, paddingBottom: 32 },
+  sectionLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 6,
+  },
+  fieldHint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 10, lineHeight: 16 },
+  descInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    minHeight: 80,
+    textAlignVertical: "top",
+    lineHeight: 20,
+  },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    gap: 6,
+  },
+  chipText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  chipRemove: { fontSize: 11 },
+  emptyHint: { fontSize: 13, fontFamily: "Inter_400Regular", fontStyle: "italic" },
+  addRow: { flexDirection: "row", gap: 8 },
+  addInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+  },
+  addBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, justifyContent: "center" },
+  addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  errorBanner: { marginTop: 16, borderRadius: 8, borderWidth: 1, padding: 12 },
+  errorText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
+  footer: { flexDirection: "row", padding: 16, borderTopWidth: 1, gap: 10 },
+  cancelBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 14, alignItems: "center" },
+  cancelBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  saveBtn: { flex: 2, borderRadius: 8, paddingVertical: 14, alignItems: "center" },
+  saveBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  backBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
+  backBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+});

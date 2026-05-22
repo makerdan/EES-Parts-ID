@@ -109,6 +109,7 @@ export default function RootLayout() {
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                 <Stack.Screen name="login" options={{ headerShown: false }} />
                 <Stack.Screen name="catalog-review" options={{ headerShown: false }} />
+                <Stack.Screen name="edit-item" options={{ headerShown: false }} />
               </Stack>
               <AuthGate />
             </AppProvider>
