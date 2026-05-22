@@ -20,7 +20,8 @@ import { useListInventory } from "@workspace/api-client-react";
 
 import { useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
-import { AddPartModal } from "@/components/AddPartModal";
+import { AddPartForm } from "@/components/AddPartForm";
+import { BarcodeAddPart } from "@/components/BarcodeAddPart";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BinEditor } from "@/components/BinEditor";
 import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
@@ -357,8 +358,7 @@ export default function UploadScreen() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
-  const [tab, setTab] = useState<"import" | "enrichment">("import");
-  const [addPartVisible, setAddPartVisible] = useState(false);
+  const [tab, setTab] = useState<"import" | "enrichment" | "addpart">("import");
   const [pasteText, setPasteText] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -1038,7 +1038,7 @@ export default function UploadScreen() {
 
           {/* Tab bar */}
           <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-            {(["import", "enrichment"] as const).map(t => (
+            {(["import", "enrichment", "addpart"] as const).map(t => (
               <Pressable
                 key={t}
                 onPress={() => setTab(t)}
@@ -1047,28 +1047,12 @@ export default function UploadScreen() {
                   { borderBottomColor: tab === t ? colors.primary : "transparent" },
                 ]}
               >
-                <Text style={[styles.tabLabel, { color: colors.primary }]}>
-                  {t === "import" ? "Import File" : `Enrichment (${inventoryTotal})`}
+                <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
+                  {t === "import" ? "Import File" : t === "enrichment" ? `Enrichment (${inventoryTotal})` : "Add Part"}
                 </Text>
               </Pressable>
             ))}
-            <Pressable
-              onPress={() => setAddPartVisible(true)}
-              style={[styles.tabItem, { borderBottomColor: "transparent" }]}
-            >
-              <Text style={[styles.tabLabel, { color: colors.primary }]}>+ Add Part</Text>
-            </Pressable>
           </View>
-
-          <AddPartModal
-            visible={addPartVisible}
-            adminToken={adminToken}
-            onClose={() => setAddPartVisible(false)}
-            onSuccess={() => {
-              setAddPartVisible(false);
-              inventoryQuery.refetch();
-            }}
-          />
 
           {tab === "import" ? (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
@@ -1514,7 +1498,7 @@ export default function UploadScreen() {
               ) : null}
 
             </ScrollView>
-          ) : (
+          ) : tab === "enrichment" ? (
             <View style={{ flex: 1 }}>
               <FlatList
                 data={inventory}
@@ -1854,6 +1838,14 @@ export default function UploadScreen() {
                 }
               />
             </View>
+          ) : (
+            <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
+              <AddPartForm
+                adminToken={adminToken}
+                onSuccess={() => { inventoryQuery.refetch(); }}
+              />
+              <BarcodeAddPart />
+            </ScrollView>
           )}
         </>
       )}
