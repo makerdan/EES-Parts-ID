@@ -293,6 +293,47 @@ export function ZoneEditor() {
 
   useEffect(() => { void fetchZones(); }, [fetchZones]);
 
+  // ── Keyboard delete shortcut ─────────────────────────────────────────────
+  // Delete or Backspace removes all selected zones, unless focus is in a text field.
+  useEffect(() => {
+    const onKeyDown = async (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      ) return;
+      const ids = [...selectedIdsRef.current];
+      if (ids.length === 0) return;
+      e.preventDefault();
+      setSaving(true);
+      try {
+        await Promise.all(
+          ids.map((id) =>
+            fetch(`${API_BASE}/warehouse-zones/${id}`, {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+            }).then((res) => {
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            }),
+          ),
+        );
+        toast.success(
+          ids.length === 1 ? "Zone deleted" : `${ids.length} zones deleted`,
+        );
+        setSelectedIds(new Set());
+        await fetchZones();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSaving(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [fetchZones]);
+
   const patchZone = useCallback(
     async (id: number, updates: Partial<Zone>): Promise<boolean> => {
       const res = await fetch(`${API_BASE}/warehouse-zones/${id}`, {
