@@ -139,6 +139,10 @@ export function filterSections(
     return sections.filter(s => sectionNumbers.includes(s.sectionNum));
   }
   if (sectionParity) {
+    // NOTE: section 00 is treated as even (0 % 2 === 0). This is intentional —
+    // section zero is a real bin location and even-parity zones should cover it.
+    // Do NOT change this to exclude 0 or treat it as "no section"; doing so
+    // would silently drop parts stored in section 00 from even-parity zones.
     return sections.filter(s =>
       sectionParity === "odd" ? s.sectionNum % 2 !== 0 : s.sectionNum % 2 === 0,
     );

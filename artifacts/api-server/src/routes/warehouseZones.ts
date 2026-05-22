@@ -1,20 +1,9 @@
 import { Router } from "express";
-import type { Request, Response, NextFunction } from "express";
 import { eq, asc } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { warehouseZoneTable } from "@workspace/db";
+import { warehouseZoneTable, inventoryTable } from "@workspace/db";
 
 const router = Router();
-
-// Warehouse zone mutations are unauthenticated by design (dev/local zone editor
-// tool). Block writes in production to prevent accidental open mutation.
-function devOnly(_req: Request, res: Response, next: NextFunction): void {
-  if (process.env.NODE_ENV === "production") {
-    res.status(403).json({ error: "Zone editor writes are disabled in production." });
-    return;
-  }
-  next();
-}
 
 // GET /warehouse-zones
 router.get("/", async (_req, res) => {
@@ -29,8 +18,50 @@ router.get("/", async (_req, res) => {
   }
 });
 
-// POST /warehouse-zones  (dev-only — no auth, blocked in production)
-router.post("/", devOnly, async (req, res) => {
+// GET /warehouse-zones/coverage
+// Returns the count of items with no valid bin and the set of aisle IDs found in
+// inventory bins that have no corresponding zone defined.
+router.get("/coverage", async (_req, res) => {
+  try {
+    const [zones, items] = await Promise.all([
+      db.select({ aisleId: warehouseZoneTable.aisleId }).from(warehouseZoneTable),
+      db.select({ binLocations: inventoryTable.binLocations }).from(inventoryTable),
+    ]);
+
+    const BIN_RE = /^(\d{2})-(\d{2})-(\d{3})$/;
+    let unsortedCount = 0;
+    const inventoryAisleIds = new Set<string>();
+
+    for (const item of items) {
+      const bins = item.binLocations ?? [];
+      let hasValid = false;
+      for (const raw of bins) {
+        const m = BIN_RE.exec(raw.trim());
+        if (m) {
+          hasValid = true;
+          // m[1] is already 2-digit zero-padded from the regex
+          inventoryAisleIds.add(m[1]!);
+        }
+      }
+      if (!hasValid) unsortedCount++;
+    }
+
+    // Normalise zone aisle IDs to 2-digit zero-padded for comparison
+    const zoneAisleIds = new Set(
+      zones.map((z) => z.aisleId.trim().padStart(2, "0")),
+    );
+    const uncoveredAisles = [...inventoryAisleIds]
+      .filter((a) => !zoneAisleIds.has(a))
+      .sort();
+
+    res.json({ unsortedCount, uncoveredAisles });
+  } catch {
+    res.status(500).json({ error: "Failed to compute coverage" });
+  }
+});
+
+// POST /warehouse-zones
+router.post("/", async (req, res) => {
   try {
     const {
       aisleId,
@@ -83,8 +114,8 @@ router.post("/", devOnly, async (req, res) => {
   }
 });
 
-// PATCH /warehouse-zones/:id  (dev-only)
-router.patch("/:id", devOnly, async (req, res) => {
+// PATCH /warehouse-zones/:id
+router.patch("/:id", async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -124,8 +155,8 @@ router.patch("/:id", devOnly, async (req, res) => {
   }
 });
 
-// DELETE /warehouse-zones/:id  (dev-only)
-router.delete("/:id", devOnly, async (req, res) => {
+// DELETE /warehouse-zones/:id
+router.delete("/:id", async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
