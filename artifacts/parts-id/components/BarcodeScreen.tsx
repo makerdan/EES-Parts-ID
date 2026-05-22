@@ -16,13 +16,12 @@ import { useApp } from "@/contexts/AppContext";
 import {
   lookupByBarcode,
   useUpdateItemBarcodes,
-  useListInventory,
   getListInventoryQueryKey,
 } from "@workspace/api-client-react";
 import { CatalogPickerModal } from "@/components/CatalogPickerModal";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { lookupByBarcodeOffline, upsertItemInBarcodeCache, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
-import { resolveBarcodeCode, resolveShelfAssign } from "@/utils/barcodeResolver";
+import { resolveBarcodeCode } from "@/utils/barcodeResolver";
 import { ResultCard } from "@/components/ResultCard";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
@@ -57,12 +56,6 @@ function formatRelativeTime(isoString: string): string {
 }
 
 type ScanPhase = "idle" | "looking" | "found" | "notfound" | "offline_miss";
-
-interface AssignmentEntry {
-  barcode: string;
-  item: InventoryItem;
-  timestamp: Date;
-}
 
 // ── Main Barcode Screen ────────────────────────────────────────────────────────
 interface BarcodeScreenProps {
@@ -101,27 +94,6 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const pendingCodeRef = useRef<string | null>(null);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // ── Bin location suggestions (for shelf picker step 1) ───────────────────────
-  const { data: inventoryPage } = useListInventory({ limit: 500 });
-  const allBinLocations = React.useMemo(() => {
-    const items = inventoryPage?.items ?? [];
-    const set = new Set<string>();
-    for (const item of items) {
-      for (const bin of item.binLocations ?? []) {
-        if (bin.trim()) set.add(bin.trim());
-      }
-    }
-    return Array.from(set).sort();
-  }, [inventoryPage]);
-
-  // ── Add by Shelf state ───────────────────────────────────────────────────────
-  const [shelfMode, setShelfMode] = useState(false);
-  const [shelfPrefix, setShelfPrefix] = useState("");
-  const [shelfStep, setShelfStep] = useState<"pickshelf" | "scanning">("pickshelf");
-  const [shelfScannedCode, setShelfScannedCode] = useState<string | null>(null);
-  const [shelfAssignPicker, setShelfAssignPicker] = useState(false);
-  const [assignments, setAssignments] = useState<AssignmentEntry[]>([]);
 
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const { history, addEntry, clear: clearHistory } = useScanHistory();
@@ -184,17 +156,6 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
         setPendingCode(null);
         setScanDelaySeconds(null);
 
-        // Shelf mode: capture and show catalog picker
-        if (shelfMode && shelfStep === "scanning") {
-          if (code === lastScannedRef.current) return;
-          lastScannedRef.current = code;
-          scanCooldownRef.current = true;
-          setTimeout(() => { scanCooldownRef.current = false; }, 2000);
-          setShelfScannedCode(code);
-          setShelfAssignPicker(true);
-          return;
-        }
-
         // Normal lookup mode
         if (code === scannedCode) return;
         scanCooldownRef.current = true;
@@ -235,7 +196,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
         }
       }, SCAN_DELAY_MS);
     },
-    [shelfMode, shelfStep, scannedCode, addEntry, scanPhase, clearPendingScan],
+    [scannedCode, addEntry, scanPhase, clearPendingScan],
   );
 
   const handleRecentTap = useCallback(async (entry: ScanEntry) => {
@@ -265,7 +226,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     scanCooldownRef.current = false;
   };
 
-  // ── Assign barcode to item (normal mode) ─────────────────────────────────────
+  // ── Assign barcode to unrecognised scan ──────────────────────────────────────
   const handleAssign = useCallback(
     async (item: InventoryItem) => {
       if (!scannedCode) return;
@@ -292,56 +253,6 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     },
     [scannedCode, updateBarcodesMutation, queryClient],
   );
-
-  // ── Shelf mode assign ─────────────────────────────────────────────────────────
-  const handleShelfAssign = useCallback(
-    async (item: InventoryItem) => {
-      if (!shelfScannedCode) return;
-      setShelfAssignPicker(false);
-      try {
-        const result = await resolveShelfAssign(
-          shelfScannedCode,
-          item,
-          (id, barcodes) =>
-            updateBarcodesMutation.mutateAsync({ id, data: { barcodes } }),
-          upsertItemInBarcodeCache,
-        );
-        if (result.wasNew) {
-          const listKeyPrefix = getListInventoryQueryKey()[0];
-          await queryClient.invalidateQueries({
-            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-          });
-        }
-        setAssignments((prev) => [
-          { barcode: shelfScannedCode, item, timestamp: new Date() },
-          ...prev,
-        ]);
-        setShelfScannedCode(null);
-        lastScannedRef.current = null;
-      } catch {
-        setScanError("Could not assign barcode. Please try again.");
-        setShelfScannedCode(null);
-      }
-    },
-    [shelfScannedCode, updateBarcodesMutation, queryClient],
-  );
-
-  const startShelfMode = () => {
-    setShelfMode(true);
-    setShelfStep("pickshelf");
-    setShelfPrefix("");
-    setAssignments([]);
-    resetScan();
-  };
-
-  const exitShelfMode = () => {
-    setShelfMode(false);
-    setShelfStep("pickshelf");
-    setShelfPrefix("");
-    setShelfScannedCode(null);
-    setShelfAssignPicker(false);
-    resetScan();
-  };
 
   // ── Permission gate ──────────────────────────────────────────────────────────
   if (!permission) {
@@ -374,38 +285,16 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     );
   }
 
-  const isCameraActive = !showAssignPicker && !barcodeEditItem && !shelfAssignPicker;
+  const isCameraActive = !showAssignPicker && !barcodeEditItem;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>
-            {shelfMode ? `Add by Shelf${shelfPrefix ? ` — ${shelfPrefix}` : ""}` : "Barcode"}
-          </Text>
-          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
-            {shelfMode
-              ? shelfStep === "pickshelf" ? "Pick a shelf prefix to begin" : `Scanning for shelf ${shelfPrefix}`
-              : "Scan a barcode to look up parts"}
-          </Text>
+          <Text style={[styles.headerTitle, { color: colors.foreground }]}>Barcode</Text>
+          <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Scan a barcode to look up parts</Text>
         </View>
-        {isAdmin && !shelfMode ? (
-          <Pressable
-            onPress={startShelfMode}
-            style={[styles.shelfBtn, { backgroundColor: colors.accent, borderColor: colors.border }]}
-          >
-            <Text style={[styles.shelfBtnText, { color: colors.foreground }]}>+ Add by Shelf</Text>
-          </Pressable>
-        ) : null}
-        {shelfMode ? (
-          <Pressable
-            onPress={exitShelfMode}
-            style={[styles.shelfBtn, { backgroundColor: colors.destructive + "22", borderColor: colors.destructive + "44" }]}
-          >
-            <Text style={[styles.shelfBtnText, { color: colors.destructive }]}>Done</Text>
-          </Pressable>
-        ) : null}
         {onClose ? (
           <Pressable
             onPress={onClose}
@@ -417,72 +306,8 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
-        {/* ── Shelf mode: step 1 pick shelf ──────────────────────────────────── */}
-        {shelfMode && shelfStep === "pickshelf" ? (
-          <View style={{ padding: 16, gap: 12 }}>
-            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>SHELF / BIN PREFIX</Text>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <TextInput
-                value={shelfPrefix}
-                onChangeText={setShelfPrefix}
-                placeholder="e.g. A1, B-Row, Shelf-3…"
-                placeholderTextColor={colors.mutedForeground}
-                style={[styles.shelfInput, { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
-                autoCorrect={false}
-                autoCapitalize="characters"
-                returnKeyType="done"
-              />
-              <Pressable
-                onPress={() => { if (shelfPrefix.trim()) setShelfStep("scanning"); }}
-                disabled={!shelfPrefix.trim()}
-                style={[styles.shelfStartBtn, { backgroundColor: shelfPrefix.trim() ? colors.primary : colors.muted }]}
-              >
-                <Text style={[styles.shelfStartBtnText, { color: shelfPrefix.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
-                  Start
-                </Text>
-              </Pressable>
-            </View>
-            {/* Suggestions from existing bin locations */}
-            {allBinLocations.length > 0 ? (
-              <View>
-                <Text style={[styles.hint, { color: colors.mutedForeground, marginBottom: 6 }]}>
-                  Tap an existing bin location to use it as a prefix:
-                </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                  <View style={{ flexDirection: "row", flexWrap: "nowrap", gap: 6 }}>
-                    {allBinLocations
-                      .filter(b => !shelfPrefix.trim() || b.toUpperCase().startsWith(shelfPrefix.toUpperCase()))
-                      .slice(0, 30)
-                      .map(bin => (
-                        <Pressable
-                          key={bin}
-                          onPress={() => setShelfPrefix(bin)}
-                          style={[
-                            styles.binChip,
-                            {
-                              backgroundColor: shelfPrefix === bin ? colors.primary : colors.muted,
-                              borderColor: shelfPrefix === bin ? colors.primary : colors.border,
-                            },
-                          ]}
-                        >
-                          <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: shelfPrefix === bin ? colors.primaryForeground : colors.foreground }}>
-                            {bin}
-                          </Text>
-                        </Pressable>
-                      ))}
-                  </View>
-                </ScrollView>
-              </View>
-            ) : null}
-            <Text style={[styles.hint, { color: colors.mutedForeground }]}>
-              Select or type a shelf/bin prefix. Each scanned barcode will be assigned to an item from that shelf.
-            </Text>
-          </View>
-        ) : null}
-
         {/* ── Camera viewfinder ──────────────────────────────────────────────── */}
-        {(!shelfMode || shelfStep === "scanning") ? (
-          <View style={styles.cameraWrapper}>
+        <View style={styles.cameraWrapper}>
             {isCameraActive ? (
               <CameraView
                 style={styles.camera}
@@ -513,20 +338,15 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                   Hold steady… {scanDelaySeconds != null && scanDelaySeconds > 0 ? `${scanDelaySeconds}s` : ""}
                 </Text>
               </View>
-            ) : scanPhase === "idle" && !shelfMode ? (
+            ) : scanPhase === "idle" ? (
               <View style={[styles.scanStatus, { backgroundColor: "#00000088" }]}>
                 <Text style={styles.scanStatusText}>Point camera at a barcode</Text>
               </View>
-            ) : shelfMode && shelfStep === "scanning" ? (
-              <View style={[styles.scanStatus, { backgroundColor: "#00000088" }]}>
-                <Text style={styles.scanStatusText}>Scan a barcode to assign</Text>
-              </View>
             ) : null}
           </View>
-        ) : null}
 
         {/* ── Recents ────────────────────────────────────────────────────────── */}
-        {!shelfMode && history.length > 0 ? (
+        {history.length > 0 ? (
           <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
             <View style={styles.recentsHeader}>
               <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>RECENT SCANS</Text>
@@ -633,8 +453,8 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           </View>
         ) : null}
 
-        {/* ── Normal mode: found result ─────────────────────────────────────── */}
-        {!shelfMode && scanPhase === "found" && matchedItem ? (
+        {/* ── Found result ──────────────────────────────────────────────────── */}
+        {scanPhase === "found" && matchedItem ? (
           <View style={{ padding: 16 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -669,8 +489,8 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           </View>
         ) : null}
 
-        {/* ── Normal mode: not found ────────────────────────────────────────── */}
-        {!shelfMode && scanPhase === "notfound" && scannedCode ? (
+        {/* ── Not found ─────────────────────────────────────────────────────── */}
+        {scanPhase === "notfound" && scannedCode ? (
           <View style={{ padding: 16 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>NOT FOUND</Text>
@@ -700,47 +520,14 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           </View>
         ) : null}
 
-        {/* ── Shelf mode: assignment log ────────────────────────────────────── */}
-        {shelfMode && shelfStep === "scanning" && assignments.length > 0 ? (
-          <View style={{ padding: 16 }}>
-            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
-              COMPLETED ({assignments.length})
-            </Text>
-            {assignments.map((a, i) => (
-              <View
-                key={i}
-                style={[styles.logRow, { backgroundColor: colors.card, borderColor: colors.border }]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.logCatalog, { color: colors.foreground }]}>
-                    {a.item.catalog}
-                    <Text style={[styles.logVendor, { color: colors.mutedForeground }]}> · {a.item.vendor}</Text>
-                  </Text>
-                  <Text style={[styles.logBarcode, { color: colors.mutedForeground }]}>{a.barcode}</Text>
-                </View>
-                <View style={[styles.logBadge, { backgroundColor: colors.success + "22" }]}>
-                  <Text style={[styles.logBadgeText, { color: colors.success }]}>✓</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        ) : null}
       </ScrollView>
 
-      {/* ── Assign picker modals ─────────────────────────────────────────────── */}
+      {/* ── Assign picker modal (not-found → assign to item) ─────────────────── */}
       <CatalogPickerModal
         visible={showAssignPicker}
         barcodeCode={scannedCode ?? ""}
         onAssign={handleAssign}
         onCancel={() => setShowAssignPicker(false)}
-      />
-
-      <CatalogPickerModal
-        visible={shelfAssignPicker}
-        barcodeCode={shelfScannedCode ?? ""}
-        shelfPrefix={shelfPrefix}
-        onAssign={handleShelfAssign}
-        onCancel={() => { setShelfAssignPicker(false); setShelfScannedCode(null); lastScannedRef.current = null; }}
       />
 
       {/* ── Barcode editor modal ─────────────────────────────────────────────── */}
@@ -911,48 +698,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   assignBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  shelfInput: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-  },
-  shelfStartBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    justifyContent: "center",
-  },
-  shelfStartBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  hint: { fontSize: 12, fontFamily: "Inter_400Regular", fontStyle: "italic", lineHeight: 18 },
-  binChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-  },
-  logRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 8,
-    borderWidth: 1,
-    padding: 10,
-    marginBottom: 6,
-    gap: 10,
-  },
-  logCatalog: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  logVendor: { fontSize: 13, fontFamily: "Inter_400Regular" },
-  logBarcode: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
-  logBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  logBadgeText: { fontSize: 14, fontFamily: "Inter_700Bold" },
   recentsHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   clearBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1 },
   clearBtnText: { fontSize: 12, fontFamily: "Inter_500Medium" },
