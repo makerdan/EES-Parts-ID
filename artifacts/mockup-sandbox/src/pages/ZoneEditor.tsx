@@ -75,6 +75,39 @@ type IxState =
   | { t: "multiMove"; startX: number; startY: number };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Returns true if the value is a non-empty string of digits only (e.g. "12"). */
+function isValidAisleId(v: string): boolean {
+  return /^\d+$/.test(v.trim());
+}
+
+/**
+ * Returns the first existing zone that would conflict with the given
+ * aisleId + sectionParity combination.  Excludes the zone being edited
+ * (by excludeId).  A conflict exists when:
+ *   - same aisleId AND same sectionParity (exact duplicate), OR
+ *   - same aisleId AND either side is "all" (all overlaps odd/even and vice-versa)
+ */
+function findDuplicateConflict(
+  zones: Zone[],
+  excludeId: number | null,
+  aisleId: string,
+  parity: Zone["sectionParity"],
+): Zone | null {
+  const trimmed = aisleId.trim();
+  return (
+    zones.find((z) => {
+      if (z.id === excludeId) return false;
+      if (z.aisleId !== trimmed) return false;
+      return (
+        z.sectionParity === parity ||
+        z.sectionParity === "all" ||
+        parity === "all"
+      );
+    }) ?? null
+  );
+}
+
 function screenToSvg(
   clientX: number,
   clientY: number,
@@ -162,6 +195,10 @@ export function ZoneEditor() {
   const [multiAisleId, setMultiAisleId] = useState("");
   const [multiParity, setMultiParity] = useState<"" | "all" | "odd" | "even">("");
   const [multiSaving, setMultiSaving] = useState(false);
+  const [coverage, setCoverage] = useState<{
+    unsortedCount: number;
+    uncoveredAisles: string[];
+  } | null>(null);
 
   // Refs — updated every render so event handlers never go stale
   const svgRef = useRef<SVGSVGElement>(null);
@@ -200,6 +237,22 @@ export function ZoneEditor() {
     [zones, selectedIds],
   );
 
+  // Inline validation for the Aisle ID field (only when a value is present;
+  // empty string is handled at save-time as "required").
+  const aisleIdError: string | null = useMemo(() => {
+    if (!form.aisleId.trim()) return null;
+    return isValidAisleId(form.aisleId) ? null : "Aisle ID must be a number (e.g. 12)";
+  }, [form.aisleId]);
+
+  // Non-blocking duplicate warning: another zone already claims this aisle+parity.
+  const duplicateConflict = useMemo(
+    () =>
+      form.aisleId.trim() && isValidAisleId(form.aisleId)
+        ? findDuplicateConflict(zones, selectedId, form.aisleId, form.sectionParity)
+        : null,
+    [zones, form.aisleId, form.sectionParity, selectedId],
+  );
+
   // ── API helpers ─────────────────────────────────────────────────────────────
   const headers = useCallback(
     () => ({ "Content-Type": "application/json" }),
@@ -215,6 +268,13 @@ export function ZoneEditor() {
       const data = await res.json();
       setZones(data.zones ?? []);
       setDragZone(null);
+      // Also refresh coverage stats (non-critical — suppress errors)
+      void fetch(`${API_BASE}/warehouse-zones/coverage`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { unsortedCount: number; uncoveredAisles: string[] } | null) => {
+          if (d) setCoverage(d);
+        })
+        .catch(() => {});
     } catch {
       setLoadError("Failed to load zones — is the API server running?");
     } finally {
@@ -244,6 +304,7 @@ export function ZoneEditor() {
   const handleCreate = async () => {
     if (!pendingRect) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
+    if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 12)"); return; }
     const label = form.label.trim() || form.aisleId.trim();
     setSaving(true);
     try {
@@ -282,6 +343,7 @@ export function ZoneEditor() {
   const handleSaveEdit = async () => {
     if (!selectedId) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
+    if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 12)"); return; }
     setSaving(true);
     try {
       await patchZone(selectedId, {
@@ -396,10 +458,16 @@ export function ZoneEditor() {
   };
 
   const handleMultiSave = async (updates: Partial<Zone>) => {
+    const n = selectedIds.size;
+    const parts: string[] = [];
+    if (updates.aisleId) parts.push(`Aisle ID → ${updates.aisleId}`);
+    if (updates.sectionParity) parts.push(`Section Parity → ${updates.sectionParity}`);
+    const what = parts.length ? parts.join(", ") : "selected properties";
+    if (!window.confirm(`Update ${n} zone${n !== 1 ? "s" : ""}?\n\n${what}`)) return;
     setMultiSaving(true);
     try {
       await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
-      toast.success(`Updated ${selectedIds.size} zones`);
+      toast.success(`Updated ${n} zones`);
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -447,6 +515,7 @@ export function ZoneEditor() {
     if (!selectedId || !lastSavedFormRef.current) return;
     if (pendingRect) return;
     if (!form.aisleId.trim()) return;
+    if (!isValidAisleId(form.aisleId)) return;
     if (JSON.stringify(form) === JSON.stringify(lastSavedFormRef.current)) return;
 
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -712,6 +781,8 @@ export function ZoneEditor() {
     // If clicking a zone that's already part of the multi-selection, start
     // a multi-move drag so all selected zones move together.
     if (selectedIdsRef.current.size > 1 && selectedIdsRef.current.has(zone.id)) {
+      // Cancel any pending auto-save before starting a drag
+      if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
       const p = getSvgPt(e.clientX, e.clientY);
       // Snapshot the current positions of all selected zones
       const origins = new Map<number, Pt>();
@@ -727,6 +798,8 @@ export function ZoneEditor() {
     }
 
     // Plain click: single-select and start move
+    // Cancel any pending auto-save before the position drag fires its own PATCH
+    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
     setSelectedIds(new Set([zone.id]));
     setPendingRect(null);
     const p = getSvgPt(e.clientX, e.clientY);
@@ -745,6 +818,8 @@ export function ZoneEditor() {
   ) => {
     e.stopPropagation();
     if (e.button !== 0) return;
+    // Cancel any pending auto-save so the resize PATCH doesn't interleave with it
+    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
     const anchor = ANCHOR[handle](zone);
     ixRef.current = {
       t: "resize",
@@ -1007,9 +1082,16 @@ export function ZoneEditor() {
                   {pendingRect.x.toFixed(0)},{pendingRect.y.toFixed(0)} ·{" "}
                   {pendingRect.w.toFixed(0)}×{pendingRect.h.toFixed(0)}
                 </div>
-                <ZoneForm form={form} onChange={setForm} />
+                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} />
+                {duplicateConflict && (
+                  <div style={styles.dupWarning}>
+                    ⚠ Zone "{duplicateConflict.label}" already uses aisle{" "}
+                    {duplicateConflict.aisleId} ({duplicateConflict.sectionParity}). Saving
+                    anyway will create an overlapping mapping.
+                  </div>
+                )}
                 <Row>
-                  <Btn color="#3b82f6" onClick={handleCreate} disabled={saving}>
+                  <Btn color="#3b82f6" onClick={handleCreate} disabled={saving || !!aisleIdError}>
                     {saving ? "Saving…" : "Save Zone"}
                   </Btn>
                   <Btn
@@ -1068,8 +1150,16 @@ export function ZoneEditor() {
                 <Row style={{ flexWrap: "wrap" }}>
                   <Btn
                     color="#3b82f6"
-                    disabled={multiSaving || (!multiAisleId.trim() && !multiParity)}
+                    disabled={
+                      multiSaving ||
+                      (!multiAisleId.trim() && !multiParity) ||
+                      (!!multiAisleId.trim() && !isValidAisleId(multiAisleId))
+                    }
                     onClick={() => {
+                      if (multiAisleId.trim() && !isValidAisleId(multiAisleId)) {
+                        toast.error("Aisle ID must be numeric (e.g. 12)");
+                        return;
+                      }
                       const updates: Partial<Zone> = {};
                       if (multiAisleId.trim()) updates.aisleId = multiAisleId.trim();
                       if (multiParity) updates.sectionParity = multiParity;
@@ -1099,7 +1189,14 @@ export function ZoneEditor() {
                   · {selectedZone.svgWidth.toFixed(1)}×
                   {selectedZone.svgHeight.toFixed(1)}
                 </div>
-                <ZoneForm form={form} onChange={setForm} />
+                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} />
+                {duplicateConflict && (
+                  <div style={styles.dupWarning}>
+                    ⚠ Zone "{duplicateConflict.label}" already uses aisle{" "}
+                    {duplicateConflict.aisleId} ({duplicateConflict.sectionParity}). Saving
+                    anyway will create an overlapping mapping.
+                  </div>
+                )}
                 <Row style={{ flexWrap: "wrap" }}>
                   <Btn
                     color="#0070ff"
@@ -1145,6 +1242,20 @@ export function ZoneEditor() {
               {selectedIds.size > 0 && ` · ${selectedIds.size} selected`}
               {loading && " · loading…"}
             </div>
+            {coverage && (coverage.unsortedCount > 0 || coverage.uncoveredAisles.length > 0) && (
+              <div style={styles.coverageBanner}>
+                {coverage.unsortedCount > 0 && (
+                  <div>
+                    ⚠ {coverage.unsortedCount} item{coverage.unsortedCount !== 1 ? "s" : ""} with no valid bin location
+                  </div>
+                )}
+                {coverage.uncoveredAisles.length > 0 && (
+                  <div>
+                    ⚠ {coverage.uncoveredAisles.length} aisle{coverage.uncoveredAisles.length !== 1 ? "s" : ""} in inventory with no zone: {coverage.uncoveredAisles.join(", ")}
+                  </div>
+                )}
+              </div>
+            )}
             {loadError && (
               <div style={styles.errorMsg}>{loadError}</div>
             )}
@@ -1197,9 +1308,11 @@ export function ZoneEditor() {
 function ZoneForm({
   form,
   onChange,
+  aisleIdError,
 }: {
   form: FormState;
   onChange: (f: FormState) => void;
+  aisleIdError?: string | null;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1215,8 +1328,16 @@ function ZoneForm({
             })
           }
           placeholder="e.g. 12"
-          style={styles.input}
+          style={{
+            ...styles.input,
+            borderColor: aisleIdError ? "#f87171" : undefined,
+          }}
         />
+        {aisleIdError && (
+          <div style={{ fontSize: 11, color: "#f87171", marginTop: 2 }}>
+            {aisleIdError}
+          </div>
+        )}
       </div>
       <div>
         <Label>Section #</Label>
@@ -1532,5 +1653,28 @@ const styles = {
     fontSize: 12,
     textAlign: "center" as const,
     lineHeight: 1.6,
+  },
+  dupWarning: {
+    margin: "8px 0 4px",
+    padding: "6px 8px",
+    background: "rgba(234,179,8,0.12)",
+    border: "1px solid rgba(234,179,8,0.4)",
+    borderRadius: 4,
+    fontSize: 11,
+    color: "#92400e",
+    lineHeight: 1.5,
+  },
+  coverageBanner: {
+    margin: "0 8px 6px",
+    padding: "6px 8px",
+    background: "rgba(239,68,68,0.08)",
+    border: "1px solid rgba(239,68,68,0.25)",
+    borderRadius: 4,
+    fontSize: 11,
+    color: "#991b1b",
+    lineHeight: 1.6,
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 3,
   },
 };
