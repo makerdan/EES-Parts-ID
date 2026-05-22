@@ -185,13 +185,6 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
           </Pressable>
         ) : null}
 
-        {/* Match reason */}
-        {matchReason ? (
-          <Text style={[cardStyles.reason, { color: colors.mutedForeground }]}>
-            ↑ {matchReason}
-          </Text>
-        ) : null}
-
         {/* Expanded content */}
         {expanded ? (
           <>
@@ -382,7 +375,6 @@ const cardStyles = StyleSheet.create({
     borderWidth: 1,
   },
   binEditText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
-  reason: { fontSize: 11, fontFamily: "Inter_400Regular", fontStyle: "italic", marginBottom: 4 },
   section: { marginTop: 12 },
   sectionTitle: {
     fontSize: 11,
