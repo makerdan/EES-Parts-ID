@@ -1132,8 +1132,9 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     paddingHorizontal: 16,
     alignItems: "center",
+    justifyContent: "center",
   },
-  searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  searchBarClearBtnText: { fontSize: 14, fontFamily: "Inter_500Medium", textAlign: "center" },
   filterOverlayWrapper: {
     position: "absolute",
     top: 0,
