@@ -124,15 +124,11 @@ function BrowseHeader({
   title,
   subtitle,
   onBack,
-  onHome,
-  showHome,
   colors,
 }: {
   title: string;
   subtitle?: string;
   onBack: () => void;
-  onHome: () => void;
-  showHome: boolean;
   colors: ReturnType<typeof useColors>;
 }) {
   return (
@@ -150,13 +146,7 @@ function BrowseHeader({
           </Text>
         ) : null}
       </View>
-      {showHome ? (
-        <Pressable onPress={onHome} hitSlop={10} style={hdrStyles.iconBtn}>
-          <Feather name="home" size={20} color={colors.mutedForeground} />
-        </Pressable>
-      ) : (
-        <View style={hdrStyles.iconBtn} />
-      )}
+      <View style={hdrStyles.iconBtn} />
     </View>
   );
 }
@@ -779,10 +769,6 @@ export function BrowseByAisle({
     }
   }, [crumbs]);
 
-  const goHome = useCallback(() => {
-    setCrumbs({ aisle: null, section: null });
-  }, []);
-
   useEffect(() => {
     if (Platform.OS !== "android") return;
     const handler = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -860,8 +846,6 @@ export function BrowseByAisle({
         title={headerTitle}
         subtitle={headerSubtitle}
         onBack={level === "aisles" ? onClose : goBack}
-        onHome={goHome}
-        showHome={level !== "aisles"}
         colors={colors}
       />
 
