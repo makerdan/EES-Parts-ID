@@ -7,6 +7,8 @@
  * - Skips duplicate in-flight fetches (fetchingRef guard).
  * - Re-fetches on app foreground via AppState subscription.
  * - Caller can trigger an explicit refresh via `refetch()` (e.g. on tab focus).
+ * - Error badge is suppressed when cached zones are already loaded — the map
+ *   works offline as long as a prior successful fetch has been cached.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
@@ -44,11 +46,12 @@ export function useWarehouseZones() {
   const [error, setError] = useState(false);
   const mountedRef = useRef(true);
   const fetchingRef = useRef(false);
+  // True once we have zones from either cache or a successful fetch.
+  // When true, background-refresh failures are silent (map works offline).
+  const hasDataRef = useRef(false);
 
-  // Background fetch — deduplicates concurrent calls via fetchingRef.
-  // Does NOT reset the flag externally; only the fetch itself clears it.
   const backgroundFetch = useCallback(async () => {
-    if (fetchingRef.current) return; // already in flight — skip
+    if (fetchingRef.current) return;
     fetchingRef.current = true;
     try {
       const data: { zones: ApiWarehouseZone[] } = await retryAsync(async () => {
@@ -60,12 +63,16 @@ export function useWarehouseZones() {
         setZones(data.zones);
         setError(false);
         setLoading(false);
+        hasDataRef.current = true;
       }
       const entry: ZoneCache = { zones: data.zones };
       await AsyncStorage.setItem(ZONES_CACHE_KEY, JSON.stringify(entry)).catch(() => {});
     } catch {
       if (mountedRef.current) {
-        setError(true);
+        // Only surface the error when there is no cached data to fall back on.
+        if (!hasDataRef.current) {
+          setError(true);
+        }
         setLoading(false);
       }
     } finally {
@@ -85,11 +92,11 @@ export function useWarehouseZones() {
           if (mountedRef.current) {
             setZones(cached.zones);
             setLoading(false);
+            hasDataRef.current = true;
           }
         }
       } catch { /* ignore corrupt cache */ }
 
-      // Always refresh in the background after serving the cache.
       backgroundFetch();
     })();
 
@@ -107,9 +114,6 @@ export function useWarehouseZones() {
     return () => sub.remove();
   }, [backgroundFetch]);
 
-  // Explicit refetch for tab-focus calls from the screen.
-  // Does not override the in-flight guard; backgroundFetch() will no-op if
-  // a fetch is already running.
   const refetch = useCallback(() => {
     backgroundFetch();
   }, [backgroundFetch]);
