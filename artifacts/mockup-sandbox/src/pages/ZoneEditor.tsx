@@ -1670,6 +1670,7 @@ const styles = {
     width: "100%",
     height: "100%",
     display: "block",
+    overflow: "hidden",
   } as React.CSSProperties,
   loadingBadge: {
     position: "absolute" as const,
@@ -1690,6 +1691,8 @@ const styles = {
     borderLeft: "1px solid #e0e0e0",
     background: "#fafafa",
     overflow: "hidden",
+    position: "relative" as const,
+    zIndex: 1,
   },
   input: {
     width: "100%",
