@@ -436,7 +436,12 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
         </Pressable>
 
         {!dimCollapsed && (
-          <>
+          <ScrollView
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+            style={Platform.OS === "web" ? { maxHeight: 480 } : undefined}
+            keyboardShouldPersistTaps="handled"
+          >
             {/* ── Text fields header + clear button ── */}
             <View style={chipAreaStyles.dimHeader}>
               <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
@@ -455,7 +460,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
             <View style={{ flexDirection: "row", gap: 10 }}>
               <View style={{ flex: 1 }}>
                 <Field
-                  label="Catalog #"
+                  label="Catalog #:"
                   value={values.catalog}
                   onChange={v => onChange("catalog", v)}
                   placeholder="e.g. BR120..."
@@ -465,7 +470,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               </View>
               <View style={{ flex: 1 }}>
                 <Field
-                  label="Vendor"
+                  label="Vendor:"
                   value={values.vendor}
                   onChange={v => onChange("vendor", v)}
                   placeholder="Eaton, SQD..."
@@ -477,7 +482,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
             <View style={{ flexDirection: "row", gap: 10 }}>
               <View style={{ flex: 1 }}>
                 <Field
-                  label="Color"
+                  label="Color:"
                   value={values.color}
                   onChange={v => onChange("color", v)}
                   placeholder="White, Black..."
@@ -487,7 +492,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               </View>
               <View style={{ flex: 1 }}>
                 <Field
-                  label="Size / Rating"
+                  label="Size / Rating:"
                   value={values.size}
                   onChange={v => onChange("size", v)}
                   placeholder={'20A, 1/2", #12...'}
@@ -498,7 +503,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
             <View style={{ flexDirection: "row", gap: 10 }}>
               <View style={{ flex: 1 }}>
                 <Field
-                  label="Material"
+                  label="Material:"
                   value={values.material}
                   onChange={v => onChange("material", v)}
                   placeholder="Steel, PVC, Copper..."
@@ -508,7 +513,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               </View>
               <View style={{ flex: 1 }}>
                 <Field
-                  label="Text / Numbers"
+                  label="Text / Numbers:"
                   value={values.textNumbers}
                   onChange={v => onChange("textNumbers", v)}
                   placeholder="Markings, UPC..."
@@ -548,7 +553,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               onChange={v => onChange("confidenceThreshold", v)}
               colors={colors}
             />
-          </>
+          </ScrollView>
         )}
       </View>
 
@@ -597,9 +602,10 @@ const chipAreaStyles = StyleSheet.create({
     marginBottom: 8,
   },
   dimHeaderLabel: {
-    fontSize: 10,
+    fontSize: 11,
     fontFamily: "Inter_600SemiBold",
     letterSpacing: 0.8,
+    textDecorationLine: "underline",
   },
   resetBtn: {
     fontSize: 12,
