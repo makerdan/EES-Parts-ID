@@ -113,6 +113,22 @@ async function readJobProgress(
   return row;
 }
 
+/** Read the full failure fields for a job from the DB. */
+async function readJobFailure(
+  jobId: number,
+): Promise<{ status: string; errorMessage: string | null }> {
+  const [row] = await db
+    .select({
+      status: catalogPdfJobTable.status,
+      errorMessage: catalogPdfJobTable.errorMessage,
+    })
+    .from(catalogPdfJobTable)
+    .where(eq(catalogPdfJobTable.id, jobId))
+    .limit(1);
+  if (!row) throw new Error(`Job ${jobId} not found in DB`);
+  return row;
+}
+
 /**
  * Poll the status endpoint until the job reaches a terminal state.
  * Throws if the job does not complete within the given timeout.
@@ -400,5 +416,78 @@ describe("PDF job status endpoint — DB-accurate counts after simulated restart
     expect(res.body.processedPages).toBe(5);
     expect(res.body.matchedParts).toBe(3);
     expect(res.body.errorMessage).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 3: Failed job stores error message in the DB
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("PDF job failure — error message persisted to DB", () => {
+  it("stores status=failed and the thrown error message when extractPdfPages throws", async () => {
+    const errorText = "Simulated PDF extraction failure";
+    mockExtractPdfPages.mockRejectedValueOnce(new Error(errorText));
+
+    const jobId = await startJob();
+    await waitForJobDone(jobId);
+
+    const row = await readJobFailure(Number(jobId));
+    expect(row.status).toBe("failed");
+    expect(row.errorMessage).toBe(errorText);
+  });
+
+  it("stores status=failed and the thrown error message when extractCatalogPage throws mid-job", async () => {
+    const errorText = "Simulated catalog extraction failure";
+
+    mockExtractPdfPages.mockResolvedValueOnce([
+      { pageNum: 1, text: "page one", images: [], isRendered: false, pageWidth: 0, pageHeight: 0 },
+    ]);
+    mockExtractCatalogPage.mockRejectedValueOnce(new Error(errorText));
+
+    const jobId = await startJob();
+    await waitForJobDone(jobId);
+
+    const row = await readJobFailure(Number(jobId));
+    expect(row.status).toBe("failed");
+    expect(row.errorMessage).toBe(errorText);
+  });
+
+  it("stores a non-null errorMessage that matches the thrown Error message", async () => {
+    const errorText = "Disk quota exceeded while reading PDF";
+    mockExtractPdfPages.mockRejectedValueOnce(new Error(errorText));
+
+    const jobId = await startJob();
+    await waitForJobDone(jobId);
+
+    const row = await readJobFailure(Number(jobId));
+    expect(row.errorMessage).not.toBeNull();
+    expect(row.errorMessage).toMatch(errorText);
+  });
+
+  it("reflects status=failed and errorMessage in the status endpoint response after failure", async () => {
+    const errorText = "Unexpected EOF in PDF stream";
+    mockExtractPdfPages.mockRejectedValueOnce(new Error(errorText));
+
+    const jobId = await startJob();
+    await waitForJobDone(jobId);
+
+    const res = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${jobId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(res.body.status).toBe("failed");
+    expect(res.body.errorMessage).toBe(errorText);
+  });
+
+  it("stores the string representation when a non-Error value is thrown", async () => {
+    mockExtractPdfPages.mockRejectedValueOnce("plain string error");
+
+    const jobId = await startJob();
+    await waitForJobDone(jobId);
+
+    const row = await readJobFailure(Number(jobId));
+    expect(row.status).toBe("failed");
+    expect(row.errorMessage).toBe("plain string error");
   });
 });
