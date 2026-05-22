@@ -80,7 +80,7 @@ const _persistReadPromise = initPersistRead();
 let _svgLoadPromise: Promise<void> | null = null;
 
 export function prefetchSvgAsset(): Promise<void> {
-  if (_svgCache !== null) return Promise.resolve();
+  if (hasCachedData()) return Promise.resolve();
   return loadSvgAsset();
 }
 
