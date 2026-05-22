@@ -26,6 +26,7 @@ import {
 } from "../utils/searchHelpers";
 import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
 import { generateKeywords } from "../utils/generateKeywords";
+import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import {
   blendPgScore,
   catalogScore,
@@ -668,6 +669,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
       })
       .returning();
 
+    invalidateReferenceAnswerCache().catch(() => {});
     res.status(201).json({ item: created });
   } catch (err) {
     console.error(err);
@@ -865,6 +867,7 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
       else updated++;
     }
 
+    invalidateReferenceAnswerCache().catch(() => {});
     res.json({ inserted, updated, total: items.length });
   } catch (err) {
     console.error(err);
@@ -948,6 +951,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
 
     res.write(`data: ${JSON.stringify({ done: true, processed, total })}\n\n`);
     res.end();
+    invalidateReferenceAnswerCache().catch(() => {});
   } catch (err) {
     console.error(err);
     res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
@@ -1064,6 +1068,9 @@ async function runBulkEnrich() {
   console.log(
     `[bulk-enrich] Done – processed=${bulkEnrichJob.processed} errors=${bulkEnrichJob.errors}`,
   );
+  if (bulkEnrichJob.processed > 0) {
+    invalidateReferenceAnswerCache().catch(() => {});
+  }
 }
 
 // ── GET /inventory/enrich-summary ─────────────────────────────────────────────
@@ -1211,6 +1218,9 @@ async function runMeasureEnrich(): Promise<void> {
   console.log(
     `[measure-enrich] Done – processed=${measureEnrichJob.processed} updated=${measureEnrichJob.updated}`,
   );
+  if (measureEnrichJob.updated > 0) {
+    invalidateReferenceAnswerCache().catch(() => {});
+  }
 }
 
 // ── POST /inventory/enrich-measurements ───────────────────────────────────────
@@ -1365,6 +1375,7 @@ router.patch("/:id/description", requireAdminAuth, async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
+    invalidateReferenceAnswerCache().catch(() => {});
     res.json(updated);
   } catch (err) {
     console.error(err);
@@ -1389,6 +1400,7 @@ router.patch("/:id/keywords", async (req, res) => {
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
+    invalidateReferenceAnswerCache().catch(() => {});
     res.json(updated);
   } catch (err) {
     console.error(err);
