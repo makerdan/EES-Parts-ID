@@ -412,9 +412,9 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
   return (
     <View>
       {/* ── Advanced Filters collapsible card ── */}
-      <View style={[chipAreaStyles.container, { backgroundColor: colors.card }]}>
+      <View style={[chipAreaStyles.container, { backgroundColor: colors.card, paddingVertical: dimCollapsed ? 4 : 12 }]}>
         <Pressable
-          style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12, padding: 10 }]}
+          style={[chipAreaStyles.header, { marginBottom: dimCollapsed ? 0 : 12, paddingHorizontal: 10, paddingVertical: 4 }]}
           onPress={toggleDimensions}
         >
           <Text style={[chipAreaStyles.title, { color: colors.foreground, flex: 1, textAlign: "center" }]}>Advanced Filters</Text>
@@ -425,9 +425,6 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
                   {activeChipCount} active
                 </Text>
               </View>
-            )}
-            {dimensionCounts && (
-              <Text style={[chipAreaStyles.liveLabel, { color: colors.mutedForeground }]}>live counts</Text>
             )}
             <Animated.View style={{ transform: [{ rotate: dimChevronRotate }] }}>
               <Feather name="chevron-down" size={16} color={colors.mutedForeground} />
