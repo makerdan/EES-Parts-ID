@@ -458,7 +458,7 @@ export function WarehouseMapView({
       const fillColor = isActive ? "rgba(0, 112, 255, 0.14)" : "rgba(0, 112, 255, 0.06)";
       const strokeColor = "#0070ff";
       const strokeWidth = isActive ? 8 : 4;
-      const labelColor = "#0070ff";
+      const labelColor = "#000000";
 
       return (
         <G
