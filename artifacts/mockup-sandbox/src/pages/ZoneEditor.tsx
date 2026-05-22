@@ -7,12 +7,15 @@
  *   Pan mode  : drag background to pan, scroll wheel to zoom
  *   Draw mode : click+drag background to draw a new rectangle, then fill form
  *   Select    : click any zone → populates sidebar form
- *   Move      : drag selected zone → PATCH on drop
- *   Resize    : drag corner handles of selected zone → PATCH on drop
+ *               Shift+click zone or list item → add/remove from multi-selection
+ *               Shift+drag background → rubber-band rectangle select
+ *   Move      : drag selected zone (single-select only) → PATCH on drop
+ *   Resize    : drag corner handles of selected zone (single-select only) → PATCH on drop
  */
 import React, {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -67,7 +70,8 @@ type IxState =
   | { t: "pan"; sx: number; sy: number; tx: number; ty: number }
   | { t: "draw"; x1: number; y1: number; x2: number; y2: number }
   | { t: "move"; id: number; ox: number; oy: number }
-  | { t: "resize"; id: number; handle: Handle; ax: number; ay: number };
+  | { t: "resize"; id: number; handle: Handle; ax: number; ay: number }
+  | { t: "rubber"; x1: number; y1: number; x2: number; y2: number; shift: boolean };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function screenToSvg(
@@ -117,13 +121,20 @@ export function ZoneEditor() {
   const [loadError, setLoadError] = useState("");
   const [tf, setTf] = useState<Tf>({ x: 0, y: 0, s: INITIAL_SCALE });
   const [mode, setMode] = useState<Mode>("pan");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  // draftRect: the live rectangle being drawn (while dragging)
+
+  // Multi-select: a Set of selected zone IDs
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  // draftRect: the live rectangle being drawn (while dragging in draw mode)
   const [draftRect, setDraftRect] = useState<{
     x: number; y: number; w: number; h: number;
   } | null>(null);
   // pendingRect: drawn but not yet saved (shows in sidebar form)
   const [pendingRect, setPendingRect] = useState<{
+    x: number; y: number; w: number; h: number;
+  } | null>(null);
+  // rubberRect: live selection rectangle (Shift+drag in pan mode)
+  const [rubberRect, setRubberRect] = useState<{
     x: number; y: number; w: number; h: number;
   } | null>(null);
   // dragZone: live zone position during move/resize
@@ -133,6 +144,11 @@ export function ZoneEditor() {
   });
   const [saving, setSaving] = useState(false);
 
+  // Multi-select form fields
+  const [multiAisleId, setMultiAisleId] = useState("");
+  const [multiParity, setMultiParity] = useState<"" | "all" | "odd" | "even">("");
+  const [multiSaving, setMultiSaving] = useState(false);
+
   // Refs — updated every render so event handlers never go stale
   const svgRef = useRef<SVGSVGElement>(null);
   const floorPlanRef = useRef<SVGGElement>(null);
@@ -141,11 +157,13 @@ export function ZoneEditor() {
   const zonesRef = useRef(zones);
   const dragZoneRef = useRef<Zone | null>(null);
   const modeRef = useRef(mode);
+  const selectedIdsRef = useRef(selectedIds);
 
   useEffect(() => { tfRef.current = tf; }, [tf]);
   useEffect(() => { zonesRef.current = zones; }, [zones]);
   useEffect(() => { dragZoneRef.current = dragZone; }, [dragZone]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
   // Inject the warehouse floor plan SVG directly into the SVG DOM so it shares
   // the same coordinate system as the zone overlays and stays crisp at any zoom.
@@ -154,6 +172,19 @@ export function ZoneEditor() {
       floorPlanRef.current.innerHTML = svgInnerContent;
     }
   }, []);
+
+  // ── Derived selection values ──────────────────────────────────────────────
+  // selectedId is non-null only when exactly one zone is selected
+  const selectedId: number | null = selectedIds.size === 1 ? [...selectedIds][0]! : null;
+  const isMulti = selectedIds.size > 1;
+  const selectedZone = useMemo(
+    () => zones.find((z) => z.id === selectedId) ?? null,
+    [zones, selectedId],
+  );
+  const selectedZoneList = useMemo(
+    () => zones.filter((z) => selectedIds.has(z.id)),
+    [zones, selectedIds],
+  );
 
   // ── API helpers ─────────────────────────────────────────────────────────────
   const headers = useCallback(
@@ -224,7 +255,7 @@ export function ZoneEditor() {
       const { zone } = await res.json() as { zone: Zone };
       toast.success(`Zone "${zone.label}" created`);
       setPendingRect(null);
-      setSelectedId(zone.id);
+      setSelectedIds(new Set([zone.id]));
       setForm({ aisleId: zone.aisleId, label: zone.label, sectionParity: zone.sectionParity, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
@@ -266,7 +297,7 @@ export function ZoneEditor() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       toast.success("Zone deleted");
-      setSelectedId(null);
+      setSelectedIds(new Set());
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -300,13 +331,26 @@ export function ZoneEditor() {
       }
       const { zone } = await res.json() as { zone: Zone };
       toast.success(`Duplicated → placed to the right`);
-      setSelectedId(zone.id);
+      setSelectedIds(new Set([zone.id]));
       setForm({ aisleId: zone.aisleId, label: zone.label, sectionParity: zone.sectionParity, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleMultiSave = async (updates: Partial<Zone>) => {
+    setMultiSaving(true);
+    try {
+      await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
+      toast.success(`Updated ${selectedIds.size} zones`);
+      await fetchZones();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMultiSaving(false);
     }
   };
 
@@ -319,7 +363,7 @@ export function ZoneEditor() {
     );
   };
 
-  // Sync form fields when selected zone changes
+  // Sync single-select form when selected zone changes
   const lastSavedFormRef = useRef<FormState | null>(null);
   useEffect(() => {
     if (!selectedId) return;
@@ -331,7 +375,19 @@ export function ZoneEditor() {
     }
   }, [selectedId, zones]);
 
-  // Auto-save when form fields change (debounced 600 ms)
+  // Sync multi-select form fields when selection or zones change
+  useEffect(() => {
+    if (!isMulti) return;
+    const list = zones.filter((z) => selectedIds.has(z.id));
+    if (list.length === 0) return;
+    const aisles = new Set(list.map((z) => z.aisleId));
+    const parities = new Set(list.map((z) => z.sectionParity));
+    setMultiAisleId(aisles.size === 1 ? [...aisles][0]! : "");
+    setMultiParity(parities.size === 1 ? [...parities][0]! as typeof multiParity : "");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, zones, isMulti]);
+
+  // Auto-save when single-select form fields change (debounced 600 ms)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!selectedId || !lastSavedFormRef.current) return;
@@ -392,6 +448,13 @@ export function ZoneEditor() {
         return;
       }
 
+      if (state.t === "rubber") {
+        ixRef.current = { ...state, x2: p.x, y2: p.y };
+        const r = normRect(state.x1, state.y1, p.x, p.y);
+        setRubberRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
+        return;
+      }
+
       if (state.t === "move") {
         const base = zonesRef.current.find((z) => z.id === state.id);
         if (!base) return;
@@ -419,7 +482,7 @@ export function ZoneEditor() {
         const dx = e.clientX - state.sx;
         const dy = e.clientY - state.sy;
         if (Math.hypot(dx, dy) < 5) {
-          setSelectedId(null);
+          setSelectedIds(new Set());
           setPendingRect(null);
         }
         return;
@@ -430,13 +493,37 @@ export function ZoneEditor() {
         const minSvg = MIN_ZONE_PX / tfRef.current.s;
         setDraftRect(null);
         if (r.svgWidth < minSvg || r.svgHeight < minSvg) {
-          setSelectedId(null);
+          setSelectedIds(new Set());
           setPendingRect(null);
           return;
         }
         setPendingRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
-        setSelectedId(null);
+        setSelectedIds(new Set());
         setForm({ aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0 });
+        return;
+      }
+
+      if (state.t === "rubber") {
+        setRubberRect(null);
+        const r = normRect(state.x1, state.y1, state.x2, state.y2);
+        const minSvg = MIN_ZONE_PX / tfRef.current.s;
+        if (r.svgWidth >= minSvg && r.svgHeight >= minSvg) {
+          const hits = zonesRef.current.filter(
+            (z) =>
+              z.svgX < r.svgX + r.svgWidth &&
+              z.svgX + z.svgWidth > r.svgX &&
+              z.svgY < r.svgY + r.svgHeight &&
+              z.svgY + z.svgHeight > r.svgY,
+          );
+          if (hits.length > 0) {
+            if (state.shift) {
+              setSelectedIds((prev) => new Set([...prev, ...hits.map((z) => z.id)]));
+            } else {
+              setSelectedIds(new Set(hits.map((z) => z.id)));
+            }
+            setPendingRect(null);
+          }
+        }
         return;
       }
 
@@ -475,11 +562,18 @@ export function ZoneEditor() {
   const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     if (e.button !== 0) return;
     if (modeRef.current === "pan") {
-      ixRef.current = {
-        t: "pan",
-        sx: e.clientX, sy: e.clientY,
-        tx: tfRef.current.x, ty: tfRef.current.y,
-      };
+      if (e.shiftKey) {
+        // Shift+drag → rubber-band selection
+        const p = getSvgPt(e.clientX, e.clientY);
+        ixRef.current = { t: "rubber", x1: p.x, y1: p.y, x2: p.x, y2: p.y, shift: true };
+        setRubberRect(null);
+      } else {
+        ixRef.current = {
+          t: "pan",
+          sx: e.clientX, sy: e.clientY,
+          tx: tfRef.current.x, ty: tfRef.current.y,
+        };
+      }
     } else {
       const p = getSvgPt(e.clientX, e.clientY);
       ixRef.current = { t: "draw", x1: p.x, y1: p.y, x2: p.x, y2: p.y };
@@ -491,7 +585,21 @@ export function ZoneEditor() {
   const onZoneMouseDown = (e: React.MouseEvent, zone: Zone) => {
     e.stopPropagation();
     if (e.button !== 0) return;
-    setSelectedId(zone.id);
+
+    if (e.shiftKey) {
+      // Shift+click: toggle zone in/out of multi-selection
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(zone.id)) next.delete(zone.id);
+        else next.add(zone.id);
+        return next;
+      });
+      setPendingRect(null);
+      return; // don't start move for shift-clicks
+    }
+
+    // Plain click: single-select and start move
+    setSelectedIds(new Set([zone.id]));
     setPendingRect(null);
     const p = getSvgPt(e.clientX, e.clientY);
     ixRef.current = {
@@ -544,7 +652,15 @@ export function ZoneEditor() {
     ? zones.map((z) => (z.id === dragZone.id ? dragZone : z))
     : zones;
 
-  const selectedZone = zones.find((z) => z.id === selectedId) ?? null;
+  // Mixed-value indicators for multi-select form
+  const multiAisleIds = useMemo(
+    () => new Set(selectedZoneList.map((z) => z.aisleId)),
+    [selectedZoneList],
+  );
+  const multiParities = useMemo(
+    () => new Set(selectedZoneList.map((z) => z.sectionParity)),
+    [selectedZoneList],
+  );
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -566,8 +682,10 @@ export function ZoneEditor() {
           </ModeBtn>
         </div>
         <span style={styles.hint}>
-          scroll-zoom · {mode === "pan" ? "drag to pan" : "drag to draw"} ·{" "}
-          {(tf.s * 100).toFixed(0)}%
+          scroll-zoom · {mode === "pan"
+            ? "drag to pan · Shift+drag to select · Shift+click to multi-select"
+            : "drag to draw"}
+          {" "}· {(tf.s * 100).toFixed(0)}%
         </span>
       </div>
 
@@ -594,15 +712,16 @@ export function ZoneEditor() {
                   shares the same coordinate system as zone overlays and stays
                   perfectly crisp at any zoom level (no rasterisation). */}
               <g ref={floorPlanRef} pointerEvents="none" />
+
               {/* Zone overlays */}
               {displayZones.map((zone) => {
-                const sel = zone.id === selectedId;
+                const sel = selectedIds.has(zone.id);
                 const fill = zone.isInventory
                   ? "rgba(0, 112, 255, 0.14)"
                   : "rgba(0, 112, 255, 0.06)";
-                const stroke = sel
-                  ? "#f59e0b"
-                  : "#0070ff";
+                const stroke = sel ? "#f59e0b" : "#0070ff";
+                // Corner handles only for single-selected zone
+                const showHandles = sel && selectedIds.size === 1;
                 return (
                   <g key={zone.id}>
                     <rect
@@ -636,8 +755,8 @@ export function ZoneEditor() {
                       {zone.label}
                     </text>
 
-                    {/* Corner handles (selected only) */}
-                    {sel && (
+                    {/* Corner handles (single-selected zone only) */}
+                    {showHandles && (
                       <>
                         {(["nw", "ne", "sw", "se"] as Handle[]).map((h) => {
                           const hx = h.includes("e")
@@ -698,6 +817,21 @@ export function ZoneEditor() {
                   style={{ pointerEvents: "none" }}
                 />
               )}
+
+              {/* Rubber-band selection rectangle (Shift+drag) */}
+              {rubberRect && rubberRect.w > 0 && rubberRect.h > 0 && (
+                <rect
+                  x={rubberRect.x}
+                  y={rubberRect.y}
+                  width={rubberRect.w}
+                  height={rubberRect.h}
+                  fill="rgba(59,130,246,0.08)"
+                  stroke="#3b82f6"
+                  strokeWidth={sw}
+                  strokeDasharray={`${10 / tf.s} ${5 / tf.s}`}
+                  style={{ pointerEvents: "none" }}
+                />
+              )}
             </g>
           </svg>
 
@@ -733,6 +867,67 @@ export function ZoneEditor() {
                   </Btn>
                 </Row>
               </>
+            ) : isMulti ? (
+              <>
+                <div style={styles.formTitle}>{selectedIds.size} zones selected</div>
+                <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 10, lineHeight: 1.4 }}>
+                  Edit shared properties below. Position and size are only available for single-zone selection.
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div>
+                    <Label>Aisle ID — all selected</Label>
+                    <input
+                      value={multiAisleId}
+                      onChange={(e) => setMultiAisleId(e.target.value)}
+                      placeholder={multiAisleIds.size > 1 ? "— mixed —" : ""}
+                      style={styles.input}
+                    />
+                    {multiAisleIds.size > 1 && (
+                      <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>
+                        Mixed: {[...multiAisleIds].join(", ")}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <Label>Section Parity — all selected</Label>
+                    <select
+                      value={multiParity}
+                      onChange={(e) => setMultiParity(e.target.value as typeof multiParity)}
+                      style={styles.input}
+                    >
+                      <option value="">
+                        {multiParities.size > 1 ? "— mixed —" : "— select —"}
+                      </option>
+                      <option value="all">All sections</option>
+                      <option value="odd">Odd sections only</option>
+                      <option value="even">Even sections only</option>
+                    </select>
+                    {multiParities.size > 1 && (
+                      <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>
+                        Mixed: {[...multiParities].join(", ")}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <Row style={{ flexWrap: "wrap" }}>
+                  <Btn
+                    color="#3b82f6"
+                    disabled={multiSaving || (!multiAisleId.trim() && !multiParity)}
+                    onClick={() => {
+                      const updates: Partial<Zone> = {};
+                      if (multiAisleId.trim()) updates.aisleId = multiAisleId.trim();
+                      if (multiParity) updates.sectionParity = multiParity;
+                      if (Object.keys(updates).length === 0) return;
+                      void handleMultiSave(updates);
+                    }}
+                  >
+                    {multiSaving ? "Saving…" : `Save ${selectedIds.size} zones`}
+                  </Btn>
+                  <Btn color="#6b7280" onClick={() => setSelectedIds(new Set())}>
+                    Clear
+                  </Btn>
+                </Row>
+              </>
             ) : selectedZone ? (
               <>
                 <div style={styles.formTitle}>Zone #{selectedZone.id}</div>
@@ -758,7 +953,7 @@ export function ZoneEditor() {
                   </Btn>
                   <Btn
                     color="#6b7280"
-                    onClick={() => setSelectedId(null)}
+                    onClick={() => setSelectedIds(new Set())}
                   >
                     Deselect
                   </Btn>
@@ -775,7 +970,7 @@ export function ZoneEditor() {
               <div style={styles.emptyHint}>
                 {mode === "draw"
                   ? "Click and drag on the map to draw a new zone."
-                  : "Switch to Draw mode to create zones, or click a zone to select it."}
+                  : "Click a zone to select it. Shift+click to multi-select. Shift+drag background for rubber-band select."}
               </div>
             )}
           </SideSection>
@@ -784,37 +979,45 @@ export function ZoneEditor() {
           <div style={styles.zoneList}>
             <div style={styles.listHeader}>
               {zones.length} zone{zones.length !== 1 ? "s" : ""}
+              {selectedIds.size > 0 && ` · ${selectedIds.size} selected`}
               {loading && " · loading…"}
             </div>
             {loadError && (
               <div style={styles.errorMsg}>{loadError}</div>
             )}
-            {displayZones.map((zone) => (
-              <div
-                key={zone.id}
-                onClick={() => {
-                  setSelectedId(zone.id);
-                  setPendingRect(null);
-                }}
-                style={{
-                  ...styles.zoneItem,
-                  borderLeft:
-                    zone.id === selectedId
-                      ? "3px solid #f59e0b"
-                      : "3px solid transparent",
-                  background:
-                    zone.id === selectedId
-                      ? "rgba(245,158,11,0.08)"
-                      : "transparent",
-                }}
-              >
-                <div style={styles.zoneItemLabel}>{zone.label}</div>
-                <div style={styles.zoneItemMeta}>
-                  Aisle {zone.aisleId} · {zone.sectionParity}
-                  {zone.isInventory ? "" : " · non-inv"}
+            {displayZones.map((zone) => {
+              const sel = selectedIds.has(zone.id);
+              return (
+                <div
+                  key={zone.id}
+                  onClick={(e) => {
+                    if (e.shiftKey) {
+                      // Shift+click: toggle in multi-selection
+                      setSelectedIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(zone.id)) next.delete(zone.id);
+                        else next.add(zone.id);
+                        return next;
+                      });
+                    } else {
+                      setSelectedIds(new Set([zone.id]));
+                    }
+                    setPendingRect(null);
+                  }}
+                  style={{
+                    ...styles.zoneItem,
+                    borderLeft: sel ? "3px solid #f59e0b" : "3px solid transparent",
+                    background: sel ? "rgba(245,158,11,0.08)" : "transparent",
+                  }}
+                >
+                  <div style={styles.zoneItemLabel}>{zone.label}</div>
+                  <div style={styles.zoneItemMeta}>
+                    Aisle {zone.aisleId} · {zone.sectionParity}
+                    {zone.isInventory ? "" : " · non-inv"}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {!loading && zones.length === 0 && !loadError && (
               <div style={styles.emptyList}>
                 No zones yet. Switch to Draw mode and drag on the map.
