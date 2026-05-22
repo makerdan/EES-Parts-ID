@@ -34,7 +34,6 @@ import { secondaryBtnBase } from "@/styles/shared";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import { retryAsync } from "@/utils/retryAsync";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
-import { AddPartModal } from "@/components/AddPartModal";
 import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
 import {
   QUERY_CACHE_KEY,
@@ -128,7 +127,6 @@ export default function SearchScreen() {
   useEffect(() => { activeCategorySlugRef.current = activeCategorySlug; }, [activeCategorySlug]);
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [filterHeaderHeight, setFilterHeaderHeight] = useState(120);
-  const [showAddPartModal, setShowAddPartModal] = useState(false);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
@@ -589,15 +587,6 @@ export default function SearchScreen() {
           </View>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          {isAdmin ? (
-            <Pressable
-              onPress={() => setShowAddPartModal(true)}
-              style={[styles.headerBtn, styles.addPartBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-            >
-              <Feather name="plus" size={16} color={colors.primary} />
-              <Text style={[styles.logoutBtnLabel, { color: colors.primary }]}>Add Part</Text>
-            </Pressable>
-          ) : null}
           <Pressable
             onPress={() => setShowReference(true)}
             style={[styles.headerBtn, styles.refBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
@@ -1120,15 +1109,6 @@ export default function SearchScreen() {
       )}
       </View>
 
-      <AddPartModal
-        visible={showAddPartModal}
-        adminToken={adminToken}
-        onClose={() => setShowAddPartModal(false)}
-        onSuccess={() => {
-          syncAllInventory();
-        }}
-        onAddDetails={isAdmin ? (item) => setDetailsItem(item) : undefined}
-      />
 
       <PartDetailsEditor
         item={detailsItem}

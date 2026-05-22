@@ -1047,7 +1047,7 @@ export default function UploadScreen() {
                   { borderBottomColor: tab === t ? colors.primary : "transparent" },
                 ]}
               >
-                <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
+                <Text style={[styles.tabLabel, { color: colors.primary }]}>
                   {t === "import" ? "Import File" : `Enrichment (${inventoryTotal})`}
                 </Text>
               </Pressable>
