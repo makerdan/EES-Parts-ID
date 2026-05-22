@@ -5,6 +5,12 @@ import { db } from "@workspace/db";
 import { quickLookupCacheTable, inventoryTable, referenceLogTable } from "@workspace/db";
 import { desc, eq, lt, or, ilike, sql } from "drizzle-orm";
 import { verifyAdminToken } from "./admin";
+import {
+  normalizeQuestion,
+  hashQuestion,
+  getCachedAnswer,
+  setCachedAnswer,
+} from "../lib/answerCache";
 
 const router = Router();
 
@@ -116,14 +122,40 @@ router.post("/ask", async (req, res) => {
       return void res.status(400).json({ error: "question is required" });
     }
 
+    const normalized = normalizeQuestion(question);
+    const questionHash = hashQuestion(normalized);
+
     const wantsJson =
       req.query["stream"] === "false" ||
       (req.headers["accept"] ?? "").includes("application/json");
 
     if (wantsJson) {
+      const cached = await getCachedAnswer(questionHash);
+      if (cached !== null) {
+        logger.debug({ questionHash }, "reference.ask cache hit (json)");
+        return void res.json({ answer: cached });
+      }
+
       const { answer, matchedItemCount } = await collectStreamedAnswer(question.trim());
       writeReferenceLog(question.trim(), answer, matchedItemCount);
+      setCachedAnswer(questionHash, normalized, answer).catch(() => {});
       return void res.json({ answer });
+    }
+
+    // SSE path: check cache first, stream from OpenAI on miss and cache after.
+    const cached = await getCachedAnswer(questionHash);
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    if (cached !== null) {
+      logger.debug({ questionHash }, "reference.ask cache hit (sse)");
+      res.write(`data: ${JSON.stringify({ content: cached })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+      return;
     }
 
     const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question.trim());
@@ -139,11 +171,6 @@ router.post("/ask", async (req, res) => {
       ],
     });
 
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.flushHeaders?.();
-
     let fullAnswer = "";
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content;
@@ -157,6 +184,9 @@ router.post("/ask", async (req, res) => {
     res.end();
 
     writeReferenceLog(question.trim(), fullAnswer, matchedItemCount);
+    if (fullAnswer) {
+      setCachedAnswer(questionHash, normalized, fullAnswer).catch(() => {});
+    }
   } catch (err) {
     logger.error({ err }, "reference.ask failed");
     if (res.headersSent) {

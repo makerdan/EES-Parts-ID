@@ -43,6 +43,13 @@
       "when": 1748217600000,
       "tag": "0005_dismissed_column",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1748390400000,
+      "tag": "0006_reference_answer_cache",
+      "breakpoints": true
     }
   ]
 }

@@ -35,6 +35,7 @@ import { Router } from "express";
 import { sql, eq, or, and } from "drizzle-orm";
 import { db, inventoryTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
+import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 
 const router = Router();
 
@@ -428,6 +429,7 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
       else updated++;
     }
 
+    invalidateReferenceAnswerCache().catch(() => {});
     res.json({ inserted, updated, total: rows.length });
   } catch (err) {
     console.error(err);
