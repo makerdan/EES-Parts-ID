@@ -2,26 +2,73 @@ import { Router } from "express";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "../lib/logger";
 import { db } from "@workspace/db";
-import { quickLookupCacheTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { quickLookupCacheTable, inventoryTable } from "@workspace/db";
+import { eq, or, ilike, sql } from "drizzle-orm";
 
 const router = Router();
 
 const GENERIC_ERROR_MESSAGE =
   "Sorry, the reference assistant ran into a problem. Please try again.";
 
+const BASE_SYSTEM_PROMPT =
+  "You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.";
+
+/**
+ * Search the inventory for items relevant to the question.
+ * Splits the question into tokens and matches against description and aiKeywords.
+ * Returns a formatted string section to inject into the system prompt, or an
+ * empty string when nothing matches.
+ */
+async function buildInventoryContext(question: string): Promise<string> {
+  try {
+    const tokens = question
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 2);
+
+    if (tokens.length === 0) return "";
+
+    const conditions = tokens.flatMap((token) => [
+      ilike(inventoryTable.description, `%${token}%`),
+      ilike(sql`array_to_string(${inventoryTable.aiKeywords}, ' ')`, `%${token}%`),
+    ]);
+
+    const rows = await db
+      .select({
+        vendor: inventoryTable.vendor,
+        catalog: inventoryTable.catalog,
+        description: inventoryTable.description,
+      })
+      .from(inventoryTable)
+      .where(or(...conditions))
+      .limit(15);
+
+    if (rows.length === 0) return "";
+
+    const lines = rows.map(
+      (r) =>
+        `${r.vendor} | ${r.catalog} | ${r.description.slice(0, 80)}${r.description.length > 80 ? "…" : ""}`,
+    );
+
+    return `\n\nRelevant items currently in this warehouse's inventory:\n${lines.join("\n")}`;
+  } catch (err) {
+    logger.warn({ err }, "inventory context lookup failed — skipping enrichment");
+    return "";
+  }
+}
+
 /** Collect the full streamed OpenAI response and return the text. */
 async function collectStreamedAnswer(question: string): Promise<string> {
+  const inventoryContext = await buildInventoryContext(question);
+  const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
+
   const stream = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     max_completion_tokens: 512,
     stream: true,
     messages: [
-      {
-        role: "system",
-        content:
-          "You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.",
-      },
+      { role: "system", content: systemContent },
       { role: "user", content: question },
     ],
   });
@@ -51,16 +98,15 @@ router.post("/ask", async (req, res) => {
       return void res.json({ answer });
     }
 
+    const inventoryContext = await buildInventoryContext(question.trim());
+    const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
+
     const stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       max_completion_tokens: 512,
       stream: true,
       messages: [
-        {
-          role: "system",
-          content:
-            "You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.",
-        },
+        { role: "system", content: systemContent },
         { role: "user", content: question },
       ],
     });

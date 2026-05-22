@@ -140,8 +140,8 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
 
     try {
       const a = await fetchChipAnswer(label, chipQuestion);
-      setAnswer(a);
       setHistory(h => [...h, { q: label, a }]);
+      setAnswer("");
     } catch {
       failedChipRef.current = { label, question: chipQuestion };
       setIsError(true);
@@ -174,8 +174,9 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
       }
 
       const data: { answer: string } = await res.json();
-      setAnswer(data.answer);
       setHistory(h => [...h, { q: askedQuestionRef.current, a: data.answer }]);
+      setAnswer("");
+      setQuestion("");
       scrollRef.current?.scrollToEnd({ animated: true });
     } catch {
       setIsError(true);
