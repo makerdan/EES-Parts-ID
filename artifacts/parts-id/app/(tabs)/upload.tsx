@@ -18,6 +18,7 @@ import { readSheet } from "read-excel-file/universal";
 import type { SheetData } from "read-excel-file/universal";
 import { useListInventory } from "@workspace/api-client-react";
 
+import { useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 import { AddPartModal } from "@/components/AddPartModal";
 import { ReferenceModal } from "@/components/ReferenceModal";
@@ -349,6 +350,7 @@ const gateStyles = StyleSheet.create({
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
   const colors = useColors();
+  const router = useRouter();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
@@ -1789,6 +1791,12 @@ export default function UploadScreen() {
                           {inventoryTotal} items total
                         </Text>
                         <View style={styles.inventoryHeaderActions}>
+                          <Pressable
+                            onPress={() => router.push("/ai-log")}
+                            style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
+                          >
+                            <Text style={[styles.exportCsvText, { color: colors.mutedForeground }]}>🤖 AI Log</Text>
+                          </Pressable>
                           <Pressable
                             onPress={handleExportCsv}
                             disabled={exportPending}
