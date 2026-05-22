@@ -79,51 +79,86 @@ const _persistReadPromise = initPersistRead();
 // duplicate network requests.
 let _svgLoadPromise: Promise<void> | null = null;
 
+// Base URL for API calls — matches the pattern used elsewhere in the app.
+const SVG_API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+  : "";
+
 export function prefetchSvgAsset(): Promise<void> {
   if (hasCachedData()) return Promise.resolve();
   return loadSvgAsset();
 }
 
+/**
+ * Load the floor plan SVG: try the server first (admin-uploadable), fall back
+ * to the bundled asset, and finally set an empty fallback if both fail.
+ * Uses hash-based cache invalidation so cold-start renders skip network.
+ */
 function loadSvgAsset(): Promise<void> {
   if (_svgLoadPromise) return _svgLoadPromise;
-  _svgLoadPromise = Asset.loadAsync(
+  _svgLoadPromise = _loadFloorPlanFromServer()
+    .catch(() => _loadFloorPlanFromBundle())
+    .catch(() => { setFallbackEmpty(); });
+  return _svgLoadPromise;
+}
+
+async function _loadFloorPlanFromServer(): Promise<void> {
+  const metaRes = await fetch(`${SVG_API_BASE}/floor-plan/meta`);
+  if (!metaRes.ok) throw new Error("no server floor plan");
+
+  const { hash } = await metaRes.json() as { hash: string };
+  // Cache hit — skip re-fetching the SVG bytes entirely.
+  if (getIfValid(hash) !== null) return;
+
+  const svgRes = await fetch(`${SVG_API_BASE}/floor-plan/svg`);
+  if (!svgRes.ok) throw new Error("floor-plan svg fetch failed");
+  const xml = await svgRes.text();
+
+  let newData: SvgData;
+  if (Platform.OS === "web") {
+    // Strip the outer <svg> wrapper so the content can be embedded
+    // directly inside the main SVG canvas as a child <g> element.
+    const innerXml = xml
+      .replace(/^[\s\S]*?<svg[^>]*>/, "")
+      .replace(/<\/svg>\s*$/, "");
+    newData = { xml, innerXml, uri: "" };
+  } else {
+    // On native, SvgUri can render directly from an http:// URL.
+    newData = { xml, innerXml: "", uri: `${SVG_API_BASE}/floor-plan/svg` };
+  }
+  setCached(hash, newData);
+}
+
+async function _loadFloorPlanFromBundle(): Promise<void> {
+  const [asset] = await Asset.loadAsync(
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     require("../assets/warehouse-map.svg"),
-  )
-    .then(async ([asset]) => {
-      const currentHash = asset.hash ?? "";
-      // Cache hit — persisted hash matches; skip the network fetch entirely.
-      if (getIfValid(currentHash) !== null) return;
+  );
+  const currentHash = asset.hash ?? "";
+  // Cache hit — persisted hash matches; skip the URI fetch entirely.
+  if (getIfValid(currentHash) !== null) return;
 
-      const uri = asset.localUri ?? asset.uri ?? "";
-      let newData: SvgData;
-      if (Platform.OS === "web") {
-        const res = await fetch(uri);
-        const xml = await res.text();
-        // Strip the outer <svg> wrapper so the content can be embedded
-        // directly inside the main SVG canvas as a child <g> element.
-        // This matches the approach used in the Zone Editor and keeps the
-        // floor plan and zone overlays in the same SVG viewport, eliminating
-        // any CSS-transform rasterisation blur at high zoom levels.
-        const innerXml = xml
-          .replace(/^[\s\S]*?<svg[^>]*>/, "")
-          .replace(/<\/svg>\s*$/, "");
-        newData = { xml, innerXml, uri: "" };
-      } else {
-        newData = { xml: "", innerXml: "", uri };
-      }
-      // Write to both in-memory cache and AsyncStorage so the next cold start
-      // skips the network fetch.  Also updates the stored hash so subsequent
-      // getIfValid calls are correct.
-      setCached(currentHash, newData);
-    })
-    .catch(() => {
-      // On load failure, set an empty fallback so subsequent mounts skip the
-      // fetch attempt and render the "Map unavailable" UI immediately.
-      // setFallbackEmpty is a no-op when valid data is already cached.
-      setFallbackEmpty();
-    });
-  return _svgLoadPromise;
+  const uri = asset.localUri ?? asset.uri ?? "";
+  let newData: SvgData;
+  if (Platform.OS === "web") {
+    const res = await fetch(uri);
+    const xml = await res.text();
+    // Strip the outer <svg> wrapper so the content can be embedded
+    // directly inside the main SVG canvas as a child <g> element.
+    // This matches the approach used in the Zone Editor and keeps the
+    // floor plan and zone overlays in the same SVG viewport, eliminating
+    // any CSS-transform rasterisation blur at high zoom levels.
+    const innerXml = xml
+      .replace(/^[\s\S]*?<svg[^>]*>/, "")
+      .replace(/<\/svg>\s*$/, "");
+    newData = { xml, innerXml, uri: "" };
+  } else {
+    newData = { xml: "", innerXml: "", uri };
+  }
+  // Write to both in-memory cache and AsyncStorage so the next cold start
+  // skips the network fetch.  Also updates the stored hash so subsequent
+  // getIfValid calls are correct.
+  setCached(currentHash, newData);
 }
 
 
