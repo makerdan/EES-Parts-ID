@@ -118,7 +118,7 @@ const DEFAULT_FILTERS: FilterValues = {
 
 export default function SearchScreen() {
   const colors = useColors();
-  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus } = useApp();
+  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast } = useApp();
   type SearchMode = "search" | "aisle" | "category";
   const [mode, setMode] = useState<SearchMode>("search");
   const [activeCategorySlug, setActiveCategorySlug] = useState<string | null>(null);
@@ -134,6 +134,10 @@ export default function SearchScreen() {
 
   const handleShowOnMap = useCallback((item: InventoryItem) => {
     const bins = item.binLocations ?? [];
+    if (bins.length === 0) {
+      showToast("No bin location assigned — add a bin to this item first.");
+      return;
+    }
     for (const bin of bins) {
       const parsed = parseBin(bin);
       if (parsed) {
@@ -146,7 +150,9 @@ export default function SearchScreen() {
         return;
       }
     }
-  }, [setPendingMapFocus]);
+    // Bins exist but none matched the expected format (e.g. "A-01-001")
+    showToast(`No map zone found for "${bins[0]}" — bin format not recognised.`);
+  }, [setPendingMapFocus, showToast]);
   // Local override of bin lists keyed by item.id, applied on top of whatever
   // results are currently displayed (online searchMutation.data, offlineResults,
   // or Fuse fallback). Lets bin edits show up immediately without a re-search.
