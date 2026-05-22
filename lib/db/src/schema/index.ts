@@ -8,3 +8,4 @@ export * from "./electrical_slang_map";
 export * from "./conversations";
 export * from "./messages";
 export * from "./quick_lookup_cache";
+export * from "./floor_plan_meta";

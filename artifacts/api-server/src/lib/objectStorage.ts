@@ -78,3 +78,41 @@ export async function uploadCatalogImage(
 
   return `/objects/${fullPath}`;
 }
+
+/**
+ * Upload a floor plan SVG to GCS under a deterministic well-known path.
+ * Overwrites any previous upload. Returns the serving object path.
+ */
+export async function uploadFloorPlanSvg(svgContent: string): Promise<string> {
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+
+  const privateDir = process.env["PRIVATE_OBJECT_DIR"] ?? "uploads";
+  const fullPath = `${privateDir}/floor-plan/warehouse-map.svg`;
+
+  const bucket = gcs.bucket(bucketId);
+  const file = bucket.file(fullPath);
+
+  await file.save(Buffer.from(svgContent, "utf8"), {
+    contentType: "image/svg+xml",
+    resumable: false,
+    metadata: { cacheControl: "public, max-age=3600" },
+  });
+
+  return `/objects/${fullPath}`;
+}
+
+/**
+ * Download the floor plan SVG from GCS as a Buffer.
+ * objectPath must start with "/objects/".
+ */
+export async function readFloorPlanSvg(objectPath: string): Promise<Buffer> {
+  const bucketId = process.env["DEFAULT_OBJECT_STORAGE_BUCKET_ID"];
+  if (!bucketId) throw new Error("DEFAULT_OBJECT_STORAGE_BUCKET_ID not set");
+
+  const gcsPath = objectPath.replace(/^\/objects\//, "");
+  const bucket = gcs.bucket(bucketId);
+  const file = bucket.file(gcsPath);
+  const [content] = await file.download();
+  return content;
+}

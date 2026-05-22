@@ -378,6 +378,11 @@ export default function UploadScreen() {
   const [exportPending, setExportPending] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // Floor plan upload state (admin-only)
+  const [floorPlanFile, setFloorPlanFile] = useState<{ name: string; uri: string } | null>(null);
+  const [floorPlanUploading, setFloorPlanUploading] = useState(false);
+  const [floorPlanResult, setFloorPlanResult] = useState<{ success: boolean; message: string } | null>(null);
+
   const [binDiff, setBinDiff] = useState<BinDiffSummary | null>(null);
   const [binDiffPending, setBinDiffPending] = useState(false);
   const [binDiffFailed, setBinDiffFailed] = useState(false);
@@ -935,6 +940,48 @@ export default function UploadScreen() {
     }
   };
 
+  // ── Floor plan upload handlers ─────────────────────────────────────────────
+  const handlePickFloorPlan = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["image/svg+xml", "text/plain", "*/*"],
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    setFloorPlanFile({ name: asset.name, uri: asset.uri });
+    setFloorPlanResult(null);
+  };
+
+  const handleUploadFloorPlan = async () => {
+    if (!floorPlanFile) return;
+    setFloorPlanUploading(true);
+    setFloorPlanResult(null);
+    try {
+      const content = await fetch(floorPlanFile.uri).then(r => r.text());
+      const token = adminTokenRef.current;
+      if (!token) {
+        setFloorPlanResult({ success: false, message: "Admin session expired — please lock and unlock again" });
+        return;
+      }
+      const res = await fetch(`${API_BASE}/admin/floor-plan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ svg: content }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Upload failed" })) as { error?: string };
+        setFloorPlanResult({ success: false, message: body.error ?? "Upload failed" });
+      } else {
+        setFloorPlanResult({ success: true, message: "Floor plan uploaded — the app will use the new plan on next launch." });
+        setFloorPlanFile(null);
+      }
+    } catch {
+      setFloorPlanResult({ success: false, message: "Network error — check connection and try again" });
+    } finally {
+      setFloorPlanUploading(false);
+    }
+  };
+
   const inventory = inventoryQuery.data?.items ?? [];
   const inventoryTotal = inventoryQuery.data?.total ?? 0;
 
@@ -1466,6 +1513,46 @@ export default function UploadScreen() {
                         setUploadError("Admin session expired. Please unlock again.");
                       }}
                     />
+
+                    {/* Floor Plan Upload */}
+                    <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <Text style={[styles.cardTitle, { color: colors.foreground }]}>🗺 Floor Plan</Text>
+                      <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                        Upload an updated warehouse floor plan (SVG). The app fetches the new plan on next launch — no app update required.
+                      </Text>
+                      <Pressable onPress={handlePickFloorPlan} style={[styles.pickBtn, { borderColor: colors.primary }]}>
+                        <Text style={[styles.pickBtnText, { color: colors.primary }]}>
+                          {floorPlanFile ? `📄 ${floorPlanFile.name}` : "Choose SVG File"}
+                        </Text>
+                      </Pressable>
+                      {floorPlanFile ? (
+                        <Pressable
+                          onPress={handleUploadFloorPlan}
+                          disabled={floorPlanUploading}
+                          style={[
+                            styles.pickBtn,
+                            { backgroundColor: floorPlanUploading ? colors.muted : colors.primary, borderColor: "transparent" },
+                          ]}
+                        >
+                          {floorPlanUploading ? (
+                            <ActivityIndicator size="small" color={colors.primaryForeground} />
+                          ) : (
+                            <Text style={[styles.pickBtnText, { color: colors.primaryForeground }]}>Upload Floor Plan</Text>
+                          )}
+                        </Pressable>
+                      ) : null}
+                      {floorPlanResult ? (
+                        <View style={[styles.uploadCard, {
+                          backgroundColor: floorPlanResult.success ? "#10b98115" : colors.destructive + "15",
+                          borderColor: floorPlanResult.success ? "#10b98155" : colors.destructive + "55",
+                          marginBottom: 0,
+                        }]}>
+                          <Text style={{ color: floorPlanResult.success ? "#059669" : colors.destructive, fontSize: 13, fontFamily: "Inter_500Medium" }}>
+                            {floorPlanResult.success ? "✓ " : "⚠ "}{floorPlanResult.message}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
 
                     {/* Bulk Enrichment Coverage */}
                     <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
