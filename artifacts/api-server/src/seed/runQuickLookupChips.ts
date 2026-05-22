@@ -1,11 +1,17 @@
 import { seedQuickLookupChips } from "./quickLookupChips";
+import { seedBreakerAttributeChips } from "./seedBreakerAttributeChips";
 
-seedQuickLookupChips()
+async function main() {
+  await seedQuickLookupChips();
+  await seedBreakerAttributeChips();
+}
+
+main()
   .then(() => {
-    console.log("Quick Lookup chip seed complete");
+    console.log("All reference chip seeds complete.");
     process.exit(0);
   })
   .catch((err) => {
-    console.error("Quick Lookup chip seed failed:", err);
+    console.error("Seed failed:", err);
     process.exit(1);
   });
