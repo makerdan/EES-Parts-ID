@@ -1,11 +1,12 @@
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { normalizeQuestion, hashQuestion, setCachedAnswer } from "../lib/answerCache";
 
 const SYSTEM_PROMPT =
   "You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.";
 
-const QUICK_LOOKUP_CHIPS: Array<{ label: string; question: string }> = [
+export const QUICK_LOOKUP_CHIPS: Array<{ label: string; question: string }> = [
   { label: "1G",               question: "What is a 1-gang electrical box, what devices does it hold, and what are the standard dimensions?" },
   { label: "GFCI",             question: "What does GFCI stand for, how does it work, and where is it required by the NEC?" },
   { label: "AFCI",             question: "What is an AFCI breaker or receptacle, how does it work, and where does the NEC require it?" },
@@ -58,4 +59,26 @@ export async function seedQuickLookupChips(): Promise<void> {
   }
 
   console.log("Quick Lookup chip seed complete.");
+}
+
+export async function seedReferenceAnswerCacheFromChips(): Promise<void> {
+  console.log(`Cross-populating reference_answer_cache from ${QUICK_LOOKUP_CHIPS.length} chip questions…`);
+
+  const rows = await db.select().from(quickLookupCacheTable);
+  const answerByLabel = new Map(rows.map((r) => [r.label, r.answer]));
+
+  for (const { label, question } of QUICK_LOOKUP_CHIPS) {
+    const answer = answerByLabel.get(label);
+    if (!answer) {
+      console.warn(`  [${label}] no cached answer found — skipping`);
+      continue;
+    }
+
+    const normalized = normalizeQuestion(question);
+    const questionHash = hashQuestion(normalized);
+    await setCachedAnswer(questionHash, question, answer);
+    console.log(`  [${label}] cross-populated`);
+  }
+
+  console.log("Reference answer cache pre-seed complete.");
 }
