@@ -8,7 +8,7 @@
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "doctor": "pnpm --filter ./artifacts/parts-id run doctor",
-    "test": "pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run test"
+    "test": "pnpm --filter ./artifacts/parts-id run test && pnpm --filter ./artifacts/api-server run test && pnpm --filter ./artifacts/mockup-sandbox run test"
   },
   "private": true,
   "devDependencies": {
