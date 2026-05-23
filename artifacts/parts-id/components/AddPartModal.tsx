@@ -137,7 +137,7 @@ export function AddPartModal({
       onRequestClose={createdItem ? handleDone : onClose}
     >
       <KeyboardAvoidingView
-        style={styles.overlay}
+        style={[styles.overlay, { backgroundColor: colors.overlay }]}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         <View style={[styles.sheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -284,7 +284,6 @@ export function AddPartModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "#00000066",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,

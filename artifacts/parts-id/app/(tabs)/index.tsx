@@ -620,7 +620,7 @@ export default function SearchScreen() {
         animationType="fade"
         onRequestClose={() => { setShowLogoutModal(false); setCacheClearedMsg(null); setCacheAge(null); }}
       >
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
           <View style={[styles.logoutModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.logoutModalTitle, { color: colors.foreground }]}>Settings</Text>
 
@@ -1168,7 +1168,7 @@ const styles = StyleSheet.create({
   logoutBtnLabel: { fontSize: 9, fontFamily: "Inter_500Medium", letterSpacing: 0.2 },
   refBtn: { flexDirection: "column", gap: 2, paddingVertical: 4, paddingHorizontal: 10 },
   refBtnIcon: { fontSize: 14 },
-  modalOverlay: { flex: 1, backgroundColor: "#00000055", alignItems: "center", justifyContent: "center", padding: 32 },
+  modalOverlay: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
   logoutModal: { width: "100%", borderRadius: 14, borderWidth: 1, padding: 24 },
   logoutModalTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   logoutModalHint: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20, marginBottom: 20 },

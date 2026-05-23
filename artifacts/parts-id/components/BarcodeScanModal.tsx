@@ -120,7 +120,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
     scanPhase === "notfound" || scanPhase === "offline_miss" ? colors.warning + "cc" :
     scanPhase === "error" ? colors.destructive + "cc" :
     scanPhase === "looking" ? colors.primary + "cc" :
-    "#00000088";
+    "rgba(0,0,0,0.53)";
 
   const isTerminal =
     scanPhase === "notfound" || scanPhase === "offline_miss" || scanPhase === "error";
@@ -178,7 +178,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
               </View>
               <View style={[scanStyles.statusBar, { backgroundColor: statusBg }]}>
                 {scanPhase === "looking" ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <ActivityIndicator color={colors.primaryForeground} size="small" />
                 ) : null}
                 <Text style={scanStyles.statusText}>{statusLabel}</Text>
               </View>

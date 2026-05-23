@@ -309,8 +309,8 @@ export function BarcodeAddPart() {
             <View style={[apStyles.viewfinderFrame, { borderColor: colors.primary }]} />
           </View>
           {pendingCode ? (
-            <View style={[apStyles.scanStatus, { backgroundColor: "#000000aa" }]}>
-              <ActivityIndicator color="#fff" size="small" />
+            <View style={[apStyles.scanStatus, { backgroundColor: "rgba(0,0,0,0.67)" }]}>
+              <ActivityIndicator color={colors.primaryForeground} size="small" />
               <Text style={apStyles.scanStatusText}>Scanning…</Text>
             </View>
           ) : null}

@@ -11,7 +11,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   SafeAreaView,
@@ -26,6 +25,7 @@ import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { RetryImage } from "@/components/RetryImage";
 import { FailedJobsSection } from "@/components/FailedJobsSection";
+import { InfoDialog } from "@/components/ConfirmDialog";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -96,6 +96,11 @@ export default function CatalogReviewScreen() {
   const [resumingId, setResumingId] = useState<number | null>(null);
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const resumePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [infoDialog, setInfoDialog] = useState<{ visible: boolean; title: string; message: string }>({
+    visible: false, title: "", message: "",
+  });
+  const showInfo = (title: string, message: string) =>
+    setInfoDialog({ visible: true, title, message });
 
   const authHeaders: Record<string, string> = adminToken
     ? { Authorization: `Bearer ${adminToken}` }
@@ -173,7 +178,7 @@ export default function CatalogReviewScreen() {
     try {
       result = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true });
     } catch {
-      Alert.alert("Error", "Could not open the file picker.");
+      showInfo("Error", "Could not open the file picker.");
       return;
     }
 
@@ -187,7 +192,7 @@ export default function CatalogReviewScreen() {
     try {
       const info = await FileSystem.getInfoAsync(uri);
       if (info.exists && "size" in info && info.size > MAX_PDF_BYTES) {
-        Alert.alert("File too large", "Please select a PDF under 25 MB.");
+        showInfo("File too large", "Please select a PDF under 25 MB.");
         return;
       }
     } catch { /* proceed even if size check fails */ }
@@ -208,7 +213,7 @@ export default function CatalogReviewScreen() {
       if (r.status === 401) { logoutAdmin(); return; }
       if (!r.ok) {
         const body = await r.json().catch(() => ({})) as { error?: string };
-        Alert.alert("Resume failed", body.error ?? "Could not resume the job.");
+        showInfo("Resume failed", body.error ?? "Could not resume the job.");
         return;
       }
 
@@ -254,7 +259,7 @@ export default function CatalogReviewScreen() {
         } catch { /* silent */ }
       }, 3000);
     } catch {
-      Alert.alert("Error", "Could not read or send the PDF file.");
+      showInfo("Error", "Could not read or send the PDF file.");
       setResumingId(null);
     }
   };
@@ -388,6 +393,12 @@ export default function CatalogReviewScreen() {
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: colors.background }]}>
+      <InfoDialog
+        visible={infoDialog.visible}
+        title={infoDialog.title}
+        message={infoDialog.message}
+        onDismiss={() => setInfoDialog(prev => ({ ...prev, visible: false }))}
+      />
       {/* Header */}
       <View style={[s.header, { borderBottomColor: colors.border }]}>
         <Pressable onPress={() => router.back()} style={s.backBtn}>

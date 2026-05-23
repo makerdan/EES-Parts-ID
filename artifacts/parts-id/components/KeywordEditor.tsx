@@ -114,7 +114,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
     } catch (err) {
       console.warn("KeywordEditor: save failed:", err);
       if (itemRef.current?.id === id) setSaveStatus("error");
-      showToast("Couldn't save keyword changes. Tap Retry in the editor.");
+      showToast("Couldn't save keyword changes. Tap Retry in the editor.", "error");
     } finally {
       s.saving = false;
     }
@@ -199,7 +199,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
       : saveStatus === "saved"
       ? colors.success
       : saveStatus === "error"
-      ? "#ef4444"
+      ? colors.destructive
       : "transparent";
 
   const statusLabel =
@@ -240,9 +240,9 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
                   onPress={retrySave}
                   accessibilityRole="button"
                   accessibilityLabel="Retry saving keywords"
-                  style={[styles.retryBtn, { borderColor: "#ef4444" }]}
+                  style={[styles.retryBtn, { borderColor: colors.destructive }]}
                 >
-                  <Text style={[styles.retryText, { color: "#ef4444" }]}>Retry</Text>
+                  <Text style={[styles.retryText, { color: colors.destructive }]}>Retry</Text>
                 </Pressable>
               )}
             </View>

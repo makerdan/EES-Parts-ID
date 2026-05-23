@@ -333,13 +333,13 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                 <Text style={styles.scanStatusText}>Looking up…</Text>
               </View>
             ) : pendingCode ? (
-              <View style={[styles.scanStatus, { backgroundColor: "#000000bb" }]}>
+              <View style={[styles.scanStatus, { backgroundColor: "rgba(0,0,0,0.73)" }]}>
                 <Text style={styles.scanStatusText}>
                   Hold steady… {scanDelaySeconds != null && scanDelaySeconds > 0 ? `${scanDelaySeconds}s` : ""}
                 </Text>
               </View>
             ) : scanPhase === "idle" ? (
-              <View style={[styles.scanStatus, { backgroundColor: "#00000088" }]}>
+              <View style={[styles.scanStatus, { backgroundColor: "rgba(0,0,0,0.53)" }]}>
                 <Text style={styles.scanStatusText}>Point camera at a barcode</Text>
               </View>
             ) : null}
