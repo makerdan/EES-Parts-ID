@@ -21,6 +21,7 @@ import React, {
 } from "react";
 import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
+import { deriveParity } from "../utils/deriveParity";
 import warehouseMapRaw from "../../public/warehouse-map.svg?raw";
 
 // Extract the inner SVG content (strip the outer <svg> wrapper) so it can be
@@ -57,7 +58,7 @@ interface Pt { x: number; y: number }
 type Handle = "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
 type Mode = "pan" | "draw";
 
-interface FormState {
+export interface FormState {
   aisleId: string;
   label: string;
   sectionParity: "all" | "odd" | "even";
@@ -1445,7 +1446,7 @@ export function ZoneEditor() {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-function ZoneForm({
+export function ZoneForm({
   form,
   onChange,
   aisleIdError,
@@ -1489,11 +1490,8 @@ function ZoneForm({
             const label = e.target.value;
             const updated: FormState = { ...form, label };
             if (!parityOverride.current) {
-              const match = label.match(/^(\d+)/);
-              if (match) {
-                const n = parseInt(match[1], 10);
-                updated.sectionParity = n % 2 === 0 ? "even" : "odd";
-              }
+              const derived = deriveParity(label);
+              if (derived !== null) updated.sectionParity = derived;
             }
             onChange(updated);
           }}
