@@ -1,8 +1,9 @@
-import { seedQuickLookupChips } from "./quickLookupChips";
+import { seedQuickLookupChips, seedReferenceAnswerCacheFromChips } from "./quickLookupChips";
 import { seedBreakerAttributeChips } from "./seedBreakerAttributeChips";
 
 async function main() {
   await seedQuickLookupChips();
+  await seedReferenceAnswerCacheFromChips();
   await seedBreakerAttributeChips();
 }
 
