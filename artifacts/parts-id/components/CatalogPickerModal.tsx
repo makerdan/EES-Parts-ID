@@ -164,7 +164,7 @@ export function CatalogPickerModal({
             </Text>
 
             <Text style={[pickerStyles.createFormLabel, { color: colors.mutedForeground }]}>
-              Vendor code <Text style={{ color: "#ef4444" }}>*</Text>
+              Vendor code <Text style={{ color: colors.destructive }}>*</Text>
             </Text>
             <TextInput
               value={newVendor}
@@ -175,12 +175,12 @@ export function CatalogPickerModal({
               autoCorrect={false}
               style={[pickerStyles.createFormInput, {
                 backgroundColor: colors.background,
-                borderColor: vendorError ? "#ef4444" : colors.border,
+                borderColor: vendorError ? colors.destructive : colors.border,
                 color: colors.foreground,
               }]}
             />
             {vendorError ? (
-              <Text style={{ color: "#ef4444", fontSize: 11, marginBottom: 6, fontFamily: "Inter_400Regular" }}>{vendorError}</Text>
+              <Text style={{ color: colors.destructive, fontSize: 11, marginBottom: 6, fontFamily: "Inter_400Regular" }}>{vendorError}</Text>
             ) : null}
 
             <Text style={[pickerStyles.createFormLabel, { color: colors.mutedForeground }]}>
@@ -201,7 +201,7 @@ export function CatalogPickerModal({
             />
 
             {createError ? (
-              <Text style={{ color: "#ef4444", fontSize: 12, marginBottom: 6, fontFamily: "Inter_400Regular" }}>{createError}</Text>
+              <Text style={{ color: colors.destructive, fontSize: 12, marginBottom: 6, fontFamily: "Inter_400Regular" }}>{createError}</Text>
             ) : null}
 
             {isCreating ? (
@@ -231,7 +231,7 @@ export function CatalogPickerModal({
         ) : null}
 
         {!showCreateForm && createError ? (
-          <Text style={[pickerStyles.errorText, { color: "#ef4444" }]}>{createError}</Text>
+          <Text style={[pickerStyles.errorText, { color: colors.destructive }]}>{createError}</Text>
         ) : null}
 
         {isCreating && !showCreateForm ? (

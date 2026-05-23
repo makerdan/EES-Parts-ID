@@ -9,6 +9,7 @@ import React, {
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Appearance, Platform, StyleSheet, Text, View } from "react-native";
+import { useColors } from "@/hooks/useColors";
 import { setAuthTokenGetter } from "@workspace/api-client-react";
 import {
   reportStorageError,
@@ -32,6 +33,8 @@ export type AppSettings = {
   themeMode: ThemeMode;
   shelfViewEnabled: boolean;
 };
+export type ToastVariant = "info" | "success" | "error";
+
 export const DEFAULT_SETTINGS: AppSettings = {
   textSize: "normal",
   defaultConfidenceThreshold: 50,
@@ -111,7 +114,7 @@ interface AppContextValue {
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void;
   textFontScale: number;
   // Non-blocking toast surface (used by storage error reporter + callers)
-  showToast: (message: string) => void;
+  showToast: (message: string, type?: ToastVariant) => void;
   // Allow screens to register an in-memory reset that fires on logout
   registerLogoutHandler: (handler: LogoutHandler) => () => void;
   // Cross-tab navigation: pending zone to open on the Map tab
@@ -157,7 +160,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [adminToken, setAdminToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastState, setToastState] = useState<{ message: string; type: ToastVariant } | null>(null);
   const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -179,11 +182,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return logoutRegistryRef.current.register(handler);
   }, []);
 
-  const showToast = useCallback((message: string) => {
-    setToastMessage(message);
+  const showToast = useCallback((message: string, type: ToastVariant = "info") => {
+    setToastState({ message, type });
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => {
-      setToastMessage(null);
+      setToastState(null);
       toastTimerRef.current = null;
     }, 4000);
   }, []);
@@ -195,7 +198,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setStorageErrorHandler((label, err) => {
       // eslint-disable-next-line no-console
       console.warn(`[storage] ${label}:`, err);
-      showToast(label);
+      showToast(label, "error");
     });
     return () => { setStorageErrorHandler(null); };
   }, [showToast]);
@@ -320,14 +323,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setPendingMapFocus,
     }}>
       {children}
-      {toastMessage ? (
-        <View style={[toastStyles.wrap, { pointerEvents: "none" }]}>
-          <View style={toastStyles.toast}>
-            <Text style={toastStyles.text} numberOfLines={3}>{toastMessage}</Text>
-          </View>
-        </View>
-      ) : null}
+      {toastState ? <BrandedToast message={toastState.message} type={toastState.type} /> : null}
     </AppContext.Provider>
+  );
+}
+
+function BrandedToast({ message, type }: { message: string; type: ToastVariant }) {
+  const colors = useColors();
+
+  const accentColor =
+    type === "success" ? colors.success :
+    type === "error"   ? colors.destructive :
+    colors.primary;
+
+  return (
+    <View style={[toastStyles.wrap, { pointerEvents: "none" }]}>
+      <View style={[toastStyles.toast, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={[toastStyles.accent, { backgroundColor: accentColor }]} />
+        <View style={toastStyles.body}>
+          <Text style={[toastStyles.text, { color: colors.foreground }]} numberOfLines={3}>{message}</Text>
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -341,15 +358,29 @@ const toastStyles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   toast: {
-    backgroundColor: "rgba(20, 20, 20, 0.92)",
+    flexDirection: "row",
     borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    borderWidth: 1,
     maxWidth: 480,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  accent: {
+    width: 4,
+    alignSelf: "stretch",
+  },
+  body: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
   text: {
-    color: "#fff",
     fontSize: 13,
+    fontFamily: "Inter_500Medium",
     lineHeight: 18,
   },
 });

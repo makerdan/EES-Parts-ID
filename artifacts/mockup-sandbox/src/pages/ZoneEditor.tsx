@@ -206,6 +206,27 @@ export function ZoneEditor() {
     uncoveredAisles: string[];
   } | null>(null);
 
+  // Branded confirm dialog (replaces window.confirm)
+  const [confirmState, setConfirmState] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    destructive: boolean;
+    resolve: ((ok: boolean) => void) | null;
+  }>({ visible: false, title: "", message: "", destructive: false, resolve: null });
+
+  const showConfirm = (title: string, message: string, destructive = false): Promise<boolean> =>
+    new Promise((resolve) =>
+      setConfirmState({ visible: true, title, message, destructive, resolve })
+    );
+
+  const handleConfirmResponse = (ok: boolean) => {
+    setConfirmState((prev) => {
+      prev.resolve?.(ok);
+      return { visible: false, title: "", message: "", destructive: false, resolve: null };
+    });
+  };
+
   // Refs — updated every render so event handlers never go stale
   const svgRef = useRef<SVGSVGElement>(null);
   const floorPlanRef = useRef<SVGGElement>(null);
@@ -414,7 +435,7 @@ export function ZoneEditor() {
 
   const handleDelete = async () => {
     if (!selectedId) return;
-    if (!window.confirm("Delete this zone?")) return;
+    if (!await showConfirm("Delete zone", "Delete this zone? This cannot be undone.", true)) return;
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE}/warehouse-zones/${selectedId}`, {
@@ -513,7 +534,7 @@ export function ZoneEditor() {
     if (updates.aisleId) parts.push(`Aisle ID → ${updates.aisleId}`);
     if (updates.sectionParity) parts.push(`Section Parity → ${updates.sectionParity}`);
     const what = parts.length ? parts.join(", ") : "selected properties";
-    if (!window.confirm(`Update ${n} zone${n !== 1 ? "s" : ""}?\n\n${what}`)) return;
+    if (!await showConfirm(`Update ${n} zone${n !== 1 ? "s" : ""}`, what)) return;
     setMultiSaving(true);
     try {
       await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
@@ -928,6 +949,70 @@ export function ZoneEditor() {
   return (
     <div style={styles.root}>
       <Toaster position="bottom-right" richColors />
+
+      {/* ── Branded Confirm Dialog ─────────────────────────────────────────── */}
+      {confirmState.visible && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1000,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          backgroundColor: "rgba(0,0,0,0.6)", padding: 24,
+        }}>
+          <div style={{
+            backgroundColor: "#161b22",
+            border: "1px solid #30363d",
+            borderRadius: 8,
+            padding: 24,
+            maxWidth: 380,
+            width: "100%",
+            fontFamily: "Inter, system-ui, sans-serif",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+          }}>
+            <div style={{
+              fontSize: 16,
+              fontWeight: 700,
+              color: "#f9fafb",
+              marginBottom: 8,
+            }}>
+              {confirmState.title}
+            </div>
+            {confirmState.message && (
+              <div style={{
+                fontSize: 13,
+                color: "#8b949e",
+                lineHeight: 1.5,
+                marginBottom: 20,
+              }}>
+                {confirmState.message}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => handleConfirmResponse(false)}
+                style={{
+                  padding: "8px 18px", borderRadius: 8, border: "1px solid #30363d",
+                  background: "transparent", color: "#8b949e",
+                  fontSize: 13, fontFamily: "Inter, system-ui, sans-serif",
+                  cursor: "pointer", fontWeight: 500,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleConfirmResponse(true)}
+                style={{
+                  padding: "8px 18px", borderRadius: 8, border: "none",
+                  background: confirmState.destructive ? "#f85149" : "#f59e0b",
+                  color: confirmState.destructive ? "#ffffff" : "#0d1117",
+                  fontSize: 13, fontFamily: "Inter, system-ui, sans-serif",
+                  cursor: "pointer", fontWeight: 700,
+                }}
+              >
+                {confirmState.destructive ? "Delete" : "Confirm"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Dev-tool banner ─────────────────────────────────────────────────── */}
       <div style={styles.banner}>
