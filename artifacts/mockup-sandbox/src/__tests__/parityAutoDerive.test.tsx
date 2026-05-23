@@ -1,8 +1,8 @@
 import React, { useRef } from "react";
-import { describe, it, expect } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, fireEvent, waitFor, act } from "@testing-library/react";
 import { deriveParity } from "../utils/deriveParity";
-import { ZoneForm, type FormState } from "../pages/ZoneEditor";
+import { ZoneEditor, ZoneForm, type FormState } from "../pages/ZoneEditor";
 
 // ── Pure utility tests ─────────────────────────────────────────────────────────
 
@@ -270,5 +270,176 @@ describe("ZoneForm — manual parity override lock", () => {
     fireEvent.change(input, { target: { value: "12" } });
     // Override already set — parity must stay "all"
     expect(getParitySelect(container).value).toBe("all");
+  });
+});
+
+// ── ZoneEditor integration — zone-switch resets the override ───────────────────
+
+/** Shared zone shape matching the Zone type in ZoneEditor */
+const ZONE_1 = {
+  id: 1, aisleId: "1", label: "12", sectionParity: "even",
+  isInventory: true, sortOrder: 0,
+  svgX: 10, svgY: 10, svgWidth: 100, svgHeight: 100,
+};
+const ZONE_2 = {
+  id: 2, aisleId: "1", label: "7", sectionParity: "odd",
+  isInventory: true, sortOrder: 1,
+  svgX: 200, svgY: 10, svgWidth: 100, svgHeight: 100,
+};
+
+function mockFetchWithZones(zones: typeof ZONE_1[]) {
+  global.fetch = vi.fn().mockResolvedValue({
+    ok: true, status: 200,
+    json: () => Promise.resolve({ zones, unsortedCount: 0, uncoveredAisles: [] }),
+    text: () => Promise.resolve(""),
+  } as unknown as Response);
+}
+
+/** Find the sidebar zone-list meta div (unique: "Aisle N · parity") */
+function findZoneListItem(container: HTMLElement, metaText: string): HTMLElement {
+  const el = Array.from(container.querySelectorAll("div")).find(
+    (d) => d.children.length === 0 && d.textContent === metaText,
+  );
+  if (!el) throw new Error(`Zone list item "${metaText}" not found`);
+  return el as HTMLElement;
+}
+
+function getSectionInput(container: HTMLElement) {
+  return container.querySelector<HTMLInputElement>('input[placeholder="e.g. 12A"]')!;
+}
+function getParitySelect(container: HTMLElement) {
+  return container.querySelector<HTMLSelectElement>("select")!;
+}
+
+describe("ZoneEditor integration — zone switch resets parity override", () => {
+  beforeEach(() => {
+    mockFetchWithZones([ZONE_1, ZONE_2]);
+  });
+
+  it("switching to a different zone re-enables auto-derive", async () => {
+    const { container } = render(<ZoneEditor />);
+
+    // Wait for zone 1 to appear in the sidebar list
+    await waitFor(() => {
+      findZoneListItem(container, "Aisle 1 · even");
+    });
+
+    // Click zone 1 → form populates with zone 1 data
+    await act(async () => {
+      fireEvent.click(findZoneListItem(container, "Aisle 1 · even"));
+    });
+    const sectionInput = await waitFor(() => {
+      const el = getSectionInput(container);
+      if (!el) throw new Error("form not visible");
+      return el;
+    });
+    const paritySelect = getParitySelect(container);
+
+    // Manually set parity — this should lock the override
+    fireEvent.change(paritySelect, { target: { value: "odd" } });
+
+    // Confirm override is locked: typing an even number doesn't flip parity
+    fireEvent.change(sectionInput, { target: { value: "14" } });
+    expect(paritySelect.value).toBe("odd");
+
+    // Click zone 2 — different id → prevSelectedIdRef check resets override
+    await act(async () => {
+      fireEvent.click(findZoneListItem(container, "Aisle 1 · odd"));
+    });
+
+    // Wait for form to reload with zone 2's data (label "7")
+    await waitFor(() => {
+      expect(sectionInput.value).toBe("7");
+    });
+
+    // Auto-derive is now active: typing an even number → parity becomes "even"
+    fireEvent.change(sectionInput, { target: { value: "12" } });
+    expect(paritySelect.value).toBe("even");
+  });
+
+  it("clicking the same zone again does NOT reset the override", async () => {
+    const { container } = render(<ZoneEditor />);
+
+    await waitFor(() => { findZoneListItem(container, "Aisle 1 · even"); });
+
+    // Select zone 1
+    await act(async () => {
+      fireEvent.click(findZoneListItem(container, "Aisle 1 · even"));
+    });
+    const sectionInput = await waitFor(() => {
+      const el = getSectionInput(container);
+      if (!el) throw new Error("form not visible");
+      return el;
+    });
+    const paritySelect = getParitySelect(container);
+
+    // Manually lock override
+    fireEvent.change(paritySelect, { target: { value: "odd" } });
+    fireEvent.change(sectionInput, { target: { value: "14" } });
+    expect(paritySelect.value).toBe("odd");
+
+    // Click the SAME zone again — selectedId doesn't change, so override stays
+    await act(async () => {
+      fireEvent.click(findZoneListItem(container, "Aisle 1 · even"));
+    });
+
+    // Override must still be locked (parity stays "odd" despite even label)
+    fireEvent.change(sectionInput, { target: { value: "14" } });
+    expect(paritySelect.value).toBe("odd");
+  });
+});
+
+describe("ZoneEditor integration — drawing a new zone resets parity override", () => {
+  beforeEach(() => {
+    mockFetchWithZones([ZONE_1]);
+  });
+
+  it("drawing a new zone re-enables auto-derive after a manual override", async () => {
+    const { container } = render(<ZoneEditor />);
+
+    // Wait for zone list to load
+    await waitFor(() => { findZoneListItem(container, "Aisle 1 · even"); });
+
+    // Select zone 1
+    await act(async () => {
+      fireEvent.click(findZoneListItem(container, "Aisle 1 · even"));
+    });
+    const sectionInput = await waitFor(() => {
+      const el = getSectionInput(container);
+      if (!el) throw new Error("form not visible");
+      return el;
+    });
+    const paritySelect = getParitySelect(container);
+
+    // Manually lock the override
+    fireEvent.change(paritySelect, { target: { value: "odd" } });
+    fireEvent.change(sectionInput, { target: { value: "14" } });
+    expect(paritySelect.value).toBe("odd");
+
+    // Switch to Draw mode
+    const drawBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Draw Zone"),
+    );
+    expect(drawBtn).toBeTruthy();
+    fireEvent.click(drawBtn!);
+
+    // Simulate a draw gesture: mousedown on SVG → mousemove on document → mouseup
+    // In jsdom, getBoundingClientRect() returns zeros and initial tf={x:0,y:0,s:1},
+    // so clientX/Y map directly to SVG coordinates — 190×190 >> MIN_ZONE_PX (8).
+    const svg = container.querySelector("svg")!;
+    await act(async () => {
+      fireEvent.mouseDown(svg, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.mouseMove(document, { clientX: 200, clientY: 200 });
+      fireEvent.mouseUp(document, { clientX: 200, clientY: 200 });
+    });
+
+    // Wait for the "New Zone" form to appear (label input is empty, parity "all")
+    await waitFor(() => {
+      expect(sectionInput.value).toBe("");
+    });
+
+    // Override was reset by the draw completion — auto-derive is active again
+    fireEvent.change(sectionInput, { target: { value: "12" } });
+    expect(paritySelect.value).toBe("even");
   });
 });
