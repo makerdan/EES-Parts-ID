@@ -11,3 +11,4 @@ export * from "./quick_lookup_cache";
 export * from "./floor_plan_meta";
 export * from "./reference_log";
 export * from "./reference_answer_cache";
+export * from "./contact_messages";

@@ -111,6 +111,7 @@ export default function RootLayout() {
                 <Stack.Screen name="catalog-review" options={{ headerShown: false }} />
                 <Stack.Screen name="edit-item" options={{ headerShown: false }} />
                 <Stack.Screen name="ai-log" options={{ headerShown: false }} />
+                <Stack.Screen name="admin-inbox" options={{ headerShown: false }} />
               </Stack>
               <AuthGate />
             </AppProvider>

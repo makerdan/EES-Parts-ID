@@ -15,6 +15,7 @@ import {
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
 import { fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl, type CacheEntry } from "@/utils/chipCache";
+import { ContactSheet } from "@/components/ContactSheet";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -97,6 +98,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   const [history, setHistory] = useState<Array<{ q: string; a: string }>>([]);
   const [inputCollapsed, setInputCollapsed] = useState(false);
   const [activeBreakerChips, setActiveBreakerChips] = useState<string[]>([]);
+  const [contactVisible, setContactVisible] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
   const pulse = useRef(new Animated.Value(1)).current;
@@ -279,6 +281,12 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                   <Text style={[modalStyles.clearText, { color: colors.mutedForeground }]}>Clear</Text>
                 </Pressable>
               ) : null}
+              <Pressable
+                onPress={() => setContactVisible(true)}
+                style={[modalStyles.clearBtn, { borderColor: colors.border }]}
+              >
+                <Text style={[modalStyles.clearText, { color: colors.mutedForeground }]}>Contact</Text>
+              </Pressable>
               <Pressable
                 onPress={handleClose}
                 style={[modalStyles.closeBtn, { backgroundColor: colors.muted }]}
@@ -483,6 +491,11 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
           ) : null}
         </KeyboardAvoidingView>
       </Modal>
+
+      <ContactSheet
+        visible={contactVisible}
+        onClose={() => setContactVisible(false)}
+      />
     </>
   );
 }
