@@ -1633,7 +1633,8 @@ const styles = {
   root: {
     display: "flex",
     flexDirection: "column" as const,
-    height: "100vh",
+    position: "fixed" as const,
+    inset: 0,
     overflow: "hidden",
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
