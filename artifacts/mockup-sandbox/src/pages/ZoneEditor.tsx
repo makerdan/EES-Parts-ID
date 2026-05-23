@@ -20,6 +20,7 @@ import React, {
   useState,
 } from "react";
 import { Toaster, toast } from "sonner";
+import { computeWheelZoom } from "../utils/wheelZoom";
 import warehouseMapRaw from "../../public/warehouse-map.svg?raw";
 
 // Extract the inner SVG content (strip the outer <svg> wrapper) so it can be
@@ -909,12 +910,7 @@ export function ZoneEditor() {
     const rect = svgRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const curr = tfRef.current;
-    const svgX = (mx - curr.x) / curr.s;
-    const svgY = (my - curr.y) / curr.s;
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    const newS = Math.max(0.03, Math.min(10, curr.s * factor));
-    const newTf = { x: mx - svgX * newS, y: my - svgY * newS, s: newS };
+    const newTf = computeWheelZoom(tfRef.current, mx, my, e.deltaY);
     tfRef.current = newTf;
     setTf({ ...newTf });
   }, []);
