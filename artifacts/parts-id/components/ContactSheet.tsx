@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -10,7 +10,15 @@ import {
   TextInput,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColors } from "@/hooks/useColors";
+
+const DEVICE_TOKEN_KEY = "contact_device_token";
+
+function makeDeviceToken(): string {
+  const rand = () => Math.random().toString(36).slice(2, 9);
+  return `dev_${rand()}${rand()}`;
+}
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -29,6 +37,21 @@ export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deviceToken, setDeviceToken] = useState<string>("anonymous");
+
+  useEffect(() => {
+    AsyncStorage.getItem(DEVICE_TOKEN_KEY)
+      .then((stored) => {
+        if (stored) {
+          setDeviceToken(stored);
+        } else {
+          const fresh = makeDeviceToken();
+          setDeviceToken(fresh);
+          AsyncStorage.setItem(DEVICE_TOKEN_KEY, fresh).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const subjectEmpty = !subject.trim();
   const bodyEmpty = !body.trim();
@@ -53,7 +76,7 @@ export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props
         body: JSON.stringify({
           subject: subject.trim(),
           body: body.trim(),
-          senderToken: senderToken ?? "anonymous",
+          senderToken: senderToken ?? deviceToken,
         }),
       });
       if (!res.ok) {

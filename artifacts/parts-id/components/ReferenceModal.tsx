@@ -16,6 +16,7 @@ import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
 import { fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl, type CacheEntry } from "@/utils/chipCache";
 import { ContactSheet } from "@/components/ContactSheet";
+import { useApp } from "@/contexts/AppContext";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -83,6 +84,7 @@ const BREAKER_ATTRIBUTE_CHIPS: { label: string; answer: string }[] = [
 
 export function ReferenceModal({ open, onClose }: Props = {}) {
   const colors = useColors();
+  const { showToast } = useApp();
   const controlled = open !== undefined;
   const [visible, setVisible] = useState(false);
   const isVisible = controlled ? open : visible;
@@ -495,6 +497,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
       <ContactSheet
         visible={contactVisible}
         onClose={() => setContactVisible(false)}
+        onSuccess={() => showToast("Message sent to admin")}
       />
     </>
   );
