@@ -552,12 +552,18 @@ export function ZoneEditor() {
 
   // Sync single-select form when selected zone changes
   const lastSavedFormRef = useRef<FormState | null>(null);
+  const prevSelectedIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (!selectedId) return;
     const z = zones.find((z) => z.id === selectedId);
     if (z) {
       const synced: FormState = { aisleId: z.aisleId, label: z.label, sectionParity: z.sectionParity, isInventory: z.isInventory, sortOrder: z.sortOrder };
-      parityOverrideRef.current = false;
+      // Only reset the manual-override flag when the selected zone actually changes,
+      // not when the zones list refreshes for the same zone (e.g. after a save).
+      if (selectedId !== prevSelectedIdRef.current) {
+        parityOverrideRef.current = false;
+      }
+      prevSelectedIdRef.current = selectedId;
       setForm(synced);
       lastSavedFormRef.current = synced;
     }
