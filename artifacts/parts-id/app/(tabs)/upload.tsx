@@ -1782,6 +1782,12 @@ export default function UploadScreen() {
                             <Text style={[styles.exportCsvText, { color: colors.mutedForeground }]}>🤖 AI Log</Text>
                           </Pressable>
                           <Pressable
+                            onPress={() => router.push("/admin-inbox")}
+                            style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
+                          >
+                            <Text style={[styles.exportCsvText, { color: colors.mutedForeground }]}>📬 Inbox</Text>
+                          </Pressable>
+                          <Pressable
                             onPress={handleExportCsv}
                             disabled={exportPending}
                             style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card, opacity: exportPending ? 0.6 : 1 }]}
