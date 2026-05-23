@@ -21,6 +21,7 @@ import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
+import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -122,7 +123,7 @@ function MessageItem({
 export default function AdminInboxScreen() {
   const colors = useColors();
   const router = useRouter();
-  const { isAdmin, adminToken } = useApp();
+  const { isAdmin, adminToken, isLoading } = useApp();
 
   const [rows, setRows] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,12 +150,15 @@ export default function AdminInboxScreen() {
   }, [adminToken]);
 
   useEffect(() => {
-    if (!isAdmin) {
+    if (shouldRedirectNonAdmin(isLoading, adminToken)) {
       router.replace("/(tabs)");
       return;
     }
-    fetchMessages();
-  }, [isAdmin, fetchMessages, router]);
+    if (!isLoading && isAdmin) {
+      fetchMessages();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, adminToken, isAdmin, fetchMessages, router]);
 
   const handleMarkRead = useCallback((id: number) => {
     setRows((prev) =>
