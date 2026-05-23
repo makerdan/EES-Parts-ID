@@ -189,6 +189,7 @@ export function ZoneEditor() {
   const [form, setForm] = useState<FormState>({
     aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0,
   });
+  const parityOverrideRef = useRef(false);
   const [saving, setSaving] = useState(false);
 
   // Multi-select form fields
@@ -393,6 +394,7 @@ export function ZoneEditor() {
       toast.success(`Zone "${zone.label}" created`);
       setPendingRect(null);
       setSelectedIds(new Set([zone.id]));
+      parityOverrideRef.current = false;
       setForm({ aisleId: zone.aisleId, label: zone.label, sectionParity: zone.sectionParity, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
@@ -470,6 +472,7 @@ export function ZoneEditor() {
       const { zone } = await res.json() as { zone: Zone };
       toast.success(`Duplicated → placed to the right`);
       setSelectedIds(new Set([zone.id]));
+      parityOverrideRef.current = false;
       setForm({ aisleId: zone.aisleId, label: zone.label, sectionParity: zone.sectionParity, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
@@ -554,6 +557,7 @@ export function ZoneEditor() {
     const z = zones.find((z) => z.id === selectedId);
     if (z) {
       const synced: FormState = { aisleId: z.aisleId, label: z.label, sectionParity: z.sectionParity, isInventory: z.isInventory, sortOrder: z.sortOrder };
+      parityOverrideRef.current = false;
       setForm(synced);
       lastSavedFormRef.current = synced;
     }
@@ -707,6 +711,7 @@ export function ZoneEditor() {
         }
         setPendingRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
         setSelectedIds(new Set());
+        parityOverrideRef.current = false;
         setForm({ aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0 });
         return;
       }
@@ -1215,7 +1220,7 @@ export function ZoneEditor() {
                   {pendingRect.x.toFixed(0)},{pendingRect.y.toFixed(0)} ·{" "}
                   {pendingRect.w.toFixed(0)}×{pendingRect.h.toFixed(0)}
                 </div>
-                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} />
+                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} parityOverride={parityOverrideRef} />
                 {duplicateConflict && (
                   <div style={styles.dupWarning}>
                     ⚠ Zone "{duplicateConflict.label}" already uses aisle{" "}
@@ -1322,7 +1327,7 @@ export function ZoneEditor() {
                   · {selectedZone.svgWidth.toFixed(1)}×
                   {selectedZone.svgHeight.toFixed(1)}
                 </div>
-                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} />
+                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} parityOverride={parityOverrideRef} />
                 {duplicateConflict && (
                   <div style={styles.dupWarning}>
                     ⚠ Zone "{duplicateConflict.label}" already uses aisle{" "}
@@ -1442,10 +1447,12 @@ function ZoneForm({
   form,
   onChange,
   aisleIdError,
+  parityOverride,
 }: {
   form: FormState;
   onChange: (f: FormState) => void;
   aisleIdError?: string | null;
+  parityOverride: React.MutableRefObject<boolean>;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1476,7 +1483,18 @@ function ZoneForm({
         <Label>Section #</Label>
         <input
           value={form.label}
-          onChange={(e) => onChange({ ...form, label: e.target.value })}
+          onChange={(e) => {
+            const label = e.target.value;
+            const updated: FormState = { ...form, label };
+            if (!parityOverride.current) {
+              const match = label.match(/^(\d+)/);
+              if (match) {
+                const n = parseInt(match[1], 10);
+                updated.sectionParity = n % 2 === 0 ? "even" : "odd";
+              }
+            }
+            onChange(updated);
+          }}
           placeholder="e.g. 12A"
           style={styles.input}
         />
@@ -1485,12 +1503,13 @@ function ZoneForm({
         <Label>Section Parity</Label>
         <select
           value={form.sectionParity}
-          onChange={(e) =>
+          onChange={(e) => {
+            parityOverride.current = true;
             onChange({
               ...form,
               sectionParity: e.target.value as FormState["sectionParity"],
-            })
-          }
+            });
+          }}
           style={styles.input}
         >
           <option value="all">All sections</option>
