@@ -22,6 +22,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
+import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -30,7 +31,7 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
 export default function EditItemScreen() {
   const colors = useColors();
   const router = useRouter();
-  const { adminToken } = useApp();
+  const { adminToken, isLoading } = useApp();
   const { item: itemParam } = useLocalSearchParams<{ item: string }>();
   const queryClient = useQueryClient();
 
@@ -43,11 +44,11 @@ export default function EditItemScreen() {
     catch { return null; }
   })();
 
-  // Admin guard — redirect non-admins back immediately
+  // Admin guard — redirect non-admins after storage has finished loading
   useEffect(() => {
-    if (!adminToken) { router.replace("/(tabs)"); }
+    if (shouldRedirectNonAdmin(isLoading, adminToken)) { router.replace("/(tabs)"); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminToken]);
+  }, [isLoading, adminToken]);
 
   const [description, setDescription] = useState(item?.description ?? "");
   const [bins, setBins] = useState<string[]>(item?.binLocations ?? []);
