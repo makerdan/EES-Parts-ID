@@ -159,12 +159,6 @@ const HANDLE_CURSOR: Record<Handle, string> = {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 export function ZoneEditor() {
-  // Admin token — stored in localStorage so Daniel doesn't retype it each visit
-  const [adminToken, setAdminToken] = useState<string>(() =>
-    localStorage.getItem("zone_editor_admin_token") ?? "",
-  );
-  const [tokenInput, setTokenInput] = useState("");
-
   const [zones, setZones] = useState<Zone[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -282,11 +276,8 @@ export function ZoneEditor() {
 
   // ── API helpers ─────────────────────────────────────────────────────────────
   const headers = useCallback(
-    (): Record<string, string> => ({
-      "Content-Type": "application/json",
-      ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
-    }),
-    [adminToken],
+    (): Record<string, string> => ({ "Content-Type": "application/json" }),
+    [],
   );
 
   const fetchZones = useCallback(async () => {
@@ -1020,62 +1011,6 @@ export function ZoneEditor() {
         <span style={{ fontWeight: 600 }}>
           ⚠ DEV TOOL — Warehouse Zone Editor — internal use only
         </span>
-        {/* Admin token input */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}>
-          <span style={{ fontSize: 11, opacity: 0.8 }}>
-            {adminToken ? "🔓" : "🔒"}
-          </span>
-          {adminToken ? (
-            <button
-              onClick={() => {
-                setAdminToken("");
-                localStorage.removeItem("zone_editor_admin_token");
-              }}
-              style={{
-                fontSize: 11, background: "rgba(255,255,255,0.15)",
-                border: "1px solid rgba(255,255,255,0.3)", borderRadius: 3,
-                color: "white", padding: "2px 6px", cursor: "pointer",
-              }}
-            >
-              Token set · clear
-            </button>
-          ) : (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const t = tokenInput.trim();
-                if (!t) return;
-                setAdminToken(t);
-                localStorage.setItem("zone_editor_admin_token", t);
-                setTokenInput("");
-              }}
-              style={{ display: "flex", gap: 4 }}
-            >
-              <input
-                type="password"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="Admin token"
-                style={{
-                  fontSize: 11, padding: "2px 6px", borderRadius: 3,
-                  border: "1px solid rgba(255,255,255,0.4)",
-                  background: "rgba(255,255,255,0.1)", color: "white",
-                  width: 110, outline: "none",
-                }}
-              />
-              <button
-                type="submit"
-                style={{
-                  fontSize: 11, background: "rgba(255,255,255,0.2)",
-                  border: "1px solid rgba(255,255,255,0.4)", borderRadius: 3,
-                  color: "white", padding: "2px 6px", cursor: "pointer",
-                }}
-              >
-                Set
-              </button>
-            </form>
-          )}
-        </div>
         <div style={styles.modeBar}>
           <ModeBtn active={mode === "pan"} onClick={() => setMode("pan")}>
             Pan / Select
