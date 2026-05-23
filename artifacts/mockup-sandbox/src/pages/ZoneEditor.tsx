@@ -892,7 +892,7 @@ export function ZoneEditor() {
     };
   };
 
-  const onWheel = (e: React.WheelEvent<SVGSVGElement>) => {
+  const onWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
     if (!svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
@@ -906,7 +906,14 @@ export function ZoneEditor() {
     const newTf = { x: mx - svgX * newS, y: my - svgY * newS, s: newS };
     tfRef.current = newTf;
     setTf({ ...newTf });
-  };
+  }, []);
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+  }, [onWheel]);
 
   // ── Derived rendering values ─────────────────────────────────────────────────
   const hs = HANDLE_PX / tf.s; // handle size in SVG user units (constant screen pixels)
@@ -1033,6 +1040,7 @@ export function ZoneEditor() {
         <div style={{ ...styles.canvas, position: "relative" }}>
           <svg
             ref={svgRef}
+            overflow="hidden"
             style={{
               ...styles.svg,
               cursor:
@@ -1043,7 +1051,6 @@ export function ZoneEditor() {
                   : "crosshair",
             }}
             onMouseDown={onSvgMouseDown}
-            onWheel={onWheel}
           >
             <g transform={`translate(${tf.x},${tf.y}) scale(${tf.s})`}>
               {/* Floor plan — embedded as a child <g> inside the SVG so it
