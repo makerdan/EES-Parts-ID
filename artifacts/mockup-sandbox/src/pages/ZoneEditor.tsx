@@ -1500,7 +1500,25 @@ export function ZoneForm({
         />
       </div>
       <div>
-        <Label>Section Parity</Label>
+        <Label>
+          Section Parity
+          {!parityOverride.current && deriveParity(form.label) !== null && (
+            <span
+              data-testid="parity-auto-hint"
+              style={{
+                marginLeft: 5,
+                fontSize: 9,
+                fontStyle: "italic",
+                fontWeight: 400,
+                letterSpacing: "0.03em",
+                opacity: 0.75,
+                textTransform: "none",
+              }}
+            >
+              (auto)
+            </span>
+          )}
+        </Label>
         <select
           value={form.sectionParity}
           onChange={(e) => {
