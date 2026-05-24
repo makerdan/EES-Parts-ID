@@ -72,6 +72,7 @@ function renderSection(
     onDismiss: jest.fn(),
     onResume: jest.fn(),
     onReviewChanges: jest.fn(),
+    onDismissResumeError: jest.fn(),
     colors: TEST_COLORS,
   });
   const texts = collectText(el);
@@ -105,6 +106,7 @@ describe("FailedJobsSection — renders nothing when there are no failed jobs", 
       onDismiss: jest.fn(),
       onResume: jest.fn(),
       onReviewChanges: jest.fn(),
+      onDismissResumeError: jest.fn(),
       colors: TEST_COLORS,
     });
     const result = (FailedJobsSection as (p: typeof el.props) => React.ReactNode)(el.props);
@@ -244,5 +246,64 @@ describe("buildFailedJobMetaLine", () => {
   it("appends page progress when processedPages > 0", () => {
     const line = buildFailedJobMetaLine({ id: 1, createdAt: "2025-01-15T00:00:00.000Z", processedPages: 4, totalPages: 12 });
     expect(line).toContain("4/12 pages processed");
+  });
+});
+
+// ── Re-failed card (resumed job that fails again) ─────────────────────────────
+
+describe("FailedJobsSection — re-failed progress card", () => {
+  const REFAILED_PROGRESS: import("../app/catalog-review").ResumeProgress = {
+    status: "failed",
+    processedPages: 3,
+    totalPages: 10,
+    matchedParts: 0,
+    errorMessage: "Page 4 was corrupt and could not be processed.",
+  };
+
+  it("renders 'Failed again' badge when resumeProgress has status failed", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: REFAILED_PROGRESS });
+    expect(texts).toContain("Failed again");
+  });
+
+  it("shows the new errorMessage from resumeProgress, not the old one from the job", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: REFAILED_PROGRESS });
+    expect(texts).toContain("Page 4 was corrupt and could not be processed.");
+    expect(texts).not.toContain("PDF could not be parsed: unexpected end of stream");
+  });
+
+  it("renders a Dismiss button on the re-failed card", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: REFAILED_PROGRESS });
+    expect(texts).toContain("Dismiss");
+  });
+
+  it("does NOT render the plain Resume button on the re-failed card", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: REFAILED_PROGRESS });
+    expect(texts).not.toContain("Resume");
+  });
+
+  it("does NOT count the re-failed job in the Failed Jobs section header", () => {
+    const { allText } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: REFAILED_PROGRESS });
+    expect(allText).not.toContain("Failed Job");
+  });
+
+  it("falls back to default message when errorMessage is null in progress", () => {
+    const prog = { ...REFAILED_PROGRESS, errorMessage: null };
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: prog });
+    expect(texts).toContain("The job failed again. Try resuming with the correct PDF.");
+  });
+
+  it("shows the vendor name on the re-failed card", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: REFAILED_PROGRESS });
+    expect(texts).toContain("ACME ELECTRIC");
+  });
+
+  it("shows the filename on the re-failed card", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: REFAILED_PROGRESS });
+    expect(texts).toContain("acme-catalog-2024.pdf");
+  });
+
+  it("does not render a plain Failed badge alongside the re-failed card", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: REFAILED_PROGRESS });
+    expect(texts).not.toContain("Failed");
   });
 });

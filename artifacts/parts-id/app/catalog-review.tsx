@@ -264,6 +264,14 @@ export default function CatalogReviewScreen() {
     }
   };
 
+  const handleDismissResumeError = (jobId: number) => {
+    setResumeProgress((prev) => {
+      const next = { ...prev };
+      delete next[jobId];
+      return next;
+    });
+  };
+
   const handleRevert = async (item: ReviewItem) => {
     if (revertingId) return;
     setRevertingId(item.id);
@@ -465,6 +473,7 @@ export default function CatalogReviewScreen() {
                 onDismiss={handleDismiss}
                 onResume={handleResume}
                 onReviewChanges={(id) => router.push(`/catalog-review?jobId=${id}`)}
+                onDismissResumeError={handleDismissResumeError}
                 colors={colors}
               />
             }

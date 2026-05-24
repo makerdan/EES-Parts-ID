@@ -55,6 +55,7 @@ interface Props {
   onDismiss: (id: number) => void;
   onResume: (id: number) => void;
   onReviewChanges: (id: number) => void;
+  onDismissResumeError: (id: number) => void;
   colors: FailedJobsSectionColors;
 }
 
@@ -66,16 +67,12 @@ export function FailedJobsSection({
   onDismiss,
   onResume,
   onReviewChanges,
+  onDismissResumeError,
   colors,
 }: Props) {
-  // Jobs shown as in-progress or done come from resumeProgress entries not
-  // yet removed from failedJobs (i.e., still failed status in the list) plus
-  // any "done" progress entries whose job was already removed.
-  const inProgressIds = new Set(
-    Object.entries(resumeProgress)
-      .filter(([, p]) => p.status !== "failed")
-      .map(([id]) => Number(id)),
-  );
+  // All jobs that have an active resumeProgress entry (any status) are shown
+  // via ResumeProgressCard — including "failed" ones, which show an error card.
+  const inProgressIds = new Set(Object.keys(resumeProgress).map(Number));
 
   // Count only jobs that are truly still in the failed state (not resuming)
   const stillFailedJobs = failedJobs.filter((j) => !inProgressIds.has(j.id));
@@ -121,7 +118,7 @@ export function FailedJobsSection({
         </View>
       )}
 
-      {/* In-progress resume cards */}
+      {/* In-progress / done / re-failed resume cards */}
       {resumingJobs.map((job) => {
         const progress = resumeProgress[job.id];
         return (
@@ -130,6 +127,7 @@ export function FailedJobsSection({
             job={job}
             progress={progress}
             onReviewChanges={onReviewChanges}
+            onDismissError={onDismissResumeError}
             colors={colors}
           />
         );
@@ -145,6 +143,7 @@ export function FailedJobsSection({
             jobId={id}
             progress={progress}
             onReviewChanges={onReviewChanges}
+            onDismissError={onDismissResumeError}
             colors={colors}
           />
         );
@@ -237,20 +236,72 @@ interface ResumeProgressCardProps {
   jobId?: number;
   progress: ResumeProgress;
   onReviewChanges: (id: number) => void;
+  onDismissError: (id: number) => void;
   colors: FailedJobsSectionColors;
 }
 
-function ResumeProgressCard({ job, jobId, progress, onReviewChanges, colors }: ResumeProgressCardProps) {
+function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissError, colors }: ResumeProgressCardProps) {
   const id = job?.id ?? jobId!;
   const vendor = job?.vendor ?? "Unknown vendor";
   const filename = job?.filename ?? "catalog.pdf";
 
   const isDone = progress.status === "done";
+  const isFailed = progress.status === "failed";
   const isUploading = progress.status === "uploading";
   const pct =
     progress.totalPages && progress.totalPages > 0
       ? Math.min(100, Math.round((progress.processedPages / progress.totalPages) * 100))
       : 0;
+
+  // Re-failed card: destructive styling with the new error message
+  if (isFailed) {
+    const errorMsg = progress.errorMessage ?? "The job failed again. Try resuming with the correct PDF.";
+    return (
+      <View
+        style={[
+          s.card,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.destructive + "55",
+          },
+        ]}
+      >
+        <View style={s.cardTop}>
+          <View style={s.cardIdent}>
+            <Text style={[s.cardVendor, { color: colors.foreground }]}>{vendor}</Text>
+            <Text style={[s.cardFile, { color: colors.mutedForeground }]} numberOfLines={1}>
+              {filename}
+            </Text>
+          </View>
+          <View style={[s.badge, { backgroundColor: colors.destructive + "18" }]}>
+            <Text style={[s.badgeText, { color: colors.destructive }]}>Failed again</Text>
+          </View>
+        </View>
+
+        <View
+          style={[
+            s.errorBox,
+            {
+              backgroundColor: colors.destructive + "0e",
+              borderColor: colors.destructive + "33",
+            },
+          ]}
+        >
+          <Text style={[s.errorLabel, { color: colors.destructive }]}>Error</Text>
+          <Text style={[s.errorMsg, { color: colors.foreground }]}>{errorMsg}</Text>
+        </View>
+
+        <View style={[s.actions, { justifyContent: "flex-end" }]}>
+          <Pressable
+            onPress={() => onDismissError(id)}
+            style={[s.dismissBtn, { borderColor: colors.mutedForeground + "55" }]}
+          >
+            <Text style={[s.dismissBtnText, { color: colors.mutedForeground }]}>Dismiss</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View
