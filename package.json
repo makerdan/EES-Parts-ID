@@ -25,7 +25,6 @@
     }
   },
   "dependencies": {
-    "@replit/connectors-sdk": "^0.4.1",
-    "isomorphic-git": "^1.38.1"
+    "@replit/connectors-sdk": "^0.4.1"
   }
 }
