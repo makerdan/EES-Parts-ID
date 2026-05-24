@@ -273,6 +273,68 @@ describe("ZoneForm — manual parity override lock", () => {
   });
 });
 
+// ── ZoneForm — (auto) hint visibility ──────────────────────────────────────────
+
+describe("ZoneForm — (auto) hint", () => {
+  function getAutoHint(container: HTMLElement) {
+    return container.querySelector('[data-testid="parity-auto-hint"]');
+  }
+
+  it("is hidden initially when label has no leading digits", () => {
+    const { container } = render(<Fixture initialForm={{ label: "A1" }} />);
+    expect(getAutoHint(container)).toBeNull();
+  });
+
+  it("is hidden initially when label is empty", () => {
+    const { container } = render(<Fixture />);
+    expect(getAutoHint(container)).toBeNull();
+  });
+
+  it("appears after typing a numeric label that triggers auto-derive", () => {
+    const { container } = render(<Fixture />);
+    fireEvent.change(getSectionInput(container), { target: { value: "12" } });
+    expect(getAutoHint(container)).not.toBeNull();
+  });
+
+  it("is present when parityOverride is false and label has leading digits (e.g. on load)", () => {
+    const { container } = render(
+      <Fixture initialForm={{ label: "7", sectionParity: "odd" }} initialOverride={false} />
+    );
+    expect(getAutoHint(container)).not.toBeNull();
+  });
+
+  it("disappears immediately after a manual parity selection", () => {
+    const { container } = render(<Fixture />);
+    const input = getSectionInput(container);
+    const select = getParitySelect(container);
+
+    // Trigger auto-derive so hint appears
+    fireEvent.change(input, { target: { value: "12" } });
+    expect(getAutoHint(container)).not.toBeNull();
+
+    // User manually picks a value — hint must vanish
+    fireEvent.change(select, { target: { value: "odd" } });
+    expect(getAutoHint(container)).toBeNull();
+  });
+
+  it("stays hidden after manual override even when a new numeric label is typed", () => {
+    const { container } = render(<Fixture />);
+    const input = getSectionInput(container);
+    const select = getParitySelect(container);
+
+    fireEvent.change(select, { target: { value: "odd" } });
+    fireEvent.change(input, { target: { value: "14" } });
+    expect(getAutoHint(container)).toBeNull();
+  });
+
+  it("is absent when parityOverride starts as true (even with a numeric label)", () => {
+    const { container } = render(
+      <Fixture initialForm={{ label: "12", sectionParity: "even" }} initialOverride={true} />
+    );
+    expect(getAutoHint(container)).toBeNull();
+  });
+});
+
 // ── ZoneEditor integration — zone-switch resets the override ───────────────────
 
 /** Shared zone shape matching the Zone type in ZoneEditor */
