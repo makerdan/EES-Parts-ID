@@ -22,7 +22,7 @@ import {
   displayErrorMessage,
   buildFailedJobMetaLine,
 } from "@/utils/failedJobCard";
-import type { ResumeProgress } from "@/app/catalog-review";
+import type { ResumeProgress } from "@/types/catalogPdf";
 
 export interface FailedJob {
   id: number;

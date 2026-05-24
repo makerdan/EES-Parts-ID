@@ -26,6 +26,7 @@ import { useApp } from "@/contexts/AppContext";
 import { RetryImage } from "@/components/RetryImage";
 import { FailedJobsSection } from "@/components/FailedJobsSection";
 import { InfoDialog } from "@/components/ConfirmDialog";
+import type { ResumeProgress } from "@/types/catalogPdf";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -52,14 +53,6 @@ type FailedJob = {
   matchedParts: number;
 };
 
-export type ResumeProgress = {
-  status: "uploading" | "processing" | "done" | "failed";
-  processedPages: number;
-  totalPages: number | null;
-  matchedParts: number;
-  errorMessage: string | null;
-};
-
 type ReviewItem = {
   id: number;
   vendor: string;
@@ -84,7 +77,7 @@ export default function CatalogReviewScreen() {
   const colors = useColors();
   const router = useRouter();
   const { jobId } = useLocalSearchParams<{ jobId?: string }>();
-  const { adminToken, logoutAdmin } = useApp();
+  const { adminToken, logoutAdmin, resumeProgress, setResumeProgress } = useApp();
 
   const [groups, setGroups] = useState<SessionGroup[]>([]);
   const [failedJobs, setFailedJobs] = useState<FailedJob[]>([]);
@@ -94,8 +87,9 @@ export default function CatalogReviewScreen() {
   const [revertedIds, setRevertedIds] = useState<Set<number>>(new Set());
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const [resumingId, setResumingId] = useState<number | null>(null);
-  const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
-  const resumePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Track one poll interval per jobId so multiple concurrent resumes work and
+  // we can re-attach polls when the screen remounts.
+  const resumePollRef = useRef<Record<number, ReturnType<typeof setInterval>>>({});
   const [infoDialog, setInfoDialog] = useState<{ visible: boolean; title: string; message: string }>({
     visible: false, title: "", message: "",
   });
@@ -153,6 +147,80 @@ export default function CatalogReviewScreen() {
   }, [adminToken, jobId]);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
+
+  // Helper: start (or re-start) polling the status endpoint for a given jobId.
+  // Stored in a ref so it can be called from handleResume AND the remount effect.
+  const startPollForJobRef = useRef<(id: number, headers: Record<string, string>) => void>(
+    () => undefined,
+  );
+  startPollForJobRef.current = (id: number, headers: Record<string, string>) => {
+    if (resumePollRef.current[id]) {
+      clearInterval(resumePollRef.current[id]);
+    }
+    resumePollRef.current[id] = setInterval(async () => {
+      try {
+        const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${id}/status`, { headers });
+        if (!statusRes.ok) return;
+        const body = await statusRes.json() as {
+          status: string;
+          processedPages: number;
+          totalPages: number | null;
+          matchedParts: number;
+          errorMessage: string | null;
+        };
+        setResumeProgress((prev) => ({
+          ...prev,
+          [id]: {
+            status: (body.status === "pending" ? "uploading" : body.status) as ResumeProgress["status"],
+            processedPages: body.processedPages ?? 0,
+            totalPages: body.totalPages ?? null,
+            matchedParts: body.matchedParts ?? 0,
+            errorMessage: body.errorMessage ?? null,
+          },
+        }));
+        if (body.status === "done" || body.status === "failed") {
+          clearInterval(resumePollRef.current[id]);
+          delete resumePollRef.current[id];
+          setResumingId((prev) => (prev === id ? null : prev));
+          if (body.status === "done") {
+            setFailedJobs((prev) => prev.filter((j) => j.id !== id));
+          }
+          fetchItems();
+        }
+      } catch { /* silent */ }
+    }, 3000);
+  };
+
+  // Convenience wrapper so call sites don't reach into the ref directly.
+  const startPollForJob = (id: number, headers: Record<string, string>) =>
+    startPollForJobRef.current(id, headers);
+
+  // On mount (and whenever adminToken changes), re-attach polling for any jobs
+  // that are still in-progress in the shared context (e.g. the user navigated
+  // away while a resume was running and has now come back).
+  useEffect(() => {
+    if (!adminToken) return;
+    const headers: Record<string, string> = { Authorization: `Bearer ${adminToken}` };
+    const pollMap = resumePollRef.current;
+    for (const [key, progress] of Object.entries(resumeProgress)) {
+      const id = Number(key);
+      if (
+        (progress.status === "uploading" || progress.status === "processing") &&
+        !pollMap[id]
+      ) {
+        startPollForJobRef.current(id, headers);
+      }
+    }
+    return () => {
+      // Clear all active polls when the screen unmounts (they will be
+      // re-attached on the next mount via the effect above).
+      for (const interval of Object.values(pollMap)) {
+        clearInterval(interval);
+      }
+      resumePollRef.current = {};
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken]);
 
   const handleDismiss = async (jobId: number) => {
     if (dismissingId) return;
@@ -224,40 +292,7 @@ export default function CatalogReviewScreen() {
       }));
 
       // Poll until the job finishes, then refresh the review list
-      if (resumePollRef.current) clearInterval(resumePollRef.current);
-      resumePollRef.current = setInterval(async () => {
-        try {
-          const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, { headers: authHeaders });
-          if (!statusRes.ok) return;
-          const body = await statusRes.json() as {
-            status: string;
-            processedPages: number;
-            totalPages: number | null;
-            matchedParts: number;
-            errorMessage: string | null;
-          };
-          setResumeProgress((prev) => ({
-            ...prev,
-            [jobId]: {
-              status: (body.status === "pending" ? "uploading" : body.status) as ResumeProgress["status"],
-              processedPages: body.processedPages ?? 0,
-              totalPages: body.totalPages ?? null,
-              matchedParts: body.matchedParts ?? 0,
-              errorMessage: body.errorMessage ?? null,
-            },
-          }));
-          if (body.status === "done" || body.status === "failed") {
-            clearInterval(resumePollRef.current!);
-            resumePollRef.current = null;
-            setResumingId(null);
-            if (body.status === "done") {
-              // Remove from the failed list now that the card shows "Review changes"
-              setFailedJobs((prev) => prev.filter((j) => j.id !== jobId));
-            }
-            fetchItems();
-          }
-        } catch { /* silent */ }
-      }, 3000);
+      startPollForJob(jobId, authHeaders);
     } catch {
       showInfo("Error", "Could not read or send the PDF file.");
       setResumingId(null);

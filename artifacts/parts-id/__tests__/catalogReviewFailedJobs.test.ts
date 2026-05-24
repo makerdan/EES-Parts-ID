@@ -62,7 +62,7 @@ function renderSection(
   jobs: FailedJob[],
   dismissingId: number | null = null,
   resumingId: number | null = null,
-  resumeProgress: Record<number, import("../app/catalog-review").ResumeProgress> = {},
+  resumeProgress: Record<number, import("../types/catalogPdf").ResumeProgress> = {},
 ) {
   const el = React.createElement(FailedJobsSection, {
     failedJobs: jobs,
