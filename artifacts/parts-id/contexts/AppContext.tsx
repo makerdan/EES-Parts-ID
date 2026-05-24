@@ -22,6 +22,7 @@ import {
   ADMIN_TOKEN_KEY,
   clearSessionStorage,
 } from "@/utils/sessionStorage";
+import type { ResumeProgress } from "@/types/catalogPdf";
 
 // ── App Settings ─────────────────────────────────────────────────────────────
 export const SETTINGS_KEY = "parts_id_settings_v1";
@@ -120,6 +121,9 @@ interface AppContextValue {
   // Cross-tab navigation: pending zone to open on the Map tab
   pendingMapFocus: MapFocus | null;
   setPendingMapFocus: (focus: MapFocus | null) => void;
+  // Persisted resume-progress state so the card survives screen navigation
+  resumeProgress: Record<number, ResumeProgress>;
+  setResumeProgress: React.Dispatch<React.SetStateAction<Record<number, ResumeProgress>>>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -162,6 +166,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [toastState, setToastState] = useState<{ message: string; type: ToastVariant } | null>(null);
   const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
+  const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep adminToken accessible to the generated API client (which calls a
@@ -321,6 +326,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       registerLogoutHandler,
       pendingMapFocus,
       setPendingMapFocus,
+      resumeProgress,
+      setResumeProgress,
     }}>
       {children}
       {toastState ? <BrandedToast message={toastState.message} type={toastState.type} /> : null}
