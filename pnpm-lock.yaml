@@ -115,6 +115,10 @@ importers:
         version: 4.21.0
 
   artifacts/mockup-sandbox:
+    dependencies:
+      '@workspace/zone-validation':
+        specifier: workspace:*
+        version: link:../../lib/zone-validation
     devDependencies:
       '@hookform/resolvers':
         specifier: ^3.10.0
@@ -381,6 +385,9 @@ importers:
       '@workspace/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
+      '@workspace/zone-validation':
+        specifier: workspace:*
+        version: link:../../lib/zone-validation
       babel-plugin-react-compiler:
         specifier: ^19.0.0-beta-e993439-20250117
         version: 19.0.0-beta-ebf51a3-20250411
@@ -571,6 +578,8 @@ importers:
       p-retry:
         specifier: ^7.1.1
         version: 7.1.1
+
+  lib/zone-validation: {}
 
   scripts:
     dependencies:
