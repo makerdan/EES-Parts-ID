@@ -252,7 +252,7 @@ describe("buildFailedJobMetaLine", () => {
 // ── Re-failed card (resumed job that fails again) ─────────────────────────────
 
 describe("FailedJobsSection — re-failed progress card", () => {
-  const REFAILED_PROGRESS: import("../app/catalog-review").ResumeProgress = {
+  const REFAILED_PROGRESS: import("../types/catalogPdf").ResumeProgress = {
     status: "failed",
     processedPages: 3,
     totalPages: 10,
