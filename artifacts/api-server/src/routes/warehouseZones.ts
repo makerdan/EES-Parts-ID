@@ -2,6 +2,7 @@ import { Router } from "express";
 import { eq, asc } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { warehouseZoneTable, inventoryTable } from "@workspace/db";
+import { devOnly } from "../middlewares/devOnly";
 
 const router = Router();
 
@@ -61,7 +62,7 @@ router.get("/coverage", async (_req, res) => {
 });
 
 // POST /warehouse-zones
-router.post("/", async (req, res) => {
+router.post("/", devOnly, async (req, res) => {
   try {
     const {
       aisleId,
@@ -115,7 +116,7 @@ router.post("/", async (req, res) => {
 });
 
 // PATCH /warehouse-zones/:id
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", devOnly, async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -156,7 +157,7 @@ router.patch("/:id", async (req, res) => {
 });
 
 // DELETE /warehouse-zones/:id
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", devOnly, async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
