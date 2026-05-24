@@ -12,8 +12,8 @@
   },
   "private": true,
   "devDependencies": {
-    "typescript": "~5.9.2",
-    "prettier": "^3.8.1"
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2"
   },
   "pnpm": {
     "overrides": {
@@ -23,5 +23,8 @@
       "picomatch": ">=4.0.4",
       "brace-expansion": ">=2.0.3"
     }
+  },
+  "dependencies": {
+    "@replit/connectors-sdk": "^0.4.1"
   }
 }
