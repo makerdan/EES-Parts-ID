@@ -22,6 +22,7 @@ import React, {
 import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
 import { deriveParity } from "../utils/deriveParity";
+import { isValidAisleId, findDuplicateConflict } from "@workspace/zone-validation";
 import warehouseMapRaw from "../../public/warehouse-map.svg?raw";
 
 // Extract the inner SVG content (strip the outer <svg> wrapper) so it can be
@@ -77,38 +78,6 @@ type IxState =
   | { t: "multiMove"; startX: number; startY: number };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Returns true if the value is a non-empty string of digits only (e.g. "12"). */
-function isValidAisleId(v: string): boolean {
-  return /^\d+$/.test(v.trim());
-}
-
-/**
- * Returns the first existing zone that would conflict with the given
- * aisleId + sectionParity combination.  Excludes the zone being edited
- * (by excludeId).  A conflict exists when:
- *   - same aisleId AND same sectionParity (exact duplicate), OR
- *   - same aisleId AND either side is "all" (all overlaps odd/even and vice-versa)
- */
-function findDuplicateConflict(
-  zones: Zone[],
-  excludeId: number | null,
-  aisleId: string,
-  parity: Zone["sectionParity"],
-): Zone | null {
-  const trimmed = aisleId.trim();
-  return (
-    zones.find((z) => {
-      if (z.id === excludeId) return false;
-      if (z.aisleId !== trimmed) return false;
-      return (
-        z.sectionParity === parity ||
-        z.sectionParity === "all" ||
-        parity === "all"
-      );
-    }) ?? null
-  );
-}
 
 function screenToSvg(
   clientX: number,
