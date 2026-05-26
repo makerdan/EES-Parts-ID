@@ -10,7 +10,22 @@ module.exports = {
     "^@workspace/zone-validation$": "<rootDir>/../../lib/zone-validation/src/index.ts",
   },
   transform: {
-    "^.+\\.tsx?$": ["ts-jest", { tsconfig: { strict: true, jsx: "react" } }],
+    "^.+\\.tsx?$": [
+      "ts-jest",
+      {
+        tsconfig: {
+          strict: true,
+          jsx: "react",
+          baseUrl: ".",
+          paths: {
+            "@/*": ["./*"],
+            "@workspace/zone-validation": [
+              "../../lib/zone-validation/src/index.ts",
+            ],
+          },
+        },
+      },
+    ],
   },
   testMatch: ["**/__tests__/**/*.test.ts"],
 };
