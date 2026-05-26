@@ -1,0 +1,1 @@
+- [ts-jest inline tsconfig paths](ts-jest-paths.md) — inline tsconfig object in jest.config.js does NOT inherit from tsconfig.json; must re-declare all paths explicitly.
