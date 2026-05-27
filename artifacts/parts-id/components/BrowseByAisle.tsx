@@ -328,11 +328,11 @@ function BinSlot({
         },
       ]}
     >
-      <Text style={[slotStyles.binCode, { color: selected ? colors.primaryForeground : colors.foreground }]}>
+      <Text style={[slotStyles.binCode, { color: selected ? colors.primaryForeground : "#0d0d0d" }]}>
         {part.bin.raw}
       </Text>
       <Text
-        style={[slotStyles.catalog, { color: selected ? colors.primaryForeground : colors.primary }]}
+        style={[slotStyles.catalog, { color: selected ? colors.primaryForeground : "#0d0d0d" }]}
         numberOfLines={1}
       >
         {part.item.catalog}
@@ -507,7 +507,6 @@ function SectionShelfView({
               onEditItem={onEditItem}
               rank={0}
               fontScale={fontScale}
-              boldText
             />
           </View>
         ) : (
@@ -594,7 +593,6 @@ function PartsListView({
               onEditItem={onEditItem}
               rank={0}
               fontScale={fontScale}
-              boldText
             />
           </View>
         )}
