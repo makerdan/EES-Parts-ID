@@ -351,7 +351,7 @@ const slotStyles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  binCode: { fontSize: 11, fontFamily: "SpaceMono_700Bold", letterSpacing: 0.3, textAlign: "center" },
+  binCode: { fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 0.3, textAlign: "center" },
   catalog: { fontSize: 11, fontFamily: "Inter_700Bold", textAlign: "center" },
 });
 
