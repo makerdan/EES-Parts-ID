@@ -167,6 +167,9 @@ export function ZoneEditor() {
   const [multiAisleId, setMultiAisleId] = useState("");
   const [multiParity, setMultiParity] = useState<"" | "all" | "odd" | "even">("");
   const [multiSaving, setMultiSaving] = useState(false);
+  // Track last-saved values so blur auto-save can diff against them
+  const lastMultiAisleIdRef = useRef("");
+  const lastMultiParityRef = useRef<"" | "all" | "odd" | "even">("");
   const [coverage, setCoverage] = useState<{
     unsortedCount: number;
     uncoveredAisles: string[];
@@ -503,7 +506,37 @@ export function ZoneEditor() {
     setMultiSaving(true);
     try {
       await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
+      if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
+      if (updates.sectionParity !== undefined) lastMultiParityRef.current = updates.sectionParity as typeof multiParity;
       toast.success(`Updated ${n} zones`);
+      await fetchZones();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMultiSaving(false);
+    }
+  };
+
+  // Auto-save multi-select aisle data on blur (no confirm dialog)
+  const handleMultiAutoSave = async () => {
+    if (multiSaving || selectedIds.size === 0) return;
+    const updates: Partial<Zone> = {};
+    const trimmedAisle = multiAisleId.trim();
+    if (trimmedAisle && trimmedAisle !== lastMultiAisleIdRef.current) {
+      if (!isValidAisleId(trimmedAisle)) return;
+      updates.aisleId = trimmedAisle;
+    }
+    if (multiParity && multiParity !== lastMultiParityRef.current) {
+      updates.sectionParity = multiParity;
+    }
+    if (Object.keys(updates).length === 0) return;
+    setMultiSaving(true);
+    try {
+      await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
+      if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
+      if (updates.sectionParity !== undefined) lastMultiParityRef.current = updates.sectionParity as typeof multiParity;
+      const n = selectedIds.size;
+      toast.success(`Saved ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -547,8 +580,12 @@ export function ZoneEditor() {
     if (list.length === 0) return;
     const aisles = new Set(list.map((z) => z.aisleId));
     const parities = new Set(list.map((z) => z.sectionParity));
-    setMultiAisleId(aisles.size === 1 ? [...aisles][0]! : "");
-    setMultiParity(parities.size === 1 ? [...parities][0]! as typeof multiParity : "");
+    const syncedAisle = aisles.size === 1 ? [...aisles][0]! : "";
+    const syncedParity = parities.size === 1 ? [...parities][0]! as typeof multiParity : "";
+    setMultiAisleId(syncedAisle);
+    setMultiParity(syncedParity);
+    lastMultiAisleIdRef.current = syncedAisle;
+    lastMultiParityRef.current = syncedParity;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds, zones, isMulti]);
 
@@ -1219,9 +1256,16 @@ export function ZoneEditor() {
               <>
                 <div style={styles.formTitle}>{selectedIds.size} zones selected</div>
                 <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 10, lineHeight: 1.4 }}>
-                  Edit shared properties below. Position and size are only available for single-zone selection.
+                  Edit shared properties below. Changes save automatically when you click away.
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                  onBlur={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                      void handleMultiAutoSave();
+                    }
+                  }}
+                >
                   <div>
                     <Label>Aisle ID — all selected</Label>
                     <input
