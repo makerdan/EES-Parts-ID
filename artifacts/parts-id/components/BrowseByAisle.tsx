@@ -507,6 +507,7 @@ function SectionShelfView({
               onEditItem={onEditItem}
               rank={0}
               fontScale={fontScale}
+              boldText
             />
           </View>
         ) : (
@@ -593,6 +594,7 @@ function PartsListView({
               onEditItem={onEditItem}
               rank={0}
               fontScale={fontScale}
+              boldText
             />
           </View>
         )}
