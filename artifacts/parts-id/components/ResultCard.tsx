@@ -25,6 +25,8 @@ interface ResultCardProps {
   onShowOnMap?: (item: InventoryItem) => void;
   rank: number;
   fontScale?: number;
+  /** When true, renders vendor/catalog/description in bold black for high-contrast browse contexts. */
+  boldText?: boolean;
 }
 
 const CONFIDENCE_COLORS = {
@@ -83,11 +85,13 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, onEditDetails, onShowOnMap, rank, fontScale = 1.0 }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, onEditDetails, onShowOnMap, rank, fontScale = 1.0, boldText = false }: ResultCardProps) {
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const { item, confidence, matchReason, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
+  const boldColor = "#0d0d0d";
+  const boldFont = "Inter_700Bold";
 
   const hasVariants = variants && variants.length > 0;
   const hasKeywords = item.aiKeywords && item.aiKeywords.length > 0;
@@ -113,10 +117,10 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
               </Text>
             </View>
             <View style={cardStyles.titleGroup}>
-              <Text style={[cardStyles.vendor, { color: colors.mutedForeground, fontSize: fs(11) }]}>
+              <Text style={[cardStyles.vendor, { color: boldText ? boldColor : colors.mutedForeground, fontSize: fs(11), fontFamily: boldText ? boldFont : cardStyles.vendor.fontFamily }]}>
                 {item.vendor}
               </Text>
-              <Text style={[cardStyles.catalog, { color: colors.foreground, fontSize: fs(17) }]}>
+              <Text style={[cardStyles.catalog, { color: boldText ? boldColor : colors.foreground, fontSize: fs(17), fontFamily: boldText ? boldFont : cardStyles.catalog.fontFamily }]}>
                 {item.catalog}
               </Text>
             </View>
@@ -143,7 +147,7 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
         </View>
 
         {/* Description */}
-        <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
+        <Text style={[cardStyles.description, { color: boldText ? boldColor : colors.foreground, fontSize: fs(13), fontFamily: boldText ? boldFont : cardStyles.description.fontFamily }]} numberOfLines={expanded ? undefined : 2}>
           {item.description || "No description"}
         </Text>
 
