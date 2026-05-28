@@ -140,6 +140,7 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
     ...process.env,
     EXPO_PUBLIC_DOMAIN: expoPublicDomain,
     EXPO_PUBLIC_REPL_ID: expoPublicReplId,
+    NODE_OPTIONS: "--max-old-space-size=4096",
   };
 
   if (expoPublicReplId) {
@@ -580,6 +581,7 @@ async function buildWeb(domain, expoPublicReplId) {
     ...process.env,
     EXPO_PUBLIC_DOMAIN: domain,
     EXPO_PUBLIC_REPL_ID: expoPublicReplId || "",
+    NODE_OPTIONS: "--max-old-space-size=4096",
   };
 
   return new Promise((resolve, reject) => {
