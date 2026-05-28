@@ -70,6 +70,7 @@ export function FailedJobsSection({
   onDismissResumeError,
   colors,
 }: Props) {
+  "use no memo";
   // All jobs that have an active resumeProgress entry (any status) are shown
   // via ResumeProgressCard — including "failed" ones, which show an error card.
   const inProgressIds = new Set(Object.keys(resumeProgress).map(Number));

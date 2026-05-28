@@ -33,6 +33,7 @@ import { secondaryBtnBase } from "@/styles/shared";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 export default function PhotoScreen() {
+  "use no memo";
   useTrackScreen("Photo ID");
   const colors = useColors();
   const { textFontScale, isAdmin, adminToken } = useApp();

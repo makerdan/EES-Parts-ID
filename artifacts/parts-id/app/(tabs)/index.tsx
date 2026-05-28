@@ -118,6 +118,7 @@ const DEFAULT_FILTERS: FilterValues = {
 };
 
 export default function SearchScreen() {
+  "use no memo";
   useTrackScreen("Search");
   const colors = useColors();
   const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast } = useApp();

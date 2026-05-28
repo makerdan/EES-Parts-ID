@@ -274,6 +274,7 @@ export function ConfidenceSlider({
   /** Quick-pick preset values. Defaults to [0,20,40,60,80]. Pass a custom list to hide 0/"All". */
   presets?: number[];
 }) {
+  "use no memo";
   // value is 0–100 (integer percentage)
   const pct = Math.round(value);
   const trackWidth = useRef(0);
@@ -362,6 +363,7 @@ export function ConfidenceSlider({
 
 
 export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelProps) {
+  "use no memo";
   const colors = useColors();
 
   const TEXT_FIELD_KEYS = ["catalog", "vendor", "color", "size", "material", "textNumbers"] as const;

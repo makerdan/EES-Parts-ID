@@ -33,6 +33,7 @@ export function CatalogPickerModal({
   onAssign: (item: InventoryItem) => void;
   onCancel: () => void;
 }) {
+  "use no memo";
   const colors = useColors();
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");

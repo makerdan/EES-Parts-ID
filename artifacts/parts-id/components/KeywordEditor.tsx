@@ -29,6 +29,7 @@ interface KeywordEditorProps {
 const DEBOUNCE_MS = 900;
 
 export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEditorProps) {
+  "use no memo";
   const colors = useColors();
   const queryClient = useQueryClient();
   const { showToast } = useApp();

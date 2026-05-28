@@ -620,6 +620,7 @@ export function BrowseByAisle({
   adminToken,
   isAdmin = false,
 }: BrowseByAisleProps) {
+  "use no memo";
   const colors = useColors();
   const [addPartVisible, setAddPartVisible] = useState(false);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);

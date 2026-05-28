@@ -84,6 +84,7 @@ const varStyles = StyleSheet.create({
 });
 
 export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, onEditDetails, onShowOnMap, rank, fontScale = 1.0 }: ResultCardProps) {
+  "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const { item, confidence, matchReason, seriesLabel, variants } = result;

@@ -33,6 +33,7 @@ interface PartDetailsEditorProps {
  * without navigating to the Upload tab.
  */
 export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEditorProps) {
+  "use no memo";
   const colors = useColors();
   const queryClient = useQueryClient();
   const updateBinsMutation = useUpdateItemBins();
