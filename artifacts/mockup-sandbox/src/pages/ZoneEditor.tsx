@@ -23,18 +23,19 @@ import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
 import { deriveParity } from "../utils/deriveParity";
 import { isValidAisleId, findDuplicateConflict } from "@workspace/zone-validation";
-import warehouseMapRaw from "../../public/warehouse-map.svg?raw";
+import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
 
-// Extract the inner SVG content (strip the outer <svg> wrapper) so it can be
-// embedded directly inside the main SVG canvas as a child <g>. This keeps
-// everything in the same SVG viewport and stays crisp at any zoom level.
-const svgInnerContent = warehouseMapRaw
-  .replace(/^[\s\S]*?<svg[^>]*>/, "")
-  .replace(/<\/svg>\s*$/, "");
+// Strip the outer <svg> wrapper so the inner content can be embedded directly
+// inside the main SVG canvas <g>, sharing the same coordinate space.
+function extractSvgInner(svgRaw: string): string {
+  return svgRaw
+    .replace(/^[\s\S]*?<svg[^>]*>/, "")
+    .replace(/<\/svg>\s*$/, "");
+}
+
+const svgFallbackInner = extractSvgInner(warehouseMapFallback);
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const SVG_W = 3592.55;
-const SVG_H = 2457.41;
 const HANDLE_PX = 6; // handle visual size in screen pixels
 const MIN_ZONE_PX = 8; // minimum zone size in screen pixels before it's discarded
 const API_BASE = `${window.location.origin}/api`;
@@ -133,6 +134,8 @@ export function ZoneEditor() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  // Floor plan SVG: starts with bundled fallback, then replaced by latest upload.
+  const [svgInner, setSvgInner] = useState<string>(svgFallbackInner);
   const [tf, setTf] = useState<Tf>({ x: 0, y: 0, s: INITIAL_SCALE });
   const [mode, setMode] = useState<Mode>("pan");
 
@@ -212,13 +215,26 @@ export function ZoneEditor() {
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
-  // Inject the warehouse floor plan SVG directly into the SVG DOM so it shares
-  // the same coordinate system as the zone overlays and stays crisp at any zoom.
+  // Fetch the latest uploaded floor plan from the API and replace the fallback.
+  // Silently ignores 404 (nothing uploaded yet) — the bundled fallback stays.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/floor-plan/svg`);
+        if (res.ok) {
+          setSvgInner(extractSvgInner(await res.text()));
+        }
+      } catch {}
+    })();
+  }, []);
+
+  // Inject the floor plan SVG directly into the SVG DOM so it shares the same
+  // coordinate system as the zone overlays and stays crisp at any zoom level.
   useEffect(() => {
     if (floorPlanRef.current) {
-      floorPlanRef.current.innerHTML = svgInnerContent;
+      floorPlanRef.current.innerHTML = svgInner;
     }
-  }, []);
+  }, [svgInner]);
 
   // ── Derived selection values ──────────────────────────────────────────────
   // selectedId is non-null only when exactly one zone is selected

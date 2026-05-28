@@ -12,14 +12,15 @@ import React, {
   useRef,
   useState,
 } from "react";
-import warehouseMapRaw from "../../public/warehouse-map.svg?raw";
+import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
 
-const svgInnerContent = warehouseMapRaw
-  .replace(/^[\s\S]*?<svg[^>]*>/, "")
-  .replace(/<\/svg>\s*$/, "");
+function extractSvgInner(svgRaw: string): string {
+  return svgRaw
+    .replace(/^[\s\S]*?<svg[^>]*>/, "")
+    .replace(/<\/svg>\s*$/, "");
+}
 
-const SVG_W = 3592.55;
-const SVG_H = 2457.41;
+const svgFallbackInner = extractSvgInner(warehouseMapFallback);
 const INITIAL_SCALE = 0.18;
 const API_BASE = `${window.location.origin}/api`;
 
@@ -49,6 +50,8 @@ function clampScale(s: number): number {
 export function WarehouseMapViewer() {
   const svgRef = useRef<SVGSVGElement>(null);
   const floorPlanRef = useRef<SVGGElement>(null);
+  // Floor plan SVG: starts with bundled fallback, then replaced by latest upload.
+  const [svgInner, setSvgInner] = useState<string>(svgFallbackInner);
   const [tf, setTf] = useState<Transform>({
     x: 40,
     y: 40,
@@ -64,12 +67,25 @@ export function WarehouseMapViewer() {
     originTf: { x: 40, y: 40, s: INITIAL_SCALE },
   });
 
+  // Fetch the latest uploaded floor plan from the API and replace the fallback.
+  // Silently ignores 404 (nothing uploaded yet) — the bundled fallback stays.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/floor-plan/svg`);
+        if (res.ok) {
+          setSvgInner(extractSvgInner(await res.text()));
+        }
+      } catch {}
+    })();
+  }, []);
+
   // Inject floor plan SVG into same coordinate space as zone overlays
   useEffect(() => {
     if (floorPlanRef.current) {
-      floorPlanRef.current.innerHTML = svgInnerContent;
+      floorPlanRef.current.innerHTML = svgInner;
     }
-  }, []);
+  }, [svgInner]);
 
   // Fetch zones from API on mount
   useEffect(() => {
