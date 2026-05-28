@@ -68,7 +68,7 @@ function AuthGate() {
     const inTabsGroup = segments[0] === "(tabs)";
     if (!isAuthenticated && inTabsGroup) {
       router.replace("/login");
-    } else if (isAuthenticated && !inTabsGroup) {
+    } else if (isAuthenticated && segments[0] === "login") {
       router.replace("/(tabs)");
     }
   }, [isAuthenticated, isLoading, segments, router]);
