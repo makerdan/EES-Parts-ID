@@ -9,6 +9,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -19,8 +21,11 @@ import {
 import Svg, { Rect, Text as SvgText } from "react-native-svg";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { File as FsFile, Paths as FsPaths } from "expo-file-system";
+import * as Sharing from "expo-sharing";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
+import { serializeDashboardToCsv } from "@/utils/exportCsv";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -165,6 +170,44 @@ export default function AdminDashboardScreen() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = useCallback(async () => {
+    if (!stats) return;
+    setExporting(true);
+    try {
+      const csv = serializeDashboardToCsv(stats);
+      const date = new Date().toISOString().slice(0, 10);
+      const filename = `admin-dashboard-${date}.csv`;
+
+      if (Platform.OS === "web") {
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        const file = new FsFile(FsPaths.cache, filename);
+        file.write(csv);
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(file.uri, {
+            mimeType: "text/csv",
+            dialogTitle: "Export Dashboard CSV",
+            UTI: "public.comma-separated-values-text",
+          });
+        }
+      }
+    } catch (err) {
+      Alert.alert("Export failed", err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setExporting(false);
+    }
+  }, [stats]);
 
   const fetchStats = useCallback(async () => {
     if (!adminToken || !API_BASE) return;
@@ -213,6 +256,18 @@ export default function AdminDashboardScreen() {
           <Feather name="arrow-left" size={20} color={colors.foreground} />
         </Pressable>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Admin Dashboard</Text>
+        <Pressable
+          onPress={handleExport}
+          style={styles.exportBtn}
+          hitSlop={8}
+          disabled={!stats || exporting}
+        >
+          <Feather
+            name="download"
+            size={18}
+            color={!stats || exporting ? colors.mutedForeground : colors.primary}
+          />
+        </Pressable>
         <Pressable onPress={fetchStats} style={styles.refreshBtn} hitSlop={8} disabled={loading}>
           <Feather name="refresh-cw" size={18} color={loading ? colors.mutedForeground : colors.primary} />
         </Pressable>
@@ -306,6 +361,7 @@ const styles = StyleSheet.create({
   },
   backBtn: { marginRight: 12 },
   headerTitle: { flex: 1, fontSize: 18, fontFamily: "Inter_600SemiBold" },
+  exportBtn: { marginLeft: 8 },
   refreshBtn: { marginLeft: 8 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   loadingText: { marginTop: 12, fontSize: 14 },
