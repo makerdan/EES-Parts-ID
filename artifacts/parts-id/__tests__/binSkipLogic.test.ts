@@ -206,9 +206,17 @@ describe("serializeToCsv", () => {
     }
   });
 
-  it("always emits the correct CSV header", () => {
+  it("always emits the correct CSV header (with UTF-8 BOM prefix)", () => {
     const csv = serializeToCsv([row0], new Set<number>());
-    expect(csv.split("\n")[0]).toBe("Vendor,Catalog,Description,BinLocation,Barcodes");
+    expect(csv.split("\n")[0]).toBe("\uFEFFVendor,Catalog,Description,BinLocation,Barcodes");
+  });
+
+  it("joins multiple barcodes with a semicolon, not a comma", () => {
+    const row = makeParsedRow({ barcodes: ["111", "222", "333"], binLocations: [] });
+    const csv = serializeToCsv([row], new Set<number>());
+    const dataLine = csv.split("\n")[1];
+    const fields = dataLine.match(/"[^"]*"|[^,]+/g) ?? [];
+    expect(fields[4]).toBe('"111;222;333"');
   });
 
   it("escapes double-quotes in field values", () => {

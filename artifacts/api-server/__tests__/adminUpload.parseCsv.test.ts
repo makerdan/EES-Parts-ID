@@ -71,6 +71,15 @@ describe("parseCsv — null / malformed cases", () => {
     expect(result).not.toBeNull();
     expect(result).toHaveLength(0);
   });
+
+  it("parses a CSV that begins with a UTF-8 BOM (\\uFEFF) without error", () => {
+    const bomCsv = "\uFEFF" + csv("Vendor,Catalog,Description", "ACME,CAT-001,Widget");
+    const result = parseCsv(bomCsv);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+    expect(result![0]!.vendor).toBe("ACME");
+    expect(result![0]!.catalog).toBe("CAT-001");
+  });
 });
 
 // ── parseCsv — barcode cell separators ───────────────────────────────────────

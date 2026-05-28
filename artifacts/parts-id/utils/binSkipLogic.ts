@@ -91,10 +91,10 @@ export function serializeToCsv(rows: ParsedRow[], skipBinRows: Set<number>): str
   const escapeField = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const lines = rows.map((row, i) => {
     const bin = skipBinRows.has(i) ? "" : row.binLocations.join(";");
-    const barcodes = row.barcodes.join(",");
+    const barcodes = row.barcodes.join(";");
     return [row.vendor, row.catalog, row.description, bin, barcodes]
       .map(escapeField)
       .join(",");
   });
-  return [header, ...lines].join("\n");
+  return "\uFEFF" + [header, ...lines].join("\n");
 }

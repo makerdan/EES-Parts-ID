@@ -109,7 +109,9 @@ export interface ParsedRow {
  * Returns null if the CSV is malformed (no header, or missing required columns).
  */
 export function parseCsv(csvText: string): ParsedRow[] | null {
-  const lines = csvText.split(/\r?\n/).filter(l => l.trim().length > 0);
+  // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
+  const text = csvText.startsWith("\uFEFF") ? csvText.slice(1) : csvText;
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
   if (lines.length < 2) return null; // header-only or empty
 
   const header = parseCsvLine(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, ""));

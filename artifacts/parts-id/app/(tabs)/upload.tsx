@@ -114,7 +114,9 @@ function findCol(headers: string[], aliases: string[]): number {
 }
 
 // ── Parse CSV text ─────────────────────────────────────────────────────────
-function parseCSV(text: string): ParsedRow[] {
+function parseCSV(rawText: string): ParsedRow[] {
+  // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
+  const text = rawText.startsWith("\uFEFF") ? rawText.slice(1) : rawText;
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
 
