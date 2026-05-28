@@ -216,4 +216,45 @@ describe("serializeToCsv", () => {
     const csv = serializeToCsv([row], new Set<number>());
     expect(csv).toContain('say ""hello""');
   });
+
+  it("handles a description containing a comma without breaking field boundaries", () => {
+    const row = makeParsedRow({ description: "nuts, bolts, and washers", binLocations: ["A1"], barcodes: [] });
+    const csv = serializeToCsv([row], new Set<number>());
+    const dataLine = csv.split("\n")[1];
+    const fields = dataLine.match(/"[^"]*"|[^,]+/g) ?? [];
+    expect(fields[2]).toBe('"nuts, bolts, and washers"');
+    expect(fields[3]).toBe('"A1"');
+  });
+
+  it("handles a description containing a double-quote by doubling it", () => {
+    const row = makeParsedRow({ description: 'M3 "metric" bolt', binLocations: [], barcodes: [] });
+    const csv = serializeToCsv([row], new Set<number>());
+    expect(csv).toContain('"M3 ""metric"" bolt"');
+  });
+
+  it("handles a description containing a newline inside a quoted field", () => {
+    const row = makeParsedRow({ description: "line one\nline two", binLocations: ["B2"], barcodes: [] });
+    const csv = serializeToCsv([row], new Set<number>());
+    expect(csv).toContain('"line one\nline two"');
+    expect(csv).toContain('"B2"');
+  });
+});
+
+// ── toggleSkipAll (empty-rows edge case) ─────────────────────────────────
+
+describe("toggleSkipAll — empty rows", () => {
+  it("returns an empty set when rows is empty (no-op)", () => {
+    const result = toggleSkipAll([], new Set<number>());
+    expect(result.size).toBe(0);
+  });
+});
+
+// ── activeReplacementCount (out-of-bounds index) ──────────────────────────
+
+describe("activeReplacementCount — out-of-bounds index in skipBinRows", () => {
+  it("ignores indices beyond the end of the rows array", () => {
+    const rows = makeRows(["replace", "replace"]);
+    const result = activeReplacementCount(2, new Set([0, 99]), rows);
+    expect(result).toBe(1);
+  });
 });
