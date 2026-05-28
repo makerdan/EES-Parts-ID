@@ -114,12 +114,20 @@ function escapeCSVField(value: unknown): string {
   return str;
 }
 
-function buildCSV(columns: string[], rows: Record<string, unknown>[]): string {
+function buildCSV(
+  columns: string[],
+  rows: Record<string, unknown>[],
+  truncated: boolean,
+  maxRows: number,
+): string {
   const header = columns.map(escapeCSVField).join(",");
   const body = rows
     .map((row) => columns.map((col) => escapeCSVField(row[col])).join(","))
     .join("\r\n");
-  return header + "\r\n" + body;
+  const truncationNote = truncated
+    ? `\r\n"[Results truncated at ${maxRows} rows — refine your query for complete data]"`
+    : "";
+  return header + "\r\n" + body + truncationNote;
 }
 
 router.post("/query", requireAdminAuth, async (req, res) => {
@@ -149,7 +157,7 @@ router.post("/query", requireAdminAuth, async (req, res) => {
     const rows = truncated ? allRows.slice(0, MAX_ROWS) : allRows;
 
     if (format === "csv") {
-      const csv = buildCSV(columns, rows);
+      const csv = buildCSV(columns, rows, truncated, MAX_ROWS);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="query-results.csv"');
       return void res.send(csv);
@@ -166,6 +174,13 @@ router.post("/query", requireAdminAuth, async (req, res) => {
       }
 
       sheet.getRow(1).font = { bold: true };
+
+      if (truncated) {
+        const noteRow = sheet.addRow([
+          `[Results truncated at ${MAX_ROWS} rows — refine your query for complete data]`,
+        ]);
+        noteRow.getCell(1).font = { italic: true, color: { argb: "FFCC0000" } };
+      }
 
       res.setHeader(
         "Content-Type",
