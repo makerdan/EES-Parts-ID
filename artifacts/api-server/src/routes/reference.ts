@@ -78,6 +78,19 @@ async function buildInventoryContext(question: string): Promise<{ context: strin
   }
 }
 
+/** Fire-and-forget: log an AI request and prune entries older than 90 days. */
+function writeAiRequestLog(feature: "reference"): void {
+  setImmediate(async () => {
+    try {
+      const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      await db.insert(aiRequestLogTable).values({ feature });
+      await db.delete(aiRequestLogTable).where(lt(aiRequestLogTable.createdAt, ninetyDaysAgo));
+    } catch (err) {
+      logger.warn({ err }, "ai_request_log write failed");
+    }
+  });
+}
+
 /** Fire-and-forget: write a Q&A log row and prune entries older than 30 days. */
 function writeReferenceLog(question: string, answer: string, matchedItemCount: number): void {
   setImmediate(async () => {
@@ -133,18 +146,14 @@ router.post("/ask", async (req, res) => {
       const cached = await getCachedAnswer(questionHash);
       if (cached !== null) {
         logger.debug({ questionHash }, "reference.ask cache hit (json)");
-        setImmediate(async () => {
-          try { await db.insert(aiRequestLogTable).values({ feature: "reference" }); } catch {}
-        });
+        writeAiRequestLog("reference");
         return void res.json({ answer: cached });
       }
 
       const { answer, matchedItemCount } = await collectStreamedAnswer(question.trim());
       writeReferenceLog(question.trim(), answer, matchedItemCount);
       setCachedAnswer(questionHash, normalized, answer).catch(() => {});
-      setImmediate(async () => {
-        try { await db.insert(aiRequestLogTable).values({ feature: "reference" }); } catch {}
-      });
+      writeAiRequestLog("reference");
       return void res.json({ answer });
     }
 
@@ -158,9 +167,7 @@ router.post("/ask", async (req, res) => {
 
     if (cached !== null) {
       logger.debug({ questionHash }, "reference.ask cache hit (sse)");
-      setImmediate(async () => {
-        try { await db.insert(aiRequestLogTable).values({ feature: "reference" }); } catch {}
-      });
+      writeAiRequestLog("reference");
       res.write(`data: ${JSON.stringify({ content: cached })}\n\n`);
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
@@ -193,9 +200,7 @@ router.post("/ask", async (req, res) => {
     res.end();
 
     writeReferenceLog(question.trim(), fullAnswer, matchedItemCount);
-    setImmediate(async () => {
-      try { await db.insert(aiRequestLogTable).values({ feature: "reference" }); } catch {}
-    });
+    writeAiRequestLog("reference");
     if (fullAnswer) {
       setCachedAnswer(questionHash, normalized, fullAnswer).catch(() => {});
     }
