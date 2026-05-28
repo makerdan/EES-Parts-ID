@@ -29,6 +29,7 @@ import { useApp } from "@/contexts/AppContext";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -352,6 +353,7 @@ const gateStyles = StyleSheet.create({
 
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
+  useTrackScreen("Upload");
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, logoutAdmin, adminToken } = useApp();

@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { buildImageContent, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
+import { db } from "@workspace/db";
+import { aiRequestLogTable } from "@workspace/db";
+import { logger } from "../lib/logger";
 
 const router = Router();
 
@@ -75,6 +78,15 @@ router.post("/identify", async (req, res) => {
       detectedVendor: analysis.detectedVendor ?? null,
       summary: analysis.summary ?? "",
       results: [], // Client will run search with these terms
+    });
+
+    // Fire-and-forget: log this AI identify request
+    setImmediate(async () => {
+      try {
+        await db.insert(aiRequestLogTable).values({ feature: "identify" });
+      } catch (err) {
+        logger.warn({ err }, "ai_request_log insert failed");
+      }
     });
   } catch (err) {
     console.error(err);

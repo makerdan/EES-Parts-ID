@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { logger } from "../lib/logger";
 import { db } from "@workspace/db";
-import { quickLookupCacheTable, inventoryTable, referenceLogTable } from "@workspace/db";
+import { quickLookupCacheTable, inventoryTable, referenceLogTable, aiRequestLogTable } from "@workspace/db";
 import { desc, eq, lt, or, ilike, sql } from "drizzle-orm";
 import { verifyAdminToken } from "./admin";
 import {
@@ -133,12 +133,18 @@ router.post("/ask", async (req, res) => {
       const cached = await getCachedAnswer(questionHash);
       if (cached !== null) {
         logger.debug({ questionHash }, "reference.ask cache hit (json)");
+        setImmediate(async () => {
+          try { await db.insert(aiRequestLogTable).values({ feature: "reference" }); } catch {}
+        });
         return void res.json({ answer: cached });
       }
 
       const { answer, matchedItemCount } = await collectStreamedAnswer(question.trim());
       writeReferenceLog(question.trim(), answer, matchedItemCount);
       setCachedAnswer(questionHash, normalized, answer).catch(() => {});
+      setImmediate(async () => {
+        try { await db.insert(aiRequestLogTable).values({ feature: "reference" }); } catch {}
+      });
       return void res.json({ answer });
     }
 
@@ -152,6 +158,9 @@ router.post("/ask", async (req, res) => {
 
     if (cached !== null) {
       logger.debug({ questionHash }, "reference.ask cache hit (sse)");
+      setImmediate(async () => {
+        try { await db.insert(aiRequestLogTable).values({ feature: "reference" }); } catch {}
+      });
       res.write(`data: ${JSON.stringify({ content: cached })}\n\n`);
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
@@ -184,6 +193,9 @@ router.post("/ask", async (req, res) => {
     res.end();
 
     writeReferenceLog(question.trim(), fullAnswer, matchedItemCount);
+    setImmediate(async () => {
+      try { await db.insert(aiRequestLogTable).values({ feature: "reference" }); } catch {}
+    });
     if (fullAnswer) {
       setCachedAnswer(questionHash, normalized, fullAnswer).catch(() => {});
     }
