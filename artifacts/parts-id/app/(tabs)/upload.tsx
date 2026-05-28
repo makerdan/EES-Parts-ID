@@ -385,6 +385,7 @@ export default function UploadScreen() {
   const [queryRunning, setQueryRunning] = useState(false);
   const [queryResult, setQueryResult] = useState<{ columns: string[]; rows: Record<string, unknown>[]; rowCount: number } | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
+  const [queryExportPending, setQueryExportPending] = useState<"csv" | "xlsx" | null>(null);
 
   // Bin diff / replace-warning state
   const [exportPending, setExportPending] = useState(false);
@@ -564,6 +565,54 @@ export default function UploadScreen() {
     void pollMeasureStatus();
     measurePollRef.current = setInterval(pollMeasureStatus, 2000);
   }, [stopMeasurePoll, pollMeasureStatus]);
+
+  const handleQueryExport = useCallback(async (format: "csv" | "xlsx") => {
+    if (!adminToken || queryExportPending || !queryText.trim()) return;
+    setQueryExportPending(format);
+    try {
+      const res = await fetch(`${API_BASE}/admin/query?format=${format}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ sql: queryText }),
+      });
+      if (res.status === 401) {
+        logoutAdmin();
+        return;
+      }
+      if (!res.ok) return;
+
+      const blob = await res.blob();
+      const filename = `query-results.${format}`;
+
+      if (Platform.OS === "web") {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        const arrayBuffer = await blob.arrayBuffer();
+        const file = new FsFile(FsPaths.cache, filename);
+        file.write(new Uint8Array(arrayBuffer));
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(file.uri, {
+            mimeType: format === "csv"
+              ? "text/csv"
+              : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            dialogTitle: `Export ${format.toUpperCase()}`,
+          });
+        }
+      }
+    } catch {
+      // Non-critical — silently ignore export errors
+    } finally {
+      setQueryExportPending(null);
+    }
+  }, [adminToken, queryExportPending, queryText, logoutAdmin]);
 
   // On admin login, load coverage summary and check if jobs are already running.
   // On admin logout (isAdmin → false), stop any active polling immediately.
@@ -1974,6 +2023,37 @@ export default function UploadScreen() {
                           ))}
                         </View>
                       </ScrollView>
+                      {/* Export buttons */}
+                      <View style={styles.queryExportRow}>
+                        <Pressable
+                          onPress={() => handleQueryExport("csv")}
+                          disabled={queryExportPending !== null}
+                          style={[
+                            styles.queryExportBtn,
+                            { borderColor: colors.border, backgroundColor: queryExportPending === "csv" ? colors.muted : colors.card },
+                          ]}
+                        >
+                          {queryExportPending === "csv" ? (
+                            <ActivityIndicator size="small" color={colors.primary} />
+                          ) : (
+                            <Text style={[styles.queryExportBtnText, { color: colors.primary }]}>↓ Download CSV</Text>
+                          )}
+                        </Pressable>
+                        <Pressable
+                          onPress={() => handleQueryExport("xlsx")}
+                          disabled={queryExportPending !== null}
+                          style={[
+                            styles.queryExportBtn,
+                            { borderColor: colors.border, backgroundColor: queryExportPending === "xlsx" ? colors.muted : colors.card },
+                          ]}
+                        >
+                          {queryExportPending === "xlsx" ? (
+                            <ActivityIndicator size="small" color={colors.primary} />
+                          ) : (
+                            <Text style={[styles.queryExportBtnText, { color: colors.primary }]}>↓ Download Excel</Text>
+                          )}
+                        </Pressable>
+                      </View>
                     </View>
                   )
                 ) : null}
@@ -2105,4 +2185,7 @@ const styles = StyleSheet.create({
   queryHeaderCell: { fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 0.3, paddingRight: 12 },
   queryDataRow: { flexDirection: "row", paddingHorizontal: 8, paddingVertical: 8, borderBottomWidth: 1 },
   queryDataCell: { fontSize: 12, fontFamily: "Inter_400Regular", paddingRight: 12 },
+  queryExportRow: { flexDirection: "row", gap: 8, paddingTop: 4 },
+  queryExportBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: "center", justifyContent: "center", minHeight: 40 },
+  queryExportBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
 });
