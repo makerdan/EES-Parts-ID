@@ -215,16 +215,24 @@ export function ZoneEditor() {
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
-  // Fetch the latest uploaded floor plan from the API and replace the fallback.
-  // Silently ignores 404 (nothing uploaded yet) — the bundled fallback stays.
+  // Fetch the latest uploaded floor plan. Tries the local API first; if it
+  // returns 404 (nothing uploaded in this env), falls back to the production
+  // API defined by VITE_FLOOR_PLAN_API_FALLBACK. The bundled SVG is only
+  // shown when both attempts fail or the env has no fallback configured.
   useEffect(() => {
     void (async () => {
-      try {
-        const res = await fetch(`${API_BASE}/floor-plan/svg`);
-        if (res.ok) {
-          setSvgInner(extractSvgInner(await res.text()));
-        }
-      } catch {}
+      const fallback = (import.meta.env.VITE_FLOOR_PLAN_API_FALLBACK as string | undefined)?.replace(/\/$/, "");
+      const urls = [`${API_BASE}/floor-plan/svg`];
+      if (fallback && fallback !== API_BASE) urls.push(`${fallback}/floor-plan/svg`);
+      for (const url of urls) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) {
+            setSvgInner(extractSvgInner(await res.text()));
+            return;
+          }
+        } catch {}
+      }
     })();
   }, []);
 
