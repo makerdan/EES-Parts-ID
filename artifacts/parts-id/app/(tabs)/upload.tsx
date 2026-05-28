@@ -360,7 +360,7 @@ export default function UploadScreen() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
-  const [tab, setTab] = useState<"import" | "enrichment" | "addpart">("import");
+  const [tab, setTab] = useState<"import" | "enrichment" | "addpart" | "query">("import");
   const [pasteText, setPasteText] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -379,6 +379,12 @@ export default function UploadScreen() {
   const [measureJobStatus, setMeasureJobStatus] = useState<MeasureJobStatus | null>(null);
   const [measureEnrichError, setMeasureEnrichError] = useState<string | null>(null);
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
+
+  // SQL query tab state
+  const [queryText, setQueryText] = useState("SELECT * FROM inventory LIMIT 20");
+  const [queryRunning, setQueryRunning] = useState(false);
+  const [queryResult, setQueryResult] = useState<{ columns: string[]; rows: Record<string, unknown>[]; rowCount: number } | null>(null);
+  const [queryError, setQueryError] = useState<string | null>(null);
 
   // Bin diff / replace-warning state
   const [exportPending, setExportPending] = useState(false);
@@ -1040,7 +1046,7 @@ export default function UploadScreen() {
 
           {/* Tab bar */}
           <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-            {(["import", "enrichment", "addpart"] as const).map(t => (
+            {(["import", "enrichment", "addpart", "query"] as const).map(t => (
               <Pressable
                 key={t}
                 onPress={() => setTab(t)}
@@ -1050,7 +1056,7 @@ export default function UploadScreen() {
                 ]}
               >
                 <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
-                  {t === "import" ? "Import File" : t === "enrichment" ? `Enrichment (${inventoryTotal})` : "Add Part"}
+                  {t === "import" ? "Import" : t === "enrichment" ? `Enrich (${inventoryTotal})` : t === "addpart" ? "Add Part" : "Query"}
                 </Text>
               </Pressable>
             ))}
@@ -1846,13 +1852,132 @@ export default function UploadScreen() {
                 }
               />
             </View>
-          ) : (
+          ) : tab === "addpart" ? (
             <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
               <AddPartForm
                 adminToken={adminToken}
                 onSuccess={() => { inventoryQuery.refetch(); }}
               />
               <BarcodeAddPart />
+            </ScrollView>
+          ) : (
+            /* ── Query tab ───────────────────────────────────────────── */
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+              <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.cardTitle, { color: colors.foreground }]}>🔍 SQL Query</Text>
+                <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                  Run a read-only SELECT against the live database. INSERT, UPDATE, DELETE, and DDL are blocked.
+                </Text>
+
+                <TextInput
+                  value={queryText}
+                  onChangeText={text => {
+                    setQueryText(text);
+                    setQueryError(null);
+                    setQueryResult(null);
+                  }}
+                  multiline
+                  scrollEnabled
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  placeholder="SELECT * FROM inventory LIMIT 20"
+                  placeholderTextColor={colors.mutedForeground}
+                  style={[styles.queryInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                  textAlignVertical="top"
+                />
+
+                <Pressable
+                  onPress={async () => {
+                    if (!adminToken || queryRunning) return;
+                    setQueryRunning(true);
+                    setQueryError(null);
+                    setQueryResult(null);
+                    try {
+                      const res = await fetch(`${API_BASE}/admin/query`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+                        body: JSON.stringify({ sql: queryText }),
+                      });
+                      if (res.status === 401) {
+                        logoutAdmin();
+                        setQueryError("Admin session expired. Please unlock again.");
+                        return;
+                      }
+                      const data = await res.json() as { columns?: string[]; rows?: Record<string, unknown>[]; rowCount?: number; error?: string };
+                      if (!res.ok || data.error) {
+                        setQueryError(data.error ?? "Query failed");
+                        return;
+                      }
+                      setQueryResult({ columns: data.columns ?? [], rows: data.rows ?? [], rowCount: data.rowCount ?? 0 });
+                    } catch {
+                      setQueryError("Network error — could not reach the server.");
+                    } finally {
+                      setQueryRunning(false);
+                    }
+                  }}
+                  disabled={queryRunning || !queryText.trim()}
+                  style={[styles.queryRunBtn, { backgroundColor: (queryRunning || !queryText.trim()) ? colors.muted : colors.primary }]}
+                >
+                  {queryRunning ? (
+                    <ActivityIndicator color={colors.primaryForeground} />
+                  ) : (
+                    <Text style={[styles.queryRunBtnText, { color: colors.primaryForeground }]}>▶ Run</Text>
+                  )}
+                </Pressable>
+
+                {queryError ? (
+                  <View style={[styles.queryErrorBox, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "55" }]}>
+                    <Text style={[styles.queryErrorText, { color: colors.destructive }]}>⚠ {queryError}</Text>
+                  </View>
+                ) : null}
+
+                {queryResult && !queryError ? (
+                  queryResult.rowCount === 0 ? (
+                    <View style={[styles.queryEmptyBox, { backgroundColor: colors.muted }]}>
+                      <Text style={[styles.queryEmptyText, { color: colors.mutedForeground }]}>No rows returned</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.queryResultsWrapper}>
+                      <Text style={[styles.queryRowCount, { color: colors.mutedForeground }]}>
+                        {queryResult.rowCount} row{queryResult.rowCount !== 1 ? "s" : ""}
+                      </Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator>
+                        <View>
+                          {/* Column headers */}
+                          <View style={[styles.queryHeaderRow, { backgroundColor: colors.muted }]}>
+                            {queryResult.columns.map(col => (
+                              <Text key={col} style={[styles.queryHeaderCell, { color: colors.foreground, minWidth: 110 }]} numberOfLines={1}>
+                                {col}
+                              </Text>
+                            ))}
+                          </View>
+                          {/* Data rows */}
+                          {queryResult.rows.map((row, ri) => (
+                            <View
+                              key={ri}
+                              style={[
+                                styles.queryDataRow,
+                                { backgroundColor: ri % 2 === 0 ? colors.background : colors.muted + "66", borderBottomColor: colors.border },
+                              ]}
+                            >
+                              {queryResult.columns.map(col => {
+                                const val = row[col];
+                                const display = val === null || val === undefined ? "" : Array.isArray(val) ? val.join(", ") : String(val);
+                                return (
+                                  <Text key={col} style={[styles.queryDataCell, { color: colors.foreground, minWidth: 110 }]} numberOfLines={2}>
+                                    {display}
+                                  </Text>
+                                );
+                              })}
+                            </View>
+                          ))}
+                        </View>
+                      </ScrollView>
+                    </View>
+                  )
+                ) : null}
+              </View>
             </ScrollView>
           )}
         </>
@@ -1966,4 +2091,18 @@ const styles = StyleSheet.create({
   successBanner: {},
   inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
   bannerClose: { paddingLeft: 10 },
+  queryCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12 },
+  queryInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: "SpaceMono_400Regular", height: 160, lineHeight: 20 },
+  queryRunBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
+  queryRunBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  queryErrorBox: { borderWidth: 1, borderRadius: 8, padding: 12 },
+  queryErrorText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
+  queryEmptyBox: { borderRadius: 8, padding: 14, alignItems: "center" },
+  queryEmptyText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  queryResultsWrapper: { gap: 8 },
+  queryRowCount: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  queryHeaderRow: { flexDirection: "row", paddingHorizontal: 8, paddingVertical: 8, borderRadius: 4 },
+  queryHeaderCell: { fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 0.3, paddingRight: 12 },
+  queryDataRow: { flexDirection: "row", paddingHorizontal: 8, paddingVertical: 8, borderBottomWidth: 1 },
+  queryDataCell: { fontSize: 12, fontFamily: "Inter_400Regular", paddingRight: 12 },
 });

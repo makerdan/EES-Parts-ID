@@ -11,6 +11,7 @@ import warehouseZonesRouter from "./warehouseZones";
 import catalogPdfRouter from "./catalogPdf";
 import floorPlanRouter from "./floorPlan";
 import contactRouter from "./contact";
+import adminQueryRouter from "./adminQuery";
 
 const router: IRouter = Router();
 
@@ -23,6 +24,7 @@ router.use("/reference", referenceRouter);
 router.use("/admin", adminRouter);
 router.use("/admin", adminUploadRouter);
 router.use("/admin", catalogPdfRouter);
+router.use("/admin", adminQueryRouter);
 router.use("/warehouse-zones", warehouseZonesRouter);
 router.use(floorPlanRouter);
 router.use("/contact", contactRouter);
