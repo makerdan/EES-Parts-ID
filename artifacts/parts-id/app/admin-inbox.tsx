@@ -22,6 +22,7 @@ import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -121,6 +122,7 @@ function MessageItem({
 }
 
 export default function AdminInboxScreen() {
+  useTrackScreen("Admin Inbox");
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, adminToken, isLoading } = useApp();

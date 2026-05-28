@@ -27,6 +27,7 @@ import { RetryImage } from "@/components/RetryImage";
 import { FailedJobsSection } from "@/components/FailedJobsSection";
 import { InfoDialog } from "@/components/ConfirmDialog";
 import type { ResumeProgress } from "@/types/catalogPdf";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -74,6 +75,7 @@ type SessionGroup = {
 };
 
 export default function CatalogReviewScreen() {
+  useTrackScreen("Catalog Review");
   const colors = useColors();
   const router = useRouter();
   const { jobId } = useLocalSearchParams<{ jobId?: string }>();

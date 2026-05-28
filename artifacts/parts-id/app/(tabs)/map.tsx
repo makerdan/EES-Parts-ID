@@ -29,6 +29,7 @@ import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const CYCLE_COUNTED_KEY = "CYCLE_COUNTED_IDS";
 
@@ -48,6 +49,7 @@ function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
 }
 
 export default function MapScreen() {
+  useTrackScreen("Map");
   const colors = useColors();
   const router = useRouter();
   const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus } = useApp();

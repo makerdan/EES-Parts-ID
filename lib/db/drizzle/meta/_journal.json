@@ -50,6 +50,13 @@
       "when": 1748390400000,
       "tag": "0006_reference_answer_cache",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1748390400001,
+      "tag": "0007_ai_and_screen_view_logs",
+      "breakpoints": true
     }
   ]
 }

@@ -23,12 +23,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "http://localhost:8080/api";
 
 export default function EditItemScreen() {
+  useTrackScreen("Edit Item");
   const colors = useColors();
   const router = useRouter();
   const { adminToken, isLoading } = useApp();
