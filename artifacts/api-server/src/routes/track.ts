@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { db } from "@workspace/db";
 import { screenViewLogTable } from "@workspace/db";
+import { lt } from "drizzle-orm";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -20,10 +21,12 @@ router.post("/screen-view", (req, res) => {
 
   setImmediate(async () => {
     try {
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       await db.insert(screenViewLogTable).values({
         screenName: screen.trim(),
         visitorHash,
       });
+      await db.delete(screenViewLogTable).where(lt(screenViewLogTable.createdAt, thirtyDaysAgo));
     } catch (err) {
       logger.warn({ err }, "screen-view log insert failed");
     }

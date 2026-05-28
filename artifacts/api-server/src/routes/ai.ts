@@ -3,6 +3,7 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 import { buildImageContent, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
 import { db } from "@workspace/db";
 import { aiRequestLogTable } from "@workspace/db";
+import { lt } from "drizzle-orm";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -80,10 +81,12 @@ router.post("/identify", async (req, res) => {
       results: [], // Client will run search with these terms
     });
 
-    // Fire-and-forget: log this AI identify request
+    // Fire-and-forget: log this AI identify request and prune rows older than 90 days
     setImmediate(async () => {
       try {
+        const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
         await db.insert(aiRequestLogTable).values({ feature: "identify" });
+        await db.delete(aiRequestLogTable).where(lt(aiRequestLogTable.createdAt, ninetyDaysAgo));
       } catch (err) {
         logger.warn({ err }, "ai_request_log insert failed");
       }
