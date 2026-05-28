@@ -128,6 +128,7 @@ export function FailedJobsSection({
             progress={progress}
             onReviewChanges={onReviewChanges}
             onDismissError={onDismissResumeError}
+            onResume={onResume}
             colors={colors}
           />
         );
@@ -144,6 +145,7 @@ export function FailedJobsSection({
             progress={progress}
             onReviewChanges={onReviewChanges}
             onDismissError={onDismissResumeError}
+            onResume={onResume}
             colors={colors}
           />
         );
@@ -237,10 +239,11 @@ interface ResumeProgressCardProps {
   progress: ResumeProgress;
   onReviewChanges: (id: number) => void;
   onDismissError: (id: number) => void;
+  onResume: (id: number) => void;
   colors: FailedJobsSectionColors;
 }
 
-function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissError, colors }: ResumeProgressCardProps) {
+function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissError, onResume, colors }: ResumeProgressCardProps) {
   const id = job?.id ?? jobId!;
   const vendor = job?.vendor ?? "Unknown vendor";
   const filename = job?.filename ?? "catalog.pdf";
@@ -292,6 +295,12 @@ function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissEr
         </View>
 
         <View style={[s.actions, { justifyContent: "flex-end" }]}>
+          <Pressable
+            onPress={() => { onDismissError(id); onResume(id); }}
+            style={[s.resumeBtn, { backgroundColor: colors.primary + "ff" }]}
+          >
+            <Text style={s.resumeBtnText}>Resume</Text>
+          </Pressable>
           <Pressable
             onPress={() => onDismissError(id)}
             style={[s.dismissBtn, { borderColor: colors.mutedForeground + "55" }]}
