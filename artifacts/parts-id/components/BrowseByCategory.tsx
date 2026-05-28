@@ -48,6 +48,7 @@ interface BrowseByCategoryProps {
 }
 
 export function BrowseByCategory({ onSelectCategory, onClose, fontScale = 1.0 }: BrowseByCategoryProps) {
+  "use no memo";
   const colors = useColors();
   const [data, setData] = useState<CategoriesResponse | null>(null);
   const [loading, setLoading] = useState(true);

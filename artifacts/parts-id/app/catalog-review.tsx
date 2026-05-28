@@ -75,6 +75,7 @@ type SessionGroup = {
 };
 
 export default function CatalogReviewScreen() {
+  "use no memo";
   useTrackScreen("Catalog Review");
   const colors = useColors();
   const router = useRouter();

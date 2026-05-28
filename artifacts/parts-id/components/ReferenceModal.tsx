@@ -83,6 +83,7 @@ const BREAKER_ATTRIBUTE_CHIPS: { label: string; answer: string }[] = [
 ];
 
 export function ReferenceModal({ open, onClose }: Props = {}) {
+  "use no memo";
   const colors = useColors();
   const { showToast } = useApp();
   const controlled = open !== undefined;

@@ -30,6 +30,7 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   : "http://localhost:8080/api";
 
 export default function EditItemScreen() {
+  "use no memo";
   useTrackScreen("Edit Item");
   const colors = useColors();
   const router = useRouter();

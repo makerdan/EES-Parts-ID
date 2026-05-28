@@ -30,6 +30,7 @@ interface AssignmentEntry {
 const SCAN_DELAY_MS = 1500;
 
 export function BarcodeAddPart() {
+  "use no memo";
   const colors = useColors();
   const { isAdmin } = useApp();
   const queryClient = useQueryClient();

@@ -514,10 +514,62 @@ function updateManifests(manifests, timestamp, baseUrl, assetsByHash) {
   console.log("Manifests updated");
 }
 
+/**
+ * Guard against the React Compiler (babel-plugin-react-compiler) silently
+ * crashing a Babel worker thread and causing Metro to return an opaque HTTP
+ * 500.  Components over LINE_THRESHOLD lines must opt out of the compiler
+ * with "use no memo" so the worker stays alive.
+ *
+ * Add "use no memo" as the FIRST statement inside the component function body
+ * to silence this check for a specific component.
+ */
+function checkReactCompilerDirectives() {
+  const LINE_THRESHOLD = 400;
+  const SCAN_DIRS = [
+    path.join(projectRoot, "app"),
+    path.join(projectRoot, "components"),
+  ];
+
+  function* walkTsx(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) yield* walkTsx(full);
+      else if (entry.name.endsWith(".tsx") || entry.name.endsWith(".ts")) yield full;
+    }
+  }
+
+  const missing = [];
+  for (const dir of SCAN_DIRS) {
+    for (const file of walkTsx(dir)) {
+      const src = fs.readFileSync(file, "utf8");
+      const lines = src.split("\n").length;
+      if (lines < LINE_THRESHOLD) continue;
+      if (!src.includes('"use no memo"')) {
+        missing.push(`  ${path.relative(projectRoot, file)} (${lines} lines)`);
+      }
+    }
+  }
+
+  if (missing.length > 0) {
+    console.error(
+      "\n[Build Guard] React Compiler crash prevention:\n" +
+      "The following large components are missing the \"use no memo\" directive.\n" +
+      "Add `\"use no memo\";` as the first statement inside each component function body\n" +
+      "to prevent babel-plugin-react-compiler from crashing the Metro Babel worker thread.\n\n" +
+      missing.join("\n") + "\n"
+    );
+    process.exit(1);
+  }
+
+  console.log(`[Build Guard] React Compiler directive check passed (${SCAN_DIRS.length} dirs scanned).`);
+}
+
 async function main() {
   console.log("Building static Expo Go deployment...");
 
   setupSignalHandlers();
+  checkReactCompilerDirectives();
 
   const domain = getDeploymentDomain();
   const expoPublicReplId = getExpoPublicReplId();

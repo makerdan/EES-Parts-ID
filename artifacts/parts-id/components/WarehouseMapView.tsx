@@ -187,6 +187,7 @@ export function WarehouseMapView({
   cycleLocked = false,
   countedZoneIds,
 }: WarehouseMapViewProps) {
+  "use no memo";
   const colors = useColors();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
