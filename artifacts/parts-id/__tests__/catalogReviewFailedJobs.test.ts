@@ -276,9 +276,58 @@ describe("FailedJobsSection — re-failed progress card", () => {
     expect(texts).toContain("Dismiss");
   });
 
-  it("does NOT render the plain Resume button on the re-failed card", () => {
+  it("renders a Resume button on the re-failed card", () => {
     const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: REFAILED_PROGRESS });
-    expect(texts).not.toContain("Resume");
+    expect(texts).toContain("Resume");
+  });
+
+  it("calls onResume when Resume is tapped on the re-failed card", () => {
+    const onResume = jest.fn();
+    const onDismissResumeError = jest.fn();
+    const el = React.createElement(FailedJobsSection, {
+      failedJobs: [MOCK_JOB],
+      dismissingId: null,
+      resumingId: null,
+      resumeProgress: { [MOCK_JOB.id]: REFAILED_PROGRESS },
+      onDismiss: jest.fn(),
+      onResume,
+      onReviewChanges: jest.fn(),
+      onDismissResumeError,
+      colors: TEST_COLORS,
+    });
+    // Walk the element tree to find the Resume button's onPress and call it.
+    // Check onPress BEFORE rendering function components so Pressable (which is
+    // a function component in the test environment) is matched by its props,
+    // not by its rendered output.  Must handle arrays the same way collectText
+    // does — children from .map() calls arrive as nested arrays.
+    function findAndPressResume(node: React.ReactNode): boolean {
+      if (node === null || node === undefined || node === false) return false;
+      if (Array.isArray(node)) {
+        for (const child of node) {
+          if (findAndPressResume(child)) return true;
+        }
+        return false;
+      }
+      if (!React.isValidElement(node)) return false;
+      const el = node as React.ReactElement<any>;
+      const { type, props } = el;
+      // Match first: an element with onPress whose subtree contains "Resume"
+      if (props.onPress && collectText(node).includes("Resume")) {
+        props.onPress();
+        return true;
+      }
+      if (typeof type === "function") {
+        const rendered = (type as (p: typeof props) => React.ReactNode)(props);
+        return findAndPressResume(rendered);
+      }
+      if (props.children) {
+        return findAndPressResume(props.children);
+      }
+      return false;
+    }
+    findAndPressResume(el);
+    expect(onResume).toHaveBeenCalledWith(MOCK_JOB.id);
+    expect(onDismissResumeError).toHaveBeenCalledWith(MOCK_JOB.id);
   });
 
   it("does NOT count the re-failed job in the Failed Jobs section header", () => {
