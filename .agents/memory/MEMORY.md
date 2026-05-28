@@ -1,2 +1,2 @@
 - [ts-jest inline tsconfig paths](ts-jest-paths.md) — inline tsconfig object in jest.config.js does NOT inherit from tsconfig.json; must re-declare all paths explicitly.
-- [Metro OOM in production build](metro-oom-build.md) — Metro HTTP 500 with no [Metro Error] output = OOM crash; fix is --max-old-space-size=4096 on both build.js and Metro spawn env.
+- [Metro silent HTTP 500 in production build](metro-oom-build.md) — React Compiler Babel worker crash (NOT OOM) causes silent Metro HTTP 500; fix with "use no memo" on large components.
