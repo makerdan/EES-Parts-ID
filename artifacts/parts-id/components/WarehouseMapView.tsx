@@ -500,6 +500,7 @@ export function WarehouseMapView({
 
   return (
     <View style={styles.fill} onLayout={onLayout}>
+      <View style={styles.mapCenter}>
       <GestureDetector gesture={mainGesture}>
         <Animated.View style={animatedStyle}>
           {/* ── Native floor plan layer ──────────────────────────────────────
@@ -632,6 +633,7 @@ export function WarehouseMapView({
           </Svg>
         </Animated.View>
       </GestureDetector>
+      </View>
 
       {/* Zone loading spinner */}
       {zonesLoading && (
@@ -735,7 +737,12 @@ export function WarehouseMapView({
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1, overflow: "hidden", justifyContent: "center" },
+  fill: { flex: 1, overflow: "hidden" },
+  mapCenter: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   svgFallback: { alignItems: "center", justifyContent: "center" },
   // Invert + slight brightness reduction for dark-mode floor plan legibility.
   // filter is supported in RN 0.76+ (Expo SDK 52+); type augmented in
