@@ -353,6 +353,7 @@ const gateStyles = StyleSheet.create({
 
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
+  "use no memo";
   useTrackScreen("Upload");
   const colors = useColors();
   const router = useRouter();

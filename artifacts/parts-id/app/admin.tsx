@@ -163,6 +163,7 @@ function DailyBarChart({
 }
 
 export default function AdminDashboardScreen() {
+  "use no memo";
   const colors = useColors();
   const { isLoading, adminToken } = useApp();
   const router = useRouter();
