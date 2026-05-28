@@ -17,7 +17,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -49,6 +49,7 @@ function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
 
 export default function MapScreen() {
   const colors = useColors();
+  const router = useRouter();
   const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus } = useApp();
 
   // Zone data — owned at this level so useFocusEffect can trigger refetch
@@ -210,6 +211,16 @@ export default function MapScreen() {
           </Pressable>
           {isAdmin && (
             <Pressable
+              onPress={() => router.push("/floor-plan-upload")}
+              style={[styles.floorPlanBtn, { borderColor: colors.border }]}
+              accessibilityLabel="Upload Floor Plan"
+            >
+              <Feather name="map" size={13} color={colors.mutedForeground} />
+              <Text style={[styles.floorPlanBtnText, { color: colors.mutedForeground }]}>Floor Plan</Text>
+            </Pressable>
+          )}
+          {isAdmin && (
+            <Pressable
               onPress={() => Linking.openURL(ZONE_EDITOR_URL)}
               style={[styles.zoneEditorBtn, { backgroundColor: colors.primary }]}
               accessibilityLabel="Open Zone Editor"
@@ -279,5 +290,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
     color: "#fff",
+  },
+  floorPlanBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  floorPlanBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
   },
 });
