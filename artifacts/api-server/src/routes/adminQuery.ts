@@ -2,8 +2,8 @@
  * POST /api/admin/query
  *
  * Execute a read-only SELECT query against the live database and return
- * column names and rows as JSON. Only SELECT statements are permitted;
- * any other statement type is rejected with a 400 error.
+ * column names and rows as JSON, CSV, or Excel. Only SELECT statements are
+ * permitted; any other statement type is rejected with a 400 error.
  *
  * Safeguards:
  *   - Statement timeout of QUERY_TIMEOUT_MS (default 5 000 ms) via SET LOCAL
@@ -12,8 +12,14 @@
  * Request body (JSON):
  *   { sql: string }
  *
+ * Query params:
+ *   format=csv  — returns a CSV file download
+ *   format=xlsx — returns an Excel file download
+ *
  * Response:
  *   200 { columns: string[], rows: Record<string, unknown>[], rowCount: number, truncated: boolean }
+ *   200 text/csv attachment                      — when ?format=csv
+ *   200 application/vnd.openxmlformats... attachment — when ?format=xlsx
  *   400 { error: string }  — non-SELECT query or empty input
  *   401                    — missing or invalid admin token
  *   408 { error: string }  — statement timeout fired
@@ -21,6 +27,7 @@
  */
 
 import { Router } from "express";
+import ExcelJS from "exceljs";
 import { pool } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
 
@@ -98,8 +105,26 @@ function validateSelect(rawSql: string): string | null {
   return null;
 }
 
+function escapeCSVField(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const str = String(value);
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function buildCSV(columns: string[], rows: Record<string, unknown>[]): string {
+  const header = columns.map(escapeCSVField).join(",");
+  const body = rows
+    .map((row) => columns.map((col) => escapeCSVField(row[col])).join(","))
+    .join("\r\n");
+  return header + "\r\n" + body;
+}
+
 router.post("/query", requireAdminAuth, async (req, res) => {
   const { sql: rawSql } = req.body as { sql?: string };
+  const format = (req.query.format as string | undefined)?.toLowerCase();
 
   const validationError = validateSelect(typeof rawSql === "string" ? rawSql : "");
   if (validationError) {
@@ -122,6 +147,34 @@ router.post("/query", requireAdminAuth, async (req, res) => {
     const allRows = result.rows as Record<string, unknown>[];
     const truncated = allRows.length > MAX_ROWS;
     const rows = truncated ? allRows.slice(0, MAX_ROWS) : allRows;
+
+    if (format === "csv") {
+      const csv = buildCSV(columns, rows);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="query-results.csv"');
+      return void res.send(csv);
+    }
+
+    if (format === "xlsx") {
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("Query Results");
+
+      sheet.columns = columns.map((col) => ({ header: col, key: col }));
+
+      for (const row of rows) {
+        sheet.addRow(row);
+      }
+
+      sheet.getRow(1).font = { bold: true };
+
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader("Content-Disposition", 'attachment; filename="query-results.xlsx"');
+      await workbook.xlsx.write(res);
+      return void res.end();
+    }
 
     res.json({ columns, rows, rowCount: rows.length, truncated });
   } catch (err: unknown) {
