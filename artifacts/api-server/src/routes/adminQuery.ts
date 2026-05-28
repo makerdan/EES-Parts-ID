@@ -5,13 +5,18 @@
  * column names and rows as JSON. Only SELECT statements are permitted;
  * any other statement type is rejected with a 400 error.
  *
+ * Safeguards:
+ *   - Statement timeout of QUERY_TIMEOUT_MS (default 5 000 ms) via SET LOCAL
+ *   - Results capped at MAX_ROWS (default 500); response includes truncated flag
+ *
  * Request body (JSON):
  *   { sql: string }
  *
  * Response:
- *   200 { columns: string[], rows: Record<string, unknown>[], rowCount: number }
+ *   200 { columns: string[], rows: Record<string, unknown>[], rowCount: number, truncated: boolean }
  *   400 { error: string }  — non-SELECT query or empty input
  *   401                    — missing or invalid admin token
+ *   408 { error: string }  — statement timeout fired
  *   500 { error: string }  — query execution error (message forwarded)
  */
 
@@ -20,6 +25,9 @@ import { pool } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
 
 const router = Router();
+
+const QUERY_TIMEOUT_MS = parseInt(process.env.ADMIN_QUERY_TIMEOUT_MS ?? "5000", 10);
+const MAX_ROWS = parseInt(process.env.ADMIN_QUERY_MAX_ROWS ?? "500", 10);
 
 function requireAdminAuth(
   req: import("express").Request,
@@ -91,22 +99,48 @@ function validateSelect(rawSql: string): string | null {
 }
 
 router.post("/query", requireAdminAuth, async (req, res) => {
+  const { sql: rawSql } = req.body as { sql?: string };
+
+  const validationError = validateSelect(typeof rawSql === "string" ? rawSql : "");
+  if (validationError) {
+    return void res.status(400).json({ error: validationError });
+  }
+
+  const client = await pool.connect();
   try {
-    const { sql: rawSql } = req.body as { sql?: string };
+    await client.query("BEGIN");
 
-    const validationError = validateSelect(typeof rawSql === "string" ? rawSql : "");
-    if (validationError) {
-      return void res.status(400).json({ error: validationError });
-    }
+    await client.query(`SET LOCAL statement_timeout = ${QUERY_TIMEOUT_MS}`);
 
-    const result = await pool.query(rawSql!);
+    const trimmedSql = rawSql!.trim().replace(/;+$/, "");
+    const capped = `SELECT * FROM (${trimmedSql}) AS _admin_query_wrapper LIMIT ${MAX_ROWS + 1}`;
+    const result = await client.query(capped);
+
+    await client.query("COMMIT");
+
     const columns: string[] = result.fields.map((f: { name: string }) => f.name);
-    const rows = result.rows as Record<string, unknown>[];
+    const allRows = result.rows as Record<string, unknown>[];
+    const truncated = allRows.length > MAX_ROWS;
+    const rows = truncated ? allRows.slice(0, MAX_ROWS) : allRows;
 
-    res.json({ columns, rows, rowCount: rows.length });
+    res.json({ columns, rows, rowCount: rows.length, truncated });
   } catch (err: unknown) {
+    await client.query("ROLLBACK").catch(() => {});
+
     const message = err instanceof Error ? err.message : "Query failed";
-    res.status(500).json({ error: message });
+    const isTimeout =
+      err instanceof Error &&
+      (message.includes("canceling statement due to statement timeout") ||
+        message.includes("statement timeout"));
+    if (isTimeout) {
+      res.status(408).json({
+        error: `Query timed out after ${QUERY_TIMEOUT_MS / 1000}s. Try a more specific query or add a LIMIT clause.`,
+      });
+    } else {
+      res.status(500).json({ error: message });
+    }
+  } finally {
+    client.release();
   }
 });
 
