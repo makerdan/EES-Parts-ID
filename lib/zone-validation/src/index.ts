@@ -12,12 +12,22 @@ export interface ZoneLike {
 }
 
 /**
+ * Strips leading zeros from a numeric aisle ID string so that "08" and "8"
+ * are treated as the same aisle.  Non-numeric strings are returned unchanged
+ * after trimming.  E.g. "08" → "8", "012" → "12", "8" → "8", "A1" → "A1".
+ */
+export function normalizeAisleId(v: string): string {
+  const t = v.trim();
+  return /^\d+$/.test(t) ? String(parseInt(t, 10)) : t;
+}
+
+/**
  * Returns true when `v` is a non-empty string that contains only digit
  * characters after trimming leading/trailing whitespace.  E.g. "12" → true,
  * " 08 " → true, "A1" → false, "" → false.
  */
 export function isValidAisleId(v: string): boolean {
-  return /^\d+$/.test(v.trim());
+  return /^\d+$/.test(normalizeAisleId(v));
 }
 
 /**
@@ -31,6 +41,10 @@ export function isValidAisleId(v: string): boolean {
  *   - same aisleId AND same sectionParity (exact duplicate), OR
  *   - same aisleId AND either side is "all" (all overlaps odd/even and
  *     vice-versa).
+ *
+ * Both the incoming aisleId and each stored aisleId are normalized (leading
+ * zeros stripped, surrounding whitespace trimmed) before comparison, so
+ * "08" and "8" (or " 8 ") are detected as the same aisle.
  */
 export function findDuplicateConflict<T extends ZoneLike>(
   zones: T[],
@@ -38,11 +52,11 @@ export function findDuplicateConflict<T extends ZoneLike>(
   aisleId: string,
   parity: SectionParity,
 ): T | null {
-  const trimmed = aisleId.trim();
+  const normalized = normalizeAisleId(aisleId);
   return (
     zones.find((z) => {
       if (z.id === excludeId) return false;
-      if (z.aisleId !== trimmed) return false;
+      if (normalizeAisleId(z.aisleId) !== normalized) return false;
       return (
         z.sectionParity === parity ||
         z.sectionParity === "all" ||

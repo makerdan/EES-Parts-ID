@@ -3,6 +3,7 @@ import { eq, asc } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { warehouseZoneTable, inventoryTable } from "@workspace/db";
 import { devOnly } from "../middlewares/devOnly";
+import { CreateWarehouseZoneBody, UpdateWarehouseZoneBody } from "@workspace/api-zod";
 
 const router = Router();
 
@@ -63,6 +64,11 @@ router.get("/coverage", async (_req, res) => {
 
 // POST /warehouse-zones
 router.post("/", devOnly, async (req, res) => {
+  const parsed = CreateWarehouseZoneBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+    return;
+  }
   try {
     const {
       aisleId,
@@ -74,33 +80,13 @@ router.post("/", devOnly, async (req, res) => {
       svgWidth,
       svgHeight,
       sortOrder,
-    } = req.body as {
-      aisleId: string;
-      label: string;
-      sectionParity?: string;
-      isInventory?: boolean;
-      svgX: number;
-      svgY: number;
-      svgWidth: number;
-      svgHeight: number;
-      sortOrder?: number;
-    };
-    const validParities = ["odd", "even", "all"] as const;
-    const resolvedParity = sectionParity ?? "all";
-    if (!aisleId || !label || svgX == null || svgY == null || svgWidth == null || svgHeight == null) {
-      res.status(400).json({ error: "aisleId, label, svgX, svgY, svgWidth, svgHeight required" });
-      return;
-    }
-    if (!validParities.includes(resolvedParity as typeof validParities[number])) {
-      res.status(400).json({ error: "sectionParity must be 'odd', 'even', or 'all'" });
-      return;
-    }
+    } = parsed.data;
     const [zone] = await db
       .insert(warehouseZoneTable)
       .values({
         aisleId,
         label,
-        sectionParity: resolvedParity,
+        sectionParity: sectionParity ?? "all",
         isInventory: isInventory ?? true,
         svgX,
         svgY,
@@ -122,25 +108,13 @@ router.patch("/:id", devOnly, async (req, res) => {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
+  const parsed = UpdateWarehouseZoneBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+    return;
+  }
   try {
-    const updates = req.body as Partial<{
-      aisleId: string;
-      label: string;
-      sectionParity: string;
-      isInventory: boolean;
-      svgX: number;
-      svgY: number;
-      svgWidth: number;
-      svgHeight: number;
-      sortOrder: number;
-    }>;
-    if (updates.sectionParity !== undefined) {
-      const validParities = ["odd", "even", "all"];
-      if (!validParities.includes(updates.sectionParity)) {
-        res.status(400).json({ error: "sectionParity must be 'odd', 'even', or 'all'" });
-        return;
-      }
-    }
+    const updates = parsed.data;
     const [zone] = await db
       .update(warehouseZoneTable)
       .set({ ...updates, updatedAt: new Date() })

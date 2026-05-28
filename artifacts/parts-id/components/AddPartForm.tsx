@@ -48,6 +48,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
   };
 
   const handleSubmit = async () => {
+    if (loading) return;
     setError(null);
     if (!validate()) return;
     if (!adminToken) {

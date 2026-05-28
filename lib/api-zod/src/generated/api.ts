@@ -42,14 +42,14 @@ export const ListInventoryResponse = zod.object({
       barcodes: zod
         .array(zod.string())
         .describe("Barcode values associated with this part"),
-      enrichedAt: zod.coerce.date().nullish(),
+      enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
       imageUrl: zod
         .string()
         .nullish()
         .describe(
           "URL of the catalog image extracted from a PDF import, served via the API proxy",
         ),
-      createdAt: zod.coerce.date(),
+      createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
       updatedAt: zod.coerce.date(),
     }),
   ),
@@ -141,14 +141,14 @@ export const SearchInventoryResponse = zod.object({
         barcodes: zod
           .array(zod.string())
           .describe("Barcode values associated with this part"),
-        enrichedAt: zod.coerce.date().nullish(),
+        enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
         imageUrl: zod
           .string()
           .nullish()
           .describe(
             "URL of the catalog image extracted from a PDF import, served via the API proxy",
           ),
-        createdAt: zod.coerce.date(),
+        createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
         updatedAt: zod.coerce.date(),
       }),
       confidence: zod.number(),
@@ -170,14 +170,14 @@ export const SearchInventoryResponse = zod.object({
           barcodes: zod
             .array(zod.string())
             .describe("Barcode values associated with this part"),
-          enrichedAt: zod.coerce.date().nullish(),
+          enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
           imageUrl: zod
             .string()
             .nullish()
             .describe(
               "URL of the catalog image extracted from a PDF import, served via the API proxy",
             ),
-          createdAt: zod.coerce.date(),
+          createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
           updatedAt: zod.coerce.date(),
         }),
       ),
@@ -465,14 +465,14 @@ export const AiIdentifyPartResponse = zod.object({
         barcodes: zod
           .array(zod.string())
           .describe("Barcode values associated with this part"),
-        enrichedAt: zod.coerce.date().nullish(),
+        enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
         imageUrl: zod
           .string()
           .nullish()
           .describe(
             "URL of the catalog image extracted from a PDF import, served via the API proxy",
           ),
-        createdAt: zod.coerce.date(),
+        createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
         updatedAt: zod.coerce.date(),
       }),
       confidence: zod.number(),
@@ -494,14 +494,14 @@ export const AiIdentifyPartResponse = zod.object({
           barcodes: zod
             .array(zod.string())
             .describe("Barcode values associated with this part"),
-          enrichedAt: zod.coerce.date().nullish(),
+          enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
           imageUrl: zod
             .string()
             .nullish()
             .describe(
               "URL of the catalog image extracted from a PDF import, served via the API proxy",
             ),
-          createdAt: zod.coerce.date(),
+          createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
           updatedAt: zod.coerce.date(),
         }),
       ),
@@ -532,7 +532,7 @@ export const ListWarehouseZonesResponse = zod.object({
       svgWidth: zod.number(),
       svgHeight: zod.number(),
       sortOrder: zod.number(),
-      createdAt: zod.coerce.date(),
+      createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
       updatedAt: zod.coerce.date(),
     }),
   ),
@@ -550,7 +550,7 @@ export const CreateWarehouseZoneBody = zod.object({
   svgY: zod.number(),
   svgWidth: zod.number(),
   svgHeight: zod.number(),
-  sortOrder: zod.number().optional(),
+  sortOrder: zod.number().int().nonnegative().optional(),
 });
 
 /**
@@ -569,7 +569,7 @@ export const UpdateWarehouseZoneBody = zod.object({
   svgY: zod.number().optional(),
   svgWidth: zod.number().optional(),
   svgHeight: zod.number().optional(),
-  sortOrder: zod.number().optional(),
+  sortOrder: zod.number().int().nonnegative().optional(),
 });
 
 export const UpdateWarehouseZoneResponse = zod.object({

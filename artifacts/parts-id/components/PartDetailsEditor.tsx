@@ -45,6 +45,11 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [fieldSaveErrors, setFieldSaveErrors] = useState<{
+    description?: string;
+    bins?: string;
+    keywords?: string;
+  }>({});
 
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
@@ -58,6 +63,7 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
     setNewKeyword("");
     setSaveStatus("idle");
     setErrorMsg(null);
+    setFieldSaveErrors({});
   }, [item?.id]);
 
   const addBin = () => {
@@ -84,60 +90,86 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
     if (!current || !adminToken) return;
     setSaveStatus("saving");
     setErrorMsg(null);
+    setFieldSaveErrors({});
 
-    try {
-      const saves: Promise<unknown>[] = [];
+    type SaveOp = {
+      field: "description" | "bins" | "keywords";
+      promise: Promise<unknown>;
+      restoreFn: () => void;
+    };
 
-      if (description.trim() !== (current.description ?? "").trim()) {
-        saves.push(
-          fetch(`${API_BASE}/inventory/${current.id}/description`, {
-            method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${adminToken}`,
-            },
-            body: JSON.stringify({ description: description.trim() }),
-          }).then(async (res) => {
-            if (!res.ok) {
-              const data = await res.json().catch(() => ({})) as { error?: string };
-              throw new Error(data.error ?? `HTTP ${res.status}`);
-            }
-          }),
-        );
+    const ops: SaveOp[] = [];
+
+    if (description.trim() !== (current.description ?? "").trim()) {
+      ops.push({
+        field: "description",
+        restoreFn: () => setDescription(current.description ?? ""),
+        promise: fetch(`${API_BASE}/inventory/${current.id}/description`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify({ description: description.trim() }),
+        }).then(async (res) => {
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(data.error ?? `HTTP ${res.status}`);
+          }
+        }),
+      });
+    }
+
+    const binsChanged = JSON.stringify(bins) !== JSON.stringify(current.binLocations ?? []);
+    if (binsChanged) {
+      ops.push({
+        field: "bins",
+        restoreFn: () => setBins(current.binLocations ?? []),
+        promise: updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: bins } }),
+      });
+    }
+
+    const kwChanged = JSON.stringify(keywords) !== JSON.stringify(current.aiKeywords ?? []);
+    if (kwChanged) {
+      ops.push({
+        field: "keywords",
+        restoreFn: () => setKeywords(current.aiKeywords ?? []),
+        promise: updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords } }),
+      });
+    }
+
+    if (ops.length === 0) {
+      setSaveStatus("idle");
+      return;
+    }
+
+    const results = await Promise.allSettled(ops.map((o) => o.promise));
+    const newFieldErrors: typeof fieldSaveErrors = {};
+    let anyFailed = false;
+
+    results.forEach((result, i) => {
+      if (result.status === "rejected") {
+        anyFailed = true;
+        ops[i].restoreFn();
+        const msg =
+          result.reason instanceof Error ? result.reason.message : "Save failed";
+        newFieldErrors[ops[i].field] = msg.includes("401")
+          ? "Session expired — re-unlock admin access"
+          : "Could not save — check connection";
       }
+    });
 
-      const binsChanged = JSON.stringify(bins) !== JSON.stringify(current.binLocations ?? []);
-      if (binsChanged) {
-        saves.push(updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: bins } }));
-      }
-
-      const kwChanged = JSON.stringify(keywords) !== JSON.stringify(current.aiKeywords ?? []);
-      if (kwChanged) {
-        saves.push(updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords } }));
-      }
-
-      if (saves.length > 0) {
-        await Promise.all(saves);
-        const listKeyPrefix = getListInventoryQueryKey()[0];
-        await queryClient.invalidateQueries({
-          predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-        });
-        await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
-      }
-
+    if (anyFailed) {
+      setFieldSaveErrors(newFieldErrors);
+      setSaveStatus("error");
+    } else {
+      const listKeyPrefix = getListInventoryQueryKey()[0];
+      await queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       setSaveStatus("saved");
       setTimeout(() => onClose(), 500);
-    } catch (err) {
-      const msg =
-        err && typeof err === "object" && "message" in err
-          ? String((err as { message: unknown }).message)
-          : "Save failed";
-      setErrorMsg(
-        msg.includes("401")
-          ? "Admin session expired. Re-unlock and try again."
-          : "Could not save changes. Check connection and try again.",
-      );
-      setSaveStatus("error");
     }
   };
 
@@ -219,12 +251,15 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
             numberOfLines={3}
             style={[
               styles.descInput,
-              { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+              { backgroundColor: colors.muted, borderColor: fieldSaveErrors.description ? colors.destructive : colors.border, color: colors.foreground },
             ]}
             autoCorrect
             autoCapitalize="sentences"
             returnKeyType="default"
           />
+          {fieldSaveErrors.description ? (
+            <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.description}</Text>
+          ) : null}
 
           {/* Bin Locations */}
           <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>
@@ -245,6 +280,9 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
               </Pressable>
             ))}
           </View>
+          {fieldSaveErrors.bins ? (
+            <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.bins}</Text>
+          ) : null}
           {bins.length === 0 && (
             <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
               No additional bins. The initial bin was added on creation.
@@ -303,6 +341,9 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
               </Pressable>
             ))}
           </View>
+          {fieldSaveErrors.keywords ? (
+            <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.keywords}</Text>
+          ) : null}
           {keywords.length === 0 && (
             <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
               No keywords yet. Add some below.
@@ -450,6 +491,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     fontStyle: "italic",
+  },
+  fieldErrorText: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    marginTop: 4,
   },
   addRow: { flexDirection: "row", gap: 8 },
   addInput: {

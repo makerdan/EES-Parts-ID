@@ -61,6 +61,18 @@ describe("isValidAisleId", () => {
     expect(isValidAisleId(" 12 ")).toBe(true);
     expect(isValidAisleId(" 08 ")).toBe(true);
   });
+
+  it("rejects negative number strings", () => {
+    expect(isValidAisleId("-1")).toBe(false);
+  });
+
+  it("rejects decimal / fractional strings", () => {
+    expect(isValidAisleId("3.5")).toBe(false);
+  });
+
+  it("rejects strings containing only whitespace", () => {
+    expect(isValidAisleId("  ")).toBe(false);
+  });
 });
 
 // ── findDuplicateConflict ─────────────────────────────────────────────────────
@@ -128,5 +140,25 @@ describe("findDuplicateConflict", () => {
     const zones = [makeZone(1, "08", "all"), makeZone(2, "08", "odd")];
     const result = findDuplicateConflict(zones, null, "08", "odd");
     expect(result!.id).toBe(1);
+  });
+
+  it("treats '08' and '8' as the same aisle (leading-zero equivalence)", () => {
+    const zones = [makeZone(1, "8", "odd")];
+    expect(findDuplicateConflict(zones, null, "08", "odd")).not.toBeNull();
+  });
+
+  it("treats '8' and '08' as the same aisle (reverse direction)", () => {
+    const zones = [makeZone(1, "08", "odd")];
+    expect(findDuplicateConflict(zones, null, "8", "odd")).not.toBeNull();
+  });
+
+  it("detects a conflict when the stored aisleId has a trailing space", () => {
+    const zones = [makeZone(1, "8 ", "odd")];
+    expect(findDuplicateConflict(zones, null, "8", "odd")).not.toBeNull();
+  });
+
+  it("detects a conflict when the stored aisleId has a leading space", () => {
+    const zones = [makeZone(1, " 8", "all")];
+    expect(findDuplicateConflict(zones, null, "8", "even")).not.toBeNull();
   });
 });
