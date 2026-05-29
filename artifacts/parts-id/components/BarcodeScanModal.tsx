@@ -27,8 +27,6 @@ interface BarcodeScanModalProps {
 type ScanPhase = "idle" | "looking" | "found" | "notfound" | "offline_miss" | "error";
 type AdminPickerMode = "link" | "create";
 
-const SCAN_DELAY_MS = 1500;
-
 export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModalProps) {
   const colors = useColors();
   const { isAdmin } = useApp();
@@ -39,11 +37,10 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
   const cameraViewSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
   const [scanPhase, setScanPhase] = useState<ScanPhase>("idle");
   const { addEntry } = useScanHistory();
-  const lastScannedRef = useRef<string | null>(null);
-  const cooldownRef = useRef(false);
+
+  // Pending barcode — set when camera detects a barcode, cleared on commit or reset
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const pendingCodeRef = useRef<string | null>(null);
-  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCommitRef = useRef<(() => void) | null>(null);
 
   const [notFoundCode, setNotFoundCode] = useState<string | null>(null);
@@ -53,7 +50,6 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
   const [adminAssignError, setAdminAssignError] = useState<string | null>(null);
 
   const clearPendingScan = useCallback(() => {
-    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
     pendingCommitRef.current = null;
     pendingCodeRef.current = null;
     setPendingCode(null);
@@ -61,8 +57,6 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
 
   const resetScan = useCallback(() => {
     setScanPhase("idle");
-    lastScannedRef.current = null;
-    cooldownRef.current = false;
     setNotFoundCode(null);
     setAdminSuccessMsg(null);
     setAdminAssignError(null);
@@ -72,8 +66,6 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
   useEffect(() => {
     if (!visible) {
       setScanPhase("idle");
-      lastScannedRef.current = null;
-      cooldownRef.current = false;
       setNotFoundCode(null);
       setShowAdminPicker(false);
       setAdminSuccessMsg(null);
@@ -135,12 +127,16 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
         }
         if (cx < vfL || cx > vfR || cy < vfT || cy > vfB) return;
       }
+
       const code = result.data;
-      if (cooldownRef.current || scanPhase !== "idle") return;
+
+      // Already processing a scan — ignore new detections
+      if (scanPhase !== "idle") return;
+
+      // Same barcode already pending — no update needed
       if (pendingCodeRef.current === code) return;
 
-      // New or different barcode — restart pending countdown
-      clearPendingScan();
+      // New or different barcode in frame — update pending
       pendingCodeRef.current = code;
       setPendingCode(code);
 
@@ -148,9 +144,6 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
         pendingCommitRef.current = null;
         pendingCodeRef.current = null;
         setPendingCode(null);
-        lastScannedRef.current = code;
-        cooldownRef.current = true;
-        setTimeout(() => { cooldownRef.current = false; }, 2500);
 
         setScanPhase("looking");
 
@@ -209,29 +202,29 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
         }
       };
       pendingCommitRef.current = doCommit;
-      pendingTimerRef.current = setTimeout(doCommit, SCAN_DELAY_MS);
     },
-    [addEntry, onFound, onClose, resetScan, clearPendingScan, scanPhase, isAdmin],
+    [addEntry, onFound, onClose, resetScan, scanPhase, isAdmin],
   );
 
   const captureNow = useCallback(() => {
     const commit = pendingCommitRef.current;
     if (!commit) return;
-    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
     void commit();
   }, []);
 
+  const canCapture = scanPhase === "idle" && !!pendingCode;
+
   const statusLabel =
-    pendingCode ? "Hold steady…" :
     scanPhase === "looking" ? "Looking up…" :
     scanPhase === "found" ? "Found — opening result…" :
     scanPhase === "notfound" ? "Barcode not in inventory" :
     scanPhase === "offline_miss" ? "No connection — barcode not cached" :
     scanPhase === "error" ? "Lookup failed — try again" :
-    "Point camera at a barcode";
+    canCapture ? "Barcode detected — tap Scan" :
+    "Aim camera at a barcode";
 
   const statusBg =
-    pendingCode ? "rgba(0,0,0,0.73)" :
+    canCapture ? colors.success + "cc" :
     scanPhase === "found" ? colors.success + "cc" :
     scanPhase === "notfound" || scanPhase === "offline_miss" ? colors.warning + "cc" :
     scanPhase === "error" ? colors.destructive + "cc" :
@@ -306,7 +299,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
                 </View>
               )}
               <View style={[scanStyles.viewfinderOverlay, { pointerEvents: "none" }]}>
-                <View style={[scanStyles.viewfinderFrame, { borderColor: colors.primary }]} />
+                <View style={[scanStyles.viewfinderFrame, { borderColor: canCapture ? colors.success : colors.primary }]} />
               </View>
               <View style={[scanStyles.statusBar, { backgroundColor: statusBg }]}>
                 {scanPhase === "looking" ? (
@@ -314,12 +307,34 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
                 ) : null}
                 <Text style={scanStyles.statusText}>{statusLabel}</Text>
               </View>
-              {pendingCode ? (
-                <Pressable onPress={captureNow} style={[scanStyles.captureBtn, { backgroundColor: colors.primary }]}>
-                  <Text style={[scanStyles.captureBtnText, { color: colors.primaryForeground }]}>✓ Capture</Text>
-                </Pressable>
-              ) : null}
             </View>
+
+            {/* Scan button — shown when idle */}
+            {scanPhase === "idle" ? (
+              <View style={scanStyles.scanBtnRow}>
+                <Pressable
+                  onPress={captureNow}
+                  disabled={!canCapture}
+                  style={[
+                    scanStyles.scanBtn,
+                    { backgroundColor: canCapture ? colors.primary : colors.muted, borderColor: canCapture ? colors.primary : colors.border },
+                  ]}
+                >
+                  <Text style={[scanStyles.scanBtnText, { color: canCapture ? colors.primaryForeground : colors.mutedForeground }]}>
+                    {canCapture ? "⬤  Scan" : "Scan"}
+                  </Text>
+                </Pressable>
+                {canCapture ? (
+                  <Text style={[scanStyles.scanBtnHint, { color: colors.mutedForeground }]}>
+                    {pendingCode}
+                  </Text>
+                ) : (
+                  <Text style={[scanStyles.scanBtnHint, { color: colors.mutedForeground }]}>
+                    Aim at a barcode, then tap Scan
+                  </Text>
+                )}
+              </View>
+            ) : null}
 
             {isAdminNotFound && !adminSuccessMsg ? (
               <View style={[scanStyles.adminPanel, { borderTopColor: colors.border }]}>
@@ -433,15 +448,29 @@ const scanStyles = StyleSheet.create({
     paddingVertical: 14,
   },
   statusText: { color: "#fff", fontSize: 14, fontFamily: "Inter_500Medium" },
-  captureBtn: {
-    position: "absolute",
-    bottom: 54,
-    alignSelf: "center",
-    paddingHorizontal: 22,
-    paddingVertical: 11,
-    borderRadius: 24,
+  scanBtnRow: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    alignItems: "center",
+    gap: 6,
   },
-  captureBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  scanBtn: {
+    width: "100%",
+    paddingVertical: 15,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scanBtnText: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.3,
+  },
+  scanBtnHint: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+  },
   adminPanel: {
     padding: 20,
     gap: 12,
@@ -500,8 +529,8 @@ const scanStyles = StyleSheet.create({
     textTransform: "uppercase",
   },
   adminSuccessDetail: {
-    fontSize: 15,
-    fontFamily: "Inter_600SemiBold",
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
     marginTop: 2,
   },
 });

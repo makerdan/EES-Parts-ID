@@ -48,7 +48,6 @@ type ShelfSession = {
   bulkMode: boolean;
 };
 
-const SCAN_DELAY_MS = 1500;
 const SHELF_SESSION_KEY = "parts_id_shelf_session_v1";
 
 // ── Shelf prefix auto-formatter ────────────────────────────────────────────
@@ -157,13 +156,10 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   const [lastAssigned, setLastAssigned] = useState<AssignmentEntry | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
 
-  // Pre-scan delay state
+  // Pending barcode — set when camera detects a barcode, cleared on commit or reset
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const pendingCodeRef = useRef<string | null>(null);
-  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCommitRef = useRef<(() => void) | null>(null);
-  const lastScannedRef = useRef<string | null>(null);
-  const scanCooldownRef = useRef(false);
 
   // Shelf mode state
   const [shelfMode, setShelfMode] = useState(false);
@@ -237,7 +233,6 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   }, [shelfMode, shelfPrefix, assignments, bulkQueue, bulkMode]);
 
   const clearPendingScan = useCallback(() => {
-    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
     pendingCommitRef.current = null;
     pendingCodeRef.current = null;
     setPendingCode(null);
@@ -276,11 +271,13 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         }
         if (cx < vfL || cx > vfR || cy < vfT || cy > vfB) return;
       }
+
       const code = result.data;
-      if (scanCooldownRef.current) return;
+
+      // Same barcode already pending — no update needed
       if (pendingCodeRef.current === code) return;
 
-      clearPendingScan();
+      // New or different barcode in frame — update pending
       pendingCodeRef.current = code;
       setPendingCode(code);
 
@@ -290,17 +287,10 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         setPendingCode(null);
 
         if (shelfMode && shelfStep === "scanning") {
-          if (code === lastScannedRef.current) return;
-          lastScannedRef.current = code;
-          scanCooldownRef.current = true;
-          setTimeout(() => { scanCooldownRef.current = false; }, 2000);
-
           if (bulkMode) {
             // In bulk mode, add to queue without opening picker
             setBulkQueue(prev => prev.some(e => e.barcode === code) ? prev : [...prev, { barcode: code, status: "pending" as BulkQueueStatus }]);
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-            lastScannedRef.current = null;
-            scanCooldownRef.current = false;
           } else {
             setShelfScannedCode(code);
             setShelfAssignPicker(true);
@@ -308,23 +298,19 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           return;
         }
 
-        if (code === lastScannedRef.current) return;
-        lastScannedRef.current = code;
-        scanCooldownRef.current = true;
-        setTimeout(() => { scanCooldownRef.current = false; }, 2000);
         setScannedCode(code);
         setAssignPicker(true);
       };
       pendingCommitRef.current = doCommit;
-      pendingTimerRef.current = setTimeout(doCommit, SCAN_DELAY_MS);
     },
-    [shelfMode, shelfStep, bulkMode, clearPendingScan],
+    [shelfMode, shelfStep, bulkMode],
   );
 
   const captureNow = useCallback(() => {
     const commit = pendingCommitRef.current;
     if (!commit) return;
-    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
+    // Trigger haptic feedback on button press
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     commit();
   }, []);
 
@@ -349,8 +335,6 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         await triggerScanFeedback(settings.scanSound);
         setLastAssigned({ barcode: scannedCode, item });
         setScannedCode(null);
-        lastScannedRef.current = null;
-        scanCooldownRef.current = false;
       } catch {
         setScanError("Could not assign barcode. Please try again.");
       }
@@ -384,7 +368,6 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           setAssignments((prev) => [{ barcode: code, item: result.updatedItem }, ...prev]);
         }
         setShelfScannedCode(null);
-        lastScannedRef.current = null;
         // Mark as assigned in bulk queue (keeps it visible with its status)
         setBulkQueue(prev =>
           prev.map(e => e.barcode === code ? { ...e, status: "assigned" as BulkQueueStatus } : e)
@@ -457,9 +440,8 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     setBulkQueue(session.bulkQueue);
     setBulkMode(session.bulkMode);
     setResumeSession(null);
-    lastScannedRef.current = null;
-    scanCooldownRef.current = false;
-  }, []);
+    clearPendingScan();
+  }, [clearPendingScan]);
 
   const startShelfMode = () => {
     setShelfMode(true);
@@ -472,8 +454,6 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     setLastAssigned(null);
     setResumeSession(null);
     clearPendingScan();
-    lastScannedRef.current = null;
-    scanCooldownRef.current = false;
     clearShelfSession();
   };
 
@@ -487,12 +467,11 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     setBulkQueue([]);
     setBulkMode(false);
     clearPendingScan();
-    lastScannedRef.current = null;
-    scanCooldownRef.current = false;
     clearShelfSession();
   };
 
   const isCameraActive = !assignPicker && !shelfAssignPicker;
+  const canCapture = !!pendingCode && isCameraActive && cameraStarted;
 
   if (!permission) {
     return (
@@ -715,18 +694,12 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                 </View>
               )}
               <View style={apStyles.viewfinderOverlay}>
-                <View style={[apStyles.viewfinderFrame, { borderColor: colors.primary }]} />
+                <View style={[apStyles.viewfinderFrame, { borderColor: canCapture ? colors.success : colors.primary }]} />
               </View>
-              {pendingCode ? (
-                <>
-                  <View style={[apStyles.scanStatus, { backgroundColor: "rgba(0,0,0,0.67)" }]}>
-                    <ActivityIndicator color={colors.primaryForeground} size="small" />
-                    <Text style={apStyles.scanStatusText}>Scanning…</Text>
-                  </View>
-                  <Pressable onPress={captureNow} style={[apStyles.captureBtn, { backgroundColor: colors.primary }]}>
-                    <Text style={[apStyles.captureBtnText, { color: colors.primaryForeground }]}>✓ Capture</Text>
-                  </Pressable>
-                </>
+              {canCapture ? (
+                <View style={[apStyles.scanStatus, { backgroundColor: colors.success + "cc" }]}>
+                  <Text style={apStyles.scanStatusText}>Barcode detected</Text>
+                </View>
               ) : null}
               {shelfMode && shelfStep === "scanning" && bulkMode ? (
                 <View style={[apStyles.bulkModeBadge, { backgroundColor: colors.primary }]}>
@@ -741,6 +714,33 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                 <Text style={apStyles.cameraStopBtnText}>■ Stop</Text>
               </Pressable>
             </>
+          )}
+        </View>
+      ) : null}
+
+      {/* Scan button */}
+      {(!shelfMode || shelfStep === "scanning") && isCameraActive && cameraStarted ? (
+        <View style={apStyles.scanBtnRow}>
+          <Pressable
+            onPress={captureNow}
+            disabled={!canCapture}
+            style={[
+              apStyles.scanBtn,
+              { backgroundColor: canCapture ? colors.primary : colors.muted, borderColor: canCapture ? colors.primary : colors.border },
+            ]}
+          >
+            <Text style={[apStyles.scanBtnText, { color: canCapture ? colors.primaryForeground : colors.mutedForeground }]}>
+              {canCapture ? "⬤  Scan" : "Scan"}
+            </Text>
+          </Pressable>
+          {canCapture ? (
+            <Text style={[apStyles.scanBtnHint, { color: colors.mutedForeground }]}>
+              {pendingCode}
+            </Text>
+          ) : (
+            <Text style={[apStyles.scanBtnHint, { color: colors.mutedForeground }]}>
+              Aim camera at a barcode, then tap Scan
+            </Text>
           )}
         </View>
       ) : null}
@@ -923,8 +923,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         onCancel={() => {
           setAssignPicker(false);
           setScannedCode(null);
-          lastScannedRef.current = null;
-          scanCooldownRef.current = false;
+          clearPendingScan();
         }}
       />
 
@@ -936,7 +935,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         onCancel={() => {
           setShelfAssignPicker(false);
           setShelfScannedCode(null);
-          lastScannedRef.current = null;
+          clearPendingScan();
         }}
       />
     </View>
@@ -1087,15 +1086,29 @@ const apStyles = StyleSheet.create({
     borderRadius: 20,
   },
   scanStatusText: { color: "#fff", fontSize: 13, fontFamily: "Inter_500Medium" },
-  captureBtn: {
-    position: "absolute",
-    bottom: 48,
-    alignSelf: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 22,
+  scanBtnRow: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    alignItems: "center",
+    gap: 5,
   },
-  captureBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  scanBtn: {
+    width: "100%",
+    paddingVertical: 13,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scanBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.3,
+  },
+  scanBtnHint: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+  },
   bulkModeBadge: {
     position: "absolute",
     top: 10,
@@ -1139,19 +1152,19 @@ const apStyles = StyleSheet.create({
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1 },
   lastAssignedCard: {
     marginHorizontal: 16,
-    marginTop: 10,
+    marginTop: 12,
     borderRadius: 10,
     borderWidth: 1,
     padding: 12,
     gap: 2,
   },
   lastAssignedLabel: { fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 0.5, textTransform: "uppercase" },
-  lastAssignedCatalog: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  lastAssignedCatalog: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginTop: 2 },
   lastAssignedBarcode: { fontSize: 11, fontFamily: "Inter_400Regular" },
   completedLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",
-    letterSpacing: 1,
+    letterSpacing: 0.8,
     textTransform: "uppercase",
     marginBottom: 6,
   },
@@ -1164,16 +1177,9 @@ const apStyles = StyleSheet.create({
     marginBottom: 6,
     gap: 8,
   },
-  logCatalog: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  logVendor: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  logCatalog: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  logVendor: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 1 },
   logBarcode: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
-  undoBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  undoBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   logBadge: {
     width: 26,
     height: 26,
@@ -1181,10 +1187,17 @@ const apStyles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  logBadgeText: { fontSize: 14, fontFamily: "Inter_700Bold" },
-  clearSkippedBtn: {
+  logBadgeText: { fontSize: 13, fontFamily: "Inter_700Bold" },
+  undoBtn: {
     paddingHorizontal: 10,
     paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  undoBtnText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  clearSkippedBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
   },
