@@ -28,6 +28,7 @@ type ScanPhase = "idle" | "looking" | "found" | "notfound" | "offline_miss" | "e
 type AdminPickerMode = "link" | "create";
 
 export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModalProps) {
+  "use no memo";
   const colors = useColors();
   const { isAdmin } = useApp();
   const queryClient = useQueryClient();
