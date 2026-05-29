@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { CameraView, useCameraPermissions } from "expo-camera";
+import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { useColors } from "@/hooks/useColors";
 import { lookupByBarcode } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -27,6 +27,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
   const colors = useColors();
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraBypass, setCameraBypass] = useState(false);
+  const cameraViewSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
   const [scanPhase, setScanPhase] = useState<ScanPhase>("idle");
   const { addEntry } = useScanHistory();
   const lastScannedRef = useRef<string | null>(null);
@@ -47,7 +48,30 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
   }, [visible]);
 
   const handleBarcodeScanned = useCallback(
-    async ({ data: code }: { data: string }) => {
+    async (result: BarcodeScanningResult) => {
+      // Reject scans that originate outside the viewfinder square
+      const { width: cw, height: ch } = cameraViewSizeRef.current;
+      if (cw > 0 && ch > 0) {
+        const VF_W = 220, VF_H = 220, MARGIN = 20;
+        const vfL = (cw - VF_W) / 2 - MARGIN, vfT = (ch - VF_H) / 2 - MARGIN;
+        const vfR = vfL + VF_W + MARGIN * 2,   vfB = vfT + VF_H + MARGIN * 2;
+        const pts = result.cornerPoints;
+        let cx: number, cy: number;
+        if (pts && pts.length >= 2) {
+          cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+          cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+        } else {
+          const b = result.bounds;
+          if (b && (b.size.width > 0 || b.size.height > 0)) {
+            cx = b.origin.x + b.size.width / 2;
+            cy = b.origin.y + b.size.height / 2;
+          } else {
+            cx = cw / 2; cy = ch / 2;
+          }
+        }
+        if (cx < vfL || cx > vfR || cy < vfT || cy > vfB) return;
+      }
+      const code = result.data;
       if (cooldownRef.current || code === lastScannedRef.current) return;
       lastScannedRef.current = code;
       cooldownRef.current = true;
@@ -171,7 +195,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
           </View>
         ) : (
           <>
-            <View style={scanStyles.cameraWrapper}>
+            <View style={scanStyles.cameraWrapper} onLayout={(e) => { cameraViewSizeRef.current = e.nativeEvent.layout; }}>
               {!cameraBypass ? (
                 <CameraView
                   style={StyleSheet.absoluteFill}
