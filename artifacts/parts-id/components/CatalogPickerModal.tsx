@@ -24,21 +24,25 @@ export function CatalogPickerModal({
   visible,
   barcodeCode,
   shelfPrefix,
+  initialQuery,
+  initialShowCreateForm,
   onAssign,
   onCancel,
 }: {
   visible: boolean;
   barcodeCode: string;
   shelfPrefix?: string;
+  initialQuery?: string;
+  initialShowCreateForm?: boolean;
   onAssign: (item: InventoryItem) => void;
   onCancel: () => void;
 }) {
   "use no memo";
   const colors = useColors();
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? "");
+  const [debouncedQuery, setDebouncedQuery] = useState(initialQuery ?? "");
   const [createError, setCreateError] = useState<string | null>(null);
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(initialShowCreateForm ?? false);
   const [newVendor, setNewVendor] = useState("");
   const [newBinLocation, setNewBinLocation] = useState("");
   const [vendorError, setVendorError] = useState<string | null>(null);
@@ -60,7 +64,14 @@ export function CatalogPickerModal({
       setShowCreateForm(false); setNewVendor(""); setNewBinLocation(""); setVendorError(null);
       return;
     }
-  }, [visible]);
+    if (initialQuery) {
+      setQuery(initialQuery);
+      setDebouncedQuery(initialQuery);
+    }
+    if (initialShowCreateForm) {
+      setShowCreateForm(true);
+    }
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!visible || !debouncedQuery.trim()) return;

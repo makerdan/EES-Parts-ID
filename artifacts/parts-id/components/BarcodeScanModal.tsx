@@ -10,10 +10,13 @@ import {
 } from "react-native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { useColors } from "@/hooks/useColors";
-import { lookupByBarcode } from "@workspace/api-client-react";
+import { lookupByBarcode, useUpdateItemBarcodes, getListInventoryQueryKey } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
-import { lookupByBarcodeOffline } from "@/utils/offlineBarcode";
+import { lookupByBarcodeOffline, upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { useScanHistory } from "@/hooks/useScanHistory";
+import { useApp } from "@/contexts/AppContext";
+import { useQueryClient } from "@tanstack/react-query";
+import { CatalogPickerModal } from "@/components/CatalogPickerModal";
 
 interface BarcodeScanModalProps {
   visible: boolean;
@@ -22,11 +25,15 @@ interface BarcodeScanModalProps {
 }
 
 type ScanPhase = "idle" | "looking" | "found" | "notfound" | "offline_miss" | "error";
+type AdminPickerMode = "link" | "create";
 
 const SCAN_DELAY_MS = 1500;
 
 export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModalProps) {
   const colors = useColors();
+  const { isAdmin } = useApp();
+  const queryClient = useQueryClient();
+  const updateBarcodesMutation = useUpdateItemBarcodes();
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraBypass, setCameraBypass] = useState(false);
   const cameraViewSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
@@ -39,6 +46,12 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCommitRef = useRef<(() => void) | null>(null);
 
+  const [notFoundCode, setNotFoundCode] = useState<string | null>(null);
+  const [showAdminPicker, setShowAdminPicker] = useState(false);
+  const [adminPickerMode, setAdminPickerMode] = useState<AdminPickerMode>("link");
+  const [adminSuccessMsg, setAdminSuccessMsg] = useState<string | null>(null);
+  const [adminAssignError, setAdminAssignError] = useState<string | null>(null);
+
   const clearPendingScan = useCallback(() => {
     if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
     pendingCommitRef.current = null;
@@ -50,6 +63,9 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
     setScanPhase("idle");
     lastScannedRef.current = null;
     cooldownRef.current = false;
+    setNotFoundCode(null);
+    setAdminSuccessMsg(null);
+    setAdminAssignError(null);
     clearPendingScan();
   }, [clearPendingScan]);
 
@@ -58,9 +74,42 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
       setScanPhase("idle");
       lastScannedRef.current = null;
       cooldownRef.current = false;
+      setNotFoundCode(null);
+      setShowAdminPicker(false);
+      setAdminSuccessMsg(null);
+      setAdminAssignError(null);
       clearPendingScan();
     }
   }, [visible, clearPendingScan]);
+
+  const handleAdminAssign = useCallback(
+    async (item: InventoryItem) => {
+      if (!notFoundCode) return;
+      setShowAdminPicker(false);
+      setAdminAssignError(null);
+      try {
+        const existing = item.barcodes ?? [];
+        if (!existing.includes(notFoundCode)) {
+          const updated = await updateBarcodesMutation.mutateAsync({
+            id: item.id,
+            data: { barcodes: [...existing, notFoundCode] },
+          });
+          const listKeyPrefix = getListInventoryQueryKey()[0];
+          await queryClient.invalidateQueries({
+            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+          });
+          await upsertItemInBarcodeCache(updated);
+        }
+        setAdminSuccessMsg(`Linked to ${item.catalog}`);
+        setTimeout(() => {
+          resetScan();
+        }, 1800);
+      } catch {
+        setAdminAssignError("Could not save — please try again.");
+      }
+    },
+    [notFoundCode, updateBarcodesMutation, queryClient, resetScan],
+  );
 
   const handleBarcodeScanned = useCallback(
     (result: BarcodeScanningResult) => {
@@ -128,7 +177,11 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
           if (status === 404) {
             setScanPhase("notfound");
             addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
-            setTimeout(resetScan, 2200);
+            if (isAdmin) {
+              setNotFoundCode(code);
+            } else {
+              setTimeout(resetScan, 2200);
+            }
           } else if (status === null) {
             const offlineItem = await lookupByBarcodeOffline(code);
             if (offlineItem) {
@@ -158,7 +211,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
       pendingCommitRef.current = doCommit;
       pendingTimerRef.current = setTimeout(doCommit, SCAN_DELAY_MS);
     },
-    [addEntry, onFound, onClose, resetScan, clearPendingScan, scanPhase],
+    [addEntry, onFound, onClose, resetScan, clearPendingScan, scanPhase, isAdmin],
   );
 
   const captureNow = useCallback(() => {
@@ -187,6 +240,8 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
 
   const isTerminal =
     scanPhase === "notfound" || scanPhase === "offline_miss" || scanPhase === "error";
+
+  const isAdminNotFound = scanPhase === "notfound" && isAdmin && notFoundCode;
 
   return (
     <Modal
@@ -266,7 +321,51 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
               ) : null}
             </View>
 
-            {isTerminal ? (
+            {isAdminNotFound && !adminSuccessMsg ? (
+              <View style={[scanStyles.adminPanel, { borderTopColor: colors.border }]}>
+                <Text style={[scanStyles.adminPanelCode, { color: colors.mutedForeground }]}>
+                  Barcode: <Text style={{ color: colors.foreground, fontFamily: "Inter_600SemiBold" }}>{notFoundCode}</Text>
+                </Text>
+
+                {adminAssignError ? (
+                  <View style={[scanStyles.adminErrorRow, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "33" }]}>
+                    <Text style={{ color: colors.destructive, fontSize: 13, fontFamily: "Inter_400Regular", flex: 1 }}>{adminAssignError}</Text>
+                    <Pressable onPress={() => setAdminAssignError(null)} hitSlop={8}>
+                      <Text style={{ color: colors.destructive, fontSize: 13 }}>✕</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+
+                <View style={scanStyles.adminBtnRow}>
+                  <Pressable
+                    onPress={() => { setAdminPickerMode("link"); setShowAdminPicker(true); }}
+                    style={[scanStyles.adminBtn, { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={[scanStyles.adminBtnText, { color: colors.primaryForeground }]}>Add to Existing Item</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => { setAdminPickerMode("create"); setShowAdminPicker(true); }}
+                    style={[scanStyles.adminBtn, { backgroundColor: colors.accent, borderWidth: 1, borderColor: colors.border }]}
+                  >
+                    <Text style={[scanStyles.adminBtnText, { color: colors.foreground }]}>Create New Part</Text>
+                  </Pressable>
+                </View>
+
+                <Pressable onPress={resetScan} style={scanStyles.adminCancelBtn}>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_500Medium" }}>
+                    Scan Again
+                  </Text>
+                </Pressable>
+              </View>
+            ) : adminSuccessMsg ? (
+              <View style={[scanStyles.adminSuccessPanel, { backgroundColor: colors.success + "15", borderColor: colors.success + "44" }]}>
+                <Text style={[scanStyles.adminSuccessIcon, { color: colors.success }]}>✓</Text>
+                <View>
+                  <Text style={[scanStyles.adminSuccessLabel, { color: colors.success }]}>Done</Text>
+                  <Text style={[scanStyles.adminSuccessDetail, { color: colors.foreground }]}>{adminSuccessMsg}</Text>
+                </View>
+              </View>
+            ) : isTerminal ? (
               <View style={{ padding: 24, alignItems: "center" }}>
                 <Pressable
                   onPress={resetScan}
@@ -281,6 +380,15 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
           </>
         )}
       </SafeAreaView>
+
+      <CatalogPickerModal
+        visible={showAdminPicker}
+        barcodeCode={notFoundCode ?? ""}
+        initialQuery={adminPickerMode === "create" ? (notFoundCode ?? "") : undefined}
+        initialShowCreateForm={adminPickerMode === "create"}
+        onAssign={handleAdminAssign}
+        onCancel={() => setShowAdminPicker(false)}
+      />
     </Modal>
   );
 }
@@ -334,4 +442,66 @@ const scanStyles = StyleSheet.create({
     borderRadius: 24,
   },
   captureBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  adminPanel: {
+    padding: 20,
+    gap: 12,
+    borderTopWidth: 1,
+  },
+  adminPanelCode: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+  },
+  adminErrorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    gap: 8,
+  },
+  adminBtnRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  adminBtn: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  adminBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    textAlign: "center",
+  },
+  adminCancelBtn: {
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+  adminSuccessPanel: {
+    margin: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  adminSuccessIcon: {
+    fontSize: 28,
+    fontFamily: "Inter_700Bold",
+  },
+  adminSuccessLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  adminSuccessDetail: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    marginTop: 2,
+  },
 });
