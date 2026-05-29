@@ -1,14 +1,18 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
+import * as Haptics from "expo-haptics";
+import { Audio } from "expo-av";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import {
@@ -27,12 +31,89 @@ interface AssignmentEntry {
   item: InventoryItem;
 }
 
+type BulkQueueStatus = "pending" | "assigned" | "skipped";
+
+interface BulkQueueEntry {
+  barcode: string;
+  status: BulkQueueStatus;
+}
+
+type ShelfSession = {
+  shelfPrefix: string;
+  assignments: AssignmentEntry[];
+  bulkQueue: BulkQueueEntry[];
+  bulkMode: boolean;
+};
+
 const SCAN_DELAY_MS = 1500;
+const SHELF_SESSION_KEY = "parts_id_shelf_session_v1";
+
+// ── Shelf prefix auto-formatter ────────────────────────────────────────────
+// For all-numeric input, formats as XX-XX-XXX (up to 7 digits).
+// Non-numeric (or mixed) input is passed through unchanged.
+function formatShelfPrefix(raw: string): string {
+  const stripped = raw.replace(/-/g, "");
+  if (!/^\d*$/.test(stripped)) return raw;
+  let result = stripped.slice(0, 2);
+  if (stripped.length > 2) result += "-" + stripped.slice(2, 4);
+  if (stripped.length > 4) result += "-" + stripped.slice(4, 7);
+  return result;
+}
+
+// ── Sound helper ───────────────────────────────────────────────────────────
+let chimeSound: Audio.Sound | null = null;
+
+async function loadChime(): Promise<void> {
+  try {
+    if (chimeSound) return;
+    const { sound } = await Audio.Sound.createAsync(
+      require("../assets/sounds/scan-chime.wav"),
+      { shouldPlay: false, volume: 0.7 },
+    );
+    chimeSound = sound;
+  } catch {
+    chimeSound = null;
+  }
+}
+
+async function playChime(): Promise<void> {
+  try {
+    if (!chimeSound) await loadChime();
+    if (!chimeSound) return;
+    await chimeSound.setPositionAsync(0);
+    await chimeSound.playAsync();
+  } catch {
+    // Non-fatal
+  }
+}
+
+// ── Session persistence ────────────────────────────────────────────────────
+async function saveShelfSession(session: ShelfSession): Promise<void> {
+  try {
+    await AsyncStorage.setItem(SHELF_SESSION_KEY, JSON.stringify(session));
+  } catch { /* non-fatal */ }
+}
+
+async function loadShelfSession(): Promise<ShelfSession | null> {
+  try {
+    const raw = await AsyncStorage.getItem(SHELF_SESSION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as ShelfSession;
+  } catch {
+    return null;
+  }
+}
+
+async function clearShelfSession(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(SHELF_SESSION_KEY);
+  } catch { /* non-fatal */ }
+}
 
 export function BarcodeAddPart() {
   "use no memo";
   const colors = useColors();
-  const { isAdmin } = useApp();
+  const { isAdmin, settings, showToast } = useApp();
   const queryClient = useQueryClient();
 
   const [permission, requestPermission] = useCameraPermissions();
@@ -61,25 +142,91 @@ export function BarcodeAddPart() {
   const [shelfAssignPicker, setShelfAssignPicker] = useState(false);
   const [assignments, setAssignments] = useState<AssignmentEntry[]>([]);
 
+  // Keep a ref to allItems for undo safety (avoids stale closures)
+  const allItemsRef = useRef<typeof allItems>([]);
+
+  // Bulk scan mode
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkQueue, setBulkQueue] = useState<BulkQueueEntry[]>([]);
+
+  // Session resume banner
+  const [resumeSession, setResumeSession] = useState<ShelfSession | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
+
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const { data: inventoryPage } = useListInventory({ limit: 500 });
 
+  const allItems = React.useMemo(() => inventoryPage?.items ?? [], [inventoryPage]);
+
+  // Keep a ref to allItems so undo callbacks always see the latest inventory
+  // without being forced into the dependency array (which would re-create the
+  // callback on every inventory poll).
+  const allItemsRef = useRef<typeof allItems>(allItems);
+  useEffect(() => { allItemsRef.current = allItems; }, [allItems]);
+
   const allBinLocations = React.useMemo(() => {
-    const items = inventoryPage?.items ?? [];
     const set = new Set<string>();
-    for (const item of items) {
+    for (const item of allItems) {
       for (const bin of item.binLocations ?? []) {
         if (bin.trim()) set.add(bin.trim());
       }
     }
     return Array.from(set).sort();
-  }, [inventoryPage]);
+  }, [allItems]);
+
+  // Shelf completion stats
+  const shelfStats = React.useMemo(() => {
+    if (!shelfPrefix.trim()) return null;
+    const prefix = shelfPrefix.trim().toUpperCase();
+    const matching = allItems.filter(item =>
+      item.binLocations?.some(b => b.toUpperCase().startsWith(prefix))
+    );
+    const withBarcode = matching.filter(item =>
+      Array.isArray(item.barcodes) && item.barcodes.length > 0
+    );
+    return { total: matching.length, withBarcode: withBarcode.length };
+  }, [shelfPrefix, allItems]);
+
+  // Keep allItemsRef current for undo safety
+  useEffect(() => {
+    allItemsRef.current = allItems;
+  }, [allItems]);
+
+  // Load chime on mount
+  useEffect(() => {
+    loadChime().catch(() => {});
+  }, []);
+
+  // Check for a saved session on mount
+  useEffect(() => {
+    loadShelfSession().then(session => {
+      if (session && session.shelfPrefix) {
+        setResumeSession(session);
+      }
+      setSessionChecked(true);
+    });
+  }, []);
+
+  // Persist session whenever it changes
+  useEffect(() => {
+    if (!shelfMode) return;
+    saveShelfSession({ shelfPrefix, assignments, bulkQueue, bulkMode });
+  }, [shelfMode, shelfPrefix, assignments, bulkQueue, bulkMode]);
 
   const clearPendingScan = useCallback(() => {
     if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
     pendingCommitRef.current = null;
     pendingCodeRef.current = null;
     setPendingCode(null);
+  }, []);
+
+  const triggerScanFeedback = useCallback(async (soundEnabled: boolean) => {
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch { /* non-fatal */ }
+    if (soundEnabled) {
+      await playChime();
+    }
   }, []);
 
   const handleBarcodeScanned = useCallback(
@@ -124,8 +271,17 @@ export function BarcodeAddPart() {
           lastScannedRef.current = code;
           scanCooldownRef.current = true;
           setTimeout(() => { scanCooldownRef.current = false; }, 2000);
-          setShelfScannedCode(code);
-          setShelfAssignPicker(true);
+
+          if (bulkMode) {
+            // In bulk mode, add to queue without opening picker
+            setBulkQueue(prev => prev.some(e => e.barcode === code) ? prev : [...prev, { barcode: code, status: "pending" as BulkQueueStatus }]);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+            lastScannedRef.current = null;
+            scanCooldownRef.current = false;
+          } else {
+            setShelfScannedCode(code);
+            setShelfAssignPicker(true);
+          }
           return;
         }
 
@@ -139,7 +295,7 @@ export function BarcodeAddPart() {
       pendingCommitRef.current = doCommit;
       pendingTimerRef.current = setTimeout(doCommit, SCAN_DELAY_MS);
     },
-    [shelfMode, shelfStep, clearPendingScan],
+    [shelfMode, shelfStep, bulkMode, clearPendingScan],
   );
 
   const captureNow = useCallback(() => {
@@ -167,6 +323,7 @@ export function BarcodeAddPart() {
           });
           await upsertItemInBarcodeCache(updated);
         }
+        await triggerScanFeedback(settings.scanSound);
         setLastAssigned({ barcode: scannedCode, item });
         setScannedCode(null);
         lastScannedRef.current = null;
@@ -175,17 +332,18 @@ export function BarcodeAddPart() {
         setScanError("Could not assign barcode. Please try again.");
       }
     },
-    [scannedCode, updateBarcodesMutation, queryClient],
+    [scannedCode, updateBarcodesMutation, queryClient, triggerScanFeedback, settings.scanSound],
   );
 
   const handleShelfAssign = useCallback(
     async (item: InventoryItem) => {
-      if (!shelfScannedCode) return;
+      const code = shelfScannedCode;
+      if (!code) return;
       setShelfAssignPicker(false);
       setScanError(null);
       try {
         const result = await resolveShelfAssign(
-          shelfScannedCode,
+          code,
           item,
           (id, barcodes) => updateBarcodesMutation.mutateAsync({ id, data: { barcodes } }),
           upsertItemInBarcodeCache,
@@ -196,27 +354,91 @@ export function BarcodeAddPart() {
             predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
           });
         }
-        setAssignments((prev) => [{ barcode: shelfScannedCode, item }, ...prev]);
+        await triggerScanFeedback(settings.scanSound);
+        // Only log undoable entries for genuinely new assignments to avoid
+        // silently deleting pre-existing barcodes via Undo on no-op scans.
+        if (result.wasNew) {
+          setAssignments((prev) => [{ barcode: code, item: result.updatedItem }, ...prev]);
+        }
         setShelfScannedCode(null);
         lastScannedRef.current = null;
+        // Mark as assigned in bulk queue (keeps it visible with its status)
+        setBulkQueue(prev =>
+          prev.map(e => e.barcode === code ? { ...e, status: "assigned" as BulkQueueStatus } : e)
+        );
       } catch {
         setScanError("Could not assign barcode. Please try again.");
         setShelfScannedCode(null);
       }
     },
-    [shelfScannedCode, updateBarcodesMutation, queryClient],
+    [shelfScannedCode, updateBarcodesMutation, queryClient, triggerScanFeedback, settings.scanSound],
   );
+
+  const handleUndoAssignment = useCallback(
+    async (entry: AssignmentEntry, index: number) => {
+      try {
+        // Use the freshest known barcodes from the query cache to avoid
+        // clobbering barcodes added by other sessions since this assignment.
+        const liveItem = allItemsRef.current.find(i => i.id === entry.item.id);
+        const currentBarcodes = (liveItem ?? entry.item).barcodes ?? [];
+        const newBarcodes = currentBarcodes.filter(b => b !== entry.barcode);
+        const updated = await updateBarcodesMutation.mutateAsync({
+          id: entry.item.id,
+          data: { barcodes: newBarcodes },
+        });
+        const listKeyPrefix = getListInventoryQueryKey()[0];
+        await queryClient.invalidateQueries({
+          predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+        });
+        await upsertItemInBarcodeCache(updated);
+        setAssignments(prev => prev.filter((_, i) => i !== index));
+        showToast("Barcode assignment undone", "info");
+      } catch {
+        showToast("Could not undo assignment. Please try again.", "error");
+      }
+    },
+    [updateBarcodesMutation, queryClient, showToast],
+  );
+
+  const assignNextFromQueue = useCallback(() => {
+    const next = bulkQueue.find(e => e.status === "pending");
+    if (!next) return;
+    setShelfScannedCode(next.barcode);
+    setShelfAssignPicker(true);
+  }, [bulkQueue]);
+
+  const skipQueueItem = useCallback((barcode: string) => {
+    setBulkQueue(prev =>
+      prev.map(e => e.barcode === barcode ? { ...e, status: "skipped" as BulkQueueStatus } : e)
+    );
+  }, []);
+
+  const applyResumeSession = useCallback((session: ShelfSession) => {
+    setShelfMode(true);
+    setShelfPrefix(session.shelfPrefix);
+    setShelfStep("scanning");
+    setAssignments(session.assignments);
+    setBulkQueue(session.bulkQueue);
+    setBulkMode(session.bulkMode);
+    setResumeSession(null);
+    lastScannedRef.current = null;
+    scanCooldownRef.current = false;
+  }, []);
 
   const startShelfMode = () => {
     setShelfMode(true);
     setShelfStep("pickshelf");
     setShelfPrefix("");
     setAssignments([]);
+    setBulkQueue([]);
+    setBulkMode(false);
     setScannedCode(null);
     setLastAssigned(null);
+    setResumeSession(null);
     clearPendingScan();
     lastScannedRef.current = null;
     scanCooldownRef.current = false;
+    clearShelfSession();
   };
 
   const exitShelfMode = () => {
@@ -226,9 +448,12 @@ export function BarcodeAddPart() {
     setShelfScannedCode(null);
     setShelfAssignPicker(false);
     setAssignments([]);
+    setBulkQueue([]);
+    setBulkMode(false);
     clearPendingScan();
     lastScannedRef.current = null;
     scanCooldownRef.current = false;
+    clearShelfSession();
   };
 
   const isCameraActive = !assignPicker && !shelfAssignPicker;
@@ -265,6 +490,32 @@ export function BarcodeAddPart() {
 
   return (
     <View>
+      {/* Resume session banner */}
+      {sessionChecked && resumeSession && !shelfMode ? (
+        <View style={[apStyles.resumeBanner, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}>
+          <Text style={[apStyles.resumeTitle, { color: colors.foreground }]}>
+            Resume shelf session: {resumeSession.shelfPrefix}
+          </Text>
+          <Text style={[apStyles.resumeSub, { color: colors.mutedForeground }]}>
+            {resumeSession.assignments.length} assigned · {resumeSession.bulkQueue.filter(e => e.status === "pending").length} pending in queue
+          </Text>
+          <View style={apStyles.resumeBtns}>
+            <Pressable
+              onPress={() => applyResumeSession(resumeSession)}
+              style={[apStyles.resumeBtn, { backgroundColor: colors.primary }]}
+            >
+              <Text style={[apStyles.resumeBtnText, { color: colors.primaryForeground }]}>Resume session</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => { setResumeSession(null); clearShelfSession(); }}
+              style={[apStyles.resumeBtn, { backgroundColor: colors.muted, borderWidth: 1, borderColor: colors.border }]}
+            >
+              <Text style={[apStyles.resumeBtnText, { color: colors.foreground }]}>Start fresh</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
       {/* Section header */}
       <View style={apStyles.sectionHeader}>
         <Text style={[apStyles.sectionTitle, { color: colors.foreground }]}>
@@ -311,13 +562,33 @@ export function BarcodeAddPart() {
         <View style={{ paddingHorizontal: 16, gap: 10 }}>
           <TextInput
             style={[apStyles.shelfInput, { borderColor: colors.border, backgroundColor: colors.muted, color: colors.foreground }]}
-            placeholder="Shelf prefix (e.g. A-01)"
+            placeholder="Prefix: e.g. 16-37-80 or A-01"
             placeholderTextColor={colors.mutedForeground}
             value={shelfPrefix}
-            onChangeText={setShelfPrefix}
+            onChangeText={(raw) => setShelfPrefix(formatShelfPrefix(raw))}
             autoCapitalize="characters"
             autoCorrect={false}
+            keyboardType="default"
           />
+
+          {/* Shelf completion stats */}
+          {shelfStats && shelfPrefix.trim().length > 0 ? (
+            <View style={[apStyles.statsRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[apStyles.statsText, { color: colors.foreground }]}>
+                <Text style={{ fontFamily: "Inter_700Bold" }}>{shelfStats.withBarcode}</Text>
+                <Text style={{ color: colors.mutedForeground }}> / {shelfStats.total} items have barcodes</Text>
+              </Text>
+              {shelfStats.total > 0 ? (
+                <View style={[apStyles.statsBar, { backgroundColor: colors.border }]}>
+                  <View style={[apStyles.statsBarFill, {
+                    backgroundColor: colors.success,
+                    width: `${Math.round((shelfStats.withBarcode / shelfStats.total) * 100)}%` as any,
+                  }]} />
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
           {allBinLocations.filter(b => !shelfPrefix || b.toUpperCase().startsWith(shelfPrefix.toUpperCase())).slice(0, 6).map(bin => (
             <Pressable
               key={bin}
@@ -336,6 +607,45 @@ export function BarcodeAddPart() {
               Start Scanning
             </Text>
           </Pressable>
+        </View>
+      ) : null}
+
+      {/* Scanning step: Bulk mode toggle + stats */}
+      {shelfMode && shelfStep === "scanning" ? (
+        <View style={{ paddingHorizontal: 16, paddingBottom: 8, gap: 8 }}>
+          {/* Progress stats */}
+          {shelfStats ? (
+            <View style={[apStyles.statsRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[apStyles.statsText, { color: colors.foreground }]}>
+                <Text style={{ fontFamily: "Inter_700Bold" }}>{shelfStats.withBarcode}</Text>
+                <Text style={{ color: colors.mutedForeground }}> / {shelfStats.total} items have barcodes</Text>
+              </Text>
+              {shelfStats.total > 0 ? (
+                <View style={[apStyles.statsBar, { backgroundColor: colors.border }]}>
+                  <View style={[apStyles.statsBarFill, {
+                    backgroundColor: colors.success,
+                    width: `${Math.round((shelfStats.withBarcode / shelfStats.total) * 100)}%` as any,
+                  }]} />
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/* Bulk mode toggle */}
+          <View style={[apStyles.bulkToggleRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[apStyles.bulkToggleLabel, { color: colors.foreground }]}>Bulk Scan mode</Text>
+              <Text style={[apStyles.bulkToggleHint, { color: colors.mutedForeground }]}>
+                Queue scans; assign one at a time. Camera stays live.
+              </Text>
+            </View>
+            <Switch
+              value={bulkMode}
+              onValueChange={setBulkMode}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor={bulkMode ? colors.primaryForeground : colors.mutedForeground}
+            />
+          </View>
         </View>
       ) : null}
 
@@ -368,6 +678,84 @@ export function BarcodeAddPart() {
               </Pressable>
             </>
           ) : null}
+          {shelfMode && shelfStep === "scanning" && bulkMode ? (
+            <View style={[apStyles.bulkModeBadge, { backgroundColor: colors.primary }]}>
+              <Text style={[apStyles.bulkModeBadgeText, { color: colors.primaryForeground }]}>BULK</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* Bulk queue list */}
+      {shelfMode && shelfStep === "scanning" && bulkQueue.length > 0 ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <Text style={[apStyles.completedLabel, { color: colors.mutedForeground }]}>
+              QUEUE ({bulkQueue.filter(e => e.status === "pending").length} pending)
+            </Text>
+            <Pressable
+              onPress={assignNextFromQueue}
+              disabled={!bulkQueue.some(e => e.status === "pending")}
+              style={[apStyles.assignNextBtn, {
+                backgroundColor: bulkQueue.some(e => e.status === "pending") ? colors.primary : colors.muted,
+              }]}
+            >
+              <Text style={[apStyles.assignNextBtnText, {
+                color: bulkQueue.some(e => e.status === "pending") ? colors.primaryForeground : colors.mutedForeground,
+              }]}>
+                Assign next
+              </Text>
+            </Pressable>
+          </View>
+          {bulkQueue.map((entry) => {
+            const isPending = entry.status === "pending";
+            const isAssigned = entry.status === "assigned";
+            const isSkipped = entry.status === "skipped";
+            const statusColor = isAssigned ? colors.success : isSkipped ? colors.mutedForeground : colors.primary;
+            const statusLabel = isAssigned ? "Assigned" : isSkipped ? "Skipped" : "Pending";
+            return (
+              <View
+                key={entry.barcode}
+                style={[apStyles.logRow, {
+                  backgroundColor: colors.card,
+                  borderColor: isAssigned ? colors.success + "44" : colors.border,
+                  opacity: isSkipped ? 0.6 : 1,
+                }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[apStyles.logBarcode, { color: colors.foreground, fontFamily: "Inter_500Medium", fontSize: 13 }]}>
+                    {entry.barcode}
+                  </Text>
+                  <Text style={[apStyles.logVendor, { color: statusColor }]}>{statusLabel}</Text>
+                </View>
+                {isPending ? (
+                  <>
+                    <Pressable
+                      onPress={() => {
+                        setShelfScannedCode(entry.barcode);
+                        setShelfAssignPicker(true);
+                      }}
+                      style={[apStyles.undoBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}
+                    >
+                      <Text style={[apStyles.undoBtnText, { color: colors.primary }]}>Assign</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => skipQueueItem(entry.barcode)}
+                      style={[apStyles.undoBtn, { backgroundColor: colors.muted, borderColor: colors.border, marginLeft: 4 }]}
+                    >
+                      <Text style={[apStyles.undoBtnText, { color: colors.mutedForeground }]}>Skip</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <View style={[apStyles.logBadge, { backgroundColor: isAssigned ? colors.success + "22" : colors.muted }]}>
+                    <Text style={[apStyles.logBadgeText, { color: statusColor, fontSize: 11 }]}>
+                      {isAssigned ? "✓" : "—"}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
         </View>
       ) : null}
 
@@ -401,7 +789,7 @@ export function BarcodeAddPart() {
           </Text>
           {assignments.map((a, i) => (
             <View
-              key={i}
+              key={`${a.barcode}-${i}`}
               style={[apStyles.logRow, { backgroundColor: colors.card, borderColor: colors.border }]}
             >
               <View style={{ flex: 1 }}>
@@ -411,6 +799,12 @@ export function BarcodeAddPart() {
                 </Text>
                 <Text style={[apStyles.logBarcode, { color: colors.mutedForeground }]}>{a.barcode}</Text>
               </View>
+              <Pressable
+                onPress={() => handleUndoAssignment(a, i)}
+                style={[apStyles.undoBtn, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "33" }]}
+              >
+                <Text style={[apStyles.undoBtnText, { color: colors.destructive }]}>Undo</Text>
+              </Pressable>
               <View style={[apStyles.logBadge, { backgroundColor: colors.success + "22" }]}>
                 <Text style={[apStyles.logBadgeText, { color: colors.success }]}>✓</Text>
               </View>
@@ -468,6 +862,24 @@ const apStyles = StyleSheet.create({
     borderRadius: 8,
   },
   permBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  resumeBanner: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    gap: 4,
+  },
+  resumeTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  resumeSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  resumeBtns: { flexDirection: "row", gap: 8, marginTop: 10 },
+  resumeBtn: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  resumeBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   sectionHeader: {
     paddingHorizontal: 16,
     paddingTop: 20,
@@ -496,6 +908,35 @@ const apStyles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter_400Regular",
   },
+  statsRow: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  statsText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  statsBar: {
+    height: 4,
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  statsBarFill: {
+    height: "100%",
+    borderRadius: 2,
+    minWidth: 2,
+  },
+  bulkToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  bulkToggleLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  bulkToggleHint: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
   binChip: {
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -553,6 +994,21 @@ const apStyles = StyleSheet.create({
     borderRadius: 22,
   },
   captureBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  bulkModeBadge: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  bulkModeBadgeText: { fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 1 },
+  assignNextBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  assignNextBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   errorBanner: {
     marginHorizontal: 16,
     marginTop: 10,
@@ -589,11 +1045,18 @@ const apStyles = StyleSheet.create({
     borderWidth: 1,
     padding: 10,
     marginBottom: 6,
-    gap: 10,
+    gap: 8,
   },
   logCatalog: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   logVendor: { fontSize: 13, fontFamily: "Inter_400Regular" },
   logBarcode: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  undoBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  undoBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   logBadge: {
     width: 26,
     height: 26,

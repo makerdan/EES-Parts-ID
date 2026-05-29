@@ -687,6 +687,22 @@ export default function SearchScreen() {
               />
             </View>
 
+            {/* Scan sound row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Scan sound</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Play a chime on each successful barcode assignment.
+                </Text>
+              </View>
+              <Switch
+                value={settings.scanSound}
+                onValueChange={v => updateSetting("scanSound", v)}
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor={settings.scanSound ? colors.primaryForeground : colors.mutedForeground}
+              />
+            </View>
+
             {/* Text size row */}
             <View style={[styles.settingsRow, { borderColor: colors.border }]}>
               <View style={{ flex: 1 }}>

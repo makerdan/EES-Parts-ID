@@ -33,6 +33,7 @@ export type AppSettings = {
   defaultConfidenceThreshold: number;
   themeMode: ThemeMode;
   shelfViewEnabled: boolean;
+  scanSound: boolean;
 };
 export type ToastVariant = "info" | "success" | "error";
 
@@ -41,6 +42,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultConfidenceThreshold: 50,
   themeMode: "system",
   shelfViewEnabled: true,
+  scanSound: true,
 };
 
 const VALID_TEXT_SIZES: TextSize[] = ["small", "normal", "large"];
