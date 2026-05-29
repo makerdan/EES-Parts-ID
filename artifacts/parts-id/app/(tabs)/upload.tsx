@@ -1108,7 +1108,7 @@ export default function UploadScreen() {
                 ]}
               >
                 <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
-                  {t === "import" ? "Import" : t === "enrichment" ? `Enrich (${inventoryTotal})` : t === "addpart" ? "Add Part" : "Query"}
+                  {t === "import" ? "Import" : t === "enrichment" ? `Enrich (${inventoryTotal})` : t === "addpart" ? "Add Part / Barcode" : "Query"}
                 </Text>
               </Pressable>
             ))}
