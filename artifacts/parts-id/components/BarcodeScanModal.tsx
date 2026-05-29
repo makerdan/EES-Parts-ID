@@ -23,6 +23,8 @@ interface BarcodeScanModalProps {
 
 type ScanPhase = "idle" | "looking" | "found" | "notfound" | "offline_miss" | "error";
 
+const SCAN_DELAY_MS = 1500;
+
 export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModalProps) {
   const colors = useColors();
   const [permission, requestPermission] = useCameraPermissions();
@@ -32,23 +34,36 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
   const { addEntry } = useScanHistory();
   const lastScannedRef = useRef<string | null>(null);
   const cooldownRef = useRef(false);
+  const [pendingCode, setPendingCode] = useState<string | null>(null);
+  const pendingCodeRef = useRef<string | null>(null);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingCommitRef = useRef<(() => void) | null>(null);
+
+  const clearPendingScan = useCallback(() => {
+    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
+    pendingCommitRef.current = null;
+    pendingCodeRef.current = null;
+    setPendingCode(null);
+  }, []);
 
   const resetScan = useCallback(() => {
     setScanPhase("idle");
     lastScannedRef.current = null;
     cooldownRef.current = false;
-  }, []);
+    clearPendingScan();
+  }, [clearPendingScan]);
 
   useEffect(() => {
     if (!visible) {
       setScanPhase("idle");
       lastScannedRef.current = null;
       cooldownRef.current = false;
+      clearPendingScan();
     }
-  }, [visible]);
+  }, [visible, clearPendingScan]);
 
   const handleBarcodeScanned = useCallback(
-    async (result: BarcodeScanningResult) => {
+    (result: BarcodeScanningResult) => {
       // Reject scans that originate outside the viewfinder square
       const { width: cw, height: ch } = cameraViewSizeRef.current;
       if (cw > 0 && ch > 0) {
@@ -72,67 +87,89 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
         if (cx < vfL || cx > vfR || cy < vfT || cy > vfB) return;
       }
       const code = result.data;
-      if (cooldownRef.current || code === lastScannedRef.current) return;
-      lastScannedRef.current = code;
-      cooldownRef.current = true;
-      setTimeout(() => { cooldownRef.current = false; }, 2500);
+      if (cooldownRef.current || scanPhase !== "idle") return;
+      if (pendingCodeRef.current === code) return;
 
-      setScanPhase("looking");
+      // New or different barcode — restart pending countdown
+      clearPendingScan();
+      pendingCodeRef.current = code;
+      setPendingCode(code);
 
-      try {
-        const item = await lookupByBarcode(encodeURIComponent(code));
-        setScanPhase("found");
-        addEntry({
-          barcode: code,
-          found: true,
-          itemId: item.id,
-          catalog: item.catalog,
-          vendor: item.vendor,
-          timestamp: new Date().toISOString(),
-        });
-        setTimeout(() => {
-          onFound(item, code, false);
-          onClose();
-        }, 500);
-      } catch (err: unknown) {
-        const status =
-          err && typeof err === "object" && "status" in err
-            ? (err as { status: number }).status
-            : null;
-        if (status === 404) {
-          setScanPhase("notfound");
-          addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
-          setTimeout(resetScan, 2200);
-        } else if (status === null) {
-          const offlineItem = await lookupByBarcodeOffline(code);
-          if (offlineItem) {
-            setScanPhase("found");
-            addEntry({
-              barcode: code,
-              found: true,
-              itemId: offlineItem.id,
-              catalog: offlineItem.catalog,
-              vendor: offlineItem.vendor,
-              timestamp: new Date().toISOString(),
-            });
-            setTimeout(() => {
-              onFound(offlineItem, code, true);
-              onClose();
-            }, 500);
+      const doCommit = async () => {
+        pendingCommitRef.current = null;
+        pendingCodeRef.current = null;
+        setPendingCode(null);
+        lastScannedRef.current = code;
+        cooldownRef.current = true;
+        setTimeout(() => { cooldownRef.current = false; }, 2500);
+
+        setScanPhase("looking");
+
+        try {
+          const item = await lookupByBarcode(encodeURIComponent(code));
+          setScanPhase("found");
+          addEntry({
+            barcode: code,
+            found: true,
+            itemId: item.id,
+            catalog: item.catalog,
+            vendor: item.vendor,
+            timestamp: new Date().toISOString(),
+          });
+          setTimeout(() => {
+            onFound(item, code, false);
+            onClose();
+          }, 500);
+        } catch (err: unknown) {
+          const status =
+            err && typeof err === "object" && "status" in err
+              ? (err as { status: number }).status
+              : null;
+          if (status === 404) {
+            setScanPhase("notfound");
+            addEntry({ barcode: code, found: false, timestamp: new Date().toISOString() });
+            setTimeout(resetScan, 2200);
+          } else if (status === null) {
+            const offlineItem = await lookupByBarcodeOffline(code);
+            if (offlineItem) {
+              setScanPhase("found");
+              addEntry({
+                barcode: code,
+                found: true,
+                itemId: offlineItem.id,
+                catalog: offlineItem.catalog,
+                vendor: offlineItem.vendor,
+                timestamp: new Date().toISOString(),
+              });
+              setTimeout(() => {
+                onFound(offlineItem, code, true);
+                onClose();
+              }, 500);
+            } else {
+              setScanPhase("offline_miss");
+              setTimeout(resetScan, 2500);
+            }
           } else {
-            setScanPhase("offline_miss");
-            setTimeout(resetScan, 2500);
+            setScanPhase("error");
+            setTimeout(resetScan, 2000);
           }
-        } else {
-          setScanPhase("error");
-          setTimeout(resetScan, 2000);
         }
-      }
+      };
+      pendingCommitRef.current = doCommit;
+      pendingTimerRef.current = setTimeout(doCommit, SCAN_DELAY_MS);
     },
-    [addEntry, onFound, onClose, resetScan],
+    [addEntry, onFound, onClose, resetScan, clearPendingScan, scanPhase],
   );
 
+  const captureNow = useCallback(() => {
+    const commit = pendingCommitRef.current;
+    if (!commit) return;
+    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
+    void commit();
+  }, []);
+
   const statusLabel =
+    pendingCode ? "Hold steady…" :
     scanPhase === "looking" ? "Looking up…" :
     scanPhase === "found" ? "Found — opening result…" :
     scanPhase === "notfound" ? "Barcode not in inventory" :
@@ -141,6 +178,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
     "Point camera at a barcode";
 
   const statusBg =
+    pendingCode ? "rgba(0,0,0,0.73)" :
     scanPhase === "found" ? colors.success + "cc" :
     scanPhase === "notfound" || scanPhase === "offline_miss" ? colors.warning + "cc" :
     scanPhase === "error" ? colors.destructive + "cc" :
@@ -221,6 +259,11 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
                 ) : null}
                 <Text style={scanStyles.statusText}>{statusLabel}</Text>
               </View>
+              {pendingCode ? (
+                <Pressable onPress={captureNow} style={[scanStyles.captureBtn, { backgroundColor: colors.primary }]}>
+                  <Text style={[scanStyles.captureBtnText, { color: colors.primaryForeground }]}>✓ Capture</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             {isTerminal ? (
@@ -282,4 +325,13 @@ const scanStyles = StyleSheet.create({
     paddingVertical: 14,
   },
   statusText: { color: "#fff", fontSize: 14, fontFamily: "Inter_500Medium" },
+  captureBtn: {
+    position: "absolute",
+    bottom: 54,
+    alignSelf: "center",
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 24,
+  },
+  captureBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
 });

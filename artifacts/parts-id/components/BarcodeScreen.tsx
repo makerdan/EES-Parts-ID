@@ -97,6 +97,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const pendingCodeRef = useRef<string | null>(null);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingCommitRef = useRef<(() => Promise<void>) | null>(null);
 
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const { history, addEntry, clear: clearHistory } = useScanHistory();
@@ -177,7 +178,8 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
         }
       }, 1000);
 
-      pendingTimerRef.current = setTimeout(async () => {
+      const doCommit = async () => {
+        pendingCommitRef.current = null;
         pendingCodeRef.current = null;
         setPendingCode(null);
         setScanDelaySeconds(null);
@@ -220,10 +222,20 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           setScanError(resolution.message);
           setScanPhase("idle");
         }
-      }, SCAN_DELAY_MS);
+      };
+      pendingCommitRef.current = doCommit;
+      pendingTimerRef.current = setTimeout(doCommit, SCAN_DELAY_MS);
     },
     [scannedCode, addEntry, scanPhase, clearPendingScan],
   );
+
+  const captureNow = useCallback(() => {
+    const commit = pendingCommitRef.current;
+    if (!commit) return;
+    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
+    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+    void commit();
+  }, []);
 
   const handleRecentTap = useCallback(async (entry: ScanEntry) => {
     if (!entry.found) return;
@@ -366,11 +378,16 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                 <Text style={styles.scanStatusText}>Looking up…</Text>
               </View>
             ) : pendingCode ? (
-              <View style={[styles.scanStatus, { backgroundColor: "rgba(0,0,0,0.73)" }]}>
-                <Text style={styles.scanStatusText}>
-                  Hold steady… {scanDelaySeconds != null && scanDelaySeconds > 0 ? `${scanDelaySeconds}s` : ""}
-                </Text>
-              </View>
+              <>
+                <View style={[styles.scanStatus, { backgroundColor: "rgba(0,0,0,0.73)" }]}>
+                  <Text style={styles.scanStatusText}>
+                    Hold steady… {scanDelaySeconds != null && scanDelaySeconds > 0 ? `${scanDelaySeconds}s` : ""}
+                  </Text>
+                </View>
+                <Pressable onPress={captureNow} style={[styles.captureBtn, { backgroundColor: colors.primary }]}>
+                  <Text style={[styles.captureBtnText, { color: colors.primaryForeground }]}>✓ Capture</Text>
+                </Pressable>
+              </>
             ) : scanPhase === "idle" ? (
               <View style={[styles.scanStatus, { backgroundColor: "rgba(0,0,0,0.53)" }]}>
                 <Text style={styles.scanStatusText}>Point camera at a barcode</Text>
@@ -699,6 +716,15 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1 },
+  captureBtn: {
+    position: "absolute",
+    bottom: 48,
+    alignSelf: "center",
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 24,
+  },
+  captureBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
   scannedCode: { fontSize: 12, fontFamily: "Inter_400Regular", marginBottom: 8 },
   rescanBtn: {
     paddingHorizontal: 10,

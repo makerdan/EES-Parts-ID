@@ -49,6 +49,7 @@ export function BarcodeAddPart() {
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const pendingCodeRef = useRef<string | null>(null);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingCommitRef = useRef<(() => void) | null>(null);
   const lastScannedRef = useRef<string | null>(null);
   const scanCooldownRef = useRef(false);
 
@@ -76,6 +77,7 @@ export function BarcodeAddPart() {
 
   const clearPendingScan = useCallback(() => {
     if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
+    pendingCommitRef.current = null;
     pendingCodeRef.current = null;
     setPendingCode(null);
   }, []);
@@ -112,7 +114,8 @@ export function BarcodeAddPart() {
       pendingCodeRef.current = code;
       setPendingCode(code);
 
-      pendingTimerRef.current = setTimeout(() => {
+      const doCommit = () => {
+        pendingCommitRef.current = null;
         pendingCodeRef.current = null;
         setPendingCode(null);
 
@@ -132,10 +135,19 @@ export function BarcodeAddPart() {
         setTimeout(() => { scanCooldownRef.current = false; }, 2000);
         setScannedCode(code);
         setAssignPicker(true);
-      }, SCAN_DELAY_MS);
+      };
+      pendingCommitRef.current = doCommit;
+      pendingTimerRef.current = setTimeout(doCommit, SCAN_DELAY_MS);
     },
     [shelfMode, shelfStep, clearPendingScan],
   );
+
+  const captureNow = useCallback(() => {
+    const commit = pendingCommitRef.current;
+    if (!commit) return;
+    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
+    commit();
+  }, []);
 
   const handleAssign = useCallback(
     async (item: InventoryItem) => {
@@ -346,10 +358,15 @@ export function BarcodeAddPart() {
             <View style={[apStyles.viewfinderFrame, { borderColor: colors.primary }]} />
           </View>
           {pendingCode ? (
-            <View style={[apStyles.scanStatus, { backgroundColor: "rgba(0,0,0,0.67)" }]}>
-              <ActivityIndicator color={colors.primaryForeground} size="small" />
-              <Text style={apStyles.scanStatusText}>Scanning…</Text>
-            </View>
+            <>
+              <View style={[apStyles.scanStatus, { backgroundColor: "rgba(0,0,0,0.67)" }]}>
+                <ActivityIndicator color={colors.primaryForeground} size="small" />
+                <Text style={apStyles.scanStatusText}>Scanning…</Text>
+              </View>
+              <Pressable onPress={captureNow} style={[apStyles.captureBtn, { backgroundColor: colors.primary }]}>
+                <Text style={[apStyles.captureBtnText, { color: colors.primaryForeground }]}>✓ Capture</Text>
+              </Pressable>
+            </>
           ) : null}
         </View>
       ) : null}
@@ -527,6 +544,15 @@ const apStyles = StyleSheet.create({
     borderRadius: 20,
   },
   scanStatusText: { color: "#fff", fontSize: 13, fontFamily: "Inter_500Medium" },
+  captureBtn: {
+    position: "absolute",
+    bottom: 48,
+    alignSelf: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 22,
+  },
+  captureBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
   errorBanner: {
     marginHorizontal: 16,
     marginTop: 10,
