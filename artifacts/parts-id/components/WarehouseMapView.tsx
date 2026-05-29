@@ -353,12 +353,29 @@ export function WarehouseMapView({
     .onUpdate((e) => {
       const newScale = clamp(savedScale.value * e.scale, MIN_SCALE, MAX_SCALE);
       scale.value = newScale;
+
+      // Focal point in container-center-relative coordinates.
+      // e.focalX/Y are in container-local space (0,0 = top-left of the
+      // GestureDetector view), so subtract half the container size to get
+      // the offset from the view's visual centre (where translateX/Y=0).
+      const focalX = e.focalX - containerWV.value / 2;
+      const focalY = e.focalY - containerHV.value / 2;
+
+      // Scale ratio relative to the baseline captured at gesture start.
+      const ratio = savedScale.value > 0 ? newScale / savedScale.value : 1;
+
+      // Translate so the map point under the pinch focal point stays fixed:
+      //   newTX = focalX - (focalX - savedTX) * ratio
+      //         = focalX * (1 - ratio) + savedTX * ratio
+      const newTX = focalX * (1 - ratio) + savedTX.value * ratio;
+      const newTY = focalY * (1 - ratio) + savedTY.value * ratio;
+
       const scaledW = svgRenderWV.value * newScale;
       const scaledH = svgRenderHV.value * newScale;
       const maxX = Math.max(0, (scaledW - containerWV.value) / 2);
       const maxY = Math.max(0, (scaledH - containerHV.value) / 2);
-      translateX.value = clamp(savedTX.value, -maxX, maxX);
-      translateY.value = clamp(savedTY.value, -maxY, maxY);
+      translateX.value = clamp(newTX, -maxX, maxX);
+      translateY.value = clamp(newTY, -maxY, maxY);
     })
     .onEnd(() => {
       savedScale.value = scale.value;
