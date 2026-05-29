@@ -1917,11 +1917,11 @@ export default function UploadScreen() {
             </View>
           ) : tab === "addpart" ? (
             <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
+              <BarcodeAddPart />
               <AddPartForm
                 adminToken={adminToken}
                 onSuccess={() => { inventoryQuery.refetch(); }}
               />
-              <BarcodeAddPart />
             </ScrollView>
           ) : (
             /* ── Query tab ───────────────────────────────────────────── */
