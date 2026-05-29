@@ -1053,7 +1053,7 @@ export default function UploadScreen() {
     import: "Import",
     enrichment: `Enrich (${inventoryTotal})`,
     addpart: "Add Part / Barcode",
-    query: "Query",
+    query: "Ask Database",
   };
 
   return (
