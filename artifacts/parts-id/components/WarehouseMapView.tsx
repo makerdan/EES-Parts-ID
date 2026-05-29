@@ -415,6 +415,24 @@ export function WarehouseMapView({
     ],
   }));
 
+  // Overscale compensating transform — derived from svgRenderWV/svgRenderHV so
+  // it updates synchronously on the UI thread in the same frame as onLayout,
+  // preventing the one-render misalignment gap that appears on device rotation.
+  const overscaleStyle = useAnimatedStyle(() => {
+    const rw = svgRenderWV.value;
+    const rh = svgRenderHV.value;
+    return {
+      position: "absolute",
+      width: SVG_VIEWBOX_W,
+      height: SVG_VIEWBOX_H,
+      transform: [
+        { translateX: (rw - SVG_VIEWBOX_W) / 2 },
+        { translateY: (rh - SVG_VIEWBOX_H) / 2 },
+        { scale: rw / SVG_VIEWBOX_W },
+      ],
+    };
+  });
+
   // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────
   const zoneOverlays = useMemo(() => {
     if (!zones.length) return null;
@@ -522,30 +540,20 @@ export function WarehouseMapView({
               // so that at zoom=1 it looks identical to a screen-width render, but the
               // raster has enough pixels to stay crisp at any zoom up to MAX_SCALE.
               <View style={{ width: svgRenderW, height: svgRenderH }}>
-                <View
+                {/* Animated.View so the compensating transform updates on the
+                    UI thread in the same frame as onLayout — no flicker on
+                    device rotation or window resize. The shared values
+                    svgRenderWV/svgRenderHV are written synchronously inside
+                    onLayout before the JS state setters fire, so this view
+                    never lags by one render. */}
+                <Animated.View
                   style={[
-                    {
-                      position: "absolute",
-                      width: SVG_VIEWBOX_W,
-                      height: SVG_VIEWBOX_H,
-                      // Scale around the view's center (RN default origin).
-                      // The center of this overscale view in parent coords is
-                      // (SVG_VIEWBOX_W/2, SVG_VIEWBOX_H/2).  After scaling by
-                      // s = svgRenderW/SVG_VIEWBOX_W the visual size is svgRenderW,
-                      // but the visual left edge lands at SVG_VIEWBOX_W/2 - svgRenderW/2.
-                      // The leading translateX/Y corrects that offset so the visual
-                      // top-left aligns with the parent's top-left corner.
-                      transform: [
-                        { translateX: (svgRenderW - SVG_VIEWBOX_W) / 2 },
-                        { translateY: (svgRenderH - SVG_VIEWBOX_H) / 2 },
-                        { scale: svgRenderW / SVG_VIEWBOX_W },
-                      ],
-                    },
+                    overscaleStyle,
                     isDark && styles.svgDarkFilter,
                   ]}
                 >
                   <SvgUri uri={svgUri} width={SVG_VIEWBOX_W} height={SVG_VIEWBOX_H} />
-                </View>
+                </Animated.View>
               </View>
             ) : !svgLoading ? (
               <View
