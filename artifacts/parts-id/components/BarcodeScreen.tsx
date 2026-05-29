@@ -291,19 +291,18 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
+      {onClose ? (
+        <View style={[styles.backBar, { borderBottomColor: colors.border }]}>
+          <Pressable onPress={onClose} style={styles.backBtn} hitSlop={8}>
+            <Text style={[styles.backBtnText, { color: colors.primary }]}>‹ Back to Photo ID</Text>
+          </Pressable>
+        </View>
+      ) : null}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={{ flex: 1 }}>
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>Barcode</Text>
           <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Scan a barcode to look up parts</Text>
         </View>
-        {onClose ? (
-          <Pressable
-            onPress={onClose}
-            style={[styles.shelfBtn, { backgroundColor: colors.muted, borderColor: colors.border, marginLeft: 6 }]}
-          >
-            <Text style={[styles.shelfBtnText, { color: colors.foreground }]}>Close</Text>
-          </Pressable>
-        ) : null}
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
@@ -596,6 +595,20 @@ const styles = StyleSheet.create({
   permText: { fontSize: 15, fontFamily: "Inter_400Regular", textAlign: "center", marginBottom: 20, lineHeight: 22 },
   permBtn: { paddingHorizontal: 24, paddingVertical: 14, borderRadius: 10 },
   permBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  backBar: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 0,
+  },
+  backBtn: {
+    alignSelf: "flex-start",
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
+  backBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+  },
   shelfBtn: {
     paddingHorizontal: 12,
     paddingVertical: 7,
