@@ -402,13 +402,19 @@ export function WarehouseMapView({
 
   // ── Programmatic zoom helpers (zoom buttons) ────────────────────────────────
   const applyZoom = useCallback((targetScale: number) => {
+    const oldScale = savedScale.value;
     const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, targetScale));
     const scaledW = svgRenderW * newScale;
     const scaledH = svgRenderH * newScale;
     const maxX = Math.max(0, (scaledW - containerW) / 2);
     const maxY = Math.max(0, (scaledH - containerH) / 2);
-    const newTX = Math.max(-maxX, Math.min(maxX, translateX.value));
-    const newTY = Math.max(-maxY, Math.min(maxY, translateY.value));
+    // Scale the existing translation by the zoom ratio so the visible center
+    // stays anchored. At zoom=1 the map center is at tx=0; as the user pans,
+    // tx/ty drift. Multiplying by newScale/oldScale keeps the same map point
+    // at the screen centre both before and after the zoom step.
+    const ratio = oldScale > 0 ? newScale / oldScale : 1;
+    const newTX = Math.max(-maxX, Math.min(maxX, translateX.value * ratio));
+    const newTY = Math.max(-maxY, Math.min(maxY, translateY.value * ratio));
     scale.value = withSpring(newScale, { damping: 18, stiffness: 200 });
     translateX.value = withSpring(newTX, { damping: 18, stiffness: 200 });
     translateY.value = withSpring(newTY, { damping: 18, stiffness: 200 });
