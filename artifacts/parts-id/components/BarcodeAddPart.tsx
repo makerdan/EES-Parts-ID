@@ -36,6 +36,7 @@ type BulkQueueStatus = "pending" | "assigned" | "skipped";
 interface BulkQueueEntry {
   barcode: string;
   status: BulkQueueStatus;
+  skippedAt?: number;
 }
 
 type ShelfSession = {
@@ -142,9 +143,6 @@ export function BarcodeAddPart() {
   const [shelfAssignPicker, setShelfAssignPicker] = useState(false);
   const [assignments, setAssignments] = useState<AssignmentEntry[]>([]);
 
-  // Keep a ref to allItems for undo safety (avoids stale closures)
-  const allItemsRef = useRef<typeof allItems>([]);
-
   // Bulk scan mode
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkQueue, setBulkQueue] = useState<BulkQueueEntry[]>([]);
@@ -186,11 +184,6 @@ export function BarcodeAddPart() {
     );
     return { total: matching.length, withBarcode: withBarcode.length };
   }, [shelfPrefix, allItems]);
-
-  // Keep allItemsRef current for undo safety
-  useEffect(() => {
-    allItemsRef.current = allItems;
-  }, [allItems]);
 
   // Load chime on mount
   useEffect(() => {
@@ -409,8 +402,21 @@ export function BarcodeAddPart() {
 
   const skipQueueItem = useCallback((barcode: string) => {
     setBulkQueue(prev =>
-      prev.map(e => e.barcode === barcode ? { ...e, status: "skipped" as BulkQueueStatus } : e)
+      prev.map(e => e.barcode === barcode ? { ...e, status: "skipped" as BulkQueueStatus, skippedAt: Date.now() } : e)
     );
+  }, []);
+
+  const retryQueueItem = useCallback((barcode: string) => {
+    setBulkQueue(prev => {
+      const entry = prev.find(e => e.barcode === barcode);
+      if (!entry) return prev;
+      const without = prev.filter(e => e.barcode !== barcode);
+      return [{ barcode: entry.barcode, status: "pending" as BulkQueueStatus }, ...without];
+    });
+  }, []);
+
+  const clearSkippedItems = useCallback(() => {
+    setBulkQueue(prev => prev.filter(e => e.status !== "skipped"));
   }, []);
 
   const applyResumeSession = useCallback((session: ShelfSession) => {
@@ -686,8 +692,8 @@ export function BarcodeAddPart() {
         </View>
       ) : null}
 
-      {/* Bulk queue list */}
-      {shelfMode && shelfStep === "scanning" && bulkQueue.length > 0 ? (
+      {/* Bulk queue list — pending and assigned only */}
+      {shelfMode && shelfStep === "scanning" && bulkQueue.some(e => e.status !== "skipped") ? (
         <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <Text style={[apStyles.completedLabel, { color: colors.mutedForeground }]}>
@@ -707,19 +713,17 @@ export function BarcodeAddPart() {
               </Text>
             </Pressable>
           </View>
-          {bulkQueue.map((entry) => {
+          {bulkQueue.filter(e => e.status !== "skipped").map((entry) => {
             const isPending = entry.status === "pending";
             const isAssigned = entry.status === "assigned";
-            const isSkipped = entry.status === "skipped";
-            const statusColor = isAssigned ? colors.success : isSkipped ? colors.mutedForeground : colors.primary;
-            const statusLabel = isAssigned ? "Assigned" : isSkipped ? "Skipped" : "Pending";
+            const statusColor = isAssigned ? colors.success : colors.primary;
+            const statusLabel = isAssigned ? "Assigned" : "Pending";
             return (
               <View
                 key={entry.barcode}
                 style={[apStyles.logRow, {
                   backgroundColor: colors.card,
                   borderColor: isAssigned ? colors.success + "44" : colors.border,
-                  opacity: isSkipped ? 0.6 : 1,
                 }]}
               >
                 <View style={{ flex: 1 }}>
@@ -747,10 +751,8 @@ export function BarcodeAddPart() {
                     </Pressable>
                   </>
                 ) : (
-                  <View style={[apStyles.logBadge, { backgroundColor: isAssigned ? colors.success + "22" : colors.muted }]}>
-                    <Text style={[apStyles.logBadgeText, { color: statusColor, fontSize: 11 }]}>
-                      {isAssigned ? "✓" : "—"}
-                    </Text>
+                  <View style={[apStyles.logBadge, { backgroundColor: colors.success + "22" }]}>
+                    <Text style={[apStyles.logBadgeText, { color: colors.success, fontSize: 11 }]}>✓</Text>
                   </View>
                 )}
               </View>
@@ -810,6 +812,53 @@ export function BarcodeAddPart() {
               </View>
             </View>
           ))}
+        </View>
+      ) : null}
+
+      {/* Skipped barcodes section */}
+      {shelfMode && shelfStep === "scanning" && bulkQueue.some(e => e.status === "skipped") ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <Text style={[apStyles.completedLabel, { color: colors.mutedForeground }]}>
+              SKIPPED ({bulkQueue.filter(e => e.status === "skipped").length})
+            </Text>
+            <Pressable
+              onPress={clearSkippedItems}
+              style={[apStyles.clearSkippedBtn, { borderColor: colors.border }]}
+            >
+              <Text style={[apStyles.clearSkippedBtnText, { color: colors.mutedForeground }]}>Clear skipped</Text>
+            </Pressable>
+          </View>
+          {bulkQueue.filter(e => e.status === "skipped").map((entry) => {
+            const timeLabel = entry.skippedAt
+              ? new Date(entry.skippedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+              : "";
+            return (
+              <View
+                key={entry.barcode}
+                style={[apStyles.logRow, {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  opacity: 0.85,
+                }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[apStyles.logBarcode, { color: colors.foreground, fontFamily: "Inter_500Medium", fontSize: 13 }]}>
+                    {entry.barcode}
+                  </Text>
+                  <Text style={[apStyles.logVendor, { color: colors.mutedForeground }]}>
+                    {timeLabel ? `Skipped at ${timeLabel}` : "Skipped"}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => retryQueueItem(entry.barcode)}
+                  style={[apStyles.undoBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}
+                >
+                  <Text style={[apStyles.undoBtnText, { color: colors.primary }]}>Retry</Text>
+                </Pressable>
+              </View>
+            );
+          })}
         </View>
       ) : null}
 
@@ -1065,4 +1114,11 @@ const apStyles = StyleSheet.create({
     justifyContent: "center",
   },
   logBadgeText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  clearSkippedBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  clearSkippedBtnText: { fontSize: 12, fontFamily: "Inter_500Medium" },
 });
