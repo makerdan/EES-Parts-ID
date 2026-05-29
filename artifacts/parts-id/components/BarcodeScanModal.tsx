@@ -26,6 +26,7 @@ type ScanPhase = "idle" | "looking" | "found" | "notfound" | "offline_miss" | "e
 export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModalProps) {
   const colors = useColors();
   const [permission, requestPermission] = useCameraPermissions();
+  const [cameraBypass, setCameraBypass] = useState(false);
   const [scanPhase, setScanPhase] = useState<ScanPhase>("idle");
   const { addEntry } = useScanHistory();
   const lastScannedRef = useRef<string | null>(null);
@@ -146,7 +147,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
           <View style={scanStyles.center}>
             <ActivityIndicator color={colors.primary} />
           </View>
-        ) : !permission.granted ? (
+        ) : !permission.granted && !cameraBypass ? (
           <View style={[scanStyles.center, { gap: 16, padding: 32 }]}>
             <Text style={{ color: colors.foreground, fontSize: 15, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 22 }}>
               Camera access is required for barcode scanning.
@@ -159,20 +160,34 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
                 Allow Camera Access
               </Text>
             </Pressable>
+            <Pressable
+              onPress={() => setCameraBypass(true)}
+              style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border }}
+            >
+              <Text style={{ color: colors.mutedForeground, fontSize: 14, fontFamily: "Inter_500Medium" }}>
+                Skip camera (dev only)
+              </Text>
+            </Pressable>
           </View>
         ) : (
           <>
             <View style={scanStyles.cameraWrapper}>
-              <CameraView
-                style={StyleSheet.absoluteFill}
-                facing="back"
-                barcodeScannerSettings={{
-                  barcodeTypes: ["qr", "ean13", "ean8", "code128", "code39", "pdf417", "upc_a", "upc_e", "aztec", "datamatrix", "itf14"],
-                }}
-                onBarcodeScanned={
-                  scanPhase === "looking" || scanPhase === "found" ? undefined : handleBarcodeScanned
-                }
-              />
+              {!cameraBypass ? (
+                <CameraView
+                  style={StyleSheet.absoluteFill}
+                  facing="back"
+                  barcodeScannerSettings={{
+                    barcodeTypes: ["qr", "ean13", "ean8", "code128", "code39", "pdf417", "upc_a", "upc_e", "aztec", "datamatrix", "itf14"],
+                  }}
+                  onBarcodeScanned={
+                    scanPhase === "looking" || scanPhase === "found" ? undefined : handleBarcodeScanned
+                  }
+                />
+              ) : (
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular" }}>📷 Camera bypassed (dev)</Text>
+                </View>
+              )}
               <View style={[scanStyles.viewfinderOverlay, { pointerEvents: "none" }]}>
                 <View style={[scanStyles.viewfinderFrame, { borderColor: colors.primary }]} />
               </View>
