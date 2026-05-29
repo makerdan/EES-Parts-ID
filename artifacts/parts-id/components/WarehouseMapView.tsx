@@ -16,10 +16,12 @@
  *            plan and the zone rectangles therefore share one SVG viewport;
  *            no separate CSS-scaled layer exists, so there is no rasterisation
  *            blur however far the user zooms in.
- *   Native — <SvgUri> renders the floor plan through the platform's native
- *            vector engine (Core Graphics / Android hardware canvas).  The
- *            Animated.View scale transform triggers a native redraw at the
- *            correct resolution on each frame, so the output is already crisp.
+ *   Native — <SvgUri> is rendered at the SVG's natural viewBox dimensions
+ *            (SVG_VIEWBOX_W × SVG_VIEWBOX_H) via an overscale wrapper, then a
+ *            compensating scale-down transform brings it back to screen size at
+ *            zoom level 1.  When the user zooms in the raster already has
+ *            sufficient pixels so the platform compositor never has to upscale
+ *            a low-resolution texture — no blur at any zoom level up to MAX_SCALE.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -508,18 +510,42 @@ export function WarehouseMapView({
               On web the floor plan is embedded inside the SVG canvas below so
               that both layers share one SVG viewport (no separate CSS-scaled
               div, therefore no rasterisation blur at any zoom level).
-              On native, <SvgUri> renders through the platform's vector engine
-              and the Animated.View transform triggers a native redraw each
-              frame, so there is no persistent rasterised texture to blur. */}
+              On native, <SvgUri> is rendered at the SVG's natural viewBox
+              dimensions (SVG_VIEWBOX_W × SVG_VIEWBOX_H) and a compensating
+              scale-down transform brings it back to screen size.  The
+              platform rasterises at full viewBox resolution, so when the
+              user zooms in there is always enough pixel density — no blur. */}
           {Platform.OS !== "web" ? (
             svgUri ? (
-              <View
-                style={[
-                  { width: svgRenderW, height: svgRenderH },
-                  isDark && styles.svgDarkFilter,
-                ]}
-              >
-                <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
+              // Outer view establishes the layout footprint (screen-width × proportional height).
+              // Inner view is rendered at the SVG's natural dimensions then scaled down
+              // so that at zoom=1 it looks identical to a screen-width render, but the
+              // raster has enough pixels to stay crisp at any zoom up to MAX_SCALE.
+              <View style={{ width: svgRenderW, height: svgRenderH }}>
+                <View
+                  style={[
+                    {
+                      position: "absolute",
+                      width: SVG_VIEWBOX_W,
+                      height: SVG_VIEWBOX_H,
+                      // Scale around the view's center (RN default origin).
+                      // The center of this overscale view in parent coords is
+                      // (SVG_VIEWBOX_W/2, SVG_VIEWBOX_H/2).  After scaling by
+                      // s = svgRenderW/SVG_VIEWBOX_W the visual size is svgRenderW,
+                      // but the visual left edge lands at SVG_VIEWBOX_W/2 - svgRenderW/2.
+                      // The leading translateX/Y corrects that offset so the visual
+                      // top-left aligns with the parent's top-left corner.
+                      transform: [
+                        { translateX: (svgRenderW - SVG_VIEWBOX_W) / 2 },
+                        { translateY: (svgRenderH - SVG_VIEWBOX_H) / 2 },
+                        { scale: svgRenderW / SVG_VIEWBOX_W },
+                      ],
+                    },
+                    isDark && styles.svgDarkFilter,
+                  ]}
+                >
+                  <SvgUri uri={svgUri} width={SVG_VIEWBOX_W} height={SVG_VIEWBOX_H} />
+                </View>
               </View>
             ) : !svgLoading ? (
               <View
