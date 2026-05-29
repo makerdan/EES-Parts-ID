@@ -1781,6 +1781,22 @@ export default function UploadScreen() {
                       </Pressable>
                     </View>
 
+                    {/* AI Log & Inbox */}
+                    <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+                      <Pressable
+                        onPress={() => router.push("/ai-log")}
+                        style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
+                      >
+                        <Text style={[styles.exportCsvText, { color: colors.mutedForeground }]}>🤖 AI Log</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => router.push("/admin-inbox")}
+                        style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
+                      >
+                        <Text style={[styles.exportCsvText, { color: colors.mutedForeground }]}>📬 Inbox</Text>
+                      </Pressable>
+                    </View>
+
                     {/* Quick Enrich */}
                     <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                       <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 Quick Enrich</Text>
@@ -1835,18 +1851,6 @@ export default function UploadScreen() {
                           {inventoryTotal} items total
                         </Text>
                         <View style={styles.inventoryHeaderActions}>
-                          <Pressable
-                            onPress={() => router.push("/ai-log")}
-                            style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-                          >
-                            <Text style={[styles.exportCsvText, { color: colors.mutedForeground }]}>🤖 AI Log</Text>
-                          </Pressable>
-                          <Pressable
-                            onPress={() => router.push("/admin-inbox")}
-                            style={[styles.exportCsvBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-                          >
-                            <Text style={[styles.exportCsvText, { color: colors.mutedForeground }]}>📬 Inbox</Text>
-                          </Pressable>
                           <Pressable
                             onPress={handleExportCsv}
                             disabled={exportPending}
