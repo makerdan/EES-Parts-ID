@@ -227,6 +227,22 @@ export function WarehouseMapView({
       containerHV.value = height;
       svgRenderWV.value = width;
       svgRenderHV.value = rh;
+
+      // After rotation the container dimensions change, so the previously saved
+      // pan offsets may place the map partially off-screen.  Re-clamp them to
+      // the new bounds and animate back with a spring so the correction is
+      // smooth rather than an instant jump.
+      const currentScale = savedScale.value;
+      const scaledW = width * currentScale;
+      const scaledH = rh * currentScale;
+      const maxX = Math.max(0, (scaledW - width) / 2);
+      const maxY = Math.max(0, (scaledH - height) / 2);
+      const newTX = clamp(savedTX.value, -maxX, maxX);
+      const newTY = clamp(savedTY.value, -maxY, maxY);
+      translateX.value = withSpring(newTX, { damping: 18, stiffness: 200 });
+      translateY.value = withSpring(newTY, { damping: 18, stiffness: 200 });
+      savedTX.value = newTX;
+      savedTY.value = newTY;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
