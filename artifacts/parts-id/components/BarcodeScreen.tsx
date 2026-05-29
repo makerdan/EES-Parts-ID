@@ -86,17 +86,9 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const [historyPreviewItem, setHistoryPreviewItem] = useState<InventoryItem | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  // Debounce scans so a single barcode doesn't fire dozens of times
-  const lastScannedRef = useRef<string | null>(null);
-  const scanCooldownRef = useRef(false);
-
-  // Pre-scan delay: hold a barcode steady for SCAN_DELAY_MS before registering
-  const SCAN_DELAY_MS = 2000;
+  // Pending barcode — set when camera detects a barcode, cleared on commit or reset
   const [pendingCode, setPendingCode] = useState<string | null>(null);
-  const [scanDelaySeconds, setScanDelaySeconds] = useState<number | null>(null);
   const pendingCodeRef = useRef<string | null>(null);
-  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingCommitRef = useRef<(() => Promise<void>) | null>(null);
 
   const updateBarcodesMutation = useUpdateItemBarcodes();
@@ -116,13 +108,11 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     });
   }, []);
 
-  // ── Pre-scan delay helpers ────────────────────────────────────────────────────
+  // ── Pending scan helpers ──────────────────────────────────────────────────────
   const clearPendingScan = useCallback(() => {
-    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
-    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+    pendingCommitRef.current = null;
     pendingCodeRef.current = null;
     setPendingCode(null);
-    setScanDelaySeconds(null);
   }, []);
 
   // ── Scan handler ─────────────────────────────────────────────────────────────
@@ -153,44 +143,24 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
         if (cx < vfL || cx > vfR || cy < vfT || cy > vfB) return;
       }
 
-      // Already in a non-idle phase — ignore
+      // Already processing a scan — ignore new detections
       if (scanPhase !== "idle") return;
-      if (scanCooldownRef.current) return;
 
-      // Same barcode already pending — let the existing countdown run
+      // Same barcode already pending — no update needed
       if (pendingCodeRef.current === code) return;
 
-      // New or different barcode — cancel existing countdown and start fresh
-      clearPendingScan();
+      // New or different barcode in frame — update pending
       pendingCodeRef.current = code;
       setPendingCode(code);
-
-      const totalSeconds = Math.round(SCAN_DELAY_MS / 1000);
-      setScanDelaySeconds(totalSeconds);
-      let secondsLeft = totalSeconds;
-
-      countdownIntervalRef.current = setInterval(() => {
-        secondsLeft -= 1;
-        setScanDelaySeconds(secondsLeft);
-        if (secondsLeft <= 0) {
-          clearInterval(countdownIntervalRef.current!);
-          countdownIntervalRef.current = null;
-        }
-      }, 1000);
 
       const doCommit = async () => {
         pendingCommitRef.current = null;
         pendingCodeRef.current = null;
         setPendingCode(null);
-        setScanDelaySeconds(null);
 
-        // Normal lookup mode
         if (code === scannedCode) return;
-        scanCooldownRef.current = true;
-        setTimeout(() => { scanCooldownRef.current = false; }, 2000);
 
         setScannedCode(code);
-        lastScannedRef.current = code;
         setScanPhase("looking");
         setScanError(null);
         setMatchedItem(null);
@@ -224,16 +194,13 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
         }
       };
       pendingCommitRef.current = doCommit;
-      pendingTimerRef.current = setTimeout(doCommit, SCAN_DELAY_MS);
     },
-    [scannedCode, addEntry, scanPhase, clearPendingScan],
+    [scannedCode, addEntry, scanPhase],
   );
 
   const captureNow = useCallback(() => {
     const commit = pendingCommitRef.current;
     if (!commit) return;
-    if (pendingTimerRef.current) { clearTimeout(pendingTimerRef.current); pendingTimerRef.current = null; }
-    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
     void commit();
   }, []);
 
@@ -260,8 +227,6 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     setScanError(null);
     setIsOfflineMatch(false);
     setFuseSyncedAt(null);
-    lastScannedRef.current = null;
-    scanCooldownRef.current = false;
   };
 
   // ── Assign barcode to unrecognised scan ──────────────────────────────────────
@@ -330,6 +295,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   }
 
   const isCameraActive = !showAssignPicker && !barcodeEditItem;
+  const canCapture = scanPhase === "idle" && !!pendingCode;
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
@@ -368,7 +334,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
 
             {/* Viewfinder overlay */}
             <View style={[styles.viewfinderOverlay, { pointerEvents: "none" }]}>
-              <View style={[styles.viewfinderFrame, { borderColor: colors.primary }]} />
+              <View style={[styles.viewfinderFrame, { borderColor: canCapture ? colors.success : colors.primary }]} />
             </View>
 
             {/* Scanning status indicator */}
@@ -377,23 +343,39 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                 <ActivityIndicator color="#fff" size="small" />
                 <Text style={styles.scanStatusText}>Looking up…</Text>
               </View>
-            ) : pendingCode ? (
-              <>
-                <View style={[styles.scanStatus, { backgroundColor: "rgba(0,0,0,0.73)" }]}>
-                  <Text style={styles.scanStatusText}>
-                    Hold steady… {scanDelaySeconds != null && scanDelaySeconds > 0 ? `${scanDelaySeconds}s` : ""}
-                  </Text>
-                </View>
-                <Pressable onPress={captureNow} style={[styles.captureBtn, { backgroundColor: colors.primary }]}>
-                  <Text style={[styles.captureBtnText, { color: colors.primaryForeground }]}>✓ Capture</Text>
-                </Pressable>
-              </>
+            ) : canCapture ? (
+              <View style={[styles.scanStatus, { backgroundColor: colors.success + "cc" }]}>
+                <Text style={styles.scanStatusText}>Barcode detected — tap Scan</Text>
+              </View>
             ) : scanPhase === "idle" ? (
               <View style={[styles.scanStatus, { backgroundColor: "rgba(0,0,0,0.53)" }]}>
-                <Text style={styles.scanStatusText}>Point camera at a barcode</Text>
+                <Text style={styles.scanStatusText}>Aim camera at a barcode</Text>
               </View>
             ) : null}
           </View>
+
+        {/* ── Scan button ────────────────────────────────────────────────────── */}
+        {scanPhase === "idle" ? (
+          <View style={styles.scanBtnRow}>
+            <Pressable
+              onPress={captureNow}
+              disabled={!canCapture}
+              style={[
+                styles.scanBtn,
+                { backgroundColor: canCapture ? colors.primary : colors.muted, borderColor: canCapture ? colors.primary : colors.border },
+              ]}
+            >
+              <Text style={[styles.scanBtnText, { color: canCapture ? colors.primaryForeground : colors.mutedForeground }]}>
+                {canCapture ? "⬤  Scan" : "Scan"}
+              </Text>
+            </Pressable>
+            {canCapture ? (
+              <Text style={[styles.scanBtnHint, { color: colors.mutedForeground }]}>
+                {pendingCode}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* ── Recents ────────────────────────────────────────────────────────── */}
         {history.length > 0 ? (
@@ -706,6 +688,30 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   scanStatusText: { color: "#fff", fontSize: 13, fontFamily: "Inter_500Medium" },
+  scanBtnRow: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    alignItems: "center",
+    gap: 6,
+  },
+  scanBtn: {
+    width: "100%",
+    paddingVertical: 15,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scanBtnText: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.3,
+  },
+  scanBtnHint: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    letterSpacing: 0.2,
+  },
   errorBanner: {
     margin: 16,
     borderRadius: 8,
@@ -716,15 +722,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1 },
-  captureBtn: {
-    position: "absolute",
-    bottom: 48,
-    alignSelf: "center",
-    paddingHorizontal: 22,
-    paddingVertical: 11,
-    borderRadius: 24,
-  },
-  captureBtnText: { fontSize: 14, fontFamily: "Inter_700Bold" },
   scannedCode: { fontSize: 12, fontFamily: "Inter_400Regular", marginBottom: 8 },
   rescanBtn: {
     paddingHorizontal: 10,
@@ -820,4 +817,3 @@ const styles = StyleSheet.create({
   },
   staleCacheNoteText: { fontSize: 12, fontFamily: "Inter_500Medium" },
 });
-
