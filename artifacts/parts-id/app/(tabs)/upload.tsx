@@ -364,6 +364,7 @@ export default function UploadScreen() {
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [tab, setTab] = useState<"import" | "enrichment" | "addpart" | "query">("import");
+  const [addpartScrollY, setAddpartScrollY] = useState(0);
   const [pasteText, setPasteText] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -1916,8 +1917,12 @@ export default function UploadScreen() {
               />
             </View>
           ) : tab === "addpart" ? (
-            <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
-              <BarcodeAddPart />
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: 100 }}
+              scrollEventThrottle={100}
+              onScroll={(e) => setAddpartScrollY(e.nativeEvent.contentOffset.y)}
+            >
+              <BarcodeAddPart scrollY={addpartScrollY} />
               <AddPartForm
                 adminToken={adminToken}
                 onSuccess={() => { inventoryQuery.refetch(); }}

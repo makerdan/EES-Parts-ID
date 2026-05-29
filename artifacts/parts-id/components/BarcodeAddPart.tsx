@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   ActivityIndicator,
+  Dimensions,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,6 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useFocusEffect } from "expo-router";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import { Audio } from "expo-av";
@@ -111,7 +113,11 @@ async function clearShelfSession(): Promise<void> {
   } catch { /* non-fatal */ }
 }
 
-export function BarcodeAddPart() {
+interface BarcodeAddPartProps {
+  scrollY?: number;
+}
+
+export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   "use no memo";
   const colors = useColors();
   const { isAdmin, settings, showToast } = useApp();
@@ -119,7 +125,31 @@ export function BarcodeAddPart() {
 
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraBypass, setCameraBypass] = useState(false);
+  const [cameraStarted, setCameraStarted] = useState(false);
   const cameraViewSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  const cameraWrapperRef = useRef<View>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        setCameraStarted(false);
+      };
+    }, []),
+  );
+
+  // Reset camera when the camera section scrolls off-screen
+  useEffect(() => {
+    if (!cameraStarted) return;
+    const wrapper = cameraWrapperRef.current;
+    if (!wrapper) return;
+    wrapper.measure((_x, _y, _w, h, _pageX, pageY) => {
+      const windowHeight = Dimensions.get("window").height;
+      const isOffScreen = pageY + h < 0 || pageY > windowHeight;
+      if (isOffScreen) {
+        setCameraStarted(false);
+      }
+    });
+  }, [cameraStarted, scrollY]);
 
   // Normal assign state
   const [scannedCode, setScannedCode] = useState<string | null>(null);
@@ -657,38 +687,54 @@ export function BarcodeAddPart() {
 
       {/* Camera viewfinder */}
       {(!shelfMode || shelfStep === "scanning") ? (
-        <View style={apStyles.cameraWrapper} onLayout={(e) => { cameraViewSizeRef.current = e.nativeEvent.layout; }}>
-          {!cameraBypass ? (
-            <CameraView
-              style={apStyles.camera}
-              facing="back"
-              barcodeScannerSettings={{ barcodeTypes: ["qr", "ean13", "ean8", "upc_a", "upc_e", "code128", "code39", "code93", "codabar", "itf14", "datamatrix", "pdf417", "aztec"] }}
-              onBarcodeScanned={isCameraActive ? handleBarcodeScanned : undefined}
-            />
-          ) : (
-            <View style={[apStyles.camera, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
-              <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular" }}>📷 Camera bypassed (dev)</Text>
-            </View>
-          )}
-          <View style={apStyles.viewfinderOverlay}>
-            <View style={[apStyles.viewfinderFrame, { borderColor: colors.primary }]} />
-          </View>
-          {pendingCode ? (
+        <View ref={cameraWrapperRef} style={apStyles.cameraWrapper} onLayout={(e) => { cameraViewSizeRef.current = e.nativeEvent.layout; }}>
+          {!cameraStarted ? (
             <>
-              <View style={[apStyles.scanStatus, { backgroundColor: "rgba(0,0,0,0.67)" }]}>
-                <ActivityIndicator color={colors.primaryForeground} size="small" />
-                <Text style={apStyles.scanStatusText}>Scanning…</Text>
+              <View style={[apStyles.camera, { backgroundColor: "#111" }]} />
+              <View style={[StyleSheet.absoluteFillObject, { alignItems: "center", justifyContent: "center" }]}>
+                <Pressable
+                  onPress={() => setCameraStarted(true)}
+                  style={[apStyles.cameraStartBtn, { backgroundColor: colors.primary }]}
+                >
+                  <Text style={[apStyles.cameraStartBtnText, { color: colors.primaryForeground }]}>Start</Text>
+                </Pressable>
               </View>
-              <Pressable onPress={captureNow} style={[apStyles.captureBtn, { backgroundColor: colors.primary }]}>
-                <Text style={[apStyles.captureBtnText, { color: colors.primaryForeground }]}>✓ Capture</Text>
-              </Pressable>
             </>
-          ) : null}
-          {shelfMode && shelfStep === "scanning" && bulkMode ? (
-            <View style={[apStyles.bulkModeBadge, { backgroundColor: colors.primary }]}>
-              <Text style={[apStyles.bulkModeBadgeText, { color: colors.primaryForeground }]}>BULK</Text>
-            </View>
-          ) : null}
+          ) : (
+            <>
+              {!cameraBypass ? (
+                <CameraView
+                  style={apStyles.camera}
+                  facing="back"
+                  barcodeScannerSettings={{ barcodeTypes: ["qr", "ean13", "ean8", "upc_a", "upc_e", "code128", "code39", "code93", "codabar", "itf14", "datamatrix", "pdf417", "aztec"] }}
+                  onBarcodeScanned={isCameraActive ? handleBarcodeScanned : undefined}
+                />
+              ) : (
+                <View style={[apStyles.camera, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
+                  <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular" }}>📷 Camera bypassed (dev)</Text>
+                </View>
+              )}
+              <View style={apStyles.viewfinderOverlay}>
+                <View style={[apStyles.viewfinderFrame, { borderColor: colors.primary }]} />
+              </View>
+              {pendingCode ? (
+                <>
+                  <View style={[apStyles.scanStatus, { backgroundColor: "rgba(0,0,0,0.67)" }]}>
+                    <ActivityIndicator color={colors.primaryForeground} size="small" />
+                    <Text style={apStyles.scanStatusText}>Scanning…</Text>
+                  </View>
+                  <Pressable onPress={captureNow} style={[apStyles.captureBtn, { backgroundColor: colors.primary }]}>
+                    <Text style={[apStyles.captureBtnText, { color: colors.primaryForeground }]}>✓ Capture</Text>
+                  </Pressable>
+                </>
+              ) : null}
+              {shelfMode && shelfStep === "scanning" && bulkMode ? (
+                <View style={[apStyles.bulkModeBadge, { backgroundColor: colors.primary }]}>
+                  <Text style={[apStyles.bulkModeBadgeText, { color: colors.primaryForeground }]}>BULK</Text>
+                </View>
+              ) : null}
+            </>
+          )}
         </View>
       ) : null}
 
@@ -1052,6 +1098,12 @@ const apStyles = StyleSheet.create({
     borderRadius: 6,
   },
   bulkModeBadgeText: { fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 1 },
+  cameraStartBtn: {
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  cameraStartBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   assignNextBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
