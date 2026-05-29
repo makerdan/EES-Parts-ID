@@ -733,6 +733,13 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
                   <Text style={[apStyles.bulkModeBadgeText, { color: colors.primaryForeground }]}>BULK</Text>
                 </View>
               ) : null}
+              <Pressable
+                onPress={() => { clearPendingScan(); setCameraStarted(false); }}
+                style={[apStyles.cameraStopBtn, { backgroundColor: "rgba(0,0,0,0.55)" }]}
+                hitSlop={8}
+              >
+                <Text style={apStyles.cameraStopBtnText}>■ Stop</Text>
+              </Pressable>
             </>
           )}
         </View>
@@ -1098,6 +1105,15 @@ const apStyles = StyleSheet.create({
     borderRadius: 6,
   },
   bulkModeBadgeText: { fontSize: 11, fontFamily: "Inter_700Bold", letterSpacing: 1 },
+  cameraStopBtn: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  cameraStopBtnText: { fontSize: 11, fontFamily: "Inter_700Bold", color: "#fff", letterSpacing: 0.5 },
   cameraStartBtn: {
     paddingHorizontal: 32,
     paddingVertical: 12,
