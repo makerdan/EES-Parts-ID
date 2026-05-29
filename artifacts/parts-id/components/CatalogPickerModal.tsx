@@ -154,7 +154,7 @@ export function CatalogPickerModal({
             autoFocus
             style={[pickerStyles.searchInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
             autoCorrect={false}
-            autoCapitalize="none"
+            autoCapitalize="characters"
           />
         </View>
 
