@@ -1049,6 +1049,13 @@ export default function UploadScreen() {
   const inventory = inventoryQuery.data?.items ?? [];
   const inventoryTotal = inventoryQuery.data?.total ?? 0;
 
+  const TAB_LABELS: Record<"import" | "enrichment" | "addpart" | "query", string> = {
+    import: "Import",
+    enrichment: `Enrich (${inventoryTotal})`,
+    addpart: "Add Part / Barcode",
+    query: "Query",
+  };
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -1108,7 +1115,7 @@ export default function UploadScreen() {
                 ]}
               >
                 <Text style={[styles.tabLabel, { color: tab === t ? colors.primary : colors.mutedForeground }]}>
-                  {t === "import" ? "Import" : t === "enrichment" ? `Enrich (${inventoryTotal})` : t === "addpart" ? "Add Part / Barcode" : "Query"}
+                  {TAB_LABELS[t]}
                 </Text>
               </Pressable>
             ))}
