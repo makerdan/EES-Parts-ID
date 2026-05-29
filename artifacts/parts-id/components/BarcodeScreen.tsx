@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { CameraView, useCameraPermissions } from "expo-camera";
+import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import {
@@ -71,6 +71,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
 
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraBypass, setCameraBypass] = useState(false);
+  const cameraViewSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
 
   // ── Scan state ───────────────────────────────────────────────────────────────
   const [scanPhase, setScanPhase] = useState<ScanPhase>("idle");
@@ -125,8 +126,31 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
 
   // ── Scan handler ─────────────────────────────────────────────────────────────
   const handleBarcodeScanned = useCallback(
-    (data: { data: string }) => {
-      const code = data.data;
+    (result: BarcodeScanningResult) => {
+      const code = result.data;
+
+      // Reject scans that originate outside the viewfinder square
+      const { width: cw, height: ch } = cameraViewSizeRef.current;
+      if (cw > 0 && ch > 0) {
+        const VF_W = 200, VF_H = 120, MARGIN = 20;
+        const vfL = (cw - VF_W) / 2 - MARGIN, vfT = (ch - VF_H) / 2 - MARGIN;
+        const vfR = vfL + VF_W + MARGIN * 2,   vfB = vfT + VF_H + MARGIN * 2;
+        const pts = result.cornerPoints;
+        let cx: number, cy: number;
+        if (pts && pts.length >= 2) {
+          cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+          cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+        } else {
+          const b = result.bounds;
+          if (b && (b.size.width > 0 || b.size.height > 0)) {
+            cx = b.origin.x + b.size.width / 2;
+            cy = b.origin.y + b.size.height / 2;
+          } else {
+            cx = cw / 2; cy = ch / 2;
+          }
+        }
+        if (cx < vfL || cx > vfR || cy < vfT || cy > vfB) return;
+      }
 
       // Already in a non-idle phase — ignore
       if (scanPhase !== "idle") return;
@@ -314,7 +338,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
 
       <ScrollView contentContainerStyle={{ paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
         {/* ── Camera viewfinder ──────────────────────────────────────────────── */}
-        <View style={styles.cameraWrapper}>
+        <View style={styles.cameraWrapper} onLayout={(e) => { cameraViewSizeRef.current = e.nativeEvent.layout; }}>
             {isCameraActive && !cameraBypass ? (
               <CameraView
                 style={styles.camera}
