@@ -74,6 +74,7 @@
   },
   "dependencies": {
     "@react-native-community/netinfo": "^11.4.1",
+    "buffer": "^6.0.3",
     "expo-asset": "^12.0.13",
     "expo-file-system": "~19.0.22",
     "expo-image-manipulator": "~14.0.8",
