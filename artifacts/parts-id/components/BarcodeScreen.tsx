@@ -70,6 +70,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const queryClient = useQueryClient();
 
   const [permission, requestPermission] = useCameraPermissions();
+  const [cameraBypass, setCameraBypass] = useState(false);
 
   // ── Scan state ───────────────────────────────────────────────────────────────
   const [scanPhase, setScanPhase] = useState<ScanPhase>("idle");
@@ -266,7 +267,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     );
   }
 
-  if (!permission.granted) {
+  if (!permission.granted && !cameraBypass) {
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -280,6 +281,12 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
             style={[styles.permBtn, { backgroundColor: colors.primary }]}
           >
             <Text style={[styles.permBtnText, { color: colors.primaryForeground }]}>Allow Camera Access</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setCameraBypass(true)}
+            style={[styles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 8 }]}
+          >
+            <Text style={[styles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -308,7 +315,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
       <ScrollView contentContainerStyle={{ paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
         {/* ── Camera viewfinder ──────────────────────────────────────────────── */}
         <View style={styles.cameraWrapper}>
-            {isCameraActive ? (
+            {isCameraActive && !cameraBypass ? (
               <CameraView
                 style={styles.camera}
                 facing="back"
@@ -317,7 +324,9 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
               />
             ) : (
               <View style={[styles.camera, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
-                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>Camera paused</Text>
+                <Text style={{ color: colors.mutedForeground, fontSize: 13 }}>
+                  {cameraBypass ? "📷 Camera bypassed (dev)" : "Camera paused"}
+                </Text>
               </View>
             )}
 

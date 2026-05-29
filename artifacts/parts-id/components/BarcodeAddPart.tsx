@@ -36,6 +36,7 @@ export function BarcodeAddPart() {
   const queryClient = useQueryClient();
 
   const [permission, requestPermission] = useCameraPermissions();
+  const [cameraBypass, setCameraBypass] = useState(false);
 
   // Normal assign state
   const [scannedCode, setScannedCode] = useState<string | null>(null);
@@ -205,7 +206,7 @@ export function BarcodeAddPart() {
     );
   }
 
-  if (!permission.granted) {
+  if (!permission.granted && !cameraBypass) {
     return (
       <View style={[apStyles.permBox, { backgroundColor: colors.muted, borderColor: colors.border }]}>
         <Text style={[apStyles.permText, { color: colors.foreground }]}>
@@ -216,6 +217,12 @@ export function BarcodeAddPart() {
           style={[apStyles.permBtn, { backgroundColor: colors.primary }]}
         >
           <Text style={[apStyles.permBtnText, { color: colors.primaryForeground }]}>Enable Camera</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setCameraBypass(true)}
+          style={[apStyles.permBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: colors.border, marginTop: 4 }]}
+        >
+          <Text style={[apStyles.permBtnText, { color: colors.mutedForeground }]}>Skip camera (dev only)</Text>
         </Pressable>
       </View>
     );
@@ -300,12 +307,18 @@ export function BarcodeAddPart() {
       {/* Camera viewfinder */}
       {(!shelfMode || shelfStep === "scanning") ? (
         <View style={apStyles.cameraWrapper}>
-          <CameraView
-            style={apStyles.camera}
-            facing="back"
-            barcodeScannerSettings={{ barcodeTypes: ["qr", "ean13", "ean8", "upc_a", "upc_e", "code128", "code39", "code93", "codabar", "itf14", "datamatrix", "pdf417", "aztec"] }}
-            onBarcodeScanned={isCameraActive ? handleBarcodeScanned : undefined}
-          />
+          {!cameraBypass ? (
+            <CameraView
+              style={apStyles.camera}
+              facing="back"
+              barcodeScannerSettings={{ barcodeTypes: ["qr", "ean13", "ean8", "upc_a", "upc_e", "code128", "code39", "code93", "codabar", "itf14", "datamatrix", "pdf417", "aztec"] }}
+              onBarcodeScanned={isCameraActive ? handleBarcodeScanned : undefined}
+            />
+          ) : (
+            <View style={[apStyles.camera, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
+              <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular" }}>📷 Camera bypassed (dev)</Text>
+            </View>
+          )}
           <View style={apStyles.viewfinderOverlay}>
             <View style={[apStyles.viewfinderFrame, { borderColor: colors.primary }]} />
           </View>
