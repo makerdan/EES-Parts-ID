@@ -23,7 +23,7 @@
  *            sufficient pixels so the platform compositor never has to upscale
  *            a low-resolution texture — no blur at any zoom level up to MAX_SCALE.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   LayoutChangeEvent,
@@ -217,6 +217,14 @@ export function WarehouseMapView({
   const svgRenderWV = useSharedValue(0);
   const svgRenderHV = useSharedValue(0);
 
+  // Track whether the first layout pass has occurred so we can skip the pan
+  // clamp on initial mount.  The clamp is only meaningful after a rotation
+  // (when the container dimensions actually change), not on the first call
+  // when every value is coming from 0 — clamping there can incorrectly snap
+  // the map when the device starts in landscape (svgRenderH < containerH
+  // makes maxY=0 and immediately forces translateY to 0).
+  const hasLaidOut = useRef(false);
+
   const onLayout = useCallback(
     (e: LayoutChangeEvent) => {
       const { width, height } = e.nativeEvent.layout;
@@ -227,6 +235,13 @@ export function WarehouseMapView({
       containerHV.value = height;
       svgRenderWV.value = width;
       svgRenderHV.value = rh;
+
+      // Skip the clamp on initial mount — there is nothing to correct yet and
+      // running it with scale=1 in landscape can snap Y to 0 unnecessarily.
+      if (!hasLaidOut.current) {
+        hasLaidOut.current = true;
+        return;
+      }
 
       // After rotation the container dimensions change, so the previously saved
       // pan offsets may place the map partially off-screen.  Re-clamp them to
