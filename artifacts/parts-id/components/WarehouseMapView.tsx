@@ -577,7 +577,7 @@ export function WarehouseMapView({
     <View style={styles.fill} onLayout={onLayout}>
       <View style={styles.mapCenter}>
       <GestureDetector gesture={mainGesture}>
-        <Animated.View style={animatedStyle}>
+        <Animated.View style={[{ width: svgRenderW, height: svgRenderH }, animatedStyle]}>
           {/* ── Native floor plan layer ──────────────────────────────────────
               On web the floor plan is embedded inside the SVG canvas below so
               that both layers share one SVG viewport (no separate CSS-scaled
