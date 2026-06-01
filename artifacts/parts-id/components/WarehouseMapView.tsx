@@ -502,8 +502,10 @@ export function WarehouseMapView({
         return (
           <G
             key={zone.id}
-            onLongPress={(!cycleLocked && isActive) ? () => onZoneLongPress?.(zone) : undefined}
-            delayLongPress={400}
+            {...(Platform.OS !== "web" && (!cycleLocked && isActive) && {
+              onLongPress: () => onZoneLongPress?.(zone),
+              delayLongPress: 400,
+            })}
           >
             <Rect
               x={zone.svgX}
@@ -538,9 +540,14 @@ export function WarehouseMapView({
       return (
         <G
           key={zone.id}
-          onPress={isActive ? () => onZoneTap(zone) : undefined}
-          onLongPress={isActive ? () => onZoneLongPress?.(zone) : undefined}
-          delayLongPress={400}
+          {...(Platform.OS === "web"
+            ? (isActive ? { onClick: () => onZoneTap(zone) } : undefined)
+            : {
+                onPress: isActive ? () => onZoneTap(zone) : undefined,
+                onLongPress: isActive ? () => onZoneLongPress?.(zone) : undefined,
+                delayLongPress: 400,
+              }
+          )}
         >
           <Rect
             x={zone.svgX + ZONE_GAP}
