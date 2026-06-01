@@ -8,8 +8,8 @@ import React, {
 } from "react";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Appearance, Platform, StyleSheet, Text, View } from "react-native";
-import { useColors } from "@/hooks/useColors";
+import { Appearance, Platform, StyleSheet, Text, View, useColorScheme } from "react-native";
+import colorTokens from "@/constants/colors";
 import { setAuthTokenGetter } from "@workspace/api-client-react";
 import {
   reportStorageError,
@@ -338,7 +338,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 }
 
 function BrandedToast({ message, type }: { message: string; type: ToastVariant }) {
-  const colors = useColors();
+  const systemScheme = useColorScheme();
+  const { settings } = useApp();
+  const themeMode = settings.themeMode ?? "system";
+  const effectiveScheme = themeMode === "system" ? systemScheme : themeMode;
+  const palette = effectiveScheme === "dark" ? colorTokens.dark : colorTokens.light;
+  const colors = { ...palette, radius: colorTokens.radius };
 
   const accentColor =
     type === "success" ? colors.success :
@@ -372,11 +377,16 @@ const toastStyles = StyleSheet.create({
     borderWidth: 1,
     maxWidth: 480,
     overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
     elevation: 4,
+    ...Platform.select({
+      web: { boxShadow: "0 2px 8px rgba(0,0,0,0.15)" },
+      default: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+      },
+    }),
   },
   accent: {
     width: 4,
