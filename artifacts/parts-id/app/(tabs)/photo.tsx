@@ -11,7 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { resizeImage } from "@/utils/resizeImage";
 import { useSearchInventory, useAiIdentifyPart, lookupByBarcode } from "@workspace/api-client-react";
@@ -324,7 +324,7 @@ export default function PhotoScreen() {
                   onPress={() => setBarcodeScanVisible(true)}
                   style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
                 >
-                  <Feather name="maximize" size={24} color={colors.foreground} />
+                  <MaterialCommunityIcons name="barcode-scan" size={24} color={colors.foreground} />
                   <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Scan Barcode</Text>
                 </Pressable>
               </View>
