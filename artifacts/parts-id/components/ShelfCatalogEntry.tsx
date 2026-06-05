@@ -12,6 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -25,6 +26,9 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
 
 const STEP_OPTIONS = [1, 2, 5, 10] as const;
 type Step = (typeof STEP_OPTIONS)[number];
+
+const STORAGE_PREFIX_KEY = "shelfEntry_prefix";
+const STORAGE_STEP_KEY = "shelfEntry_step";
 
 interface ShelfCatalogEntryProps {
   visible: boolean;
@@ -77,15 +81,16 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
   const positionRef = useRef(position);
   useEffect(() => { positionRef.current = position; }, [position]);
 
+  const hydratedRef = useRef(false);
+
   const binCode = shelfPrefix.trim() && position.trim()
     ? `${shelfPrefix.trim()}-${position.trim()}`
     : "";
 
   useEffect(() => {
     if (!visible) {
-      setShelfPrefix("");
+      hydratedRef.current = false;
       setStartPosition("");
-      setStep(1);
       setPosition("");
       setPositionEditing(false);
       setCatalog("");
@@ -97,8 +102,31 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       setCameraOpen(false);
       setPrefixScannerOpen(false);
       prefixScanLock.current = false;
+    } else {
+      AsyncStorage.multiGet([STORAGE_PREFIX_KEY, STORAGE_STEP_KEY]).then(pairs => {
+        const savedPrefix = pairs[0][1];
+        const savedStep = pairs[1][1];
+        if (savedPrefix) setShelfPrefix(savedPrefix);
+        if (savedStep) {
+          const parsed = parseInt(savedStep, 10) as Step;
+          if ((STEP_OPTIONS as readonly number[]).includes(parsed)) setStep(parsed);
+        }
+        hydratedRef.current = true;
+      }).catch(() => {
+        hydratedRef.current = true;
+      });
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    AsyncStorage.setItem(STORAGE_PREFIX_KEY, shelfPrefix).catch(() => {});
+  }, [shelfPrefix]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    AsyncStorage.setItem(STORAGE_STEP_KEY, String(step)).catch(() => {});
+  }, [step]);
 
   const handleStartPositionChange = useCallback((val: string) => {
     const digits = val.replace(/\D/g, "").slice(0, 3);
