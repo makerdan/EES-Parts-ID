@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -446,7 +447,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
         </Pressable>
 
         {!dimCollapsed && (
-          <ScrollView
+          <KeyboardAwareScrollViewCompat
             nestedScrollEnabled
             showsVerticalScrollIndicator
             style={Platform.OS === "web" ? { maxHeight: 480 } : undefined}
@@ -635,7 +636,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               onChange={v => onChange("confidenceThreshold", v)}
               colors={colors}
             />
-          </ScrollView>
+          </KeyboardAwareScrollViewCompat>
         )}
       </View>
 
