@@ -27,6 +27,7 @@ import {
 import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
 import { generateKeywords } from "../utils/generateKeywords";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
+import { uploadCatalogImage } from "../lib/objectStorage";
 import {
   blendPgScore,
   catalogScore,
@@ -647,14 +648,17 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
     const binLocations = binLocation?.trim() ? [binLocation.trim()] : [];
 
     // Check for duplicate before inserting so we can return a clear 409.
+    // Return the full existing item so callers can offer to update instead of
+    // creating a duplicate (e.g. ShelfCatalogEntry duplicate-detection flow).
     const existing = await db
-      .select({ id: inventoryTable.id })
+      .select()
       .from(inventoryTable)
       .where(and(eq(inventoryTable.vendor, upperVendor), eq(inventoryTable.catalog, trimmedCatalog)));
 
     if (existing.length > 0) {
       return void res.status(409).json({
         error: `Part already exists: ${upperVendor} / ${trimmedCatalog}`,
+        existingItem: existing[0],
       });
     }
 
@@ -1405,6 +1409,44 @@ router.patch("/:id/keywords", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update keywords" });
+  }
+});
+
+// ── PATCH /inventory/:id/photo ────────────────────────────────────────────────
+// Accept a base64-encoded image from the mobile client, upload it to GCS via
+// the existing object storage helper, and persist the resulting URL on the item.
+// Used by the ShelfCatalogEntry rapid-entry flow.
+router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    if (!id) return void res.status(400).json({ error: "Invalid item id" });
+
+    const { imageBase64, mimeType } = req.body as {
+      imageBase64?: string;
+      mimeType?: string;
+    };
+
+    if (!imageBase64?.trim()) {
+      return void res.status(400).json({ error: "imageBase64 is required" });
+    }
+
+    const buffer = Buffer.from(imageBase64, "base64");
+    const contentType = mimeType?.startsWith("image/") ? mimeType : "image/jpeg";
+
+    const imageUrl = await uploadCatalogImage(buffer, contentType);
+
+    const [updated] = await db
+      .update(inventoryTable)
+      .set({ imageUrl, updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning();
+
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    invalidateReferenceAnswerCache().catch(() => {});
+    res.json({ imageUrl: updated.imageUrl });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to upload photo" });
   }
 });
 
