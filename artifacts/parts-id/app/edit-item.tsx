@@ -122,6 +122,17 @@ export default function EditItemScreen() {
     setSaveStatus("saving");
     setErrorMsg(null);
 
+    // Auto-add any pending barcode text before saving
+    const pendingBarcode = newBarcode.trim();
+    const finalBarcodes =
+      pendingBarcode && !barcodes.includes(pendingBarcode)
+        ? [...barcodes, pendingBarcode]
+        : barcodes;
+    if (finalBarcodes !== barcodes) {
+      setBarcodes(finalBarcodes);
+      setNewBarcode("");
+    }
+
     try {
       const saves: Promise<unknown>[] = [];
 
@@ -144,8 +155,8 @@ export default function EditItemScreen() {
         saves.push(updateBinsMutation.mutateAsync({ id: current.id, data: { binLocations: bins } }));
       }
 
-      if (JSON.stringify(barcodes) !== JSON.stringify(current.barcodes ?? [])) {
-        saves.push(updateBarcodesMutation.mutateAsync({ id: current.id, data: { barcodes } }));
+      if (JSON.stringify(finalBarcodes) !== JSON.stringify(current.barcodes ?? [])) {
+        saves.push(updateBarcodesMutation.mutateAsync({ id: current.id, data: { barcodes: finalBarcodes } }));
       }
 
       if (JSON.stringify(keywords) !== JSON.stringify(current.aiKeywords ?? [])) {

@@ -92,10 +92,22 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
     if (!current) return;
     setSaveStatus("saving");
     setErrorMsg(null);
+
+    // Auto-add any pending barcode text before saving
+    const pendingBarcode = newBarcode.trim();
+    const finalBarcodes =
+      pendingBarcode && !barcodes.includes(pendingBarcode)
+        ? [...barcodes, pendingBarcode]
+        : barcodes;
+    if (finalBarcodes !== barcodes) {
+      setBarcodes(finalBarcodes);
+      setNewBarcode("");
+    }
+
     try {
       const updated = await updateMutation.mutateAsync({
         id: current.id,
-        data: { barcodes },
+        data: { barcodes: finalBarcodes },
       });
       onBarcodesChanged?.(current.id, updated.barcodes);
       const listKeyPrefix = getListInventoryQueryKey()[0];
