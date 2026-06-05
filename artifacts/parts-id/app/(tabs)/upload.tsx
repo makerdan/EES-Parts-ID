@@ -19,9 +19,11 @@ import type { SheetData } from "read-excel-file/universal";
 import { useListInventory } from "@workspace/api-client-react";
 
 import { useRouter } from "expo-router";
+import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { AddPartForm } from "@/components/AddPartForm";
 import { BarcodeAddPart } from "@/components/BarcodeAddPart";
+import { ShelfCatalogEntry } from "@/components/ShelfCatalogEntry";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BinEditor } from "@/components/BinEditor";
 import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
@@ -371,6 +373,7 @@ export default function UploadScreen() {
   const [uploadPending, setUploadPending] = useState(false);
   const [inventoryPage, setInventoryPage] = useState(1);
   const [binEditorItem, setBinEditorItem] = useState<InventoryItem | null>(null);
+  const [shelfEntryOpen, setShelfEntryOpen] = useState(false);
 
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
@@ -1922,6 +1925,18 @@ export default function UploadScreen() {
               scrollEventThrottle={100}
               onScroll={(e) => setAddpartScrollY(e.nativeEvent.contentOffset.y)}
             >
+              <Pressable
+                onPress={() => setShelfEntryOpen(true)}
+                style={[styles.shelfEntryBanner, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "55" }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.shelfEntryTitle, { color: colors.primary }]}>📦 Shelf Catalog Entry</Text>
+                  <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
+                    Rapid per-shelf mode — set prefix once, auto-increment position, optional photo per item.
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={20} color={colors.primary} />
+              </Pressable>
               <BarcodeAddPart scrollY={addpartScrollY} />
               <AddPartForm
                 adminToken={adminToken}
@@ -2090,6 +2105,12 @@ export default function UploadScreen() {
         // BinEditor already invalidates the listInventory query by URL prefix,
         // so we don't need to do anything else to refresh the visible rows.
       />
+
+      <ShelfCatalogEntry
+        visible={shelfEntryOpen}
+        adminToken={adminToken}
+        onClose={() => { setShelfEntryOpen(false); inventoryQuery.refetch(); }}
+      />
     </SafeAreaView>
   );
 }
@@ -2207,4 +2228,16 @@ const styles = StyleSheet.create({
   queryExportRow: { flexDirection: "row", gap: 8, paddingTop: 4 },
   queryExportBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: "center", justifyContent: "center", minHeight: 40 },
   queryExportBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  shelfEntryBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    margin: 16,
+    marginBottom: 0,
+    gap: 10,
+  },
+  shelfEntryTitle: { fontSize: 15, fontFamily: "Inter_700Bold", marginBottom: 2 },
+  shelfEntryHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
 });
