@@ -238,6 +238,35 @@ describe("buildSearchBody", () => {
     const body = buildSearchBody(BLANK, "wire");
     expect(body.categorySlug).toBe("wire");
   });
+
+  it("includes minDiameter in the body when set", () => {
+    const f: FilterValues = { ...BLANK, minDiameter: "0.5" };
+    const body = buildSearchBody(f);
+    expect(body.minDiameter).toBe(0.5);
+  });
+
+  it("includes maxDiameter in the body when set", () => {
+    const f: FilterValues = { ...BLANK, maxDiameter: "2.75" };
+    const body = buildSearchBody(f);
+    expect(body.maxDiameter).toBe(2.75);
+  });
+
+  it("includes both minDiameter and maxDiameter when both are set", () => {
+    const f: FilterValues = { ...BLANK, minDiameter: "1", maxDiameter: "3" };
+    const body = buildSearchBody(f);
+    expect(body.minDiameter).toBe(1);
+    expect(body.maxDiameter).toBe(3);
+  });
+
+  it("omits minDiameter from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "minDiameter")).toBe(false);
+  });
+
+  it("omits maxDiameter from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "maxDiameter")).toBe(false);
+  });
 });
 
 // ── buildQueryKey ─────────────────────────────────────────────────────────────
@@ -267,6 +296,30 @@ describe("buildQueryKey", () => {
 
   it("returns a non-empty string", () => {
     expect(buildQueryKey(BLANK).length).toBeGreaterThan(0);
+  });
+
+  it("produces a different key when minDiameter changes", () => {
+    const a = { ...BLANK, minDiameter: "" };
+    const b = { ...BLANK, minDiameter: "1.5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when maxDiameter changes", () => {
+    const a = { ...BLANK, maxDiameter: "" };
+    const b = { ...BLANK, maxDiameter: "4" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different minDiameter values", () => {
+    const a = { ...BLANK, minDiameter: "1" };
+    const b = { ...BLANK, minDiameter: "2" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different maxDiameter values", () => {
+    const a = { ...BLANK, maxDiameter: "3" };
+    const b = { ...BLANK, maxDiameter: "5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
   });
 });
 
