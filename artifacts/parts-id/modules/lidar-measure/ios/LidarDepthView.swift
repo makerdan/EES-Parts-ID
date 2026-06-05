@@ -27,7 +27,8 @@ public class LidarDepthView: ExpoView, ARSCNViewDelegate, ARSessionDelegate {
     }
 
     /// Convert metres (ARKit native) to the display value and suffix.
-    private func formatMetres(_ metres: Float) -> String {
+    /// `internal` (not `private`) so it can be exercised by LidarDepthViewTests.
+    func formatMetres(_ metres: Float) -> String {
         switch displayUnit {
         case "cm":
             return String(format: "%.1f cm", metres * 100)

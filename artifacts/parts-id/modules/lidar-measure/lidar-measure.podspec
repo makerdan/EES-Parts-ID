@@ -24,6 +24,10 @@ Pod::Spec.new do |s|
   s.frameworks     = 'ARKit', 'SceneKit'
 
   s.test_spec 'LidarMeasureTests' do |test|
-    test.source_files = 'ios/LidarMeasureModuleTests.swift'
+    test.source_files = [
+      'ios/LidarMeasureModuleTests.swift',
+      'ios/LidarDepthViewTests.swift',
+      'ios/LidarARSessionManagerTests.swift',
+    ]
   end
 end
