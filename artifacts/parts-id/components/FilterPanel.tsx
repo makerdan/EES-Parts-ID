@@ -37,6 +37,10 @@ export interface FilterValues {
   // ── Physical dimensions size-range filter (mm) ────────────────────────────
   minLength: string;
   maxLength: string;
+  minWidth: string;
+  maxWidth: string;
+  minHeight: string;
+  maxHeight: string;
   minDiameter: string;
   maxDiameter: string;
   // ── 16 structured chip dimensions (AND-logic on server) ───────────────────
@@ -377,6 +381,8 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
 
   const activeTextFieldCount = TEXT_FIELD_KEYS.filter(k => values[k].trim() !== "").length +
     (values.minLength.trim() !== "" || values.maxLength.trim() !== "" ? 1 : 0) +
+    (values.minWidth.trim() !== "" || values.maxWidth.trim() !== "" ? 1 : 0) +
+    (values.minHeight.trim() !== "" || values.maxHeight.trim() !== "" ? 1 : 0) +
     (values.minDiameter.trim() !== "" || values.maxDiameter.trim() !== "" ? 1 : 0);
   const activeChipOnlyCount = CHIP_DIMS.filter(d => values[d.key]).length;
 
@@ -390,6 +396,10 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
     TEXT_FIELD_KEYS.forEach(k => onChange(k, ""));
     onChange("minLength", "");
     onChange("maxLength", "");
+    onChange("minWidth", "");
+    onChange("maxWidth", "");
+    onChange("minHeight", "");
+    onChange("maxHeight", "");
     onChange("minDiameter", "");
     onChange("maxDiameter", "");
   }, [onChange]);
@@ -563,6 +573,78 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
                   value={values.maxLength}
                   onChangeText={v => onChange("maxLength", v.replace(/[^0-9.]/g, ""))}
                   placeholder="e.g. 60"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                />
+              </View>
+            </View>
+
+            {/* ── Width range filter ── */}
+            <View style={chipAreaStyles.dimHeader}>
+              <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
+                WIDTH RANGE (mm)
+              </Text>
+              {(values.minWidth.trim() !== "" || values.maxWidth.trim() !== "") && (
+                <Pressable onPress={() => { onChange("minWidth", ""); onChange("maxWidth", ""); }} hitSlop={8}>
+                  <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>Clear</Text>
+                </Pressable>
+              )}
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Min width</Text>
+                <KeyboardDoneInput
+                  value={values.minWidth}
+                  onChangeText={v => onChange("minWidth", v.replace(/[^0-9.]/g, ""))}
+                  placeholder="e.g. 20"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Max width</Text>
+                <KeyboardDoneInput
+                  value={values.maxWidth}
+                  onChangeText={v => onChange("maxWidth", v.replace(/[^0-9.]/g, ""))}
+                  placeholder="e.g. 50"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                />
+              </View>
+            </View>
+
+            {/* ── Height range filter ── */}
+            <View style={chipAreaStyles.dimHeader}>
+              <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
+                HEIGHT RANGE (mm)
+              </Text>
+              {(values.minHeight.trim() !== "" || values.maxHeight.trim() !== "") && (
+                <Pressable onPress={() => { onChange("minHeight", ""); onChange("maxHeight", ""); }} hitSlop={8}>
+                  <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>Clear</Text>
+                </Pressable>
+              )}
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Min height</Text>
+                <KeyboardDoneInput
+                  value={values.minHeight}
+                  onChangeText={v => onChange("minHeight", v.replace(/[^0-9.]/g, ""))}
+                  placeholder="e.g. 15"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Max height</Text>
+                <KeyboardDoneInput
+                  value={values.maxHeight}
+                  onChangeText={v => onChange("maxHeight", v.replace(/[^0-9.]/g, ""))}
+                  placeholder="e.g. 40"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
                   style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}

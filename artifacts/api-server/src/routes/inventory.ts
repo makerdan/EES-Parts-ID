@@ -45,8 +45,12 @@ router.get("/", async (req, res) => {
     const limit = Math.min(500, Math.max(1, parseInt(req.query["limit"] as string) || 50));
     const offset = (page - 1) * limit;
 
-    const minLength  = req.query["minLength"]  != null ? parseFloat(req.query["minLength"]  as string) : null;
-    const maxLength  = req.query["maxLength"]  != null ? parseFloat(req.query["maxLength"]  as string) : null;
+    const minLength   = req.query["minLength"]   != null ? parseFloat(req.query["minLength"]   as string) : null;
+    const maxLength   = req.query["maxLength"]   != null ? parseFloat(req.query["maxLength"]   as string) : null;
+    const minWidth    = req.query["minWidth"]    != null ? parseFloat(req.query["minWidth"]    as string) : null;
+    const maxWidth    = req.query["maxWidth"]    != null ? parseFloat(req.query["maxWidth"]    as string) : null;
+    const minHeight   = req.query["minHeight"]   != null ? parseFloat(req.query["minHeight"]   as string) : null;
+    const maxHeight   = req.query["maxHeight"]   != null ? parseFloat(req.query["maxHeight"]   as string) : null;
     const minDiameter = req.query["minDiameter"] != null ? parseFloat(req.query["minDiameter"] as string) : null;
     const maxDiameter = req.query["maxDiameter"] != null ? parseFloat(req.query["maxDiameter"] as string) : null;
 
@@ -54,8 +58,12 @@ router.get("/", async (req, res) => {
     // as the indexed columns so Postgres can use the expression indexes.
     const dimConditions = and(
       ...[
-        minLength  != null && !isNaN(minLength)   ? sql`(dimensions->>'length')::numeric   >= ${minLength}`   : undefined,
-        maxLength  != null && !isNaN(maxLength)   ? sql`(dimensions->>'length')::numeric   <= ${maxLength}`   : undefined,
+        minLength   != null && !isNaN(minLength)   ? sql`(dimensions->>'length')::numeric   >= ${minLength}`   : undefined,
+        maxLength   != null && !isNaN(maxLength)   ? sql`(dimensions->>'length')::numeric   <= ${maxLength}`   : undefined,
+        minWidth    != null && !isNaN(minWidth)    ? sql`(dimensions->>'width')::numeric    >= ${minWidth}`    : undefined,
+        maxWidth    != null && !isNaN(maxWidth)    ? sql`(dimensions->>'width')::numeric    <= ${maxWidth}`    : undefined,
+        minHeight   != null && !isNaN(minHeight)   ? sql`(dimensions->>'height')::numeric   >= ${minHeight}`   : undefined,
+        maxHeight   != null && !isNaN(maxHeight)   ? sql`(dimensions->>'height')::numeric   <= ${maxHeight}`   : undefined,
         minDiameter != null && !isNaN(minDiameter) ? sql`(dimensions->>'diameter')::numeric >= ${minDiameter}` : undefined,
         maxDiameter != null && !isNaN(maxDiameter) ? sql`(dimensions->>'diameter')::numeric <= ${maxDiameter}` : undefined,
       ].filter((c): c is NonNullable<typeof c> => c !== undefined),
@@ -137,6 +145,10 @@ router.post("/search", async (req, res) => {
       categorySlug = "",
       minLength,
       maxLength,
+      minWidth,
+      maxWidth,
+      minHeight,
+      maxHeight,
       minDiameter,
       maxDiameter,
     } = req.body as {
@@ -155,6 +167,10 @@ router.post("/search", async (req, res) => {
       categorySlug?: string;
       minLength?: number | null;
       maxLength?: number | null;
+      minWidth?: number | null;
+      maxWidth?: number | null;
+      minHeight?: number | null;
+      maxHeight?: number | null;
       minDiameter?: number | null;
       maxDiameter?: number | null;
     };
@@ -165,6 +181,18 @@ router.post("/search", async (req, res) => {
     const _maxRaw = maxLength ?? (req.query["maxLength"] != null ? parseFloat(req.query["maxLength"] as string) : null);
     const lenMin: number | null = (_minRaw != null && !isNaN(Number(_minRaw))) ? Number(_minRaw) : null;
     const lenMax: number | null = (_maxRaw != null && !isNaN(Number(_maxRaw))) ? Number(_maxRaw) : null;
+
+    // Normalize width bounds the same way.
+    const _widMinRaw = minWidth ?? (req.query["minWidth"] != null ? parseFloat(req.query["minWidth"] as string) : null);
+    const _widMaxRaw = maxWidth ?? (req.query["maxWidth"] != null ? parseFloat(req.query["maxWidth"] as string) : null);
+    const widMin: number | null = (_widMinRaw != null && !isNaN(Number(_widMinRaw))) ? Number(_widMinRaw) : null;
+    const widMax: number | null = (_widMaxRaw != null && !isNaN(Number(_widMaxRaw))) ? Number(_widMaxRaw) : null;
+
+    // Normalize height bounds the same way.
+    const _hgtMinRaw = minHeight ?? (req.query["minHeight"] != null ? parseFloat(req.query["minHeight"] as string) : null);
+    const _hgtMaxRaw = maxHeight ?? (req.query["maxHeight"] != null ? parseFloat(req.query["maxHeight"] as string) : null);
+    const hgtMin: number | null = (_hgtMinRaw != null && !isNaN(Number(_hgtMinRaw))) ? Number(_hgtMinRaw) : null;
+    const hgtMax: number | null = (_hgtMaxRaw != null && !isNaN(Number(_hgtMaxRaw))) ? Number(_hgtMaxRaw) : null;
 
     // Normalize diameter bounds the same way.
     const _diaMinRaw = minDiameter ?? (req.query["minDiameter"] != null ? parseFloat(req.query["minDiameter"] as string) : null);
@@ -179,6 +207,24 @@ router.post("/search", async (req, res) => {
       if (lenMin !== null && lenMax !== null) return sql`AND ${col} BETWEEN ${lenMin} AND ${lenMax}`;
       if (lenMin !== null) return sql`AND ${col} >= ${lenMin}`;
       if (lenMax !== null) return sql`AND ${col} <= ${lenMax}`;
+      return sql``;
+    };
+
+    // Reusable helper: builds the SQL fragment for width bounds.
+    const buildWidthClause = (alias: "i" | "" = "i") => {
+      const col = alias ? sql`(${sql.raw(alias)}.dimensions->>'width')::numeric` : sql`(dimensions->>'width')::numeric`;
+      if (widMin !== null && widMax !== null) return sql`AND ${col} BETWEEN ${widMin} AND ${widMax}`;
+      if (widMin !== null) return sql`AND ${col} >= ${widMin}`;
+      if (widMax !== null) return sql`AND ${col} <= ${widMax}`;
+      return sql``;
+    };
+
+    // Reusable helper: builds the SQL fragment for height bounds.
+    const buildHeightClause = (alias: "i" | "" = "i") => {
+      const col = alias ? sql`(${sql.raw(alias)}.dimensions->>'height')::numeric` : sql`(dimensions->>'height')::numeric`;
+      if (hgtMin !== null && hgtMax !== null) return sql`AND ${col} BETWEEN ${hgtMin} AND ${hgtMax}`;
+      if (hgtMin !== null) return sql`AND ${col} >= ${hgtMin}`;
+      if (hgtMax !== null) return sql`AND ${col} <= ${hgtMax}`;
       return sql``;
     };
 
@@ -258,7 +304,7 @@ router.post("/search", async (req, res) => {
       ? categoryKeywords.map(escapeRegex).join("|")
       : null;
 
-    const hasSizeFilter = lenMin !== null || lenMax !== null || diaMin !== null || diaMax !== null;
+    const hasSizeFilter = lenMin !== null || lenMax !== null || widMin !== null || widMax !== null || hgtMin !== null || hgtMax !== null || diaMin !== null || diaMax !== null;
 
     if (!allSearchText.trim() && !categorySlug && !hasSizeFilter) {
       return void res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
@@ -270,11 +316,13 @@ router.post("/search", async (req, res) => {
     // Length-range and diameter-range filters (if any) are pushed into SQL.
     if (categorySlug && !isCategoryUncategorized && catSqlRegex && !allSearchText.trim()) {
       const catLengthClause = buildLengthClause("");
+      const catWidthClause = buildWidthClause("");
+      const catHeightClause = buildHeightClause("");
       const catDiameterClause = buildDiameterClause("");
       const catItems = await db
         .select()
         .from(inventoryTable)
-        .where(sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} ${catLengthClause} ${catDiameterClause}`)
+        .where(sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} ${catLengthClause} ${catWidthClause} ${catHeightClause} ${catDiameterClause}`)
         .orderBy(inventoryTable.vendor, inventoryTable.catalog)
         .limit(200);
       return void res.json({
@@ -299,6 +347,10 @@ router.post("/search", async (req, res) => {
       const uncatSizeConditions = [
         lenMin !== null ? sql`(dimensions->>'length')::numeric >= ${lenMin}` : undefined,
         lenMax !== null ? sql`(dimensions->>'length')::numeric <= ${lenMax}` : undefined,
+        widMin !== null ? sql`(dimensions->>'width')::numeric >= ${widMin}` : undefined,
+        widMax !== null ? sql`(dimensions->>'width')::numeric <= ${widMax}` : undefined,
+        hgtMin !== null ? sql`(dimensions->>'height')::numeric >= ${hgtMin}` : undefined,
+        hgtMax !== null ? sql`(dimensions->>'height')::numeric <= ${hgtMax}` : undefined,
         diaMin !== null ? sql`(dimensions->>'diameter')::numeric >= ${diaMin}` : undefined,
         diaMax !== null ? sql`(dimensions->>'diameter')::numeric <= ${diaMax}` : undefined,
       ].filter((c): c is NonNullable<typeof c> => c !== undefined);
@@ -328,22 +380,35 @@ router.post("/search", async (req, res) => {
     // Scans the table using the expression indexes on length and/or diameter.
     if (hasSizeFilter && !allSearchText.trim() && !categorySlug) {
       const sizeOnlyLengthClause = buildLengthClause("");
+      const sizeOnlyWidthClause = buildWidthClause("");
+      const sizeOnlyHeightClause = buildHeightClause("");
       const sizeOnlyDiameterClause = buildDiameterClause("");
       const hasLenFilter = lenMin !== null || lenMax !== null;
+      const hasWidFilter = widMin !== null || widMax !== null;
+      const hasHgtFilter = hgtMin !== null || hgtMax !== null;
       const hasDiaFilter = diaMin !== null || diaMax !== null;
       // Require the relevant dimension to be non-null so the expression index fires.
-      const dimPresenceClause = hasLenFilter && hasDiaFilter
-        ? sql`((dimensions->>'length')::numeric IS NOT NULL OR (dimensions->>'diameter')::numeric IS NOT NULL)`
-        : hasLenFilter
-          ? sql`(dimensions->>'length')::numeric IS NOT NULL`
-          : sql`(dimensions->>'diameter')::numeric IS NOT NULL`;
+      const presenceParts: ReturnType<typeof sql>[] = [];
+      if (hasLenFilter) presenceParts.push(sql`(dimensions->>'length')::numeric IS NOT NULL`);
+      if (hasWidFilter) presenceParts.push(sql`(dimensions->>'width')::numeric IS NOT NULL`);
+      if (hasHgtFilter) presenceParts.push(sql`(dimensions->>'height')::numeric IS NOT NULL`);
+      if (hasDiaFilter) presenceParts.push(sql`(dimensions->>'diameter')::numeric IS NOT NULL`);
+      const dimPresenceClause = presenceParts.length > 1
+        ? sql`(${sql.join(presenceParts, sql` OR `)})`
+        : presenceParts[0];
       const orderClause = hasLenFilter
         ? sql`ORDER BY (dimensions->>'length')::numeric ASC`
-        : sql`ORDER BY (dimensions->>'diameter')::numeric ASC`;
+        : hasWidFilter
+          ? sql`ORDER BY (dimensions->>'width')::numeric ASC`
+          : hasHgtFilter
+            ? sql`ORDER BY (dimensions->>'height')::numeric ASC`
+            : sql`ORDER BY (dimensions->>'diameter')::numeric ASC`;
       const sizeItems = await db.execute(sql`
         SELECT * FROM inventory
         WHERE ${dimPresenceClause}
         ${sizeOnlyLengthClause}
+        ${sizeOnlyWidthClause}
+        ${sizeOnlyHeightClause}
         ${sizeOnlyDiameterClause}
         ${orderClause}
         LIMIT 200
@@ -468,6 +533,26 @@ router.post("/search", async (req, res) => {
           return sql`AND (i.dimensions->>'length') IS NOT NULL AND ${sql.join(parts, sql` AND `)}`;
         })();
 
+        // Push width-range filter into SQL so it hits the expression index
+        // added in migration 0011: (dimensions->>'width')::numeric
+        const widthSqlClause = (() => {
+          if (widMin == null && widMax == null) return sql``;
+          const parts = [];
+          if (widMin != null) parts.push(sql`(i.dimensions->>'width')::numeric >= ${widMin}`);
+          if (widMax != null) parts.push(sql`(i.dimensions->>'width')::numeric <= ${widMax}`);
+          return sql`AND (i.dimensions->>'width') IS NOT NULL AND ${sql.join(parts, sql` AND `)}`;
+        })();
+
+        // Push height-range filter into SQL so it hits the expression index
+        // added in migration 0011: (dimensions->>'height')::numeric
+        const heightSqlClause = (() => {
+          if (hgtMin == null && hgtMax == null) return sql``;
+          const parts = [];
+          if (hgtMin != null) parts.push(sql`(i.dimensions->>'height')::numeric >= ${hgtMin}`);
+          if (hgtMax != null) parts.push(sql`(i.dimensions->>'height')::numeric <= ${hgtMax}`);
+          return sql`AND (i.dimensions->>'height') IS NOT NULL AND ${sql.join(parts, sql` AND `)}`;
+        })();
+
         // Push diameter-range filter into SQL so it hits the expression index
         // added in migration 0010: (dimensions->>'diameter')::numeric
         const diameterSqlClause = (() => {
@@ -516,6 +601,8 @@ router.post("/search", async (req, res) => {
             ${chipClauses}
             ${catClause}
             ${lengthSqlClause}
+            ${widthSqlClause}
+            ${heightSqlClause}
             ${diameterSqlClause}
           ) AS __ranked
           ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC

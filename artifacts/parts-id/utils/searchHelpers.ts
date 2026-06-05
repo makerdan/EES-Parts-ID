@@ -17,6 +17,10 @@ export type QueryCache<R = unknown> = Record<string, QueryCacheEntry<R>>;
 export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
   const minLengthNum = f.minLength.trim() !== "" ? parseFloat(f.minLength) : null;
   const maxLengthNum = f.maxLength.trim() !== "" ? parseFloat(f.maxLength) : null;
+  const minWidthNum = f.minWidth.trim() !== "" ? parseFloat(f.minWidth) : null;
+  const maxWidthNum = f.maxWidth.trim() !== "" ? parseFloat(f.maxWidth) : null;
+  const minHeightNum = f.minHeight.trim() !== "" ? parseFloat(f.minHeight) : null;
+  const maxHeightNum = f.maxHeight.trim() !== "" ? parseFloat(f.maxHeight) : null;
   const minDiameterNum = f.minDiameter.trim() !== "" ? parseFloat(f.minDiameter) : null;
   const maxDiameterNum = f.maxDiameter.trim() !== "" ? parseFloat(f.maxDiameter) : null;
   return {
@@ -46,6 +50,10 @@ export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
     poleCount: f.poleCount,
     ...(minLengthNum != null && !isNaN(minLengthNum) ? { minLength: minLengthNum } : {}),
     ...(maxLengthNum != null && !isNaN(maxLengthNum) ? { maxLength: maxLengthNum } : {}),
+    ...(minWidthNum != null && !isNaN(minWidthNum) ? { minWidth: minWidthNum } : {}),
+    ...(maxWidthNum != null && !isNaN(maxWidthNum) ? { maxWidth: maxWidthNum } : {}),
+    ...(minHeightNum != null && !isNaN(minHeightNum) ? { minHeight: minHeightNum } : {}),
+    ...(maxHeightNum != null && !isNaN(maxHeightNum) ? { maxHeight: maxHeightNum } : {}),
     ...(minDiameterNum != null && !isNaN(minDiameterNum) ? { minDiameter: minDiameterNum } : {}),
     ...(maxDiameterNum != null && !isNaN(maxDiameterNum) ? { maxDiameter: maxDiameterNum } : {}),
     ...(categorySlug ? { categorySlug } : {}),

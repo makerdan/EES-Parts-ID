@@ -32,6 +32,10 @@ type FilterValues = {
   confidenceThreshold: number;
   minLength: string;
   maxLength: string;
+  minWidth: string;
+  maxWidth: string;
+  minHeight: string;
+  maxHeight: string;
   minDiameter: string;
   maxDiameter: string;
   category: string;
@@ -63,6 +67,10 @@ const BLANK: FilterValues = {
   confidenceThreshold: 50,
   minLength: "",
   maxLength: "",
+  minWidth: "",
+  maxWidth: "",
+  minHeight: "",
+  maxHeight: "",
   minDiameter: "",
   maxDiameter: "",
   category: "",
