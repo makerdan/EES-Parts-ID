@@ -30,6 +30,8 @@ type FilterValues = {
   material: string;
   textNumbers: string;
   confidenceThreshold: number;
+  minLength: string;
+  maxLength: string;
   category: string;
   amperage: string;
   colorChip: string;
@@ -57,6 +59,8 @@ const BLANK: FilterValues = {
   material: "",
   textNumbers: "",
   confidenceThreshold: 50,
+  minLength: "",
+  maxLength: "",
   category: "",
   amperage: "",
   colorChip: "",

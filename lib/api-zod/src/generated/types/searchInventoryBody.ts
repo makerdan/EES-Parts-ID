@@ -52,4 +52,8 @@ export interface SearchInventoryBody {
   voltage?: string;
   /** Pole count chip filter (breakers/switches) */
   poleCount?: string;
+  /** Minimum part length in mm (dimensions filter) */
+  minLength?: number | null;
+  /** Maximum part length in mm (dimensions filter) */
+  maxLength?: number | null;
 }

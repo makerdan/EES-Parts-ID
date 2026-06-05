@@ -116,6 +116,8 @@ router.post("/search", async (req, res) => {
       voltage = "",
       poleCount = "",
       categorySlug = "",
+      minLength,
+      maxLength,
     } = req.body as {
       keywords?: string;
       catalog?: string;
@@ -130,6 +132,8 @@ router.post("/search", async (req, res) => {
       conduitType?: string; conduitSize?: string; boxType?: string; boxGangCount?: string;
       mountingType?: string; environment?: string; voltage?: string; poleCount?: string;
       categorySlug?: string;
+      minLength?: number | null;
+      maxLength?: number | null;
     };
 
     const activeChipFilters: Array<{ key: string; value: string }> = [
@@ -299,7 +303,9 @@ router.post("/search", async (req, res) => {
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
       bin_locations: string[]; ai_keywords: string[]; barcodes: string[];
-      enriched_at: Date | null; image_url: string | null; created_at: Date; updated_at: Date;
+      enriched_at: Date | null; image_url: string | null;
+      dimensions: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null;
+      created_at: Date; updated_at: Date;
       fts_rank: number; trgm_sim: number;
     };
 
@@ -344,7 +350,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.created_at, i.updated_at,
+              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.dimensions, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 to_tsvector('english',
                   coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
@@ -438,6 +444,7 @@ router.post("/search", async (req, res) => {
         imageConfidence: null,
         previousDescription: null,
         catalogPdfJobId: null,
+        dimensions: row.dimensions ?? null,
         createdAt: row.created_at instanceof Date ? row.created_at : new Date(0),
         updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(0),
       };
@@ -538,9 +545,25 @@ router.post("/search", async (req, res) => {
       ? catPreFiltered.filter(r => matchesChipFilters(r.item, activeChipFilters))
       : catPreFiltered;
 
+    // ── Apply dimensions size-range filter ───────────────────────────────────
+    // Only items that HAVE dimensions and whose length falls in the range pass.
+    // If neither bound is provided the filter is a no-op.
+    const hasLengthFilter = (minLength != null && !isNaN(Number(minLength))) ||
+                            (maxLength != null && !isNaN(Number(maxLength)));
+    const dimFiltered = hasLengthFilter
+      ? chipFiltered.filter(r => {
+          const dims = (r.item as unknown as { dimensions?: { length?: number | null } | null }).dimensions;
+          if (!dims || dims.length == null) return false;
+          const len = dims.length;
+          if (minLength != null && !isNaN(Number(minLength)) && len < Number(minLength)) return false;
+          if (maxLength != null && !isNaN(Number(maxLength)) && len > Number(maxLength)) return false;
+          return true;
+        })
+      : chipFiltered;
+
     // Group into series + find variants
     const seriesGroups = new Map<string, { label: string; items: typeof inventoryTable.$inferSelect[] }>();
-    for (const r of chipFiltered) {
+    for (const r of dimFiltered) {
       const series = getSeriesBase(r.item.vendor, r.item.catalog, r.item.description);
       if (series) {
         const existing = seriesGroups.get(series.key) ?? { label: series.label, items: [] };
@@ -550,7 +573,7 @@ router.post("/search", async (req, res) => {
     }
 
     const variantMap = new Map<number, typeof inventoryTable.$inferSelect[]>();
-    const resultIds = new Set(chipFiltered.map(r => r.item.id));
+    const resultIds = new Set(dimFiltered.map(r => r.item.id));
 
     if (seriesGroups.size > 0) {
       const allInventory = await db.select().from(inventoryTable);
@@ -572,8 +595,8 @@ router.post("/search", async (req, res) => {
 
     // confidenceThreshold is 0–100 from client; confidence scores are 0–1 internally
     const thresholdFraction = Math.max(0, Math.min(100, confidenceThreshold)) / 100;
-    const aboveThreshold = chipFiltered.filter(r => r.confidence >= thresholdFraction);
-    const belowCount = chipFiltered.length - aboveThreshold.length;
+    const aboveThreshold = dimFiltered.filter(r => r.confidence >= thresholdFraction);
+    const belowCount = dimFiltered.length - aboveThreshold.length;
 
     aboveThreshold.sort((a, b) => {
       const diff = b.confidence - a.confidence;
@@ -593,7 +616,7 @@ router.post("/search", async (req, res) => {
 
     res.json({
       results: finalResults,
-      totalMatches: chipFiltered.length,
+      totalMatches: dimFiltered.length,
       belowThreshold: belowCount,
       dimensionCounts,
     });
@@ -1447,6 +1470,127 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to upload photo" });
+  }
+});
+
+// ── PATCH /inventory/:id/dimensions ──────────────────────────────────────────
+// Admin-only: save physical dimensions (length, width, height, diameter) in mm.
+// Only fields present in the body are updated (partial merge); omitted fields
+// are preserved from the existing value.  Pass null to clear a specific field.
+router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    if (!id) return void res.status(400).json({ error: "Invalid item id" });
+
+    const { length, width, height, diameter } = req.body as {
+      length?: number | null;
+      width?: number | null;
+      height?: number | null;
+      diameter?: number | null;
+    };
+
+    const isValidMm = (v: unknown) =>
+      v == null || (typeof v === "number" && isFinite(v) && v >= 0 && v <= 100_000);
+
+    if (!isValidMm(length) || !isValidMm(width) || !isValidMm(height) || !isValidMm(diameter)) {
+      return void res.status(400).json({ error: "All dimension values must be non-negative numbers in mm (or null)" });
+    }
+
+    // Build only the fields that were explicitly provided so we can merge
+    // them into the existing jsonb without dropping unrelated fields.
+    const patch: Record<string, number | null> = {};
+    if (length !== undefined) patch.length = length;
+    if (width !== undefined) patch.width = width;
+    if (height !== undefined) patch.height = height;
+    if (diameter !== undefined) patch.diameter = diameter;
+
+    // Use PostgreSQL jsonb || merge operator: existing fields not in patch are preserved.
+    const [updated] = await db
+      .update(inventoryTable)
+      .set({
+        dimensions: sql`COALESCE(${inventoryTable.dimensions}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`,
+        updatedAt: new Date(),
+      })
+      .where(eq(inventoryTable.id, id))
+      .returning();
+
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to update dimensions" });
+  }
+});
+
+// ── POST /inventory/estimate-dimensions ───────────────────────────────────────
+// Admin-only: accepts a base64-encoded JPEG/PNG photo of a part and uses
+// OpenAI Vision to estimate its physical dimensions (length, width, height,
+// diameter) in millimetres.  The admin confirms / adjusts values before saving.
+router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
+  try {
+    const { imageBase64, mimeType = "image/jpeg" } = req.body as {
+      imageBase64: string;
+      mimeType?: string;
+    };
+
+    if (!imageBase64 || typeof imageBase64 !== "string") {
+      return void res.status(400).json({ error: "imageBase64 is required" });
+    }
+
+    // Sanity-check size (≈4 MB base64 ≈ 3 MB binary)
+    if (imageBase64.length > 5_000_000) {
+      return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
+    }
+
+    const { openai } = await import("@workspace/integrations-openai-ai-server");
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.1",
+      max_completion_tokens: 256,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "low" },
+            },
+            {
+              type: "text",
+              text: `Look at this image of an electrical or mechanical part.
+Estimate the part's physical dimensions in millimetres.
+Reply with ONLY a JSON object — no prose — in exactly this shape:
+{"length":null,"width":null,"height":null,"diameter":null}
+Use null for any value you cannot estimate with reasonable confidence.
+"length" is the longest dimension; "width" and "height" are the other two;
+"diameter" applies only to round/cylindrical parts.
+All values must be positive numbers (mm) or null.`,
+            },
+          ],
+        },
+      ],
+    });
+
+    const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
+
+    // Extract the first JSON object from the response (model may wrap in prose)
+    const jsonMatch = raw.match(/\{[^}]*\}/);
+    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+
+    const sanitize = (v: unknown): number | null => {
+      const n = Number(v);
+      return isFinite(n) && n > 0 && n <= 100_000 ? Math.round(n * 10) / 10 : null;
+    };
+
+    res.json({
+      length: sanitize(parsed.length),
+      width: sanitize(parsed.width),
+      height: sanitize(parsed.height),
+      diameter: sanitize(parsed.diameter),
+    });
+  } catch (err) {
+    console.error("[estimate-dimensions]", err);
+    res.status(500).json({ error: "Dimension estimation failed" });
   }
 });
 

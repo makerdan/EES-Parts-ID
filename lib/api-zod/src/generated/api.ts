@@ -49,6 +49,12 @@ export const ListInventoryResponse = zod.object({
         .describe(
           "URL of the catalog image extracted from a PDF import, served via the API proxy",
         ),
+      dimensions: zod.object({
+        length: zod.number().nullish(),
+        width: zod.number().nullish(),
+        height: zod.number().nullish(),
+        diameter: zod.number().nullish(),
+      }).nullish().describe("Physical dimensions in millimetres"),
       createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
       updatedAt: zod.coerce.date(),
     }),
@@ -122,6 +128,8 @@ export const SearchInventoryBody = zod.object({
     .string()
     .optional()
     .describe("Pole count chip filter (breakers\/switches)"),
+  minLength: zod.number().optional().describe("Minimum part length in mm (size-range filter)"),
+  maxLength: zod.number().optional().describe("Maximum part length in mm (size-range filter)"),
 });
 
 export const SearchInventoryResponse = zod.object({
@@ -148,6 +156,12 @@ export const SearchInventoryResponse = zod.object({
           .describe(
             "URL of the catalog image extracted from a PDF import, served via the API proxy",
           ),
+        dimensions: zod.object({
+          length: zod.number().nullish(),
+          width: zod.number().nullish(),
+          height: zod.number().nullish(),
+          diameter: zod.number().nullish(),
+        }).nullish().describe("Physical dimensions in millimetres"),
         createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
         updatedAt: zod.coerce.date(),
       }),
@@ -177,6 +191,12 @@ export const SearchInventoryResponse = zod.object({
             .describe(
               "URL of the catalog image extracted from a PDF import, served via the API proxy",
             ),
+          dimensions: zod.object({
+            length: zod.number().nullish(),
+            width: zod.number().nullish(),
+            height: zod.number().nullish(),
+            diameter: zod.number().nullish(),
+          }).nullish().describe("Physical dimensions in millimetres"),
           createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
           updatedAt: zod.coerce.date(),
         }),
@@ -264,6 +284,12 @@ export const UpdateItemBinsResponse = zod.object({
     .describe(
       "URL of the catalog image extracted from a PDF import, served via the API proxy",
     ),
+  dimensions: zod.object({
+    length: zod.number().nullish(),
+    width: zod.number().nullish(),
+    height: zod.number().nullish(),
+    diameter: zod.number().nullish(),
+  }).nullish().describe("Physical dimensions in millimetres"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -296,6 +322,12 @@ export const LookupByBarcodeResponse = zod.object({
     .describe(
       "URL of the catalog image extracted from a PDF import, served via the API proxy",
     ),
+  dimensions: zod.object({
+    length: zod.number().nullish(),
+    width: zod.number().nullish(),
+    height: zod.number().nullish(),
+    diameter: zod.number().nullish(),
+  }).nullish().describe("Physical dimensions in millimetres"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -334,6 +366,12 @@ export const UpdateItemBarcodesResponse = zod.object({
     .describe(
       "URL of the catalog image extracted from a PDF import, served via the API proxy",
     ),
+  dimensions: zod.object({
+    length: zod.number().nullish(),
+    width: zod.number().nullish(),
+    height: zod.number().nullish(),
+    diameter: zod.number().nullish(),
+  }).nullish().describe("Physical dimensions in millimetres"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -354,6 +392,12 @@ export const UpdateItemDescriptionResponse = zod.object({
   vendor: zod.string(),
   catalog: zod.string(),
   description: zod.string(),
+  dimensions: zod.object({
+    length: zod.number().nullish(),
+    width: zod.number().nullish(),
+    height: zod.number().nullish(),
+    diameter: zod.number().nullish(),
+  }).nullish().describe("Physical dimensions in millimetres"),
   binLocations: zod
     .array(zod.string())
     .describe(
@@ -390,6 +434,12 @@ export const UpdateItemKeywordsResponse = zod.object({
   vendor: zod.string(),
   catalog: zod.string(),
   description: zod.string(),
+  dimensions: zod.object({
+    length: zod.number().nullish(),
+    width: zod.number().nullish(),
+    height: zod.number().nullish(),
+    diameter: zod.number().nullish(),
+  }).nullish().describe("Physical dimensions in millimetres"),
   binLocations: zod
     .array(zod.string())
     .describe(
@@ -472,6 +522,12 @@ export const AiIdentifyPartResponse = zod.object({
           .describe(
             "URL of the catalog image extracted from a PDF import, served via the API proxy",
           ),
+        dimensions: zod.object({
+          length: zod.number().nullish(),
+          width: zod.number().nullish(),
+          height: zod.number().nullish(),
+          diameter: zod.number().nullish(),
+        }).nullish().describe("Physical dimensions in millimetres"),
         createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
         updatedAt: zod.coerce.date(),
       }),
@@ -501,6 +557,12 @@ export const AiIdentifyPartResponse = zod.object({
             .describe(
               "URL of the catalog image extracted from a PDF import, served via the API proxy",
             ),
+          dimensions: zod.object({
+            length: zod.number().nullish(),
+            width: zod.number().nullish(),
+            height: zod.number().nullish(),
+            diameter: zod.number().nullish(),
+          }).nullish().describe("Physical dimensions in millimetres"),
           createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
           updatedAt: zod.coerce.date(),
         }),
@@ -598,6 +660,35 @@ export const DeleteWarehouseZoneParams = zod.object({
 
 export const DeleteWarehouseZoneResponse = zod.object({
   deleted: zod.boolean(),
+});
+
+/**
+ * @summary Save / merge physical dimensions for an inventory item (admin)
+ */
+export const UpdateItemDimensionsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateItemDimensionsBody = zod.object({
+  length: zod.number().nullish().describe("Longest dimension in mm"),
+  width: zod.number().nullish().describe("Width in mm"),
+  height: zod.number().nullish().describe("Height in mm"),
+  diameter: zod.number().nullish().describe("Diameter in mm (for round/cylindrical parts)"),
+});
+
+/**
+ * @summary Estimate part dimensions from a photo using AI Vision (admin)
+ */
+export const EstimateDimensionsBody = zod.object({
+  imageBase64: zod.string().describe("Base64-encoded JPEG or PNG photo of the part"),
+  mimeType: zod.string().optional().describe("MIME type of the image (default image/jpeg)"),
+});
+
+export const EstimateDimensionsResponse = zod.object({
+  length: zod.number().nullish(),
+  width: zod.number().nullish(),
+  height: zod.number().nullish(),
+  diameter: zod.number().nullish(),
 });
 
 /**

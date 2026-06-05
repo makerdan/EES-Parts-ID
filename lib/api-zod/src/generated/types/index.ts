@@ -26,6 +26,7 @@ export * from "./searchResult";
 export * from "./updateBarcodesBody";
 export * from "./updateBinsBody";
 export * from "./updateDescriptionBody";
+export * from "./updateDimensionsBody";
 export * from "./updateKeywordsBody";
 export * from "./updateWarehouseZoneBody";
 export * from "./updateWarehouseZoneBodySectionParity";

@@ -152,6 +152,62 @@ paths:
         "404":
           description: Item not found
 
+  /inventory/estimate-dimensions:
+    post:
+      operationId: estimateDimensions
+      tags: [inventory]
+      summary: Estimate part dimensions from a photo using AI Vision (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EstimateDimensionsBody"
+      responses:
+        "200":
+          description: AI-estimated dimensions in mm (all fields may be null if not determinable)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstimateDimensionsResponse"
+        "400":
+          description: Missing or invalid imageBase64
+        "401":
+          description: Admin token required
+        "413":
+          description: Image too large
+
+  /inventory/{id}/dimensions:
+    patch:
+      operationId: updateItemDimensions
+      tags: [inventory]
+      summary: Save / merge physical dimensions for an inventory item (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDimensionsBody"
+      responses:
+        "200":
+          description: Updated inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "400":
+          description: Invalid dimension values
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
   /inventory/barcode/{code}:
     get:
       operationId: lookupByBarcode
@@ -503,6 +559,23 @@ components:
           type: string
           nullable: true
           description: URL of the catalog image extracted from a PDF import, served via the API proxy
+        dimensions:
+          type: object
+          nullable: true
+          description: Physical dimensions in millimetres (length, width, height, diameter)
+          properties:
+            length:
+              type: number
+              nullable: true
+            width:
+              type: number
+              nullable: true
+            height:
+              type: number
+              nullable: true
+            diameter:
+              type: number
+              nullable: true
         createdAt:
           type: string
           format: date-time
@@ -613,6 +686,12 @@ components:
         categorySlug:
           type: string
           description: Taxonomy category/subcategory/item-type slug to pre-filter results
+        minLength:
+          type: number
+          description: Minimum part length in mm (size-range filter)
+        maxLength:
+          type: number
+          description: Maximum part length in mm (size-range filter)
       required: []
 
     SearchResult:
@@ -662,6 +741,55 @@ components:
         - results
         - totalMatches
         - belowThreshold
+
+    UpdateDimensionsBody:
+      type: object
+      description: Partial-merge update for physical dimensions; omitted fields are preserved.
+      properties:
+        length:
+          type: number
+          nullable: true
+          description: Longest dimension in mm
+        width:
+          type: number
+          nullable: true
+          description: Width in mm
+        height:
+          type: number
+          nullable: true
+          description: Height in mm
+        diameter:
+          type: number
+          nullable: true
+          description: Diameter in mm (for round/cylindrical parts)
+
+    EstimateDimensionsBody:
+      type: object
+      required: [imageBase64]
+      properties:
+        imageBase64:
+          type: string
+          description: Base64-encoded JPEG or PNG photo of the part
+        mimeType:
+          type: string
+          description: MIME type of the image (default image/jpeg)
+
+    EstimateDimensionsResponse:
+      type: object
+      description: AI-estimated dimensions in millimetres; null for any field the model cannot estimate with confidence
+      properties:
+        length:
+          type: number
+          nullable: true
+        width:
+          type: number
+          nullable: true
+        height:
+          type: number
+          nullable: true
+        diameter:
+          type: number
+          nullable: true
 
     UpsertInventoryBody:
       type: object
