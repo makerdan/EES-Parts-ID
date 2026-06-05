@@ -306,6 +306,20 @@ export function WarehouseMapView({
     },
   );
 
+  // Track the display scale for overlay compensation: zone stroke widths and
+  // font sizes are specified in viewBox coordinates.  When the gesture
+  // transform scales the canvas up, those values grow proportionally, making
+  // borders appear thick and labels huge at high zoom.  Dividing by
+  // displayScale before passing to SVG props keeps visual weight constant.
+  // Rounded to 1 d.p. so the reaction doesn't fire on every micro-gesture.
+  const [displayScale, setDisplayScale] = useState(1);
+  useAnimatedReaction(
+    () => Math.round(scale.value * 10) / 10,
+    (rounded, prev) => {
+      if (rounded !== prev) runOnJS(setDisplayScale)(rounded);
+    },
+  );
+
   // numTiles is the tile-grid dimension; oversample is the single-texture
   // fallback factor (both derived from renderZoom).
   const { numTiles, oversample } = useMemo(() => {
@@ -612,6 +626,13 @@ export function WarehouseMapView({
   // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────
   const zoneOverlays = useMemo(() => {
     if (!zones.length) return null;
+    // Stroke widths and font sizes are in viewBox units.  The gesture transform
+    // scales the whole canvas, so a 4-unit stroke appears 4×scale units wide
+    // on screen.  Dividing by displayScale keeps the visual weight constant at
+    // every zoom level.  Clamp to a minimum of 0.5 to stay visible at extreme
+    // zoom, and maximum of 1 so values never exceed their baseline at scale<1.
+    const inv = 1 / Math.max(displayScale, 0.5);
+
     return zones.map((zone) => {
       const isActive = zone.isInventory;
 
@@ -619,7 +640,7 @@ export function WarehouseMapView({
         const isCounted = countedZoneIds?.has(zone.id) ?? false;
         const fillColor = isCounted ? "#22c55ecc" : colors.primary + "18";
         const strokeColor = isCounted ? "#16a34a" : colors.primary + "50";
-        const strokeWidth = isCounted ? 10 : 4;
+        const strokeWidth = (isCounted ? 10 : 4) * inv;
         const labelColor = isCounted ? "#fff" : colors.primary + "80";
         return (
           <G
@@ -641,7 +662,7 @@ export function WarehouseMapView({
             <SvgText
               x={zone.svgX + zone.svgWidth / 2}
               y={zone.svgY + zone.svgHeight / 2}
-              fontSize={Math.max(24, Math.min(48, zone.svgHeight / 3))}
+              fontSize={Math.max(24, Math.min(48, zone.svgHeight / 3)) * inv}
               fontWeight="bold"
               fill={labelColor}
               textAnchor="middle"
@@ -656,7 +677,7 @@ export function WarehouseMapView({
       const ZONE_GAP = 5;
       const fillColor = isActive ? "rgba(0, 112, 255, 0.14)" : "rgba(0, 112, 255, 0.06)";
       const strokeColor = "#0070ff";
-      const strokeWidth = isActive ? 8 : 4;
+      const strokeWidth = (isActive ? 8 : 4) * inv;
       const labelColor = "#000000";
 
       return (
@@ -684,7 +705,7 @@ export function WarehouseMapView({
           <SvgText
             x={zone.svgX + zone.svgWidth / 2}
             y={zone.svgY + zone.svgHeight / 2}
-            fontSize={Math.max(24, Math.min(48, zone.svgHeight / 3))}
+            fontSize={Math.max(24, Math.min(48, zone.svgHeight / 3)) * inv}
             fontWeight="bold"
             fill={labelColor}
             textAnchor="middle"
@@ -695,7 +716,7 @@ export function WarehouseMapView({
         </G>
       );
     });
-  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, cycleLocked, countedZoneIds]);
+  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, cycleLocked, countedZoneIds, displayScale]);
 
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
