@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -12,6 +13,8 @@ import {
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { Feather } from "@expo/vector-icons";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import type { InventoryItem } from "@workspace/api-client-react";
 import {
   useUpdateItemBins,
@@ -62,8 +65,31 @@ export default function EditItemScreen() {
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
+  const [permission, requestPermission] = useCameraPermissions();
+  const scannerLockRef = useRef(false);
   const itemRef = useRef(item);
+
+  const openScanner = useCallback(async () => {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) return;
+    }
+    scannerLockRef.current = false;
+    setScannerOpen(true);
+  }, [permission, requestPermission]);
+
+  const handleBarcodeScanned = useCallback(({ data }: { data: string }) => {
+    if (scannerLockRef.current) return;
+    scannerLockRef.current = true;
+    setScannerOpen(false);
+    const trimmed = data.trim();
+    if (trimmed && !barcodes.includes(trimmed)) {
+      setBarcodes(prev => [...prev, trimmed]);
+      setSaveStatus("idle");
+    }
+  }, [barcodes]);
 
   const addBin = () => {
     const t = newBin.trim();
@@ -291,15 +317,25 @@ export default function EditItemScreen() {
           <View style={[s.addRow, { marginTop: 10 }]}>
             <TextInput
               value={newBarcode}
-              onChangeText={setNewBarcode}
-              placeholder="Type or paste barcode…"
+              onChangeText={(v) => { setNewBarcode(v); setSaveStatus("idle"); }}
+              placeholder="Type barcode…"
               placeholderTextColor={colors.mutedForeground}
+              keyboardType="number-pad"
               style={[s.addInput, { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
               onSubmitEditing={addBarcode}
               returnKeyType="done"
               autoCorrect={false}
               autoCapitalize="none"
             />
+            {Platform.OS !== "web" ? (
+              <Pressable
+                onPress={openScanner}
+                style={[s.scanBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                accessibilityLabel="Scan barcode with camera"
+              >
+                <Feather name="camera" size={18} color={colors.foreground} />
+              </Pressable>
+            ) : null}
             <Pressable
               onPress={addBarcode}
               disabled={!newBarcode.trim()}
@@ -392,9 +428,50 @@ export default function EditItemScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Barcode scanner modal — native only */}
+      {Platform.OS !== "web" ? (
+        <Modal
+          visible={scannerOpen}
+          animationType="slide"
+          onRequestClose={() => setScannerOpen(false)}
+        >
+          <View style={s.scanModal}>
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              onBarcodeScanned={handleBarcodeScanned}
+              barcodeScannerSettings={{
+                barcodeTypes: ["ean13", "ean8", "code128", "code39", "upc_a", "upc_e", "qr"],
+              }}
+            />
+            {/* Viewfinder overlay */}
+            <View style={s.scanOverlay}>
+              <View style={s.scanHeader}>
+                <Pressable onPress={() => setScannerOpen(false)} style={s.scanCloseBtn}>
+                  <Feather name="x" size={20} color="#fff" />
+                </Pressable>
+                <Text style={s.scanTitle}>Scan Barcode</Text>
+                <View style={{ width: 40 }} />
+              </View>
+              <View style={s.viewfinderWrapper}>
+                <View style={s.viewfinder}>
+                  <View style={[s.vfCorner, s.vfTL]} />
+                  <View style={[s.vfCorner, s.vfTR]} />
+                  <View style={[s.vfCorner, s.vfBL]} />
+                  <View style={[s.vfCorner, s.vfBR]} />
+                </View>
+              </View>
+              <Text style={s.scanHint}>Point at a barcode to add it automatically</Text>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
     </SafeAreaView>
   );
 }
+
+const CORNER = 20;
+const CORNER_W = 3;
 
 const s = StyleSheet.create({
   safe: { flex: 1 },
@@ -463,6 +540,13 @@ const s = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter_400Regular",
   },
+  scanBtn: {
+    width: 44,
+    borderWidth: 1,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   addBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, justifyContent: "center" },
   addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   errorBanner: { marginTop: 16, borderRadius: 8, borderWidth: 1, padding: 12 },
@@ -474,4 +558,48 @@ const s = StyleSheet.create({
   saveBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
   backBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8 },
   backBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  // Scanner modal
+  scanModal: { flex: 1, backgroundColor: "#000" },
+  scanOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "space-between",
+    paddingBottom: 48,
+  },
+  scanHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 56,
+    paddingBottom: 16,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  scanCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scanTitle: { color: "#fff", fontSize: 17, fontFamily: "Inter_600SemiBold" },
+  viewfinderWrapper: { flex: 1, alignItems: "center", justifyContent: "center" },
+  viewfinder: { width: 260, height: 160, position: "relative" },
+  vfCorner: {
+    position: "absolute",
+    width: CORNER,
+    height: CORNER,
+    borderColor: "#fff",
+  },
+  vfTL: { top: 0, left: 0, borderTopWidth: CORNER_W, borderLeftWidth: CORNER_W },
+  vfTR: { top: 0, right: 0, borderTopWidth: CORNER_W, borderRightWidth: CORNER_W },
+  vfBL: { bottom: 0, left: 0, borderBottomWidth: CORNER_W, borderLeftWidth: CORNER_W },
+  vfBR: { bottom: 0, right: 0, borderBottomWidth: CORNER_W, borderRightWidth: CORNER_W },
+  scanHint: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+    paddingHorizontal: 32,
+  },
 });
