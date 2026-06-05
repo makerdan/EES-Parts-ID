@@ -5,12 +5,16 @@
  * These tests run entirely in the Swift test process — no ARKit hardware,
  * no device, no simulator required.
  *
- * Add this file to an XCTest target in the project's Xcode workspace.
- * Run with:
+ * This file is wired into the `LidarMeasureTests` test_spec in lidar-measure.podspec.
+ * After running `expo prebuild` (which also runs `pod install`), open
+ * ios/PartsID.xcworkspace in Xcode, select the
+ * `lidar-measure-LidarMeasureTests` scheme, and press Cmd-U.
+ *
+ * Command-line equivalent:
  *   xcodebuild test \
  *     -workspace ios/PartsID.xcworkspace \
- *     -scheme PartsIDTests \
- *     -destination 'platform=iOS Simulator,name=iPhone 15'
+ *     -scheme lidar-measure-LidarMeasureTests \
+ *     -destination 'platform=iOS Simulator,name=iPhone 16'
  */
 
 import XCTest
