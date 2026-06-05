@@ -101,6 +101,10 @@ const DEFAULT_FILTERS: FilterValues = {
   confidenceThreshold: 50,
   minLength: "",
   maxLength: "",
+  minWidth: "",
+  maxWidth: "",
+  minHeight: "",
+  maxHeight: "",
   minDiameter: "",
   maxDiameter: "",
   // 16 required chip dimensions

@@ -66,6 +66,14 @@ export const inventoryTable = pgTable(
       "btree",
       sql`((dimensions->>'length')::numeric)`,
     ),
+    index("inventory_dimensions_width_idx").using(
+      "btree",
+      sql`((dimensions->>'width')::numeric)`,
+    ),
+    index("inventory_dimensions_height_idx").using(
+      "btree",
+      sql`((dimensions->>'height')::numeric)`,
+    ),
     index("inventory_dimensions_diameter_idx").using(
       "btree",
       sql`((dimensions->>'diameter')::numeric)`,
