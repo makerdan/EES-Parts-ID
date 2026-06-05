@@ -7,7 +7,36 @@ import SceneKit
 ///
 /// The bounding box is computed as a world-space AABB and updated every ARKit
 /// delegate tick (~60 fps) so it visibly tightens as new mesh geometry arrives.
+///
+/// The `unit` prop controls how the W/H/D labels are formatted:
+///   "mm" → millimetres (e.g. "W 300.0 mm")
+///   "cm" → centimetres (e.g. "W 30.0 cm")   ← default
+///   "in" → inches      (e.g. "W 11.81 in")
 public class LidarDepthView: ExpoView, ARSCNViewDelegate, ARSessionDelegate {
+
+    // MARK: - Unit preference (set via Expo prop)
+
+    /// The display unit for the W/H/D overlay labels. Matches app default ("mm").
+    private var displayUnit: String = "mm"
+
+    /// Called by LidarDepthViewModule when the React `unit` prop changes.
+    /// Accepts "mm", "cm", or "in"; any other value falls back to "mm".
+    public func setUnit(_ unit: String) {
+        let valid = ["mm", "cm", "in"]
+        displayUnit = valid.contains(unit) ? unit : "mm"
+    }
+
+    /// Convert metres (ARKit native) to the display value and suffix.
+    private func formatMetres(_ metres: Float) -> String {
+        switch displayUnit {
+        case "cm":
+            return String(format: "%.1f cm", metres * 100)
+        case "in":
+            return String(format: "%.2f in", metres * 39.3701)
+        default:
+            return String(format: "%.0f mm", metres * 1000)
+        }
+    }
 
     // MARK: - Sub-views
 
@@ -250,15 +279,15 @@ public class LidarDepthView: ExpoView, ARSCNViewDelegate, ARSessionDelegate {
         // Update dimension label text and positions.
         // Each label sits slightly outside the midpoint of a representative edge
         // so it doesn't overlap the box geometry.
-        let widthCm  = (x1 - x0) * 100
-        let heightCm = (y1 - y0) * 100
-        let depthCm  = (z1 - z0) * 100
+        let widthM  = x1 - x0
+        let heightM = y1 - y0
+        let depthM  = z1 - z0
 
         let offsetOut: Float = 0.04  // 4 cm clearance from the box face
 
         // Width label (X axis) — along the bottom-front edge, offset toward -Z
         if let text = labelNodeX.geometry as? SCNText {
-            text.string = String(format: "W %.1f cm", widthCm)
+            text.string = "W \(formatMetres(widthM))"
         }
         labelNodeX.position = SCNVector3(
             (x0 + x1) * 0.5,
@@ -268,7 +297,7 @@ public class LidarDepthView: ExpoView, ARSCNViewDelegate, ARSessionDelegate {
 
         // Height label (Y axis) — along the right-front edge, offset toward +X
         if let text = labelNodeY.geometry as? SCNText {
-            text.string = String(format: "H %.1f cm", heightCm)
+            text.string = "H \(formatMetres(heightM))"
         }
         labelNodeY.position = SCNVector3(
             x1 + offsetOut,
@@ -278,7 +307,7 @@ public class LidarDepthView: ExpoView, ARSCNViewDelegate, ARSessionDelegate {
 
         // Depth label (Z axis) — along the bottom-right edge, offset toward -Y
         if let text = labelNodeZ.geometry as? SCNText {
-            text.string = String(format: "D %.1f cm", depthCm)
+            text.string = "D \(formatMetres(depthM))"
         }
         labelNodeZ.position = SCNVector3(
             x1,

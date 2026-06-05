@@ -27,7 +27,7 @@ import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { BrowseByCategory } from "@/components/BrowseByCategory";
-import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode } from "@/contexts/AppContext";
+import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode, type DimensionUnit } from "@/contexts/AppContext";
 import { parseBin } from "@/lib/aisleHierarchy";
 import { router } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -770,6 +770,39 @@ export default function SearchScreen() {
                       { color: settings.themeMode === mode ? colors.primaryForeground : colors.foreground },
                     ]}>
                       {mode === "light" ? "Light" : mode === "dark" ? "Dark" : "System"}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            {/* Dimension unit row */}
+            <View style={[styles.settingsRow, { borderColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Dimension unit</Text>
+                <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
+                  Unit used for W/H/D labels when measuring parts.
+                </Text>
+              </View>
+              <View style={styles.textSizePicker}>
+                {(["mm", "cm", "in"] as DimensionUnit[]).map(u => (
+                  <Pressable
+                    key={u}
+                    onPress={() => updateSetting("dimensionUnit", u)}
+                    style={[
+                      styles.secondaryBtn,
+                      styles.textSizeBtn,
+                      {
+                        backgroundColor: settings.dimensionUnit === u ? colors.primary : colors.muted,
+                        borderColor: settings.dimensionUnit === u ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[
+                      styles.textSizeBtnLabel,
+                      { color: settings.dimensionUnit === u ? colors.primaryForeground : colors.foreground },
+                    ]}>
+                      {u}
                     </Text>
                   </Pressable>
                 ))}

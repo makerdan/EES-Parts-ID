@@ -4,6 +4,10 @@ public class LidarDepthViewModule: Module {
     public func definition() -> ModuleDefinition {
         Name("LidarDepthView")
 
-        View(LidarDepthView.self) {}
+        View(LidarDepthView.self) {
+            Prop("unit") { (view: LidarDepthView, unit: String) in
+                view.setUnit(unit)
+            }
+        }
     }
 }
