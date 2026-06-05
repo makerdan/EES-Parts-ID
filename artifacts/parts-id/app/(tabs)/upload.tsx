@@ -24,6 +24,7 @@ import { useColors } from "@/hooks/useColors";
 import { AddPartForm } from "@/components/AddPartForm";
 import { BarcodeAddPart } from "@/components/BarcodeAddPart";
 import { ShelfCatalogEntry } from "@/components/ShelfCatalogEntry";
+import { BulkShelfAssign } from "@/components/BulkShelfAssign";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BinEditor } from "@/components/BinEditor";
 import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
@@ -374,6 +375,7 @@ export default function UploadScreen() {
   const [inventoryPage, setInventoryPage] = useState(1);
   const [binEditorItem, setBinEditorItem] = useState<InventoryItem | null>(null);
   const [shelfEntryOpen, setShelfEntryOpen] = useState(false);
+  const [bulkShelfOpen, setBulkShelfOpen] = useState(false);
 
   // Bulk enrichment state
   const [bulkJobStatus, setBulkJobStatus] = useState<BulkJobStatus | null>(null);
@@ -1937,6 +1939,18 @@ export default function UploadScreen() {
                 </View>
                 <Feather name="chevron-right" size={20} color={colors.primary} />
               </Pressable>
+              <Pressable
+                onPress={() => setBulkShelfOpen(true)}
+                style={[styles.shelfEntryBanner, { backgroundColor: colors.success + "12", borderColor: colors.success + "55", marginTop: 10 }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.shelfEntryTitle, { color: colors.success }]}>🔖 Bulk Assign by Shelf</Text>
+                  <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
+                    Load all items on a shelf, then scan barcodes to assign them one at a time.
+                  </Text>
+                </View>
+                <Feather name="chevron-right" size={20} color={colors.success} />
+              </Pressable>
               <BarcodeAddPart scrollY={addpartScrollY} />
               <AddPartForm
                 adminToken={adminToken}
@@ -2110,6 +2124,11 @@ export default function UploadScreen() {
         visible={shelfEntryOpen}
         adminToken={adminToken}
         onClose={() => { setShelfEntryOpen(false); inventoryQuery.refetch(); }}
+      />
+
+      <BulkShelfAssign
+        visible={bulkShelfOpen}
+        onClose={() => setBulkShelfOpen(false)}
       />
     </SafeAreaView>
   );
