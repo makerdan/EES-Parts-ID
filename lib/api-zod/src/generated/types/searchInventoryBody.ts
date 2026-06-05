@@ -56,4 +56,8 @@ export interface SearchInventoryBody {
   minLength?: number | null;
   /** Maximum part length in mm (dimensions filter) */
   maxLength?: number | null;
+  /** Minimum part diameter in mm (diameter-range filter) */
+  minDiameter?: number | null;
+  /** Maximum part diameter in mm (diameter-range filter) */
+  maxDiameter?: number | null;
 }

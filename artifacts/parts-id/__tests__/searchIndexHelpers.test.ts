@@ -32,6 +32,8 @@ type FilterValues = {
   confidenceThreshold: number;
   minLength: string;
   maxLength: string;
+  minDiameter: string;
+  maxDiameter: string;
   category: string;
   amperage: string;
   colorChip: string;
@@ -61,6 +63,8 @@ const BLANK: FilterValues = {
   confidenceThreshold: 50,
   minLength: "",
   maxLength: "",
+  minDiameter: "",
+  maxDiameter: "",
   category: "",
   amperage: "",
   colorChip: "",
