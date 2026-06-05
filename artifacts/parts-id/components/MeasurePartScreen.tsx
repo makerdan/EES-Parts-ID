@@ -33,10 +33,24 @@ import {
   View,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Device from "expo-device";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { cancelMeasure, isLiDARSupported, measureObject, NativeLidarDepthView } from "lidar-measure";
 
+/**
+ * Returns true when the current iOS device is known to include LiDAR hardware
+ * (iPhone 12 Pro+ / iPad Pro 2020+).  Falls back to true in development
+ * (simulator or unknown model) so the feature is accessible while testing.
+ * In production on a non-LiDAR device the button is hidden by the caller.
+ */
+export function isLiDARCapableDevice(): boolean {
+  if (!Device.modelName) return true;
+  const m = Device.modelName;
+  const iPhoneProPattern = /iPhone (1[2-9]|[2-9]\d+) Pro/i;
+  const iPadProPattern = /iPad Pro/i;
+  return iPhoneProPattern.test(m) || iPadProPattern.test(m);
+}
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`

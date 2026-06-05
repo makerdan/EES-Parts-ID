@@ -20,6 +20,7 @@ module.exports = {
           baseUrl: ".",
           paths: {
             "@/*": ["./*"],
+            "lidar-measure": ["./modules/lidar-measure/src/index"],
             "@workspace/zone-validation": [
               "../../lib/zone-validation/src/index.ts",
             ],
@@ -28,5 +29,5 @@ module.exports = {
       },
     ],
   },
-  testMatch: ["**/__tests__/**/*.test.ts"],
+  testMatch: ["**/__tests__/**/*.test.ts", "**/__tests__/**/*.test.tsx"],
 };
