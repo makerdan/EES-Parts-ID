@@ -45,9 +45,28 @@ router.get("/", async (req, res) => {
     const limit = Math.min(500, Math.max(1, parseInt(req.query["limit"] as string) || 50));
     const offset = (page - 1) * limit;
 
+    const minLength  = req.query["minLength"]  != null ? parseFloat(req.query["minLength"]  as string) : null;
+    const maxLength  = req.query["maxLength"]  != null ? parseFloat(req.query["maxLength"]  as string) : null;
+    const minDiameter = req.query["minDiameter"] != null ? parseFloat(req.query["minDiameter"] as string) : null;
+    const maxDiameter = req.query["maxDiameter"] != null ? parseFloat(req.query["maxDiameter"] as string) : null;
+
+    // Build optional dimension WHERE conditions using the same expression pattern
+    // as the indexed columns so Postgres can use the expression indexes.
+    const dimConditions = and(
+      ...[
+        minLength  != null && !isNaN(minLength)   ? sql`(dimensions->>'length')::numeric   >= ${minLength}`   : undefined,
+        maxLength  != null && !isNaN(maxLength)   ? sql`(dimensions->>'length')::numeric   <= ${maxLength}`   : undefined,
+        minDiameter != null && !isNaN(minDiameter) ? sql`(dimensions->>'diameter')::numeric >= ${minDiameter}` : undefined,
+        maxDiameter != null && !isNaN(maxDiameter) ? sql`(dimensions->>'diameter')::numeric <= ${maxDiameter}` : undefined,
+      ].filter((c): c is NonNullable<typeof c> => c !== undefined),
+    );
+
     const [items, countResult] = await Promise.all([
-      db.select().from(inventoryTable).limit(limit).offset(offset).orderBy(inventoryTable.vendor, inventoryTable.catalog),
-      db.select({ count: sql<number>`count(*)` }).from(inventoryTable),
+      db.select().from(inventoryTable)
+        .where(dimConditions)
+        .limit(limit).offset(offset)
+        .orderBy(inventoryTable.vendor, inventoryTable.catalog),
+      db.select({ count: sql<number>`count(*)` }).from(inventoryTable).where(dimConditions),
     ]);
 
     res.json({
@@ -118,6 +137,8 @@ router.post("/search", async (req, res) => {
       categorySlug = "",
       minLength,
       maxLength,
+      minDiameter,
+      maxDiameter,
     } = req.body as {
       keywords?: string;
       catalog?: string;
@@ -134,6 +155,8 @@ router.post("/search", async (req, res) => {
       categorySlug?: string;
       minLength?: number | null;
       maxLength?: number | null;
+      minDiameter?: number | null;
+      maxDiameter?: number | null;
     };
 
     const activeChipFilters: Array<{ key: string; value: string }> = [
@@ -343,6 +366,30 @@ router.post("/search", async (req, res) => {
           ? sql`AND (${chipText} ~* ${catSqlRegex})`
           : sql``;
 
+        // Push length-range filter into SQL so the LIMIT 200 cap applies after
+        // filtering, not before — mirrors the chip-filter pattern above.
+        const lengthSqlClause = (() => {
+          const minVal = minLength != null && !isNaN(Number(minLength)) ? Number(minLength) : null;
+          const maxVal = maxLength != null && !isNaN(Number(maxLength)) ? Number(maxLength) : null;
+          if (minVal == null && maxVal == null) return sql``;
+          const parts = [];
+          if (minVal != null) parts.push(sql`(i.dimensions->>'length')::numeric >= ${minVal}`);
+          if (maxVal != null) parts.push(sql`(i.dimensions->>'length')::numeric <= ${maxVal}`);
+          return sql`AND (i.dimensions->>'length') IS NOT NULL AND ${sql.join(parts, sql` AND `)}`;
+        })();
+
+        // Push diameter-range filter into SQL so it hits the expression index
+        // added in migration 0010: (dimensions->>'diameter')::numeric
+        const diameterSqlClause = (() => {
+          const minVal = minDiameter != null && !isNaN(Number(minDiameter)) ? Number(minDiameter) : null;
+          const maxVal = maxDiameter != null && !isNaN(Number(maxDiameter)) ? Number(maxDiameter) : null;
+          if (minVal == null && maxVal == null) return sql``;
+          const parts = [];
+          if (minVal != null) parts.push(sql`(i.dimensions->>'diameter')::numeric >= ${minVal}`);
+          if (maxVal != null) parts.push(sql`(i.dimensions->>'diameter')::numeric <= ${maxVal}`);
+          return sql`AND (i.dimensions->>'diameter') IS NOT NULL AND ${sql.join(parts, sql` AND `)}`;
+        })();
+
         // Wrap in a subquery so ORDER BY can reference the computed column aliases.
         // PostgreSQL only resolves aliases in ORDER BY when used as direct references
         // (not inside arithmetic expressions like fts_rank * 0.6 + trgm_sim * 0.4).
@@ -378,6 +425,8 @@ router.post("/search", async (req, res) => {
             )
             ${chipClauses}
             ${catClause}
+            ${lengthSqlClause}
+            ${diameterSqlClause}
           ) AS __ranked
           ORDER BY (fts_rank * 0.6 + trgm_sim * 0.4) DESC
           LIMIT 200
@@ -550,7 +599,7 @@ router.post("/search", async (req, res) => {
     // If neither bound is provided the filter is a no-op.
     const hasLengthFilter = (minLength != null && !isNaN(Number(minLength))) ||
                             (maxLength != null && !isNaN(Number(maxLength)));
-    const dimFiltered = hasLengthFilter
+    const lengthFiltered = hasLengthFilter
       ? chipFiltered.filter(r => {
           const dims = (r.item as unknown as { dimensions?: { length?: number | null } | null }).dimensions;
           if (!dims || dims.length == null) return false;
@@ -560,6 +609,23 @@ router.post("/search", async (req, res) => {
           return true;
         })
       : chipFiltered;
+
+    // ── Apply diameter-range filter ───────────────────────────────────────────
+    // Mirrors the length filter above; uses the (dimensions->>'diameter')::numeric
+    // expression index added in migration 0010 at the DB level.
+    // If neither bound is provided the filter is a no-op.
+    const hasDiameterFilter = (minDiameter != null && !isNaN(Number(minDiameter))) ||
+                              (maxDiameter != null && !isNaN(Number(maxDiameter)));
+    const dimFiltered = hasDiameterFilter
+      ? lengthFiltered.filter(r => {
+          const dims = (r.item as unknown as { dimensions?: { diameter?: number | null } | null }).dimensions;
+          if (!dims || dims.diameter == null) return false;
+          const dia = dims.diameter;
+          if (minDiameter != null && !isNaN(Number(minDiameter)) && dia < Number(minDiameter)) return false;
+          if (maxDiameter != null && !isNaN(Number(maxDiameter)) && dia > Number(maxDiameter)) return false;
+          return true;
+        })
+      : lengthFiltered;
 
     // Group into series + find variants
     const seriesGroups = new Map<string, { label: string; items: typeof inventoryTable.$inferSelect[] }>();

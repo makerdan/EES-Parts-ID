@@ -130,6 +130,8 @@ export const SearchInventoryBody = zod.object({
     .describe("Pole count chip filter (breakers\/switches)"),
   minLength: zod.number().optional().describe("Minimum part length in mm (size-range filter)"),
   maxLength: zod.number().optional().describe("Maximum part length in mm (size-range filter)"),
+  minDiameter: zod.number().optional().describe("Minimum part diameter in mm (diameter-range filter)"),
+  maxDiameter: zod.number().optional().describe("Maximum part diameter in mm (diameter-range filter)"),
 });
 
 export const SearchInventoryResponse = zod.object({

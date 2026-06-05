@@ -17,6 +17,8 @@ export type QueryCache<R = unknown> = Record<string, QueryCacheEntry<R>>;
 export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
   const minLengthNum = f.minLength.trim() !== "" ? parseFloat(f.minLength) : null;
   const maxLengthNum = f.maxLength.trim() !== "" ? parseFloat(f.maxLength) : null;
+  const minDiameterNum = f.minDiameter.trim() !== "" ? parseFloat(f.minDiameter) : null;
+  const maxDiameterNum = f.maxDiameter.trim() !== "" ? parseFloat(f.maxDiameter) : null;
   return {
     keywords: f.keywords,
     catalog: f.catalog,
@@ -44,6 +46,8 @@ export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
     poleCount: f.poleCount,
     ...(minLengthNum != null && !isNaN(minLengthNum) ? { minLength: minLengthNum } : {}),
     ...(maxLengthNum != null && !isNaN(maxLengthNum) ? { maxLength: maxLengthNum } : {}),
+    ...(minDiameterNum != null && !isNaN(minDiameterNum) ? { minDiameter: minDiameterNum } : {}),
+    ...(maxDiameterNum != null && !isNaN(maxDiameterNum) ? { maxDiameter: maxDiameterNum } : {}),
     ...(categorySlug ? { categorySlug } : {}),
   };
 }

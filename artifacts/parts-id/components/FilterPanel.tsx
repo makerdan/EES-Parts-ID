@@ -35,6 +35,8 @@ export interface FilterValues {
   // ── Physical dimensions size-range filter (mm) ────────────────────────────
   minLength: string;
   maxLength: string;
+  minDiameter: string;
+  maxDiameter: string;
   // ── 16 structured chip dimensions (AND-logic on server) ───────────────────
   category: string;       // Part category / type
   amperage: string;       // Current rating
@@ -372,7 +374,8 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
   const TEXT_FIELD_KEYS = ["catalog", "vendor", "color", "size", "material", "textNumbers"] as const;
 
   const activeTextFieldCount = TEXT_FIELD_KEYS.filter(k => values[k].trim() !== "").length +
-    (values.minLength.trim() !== "" || values.maxLength.trim() !== "" ? 1 : 0);
+    (values.minLength.trim() !== "" || values.maxLength.trim() !== "" ? 1 : 0) +
+    (values.minDiameter.trim() !== "" || values.maxDiameter.trim() !== "" ? 1 : 0);
   const activeChipOnlyCount = CHIP_DIMS.filter(d => values[d.key]).length;
 
   const activeChipCount = activeChipOnlyCount + activeTextFieldCount;
@@ -385,6 +388,8 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
     TEXT_FIELD_KEYS.forEach(k => onChange(k, ""));
     onChange("minLength", "");
     onChange("maxLength", "");
+    onChange("minDiameter", "");
+    onChange("maxDiameter", "");
   }, [onChange]);
 
   // ── Advanced Filters collapse state ──────────────────────────────────────
@@ -556,6 +561,42 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
                   value={values.maxLength}
                   onChangeText={v => onChange("maxLength", v.replace(/[^0-9.]/g, ""))}
                   placeholder="e.g. 60"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                />
+              </View>
+            </View>
+
+            {/* ── Diameter range filter ── */}
+            <View style={chipAreaStyles.dimHeader}>
+              <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
+                DIAMETER RANGE (mm)
+              </Text>
+              {(values.minDiameter.trim() !== "" || values.maxDiameter.trim() !== "") && (
+                <Pressable onPress={() => { onChange("minDiameter", ""); onChange("maxDiameter", ""); }} hitSlop={8}>
+                  <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>Clear</Text>
+                </Pressable>
+              )}
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Min diameter</Text>
+                <TextInput
+                  value={values.minDiameter}
+                  onChangeText={v => onChange("minDiameter", v.replace(/[^0-9.]/g, ""))}
+                  placeholder="e.g. 10"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Max diameter</Text>
+                <TextInput
+                  value={values.maxDiameter}
+                  onChangeText={v => onChange("maxDiameter", v.replace(/[^0-9.]/g, ""))}
+                  placeholder="e.g. 25"
                   placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
                   style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
