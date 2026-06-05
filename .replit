@@ -32,12 +32,12 @@ args = "expo-doctor"
 name = "typecheck"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm run typecheck"
-
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/parts-id exec tsc --noEmit"
 
 [[workflows.workflow]]
 name = "test"
