@@ -16,17 +16,23 @@
  *            plan and the zone rectangles therefore share one SVG viewport;
  *            no separate CSS-scaled layer exists, so there is no rasterisation
  *            blur however far the user zooms in.
- *   Native — <SvgUri> is rendered directly at svgRenderW × svgRenderH.  The
- *            SVG element's own viewBox attribute handles coordinate scaling so
- *            no manual transform is needed.  This avoids rasterising at the
- *            SVG's natural viewBox resolution (3592 × 2457 pts × 3× DPR ≈
- *            10 776 × 7 372 px) which exceeded iOS's maximum GPU texture size
- *            and caused patchwork tiles and blur.
+ *   Native — Adaptive tiling: the floor plan is split into numTiles×numTiles
+ *            tiles where numTiles = ceil(zoom).  Each tile renders
+ *            svgRenderW×svgRenderH pt of SvgXml with a viewBox cropped to its
+ *            1/N × 1/N fraction of the floor plan, so the rasteriser produces
+ *            exactly the resolution the compositor needs — quality ratio N/Z
+ *            always equals 1.  Only the tiles that overlap the current pan/
+ *            zoom viewport (plus a 1-tile buffer) are instantiated, so memory
+ *            stays constant regardless of zoom level.  A centred absolute-
+ *            position + transform:scale(1/N) maps each tile's layout area to
+ *            its correct visual slot in the floor plan.  Falls back to a single
+ *            oversample SvgUri when the SVG XML is not yet available.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   LayoutChangeEvent,
+  PixelRatio,
   Platform,
   Pressable,
   StyleSheet,
@@ -48,13 +54,14 @@ import {
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
+  useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import { Svg, Rect, G, Text as SvgText, SvgUri } from "react-native-svg";
+import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml } from "react-native-svg";
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 
@@ -64,6 +71,10 @@ const SVG_ASPECT = SVG_VIEWBOX_W / SVG_VIEWBOX_H;
 
 const MIN_SCALE = 0.8;
 const MAX_SCALE = 50;
+
+// Conservative iOS Metal GPU texture limit in physical pixels.
+// Exceeding this causes patchwork tiles; keep high-res renders below it.
+const IOS_MAX_TEXTURE_PX = 8192;
 
 // Standalone worklet — no closure over JS values
 function clamp(val: number, min: number, max: number) {
@@ -155,7 +166,11 @@ async function _loadFloorPlanFromBundle(): Promise<void> {
       .replace(/<\/svg>\s*$/, "");
     newData = { xml, innerXml, uri: "" };
   } else {
-    newData = { xml: "", innerXml: "", uri };
+    // Fetch the SVG text so the tile renderer can use SvgXml with per-tile
+    // viewBox crops at high zoom.  This is a local-file read so it is fast.
+    const res = await fetch(uri);
+    const xml = res.ok ? await res.text() : "";
+    newData = { xml, innerXml: "", uri };
   }
   // Write to both in-memory cache and AsyncStorage so the next cold start
   // skips the network fetch.  Also updates the stored hash so subsequent
@@ -267,6 +282,104 @@ export function WarehouseMapView({
   const savedTX = useSharedValue(0);
   const savedTY = useSharedValue(0);
 
+  // ── Adaptive-tiling floor-plan renderer ──────────────────────────────────
+  // At zoom N the floor plan is split into N×N tiles.  Each tile renders at
+  // svgRenderW×svgRenderH with a viewBox crop for its 1/N × 1/N slice of the
+  // SVG, so the rasteriser always matches the resolution the compositor needs
+  // (quality ratio N/Z = 1 at every zoom level).
+  //
+  // numTiles = ceil(scale) so the tile count advances by integer steps only.
+  // Visible-range culling (via useAnimatedReaction) keeps the live tile count
+  // to ~4-9 regardless of total numTiles, holding memory constant.
+  //
+  // Falls back to single-texture SvgUri (with capped oversample) while svgXml
+  // is not yet available (first cold start before the bundle fetch completes).
+
+  // Track the integer zoom tier on the JS thread (avoids churn during pinch).
+  const [renderZoom, setRenderZoom] = useState(1);
+  useAnimatedReaction(
+    () => Math.ceil(scale.value),
+    (tier, prevTier) => {
+      if (tier !== prevTier) {
+        runOnJS(setRenderZoom)(tier);
+      }
+    },
+  );
+
+  // numTiles is the tile-grid dimension; oversample is the single-texture
+  // fallback factor (both derived from renderZoom).
+  const { numTiles, oversample } = useMemo(() => {
+    if (svgRenderW <= 0) return { numTiles: 1, oversample: 1 };
+    const pixelRatio = PixelRatio.get();
+    const maxByTexture = Math.max(
+      1,
+      Math.floor(IOS_MAX_TEXTURE_PX / (svgRenderW * pixelRatio)),
+    );
+    return {
+      numTiles: renderZoom,                                  // N×N tiling
+      oversample: Math.max(1, Math.min(renderZoom, maxByTexture)), // fallback cap
+    };
+  }, [renderZoom, svgRenderW]);
+
+  // Single-texture fallback dimensions
+  const hiResW = svgRenderW * oversample;
+  const hiResH = svgRenderH * oversample;
+
+  // ── Visible-tile culling ──────────────────────────────────────────────────
+  // Shared values that mirror JS state so the UI-thread reaction can read them
+  // without requiring runOnJS on every gesture frame.
+  const numTilesV = useSharedValue(1);
+  const svgRenderWV = useSharedValue(svgRenderW);
+  useEffect(() => { numTilesV.value = numTiles; }, [numTiles, numTilesV]);
+  useEffect(() => { svgRenderWV.value = svgRenderW; }, [svgRenderW, svgRenderWV]);
+
+  // Tile range visible in the current viewport.  Updated when any tile
+  // boundary is crossed during pan or zoom (not on every animation frame).
+  interface VisibleRange { N: number; c0: number; c1: number; r0: number; r1: number; }
+  const [visibleRange, setVisibleRange] = useState<VisibleRange>(
+    { N: 1, c0: 0, c1: 0, r0: 0, r1: 0 },
+  );
+  useAnimatedReaction(
+    () => {
+      const N = numTilesV.value;
+      const W = svgRenderWV.value;
+      if (N <= 1 || W <= 0) return { N, c0: 0, c1: 0, r0: 0, r1: 0 };
+      const H = W / SVG_ASPECT;
+      const Z = scale.value;
+      const tx = translateX.value;
+      const ty = translateY.value;
+      const cW = containerWV.value;
+      const cH = containerHV.value;
+      const tileW = W / N;
+      const tileH = H / N;
+      // Centre of the visible floor-plan window in floor-plan coordinates.
+      const visCX = W / 2 - tx / Z;
+      const visCY = H / 2 - ty / Z;
+      // Size of the visible window in floor-plan coordinates.
+      const visW = cW / Z;
+      const visH = cH / Z;
+      // Tile grid range with 1-tile buffer to avoid pop-in on slow scrolls.
+      const c0 = Math.max(0, Math.floor((visCX - visW / 2) / tileW) - 1);
+      const c1 = Math.min(N - 1, Math.ceil((visCX + visW / 2) / tileW));
+      const r0 = Math.max(0, Math.floor((visCY - visH / 2) / tileH) - 1);
+      const r1 = Math.min(N - 1, Math.ceil((visCY + visH / 2) / tileH));
+      return { N, c0, c1, r0, r1 };
+    },
+    (curr, prev) => {
+      "worklet";
+      if (
+        !prev ||
+        curr.N !== prev.N ||
+        curr.c0 !== prev.c0 ||
+        curr.c1 !== prev.c1 ||
+        curr.r0 !== prev.r0 ||
+        curr.r1 !== prev.r1
+      ) {
+        runOnJS(setVisibleRange)(curr);
+      }
+    },
+  );
+
   // Resolve the bundled SVG asset.
   //
   // Web path  — fetches the SVG text, strips the outer <svg> wrapper, and
@@ -281,6 +394,8 @@ export function WarehouseMapView({
   // no skeleton, no fetch.
   const [svgUri, setSvgUri] = useState(() => getCachedData()?.uri ?? "");
   const [innerXml, setInnerXml] = useState(() => getCachedData()?.innerXml ?? "");
+  // svgXml: full SVG text used by the tile renderer (SvgXml + modified viewBox)
+  const [svgXml, setSvgXml] = useState(() => getCachedData()?.xml ?? "");
   const [svgLoading, setSvgLoading] = useState(() => !hasCachedData());
   useEffect(() => {
     if (hasCachedData()) return; // already cached (in-memory) — nothing to do
@@ -299,6 +414,7 @@ export function WarehouseMapView({
         // never appears for returning users.
         setSvgUri(afterPersist.uri);
         setInnerXml(afterPersist.innerXml);
+        setSvgXml(afterPersist.xml);
         setSvgLoading(false);
       }
 
@@ -311,10 +427,38 @@ export function WarehouseMapView({
       if (afterLoad) {
         setSvgUri(afterLoad.uri);
         setInnerXml(afterLoad.innerXml);
+        setSvgXml(afterLoad.xml);
       }
       setSvgLoading(false);
     })();
   }, []);
+
+  // ── Tile XML memoisation ──────────────────────────────────────────────────
+  // Produces SvgXml strings for each visible tile by replacing the viewBox
+  // attribute in the cached SVG text.  Recomputes only when the visible range
+  // or numTiles changes — not on every animation frame.
+  interface TileSpec { col: number; row: number; xml: string; }
+  const tiles = useMemo<TileSpec[]>(() => {
+    if (numTiles <= 1 || !svgXml || Platform.OS === "web") return [];
+    const N = numTiles;
+    const { c0, c1, r0, r1, N: rangeN } = visibleRange;
+    // Wait until the reaction has caught up to the current N.
+    if (rangeN !== N) return [];
+    const vbW = SVG_VIEWBOX_W / N;
+    const vbH = SVG_VIEWBOX_H / N;
+    const result: TileSpec[] = [];
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        // Replace the viewBox attribute so this tile renders only its slice.
+        const tileXml = svgXml.replace(
+          /viewBox="[^"]+"/,
+          `viewBox="${c * vbW} ${r * vbH} ${vbW} ${vbH}"`,
+        );
+        result.push({ col: c, row: r, xml: tileXml });
+      }
+    }
+    return result;
+  }, [numTiles, svgXml, visibleRange]);
 
   // Skeleton shimmer — pulsing opacity while SVG is fetching.
   // Starts unmounted when the cache is already populated so there is no
@@ -573,20 +717,57 @@ export function WarehouseMapView({
               tiles and blur when rasterising at the SVG's full viewBox
               resolution (3592 × 2457 pts × 3× DPR ≈ 10 776 × 7 372 px). */}
           {Platform.OS !== "web" ? (
-            svgUri ? (
-              // Render SvgUri directly at svgRenderW × svgRenderH.
-              // The SVG's own viewBox handles coordinate scaling so no manual
-              // transform is needed.  Rendering at the natural viewBox resolution
-              // (3592 × 2457 pts) via an overscale wrapper caused iOS to exceed
-              // its maximum GPU texture size (~10 776 × 7 372 px at 3× DPR),
-              // resulting in patchwork tiles and blur.
+            (svgUri || svgXml) ? (
+              // ── Native floor plan — adaptive tiling ──────────────────────
+              // Primary path (svgXml available): N×N tiles where N = ceil(zoom).
+              // Each tile renders the SVG at svgRenderW×svgRenderH with a
+              // viewBox cropped to its 1/N slice, so the SVG rasteriser always
+              // produces the resolution the compositor needs (quality ratio 1).
+              // Only tiles that overlap the visible viewport are instantiated.
+              //
+              // Fallback (svgXml not yet loaded): single-texture SvgUri with
+              // capped oversample so the first cold-start render is still sharp
+              // up to ~7× while the XML fetch completes in the background.
               <View
                 style={[
-                  { width: svgRenderW, height: svgRenderH },
+                  { width: svgRenderW, height: svgRenderH, overflow: "hidden" },
                   isDark && styles.svgDarkFilter,
                 ]}
               >
-                <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
+                {numTiles > 1 && tiles.length > 0 ? (
+                  // Tiled path — render only visible tiles
+                  tiles.map(({ col, row, xml: tileXml }) => (
+                    <View
+                      key={`${col}-${row}`}
+                      style={{
+                        width: svgRenderW,
+                        height: svgRenderH,
+                        position: "absolute",
+                        // Centre the tile's layout box so that scale(1/N)
+                        // pivots exactly around the tile's visual centre.
+                        left: (col + 0.5) * (svgRenderW / numTiles) - svgRenderW / 2,
+                        top: (row + 0.5) * (svgRenderH / numTiles) - svgRenderH / 2,
+                        transform: [{ scale: 1 / numTiles }],
+                      }}
+                    >
+                      <SvgXml xml={tileXml} width={svgRenderW} height={svgRenderH} />
+                    </View>
+                  ))
+                ) : (
+                  // Single-texture fallback — SvgUri with oversample
+                  <View
+                    style={{
+                      width: hiResW,
+                      height: hiResH,
+                      position: "absolute",
+                      left: (svgRenderW - hiResW) / 2,
+                      top: (svgRenderH - hiResH) / 2,
+                      transform: [{ scale: 1 / oversample }],
+                    }}
+                  >
+                    <SvgUri uri={svgUri} width={hiResW} height={hiResH} />
+                  </View>
+                )}
               </View>
             ) : !svgLoading ? (
               <View
