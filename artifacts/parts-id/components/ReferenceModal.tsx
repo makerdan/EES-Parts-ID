@@ -18,6 +18,7 @@ import { fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetc
 import { ContactSheet } from "@/components/ContactSheet";
 import { useApp } from "@/contexts/AppContext";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -463,7 +464,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
           {/* Persistent bottom input bar — visible once conversation has started */}
           {(history.length > 0 || hasActiveAnswerArea) ? (
             <View style={[inputStyles.bar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-              <TextInput
+              <KeyboardDoneInput
                 value={question}
                 onChangeText={t => { setQuestion(t); if (inputCollapsed) setInputCollapsed(false); }}
                 placeholder="Ask about any electrical term..."

@@ -18,6 +18,7 @@ import {
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -244,7 +245,7 @@ function Field({
   return (
     <View style={{ marginBottom: 12 }}>
       <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>{label}</Text>
-      <TextInput
+      <KeyboardDoneInput
         value={value}
         onChangeText={onChange}
         placeholder={placeholder}
@@ -547,7 +548,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
             <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
               <View style={{ flex: 1 }}>
                 <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Min length</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={values.minLength}
                   onChangeText={v => onChange("minLength", v.replace(/[^0-9.]/g, ""))}
                   placeholder="e.g. 30"
@@ -558,7 +559,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Max length</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={values.maxLength}
                   onChangeText={v => onChange("maxLength", v.replace(/[^0-9.]/g, ""))}
                   placeholder="e.g. 60"
@@ -583,7 +584,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
             <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
               <View style={{ flex: 1 }}>
                 <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Min diameter</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={values.minDiameter}
                   onChangeText={v => onChange("minDiameter", v.replace(/[^0-9.]/g, ""))}
                   placeholder="e.g. 10"
@@ -594,7 +595,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Max diameter</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={values.maxDiameter}
                   onChangeText={v => onChange("maxDiameter", v.replace(/[^0-9.]/g, ""))}
                   placeholder="e.g. 25"
