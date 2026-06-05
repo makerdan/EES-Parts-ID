@@ -1,0 +1,47 @@
+name: LiDAR Measure Tests
+
+on:
+  pull_request:
+
+jobs:
+  lidar-measure-tests:
+    name: Run LidarMeasureTests
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Expo prebuild (generates ios/)
+        working-directory: artifacts/parts-id
+        run: pnpm exec expo prebuild --platform ios --no-install
+
+      - name: Pod install
+        working-directory: artifacts/parts-id/ios
+        run: pod install
+
+      - name: Install xcpretty
+        run: gem install xcpretty --no-document
+
+      - name: Run LidarMeasureTests
+        working-directory: artifacts/parts-id
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -workspace ios/PartsID.xcworkspace \
+            -scheme lidar-measure-LidarMeasureTests \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            | xcpretty
