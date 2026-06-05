@@ -69,6 +69,7 @@ interface MeasurePartScreenProps {
 }
 
 type Phase = "preview" | "lidar_scanning" | "estimating" | "confirm";
+type RescanAxis = "length" | "width" | "height";
 
 const LIDAR_TIMEOUT_S = 4;
 
@@ -99,12 +100,15 @@ export function MeasurePartScreen({
   const [heightStr, setHeightStr] = useState("");
   const [diameterStr, setDiameterStr] = useState("");
 
+  const [rescanningAxis, setRescanningAxis] = useState<RescanAxis | null>(null);
+
   const cameraRef = useRef<CameraView>(null);
 
   useEffect(() => {
     if (visible) {
       setPhase("preview");
       setEstimateError(null);
+      setRescanningAxis(null);
       setLengthStr(fmt(initialDims?.length));
       setWidthStr(fmt(initialDims?.width));
       setHeightStr(fmt(initialDims?.height));
@@ -113,7 +117,7 @@ export function MeasurePartScreen({
     }
   }, [visible, initialDims, permission, requestPermission]);
 
-  // ── LiDAR scan path ────────────────────────────────────────────────────────
+  // ── LiDAR full scan path ────────────────────────────────────────────────────
 
   const handleLidarScan = useCallback(async () => {
     setPhase("lidar_scanning");
@@ -133,6 +137,26 @@ export function MeasurePartScreen({
         "LiDAR scan failed",
         `${msg}\n\nYou can use photo estimation or enter dimensions manually.`
       );
+    }
+  }, []);
+
+  // ── LiDAR per-axis re-scan ──────────────────────────────────────────────────
+
+  const handleAxisRescan = useCallback(async (axis: RescanAxis) => {
+    setRescanningAxis(axis);
+    try {
+      const dims = await measureObject(LIDAR_TIMEOUT_S);
+      if (axis === "length") setLengthStr(fmt(dims.length));
+      else if (axis === "width") setWidthStr(fmt(dims.width));
+      else if (axis === "height") setHeightStr(fmt(dims.height));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "LiDAR scan failed";
+      Alert.alert(
+        "Re-scan failed",
+        `${msg}\n\nYou can adjust the value manually.`
+      );
+    } finally {
+      setRescanningAxis(null);
     }
   }, []);
 
@@ -207,7 +231,24 @@ export function MeasurePartScreen({
   if (!visible) return null;
 
   const hasCameraAccess = Platform.OS !== "web" && permission?.granted;
-  const isScanning = phase === "estimating" || phase === "lidar_scanning";
+  const isScanning =
+    phase === "estimating" ||
+    phase === "lidar_scanning" ||
+    rescanningAxis !== null;
+
+  type FieldDef = {
+    label: string;
+    value: string;
+    set: (v: string) => void;
+    axis?: RescanAxis;
+  };
+
+  const fieldDefs: FieldDef[] = [
+    { label: "Length", value: lengthStr, set: setLengthStr, axis: "length" },
+    { label: "Width", value: widthStr, set: setWidthStr, axis: "width" },
+    { label: "Height", value: heightStr, set: setHeightStr, axis: "height" },
+    { label: "Diameter (opt.)", value: diameterStr, set: setDiameterStr },
+  ];
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -362,33 +403,53 @@ export function MeasurePartScreen({
                 </Text>
 
                 <View style={ms.fieldsGrid}>
-                  {(
-                    [
-                      { label: "Length", value: lengthStr, set: setLengthStr },
-                      { label: "Width", value: widthStr, set: setWidthStr },
-                      { label: "Height", value: heightStr, set: setHeightStr },
-                      {
-                        label: "Diameter (opt.)",
-                        value: diameterStr,
-                        set: setDiameterStr,
-                      },
-                    ] as const
-                  ).map(({ label, value, set }) => (
-                    <View key={label} style={ms.fieldGroup}>
-                      <Text style={ms.fieldLabel}>{label}</Text>
-                      <TextInput
-                        value={value}
-                        onChangeText={(v) =>
-                          set(v.replace(/[^0-9.]/g, ""))
-                        }
-                        placeholder="–"
-                        placeholderTextColor="#aaa"
-                        keyboardType="numeric"
-                        returnKeyType="next"
-                        style={ms.fieldInput}
-                      />
-                    </View>
-                  ))}
+                  {fieldDefs.map(({ label, value, set, axis }) => {
+                    const isRescanning = axis != null && rescanningAxis === axis;
+                    const anyRescanning = rescanningAxis !== null;
+                    return (
+                      <View key={label} style={ms.fieldGroup}>
+                        <View style={ms.fieldLabelRow}>
+                          <Text style={ms.fieldLabel}>{label}</Text>
+                          {lidarAvailable && axis != null && (
+                            <Pressable
+                              onPress={() => handleAxisRescan(axis)}
+                              disabled={anyRescanning}
+                              style={[
+                                ms.axisRescanBtn,
+                                anyRescanning && ms.axisRescanBtnDisabled,
+                              ]}
+                              accessibilityLabel={`Re-scan ${label} with LiDAR`}
+                            >
+                              {isRescanning ? (
+                                <ActivityIndicator size={10} color="#10b981" />
+                              ) : (
+                                <Feather
+                                  name="refresh-cw"
+                                  size={11}
+                                  color={anyRescanning ? "#bbb" : "#10b981"}
+                                />
+                              )}
+                            </Pressable>
+                          )}
+                        </View>
+                        <TextInput
+                          value={value}
+                          onChangeText={(v) =>
+                            set(v.replace(/[^0-9.]/g, ""))
+                          }
+                          placeholder="–"
+                          placeholderTextColor="#aaa"
+                          keyboardType="numeric"
+                          returnKeyType="next"
+                          editable={!isRescanning}
+                          style={[
+                            ms.fieldInput,
+                            isRescanning && ms.fieldInputRescanning,
+                          ]}
+                        />
+                      </View>
+                    );
+                  })}
                 </View>
 
                 {lengthStr && widthStr && heightStr ? (
@@ -405,11 +466,22 @@ export function MeasurePartScreen({
                 <View style={ms.btnRow}>
                   <Pressable
                     onPress={() => setPhase("preview")}
-                    style={ms.rescanBtn}
+                    disabled={rescanningAxis !== null}
+                    style={[
+                      ms.rescanBtn,
+                      rescanningAxis !== null && ms.rescanBtnDisabled,
+                    ]}
                   >
-                    <Text style={ms.rescanBtnText}>Re-scan</Text>
+                    <Text style={ms.rescanBtnText}>Re-scan all</Text>
                   </Pressable>
-                  <Pressable onPress={handleConfirm} style={ms.confirmBtn}>
+                  <Pressable
+                    onPress={handleConfirm}
+                    disabled={rescanningAxis !== null}
+                    style={[
+                      ms.confirmBtn,
+                      rescanningAxis !== null && ms.confirmBtnDisabled,
+                    ]}
+                  >
                     <Text style={ms.confirmBtnText}>Save Dimensions</Text>
                   </Pressable>
                 </View>
@@ -569,12 +641,28 @@ const ms = StyleSheet.create({
   },
   fieldsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   fieldGroup: { width: "47%", gap: 4 },
+  fieldLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   fieldLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",
     color: "#555",
     textTransform: "uppercase",
     letterSpacing: 0.5,
+  },
+  axisRescanBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(16,185,129,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  axisRescanBtnDisabled: {
+    backgroundColor: "rgba(0,0,0,0.05)",
   },
   fieldInput: {
     borderWidth: 1,
@@ -586,6 +674,10 @@ const ms = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: "#111",
     backgroundColor: "#f5f5f5",
+  },
+  fieldInputRescanning: {
+    borderColor: "#10b981",
+    backgroundColor: "#f0fdf8",
   },
   dimPreview: {
     fontSize: 13,
@@ -603,6 +695,9 @@ const ms = StyleSheet.create({
     paddingVertical: 13,
     alignItems: "center",
   },
+  rescanBtnDisabled: {
+    opacity: 0.4,
+  },
   rescanBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#444" },
   confirmBtn: {
     flex: 2,
@@ -610,6 +705,9 @@ const ms = StyleSheet.create({
     borderRadius: 10,
     paddingVertical: 13,
     alignItems: "center",
+  },
+  confirmBtnDisabled: {
+    opacity: 0.4,
   },
   confirmBtnText: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#fff" },
 });
