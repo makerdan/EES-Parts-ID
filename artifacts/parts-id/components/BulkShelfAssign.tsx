@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Image,
   Modal,
   Pressable,
@@ -116,7 +117,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const [permission, requestPermission] = useCameraPermissions();
 
-  const [step, setStep] = useState<"input" | "session">("input");
+  const [step, setStep] = useState<"input" | "session" | "done">("input");
   const [shelfPrefix, setShelfPrefix] = useState("");
   const [targetItemId, setTargetItemId] = useState<number | null>(null);
   const [itemRowStates, setItemRowStates] = useState<Record<number, ItemRowState>>({});
@@ -147,6 +148,9 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
   const [resumeSession, setResumeSession] = useState<BulkSession | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
 
+  const doneAnimScale = useRef(new Animated.Value(0)).current;
+  const doneAnimOpacity = useRef(new Animated.Value(0)).current;
+
   // Used only for the shelf prefix autocomplete chips (lower limit is fine here)
   const { data: suggestPage } = useListInventory({ limit: 500 });
   const suggestAllItems = useMemo(() => suggestPage?.items ?? [], [suggestPage]);
@@ -175,6 +179,10 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
       if (row?.assignedBarcode) return false;
       return !Array.isArray(item.barcodes) || item.barcodes.length === 0;
     });
+  }, [shelfItems, itemRowStates]);
+
+  const conflictItems = useMemo(() => {
+    return shelfItems.filter(item => !!itemRowStates[item.id]?.conflictBarcode);
   }, [shelfItems, itemRowStates]);
 
   // Snapshot stats for the input step (uses the cached 500-item list for fast preview)
@@ -208,6 +216,27 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     if (step !== "session" || !shelfPrefix) return;
     saveBulkSession({ shelfPrefix, shelfItems, itemRowStates, targetItemId });
   }, [step, shelfPrefix, shelfItems, itemRowStates, targetItemId]);
+
+  // Detect completion: all items assigned → transition to "done"
+  useEffect(() => {
+    if (step !== "session") return;
+    if (shelfItems.length === 0) return;
+    if (assignedCount < shelfItems.length) return;
+    // Every item is assigned — show summary
+    clearBulkSession();
+    setCameraStarted(false);
+    doneAnimScale.setValue(0);
+    doneAnimOpacity.setValue(0);
+    setStep("done");
+    Animated.parallel([
+      Animated.spring(doneAnimScale, { toValue: 1, useNativeDriver: true, bounciness: 14 }),
+      Animated.timing(doneAnimOpacity, { toValue: 1, useNativeDriver: true, duration: 280 }),
+    ]).start();
+    try {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignedCount, shelfItems.length, step]);
 
   /**
    * Resume a saved session. Restores the full item list immediately from
@@ -269,8 +298,10 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     setShelfItems([]);
     setLoadError(null);
     lastScanRef.current = null;
+    doneAnimScale.setValue(0);
+    doneAnimOpacity.setValue(0);
     onClose();
-  }, [onClose]);
+  }, [onClose, doneAnimScale, doneAnimOpacity]);
 
   /**
    * Perform the remote assignment for a (barcode, item) pair.
@@ -488,7 +519,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         {/* Header */}
         <View style={[bsStyles.header, { borderBottomColor: colors.border }]}>
           <Text style={[bsStyles.headerTitle, { color: colors.foreground }]}>
-            {step === "session" ? `Bulk Assign — ${shelfPrefix}` : "Bulk Assign by Shelf"}
+            {step === "session" ? `Bulk Assign — ${shelfPrefix}` : step === "done" ? `Done — ${shelfPrefix}` : "Bulk Assign by Shelf"}
           </Text>
           <Pressable onPress={handleClose} hitSlop={10}>
             <Text style={{ color: colors.primary, fontSize: 15, fontFamily: "Inter_500Medium" }}>
@@ -496,6 +527,112 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
             </Text>
           </Pressable>
         </View>
+
+        {/* ── Done summary step ────────────────────────────────────────────── */}
+        {step === "done" ? (
+          <Animated.View style={[bsStyles.doneSummary, { opacity: doneAnimOpacity }]}>
+            <Animated.View
+              style={[
+                bsStyles.doneIconCircle,
+                {
+                  backgroundColor: colors.success + "22",
+                  borderColor: colors.success + "55",
+                  transform: [{ scale: doneAnimScale }],
+                },
+              ]}
+            >
+              <Text style={bsStyles.doneCheckmark}>✓</Text>
+            </Animated.View>
+
+            <Text style={[bsStyles.doneTitle, { color: colors.foreground }]}>
+              Shelf Complete
+            </Text>
+            <Text style={[bsStyles.doneSubtitle, { color: colors.mutedForeground }]}>
+              All items on shelf {shelfPrefix} have been processed.
+            </Text>
+
+            <View
+              style={[
+                bsStyles.doneStat,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+            >
+              <View style={bsStyles.doneStatRow}>
+                <Text style={[bsStyles.doneStatLabel, { color: colors.mutedForeground }]}>
+                  Shelf
+                </Text>
+                <Text style={[bsStyles.doneStatValue, { color: colors.foreground }]}>
+                  {shelfPrefix}
+                </Text>
+              </View>
+              <View style={[bsStyles.doneStatDivider, { backgroundColor: colors.border }]} />
+              <View style={bsStyles.doneStatRow}>
+                <Text style={[bsStyles.doneStatLabel, { color: colors.mutedForeground }]}>
+                  Total items
+                </Text>
+                <Text style={[bsStyles.doneStatValue, { color: colors.foreground }]}>
+                  {shelfItems.length}
+                </Text>
+              </View>
+              <View style={[bsStyles.doneStatDivider, { backgroundColor: colors.border }]} />
+              <View style={bsStyles.doneStatRow}>
+                <Text style={[bsStyles.doneStatLabel, { color: colors.mutedForeground }]}>
+                  Assigned
+                </Text>
+                <Text style={[bsStyles.doneStatValue, { color: colors.success }]}>
+                  {assignedCount}
+                </Text>
+              </View>
+              {conflictItems.length > 0 ? (
+                <>
+                  <View style={[bsStyles.doneStatDivider, { backgroundColor: colors.border }]} />
+                  <View style={bsStyles.doneStatRow}>
+                    <Text style={[bsStyles.doneStatLabel, { color: colors.mutedForeground }]}>
+                      Conflicts flagged
+                    </Text>
+                    <Text style={[bsStyles.doneStatValue, { color: colors.destructive }]}>
+                      {conflictItems.length}
+                    </Text>
+                  </View>
+                </>
+              ) : null}
+            </View>
+
+            {conflictItems.length > 0 ? (
+              <View
+                style={[
+                  bsStyles.doneConflictList,
+                  {
+                    backgroundColor: colors.destructive + "0c",
+                    borderColor: colors.destructive + "33",
+                  },
+                ]}
+              >
+                <Text style={[bsStyles.doneConflictHeading, { color: colors.destructive }]}>
+                  ⚠ Items with barcode conflicts
+                </Text>
+                {conflictItems.map(item => (
+                  <Text
+                    key={item.id}
+                    style={[bsStyles.doneConflictItem, { color: colors.foreground }]}
+                    numberOfLines={1}
+                  >
+                    · {item.catalog}{item.vendor ? ` — ${item.vendor}` : ""}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+
+            <Pressable
+              onPress={handleClose}
+              style={[bsStyles.doneDoneBtn, { backgroundColor: colors.primary }]}
+            >
+              <Text style={[bsStyles.doneDoneBtnText, { color: colors.primaryForeground }]}>
+                Done
+              </Text>
+            </Pressable>
+          </Animated.View>
+        ) : null}
 
         {/* ── Input step ───────────────────────────────────────────────────── */}
         {step === "input" ? (
@@ -647,7 +784,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
               </Pressable>
             </View>
           </ScrollView>
-        ) : (
+        ) : step === "session" ? (
           /* ── Session step ─────────────────────────────────────────────── */
           <View style={bsStyles.sessionRoot}>
             {/* Progress bar */}
@@ -953,7 +1090,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
               )}
             </View>
           </View>
-        )}
+        ) : null}
         </DismissKeyboard>
       </SafeAreaView>
     </Modal>
@@ -1109,4 +1246,63 @@ const bsStyles = StyleSheet.create({
   },
   autoAssignText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   clearTargetText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  doneSummary: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingBottom: 32,
+    gap: 16,
+  },
+  doneIconCircle: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  doneCheckmark: { fontSize: 40, color: "#22c55e" },
+  doneTitle: { fontSize: 22, fontFamily: "Inter_700Bold", textAlign: "center" },
+  doneSubtitle: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  doneStat: {
+    width: "100%",
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  doneStatRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  doneStatDivider: { height: 1, marginHorizontal: 16 },
+  doneStatLabel: { fontSize: 14, fontFamily: "Inter_400Regular" },
+  doneStatValue: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  doneConflictList: {
+    width: "100%",
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 12,
+    gap: 4,
+  },
+  doneConflictHeading: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginBottom: 4 },
+  doneConflictItem: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  doneDoneBtn: {
+    width: "100%",
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: "center",
+    marginTop: 4,
+  },
+  doneDoneBtnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
 });
