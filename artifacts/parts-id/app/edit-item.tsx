@@ -27,7 +27,7 @@ import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { useTrackScreen } from "@/utils/useTrackScreen";
-import { MeasurePartScreen, isLiDARCapableDevice } from "@/components/MeasurePartScreen";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -423,7 +423,7 @@ export default function EditItemScreen() {
           {/* Dimensions */}
           <View style={[s.dimHeader, { marginTop: 24 }]}>
             <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>DIMENSIONS (mm)</Text>
-            {Platform.OS === "ios" && isLiDARCapableDevice() ? (
+            {Platform.OS === "ios" ? (
               <Pressable
                 onPress={() => setMeasureOpen(true)}
                 style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
@@ -435,8 +435,8 @@ export default function EditItemScreen() {
             ) : null}
           </View>
           <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
-            {Platform.OS === "ios" && isLiDARCapableDevice()
-              ? "Tap Measure to estimate from a photo, or enter values manually. Leave blank if unknown."
+            {Platform.OS === "ios"
+              ? "Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."
               : "Enter physical dimensions in millimetres. Leave blank if unknown."}
           </Text>
           <View style={s.dimGrid}>
@@ -614,8 +614,8 @@ export default function EditItemScreen() {
         </Modal>
       ) : null}
 
-      {/* Measure modal — iOS only, LiDAR-capable hardware (AI Vision estimate) */}
-      {Platform.OS === "ios" && isLiDARCapableDevice() ? (
+      {/* Measure modal — iOS only (LiDAR or AI Vision estimate) */}
+      {Platform.OS === "ios" ? (
         <MeasurePartScreen
           visible={measureOpen}
           onClose={() => setMeasureOpen(false)}

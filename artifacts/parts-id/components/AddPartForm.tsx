@@ -11,7 +11,7 @@ import {
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
-import { MeasurePartScreen, isLiDARCapableDevice } from "@/components/MeasurePartScreen";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -240,7 +240,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
         <View style={apfStyles.fieldGroup}>
           <View style={apfStyles.dimLabelRow}>
             <Text style={[apfStyles.label, { color: colors.foreground }]}>Dimensions (mm) — optional</Text>
-            {Platform.OS === "ios" && isLiDARCapableDevice() ? (
+            {Platform.OS === "ios" ? (
               <Pressable
                 onPress={() => setMeasureOpen(true)}
                 style={[apfStyles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
@@ -325,8 +325,8 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
         )}
       </Pressable>
 
-      {/* Measure modal — iOS only, LiDAR-capable hardware (AI Vision estimate) */}
-      {Platform.OS === "ios" && isLiDARCapableDevice() ? (
+      {/* Measure modal — iOS only (LiDAR or AI Vision estimate) */}
+      {Platform.OS === "ios" ? (
         <MeasurePartScreen
           visible={measureOpen}
           onClose={() => setMeasureOpen(false)}

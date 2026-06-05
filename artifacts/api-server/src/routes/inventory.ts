@@ -1689,9 +1689,24 @@ All values must be positive numbers (mm) or null.`,
 
     const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
 
-    // Extract the first JSON object from the response (model may wrap in prose)
-    const jsonMatch = raw.match(/\{[^}]*\}/);
-    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+    // Extract the first balanced JSON object from the response.
+    // The flat regex /\{[^}]*\}/ fails on nested braces, so we scan manually.
+    let parsed: Record<string, unknown> = {};
+    const start = raw.indexOf("{");
+    if (start !== -1) {
+      let depth = 0;
+      let end = -1;
+      for (let i = start; i < raw.length; i++) {
+        if (raw[i] === "{") depth++;
+        else if (raw[i] === "}") {
+          depth--;
+          if (depth === 0) { end = i; break; }
+        }
+      }
+      if (end !== -1) {
+        try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { /* keep {} */ }
+      }
+    }
 
     const sanitize = (v: unknown): number | null => {
       const n = Number(v);
