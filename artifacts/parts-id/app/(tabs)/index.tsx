@@ -580,6 +580,12 @@ export default function SearchScreen() {
       ? { ...r, item: { ...r.item, binLocations: binOverrides[r.item.id]! } }
       : r,
   );
+  const rawSizeUnknownResults: SearchResult[] = isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []);
+  const sizeUnknownResults: SearchResult[] = rawSizeUnknownResults.map(r =>
+    binOverrides[r.item.id]
+      ? { ...r, item: { ...r.item, binLocations: binOverrides[r.item.id]! } }
+      : r,
+  );
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
 
@@ -606,6 +612,20 @@ export default function SearchScreen() {
     hasActiveSizeFilter ||
     activeCategorySlug != null;
 
+  type FlatListItem =
+    | { kind: "result"; result: SearchResult; index: number }
+    | { kind: "sizeUnknownHeader"; count: number }
+    | { kind: "sizeUnknown"; result: SearchResult; index: number };
+
+  const flatListData: FlatListItem[] = [
+    ...results.map((result, index) => ({ kind: "result" as const, result, index })),
+    ...(sizeUnknownResults.length > 0
+      ? [
+          { kind: "sizeUnknownHeader" as const, count: sizeUnknownResults.length },
+          ...sizeUnknownResults.map((result, index) => ({ kind: "sizeUnknown" as const, result, index })),
+        ]
+      : []),
+  ];
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -1037,8 +1057,8 @@ export default function SearchScreen() {
       ) : (
       <>
         <FlatList
-          data={results}
-          keyExtractor={item => String(item.item.id)}
+          data={flatListData}
+          keyExtractor={item => item.kind === "sizeUnknownHeader" ? "__size-unknown-header__" : String(item.result.item.id) + (item.kind === "sizeUnknown" ? "-unknown" : "")}
           style={{ flex: 1 }}
           refreshControl={
             <RefreshControl
@@ -1055,7 +1075,7 @@ export default function SearchScreen() {
               <View>
                 <View style={styles.resultsHeader}>
                   <Text style={[styles.resultsCount, { color: colors.foreground }]}>
-                    {results.length} {isOffline ? "offline" : ""} match{results.length !== 1 ? "es" : ""} found
+                    {results.length + sizeUnknownResults.length} {isOffline ? "offline" : ""} match{results.length + sizeUnknownResults.length !== 1 ? "es" : ""} found
                   </Text>
                   <Pressable
                     onPress={handleClear}
@@ -1176,21 +1196,40 @@ export default function SearchScreen() {
             ) : null}
           </View>
         )}
-        renderItem={({ item: result, index }) => (
-          <View style={styles.resultItem}>
-            <ResultCard
-              result={result}
-              onEditKeywords={setEditItem}
-              onEditBins={isAdmin ? setBinEditItem : undefined}
-              onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
-              onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
-              onEditDetails={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
-              onShowOnMap={handleShowOnMap}
-              rank={index}
-              fontScale={textFontScale}
-            />
-          </View>
-        )}
+        renderItem={({ item: listItem }) => {
+          if (listItem.kind === "sizeUnknownHeader") {
+            return (
+              <View style={[styles.sizeUnknownHeader, { backgroundColor: colors.warning + "14", borderColor: colors.warning + "44" }]}>
+                <Text style={[styles.sizeUnknownHeaderIcon, { color: colors.warning }]}>📏</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.sizeUnknownHeaderTitle, { color: colors.warning }]}>
+                    Size not measured ({listItem.count} {listItem.count === 1 ? "item" : "items"})
+                  </Text>
+                  <Text style={[styles.sizeUnknownHeaderHint, { color: colors.warning + "bb" }]}>
+                    These items match your search but have no dimension data on file.
+                  </Text>
+                </View>
+              </View>
+            );
+          }
+          const { result, index } = listItem;
+          return (
+            <View style={styles.resultItem}>
+              <ResultCard
+                result={result}
+                onEditKeywords={setEditItem}
+                onEditBins={isAdmin ? setBinEditItem : undefined}
+                onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
+                onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+                onEditDetails={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+                onShowOnMap={handleShowOnMap}
+                rank={index}
+                fontScale={textFontScale}
+                sizeUnknown={listItem.kind === "sizeUnknown"}
+              />
+            </View>
+          );
+        }}
         contentContainerStyle={[styles.listContent, { paddingTop: filterHeaderHeight + 8 }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -1446,6 +1485,20 @@ const styles = StyleSheet.create({
   tipTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 8 },
   tipText: { fontSize: 13, fontFamily: "Inter_400Regular", marginBottom: 4, lineHeight: 18 },
   resultItem: { paddingHorizontal: 12 },
+  sizeUnknownHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginHorizontal: 12,
+    marginTop: 8,
+    marginBottom: 4,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 10,
+  },
+  sizeUnknownHeaderIcon: { fontSize: 18, marginTop: 1 },
+  sizeUnknownHeaderTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
+  sizeUnknownHeaderHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 16 },
   listContent: { paddingBottom: 0 },
   settingsRow: {
     flexDirection: "row",

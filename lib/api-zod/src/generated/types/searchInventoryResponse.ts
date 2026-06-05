@@ -14,4 +14,8 @@ export interface SearchInventoryResponse {
   belowThreshold: number;
   /** Per-chip-dimension live match counts (dimKey → optionLabel → count) */
   dimensionCounts?: SearchInventoryResponseDimensionCounts;
+  /** Items that have no data for the active size dimension(s); shown as a trailing "size unknown" group */
+  sizeUnknownResults?: SearchResult[];
+  /** Count of items excluded from the main results because the relevant dimension field is NULL */
+  sizeUnknownCount?: number;
 }
