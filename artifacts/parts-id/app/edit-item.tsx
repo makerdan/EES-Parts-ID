@@ -30,6 +30,12 @@ import { useTrackScreen } from "@/utils/useTrackScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { isLiDARSupported } from "lidar-measure";
+import { RetryImage } from "@/components/RetryImage";
+
+interface CapturedPhoto {
+  uri: string;
+  base64: string;
+}
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -93,9 +99,46 @@ export default function EditItemScreen() {
   const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
 
+  const [newPhotoData, setNewPhotoData] = useState<CapturedPhoto | null>(null);
+  const [removeCurrentPhoto, setRemoveCurrentPhoto] = useState(false);
+  const [photoCameraOpen, setPhotoCameraOpen] = useState(false);
+  const [takingEditPhoto, setTakingEditPhoto] = useState(false);
+  const photoCameraRef = useRef<CameraView>(null);
+
   const [permission, requestPermission] = useCameraPermissions();
   const scannerLockRef = useRef(false);
   const itemRef = useRef(item);
+
+  const openPhotoCamera = useCallback(async () => {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) return;
+    }
+    setTakingEditPhoto(false);
+    setPhotoCameraOpen(true);
+  }, [permission, requestPermission]);
+
+  const handleTakeEditPhoto = useCallback(async () => {
+    if (takingEditPhoto || !photoCameraRef.current) return;
+    setTakingEditPhoto(true);
+    try {
+      const result = await photoCameraRef.current.takePictureAsync({
+        quality: 0.6,
+        base64: true,
+        exif: false,
+      });
+      if (result && result.base64) {
+        setNewPhotoData({ uri: result.uri, base64: result.base64 });
+        setRemoveCurrentPhoto(false);
+        setSaveStatus("idle");
+      }
+      setPhotoCameraOpen(false);
+    } catch (err) {
+      console.warn("Failed to take photo:", err);
+    } finally {
+      setTakingEditPhoto(false);
+    }
+  }, [takingEditPhoto]);
 
   const openScanner = useCallback(async () => {
     if (!permission?.granted) {
@@ -227,6 +270,34 @@ export default function EditItemScreen() {
         );
       }
 
+      if (newPhotoData) {
+        saves.push(
+          fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+            body: JSON.stringify({ imageBase64: newPhotoData.base64, mimeType: "image/jpeg" }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const d = await res.json().catch(() => ({})) as { error?: string };
+              throw new Error(d.error ?? `HTTP ${res.status}`);
+            }
+          }),
+        );
+      } else if (removeCurrentPhoto && current.imageUrl) {
+        saves.push(
+          fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+            body: JSON.stringify({ remove: true }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const d = await res.json().catch(() => ({})) as { error?: string };
+              throw new Error(d.error ?? `HTTP ${res.status}`);
+            }
+          }),
+        );
+      }
+
       if (saves.length > 0) {
         await Promise.all(saves);
         const listKeyPrefix = getListInventoryQueryKey()[0];
@@ -273,7 +344,13 @@ export default function EditItemScreen() {
     parseDimField(dimLength) !== (existingDims?.length ?? null) ||
     parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
     parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
-    parseDimField(dimDiameter) !== (existingDims?.diameter ?? null);
+    parseDimField(dimDiameter) !== (existingDims?.diameter ?? null) ||
+    newPhotoData !== null ||
+    (removeCurrentPhoto && !!item.imageUrl);
+
+  const currentPhotoUri = removeCurrentPhoto
+    ? null
+    : (newPhotoData?.uri ?? item.imageUrl ?? null);
 
   const statusColor =
     isSaving ? colors.warning
@@ -316,8 +393,46 @@ export default function EditItemScreen() {
           contentContainerStyle={s.scroll}
           keyboardShouldPersistTaps="handled"
         >
+          {/* Photo */}
+          <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>PHOTO</Text>
+          <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
+            {Platform.OS !== "web"
+              ? "Take or replace the item photo. Tap ✕ to remove."
+              : "Photo capture is only available on device."}
+          </Text>
+          <View style={s.photoRow}>
+            {currentPhotoUri ? (
+              <View style={s.photoThumbWrap}>
+                <RetryImage uri={currentPhotoUri} style={s.photoThumb} resizeMode="cover" />
+                <Pressable
+                  onPress={() => { setRemoveCurrentPhoto(true); setNewPhotoData(null); setSaveStatus("idle"); }}
+                  style={[s.photoRemoveBtn, { backgroundColor: colors.destructive }]}
+                >
+                  <Text style={{ color: "#fff", fontSize: 11, fontFamily: "Inter_700Bold" }}>✕</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={[s.photoPlaceholder, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                <Feather name="image" size={26} color={colors.mutedForeground} />
+                <Text style={[s.photoPlaceholderText, { color: colors.mutedForeground }]}>No photo</Text>
+              </View>
+            )}
+            {Platform.OS !== "web" ? (
+              <Pressable
+                onPress={openPhotoCamera}
+                style={[s.photoCameraBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                accessibilityLabel="Take or replace item photo"
+              >
+                <Feather name="camera" size={20} color={colors.foreground} />
+                <Text style={[s.photoCameraBtnText, { color: colors.foreground }]}>
+                  {currentPhotoUri ? "Replace" : "Take Photo"}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+
           {/* Description */}
-          <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+          <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>DESCRIPTION</Text>
           <TextInput
             value={description}
             onChangeText={(v) => { setDescription(v); setSaveStatus("idle"); }}
@@ -643,6 +758,47 @@ export default function EditItemScreen() {
           adminToken={adminToken ?? ""}
         />
       ) : null}
+
+      {/* Photo camera modal — native only */}
+      {Platform.OS !== "web" ? (
+        <Modal
+          visible={photoCameraOpen}
+          animationType="slide"
+          onRequestClose={() => setPhotoCameraOpen(false)}
+        >
+          <View style={s.scanModal}>
+            <CameraView
+              ref={photoCameraRef}
+              style={StyleSheet.absoluteFill}
+              mode="picture"
+              facing="back"
+            />
+            <View style={s.scanOverlay}>
+              <View style={s.scanHeader}>
+                <Pressable onPress={() => setPhotoCameraOpen(false)} style={s.scanCloseBtn}>
+                  <Feather name="x" size={20} color="#fff" />
+                </Pressable>
+                <Text style={s.scanTitle}>Capture Item Photo</Text>
+                <View style={{ width: 40 }} />
+              </View>
+              <View style={{ flex: 1 }} />
+              <View style={s.photoShutterRow}>
+                <Pressable
+                  onPress={handleTakeEditPhoto}
+                  disabled={takingEditPhoto}
+                  style={[s.photoShutterBtn, { opacity: takingEditPhoto ? 0.6 : 1 }]}
+                >
+                  {takingEditPhoto ? (
+                    <ActivityIndicator size="large" color="#fff" />
+                  ) : (
+                    <View style={s.photoShutterInner} />
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -814,5 +970,59 @@ const s = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     textAlign: "center",
     paddingHorizontal: 32,
+  },
+  photoRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },
+  photoThumbWrap: { position: "relative", width: 80, height: 80 },
+  photoThumb: { width: 80, height: 80, borderRadius: 8 },
+  photoRemoveBtn: {
+    position: "absolute",
+    top: -6,
+    right: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  photoPlaceholder: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  photoPlaceholderText: { fontSize: 10, fontFamily: "Inter_400Regular" },
+  photoCameraBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  photoCameraBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  photoShutterRow: {
+    alignItems: "center",
+    paddingBottom: 56,
+  },
+  photoShutterBtn: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 3,
+    borderColor: "#fff",
+  },
+  photoShutterInner: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#fff",
   },
 });

@@ -66,6 +66,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successCount, setSuccessCount] = useState(0);
+  const [photoCount, setPhotoCount] = useState(0);
 
   const [duplicate, setDuplicate] = useState<DuplicateState | null>(null);
   const [duplicateLoading, setDuplicateLoading] = useState(false);
@@ -98,6 +99,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       setPhoto(null);
       setError(null);
       setSuccessCount(0);
+      setPhotoCount(0);
       setDuplicate(null);
       setCameraOpen(false);
       setPrefixScannerOpen(false);
@@ -262,6 +264,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
 
       await invalidateInventory();
       setSuccessCount(c => c + 1);
+      if (photo) setPhotoCount(c => c + 1);
       resetItemFields();
 
       if (mode === "next") {
@@ -311,6 +314,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
 
       await invalidateInventory();
       setSuccessCount(c => c + 1);
+      if (duplicate.pendingPhoto) setPhotoCount(c => c + 1);
       const resolvedMode = duplicate.pendingMode;
       setDuplicate(null);
       resetItemFields();
@@ -398,7 +402,9 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
             <View style={{ flex: 1 }}>
               <Text style={[styles.title, { color: colors.foreground }]}>Shelf Entry</Text>
               <Text style={[styles.sub, { color: colors.mutedForeground }]}>
-                {successCount > 0 ? `${successCount} item${successCount !== 1 ? "s" : ""} added this session` : "Rapid per-shelf cataloging"}
+                {successCount > 0
+                  ? `${successCount} item${successCount !== 1 ? "s" : ""} added${photoCount > 0 ? ` 📷 ${photoCount}` : ""}`
+                  : "Rapid per-shelf cataloging"}
               </Text>
             </View>
             <Pressable onPress={onClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]}>

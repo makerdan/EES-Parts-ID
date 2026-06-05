@@ -1595,10 +1595,22 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     const id = parseInt(String(req.params["id"] ?? "0"));
     if (!id) return void res.status(400).json({ error: "Invalid item id" });
 
-    const { imageBase64, mimeType } = req.body as {
+    const { imageBase64, mimeType, remove } = req.body as {
       imageBase64?: string;
       mimeType?: string;
+      remove?: boolean;
     };
+
+    if (remove === true) {
+      const [updated] = await db
+        .update(inventoryTable)
+        .set({ imageUrl: null, updatedAt: new Date() })
+        .where(eq(inventoryTable.id, id))
+        .returning();
+      if (!updated) return void res.status(404).json({ error: "Item not found" });
+      invalidateReferenceAnswerCache().catch(() => {});
+      return void res.json({ imageUrl: null });
+    }
 
     if (!imageBase64?.trim()) {
       return void res.status(400).json({ error: "imageBase64 is required" });
