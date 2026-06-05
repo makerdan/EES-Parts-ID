@@ -12,6 +12,9 @@ expo-env.d.ts
 # Native
 ios/
 android/
+
+# Allow native source files inside Expo local modules
+!modules/**/ios/
 *.orig.*
 *.jks
 *.p8
