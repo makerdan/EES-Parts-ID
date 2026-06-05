@@ -171,6 +171,7 @@ function DrillRow({
   hint,
   count,
   onPress,
+  onAddHere,
   colors,
   fontScale = 1.0,
   highlighted = false,
@@ -179,6 +180,7 @@ function DrillRow({
   hint?: string;
   count: number;
   onPress: () => void;
+  onAddHere?: () => void;
   colors: ReturnType<typeof useColors>;
   fontScale?: number;
   highlighted?: boolean;
@@ -221,6 +223,15 @@ function DrillRow({
         <View style={[drillStyles.countBadge, { backgroundColor: colors.primary + "22" }]}>
           <Text style={[drillStyles.countText, { color: colors.primary, fontSize: Math.round(12 * fontScale) }]}>{count}</Text>
         </View>
+        {onAddHere ? (
+          <Pressable
+            onPress={e => { e.stopPropagation?.(); onAddHere(); }}
+            hitSlop={8}
+            style={[drillStyles.addHereBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}
+          >
+            <Feather name="plus" size={14} color={colors.primary} />
+          </Pressable>
+        ) : null}
         <Feather name="chevron-right" size={18} color={colors.mutedForeground} style={{ marginLeft: 4 }} />
       </Pressable>
     </View>
@@ -240,6 +251,7 @@ const drillStyles = StyleSheet.create({
   hint: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   countBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   countText: { fontSize: 12, fontFamily: "Inter_700Bold" },
+  addHereBtn: { width: 28, height: 28, borderRadius: 7, borderWidth: 1, alignItems: "center", justifyContent: "center" },
 });
 
 function SectionNavBar({
@@ -361,20 +373,34 @@ function ShelfRow({
   shelf,
   selectedKey,
   onSelectPart,
+  onAddHere,
   colors,
 }: {
   shelf: ShelfNode;
   selectedKey: string | null;
   onSelectPart: (part: PartOnShelf) => void;
+  onAddHere?: () => void;
   colors: ReturnType<typeof useColors>;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   useWebDragScroll(scrollRef);
   return (
     <View>
-      <Text style={[shelfRowStyles.label, { color: colors.mutedForeground }]}>
-        {shelf.label}
-      </Text>
+      <View style={shelfRowStyles.labelRow}>
+        <Text style={[shelfRowStyles.label, { color: colors.mutedForeground, flex: 1 }]}>
+          {shelf.label}
+        </Text>
+        {onAddHere ? (
+          <Pressable
+            onPress={onAddHere}
+            hitSlop={8}
+            style={[shelfRowStyles.addHereBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}
+          >
+            <Feather name="plus" size={12} color={colors.primary} />
+            <Text style={[shelfRowStyles.addHereText, { color: colors.primary }]}>Add Here</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false} style={shelfRowStyles.row} contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 4, gap: 0 }}>
         {shelf.parts.map((part, idx) => {
           const nextPart = shelf.parts[idx + 1];
@@ -401,7 +427,10 @@ function ShelfRow({
 }
 
 const shelfRowStyles = StyleSheet.create({
-  label: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.8, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 },
+  labelRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4 },
+  label: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.8 },
+  addHereBtn: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, borderWidth: 1 },
+  addHereText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
   row: { paddingVertical: 4 },
   plank: { height: 6, marginHorizontal: 12, borderRadius: 3, marginBottom: 4 },
 });
@@ -418,6 +447,7 @@ function SectionShelfView({
   onEditKeywords,
   onEditBins,
   onEditItem,
+  onAddHereShelf,
   colors,
   cardItemPanHandlers,
   sectionPanHandlers,
@@ -433,6 +463,7 @@ function SectionShelfView({
   onEditKeywords?: (item: InventoryItem) => void;
   onEditBins?: (item: InventoryItem) => void;
   onEditItem?: (item: InventoryItem) => void;
+  onAddHereShelf?: (shelfHundreds: number) => void;
   colors: ReturnType<typeof useColors>;
   cardItemPanHandlers: ReturnType<typeof PanResponder.create>["panHandlers"];
   sectionPanHandlers: ReturnType<typeof PanResponder.create>["panHandlers"];
@@ -491,6 +522,7 @@ function SectionShelfView({
             shelf={shelf}
             selectedKey={selectedKey}
             onSelectPart={handleSelectPart}
+            onAddHere={onAddHereShelf ? () => onAddHereShelf(shelf.shelfHundreds) : undefined}
             colors={colors}
           />
         ))}
@@ -626,6 +658,7 @@ export function BrowseByAisle({
   "use no memo";
   const colors = useColors();
   const [addPartVisible, setAddPartVisible] = useState(false);
+  const [pendingBin, setPendingBin] = useState("");
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [aisleRefreshing, setAisleRefreshing] = useState(false);
 
@@ -732,13 +765,33 @@ export function BrowseByAisle({
       ? `${crumbs.section!.partCount} part${crumbs.section!.partCount !== 1 ? "s" : ""}`
       : undefined;
 
-  const addPartDefaultBin = useMemo(() => {
+  const crumbsBin = useCallback(() => {
     if (!crumbs.aisle) return "";
     const aisleStr = String(crumbs.aisle.aisleNum).padStart(2, "0");
     if (!crumbs.section) return `${aisleStr}-`;
     const sectionStr = String(crumbs.section.sectionNum).padStart(2, "0");
     return `${aisleStr}-${sectionStr}-`;
   }, [crumbs]);
+
+  const openAddHere = useCallback((bin: string) => {
+    setPendingBin(bin);
+    setAddPartVisible(true);
+  }, []);
+
+  const handleAddHereSection = useCallback((section: SectionNode) => {
+    if (!crumbs.aisle) return;
+    const aisleStr = String(crumbs.aisle.aisleNum).padStart(2, "0");
+    const sectionStr = String(section.sectionNum).padStart(2, "0");
+    openAddHere(`${aisleStr}-${sectionStr}`);
+  }, [crumbs.aisle, openAddHere]);
+
+  const handleAddHereShelf = useCallback((shelfHundreds: number) => {
+    if (!crumbs.aisle || !crumbs.section) return;
+    const aisleStr = String(crumbs.aisle.aisleNum).padStart(2, "0");
+    const sectionStr = String(crumbs.section.sectionNum).padStart(2, "0");
+    const shelfStr = String(shelfHundreds * 100).padStart(3, "0");
+    openAddHere(`${aisleStr}-${sectionStr}-${shelfStr}`);
+  }, [crumbs.aisle, crumbs.section, openAddHere]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -851,6 +904,7 @@ export function BrowseByAisle({
                 onPress={() => {
                   setCrumbs(prev => ({ ...prev, section }));
                 }}
+                onAddHere={isAdmin ? () => handleAddHereSection(section) : undefined}
                 colors={colors}
                 fontScale={fontScale}
                 highlighted={section.sectionNum === highlightedSectionNum}
@@ -878,6 +932,7 @@ export function BrowseByAisle({
               onEditKeywords={onEditKeywords}
               onEditBins={onEditBins}
               onEditItem={isAdmin ? setDetailsItem : undefined}
+              onAddHereShelf={isAdmin ? handleAddHereShelf : undefined}
               colors={colors}
               cardItemPanHandlers={cardItemSwipe.panHandlers}
               sectionPanHandlers={sectionSwipe.panHandlers}
@@ -905,7 +960,7 @@ export function BrowseByAisle({
       {/* ── Admin: Add Part FAB ── */}
       {isAdmin ? (
         <Pressable
-          onPress={() => setAddPartVisible(true)}
+          onPress={() => { setPendingBin(crumbsBin()); setAddPartVisible(true); }}
           style={[browseStyles.addPartFab, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
         >
           <Feather name="plus" size={22} color={colors.primaryForeground} />
@@ -915,7 +970,7 @@ export function BrowseByAisle({
       <AddPartModal
         visible={addPartVisible}
         adminToken={adminToken ?? null}
-        defaultBin={addPartDefaultBin}
+        defaultBin={pendingBin}
         onClose={() => setAddPartVisible(false)}
         onSuccess={() => {
           onPartAdded?.();
