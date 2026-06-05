@@ -1,5 +1,6 @@
 packages:
   - artifacts/*
+  - artifacts/parts-id/modules/*
   - lib/*
   - lib/integrations/*
   - scripts
