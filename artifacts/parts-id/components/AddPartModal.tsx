@@ -163,7 +163,8 @@ export function AddPartModal({
                 <Text style={[styles.title, { color: colors.foreground }]}>Part Added</Text>
               </View>
               <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-                {createdItem.vendor} / {createdItem.catalog} has been registered.
+                {createdItem.vendor} / {createdItem.catalog} registered at{" "}
+                <Text style={{ fontWeight: "700", color: colors.foreground }}>{binLocation}</Text>
               </Text>
               {onAddDetails ? (
                 <Text style={[styles.detailsHint, { color: colors.mutedForeground }]}>
