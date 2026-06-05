@@ -26,3 +26,12 @@ When `transform` in `jest.config.js` uses an inline tsconfig object like `{ tsco
 **Why:** ts-jest treats the inline object as the complete compiler options — it does not merge with the nearest tsconfig.json. Without `baseUrl`, `paths` is also silently ignored by TypeScript itself.
 
 **How to apply:** Any time a new `@workspace/*` package or path alias is added to `tsconfig.json`, mirror it in the ts-jest inline config in `artifacts/parts-id/jest.config.js`. The `moduleNameMapper` in jest.config.js handles *runtime* resolution; the inline tsconfig `paths` handles *type-checking* resolution — both are needed.
+
+## Corollary: pnpm-cached workspace packages can be stale
+
+When a local workspace package (e.g. `lidar-measure`) is updated, the copy under `node_modules/.pnpm/lidar-measure@file+...` may still reflect the old version. If the inline tsconfig `paths` does not point to the local `src/index`, ts-jest falls back to the stale cached copy and reports missing exports (`TS2305`).
+
+**Fix:** Always add local workspace packages to the ts-jest `paths` so type-checking hits the local source, not the pnpm cache:
+```js
+"lidar-measure": ["./modules/lidar-measure/src/index"],
+```
