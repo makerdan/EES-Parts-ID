@@ -13,6 +13,11 @@ export interface ScanEntry {
   vendor?: string;
   /** ISO 8601 string — stored as string so JSON round-trips cleanly */
   timestamp: string;
+  /**
+   * Set when an admin linked or created a part from the "not found" scanner
+   * panel. Undefined for ordinary scans.
+   */
+  adminAction?: "linked" | "created";
 }
 
 function isValidEntry(e: unknown): e is ScanEntry {
@@ -47,14 +52,18 @@ export async function saveScanHistory(entries: ScanEntry[]): Promise<void> {
 }
 
 /**
- * Prepend a new entry, deduplicating by barcode (existing entry is removed
- * before prepending so the latest scan bubbles to the top). Trims to MAX_ENTRIES.
+ * Prepend a new entry, deduplicating by barcode so the latest scan bubbles to
+ * the top. Admin-action entries ("linked" / "created") are permanent audit
+ * records and are never evicted during dedup — only non-admin entries for the
+ * same barcode are removed. Trims to MAX_ENTRIES.
  */
 export function prependEntry(
   existing: ScanEntry[],
   entry: ScanEntry,
 ): ScanEntry[] {
-  const deduped = existing.filter((e) => e.barcode !== entry.barcode);
+  const deduped = existing.filter(
+    (e) => e.barcode !== entry.barcode || !!e.adminAction,
+  );
   return [entry, ...deduped].slice(0, MAX_ENTRIES);
 }
 

@@ -80,6 +80,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
       if (!notFoundCode) return;
       setShowAdminPicker(false);
       setAdminAssignError(null);
+      const action = adminPickerMode === "create" ? "created" : "linked";
       try {
         const existing = item.barcodes ?? [];
         if (!existing.includes(notFoundCode)) {
@@ -93,7 +94,16 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
           });
           await upsertItemInBarcodeCache(updated);
         }
-        setAdminSuccessMsg(`Linked to ${item.catalog}`);
+        addEntry({
+          barcode: notFoundCode,
+          found: true,
+          itemId: item.id,
+          catalog: item.catalog,
+          vendor: item.vendor,
+          timestamp: new Date().toISOString(),
+          adminAction: action,
+        });
+        setAdminSuccessMsg(action === "created" ? `Created ${item.catalog}` : `Linked to ${item.catalog}`);
         setTimeout(() => {
           resetScan();
         }, 1800);
@@ -101,7 +111,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
         setAdminAssignError("Could not save — please try again.");
       }
     },
-    [notFoundCode, updateBarcodesMutation, queryClient, resetScan],
+    [notFoundCode, adminPickerMode, addEntry, updateBarcodesMutation, queryClient, resetScan],
   );
 
   const handleBarcodeScanned = useCallback(

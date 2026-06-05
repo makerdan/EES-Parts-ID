@@ -377,6 +377,65 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           </View>
         ) : null}
 
+        {/* ── Admin Action Log ────────────────────────────────────────────────── */}
+        {isAdmin && history.some((e) => !!e.adminAction) ? (
+          <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginBottom: 8 }]}>
+              ADMIN ACTION LOG
+            </Text>
+            {history
+              .filter((e) => !!e.adminAction)
+              .map((entry, idx) => (
+                <Pressable
+                  key={`admin-${entry.barcode}-${idx}`}
+                  onPress={() => handleRecentTap(entry)}
+                  style={({ pressed }) => [
+                    styles.recentRow,
+                    {
+                      backgroundColor: pressed ? colors.muted : colors.card,
+                      borderColor: entry.adminAction === "created" ? colors.primary + "55" : colors.success + "55",
+                    },
+                  ]}
+                >
+                  <View style={[
+                    styles.adminActionIcon,
+                    { backgroundColor: entry.adminAction === "created" ? colors.primary + "18" : colors.success + "18" },
+                  ]}>
+                    <Text style={{ fontSize: 14, color: entry.adminAction === "created" ? colors.primary : colors.success }}>
+                      {entry.adminAction === "created" ? "+" : "⇢"}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    {entry.catalog ? (
+                      <Text style={[styles.recentCatalog, { color: colors.foreground }]}>
+                        {entry.catalog}
+                        {entry.vendor ? (
+                          <Text style={[styles.recentVendor, { color: colors.mutedForeground }]}> · {entry.vendor}</Text>
+                        ) : null}
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.recentBarcode, { color: colors.mutedForeground }]}>{entry.barcode}</Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end", gap: 4 }}>
+                    <Text style={[styles.recentTime, { color: colors.mutedForeground }]}>{formatRelativeTime(entry.timestamp)}</Text>
+                    <View style={[
+                      styles.recentBadge,
+                      { backgroundColor: entry.adminAction === "created" ? colors.primary + "18" : colors.success + "18" },
+                    ]}>
+                      <Text style={[
+                        styles.recentBadgeText,
+                        { color: entry.adminAction === "created" ? colors.primary : colors.success },
+                      ]}>
+                        {entry.adminAction}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.recentChevron, { color: colors.mutedForeground }]}>›</Text>
+                </Pressable>
+              ))}
+          </View>
+        ) : null}
+
         {/* ── Recents ────────────────────────────────────────────────────────── */}
         {history.length > 0 ? (
           <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
@@ -437,11 +496,23 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                       </View>
                       <View style={{ alignItems: "flex-end", gap: 4 }}>
                         <Text style={[styles.recentTime, { color: colors.mutedForeground }]}>{formatRelativeTime(entry.timestamp)}</Text>
-                        <View style={[styles.recentBadge, { backgroundColor: entry.found ? colors.success + "22" : colors.muted }]}>
-                          <Text style={[styles.recentBadgeText, { color: entry.found ? colors.success : colors.mutedForeground }]}>
-                            {entry.found ? "found" : "unassigned"}
-                          </Text>
-                        </View>
+                        {entry.adminAction ? (
+                          <View style={[styles.recentBadge, {
+                            backgroundColor: entry.adminAction === "created" ? colors.primary + "18" : colors.success + "18",
+                          }]}>
+                            <Text style={[styles.recentBadgeText, {
+                              color: entry.adminAction === "created" ? colors.primary : colors.success,
+                            }]}>
+                              {entry.adminAction}
+                            </Text>
+                          </View>
+                        ) : (
+                          <View style={[styles.recentBadge, { backgroundColor: entry.found ? colors.success + "22" : colors.muted }]}>
+                            <Text style={[styles.recentBadgeText, { color: entry.found ? colors.success : colors.mutedForeground }]}>
+                              {entry.found ? "found" : "unassigned"}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                       {entry.found ? (
                         <Text style={[styles.recentChevron, { color: colors.mutedForeground }]}>›</Text>
@@ -779,6 +850,13 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 6,
     gap: 10,
+  },
+  adminActionIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
   },
   recentCatalog: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   recentVendor: { fontSize: 13, fontFamily: "Inter_400Regular" },
