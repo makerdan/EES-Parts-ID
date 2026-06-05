@@ -146,6 +146,8 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
    */
   const lastScanRef = useRef<{ code: string; ts: number } | null>(null);
 
+  const [filterUnassigned, setFilterUnassigned] = useState(false);
+
   const [resumeSession, setResumeSession] = useState<BulkSession | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
 
@@ -185,6 +187,15 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
   const conflictItems = useMemo(() => {
     return shelfItems.filter(item => !!itemRowStates[item.id]?.conflictBarcode);
   }, [shelfItems, itemRowStates]);
+
+  const filteredShelfItems = useMemo(() => {
+    if (!filterUnassigned) return shelfItems;
+    return shelfItems.filter(item => {
+      const row = itemRowStates[item.id];
+      if (row?.assignedBarcode) return false;
+      return !Array.isArray(item.barcodes) || item.barcodes.length === 0;
+    });
+  }, [shelfItems, itemRowStates, filterUnassigned]);
 
   // Snapshot stats for the input step (uses the cached 500-item list for fast preview)
   const inputPreviewStats = useMemo(() => {
@@ -858,9 +869,37 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
               )}
             </View>
 
+            {/* Filter toggle */}
+            <View style={[bsStyles.filterRow, { paddingHorizontal: 14, paddingBottom: 6 }]}>
+              <Pressable
+                onPress={() => setFilterUnassigned(prev => !prev)}
+                style={[
+                  bsStyles.filterToggle,
+                  {
+                    backgroundColor: filterUnassigned ? colors.primary : colors.muted,
+                    borderColor: filterUnassigned ? colors.primary : colors.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    bsStyles.filterToggleText,
+                    { color: filterUnassigned ? colors.primaryForeground : colors.mutedForeground },
+                  ]}
+                >
+                  {filterUnassigned ? "⊘ Unassigned only" : "Show unassigned only"}
+                </Text>
+              </Pressable>
+              {filterUnassigned ? (
+                <Text style={[bsStyles.filterCount, { color: colors.mutedForeground }]}>
+                  {filteredShelfItems.length} remaining
+                </Text>
+              ) : null}
+            </View>
+
             {/* Item list */}
             <ScrollView style={bsStyles.itemList} contentContainerStyle={{ paddingBottom: 8 }} keyboardShouldPersistTaps="handled">
-              {shelfItems.map(item => {
+              {filteredShelfItems.map(item => {
                 const row = itemRowStates[item.id];
                 const hasExistingBarcode =
                   Array.isArray(item.barcodes) && item.barcodes.length > 0;
@@ -1353,4 +1392,17 @@ const bsStyles = StyleSheet.create({
     marginTop: 4,
   },
   doneDoneBtnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
+  filterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  filterToggle: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  filterToggleText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  filterCount: { fontSize: 12, fontFamily: "Inter_400Regular" },
 });
