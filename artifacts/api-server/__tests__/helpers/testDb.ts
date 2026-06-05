@@ -14,6 +14,12 @@ export interface FixtureItem {
   catalog: string;
   description: string;
   binLocations?: string[];
+  dimensions?: {
+    length?: number | null;
+    width?: number | null;
+    height?: number | null;
+    diameter?: number | null;
+  } | null;
 }
 
 /**
@@ -30,6 +36,7 @@ export async function seedFixtures(items: FixtureItem[]) {
         description: i.description,
         binLocations: i.binLocations ?? [],
         aiKeywords: [] as string[],
+        ...(i.dimensions !== undefined ? { dimensions: i.dimensions } : {}),
       })),
     )
     .onConflictDoNothing()

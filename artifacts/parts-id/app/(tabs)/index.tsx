@@ -468,6 +468,22 @@ export default function SearchScreen() {
   const SEARCH_TIMEOUT_MS = 8000;
 
   const handleSearch = () => {
+    // Guard: do not fire a search when there is nothing to search for.
+    // This mirrors the canSearch computation below and also protects the
+    // onSubmitEditing path (keyboard Return), which bypasses the button's
+    // disabled prop.
+    const flt = filtersRef.current;
+    const hasSizeInput =
+      flt.minLength.trim() !== "" || flt.maxLength.trim() !== "" ||
+      flt.minDiameter.trim() !== "" || flt.maxDiameter.trim() !== "";
+    const hasAnyInput =
+      flt.keywords.trim() !== "" || flt.catalog.trim() !== "" ||
+      flt.vendor.trim() !== "" || flt.color.trim() !== "" ||
+      flt.size.trim() !== "" || flt.material.trim() !== "" ||
+      flt.textNumbers.trim() !== "" || hasSizeInput ||
+      activeCategorySlugRef.current != null;
+    if (!hasAnyInput) return;
+
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
@@ -562,6 +578,30 @@ export default function SearchScreen() {
   );
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
+
+  // True when the user has entered at least one dimension bound.
+  // The search button must remain enabled in this state even if the keyword
+  // field is empty — the API runs a dedicated SQL scan using expression indexes
+  // when size-range filters are the only input.
+  const hasActiveSizeFilter =
+    filters.minLength.trim() !== "" ||
+    filters.maxLength.trim() !== "" ||
+    filters.minDiameter.trim() !== "" ||
+    filters.maxDiameter.trim() !== "";
+
+  // The search button is enabled when the user has provided any searchable
+  // input — text fields, a size-range bound, or a browsed category.
+  const canSearch =
+    filters.keywords.trim() !== "" ||
+    filters.catalog.trim() !== "" ||
+    filters.vendor.trim() !== "" ||
+    filters.color.trim() !== "" ||
+    filters.size.trim() !== "" ||
+    filters.material.trim() !== "" ||
+    filters.textNumbers.trim() !== "" ||
+    hasActiveSizeFilter ||
+    activeCategorySlug != null;
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -945,18 +985,18 @@ export default function SearchScreen() {
         <View style={styles.searchBarButtons}>
           <Pressable
             onPress={handleSearch}
-            disabled={searchMutation.isPending}
+            disabled={searchMutation.isPending || !canSearch}
             style={[styles.searchBarSearchBtn, {
-              backgroundColor: searchMutation.isPending ? colors.muted : colors.primary,
+              backgroundColor: (searchMutation.isPending || !canSearch) ? colors.muted : colors.primary,
               borderWidth: 1,
-              borderColor: searchMutation.isPending ? colors.border : '#000',
+              borderColor: (searchMutation.isPending || !canSearch) ? colors.border : '#000',
             }]}
           >
             <Text style={[styles.searchBarSearchBtnText, { color: '#000' }]}>
               {searchMutation.isPending ? "…" : "🔍 Search"}
             </Text>
           </Pressable>
-          {(hasResults || filters.keywords) ? (
+          {(hasResults || filters.keywords || hasActiveSizeFilter) ? (
             <Pressable
               onPress={handleClear}
               style={[styles.secondaryBtn, styles.searchBarClearBtn, { borderColor: colors.border }]}

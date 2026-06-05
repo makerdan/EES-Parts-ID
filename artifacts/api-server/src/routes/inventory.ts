@@ -360,6 +360,10 @@ router.post("/search", async (req, res) => {
         })),
         totalMatches: sizeRows.length,
         belowThreshold: 0,
+        // Dimension facet counts are not computed in the size-only path (no
+        // FTS pipeline runs), so return an empty object to keep the response
+        // shape consistent with the full-text search path.
+        dimensionCounts: {},
       });
     }
 
