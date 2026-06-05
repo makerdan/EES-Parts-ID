@@ -130,6 +130,15 @@ export function AddPartModal({
     onClose();
   };
 
+  const handleAddAnother = () => {
+    setCatalog("");
+    setVendor("");
+    setBinLocation(defaultBin);
+    setError(null);
+    setFieldErrors({});
+    setCreatedItem(null);
+  };
+
   return (
     <Modal
       visible={visible}
@@ -161,22 +170,56 @@ export function AddPartModal({
                   Would you like to enrich it with a description, additional bins, or keywords?
                 </Text>
               ) : null}
-              <View style={styles.actions}>
-                <Pressable
-                  onPress={handleDone}
-                  style={[styles.cancelBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
-                >
-                  <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Done</Text>
-                </Pressable>
-                {onAddDetails ? (
+              {defaultBin && onAddDetails ? (
+                /* Three-action layout: stack primaries below Done */
+                <View style={styles.actionsColumn}>
+                  <View style={styles.actions}>
+                    <Pressable
+                      onPress={handleAddAnother}
+                      style={[styles.submitBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                    >
+                      <Text style={[styles.submitBtnText, { color: colors.primaryForeground }]}>Add Another</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={handleAddDetails}
+                      style={[styles.submitBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                    >
+                      <Text style={[styles.submitBtnText, { color: colors.primaryForeground }]}>Add Details</Text>
+                    </Pressable>
+                  </View>
                   <Pressable
-                    onPress={handleAddDetails}
-                    style={[styles.submitBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                    onPress={handleDone}
+                    style={[styles.cancelBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
                   >
-                    <Text style={[styles.submitBtnText, { color: colors.primaryForeground }]}>Add Details</Text>
+                    <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Done</Text>
                   </Pressable>
-                ) : null}
-              </View>
+                </View>
+              ) : (
+                <View style={styles.actions}>
+                  <Pressable
+                    onPress={handleDone}
+                    style={[styles.cancelBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+                  >
+                    <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Done</Text>
+                  </Pressable>
+                  {defaultBin ? (
+                    <Pressable
+                      onPress={handleAddAnother}
+                      style={[styles.submitBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                    >
+                      <Text style={[styles.submitBtnText, { color: colors.primaryForeground }]}>Add Another</Text>
+                    </Pressable>
+                  ) : null}
+                  {onAddDetails ? (
+                    <Pressable
+                      onPress={handleAddDetails}
+                      style={[styles.submitBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                    >
+                      <Text style={[styles.submitBtnText, { color: colors.primaryForeground }]}>Add Details</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              )}
             </>
           ) : (
             /* ── Entry form ── */
@@ -360,6 +403,10 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: "row",
     gap: 10,
+    marginTop: 4,
+  },
+  actionsColumn: {
+    gap: 8,
     marginTop: 4,
   },
   cancelBtn: {
