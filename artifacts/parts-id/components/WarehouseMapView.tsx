@@ -257,6 +257,12 @@ export function WarehouseMapView({
     (e: LayoutChangeEvent) => {
       const { width, height } = e.nativeEvent.layout;
       const rh = width > 0 ? width / SVG_ASPECT : 0;
+
+      // Capture the previous container width BEFORE overwriting the ref so we
+      // can compute the correct translation to keep the same floor-plan point
+      // centred after a device rotation.
+      const prevW = containerWRef.current;
+
       setContainerW(width);
       setContainerH(height);
       containerWV.value = width;
@@ -288,17 +294,30 @@ export function WarehouseMapView({
         return;
       }
 
-      // After rotation the container dimensions change, so the previously saved
-      // pan offsets may place the map partially off-screen.  Re-clamp them to
-      // the new bounds and animate back with a spring so the correction is
-      // smooth rather than an instant jump.
+      // After rotation the container dimensions change.  The floor plan is
+      // always rendered at containerW × (containerW / SVG_ASPECT), so both
+      // axes scale by the same ratio newW / oldW.  Multiplying the saved
+      // translation by this ratio maps the previously centred floor-plan point
+      // to exactly the same screen position in the new orientation.  We then
+      // clamp to the new bounds (so the map never goes off-screen) and animate
+      // the correction with a spring for a smooth, context-preserving feel.
+      //
+      // Why this works — the visible floor-plan centre in normalised [0,1]
+      // coordinates is: (0.5 − tx / (Z × W)).  To keep the same normalised
+      // centre after the resize:
+      //   tx_new = tx_old × (W_new / W_old)
+      // Both axes share the same ratio because H = W / SVG_ASPECT.
       const currentScale = savedScale.value;
+      const sizeRatio = prevW > 0 ? width / prevW : 1;
+      const centredTX = savedTX.value * sizeRatio;
+      const centredTY = savedTY.value * sizeRatio;
+
       const scaledW = width * currentScale;
       const scaledH = rh * currentScale;
       const maxX = Math.max(0, (scaledW - width) / 2);
       const maxY = Math.max(0, (scaledH - height) / 2);
-      const newTX = clamp(savedTX.value, -maxX, maxX);
-      const newTY = clamp(savedTY.value, -maxY, maxY);
+      const newTX = clamp(centredTX, -maxX, maxX);
+      const newTY = clamp(centredTY, -maxY, maxY);
       translateX.value = withSpring(newTX, { damping: 18, stiffness: 200 });
       translateY.value = withSpring(newTY, { damping: 18, stiffness: 200 });
       savedTX.value = newTX;
