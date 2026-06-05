@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -17,10 +17,24 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { Feather } from "@expo/vector-icons";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
+import { isLiDARSupported } from "lidar-measure";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "http://localhost:8080/api";
+
+function fmtDim(v: number | null | undefined): string {
+  if (v == null) return "";
+  return String(v);
+}
+
+function parseDimField(s: string): number | null {
+  const n = parseFloat(s);
+  return isNaN(n) || n < 0 ? null : Math.round(n * 10) / 10;
+}
 
 interface PartDetailsEditorProps {
   item: InventoryItem | null;
@@ -30,8 +44,13 @@ interface PartDetailsEditorProps {
 
 /**
  * Combined full-part editor opened after a successful quick-add.
- * Lets admins fill in description, bin locations, and keywords in one place
- * without navigating to the Upload tab.
+ * Lets admins fill in description, bin locations, keywords, and dimensions
+ * in one place without navigating to the Upload tab.
+ *
+ * On iOS devices with LiDAR a "LiDAR" shortcut appears in the dimensions
+ * section so admins can capture measurements without navigating to Edit.
+ * On non-LiDAR iOS devices the "Estimate" (photo AI) path is shown instead.
+ * Android and Web see neither — manual entry only.
  */
 export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEditorProps) {
   "use no memo";
@@ -51,13 +70,28 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
     description?: string;
     bins?: string;
     keywords?: string;
+    dimensions?: string;
   }>({});
+
+  const existingDims = (item as unknown as { dimensions?: PartDimensions | null })?.dimensions;
+  const [dimLength, setDimLength] = useState(fmtDim(existingDims?.length));
+  const [dimWidth, setDimWidth] = useState(fmtDim(existingDims?.width));
+  const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
+  const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
+
+  const [measureOpen, setMeasureOpen] = useState(false);
+  const [lidarAvailable, setLidarAvailable] = useState(false);
+
+  useEffect(() => {
+    setLidarAvailable(isLiDARSupported());
+  }, []);
 
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
 
   useEffect(() => {
     if (!item) return;
+    const dims = (item as unknown as { dimensions?: PartDimensions | null })?.dimensions;
     setDescription(item.description ?? "");
     setBins(item.binLocations ?? []);
     setKeywords(item.aiKeywords ?? []);
@@ -66,6 +100,13 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
     setSaveStatus("idle");
     setErrorMsg(null);
     setFieldSaveErrors({});
+    setDimLength(fmtDim(dims?.length));
+    setDimWidth(fmtDim(dims?.width));
+    setDimHeight(fmtDim(dims?.height));
+    setDimDiameter(fmtDim(dims?.diameter));
+    setDimSaveStatus("idle");
+    setDimSaveError(null);
+    dimAutoSavedRef.current = null;
   }, [item?.id]);
 
   const addBin = () => {
@@ -87,6 +128,63 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
 
   const removeKeyword = (kw: string) => setKeywords(keywords.filter((k) => k !== kw));
 
+  const [dimSaveStatus, setDimSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [dimSaveError, setDimSaveError] = useState<string | null>(null);
+  // Tracks the dims that handleMeasureConfirm has already persisted, so
+  // handleSave won't send a redundant PATCH for the same values.
+  const dimAutoSavedRef = useRef<PartDimensions | null>(null);
+
+  const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
+    setMeasureOpen(false);
+    setDimLength(fmtDim(dims.length));
+    setDimWidth(fmtDim(dims.width));
+    setDimHeight(fmtDim(dims.height));
+    setDimDiameter(fmtDim(dims.diameter));
+
+    const current = itemRef.current;
+    if (!current || !adminToken) return;
+
+    setDimSaveStatus("saving");
+    setDimSaveError(null);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify(dims),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      const listKeyPrefix = getListInventoryQueryKey()[0];
+      await queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      // Store as parsed values so dimsAlreadySaved can compare apples-to-apples
+      // with what parseDimField(fmtDim(x)) would produce from the display string.
+      dimAutoSavedRef.current = {
+        length: parseDimField(fmtDim(dims.length)),
+        width: parseDimField(fmtDim(dims.width)),
+        height: parseDimField(fmtDim(dims.height)),
+        diameter: parseDimField(fmtDim(dims.diameter)),
+      };
+      setDimSaveStatus("saved");
+      setTimeout(() => setDimSaveStatus("idle"), 2500);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Save failed";
+      setDimSaveError(
+        msg.includes("401")
+          ? "Admin session expired — re-unlock and try again."
+          : "Could not save dimensions — check connection.",
+      );
+      setDimSaveStatus("error");
+    }
+  }, [adminToken, queryClient]);
+
   const handleSave = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
@@ -95,7 +193,7 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
     setFieldSaveErrors({});
 
     type SaveOp = {
-      field: "description" | "bins" | "keywords";
+      field: "description" | "bins" | "keywords" | "dimensions";
       promise: Promise<unknown>;
       restoreFn: () => void;
     };
@@ -137,6 +235,52 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
         field: "keywords",
         restoreFn: () => setKeywords(current.aiKeywords ?? []),
         promise: updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords } }),
+      });
+    }
+
+    const newDims: PartDimensions = {
+      length: parseDimField(dimLength),
+      width: parseDimField(dimWidth),
+      height: parseDimField(dimHeight),
+      diameter: parseDimField(dimDiameter),
+    };
+    const oldDims = existingDims ?? {};
+    const dimsChanged =
+      newDims.length !== (oldDims.length ?? null) ||
+      newDims.width !== (oldDims.width ?? null) ||
+      newDims.height !== (oldDims.height ?? null) ||
+      newDims.diameter !== (oldDims.diameter ?? null);
+
+    // Skip the PATCH if handleMeasureConfirm already persisted these exact values.
+    const autoSaved = dimAutoSavedRef.current;
+    const dimsAlreadySaved = autoSaved !== null &&
+      newDims.length === (autoSaved.length ?? null) &&
+      newDims.width === (autoSaved.width ?? null) &&
+      newDims.height === (autoSaved.height ?? null) &&
+      newDims.diameter === (autoSaved.diameter ?? null);
+
+    if (dimsChanged && !dimsAlreadySaved) {
+      ops.push({
+        field: "dimensions",
+        restoreFn: () => {
+          setDimLength(fmtDim(existingDims?.length));
+          setDimWidth(fmtDim(existingDims?.width));
+          setDimHeight(fmtDim(existingDims?.height));
+          setDimDiameter(fmtDim(existingDims?.diameter));
+        },
+        promise: fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify(newDims),
+        }).then(async (res) => {
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(data.error ?? `HTTP ${res.status}`);
+          }
+        }),
       });
     }
 
@@ -183,7 +327,11 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
   const hasChanges =
     description.trim() !== (item.description ?? "").trim() ||
     JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
-    JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []);
+    JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
+    parseDimField(dimLength) !== (existingDims?.length ?? null) ||
+    parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
+    parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
+    parseDimField(dimDiameter) !== (existingDims?.diameter ?? null);
 
   const statusColor =
     isSaving ? colors.warning
@@ -198,222 +346,342 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
     : "";
 
   return (
-    <Modal
-      visible
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={[styles.container, { backgroundColor: colors.background }]}
+    <>
+      <Modal
+        visible
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={onClose}
       >
-        <DismissKeyboard>
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Text style={[styles.title, { color: colors.foreground }]}>Edit Part</Text>
-              {saveStatus !== "idle" && (
-                <View style={[styles.statusBadge, { backgroundColor: statusColor + "22" }]}>
-                  {isSaving ? (
-                    <ActivityIndicator size="small" color={statusColor} style={{ marginRight: 4 }} />
-                  ) : null}
-                  <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
-                </View>
-              )}
-            </View>
-            <Text style={[styles.sub, { color: colors.mutedForeground }]} numberOfLines={1}>
-              {item.vendor} · {item.catalog}
-            </Text>
-          </View>
-          <Pressable
-            onPress={onClose}
-            style={[styles.closeBtn, { backgroundColor: colors.muted }]}
-          >
-            <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
-          </Pressable>
-        </View>
-
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={[styles.container, { backgroundColor: colors.background }]}
         >
-          <Text style={[styles.hint, { color: colors.mutedForeground }]}>
-            Edit this part's description, bin locations, and searchable keywords.
-          </Text>
-
-          {/* Description */}
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
-          <TextInput
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Brief description of the part…"
-            placeholderTextColor={colors.mutedForeground}
-            multiline
-            numberOfLines={3}
-            style={[
-              styles.descInput,
-              { backgroundColor: colors.muted, borderColor: fieldSaveErrors.description ? colors.destructive : colors.border, color: colors.foreground },
-            ]}
-            autoCorrect
-            autoCapitalize="sentences"
-            returnKeyType="default"
-          />
-          {fieldSaveErrors.description ? (
-            <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.description}</Text>
-          ) : null}
-
-          {/* Bin Locations */}
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>
-            BIN LOCATIONS ({bins.length})
-          </Text>
-          <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
-            Tap a bin to remove it.
-          </Text>
-          <View style={styles.chipRow}>
-            {bins.map((b) => (
-              <Pressable
-                key={b}
-                onPress={() => removeBin(b)}
-                style={[styles.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
-              >
-                <Text style={[styles.chipText, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>{b}</Text>
-                <Text style={[styles.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
-              </Pressable>
-            ))}
-          </View>
-          {fieldSaveErrors.bins ? (
-            <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.bins}</Text>
-          ) : null}
-          {bins.length === 0 && (
-            <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-              No additional bins. The initial bin was added on creation.
-            </Text>
-          )}
-          <View style={[styles.addRow, { marginTop: 10 }]}>
-            <TextInput
-              value={newBin}
-              onChangeText={setNewBin}
-              placeholder="e.g. A1-04"
-              placeholderTextColor={colors.mutedForeground}
-              style={[
-                styles.addInput,
-                { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
-              ]}
-              onSubmitEditing={addBin}
-              returnKeyType="done"
-              autoCorrect={false}
-              autoCapitalize="characters"
-            />
-            <Pressable
-              onPress={addBin}
-              disabled={!newBin.trim()}
-              style={[
-                styles.addBtn,
-                { backgroundColor: newBin.trim() ? colors.primary : colors.muted },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.addBtnText,
-                  { color: newBin.trim() ? colors.primaryForeground : colors.mutedForeground },
-                ]}
-              >
-                + Add
+          <DismissKeyboard>
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={[styles.title, { color: colors.foreground }]}>Edit Part</Text>
+                {saveStatus !== "idle" && (
+                  <View style={[styles.statusBadge, { backgroundColor: statusColor + "22" }]}>
+                    {isSaving ? (
+                      <ActivityIndicator size="small" color={statusColor} style={{ marginRight: 4 }} />
+                    ) : null}
+                    <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={[styles.sub, { color: colors.mutedForeground }]} numberOfLines={1}>
+                {item.vendor} · {item.catalog}
               </Text>
-            </Pressable>
-          </View>
-
-          {/* Keywords */}
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
-            KEYWORDS ({keywords.length})
-          </Text>
-          <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
-            Tap a keyword to remove it.
-          </Text>
-          <View style={styles.chipRow}>
-            {keywords.map((kw) => (
-              <Pressable
-                key={kw}
-                onPress={() => removeKeyword(kw)}
-                style={[styles.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
-              >
-                <Text style={[styles.chipText, { color: colors.foreground }]}>{kw}</Text>
-                <Text style={[styles.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
-              </Pressable>
-            ))}
-          </View>
-          {fieldSaveErrors.keywords ? (
-            <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.keywords}</Text>
-          ) : null}
-          {keywords.length === 0 && (
-            <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-              No keywords yet. Add some below.
-            </Text>
-          )}
-          <View style={[styles.addRow, { marginTop: 10 }]}>
-            <TextInput
-              value={newKeyword}
-              onChangeText={setNewKeyword}
-              placeholder="Type keyword and press Add…"
-              placeholderTextColor={colors.mutedForeground}
-              style={[
-                styles.addInput,
-                { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
-              ]}
-              onSubmitEditing={addKeyword}
-              returnKeyType="done"
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
-            <Pressable
-              onPress={addKeyword}
-              style={[styles.addBtn, { backgroundColor: colors.primary }]}
-            >
-              <Text style={[styles.addBtnText, { color: colors.primaryForeground }]}>+ Add</Text>
-            </Pressable>
-          </View>
-
-          {errorMsg ? (
-            <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "55" }]}>
-              <Text style={[styles.errorText, { color: colors.destructive }]}>{errorMsg}</Text>
             </View>
-          ) : null}
-        </ScrollView>
+            <Pressable
+              onPress={onClose}
+              style={[styles.closeBtn, { backgroundColor: colors.muted }]}
+            >
+              <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
+            </Pressable>
+          </View>
 
-        <View style={[styles.footer, { borderTopColor: colors.border }]}>
-          <Pressable
-            onPress={onClose}
-            style={[styles.cancelBtn, { borderColor: colors.border }]}
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
           >
-            <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleSave}
-            disabled={isSaving || (!hasChanges && saveStatus !== "error")}
-            style={[
-              styles.saveBtn,
-              { backgroundColor: isSaving || (!hasChanges && saveStatus !== "error") ? colors.muted : colors.primary },
-            ]}
-          >
-            {isSaving ? (
-              <ActivityIndicator color={colors.primaryForeground} />
-            ) : (
-              <Text
-                style={[
-                  styles.saveBtnText,
-                  { color: isSaving || (!hasChanges && saveStatus !== "error") ? colors.mutedForeground : colors.primaryForeground },
-                ]}
-              >
-                Save Details
+            <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+              Edit this part's description, bin locations, keywords, and dimensions.
+            </Text>
+
+            {/* Description */}
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+            <TextInput
+              value={description}
+              onChangeText={setDescription}
+              placeholder="Brief description of the part…"
+              placeholderTextColor={colors.mutedForeground}
+              multiline
+              numberOfLines={3}
+              style={[
+                styles.descInput,
+                { backgroundColor: colors.muted, borderColor: fieldSaveErrors.description ? colors.destructive : colors.border, color: colors.foreground },
+              ]}
+              autoCorrect
+              autoCapitalize="sentences"
+              returnKeyType="default"
+            />
+            {fieldSaveErrors.description ? (
+              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.description}</Text>
+            ) : null}
+
+            {/* Bin Locations */}
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>
+              BIN LOCATIONS ({bins.length})
+            </Text>
+            <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
+              Tap a bin to remove it.
+            </Text>
+            <View style={styles.chipRow}>
+              {bins.map((b) => (
+                <Pressable
+                  key={b}
+                  onPress={() => removeBin(b)}
+                  style={[styles.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
+                >
+                  <Text style={[styles.chipText, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>{b}</Text>
+                  <Text style={[styles.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
+                </Pressable>
+              ))}
+            </View>
+            {fieldSaveErrors.bins ? (
+              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.bins}</Text>
+            ) : null}
+            {bins.length === 0 && (
+              <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+                No additional bins. The initial bin was added on creation.
               </Text>
             )}
-          </Pressable>
-        </View>
-        </DismissKeyboard>
-      </KeyboardAvoidingView>
-    </Modal>
+            <View style={[styles.addRow, { marginTop: 10 }]}>
+              <TextInput
+                value={newBin}
+                onChangeText={setNewBin}
+                placeholder="e.g. A1-04"
+                placeholderTextColor={colors.mutedForeground}
+                style={[
+                  styles.addInput,
+                  { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                ]}
+                onSubmitEditing={addBin}
+                returnKeyType="done"
+                autoCorrect={false}
+                autoCapitalize="characters"
+              />
+              <Pressable
+                onPress={addBin}
+                disabled={!newBin.trim()}
+                style={[
+                  styles.addBtn,
+                  { backgroundColor: newBin.trim() ? colors.primary : colors.muted },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.addBtnText,
+                    { color: newBin.trim() ? colors.primaryForeground : colors.mutedForeground },
+                  ]}
+                >
+                  + Add
+                </Text>
+              </Pressable>
+            </View>
+
+            {/* Keywords */}
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
+              KEYWORDS ({keywords.length})
+            </Text>
+            <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
+              Tap a keyword to remove it.
+            </Text>
+            <View style={styles.chipRow}>
+              {keywords.map((kw) => (
+                <Pressable
+                  key={kw}
+                  onPress={() => removeKeyword(kw)}
+                  style={[styles.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
+                >
+                  <Text style={[styles.chipText, { color: colors.foreground }]}>{kw}</Text>
+                  <Text style={[styles.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
+                </Pressable>
+              ))}
+            </View>
+            {fieldSaveErrors.keywords ? (
+              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.keywords}</Text>
+            ) : null}
+            {keywords.length === 0 && (
+              <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+                No keywords yet. Add some below.
+              </Text>
+            )}
+            <View style={[styles.addRow, { marginTop: 10 }]}>
+              <TextInput
+                value={newKeyword}
+                onChangeText={setNewKeyword}
+                placeholder="Type keyword and press Add…"
+                placeholderTextColor={colors.mutedForeground}
+                style={[
+                  styles.addInput,
+                  { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                ]}
+                onSubmitEditing={addKeyword}
+                returnKeyType="done"
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              <Pressable
+                onPress={addKeyword}
+                style={[styles.addBtn, { backgroundColor: colors.primary }]}
+              >
+                <Text style={[styles.addBtnText, { color: colors.primaryForeground }]}>+ Add</Text>
+              </Pressable>
+            </View>
+
+            {/* Dimensions */}
+            <View style={[styles.dimHeader, { marginTop: 24 }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>DIMENSIONS (mm)</Text>
+                {dimSaveStatus === "saving" ? (
+                  <ActivityIndicator size="small" color={colors.warning} />
+                ) : dimSaveStatus === "saved" ? (
+                  <Text style={[styles.dimStatusText, { color: colors.success }]}>✓ Saved</Text>
+                ) : dimSaveStatus === "error" ? (
+                  <Text style={[styles.dimStatusText, { color: colors.destructive }]}>Save failed</Text>
+                ) : null}
+              </View>
+              {Platform.OS === "ios" ? (
+                lidarAvailable ? (
+                  <Pressable
+                    onPress={() => setMeasureOpen(true)}
+                    style={[styles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+                    accessibilityLabel="Measure dimensions with LiDAR"
+                  >
+                    <Feather name="maximize-2" size={13} color={colors.primary} />
+                    <Text style={[styles.measureBtnText, { color: colors.primary }]}>LiDAR</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    onPress={() => setMeasureOpen(true)}
+                    style={[styles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+                    accessibilityLabel="Estimate dimensions from photo"
+                  >
+                    <Feather name="maximize" size={13} color={colors.primary} />
+                    <Text style={[styles.measureBtnText, { color: colors.primary }]}>Estimate</Text>
+                  </Pressable>
+                )
+              ) : null}
+            </View>
+            <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
+              {Platform.OS === "ios"
+                ? lidarAvailable
+                  ? "Tap LiDAR to measure precisely, or enter values manually. Leave blank if unknown."
+                  : "Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."
+                : "Enter physical dimensions in millimetres. Leave blank if unknown."}
+            </Text>
+            <View style={styles.dimGrid}>
+              <View style={styles.dimField}>
+                <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Length</Text>
+                <TextInput
+                  value={dimLength}
+                  onChangeText={v => { setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  placeholder="–"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                />
+              </View>
+              <View style={styles.dimField}>
+                <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Width</Text>
+                <TextInput
+                  value={dimWidth}
+                  onChangeText={v => { setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  placeholder="–"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                />
+              </View>
+              <View style={styles.dimField}>
+                <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Height</Text>
+                <TextInput
+                  value={dimHeight}
+                  onChangeText={v => { setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  placeholder="–"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                />
+              </View>
+              <View style={styles.dimField}>
+                <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Diameter</Text>
+                <TextInput
+                  value={dimDiameter}
+                  onChangeText={v => { setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                  placeholder="–"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[styles.dimInput, { backgroundColor: colors.muted, borderColor: fieldSaveErrors.dimensions ? colors.destructive : colors.border, color: colors.foreground }]}
+                />
+              </View>
+            </View>
+            {dimSaveError ? (
+              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{dimSaveError}</Text>
+            ) : fieldSaveErrors.dimensions ? (
+              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.dimensions}</Text>
+            ) : null}
+            {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
+              <Text style={[styles.dimSummary, { color: colors.primary }]}>
+                {[
+                  dimLength && dimWidth && dimHeight && `${dimLength} × ${dimWidth} × ${dimHeight} mm`,
+                  dimDiameter && `⌀ ${dimDiameter} mm`,
+                ].filter(Boolean).join("   ")}
+              </Text>
+            ) : null}
+
+            {errorMsg ? (
+              <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "55" }]}>
+                <Text style={[styles.errorText, { color: colors.destructive }]}>{errorMsg}</Text>
+              </View>
+            ) : null}
+          </ScrollView>
+
+          <View style={[styles.footer, { borderTopColor: colors.border }]}>
+            <Pressable
+              onPress={onClose}
+              style={[styles.cancelBtn, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSave}
+              disabled={isSaving || (!hasChanges && saveStatus !== "error")}
+              style={[
+                styles.saveBtn,
+                { backgroundColor: isSaving || (!hasChanges && saveStatus !== "error") ? colors.muted : colors.primary },
+              ]}
+            >
+              {isSaving ? (
+                <ActivityIndicator color={colors.primaryForeground} />
+              ) : (
+                <Text
+                  style={[
+                    styles.saveBtnText,
+                    { color: isSaving || (!hasChanges && saveStatus !== "error") ? colors.mutedForeground : colors.primaryForeground },
+                  ]}
+                >
+                  Save Details
+                </Text>
+              )}
+            </Pressable>
+          </View>
+          </DismissKeyboard>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* MeasurePartScreen is rendered outside the main Modal so it can present
+          its own full-screen Modal without nesting conflicts on iOS. */}
+      {adminToken ? (
+        <MeasurePartScreen
+          visible={measureOpen}
+          onClose={() => setMeasureOpen(false)}
+          onConfirm={handleMeasureConfirm}
+          initialDims={{
+            length: parseDimField(dimLength),
+            width: parseDimField(dimWidth),
+            height: parseDimField(dimHeight),
+            diameter: parseDimField(dimDiameter),
+          }}
+          adminToken={adminToken}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -517,6 +785,53 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  dimHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 0,
+  },
+  measureBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 7,
+    borderWidth: 1,
+    marginBottom: 6,
+  },
+  measureBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  dimStatusText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  dimGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 4,
+  },
+  dimField: { width: "47%" },
+  dimLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    marginBottom: 4,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  dimInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    textAlign: "center",
+  },
+  dimSummary: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    marginTop: 10,
+    textAlign: "center",
+  },
   errorBanner: {
     marginTop: 16,
     borderRadius: 8,
