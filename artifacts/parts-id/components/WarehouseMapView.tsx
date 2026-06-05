@@ -40,6 +40,7 @@ import {
   useColorScheme,
   View,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import { Asset } from "expo-asset";
 import {
@@ -71,6 +72,8 @@ const SVG_ASPECT = SVG_VIEWBOX_W / SVG_VIEWBOX_H;
 
 const MIN_SCALE = 0.8;
 const MAX_SCALE = 50;
+
+const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v1";
 
 // Conservative iOS Metal GPU texture limit in physical pixels.
 // Exceeding this causes patchwork tiles; keep high-res renders below it.
@@ -281,6 +284,63 @@ export function WarehouseMapView({
   const translateY = useSharedValue(0);
   const savedTX = useSharedValue(0);
   const savedTY = useSharedValue(0);
+
+  // ── Viewport persistence (AsyncStorage) ────────────────────────────────────
+  // Restore the saved viewport once on mount, before the first layout clamp
+  // runs, so the user resumes exactly where they left off.
+  const _persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const persistViewport = useCallback((s: number, tx: number, ty: number) => {
+    if (_persistTimer.current !== null) clearTimeout(_persistTimer.current);
+    _persistTimer.current = setTimeout(() => {
+      AsyncStorage.setItem(VIEWPORT_KEY, JSON.stringify({ s, tx, ty })).catch(() => {});
+    }, 300);
+  }, []);
+
+  // Flush any pending debounced write and cancel the timer on unmount so a
+  // stale timeout never fires against an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (_persistTimer.current !== null) {
+        clearTimeout(_persistTimer.current);
+        _persistTimer.current = null;
+        // Immediate flush: write the latest saved values synchronously so
+        // the last viewport is not lost if the tab is closed mid-debounce.
+        AsyncStorage.setItem(
+          VIEWPORT_KEY,
+          JSON.stringify({ s: savedScale.value, tx: savedTX.value, ty: savedTY.value }),
+        ).catch(() => {});
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.getItem(VIEWPORT_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        try {
+          const { s, tx, ty } = JSON.parse(raw) as { s: number; tx: number; ty: number };
+          if (
+            typeof s === "number" && isFinite(s) &&
+            typeof tx === "number" && isFinite(tx) &&
+            typeof ty === "number" && isFinite(ty)
+          ) {
+            const clampedS = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+            scale.value = clampedS;
+            savedScale.value = clampedS;
+            translateX.value = tx;
+            translateY.value = ty;
+            savedTX.value = tx;
+            savedTY.value = ty;
+          }
+        } catch {
+          // Corrupted JSON — silently discard; starts at default position.
+        }
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Adaptive-tiling floor-plan renderer ──────────────────────────────────
   // At zoom N the floor plan is split into N×N tiles.  Each tile renders at
@@ -535,6 +595,7 @@ export function WarehouseMapView({
       savedScale.value = scale.value;
       savedTX.value = translateX.value;
       savedTY.value = translateY.value;
+      runOnJS(persistViewport)(scale.value, translateX.value, translateY.value);
     });
 
   // ── Pan gesture (minDistance prevents tap interference) ────────────────────
@@ -552,6 +613,7 @@ export function WarehouseMapView({
     .onEnd(() => {
       savedTX.value = translateX.value;
       savedTY.value = translateY.value;
+      runOnJS(persistViewport)(scale.value, translateX.value, translateY.value);
     });
 
   // ── Double-tap to reset zoom ────────────────────────────────────────────────
@@ -564,6 +626,7 @@ export function WarehouseMapView({
       translateY.value = withSpring(0);
       savedTX.value = 0;
       savedTY.value = 0;
+      runOnJS(persistViewport)(1, 0, 0);
     });
 
   const mainGesture = Gesture.Exclusive(
@@ -592,8 +655,9 @@ export function WarehouseMapView({
     savedScale.value = newScale;
     savedTX.value = newTX;
     savedTY.value = newTY;
+    persistViewport(newScale, newTX, newTY);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [svgRenderW, svgRenderH, containerW, containerH]);
+  }, [svgRenderW, svgRenderH, containerW, containerH, persistViewport]);
 
   const handleZoomIn = useCallback(() => {
     applyZoom(scale.value * 1.5);
@@ -612,8 +676,9 @@ export function WarehouseMapView({
     savedScale.value = 1;
     savedTX.value = 0;
     savedTY.value = 0;
+    persistViewport(1, 0, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [persistViewport]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
