@@ -1,5 +1,6 @@
-import { requireNativeModule } from "expo-modules-core";
+import { requireNativeModule, requireNativeViewManager } from "expo-modules-core";
 import { Platform } from "react-native";
+import React from "react";
 
 export interface LidarDimensions {
   length: number;
@@ -47,3 +48,26 @@ export function measureObject(timeoutSeconds = 4): Promise<LidarDimensions> {
   }
   return native().measureObject(timeoutSeconds);
 }
+
+/**
+ * A full-screen native view that renders the live ARKit mesh wireframe overlay
+ * on top of the device camera feed.  Mount this during the lidar_scanning phase
+ * so the admin can see real-time depth feedback while the scan runs.
+ *
+ * The view shares the same ARSession as measureObject() via
+ * LidarARSessionManager, so only one ARKit session is ever active at a time.
+ *
+ * iOS only — on other platforms this resolves to null and is not rendered.
+ */
+const NativeLidarDepthView: React.ComponentType<{ style?: object }> | null =
+  Platform.OS === "ios"
+    ? (() => {
+        try {
+          return requireNativeViewManager("LidarDepthView");
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
+export { NativeLidarDepthView };

@@ -33,7 +33,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
-import { isLiDARSupported, measureObject } from "lidar-measure";
+import { isLiDARSupported, measureObject, NativeLidarDepthView } from "lidar-measure";
 
 /**
  * Returns true when the current iOS device is known to include LiDAR hardware
@@ -94,6 +94,7 @@ export function MeasurePartScreen({
   const [phase, setPhase] = useState<Phase>("preview");
   const [estimateError, setEstimateError] = useState<string | null>(null);
   const [lidarAvailable] = useState<boolean>(() => isLiDARSupported());
+  const [scanSecsLeft, setScanSecsLeft] = useState(LIDAR_TIMEOUT_S);
 
   const [lengthStr, setLengthStr] = useState("");
   const [widthStr, setWidthStr] = useState("");
@@ -117,9 +118,24 @@ export function MeasurePartScreen({
     }
   }, [visible, initialDims, permission, requestPermission]);
 
+  // ── Countdown timer for LiDAR scan phase ──────────────────────────────────
+  useEffect(() => {
+    if (phase !== "lidar_scanning") return;
+    setScanSecsLeft(LIDAR_TIMEOUT_S);
+    const interval = setInterval(() => {
+      setScanSecsLeft((s) => {
+        const next = s - 1;
+        if (next <= 0) clearInterval(interval);
+        return next > 0 ? next : 0;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [phase]);
+
   // ── LiDAR full scan path ────────────────────────────────────────────────────
 
   const handleLidarScan = useCallback(async () => {
+    setScanSecsLeft(LIDAR_TIMEOUT_S);
     setPhase("lidar_scanning");
     setEstimateError(null);
     try {
@@ -253,12 +269,22 @@ export function MeasurePartScreen({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={ms.root}>
-        {hasCameraAccess ? (
+        {/* During LiDAR scanning show the native AR depth overlay; otherwise
+            fall back to the regular CameraView so photo-estimate still works. */}
+        {phase === "lidar_scanning" && NativeLidarDepthView ? (
+          <NativeLidarDepthView style={StyleSheet.absoluteFill} />
+        ) : hasCameraAccess ? (
           <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
         ) : (
           <View style={[StyleSheet.absoluteFill, ms.cameraBg]} />
         )}
-        <View style={[StyleSheet.absoluteFill, ms.dimOverlay]} />
+        {/* Dim overlay — lighter during LiDAR scan so the mesh is clearly visible */}
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            phase === "lidar_scanning" ? ms.dimOverlayLight : ms.dimOverlay,
+          ]}
+        />
 
         <SafeAreaView style={ms.safeArea}>
           {/* Header */}
@@ -369,12 +395,44 @@ export function MeasurePartScreen({
 
           {/* ── LiDAR scanning phase ── */}
           {phase === "lidar_scanning" && (
-            <View style={ms.phaseContainer}>
-              <ActivityIndicator size="large" color="#10b981" />
-              <Text style={ms.instructionText}>Scanning with LiDAR…</Text>
-              <Text style={ms.subText}>
-                Hold still — reading depth data ({LIDAR_TIMEOUT_S} s)
-              </Text>
+            <View style={ms.lidarScanContainer}>
+              {/* Top hint — tells the admin what the green wireframe is */}
+              <View style={ms.lidarTopHint}>
+                <View style={ms.lidarDot} />
+                <Text style={ms.lidarTopHintText}>
+                  Live depth mesh — point at all sides of the part
+                </Text>
+              </View>
+
+              {/* Spacer so the bottom card sits at the bottom */}
+              <View style={{ flex: 1 }} />
+
+              {/* Bottom status card */}
+              <View style={ms.lidarStatusCard}>
+                <View style={ms.lidarStatusRow}>
+                  <ActivityIndicator size="small" color="#10b981" />
+                  <Text style={ms.lidarStatusText}>
+                    Building mesh… hold still
+                  </Text>
+                </View>
+
+                {/* Countdown bar */}
+                <View style={ms.countdownTrack}>
+                  <View
+                    style={[
+                      ms.countdownFill,
+                      {
+                        width: `${(scanSecsLeft / LIDAR_TIMEOUT_S) * 100}%` as unknown as number,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={ms.countdownLabel}>
+                  {scanSecsLeft > 0
+                    ? `Reading for ${scanSecsLeft}s more…`
+                    : "Finalising measurement…"}
+                </Text>
+              </View>
             </View>
           )}
 
@@ -501,6 +559,69 @@ const ms = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
   cameraBg: { backgroundColor: "#111" },
   dimOverlay: { backgroundColor: "rgba(0,0,0,0.45)" },
+  dimOverlayLight: { backgroundColor: "rgba(0,0,0,0.18)" },
+
+  // ── LiDAR scanning phase ────────────────────────────────────────────────────
+  lidarScanContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+  },
+  lidarTopHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "center",
+    marginTop: 20,
+    gap: 8,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  lidarDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#10b981",
+  },
+  lidarTopHintText: {
+    color: "#fff",
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+  },
+  lidarStatusCard: {
+    backgroundColor: "rgba(0,0,0,0.72)",
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
+  },
+  lidarStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  lidarStatusText: {
+    color: "#fff",
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+  },
+  countdownTrack: {
+    height: 4,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  countdownFill: {
+    height: 4,
+    backgroundColor: "#10b981",
+    borderRadius: 2,
+  },
+  countdownLabel: {
+    color: "rgba(255,255,255,0.6)",
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+  },
   safeArea: { flex: 1 },
   header: {
     flexDirection: "row",
