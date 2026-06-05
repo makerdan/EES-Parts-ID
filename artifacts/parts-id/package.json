@@ -9,7 +9,8 @@
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "doctor": "expo-doctor",
-    "test": "jest"
+    "test": "jest",
+    "lint": "eslint . --ext .ts,.tsx"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -30,6 +31,8 @@
     "@workspace/api-client-react": "workspace:*",
     "@workspace/zone-validation": "workspace:*",
     "babel-plugin-react-compiler": "^19.0.0-beta-e993439-20250117",
+    "eslint": "^8.57.0",
+    "eslint-config-expo": "^7.0.0",
     "expo": "~54.0.35",
     "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",
