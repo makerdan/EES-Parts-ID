@@ -1,18 +1,32 @@
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
+import { MeasurePartScreen, isLiDARCapableDevice } from "@/components/MeasurePartScreen";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "http://localhost:8080/api";
+
+function fmtDim(v: number | null | undefined): string {
+  if (v == null) return "";
+  return String(v);
+}
+
+function parseDimField(s: string): number | null {
+  const n = parseFloat(s);
+  return isNaN(n) || n < 0 ? null : Math.round(n * 10) / 10;
+}
 
 export interface AddPartFormProps {
   adminToken: string | null;
@@ -29,6 +43,13 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
   const [fieldErrors, setFieldErrors] = useState<{ catalog?: string; vendor?: string; bin?: string }>({});
   const [createdItem, setCreatedItem] = useState<InventoryItem | null>(null);
 
+  // Dimensions
+  const [dimLength, setDimLength] = useState("");
+  const [dimWidth, setDimWidth] = useState("");
+  const [dimHeight, setDimHeight] = useState("");
+  const [dimDiameter, setDimDiameter] = useState("");
+  const [measureOpen, setMeasureOpen] = useState(false);
+
   const reset = () => {
     setCatalog("");
     setVendor("");
@@ -36,6 +57,10 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
     setError(null);
     setFieldErrors({});
     setCreatedItem(null);
+    setDimLength("");
+    setDimWidth("");
+    setDimHeight("");
+    setDimDiameter("");
   };
 
   const validate = () => {
@@ -45,6 +70,14 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
     if (!binLocation.trim()) errs.bin = "Bin location is required";
     setFieldErrors(errs);
     return Object.keys(errs).length === 0;
+  };
+
+  const handleMeasureConfirm = (dims: PartDimensions) => {
+    setMeasureOpen(false);
+    setDimLength(fmtDim(dims.length));
+    setDimWidth(fmtDim(dims.width));
+    setDimHeight(fmtDim(dims.height));
+    setDimDiameter(fmtDim(dims.diameter));
   };
 
   const handleSubmit = async () => {
@@ -87,8 +120,33 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
       }
 
       const data = await res.json() as { item: InventoryItem };
-      setCreatedItem(data.item);
-      onSuccess(data.item);
+      const newItem = data.item;
+
+      // If dimensions were entered, persist them — surface any failure to the admin
+      const hasDims = dimLength || dimWidth || dimHeight || dimDiameter;
+      if (hasDims) {
+        const dimRes = await fetch(`${API_BASE}/inventory/${newItem.id}/dimensions`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify({
+            length: parseDimField(dimLength),
+            width: parseDimField(dimWidth),
+            height: parseDimField(dimHeight),
+            diameter: parseDimField(dimDiameter),
+          }),
+        });
+        if (!dimRes.ok) {
+          const dimErr = await dimRes.json().catch(() => ({})) as { error?: string };
+          setError(dimErr.error ?? "Part was added but dimensions could not be saved. You can edit them from the part detail screen.");
+          return;
+        }
+      }
+
+      setCreatedItem(newItem);
+      onSuccess(newItem);
     } catch {
       setError("Network error. Check your connection and try again.");
     } finally {
@@ -177,6 +235,76 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
             <Text style={[apfStyles.fieldError, { color: colors.destructive }]}>{fieldErrors.bin}</Text>
           ) : null}
         </View>
+
+        {/* Dimensions (optional) */}
+        <View style={apfStyles.fieldGroup}>
+          <View style={apfStyles.dimLabelRow}>
+            <Text style={[apfStyles.label, { color: colors.foreground }]}>Dimensions (mm) — optional</Text>
+            {Platform.OS === "ios" && isLiDARCapableDevice() ? (
+              <Pressable
+                onPress={() => setMeasureOpen(true)}
+                style={[apfStyles.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+              >
+                <Feather name="maximize" size={12} color={colors.primary} />
+                <Text style={[apfStyles.measureBtnText, { color: colors.primary }]}>Estimate</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          <View style={apfStyles.dimGrid}>
+            <View style={apfStyles.dimHalf}>
+              <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Length</Text>
+              <TextInput
+                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                placeholder="–"
+                placeholderTextColor={colors.mutedForeground}
+                value={dimLength}
+                onChangeText={v => setDimLength(v.replace(/[^0-9.]/g, ""))}
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={apfStyles.dimHalf}>
+              <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Width</Text>
+              <TextInput
+                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                placeholder="–"
+                placeholderTextColor={colors.mutedForeground}
+                value={dimWidth}
+                onChangeText={v => setDimWidth(v.replace(/[^0-9.]/g, ""))}
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={apfStyles.dimHalf}>
+              <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Height</Text>
+              <TextInput
+                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                placeholder="–"
+                placeholderTextColor={colors.mutedForeground}
+                value={dimHeight}
+                onChangeText={v => setDimHeight(v.replace(/[^0-9.]/g, ""))}
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={apfStyles.dimHalf}>
+              <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Diameter</Text>
+              <TextInput
+                style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                placeholder="–"
+                placeholderTextColor={colors.mutedForeground}
+                value={dimDiameter}
+                onChangeText={v => setDimDiameter(v.replace(/[^0-9.]/g, ""))}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+          {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
+            <Text style={[apfStyles.dimSummary, { color: colors.primary }]}>
+              {[
+                dimLength && dimWidth && dimHeight && `${dimLength} × ${dimWidth} × ${dimHeight} mm`,
+                dimDiameter && `⌀ ${dimDiameter} mm`,
+              ].filter(Boolean).join("   ")}
+            </Text>
+          ) : null}
+        </View>
       </View>
 
       {error ? (
@@ -196,6 +324,16 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
           <Text style={[apfStyles.submitBtnText, { color: colors.primaryForeground }]}>Add Part</Text>
         )}
       </Pressable>
+
+      {/* Measure modal — iOS only, LiDAR-capable hardware (AI Vision estimate) */}
+      {Platform.OS === "ios" && isLiDARCapableDevice() ? (
+        <MeasurePartScreen
+          visible={measureOpen}
+          onClose={() => setMeasureOpen(false)}
+          onConfirm={handleMeasureConfirm}
+          adminToken={adminToken ?? ""}
+        />
+      ) : null}
     </View>
   );
 }
@@ -223,6 +361,42 @@ const apfStyles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
   },
   fieldError: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  // Dimensions
+  dimLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  measureBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  measureBtnText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  dimGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  dimHalf: { width: "47%" },
+  dimFieldLabel: {
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 3,
+  },
+  dimInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+  },
+  dimSummary: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    marginTop: 6,
+    textAlign: "center",
+    letterSpacing: 0.3,
+  },
   errorBanner: {
     borderRadius: 8,
     borderWidth: 1,

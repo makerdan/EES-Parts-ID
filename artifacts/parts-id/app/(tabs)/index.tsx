@@ -99,6 +99,8 @@ const DEFAULT_FILTERS: FilterValues = {
   material: "",
   textNumbers: "",
   confidenceThreshold: 50,
+  minLength: "",
+  maxLength: "",
   // 16 required chip dimensions
   category: "",
   amperage: "",

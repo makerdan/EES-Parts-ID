@@ -9,6 +9,13 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface InventoryItemDimensions {
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  diameter?: number | null;
+}
+
 export interface InventoryItem {
   id: number;
   vendor: string;
@@ -22,6 +29,8 @@ export interface InventoryItem {
   enrichedAt?: string | null;
   /** URL of the catalog image extracted from a PDF import, served via the API proxy */
   imageUrl?: string | null;
+  /** Physical dimensions in millimetres (length, width, height, diameter) */
+  dimensions?: InventoryItemDimensions | null;
   createdAt: string;
   updatedAt: string;
 }

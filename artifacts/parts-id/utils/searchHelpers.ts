@@ -15,6 +15,8 @@ export type QueryCacheEntry<R = unknown> = { timestamp: number; results: R[] };
 export type QueryCache<R = unknown> = Record<string, QueryCacheEntry<R>>;
 
 export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
+  const minLengthNum = f.minLength.trim() !== "" ? parseFloat(f.minLength) : null;
+  const maxLengthNum = f.maxLength.trim() !== "" ? parseFloat(f.maxLength) : null;
   return {
     keywords: f.keywords,
     catalog: f.catalog,
@@ -40,6 +42,8 @@ export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
     environment: f.environment,
     voltage: f.voltage,
     poleCount: f.poleCount,
+    ...(minLengthNum != null && !isNaN(minLengthNum) ? { minLength: minLengthNum } : {}),
+    ...(maxLengthNum != null && !isNaN(maxLengthNum) ? { maxLength: maxLengthNum } : {}),
     ...(categorySlug ? { categorySlug } : {}),
   };
 }

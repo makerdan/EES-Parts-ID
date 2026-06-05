@@ -7,6 +7,7 @@ import {
   View,
 } from "react-native";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { RetryImage } from "@/components/RetryImage";
 import { useColors } from "@/hooks/useColors";
 
@@ -186,6 +187,27 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
             </Text>
             <Text style={[cardStyles.binEditText, { color: colors.primary }]}>+ Add bin</Text>
           </Pressable>
+        ) : null}
+
+        {/* Dimensions badge — shown inline on the card when present */}
+        {(item as unknown as { dimensions?: PartDimensions | null }).dimensions &&
+         Object.values((item as unknown as { dimensions: PartDimensions }).dimensions).some(v => v != null) ? (
+          <View style={[cardStyles.dimBadge, { backgroundColor: colors.muted }]}>
+            <Text style={[cardStyles.dimIcon, { color: colors.mutedForeground }]}>📐</Text>
+            <Text style={[cardStyles.dimText, { color: colors.mutedForeground }]}>
+              {(() => {
+                const d = (item as unknown as { dimensions: PartDimensions }).dimensions;
+                const parts: string[] = [];
+                if (d.length != null && d.width != null && d.height != null) {
+                  parts.push(`${d.length} × ${d.width} × ${d.height} mm`);
+                } else if (d.length != null) {
+                  parts.push(`L ${d.length} mm`);
+                }
+                if (d.diameter != null) parts.push(`⌀ ${d.diameter} mm`);
+                return parts.join("   ");
+              })()}
+            </Text>
+          </View>
         ) : null}
 
         {/* Expanded content */}
@@ -423,6 +445,18 @@ const cardStyles = StyleSheet.create({
   enrichedAt: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
   moreText: { fontSize: 12, fontFamily: "Inter_400Regular", alignSelf: "center", marginBottom: 6 },
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
+  dimBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 8,
+    gap: 4,
+    alignSelf: "flex-start",
+  },
+  dimIcon: { fontSize: 12 },
+  dimText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   thumbnail: {
     width: 52,
     height: 52,

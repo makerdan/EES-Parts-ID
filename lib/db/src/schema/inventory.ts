@@ -8,6 +8,7 @@ import {
   real,
   integer,
   check,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -45,6 +46,16 @@ export const inventoryTable = pgTable(
     imageConfidence: real("image_confidence"),
     previousDescription: text("previous_description"),
     catalogPdfJobId: integer("catalog_pdf_job_id"),
+    // ── Physical dimensions ──────────────────────────────────────────────────
+    // Nullable JSON object: { length?, width?, height?, diameter? } all in mm.
+    // Populated via LiDAR scan or manual entry. Kept as jsonb so the schema
+    // remains flexible (e.g. future tolerance fields) without another migration.
+    dimensions: jsonb("dimensions").$type<{
+      length?: number | null;
+      width?: number | null;
+      height?: number | null;
+      diameter?: number | null;
+    }>(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

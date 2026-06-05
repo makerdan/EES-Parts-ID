@@ -32,6 +32,9 @@ export interface FilterValues {
   material: string;
   textNumbers: string;
   confidenceThreshold: number;
+  // ── Physical dimensions size-range filter (mm) ────────────────────────────
+  minLength: string;
+  maxLength: string;
   // ── 16 structured chip dimensions (AND-logic on server) ───────────────────
   category: string;       // Part category / type
   amperage: string;       // Current rating
@@ -368,7 +371,8 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
 
   const TEXT_FIELD_KEYS = ["catalog", "vendor", "color", "size", "material", "textNumbers"] as const;
 
-  const activeTextFieldCount = TEXT_FIELD_KEYS.filter(k => values[k].trim() !== "").length;
+  const activeTextFieldCount = TEXT_FIELD_KEYS.filter(k => values[k].trim() !== "").length +
+    (values.minLength.trim() !== "" || values.maxLength.trim() !== "" ? 1 : 0);
   const activeChipOnlyCount = CHIP_DIMS.filter(d => values[d.key]).length;
 
   const activeChipCount = activeChipOnlyCount + activeTextFieldCount;
@@ -379,6 +383,8 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
 
   const resetTextFields = useCallback(() => {
     TEXT_FIELD_KEYS.forEach(k => onChange(k, ""));
+    onChange("minLength", "");
+    onChange("maxLength", "");
   }, [onChange]);
 
   // ── Advanced Filters collapse state ──────────────────────────────────────
@@ -517,6 +523,42 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
                   onChange={v => onChange("textNumbers", v)}
                   placeholder="Markings, UPC..."
                   colors={colors}
+                />
+              </View>
+            </View>
+
+            {/* ── Physical size range filter ── */}
+            <View style={chipAreaStyles.dimHeader}>
+              <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
+                SIZE RANGE (mm)
+              </Text>
+              {(values.minLength.trim() !== "" || values.maxLength.trim() !== "") && (
+                <Pressable onPress={() => { onChange("minLength", ""); onChange("maxLength", ""); }} hitSlop={8}>
+                  <Text style={[chipAreaStyles.resetBtn, { color: colors.primary }]}>Clear</Text>
+                </Pressable>
+              )}
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Min length</Text>
+                <TextInput
+                  value={values.minLength}
+                  onChangeText={v => onChange("minLength", v.replace(/[^0-9.]/g, ""))}
+                  placeholder="e.g. 30"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[fieldStyles.label, { color: colors.mutedForeground }]}>Max length</Text>
+                <TextInput
+                  value={values.maxLength}
+                  onChangeText={v => onChange("maxLength", v.replace(/[^0-9.]/g, ""))}
+                  placeholder="e.g. 60"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="numeric"
+                  style={[fieldStyles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                 />
               </View>
             </View>

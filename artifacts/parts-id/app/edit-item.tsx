@@ -27,10 +27,22 @@ import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { useTrackScreen } from "@/utils/useTrackScreen";
+import { MeasurePartScreen, isLiDARCapableDevice } from "@/components/MeasurePartScreen";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "http://localhost:8080/api";
+
+function fmtDim(v: number | null | undefined): string {
+  if (v == null) return "";
+  return String(v);
+}
+
+function parseDimField(s: string): number | null {
+  const n = parseFloat(s);
+  return isNaN(n) || n < 0 ? null : Math.round(n * 10) / 10;
+}
 
 export default function EditItemScreen() {
   "use no memo";
@@ -66,6 +78,14 @@ export default function EditItemScreen() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [measureOpen, setMeasureOpen] = useState(false);
+
+  // Dimensions state
+  const existingDims = (item as unknown as { dimensions?: PartDimensions | null })?.dimensions;
+  const [dimLength, setDimLength] = useState(fmtDim(existingDims?.length));
+  const [dimWidth, setDimWidth] = useState(fmtDim(existingDims?.width));
+  const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
+  const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
 
   const [permission, requestPermission] = useCameraPermissions();
   const scannerLockRef = useRef(false);
@@ -90,6 +110,15 @@ export default function EditItemScreen() {
       setSaveStatus("idle");
     }
   }, [barcodes]);
+
+  const handleMeasureConfirm = useCallback((dims: PartDimensions) => {
+    setMeasureOpen(false);
+    setDimLength(fmtDim(dims.length));
+    setDimWidth(fmtDim(dims.width));
+    setDimHeight(fmtDim(dims.height));
+    setDimDiameter(fmtDim(dims.diameter));
+    setSaveStatus("idle");
+  }, []);
 
   const addBin = () => {
     const t = newBin.trim();
@@ -133,6 +162,20 @@ export default function EditItemScreen() {
       setNewBarcode("");
     }
 
+    // Build current dimensions object for comparison
+    const newDims: PartDimensions = {
+      length: parseDimField(dimLength),
+      width: parseDimField(dimWidth),
+      height: parseDimField(dimHeight),
+      diameter: parseDimField(dimDiameter),
+    };
+    const oldDims = existingDims ?? {};
+    const dimsChanged =
+      newDims.length !== (oldDims.length ?? null) ||
+      newDims.width !== (oldDims.width ?? null) ||
+      newDims.height !== (oldDims.height ?? null) ||
+      newDims.diameter !== (oldDims.diameter ?? null);
+
     try {
       const saves: Promise<unknown>[] = [];
 
@@ -161,6 +204,21 @@ export default function EditItemScreen() {
 
       if (JSON.stringify(keywords) !== JSON.stringify(current.aiKeywords ?? [])) {
         saves.push(updateKeywordsMutation.mutateAsync({ id: current.id, data: { keywords } }));
+      }
+
+      if (dimsChanged) {
+        saves.push(
+          fetch(`${API_BASE}/inventory/${current.id}/dimensions`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+            body: JSON.stringify(newDims),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const d = await res.json().catch(() => ({})) as { error?: string };
+              throw new Error(d.error ?? `HTTP ${res.status}`);
+            }
+          }),
+        );
       }
 
       if (saves.length > 0) {
@@ -205,7 +263,11 @@ export default function EditItemScreen() {
     description.trim() !== (item.description ?? "").trim() ||
     JSON.stringify(bins) !== JSON.stringify(item.binLocations ?? []) ||
     JSON.stringify(barcodes) !== JSON.stringify(item.barcodes ?? []) ||
-    JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []);
+    JSON.stringify(keywords) !== JSON.stringify(item.aiKeywords ?? []) ||
+    parseDimField(dimLength) !== (existingDims?.length ?? null) ||
+    parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
+    parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
+    parseDimField(dimDiameter) !== (existingDims?.diameter ?? null);
 
   const statusColor =
     isSaving ? colors.warning
@@ -358,6 +420,80 @@ export default function EditItemScreen() {
             </Pressable>
           </View>
 
+          {/* Dimensions */}
+          <View style={[s.dimHeader, { marginTop: 24 }]}>
+            <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>DIMENSIONS (mm)</Text>
+            {Platform.OS === "ios" && isLiDARCapableDevice() ? (
+              <Pressable
+                onPress={() => setMeasureOpen(true)}
+                style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+                accessibilityLabel="Estimate dimensions from photo"
+              >
+                <Feather name="maximize" size={13} color={colors.primary} />
+                <Text style={[s.measureBtnText, { color: colors.primary }]}>Estimate</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
+            {Platform.OS === "ios" && isLiDARCapableDevice()
+              ? "Tap Measure to estimate from a photo, or enter values manually. Leave blank if unknown."
+              : "Enter physical dimensions in millimetres. Leave blank if unknown."}
+          </Text>
+          <View style={s.dimGrid}>
+            <View style={s.dimField}>
+              <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Length</Text>
+              <TextInput
+                value={dimLength}
+                onChangeText={v => { setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                placeholder="–"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="numeric"
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+              />
+            </View>
+            <View style={s.dimField}>
+              <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Width</Text>
+              <TextInput
+                value={dimWidth}
+                onChangeText={v => { setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                placeholder="–"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="numeric"
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+              />
+            </View>
+            <View style={s.dimField}>
+              <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Height</Text>
+              <TextInput
+                value={dimHeight}
+                onChangeText={v => { setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                placeholder="–"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="numeric"
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+              />
+            </View>
+            <View style={s.dimField}>
+              <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Diameter</Text>
+              <TextInput
+                value={dimDiameter}
+                onChangeText={v => { setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
+                placeholder="–"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="numeric"
+                style={[s.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
+              />
+            </View>
+          </View>
+          {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
+            <Text style={[s.dimSummary, { color: colors.primary }]}>
+              {[
+                dimLength && dimWidth && dimHeight && `${dimLength} × ${dimWidth} × ${dimHeight} mm`,
+                dimDiameter && `⌀ ${dimDiameter} mm`,
+              ].filter(Boolean).join("   ")}
+            </Text>
+          ) : null}
+
           {/* Keywords */}
           <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
             AI KEYWORDS ({keywords.length})
@@ -477,6 +613,17 @@ export default function EditItemScreen() {
           </View>
         </Modal>
       ) : null}
+
+      {/* Measure modal — iOS only, LiDAR-capable hardware (AI Vision estimate) */}
+      {Platform.OS === "ios" && isLiDARCapableDevice() ? (
+        <MeasurePartScreen
+          visible={measureOpen}
+          onClose={() => setMeasureOpen(false)}
+          onConfirm={handleMeasureConfirm}
+          initialDims={existingDims}
+          adminToken={adminToken ?? ""}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -560,6 +707,42 @@ const s = StyleSheet.create({
   },
   addBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, justifyContent: "center" },
   addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  // Dimensions
+  dimHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  measureBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  measureBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  dimGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  dimField: { width: "47%" },
+  dimLabel: {
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  dimInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+  },
+  dimSummary: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    marginTop: 8,
+    textAlign: "center",
+    letterSpacing: 0.3,
+  },
   errorBanner: { marginTop: 16, borderRadius: 8, borderWidth: 1, padding: 12 },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
   footer: { flexDirection: "row", padding: 16, borderTopWidth: 1, gap: 10 },
