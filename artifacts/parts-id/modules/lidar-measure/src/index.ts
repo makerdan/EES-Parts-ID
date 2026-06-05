@@ -11,6 +11,7 @@ export interface LidarDimensions {
 type NativeApi = {
   isLiDARSupported(): boolean;
   measureObject(timeoutSeconds: number): Promise<LidarDimensions>;
+  cancelMeasure(): void;
 };
 
 function native(): NativeApi {
@@ -69,5 +70,19 @@ const NativeLidarDepthView: React.ComponentType<{ style?: object }> | null =
         }
       })()
     : null;
+
+/**
+ * Cancels an in-progress measureObject() call, pauses the ARSession, and
+ * rejects the outstanding promise with ERR_INTERRUPTED.  Safe to call even
+ * when no scan is running.
+ */
+export function cancelMeasure(): void {
+  if (Platform.OS !== "ios") return;
+  try {
+    native().cancelMeasure();
+  } catch {
+    // no-op if native module is unavailable
+  }
+}
 
 export { NativeLidarDepthView };

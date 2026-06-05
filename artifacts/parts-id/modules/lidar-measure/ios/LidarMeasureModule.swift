@@ -23,6 +23,11 @@ public class LidarMeasureModule: Module {
             self.measureSession = session
             session.start()
         }
+
+        Function("cancelMeasure") { () in
+            self.measureSession?.cancel()
+            self.measureSession = nil
+        }
     }
 }
 
@@ -48,6 +53,14 @@ private class MeasureSession: NSObject, ARSessionDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { [weak self] _ in
             self?.finish()
         }
+    }
+
+    func cancel() {
+        guard !settled else { return }
+        settled = true
+        timer?.invalidate()
+        LidarARSessionManager.shared.pause()
+        promise.reject("ERR_INTERRUPTED", "Scan interrupted — please try again.")
     }
 
     private func finish() {
