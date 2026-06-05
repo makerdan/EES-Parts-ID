@@ -20,6 +20,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Modal,
   Platform,
   Pressable,
@@ -102,6 +103,37 @@ export function MeasurePartScreen({
   const [diameterStr, setDiameterStr] = useState("");
 
   const [rescanningAxis, setRescanningAxis] = useState<RescanAxis | null>(null);
+
+  const scanPulse = useRef(new Animated.Value(0)).current;
+  const scanLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  useEffect(() => {
+    if (rescanningAxis !== null) {
+      scanLoopRef.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(scanPulse, {
+            toValue: 1,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+          Animated.timing(scanPulse, {
+            toValue: 0,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      scanLoopRef.current.start();
+    } else {
+      scanLoopRef.current?.stop();
+      scanLoopRef.current = null;
+      scanPulse.setValue(0);
+    }
+    return () => {
+      scanLoopRef.current?.stop();
+      scanLoopRef.current = null;
+    };
+  }, [rescanningAxis, scanPulse]);
 
   const cameraRef = useRef<CameraView>(null);
 
@@ -269,20 +301,25 @@ export function MeasurePartScreen({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={ms.root}>
-        {/* During LiDAR scanning show the native AR depth overlay; otherwise
-            fall back to the regular CameraView so photo-estimate still works. */}
-        {phase === "lidar_scanning" && NativeLidarDepthView ? (
+        {/* During LiDAR scanning (full or per-axis) show the native AR depth
+            overlay so the mesh wireframe is visible; otherwise fall back to the
+            regular CameraView so photo-estimate still works. */}
+        {(phase === "lidar_scanning" || rescanningAxis !== null) &&
+        NativeLidarDepthView ? (
           <NativeLidarDepthView style={StyleSheet.absoluteFill} />
         ) : hasCameraAccess ? (
           <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
         ) : (
           <View style={[StyleSheet.absoluteFill, ms.cameraBg]} />
         )}
-        {/* Dim overlay — lighter during LiDAR scan so the mesh is clearly visible */}
+        {/* Dim overlay — lighter during any LiDAR scan so the mesh is clearly
+            visible; darker otherwise */}
         <View
           style={[
             StyleSheet.absoluteFill,
-            phase === "lidar_scanning" ? ms.dimOverlayLight : ms.dimOverlay,
+            phase === "lidar_scanning" || rescanningAxis !== null
+              ? ms.dimOverlayLight
+              : ms.dimOverlay,
           ]}
         />
 
@@ -442,6 +479,46 @@ export function MeasurePartScreen({
               <ActivityIndicator size="large" color="#3b82f6" />
               <Text style={ms.instructionText}>Analysing photo…</Text>
               <Text style={ms.subText}>Asking AI to estimate dimensions</Text>
+            </View>
+          )}
+
+          {/* ── Per-axis rescan depth overlay ── */}
+          {phase === "confirm" && rescanningAxis !== null && (
+            <View
+              style={ms.axisOverlayContainer}
+              pointerEvents="none"
+            >
+              <Animated.View
+                style={[
+                  ms.axisOverlayRing,
+                  {
+                    opacity: scanPulse.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.35, 0.9],
+                    }),
+                    transform: [
+                      {
+                        scale: scanPulse.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.88, 1.08],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              />
+              <View style={ms.axisOverlayInner}>
+                <ActivityIndicator size="large" color="#10b981" />
+                <Text style={ms.axisOverlayScanText}>
+                  Scanning{" "}
+                  {rescanningAxis.charAt(0).toUpperCase() +
+                    rescanningAxis.slice(1)}
+                  …
+                </Text>
+                <Text style={ms.axisOverlaySubText}>
+                  Hold still — reading depth ({LIDAR_TIMEOUT_S} s)
+                </Text>
+              </View>
             </View>
           )}
 
@@ -831,4 +908,39 @@ const ms = StyleSheet.create({
     opacity: 0.4,
   },
   confirmBtnText: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#fff" },
+  axisOverlayContainer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingBottom: 260,
+  },
+  axisOverlayRing: {
+    position: "absolute",
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    borderWidth: 2,
+    borderColor: "#10b981",
+    backgroundColor: "rgba(16,185,129,0.08)",
+  },
+  axisOverlayInner: {
+    alignItems: "center",
+    gap: 12,
+  },
+  axisOverlayScanText: {
+    color: "#fff",
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    textAlign: "center",
+  },
+  axisOverlaySubText: {
+    color: "rgba(255,255,255,0.65)",
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+  },
 });
