@@ -301,6 +301,134 @@ describe("POST /api/inventory/search", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /api/inventory/search — size-only path (no keywords)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/inventory/search — size-range filters without keywords", () => {
+  const SIZE_FIXTURES = [
+    {
+      vendor: "JEST-VENDOR",
+      catalog: "JEST-ITG-DIM-SHORT",
+      description: "Short conduit fitting",
+      dimensions: { length: 30 },
+    },
+    {
+      vendor: "JEST-VENDOR",
+      catalog: "JEST-ITG-DIM-MED",
+      description: "Medium conduit fitting",
+      dimensions: { length: 60 },
+    },
+    {
+      vendor: "JEST-VENDOR",
+      catalog: "JEST-ITG-DIM-LONG",
+      description: "Long conduit fitting",
+      dimensions: { length: 120 },
+    },
+    {
+      vendor: "JEST-VENDOR",
+      catalog: "JEST-ITG-DIM-DIA",
+      description: "Round conduit fitting",
+      dimensions: { diameter: 25 },
+    },
+    {
+      vendor: "JEST-VENDOR",
+      catalog: "JEST-ITG-DIM-NODIM",
+      description: "Conduit fitting no dimensions",
+    },
+  ];
+
+  beforeAll(async () => {
+    await seedFixtures(SIZE_FIXTURES);
+  }, 15_000);
+
+  it("does not return early-empty when only minLength is provided (the regression case)", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ minLength: 50 })
+      .expect(200);
+
+    expect(res.body).toHaveProperty("results");
+    expect(Array.isArray(res.body.results)).toBe(true);
+    const catalogs = res.body.results.map(
+      (r: { item: { catalog: string } }) => r.item.catalog,
+    );
+    expect(catalogs).toContain("JEST-ITG-DIM-MED");
+    expect(catalogs).toContain("JEST-ITG-DIM-LONG");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-SHORT");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-NODIM");
+  });
+
+  it("does not return early-empty when only maxLength is provided", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ maxLength: 50 })
+      .expect(200);
+
+    const catalogs = res.body.results.map(
+      (r: { item: { catalog: string } }) => r.item.catalog,
+    );
+    expect(catalogs).toContain("JEST-ITG-DIM-SHORT");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-LONG");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-NODIM");
+  });
+
+  it("returns results within the inclusive range when both minLength and maxLength are provided", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ minLength: 40, maxLength: 90 })
+      .expect(200);
+
+    const catalogs = res.body.results.map(
+      (r: { item: { catalog: string } }) => r.item.catalog,
+    );
+    expect(catalogs).toContain("JEST-ITG-DIM-MED");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-SHORT");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-LONG");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-NODIM");
+  });
+
+  it("orders results by length ascending when no keywords are present", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ minLength: 1 })
+      .expect(200);
+
+    const lengths = res.body.results
+      .map((r: { item: { dimensions?: { length?: number } } }) => r.item.dimensions?.length)
+      .filter((l: unknown): l is number => typeof l === "number");
+
+    for (let i = 1; i < lengths.length; i++) {
+      expect(lengths[i]).toBeGreaterThanOrEqual(lengths[i - 1]!);
+    }
+  });
+
+  it("returns 200 with empty results when no items fall within the given range", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ minLength: 9000, maxLength: 9999 })
+      .expect(200);
+
+    expect(res.body.results).toEqual([]);
+    expect(res.body.totalMatches).toBe(0);
+  });
+
+  it("filters by diameter alone (no keywords, no length filter)", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ minDiameter: 20, maxDiameter: 30 })
+      .expect(200);
+
+    const catalogs = res.body.results.map(
+      (r: { item: { catalog: string } }) => r.item.catalog,
+    );
+    expect(catalogs).toContain("JEST-ITG-DIM-DIA");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-SHORT");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-MED");
+    expect(catalogs).not.toContain("JEST-ITG-DIM-NODIM");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/inventory/upsert-batch
 // ─────────────────────────────────────────────────────────────────────────────
 
