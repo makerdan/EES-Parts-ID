@@ -4,6 +4,7 @@ import {
   serial,
   timestamp,
   uniqueIndex,
+  index,
   boolean,
   real,
   integer,
@@ -61,6 +62,10 @@ export const inventoryTable = pgTable(
   },
   (table) => [
     uniqueIndex("inventory_vendor_catalog_idx").on(table.vendor, table.catalog),
+    index("inventory_dimensions_length_idx").using(
+      "btree",
+      sql`((dimensions->>'length')::numeric)`,
+    ),
   ],
 );
 
