@@ -319,23 +319,45 @@ router.post("/search", async (req, res) => {
       const catWidthClause = buildWidthClause("");
       const catHeightClause = buildHeightClause("");
       const catDiameterClause = buildDiameterClause("");
+      const catHasLenFilter = lenMin !== null || lenMax !== null;
+      const catHasDiaFilter = diaMin !== null || diaMax !== null;
       const catItems = await db
         .select()
         .from(inventoryTable)
         .where(sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} ${catLengthClause} ${catWidthClause} ${catHeightClause} ${catDiameterClause}`)
         .orderBy(inventoryTable.vendor, inventoryTable.catalog)
         .limit(200);
+
+      // When a size filter is active, also collect category items with no relevant dimension data.
+      let catSizeUnknownItems: typeof inventoryTable.$inferSelect[] = [];
+      if (hasSizeFilter) {
+        const catNullDimWhere = catHasLenFilter && catHasDiaFilter
+          ? sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} AND (dimensions->>'length') IS NULL AND (dimensions->>'diameter') IS NULL`
+          : catHasLenFilter
+            ? sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} AND (dimensions->>'length') IS NULL`
+            : sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} AND (dimensions->>'diameter') IS NULL`;
+        catSizeUnknownItems = await db
+          .select()
+          .from(inventoryTable)
+          .where(catNullDimWhere)
+          .orderBy(inventoryTable.vendor, inventoryTable.catalog)
+          .limit(200);
+      }
+
+      const toResult = (item: typeof inventoryTable.$inferSelect, matchReason: string) => ({
+        item,
+        confidence: 1.0,
+        matchReason,
+        seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
+        seriesLabel: getSeriesBase(item.vendor, item.catalog, item.description)?.label ?? null,
+        variants: [],
+      });
       return void res.json({
-        results: catItems.map(item => ({
-          item,
-          confidence: 1.0,
-          matchReason: "category browse",
-          seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
-          seriesLabel: getSeriesBase(item.vendor, item.catalog, item.description)?.label ?? null,
-          variants: [],
-        })),
-        totalMatches: catItems.length,
+        results: catItems.map(item => toResult(item, "category browse")),
+        totalMatches: catItems.length + catSizeUnknownItems.length,
         belowThreshold: 0,
+        sizeUnknownResults: catSizeUnknownItems.map(item => toResult(item, "category browse")),
+        sizeUnknownCount: catSizeUnknownItems.length,
       });
     }
 
@@ -344,6 +366,8 @@ router.post("/search", async (req, res) => {
     if (isCategoryUncategorized && !allSearchText.trim()) {
       // Push size bounds into SQL so only matching rows are fetched before
       // the JS-side inverse-taxonomy exclusion runs.
+      const uncatHasLenFilter = lenMin !== null || lenMax !== null;
+      const uncatHasDiaFilter = diaMin !== null || diaMax !== null;
       const uncatSizeConditions = [
         lenMin !== null ? sql`(dimensions->>'length')::numeric >= ${lenMin}` : undefined,
         lenMax !== null ? sql`(dimensions->>'length')::numeric <= ${lenMax}` : undefined,
@@ -362,17 +386,41 @@ router.post("/search", async (req, res) => {
         if (allTaxKws.some(kw => text.includes(kw))) return false;
         return true;
       });
+
+      // When a size filter is active, also fetch uncategorized items with no relevant dimension.
+      let uncatSizeUnknownItems: typeof inventoryTable.$inferSelect[] = [];
+      if (hasSizeFilter) {
+        const nullDimConditions = [
+          uncatHasLenFilter ? sql`(dimensions->>'length') IS NULL` : undefined,
+          uncatHasDiaFilter ? sql`(dimensions->>'diameter') IS NULL` : undefined,
+        ].filter((c): c is NonNullable<typeof c> => c !== undefined);
+        // Items must be missing ALL of the filtered dimensions (not just one)
+        const nullDimWhere = nullDimConditions.length > 1
+          ? and(...nullDimConditions)
+          : nullDimConditions[0];
+        const allNullDimItems = nullDimWhere
+          ? await db.select().from(inventoryTable).where(nullDimWhere)
+          : [];
+        uncatSizeUnknownItems = allNullDimItems.filter(item => {
+          const text = itemFullText(item);
+          return !allTaxKws.some(kw => text.includes(kw));
+        });
+      }
+
+      const toUncatResult = (item: typeof inventoryTable.$inferSelect) => ({
+        item,
+        confidence: 1.0,
+        matchReason: "uncategorized browse",
+        seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
+        seriesLabel: getSeriesBase(item.vendor, item.catalog, item.description)?.label ?? null,
+        variants: [],
+      });
       return void res.json({
-        results: uncatItems.map(item => ({
-          item,
-          confidence: 1.0,
-          matchReason: "uncategorized browse",
-          seriesBase: getSeriesBase(item.vendor, item.catalog, item.description)?.key ?? null,
-          seriesLabel: getSeriesBase(item.vendor, item.catalog, item.description)?.label ?? null,
-          variants: [],
-        })),
-        totalMatches: uncatItems.length,
+        results: uncatItems.map(toUncatResult),
+        totalMatches: uncatItems.length + uncatSizeUnknownItems.length,
         belowThreshold: 0,
+        sizeUnknownResults: uncatSizeUnknownItems.map(toUncatResult),
+        sizeUnknownCount: uncatSizeUnknownItems.length,
       });
     }
 
@@ -403,32 +451,54 @@ router.post("/search", async (req, res) => {
           : hasHgtFilter
             ? sql`ORDER BY (dimensions->>'height')::numeric ASC`
             : sql`ORDER BY (dimensions->>'diameter')::numeric ASC`;
-      const sizeItems = await db.execute(sql`
-        SELECT * FROM inventory
-        WHERE ${dimPresenceClause}
-        ${sizeOnlyLengthClause}
-        ${sizeOnlyWidthClause}
-        ${sizeOnlyHeightClause}
-        ${sizeOnlyDiameterClause}
-        ${orderClause}
-        LIMIT 200
-      `);
+
+      // Null-dimension clause: items missing ALL of the filtered dimension(s)
+      const nullDimParts: ReturnType<typeof sql>[] = [];
+      if (hasLenFilter) nullDimParts.push(sql`(dimensions->>'length') IS NULL`);
+      if (hasWidFilter) nullDimParts.push(sql`(dimensions->>'width') IS NULL`);
+      if (hasHgtFilter) nullDimParts.push(sql`(dimensions->>'height') IS NULL`);
+      if (hasDiaFilter) nullDimParts.push(sql`(dimensions->>'diameter') IS NULL`);
+      const nullDimPresenceClause = nullDimParts.length > 1
+        ? sql`(${sql.join(nullDimParts, sql` AND `)})`
+        : nullDimParts[0];
+
+      const [sizeItems, nullDimItems] = await Promise.all([
+        db.execute(sql`
+          SELECT * FROM inventory
+          WHERE ${dimPresenceClause}
+          ${sizeOnlyLengthClause}
+          ${sizeOnlyWidthClause}
+          ${sizeOnlyHeightClause}
+          ${sizeOnlyDiameterClause}
+          ${orderClause}
+          LIMIT 200
+        `),
+        db.select().from(inventoryTable)
+          .where(nullDimPresenceClause)
+          .orderBy(inventoryTable.vendor, inventoryTable.catalog)
+          .limit(200),
+      ]);
+
+
       const sizeRows = (sizeItems as { rows: unknown[] }).rows as typeof inventoryTable.$inferSelect[];
+      const toSizeResult = (item: typeof inventoryTable.$inferSelect, matchReason: string) => ({
+        item,
+        confidence: 1.0,
+        matchReason,
+        seriesBase: getSeriesBase((item as { vendor: string }).vendor, (item as { catalog: string }).catalog, (item as { description: string }).description)?.key ?? null,
+        seriesLabel: getSeriesBase((item as { vendor: string }).vendor, (item as { catalog: string }).catalog, (item as { description: string }).description)?.label ?? null,
+        variants: [],
+      });
       return void res.json({
-        results: sizeRows.map(item => ({
-          item,
-          confidence: 1.0,
-          matchReason: "size-range scan",
-          seriesBase: getSeriesBase((item as { vendor: string }).vendor, (item as { catalog: string }).catalog, (item as { description: string }).description)?.key ?? null,
-          seriesLabel: getSeriesBase((item as { vendor: string }).vendor, (item as { catalog: string }).catalog, (item as { description: string }).description)?.label ?? null,
-          variants: [],
-        })),
-        totalMatches: sizeRows.length,
+        results: sizeRows.map(item => toSizeResult(item, "size-range scan")),
+        totalMatches: sizeRows.length + nullDimItems.length,
         belowThreshold: 0,
         // Dimension facet counts are not computed in the size-only path (no
         // FTS pipeline runs), so return an empty object to keep the response
         // shape consistent with the full-text search path.
         dimensionCounts: {},
+        sizeUnknownResults: nullDimItems.map(item => toSizeResult(item, "size-range scan")),
+        sizeUnknownCount: nullDimItems.length,
       });
     }
 
@@ -772,14 +842,21 @@ router.post("/search", async (req, res) => {
       : catPreFiltered;
 
     // ── Apply dimensions size-range filter ───────────────────────────────────
-    // Only items that HAVE dimensions and whose length falls in the range pass.
+    // Items that HAVE the relevant dimension and fall in range pass.
+    // Items that are missing the relevant dimension are collected as "size unknown"
+    // (they were never measured, not out-of-range) and included as a trailing group.
+    // Items that have data but fall outside the range are silently excluded.
     // If neither bound is provided the filter is a no-op.
     const hasLengthFilter = (minLength != null && !isNaN(Number(minLength))) ||
                             (maxLength != null && !isNaN(Number(maxLength)));
+    const sizeUnknownSet = new Map<number, (typeof chipFiltered)[0]>();
     const lengthFiltered = hasLengthFilter
       ? chipFiltered.filter(r => {
           const dimLen = r.item.dimensions?.length ?? null;
-          if (dimLen == null) return false;
+          if (dimLen == null) {
+            sizeUnknownSet.set(r.item.id, r);
+            return false;
+          }
           if (lenMin !== null && dimLen < lenMin) return false;
           if (lenMax !== null && dimLen > lenMax) return false;
           return true;
@@ -795,13 +872,18 @@ router.post("/search", async (req, res) => {
     const dimFiltered = hasDiameterFilter
       ? lengthFiltered.filter(r => {
           const dims = (r.item as unknown as { dimensions?: { diameter?: number | null } | null }).dimensions;
-          if (!dims || dims.diameter == null) return false;
+          if (!dims || dims.diameter == null) {
+            if (!sizeUnknownSet.has(r.item.id)) sizeUnknownSet.set(r.item.id, r);
+            return false;
+          }
           const dia = dims.diameter;
           if (minDiameter != null && !isNaN(Number(minDiameter)) && dia < Number(minDiameter)) return false;
           if (maxDiameter != null && !isNaN(Number(maxDiameter)) && dia > Number(maxDiameter)) return false;
           return true;
         })
       : lengthFiltered;
+
+    const sizeUnknownItems = Array.from(sizeUnknownSet.values());
 
     // Group into series + find variants
     const seriesGroups = new Map<string, { label: string; items: typeof inventoryTable.$inferSelect[] }>();
@@ -856,11 +938,22 @@ router.post("/search", async (req, res) => {
       variants: (variantMap.get(r.item.id) ?? []),
     }));
 
+    const sizeUnknownResults = sizeUnknownItems.map(r => ({
+      item: r.item,
+      confidence: r.confidence,
+      matchReason: r.reason,
+      seriesBase: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.key ?? null,
+      seriesLabel: getSeriesBase(r.item.vendor, r.item.catalog, r.item.description)?.label ?? null,
+      variants: [],
+    }));
+
     res.json({
       results: finalResults,
-      totalMatches: dimFiltered.length,
+      totalMatches: dimFiltered.length + sizeUnknownItems.length,
       belowThreshold: belowCount,
       dimensionCounts,
+      sizeUnknownResults,
+      sizeUnknownCount: sizeUnknownItems.length,
     });
   } catch (err) {
     console.error(err);
