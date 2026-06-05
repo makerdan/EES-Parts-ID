@@ -241,6 +241,18 @@ export function WarehouseMapView({
   // makes maxY=0 and immediately forces translateY to 0).
   const hasLaidOut = useRef(false);
 
+  // Mirror container dimensions in refs so async callbacks (e.g. the viewport
+  // restore useEffect) always read the latest values without closing over stale
+  // JS state snapshots.
+  const containerWRef = useRef(0);
+  const containerHRef = useRef(0);
+
+  // Viewport restore values that arrived from AsyncStorage before the first
+  // layout pass completed.  onLayout drains this on its first call so the
+  // tx/ty are always clamped to the real container bounds, regardless of
+  // whether layout or the storage read wins the race.
+  const pendingRestore = useRef<{ s: number; tx: number; ty: number } | null>(null);
+
   const onLayout = useCallback(
     (e: LayoutChangeEvent) => {
       const { width, height } = e.nativeEvent.layout;
@@ -249,11 +261,30 @@ export function WarehouseMapView({
       setContainerH(height);
       containerWV.value = width;
       containerHV.value = height;
+      containerWRef.current = width;
+      containerHRef.current = height;
 
-      // Skip the clamp on initial mount — there is nothing to correct yet and
-      // running it with scale=1 in landscape can snap Y to 0 unnecessarily.
       if (!hasLaidOut.current) {
         hasLaidOut.current = true;
+
+        // If the AsyncStorage restore already ran while we were still at size 0,
+        // its tx/ty were saved unclamped in pendingRestore.  Apply them now that
+        // we have real dimensions so portrait-saved offsets don't bleed into a
+        // landscape session (and vice versa).
+        const pending = pendingRestore.current;
+        if (pending !== null) {
+          pendingRestore.current = null;
+          const scaledW = width * pending.s;
+          const scaledH = rh * pending.s;
+          const maxX = Math.max(0, (scaledW - width) / 2);
+          const maxY = Math.max(0, (scaledH - height) / 2);
+          const clampedTX = Math.max(-maxX, Math.min(maxX, pending.tx));
+          const clampedTY = Math.max(-maxY, Math.min(maxY, pending.ty));
+          translateX.value = clampedTX;
+          translateY.value = clampedTY;
+          savedTX.value = clampedTX;
+          savedTY.value = clampedTY;
+        }
         return;
       }
 
@@ -329,10 +360,34 @@ export function WarehouseMapView({
             const clampedS = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
             scale.value = clampedS;
             savedScale.value = clampedS;
-            translateX.value = tx;
-            translateY.value = ty;
-            savedTX.value = tx;
-            savedTY.value = ty;
+
+            // Always clamp tx/ty to the bounds that match the current container
+            // dimensions so a portrait-saved viewport doesn't bleed off-screen
+            // when the device is reopened in landscape (and vice versa).
+            const w = containerWRef.current;
+            const h = containerHRef.current;
+            if (w > 0) {
+              // Layout has already fired — we have real dimensions.
+              const rh = w / SVG_ASPECT;
+              const scaledW = w * clampedS;
+              const scaledH = rh * clampedS;
+              const maxX = Math.max(0, (scaledW - w) / 2);
+              const maxY = Math.max(0, (scaledH - h) / 2);
+              const clampedTX = Math.max(-maxX, Math.min(maxX, tx));
+              const clampedTY = Math.max(-maxY, Math.min(maxY, ty));
+              translateX.value = clampedTX;
+              translateY.value = clampedTY;
+              savedTX.value = clampedTX;
+              savedTY.value = clampedTY;
+            } else {
+              // Layout hasn't fired yet — stash the raw values; onLayout will
+              // clamp and apply them once real dimensions are known.
+              pendingRestore.current = { s: clampedS, tx, ty };
+              translateX.value = tx;
+              translateY.value = ty;
+              savedTX.value = tx;
+              savedTY.value = ty;
+            }
           }
         } catch {
           // Corrupted JSON — silently discard; starts at default position.
