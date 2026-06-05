@@ -29,6 +29,7 @@ import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
+import { isLiDARSupported } from "lidar-measure";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -79,6 +80,11 @@ export default function EditItemScreen() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [measureOpen, setMeasureOpen] = useState(false);
+  const [lidarAvailable, setLidarAvailable] = useState(false);
+
+  useEffect(() => {
+    setLidarAvailable(isLiDARSupported());
+  }, []);
 
   // Dimensions state
   const existingDims = (item as unknown as { dimensions?: PartDimensions | null })?.dimensions;
@@ -424,19 +430,32 @@ export default function EditItemScreen() {
           <View style={[s.dimHeader, { marginTop: 24 }]}>
             <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>DIMENSIONS (mm)</Text>
             {Platform.OS === "ios" ? (
-              <Pressable
-                onPress={() => setMeasureOpen(true)}
-                style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
-                accessibilityLabel="Estimate dimensions from photo"
-              >
-                <Feather name="maximize" size={13} color={colors.primary} />
-                <Text style={[s.measureBtnText, { color: colors.primary }]}>Estimate</Text>
-              </Pressable>
+              lidarAvailable ? (
+                <Pressable
+                  onPress={() => setMeasureOpen(true)}
+                  style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+                  accessibilityLabel="Measure dimensions with LiDAR"
+                >
+                  <Feather name="maximize-2" size={13} color={colors.primary} />
+                  <Text style={[s.measureBtnText, { color: colors.primary }]}>LiDAR</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => setMeasureOpen(true)}
+                  style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
+                  accessibilityLabel="Estimate dimensions from photo"
+                >
+                  <Feather name="maximize" size={13} color={colors.primary} />
+                  <Text style={[s.measureBtnText, { color: colors.primary }]}>Estimate</Text>
+                </Pressable>
+              )
             ) : null}
           </View>
           <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
             {Platform.OS === "ios"
-              ? "Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."
+              ? lidarAvailable
+                ? "Tap LiDAR to measure precisely, or enter values manually. Leave blank if unknown."
+                : "Tap Estimate to measure from a photo, or enter values manually. Leave blank if unknown."
               : "Enter physical dimensions in millimetres. Leave blank if unknown."}
           </Text>
           <View style={s.dimGrid}>
