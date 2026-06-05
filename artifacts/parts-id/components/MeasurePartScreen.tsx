@@ -21,6 +21,8 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
+  AppStateStatus,
   Modal,
   Platform,
   Pressable,
@@ -33,7 +35,7 @@ import {
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
-import { isLiDARSupported, measureObject, NativeLidarDepthView } from "lidar-measure";
+import { cancelMeasure, isLiDARSupported, measureObject, NativeLidarDepthView } from "lidar-measure";
 
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -92,6 +94,7 @@ export function MeasurePartScreen({
 
   const scanPulse = useRef(new Animated.Value(0)).current;
   const scanLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+  const scanInterruptedRef = useRef(false);
 
   useEffect(() => {
     if (rescanningAxis !== null) {
@@ -150,9 +153,27 @@ export function MeasurePartScreen({
     return () => clearInterval(interval);
   }, [phase]);
 
+  // ── AppState guard: cancel scan if app is backgrounded mid-scan ────────────
+  useEffect(() => {
+    if (phase !== "lidar_scanning") return;
+
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === "background" || nextState === "inactive") {
+        scanInterruptedRef.current = true;
+        cancelMeasure();
+        setEstimateError("Scan interrupted — please try again.");
+        setPhase("preview");
+      }
+    };
+
+    const subscription = AppState.addEventListener("change", handleAppStateChange);
+    return () => subscription.remove();
+  }, [phase]);
+
   // ── LiDAR full scan path ────────────────────────────────────────────────────
 
   const handleLidarScan = useCallback(async () => {
+    scanInterruptedRef.current = false;
     setScanSecsLeft(LIDAR_TIMEOUT_S);
     setPhase("lidar_scanning");
     setEstimateError(null);
@@ -164,6 +185,9 @@ export function MeasurePartScreen({
       setDiameterStr("");
       setPhase("confirm");
     } catch (err) {
+      if (scanInterruptedRef.current) {
+        return;
+      }
       const msg = err instanceof Error ? err.message : "LiDAR scan failed";
       setEstimateError(msg);
       setPhase("preview");
