@@ -159,6 +159,23 @@ router.post("/search", async (req, res) => {
       maxDiameter?: number | null;
     };
 
+    // Normalize length bounds — body takes precedence; fall back to query string so
+    // callers can pass ?minLength=30&maxLength=60 on the URL as well.
+    const _minRaw = minLength ?? (req.query["minLength"] != null ? parseFloat(req.query["minLength"] as string) : null);
+    const _maxRaw = maxLength ?? (req.query["maxLength"] != null ? parseFloat(req.query["maxLength"] as string) : null);
+    const lenMin: number | null = (_minRaw != null && !isNaN(Number(_minRaw))) ? Number(_minRaw) : null;
+    const lenMax: number | null = (_maxRaw != null && !isNaN(Number(_maxRaw))) ? Number(_maxRaw) : null;
+
+    // Reusable helper: builds the SQL fragment that uses the expression index on
+    // ((dimensions->>'length')::numeric). Returns sql`` (no-op) when no bound is set.
+    const buildLengthClause = (alias: "i" | "" = "i") => {
+      const col = alias ? sql`(${sql.raw(alias)}.dimensions->>'length')::numeric` : sql`(dimensions->>'length')::numeric`;
+      if (lenMin !== null && lenMax !== null) return sql`AND ${col} BETWEEN ${lenMin} AND ${lenMax}`;
+      if (lenMin !== null) return sql`AND ${col} >= ${lenMin}`;
+      if (lenMax !== null) return sql`AND ${col} <= ${lenMax}`;
+      return sql``;
+    };
+
     const activeChipFilters: Array<{ key: string; value: string }> = [
       { key: "category",     value: category },
       { key: "amperage",     value: amperage },
@@ -226,18 +243,22 @@ router.post("/search", async (req, res) => {
       ? categoryKeywords.map(escapeRegex).join("|")
       : null;
 
-    if (!allSearchText.trim() && !categorySlug) {
+    const hasSizeFilter = lenMin !== null || lenMax !== null;
+
+    if (!allSearchText.trim() && !categorySlug && !hasSizeFilter) {
       return void res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
     }
 
     // Dedicated path: non-uncategorized category browse with no text query.
     // Returns every item whose chip text matches the node's keyword union via
     // a SQL-literal regex so the GIN trigram index can be used.
+    // Length-range filter (if any) is pushed into SQL so the expression index fires.
     if (categorySlug && !isCategoryUncategorized && catSqlRegex && !allSearchText.trim()) {
+      const catLengthClause = buildLengthClause("");
       const catItems = await db
         .select()
         .from(inventoryTable)
-        .where(sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex}`)
+        .where(sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} ${catLengthClause}`)
         .orderBy(inventoryTable.vendor, inventoryTable.catalog)
         .limit(200);
       return void res.json({
@@ -261,7 +282,11 @@ router.post("/search", async (req, res) => {
       const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
       const uncatItems = allItems.filter(item => {
         const text = itemFullText(item);
-        return !allTaxKws.some(kw => text.includes(kw));
+        if (allTaxKws.some(kw => text.includes(kw))) return false;
+        const dimLen = item.dimensions?.length ?? null;
+        if (lenMin !== null && (dimLen == null || dimLen < lenMin)) return false;
+        if (lenMax !== null && (dimLen == null || dimLen > lenMax)) return false;
+        return true;
       });
       return void res.json({
         results: uncatItems.map(item => ({
@@ -273,6 +298,32 @@ router.post("/search", async (req, res) => {
           variants: [],
         })),
         totalMatches: uncatItems.length,
+        belowThreshold: 0,
+      });
+    }
+
+    // Dedicated path: size-range filter with no text query and no category.
+    // Scans the table using the expression index and returns results ordered by length.
+    if (hasSizeFilter && !allSearchText.trim() && !categorySlug) {
+      const sizeOnlyClause = buildLengthClause("");
+      const sizeItems = await db.execute(sql`
+        SELECT * FROM inventory
+        WHERE (dimensions->>'length')::numeric IS NOT NULL
+        ${sizeOnlyClause}
+        ORDER BY (dimensions->>'length')::numeric ASC
+        LIMIT 200
+      `);
+      const sizeRows = (sizeItems as { rows: unknown[] }).rows as typeof inventoryTable.$inferSelect[];
+      return void res.json({
+        results: sizeRows.map(item => ({
+          item,
+          confidence: 1.0,
+          matchReason: "size-range scan",
+          seriesBase: getSeriesBase((item as { vendor: string }).vendor, (item as { catalog: string }).catalog, (item as { description: string }).description)?.key ?? null,
+          seriesLabel: getSeriesBase((item as { vendor: string }).vendor, (item as { catalog: string }).catalog, (item as { description: string }).description)?.label ?? null,
+          variants: [],
+        })),
+        totalMatches: sizeRows.length,
         belowThreshold: 0,
       });
     }
@@ -601,11 +652,10 @@ router.post("/search", async (req, res) => {
                             (maxLength != null && !isNaN(Number(maxLength)));
     const lengthFiltered = hasLengthFilter
       ? chipFiltered.filter(r => {
-          const dims = (r.item as unknown as { dimensions?: { length?: number | null } | null }).dimensions;
-          if (!dims || dims.length == null) return false;
-          const len = dims.length;
-          if (minLength != null && !isNaN(Number(minLength)) && len < Number(minLength)) return false;
-          if (maxLength != null && !isNaN(Number(maxLength)) && len > Number(maxLength)) return false;
+          const dimLen = r.item.dimensions?.length ?? null;
+          if (dimLen == null) return false;
+          if (lenMin !== null && dimLen < lenMin) return false;
+          if (lenMax !== null && dimLen > lenMax) return false;
           return true;
         })
       : chipFiltered;
