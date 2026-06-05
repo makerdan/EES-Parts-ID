@@ -18,6 +18,7 @@ import { useColors } from "@/hooks/useColors";
 import { arraysEqual } from "@/utils/arraysEqual";
 import { drainSave } from "@/utils/drainSave";
 import { useApp } from "@/contexts/AppContext";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 
 interface KeywordEditorProps {
   item: InventoryItem | null;
@@ -223,6 +224,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={[styles.container, { backgroundColor: colors.background }]}
       >
+        <DismissKeyboard>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <View style={{ flex: 1 }}>
@@ -256,7 +258,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
           </Pressable>
         </View>
 
-        <ScrollView style={{ flex: 1, padding: 16 }}>
+        <ScrollView style={{ flex: 1, padding: 16 }} keyboardShouldPersistTaps="handled">
           <Text style={[styles.desc, { color: colors.mutedForeground }]} numberOfLines={2}>
             {item.description}
           </Text>
@@ -325,6 +327,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
             <Text style={[styles.doneBtnText, { color: colors.primaryForeground }]}>Done</Text>
           </Pressable>
         </View>
+        </DismissKeyboard>
       </KeyboardAvoidingView>
     </Modal>
   );

@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColors } from "@/hooks/useColors";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 
 const DEVICE_TOKEN_KEY = "contact_device_token";
 
@@ -106,6 +107,7 @@ export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={[styles.container, { backgroundColor: colors.background }]}
       >
+        <DismissKeyboard>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <View>
@@ -189,6 +191,7 @@ export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props
             )}
           </Pressable>
         </View>
+        </DismissKeyboard>
       </KeyboardAvoidingView>
     </Modal>
   );
