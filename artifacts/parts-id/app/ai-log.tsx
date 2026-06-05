@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -90,11 +91,13 @@ export default function AiLogScreen() {
 
   const [rows, setRows] = useState<LogRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchLog = useCallback(async () => {
+  const fetchLog = useCallback(async (isRefresh = false) => {
     if (!adminToken) return;
-    setLoading(true);
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const res = await fetch(`${API_BASE}/reference/ask-log`, {
@@ -106,7 +109,8 @@ export default function AiLogScreen() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load log");
     } finally {
-      setLoading(false);
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
     }
   }, [adminToken]);
 
@@ -132,7 +136,7 @@ export default function AiLogScreen() {
           <Text style={[styles.headerTitle, { color: colors.foreground }]}>AI Answer Log</Text>
           <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Last 100 questions</Text>
         </View>
-        <Pressable onPress={fetchLog} style={styles.refreshBtn} accessibilityLabel="Refresh">
+        <Pressable onPress={() => fetchLog()} style={styles.refreshBtn} accessibilityLabel="Refresh">
           <Feather name="refresh-cw" size={17} color={colors.mutedForeground} />
         </Pressable>
       </View>
@@ -144,7 +148,7 @@ export default function AiLogScreen() {
       ) : error ? (
         <View style={styles.centered}>
           <Text style={[styles.errorText, { color: colors.destructive }]}>⚠ {error}</Text>
-          <Pressable onPress={fetchLog} style={[styles.retryBtn, { borderColor: colors.border }]}>
+          <Pressable onPress={() => fetchLog()} style={[styles.retryBtn, { borderColor: colors.border }]}>
             <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
           </Pressable>
         </View>
@@ -153,6 +157,14 @@ export default function AiLogScreen() {
           data={rows}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchLog(true)}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
           renderItem={({ item }) => <LogItem row={item} colors={colors} />}
           ListEmptyComponent={
             <View style={styles.centered}>

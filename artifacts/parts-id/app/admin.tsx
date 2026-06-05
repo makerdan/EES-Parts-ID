@@ -12,6 +12,7 @@ import {
   Alert,
   Platform,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -170,6 +171,7 @@ export default function AdminDashboardScreen() {
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -210,9 +212,10 @@ export default function AdminDashboardScreen() {
     }
   }, [stats]);
 
-  const fetchStats = useCallback(async () => {
+  const fetchStats = useCallback(async (isRefresh = false) => {
     if (!adminToken || !API_BASE) return;
-    setLoading(true);
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const res = await fetch(`${API_BASE}/admin/dashboard-stats`, {
@@ -224,7 +227,8 @@ export default function AdminDashboardScreen() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load stats");
     } finally {
-      setLoading(false);
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
     }
   }, [adminToken]);
 
@@ -269,7 +273,7 @@ export default function AdminDashboardScreen() {
             color={!stats || exporting ? colors.mutedForeground : colors.primary}
           />
         </Pressable>
-        <Pressable onPress={fetchStats} style={styles.refreshBtn} hitSlop={8} disabled={loading}>
+        <Pressable onPress={() => fetchStats()} style={styles.refreshBtn} hitSlop={8} disabled={loading}>
           <Feather name="refresh-cw" size={18} color={loading ? colors.mutedForeground : colors.primary} />
         </Pressable>
       </View>
@@ -282,12 +286,23 @@ export default function AdminDashboardScreen() {
       ) : error ? (
         <View style={styles.centered}>
           <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
-          <Pressable onPress={fetchStats} style={[styles.retryBtn, { backgroundColor: colors.primary }]}>
+          <Pressable onPress={() => fetchStats()} style={[styles.retryBtn, { backgroundColor: colors.primary }]}>
             <Text style={[styles.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
           </Pressable>
         </View>
       ) : stats ? (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchStats(true)}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
+        >
 
           {/* Summary Cards */}
           <SectionHeader title="Summary" colors={colors} />

@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -85,6 +86,7 @@ export default function CatalogReviewScreen() {
   const [groups, setGroups] = useState<SessionGroup[]>([]);
   const [failedJobs, setFailedJobs] = useState<FailedJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revertingId, setRevertingId] = useState<number | null>(null);
   const [revertedIds, setRevertedIds] = useState<Set<number>>(new Set());
@@ -103,9 +105,10 @@ export default function CatalogReviewScreen() {
     ? { Authorization: `Bearer ${adminToken}` }
     : {};
 
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (isRefresh = false) => {
     if (!adminToken) return;
-    setLoading(true);
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const url = jobId
@@ -144,7 +147,8 @@ export default function CatalogReviewScreen() {
     } catch {
       setError("Could not load review data. Check your connection.");
     } finally {
-      setLoading(false);
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminToken, jobId]);
@@ -456,7 +460,7 @@ export default function CatalogReviewScreen() {
             <Text style={[s.headerSub, { color: colors.mutedForeground }]}>Job #{jobId}</Text>
           ) : null}
         </View>
-        <Pressable onPress={fetchItems} style={s.refreshBtn}>
+        <Pressable onPress={() => fetchItems()} style={s.refreshBtn}>
           <Text style={[s.refreshText, { color: colors.mutedForeground }]}>Refresh</Text>
         </Pressable>
       </View>
@@ -469,7 +473,7 @@ export default function CatalogReviewScreen() {
       ) : error ? (
         <View style={s.center}>
           <Text style={[s.errorText, { color: colors.destructive }]}>{error}</Text>
-          <Pressable onPress={fetchItems} style={[s.retryBtn, { backgroundColor: colors.primary }]}>
+          <Pressable onPress={() => fetchItems()} style={[s.retryBtn, { backgroundColor: colors.primary }]}>
             <Text style={[s.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
           </Pressable>
         </View>
@@ -502,6 +506,14 @@ export default function CatalogReviewScreen() {
                 : `item-${row.item.id}-${i}`
             }
             renderItem={renderRow}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => fetchItems(true)}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+              />
+            }
             ListHeaderComponent={
               <FailedJobsSection
                 failedJobs={failedJobs}

@@ -4,6 +4,7 @@ import {
   FlatList,
   Modal,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -944,6 +945,7 @@ export default function SearchScreen() {
           isAdmin={isAdmin}
           adminToken={adminToken}
           onPartAdded={() => syncAllInventory()}
+          onRefresh={syncAllInventory}
         />
       ) : mode === "category" ? (
         <BrowseByCategory
@@ -957,6 +959,14 @@ export default function SearchScreen() {
           data={results}
           keyExtractor={item => String(item.item.id)}
           style={{ flex: 1 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={syncProgress !== null}
+              onRefresh={syncAllInventory}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
         ListHeaderComponent={() => (
           <View>
             {/* Results header */}
