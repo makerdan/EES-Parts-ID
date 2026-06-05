@@ -16,12 +16,12 @@
  *            plan and the zone rectangles therefore share one SVG viewport;
  *            no separate CSS-scaled layer exists, so there is no rasterisation
  *            blur however far the user zooms in.
- *   Native — <SvgUri> is rendered at the SVG's natural viewBox dimensions
- *            (SVG_VIEWBOX_W × SVG_VIEWBOX_H) via an overscale wrapper, then a
- *            compensating scale-down transform brings it back to screen size at
- *            zoom level 1.  When the user zooms in the raster already has
- *            sufficient pixels so the platform compositor never has to upscale
- *            a low-resolution texture — no blur at any zoom level up to MAX_SCALE.
+ *   Native — <SvgUri> is rendered directly at svgRenderW × svgRenderH.  The
+ *            SVG element's own viewBox attribute handles coordinate scaling so
+ *            no manual transform is needed.  This avoids rasterising at the
+ *            SVG's natural viewBox resolution (3592 × 2457 pts × 3× DPR ≈
+ *            10 776 × 7 372 px) which exceeded iOS's maximum GPU texture size
+ *            and caused patchwork tiles and blur.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -214,8 +214,6 @@ export function WarehouseMapView({
   // Shared values for gesture computations (UI thread safe)
   const containerWV = useSharedValue(0);
   const containerHV = useSharedValue(0);
-  const svgRenderWV = useSharedValue(0);
-  const svgRenderHV = useSharedValue(0);
 
   // Track whether the first layout pass has occurred so we can skip the pan
   // clamp on initial mount.  The clamp is only meaningful after a rotation
@@ -233,8 +231,6 @@ export function WarehouseMapView({
       setContainerH(height);
       containerWV.value = width;
       containerHV.value = height;
-      svgRenderWV.value = width;
-      svgRenderHV.value = rh;
 
       // Skip the clamp on initial mount — there is nothing to correct yet and
       // running it with scale=1 in landscape can snap Y to 0 unnecessarily.
@@ -370,8 +366,8 @@ export function WarehouseMapView({
       const newTX = focalX * (1 - ratio) + savedTX.value * ratio;
       const newTY = focalY * (1 - ratio) + savedTY.value * ratio;
 
-      const scaledW = svgRenderWV.value * newScale;
-      const scaledH = svgRenderHV.value * newScale;
+      const scaledW = containerWV.value * newScale;
+      const scaledH = (containerWV.value / SVG_ASPECT) * newScale;
       const maxX = Math.max(0, (scaledW - containerWV.value) / 2);
       const maxY = Math.max(0, (scaledH - containerHV.value) / 2);
       translateX.value = clamp(newTX, -maxX, maxX);
@@ -388,8 +384,8 @@ export function WarehouseMapView({
     .minPointers(1)
     .minDistance(6)
     .onUpdate((e) => {
-      const scaledW = svgRenderWV.value * scale.value;
-      const scaledH = svgRenderHV.value * scale.value;
+      const scaledW = containerWV.value * scale.value;
+      const scaledH = (containerWV.value / SVG_ASPECT) * scale.value;
       const maxX = Math.max(0, (scaledW - containerWV.value) / 2);
       const maxY = Math.max(0, (scaledH - containerHV.value) / 2);
       translateX.value = clamp(savedTX.value + e.translationX, -maxX, maxX);
@@ -468,24 +464,6 @@ export function WarehouseMapView({
       { scale: scale.value },
     ],
   }));
-
-  // Overscale compensating transform — derived from svgRenderWV/svgRenderHV so
-  // it updates synchronously on the UI thread in the same frame as onLayout,
-  // preventing the one-render misalignment gap that appears on device rotation.
-  const overscaleStyle = useAnimatedStyle(() => {
-    const rw = svgRenderWV.value;
-    const rh = svgRenderHV.value;
-    return {
-      position: "absolute",
-      width: SVG_VIEWBOX_W,
-      height: SVG_VIEWBOX_H,
-      transform: [
-        { translateX: (rw - SVG_VIEWBOX_W) / 2 },
-        { translateY: (rh - SVG_VIEWBOX_H) / 2 },
-        { scale: rw / SVG_VIEWBOX_W },
-      ],
-    };
-  });
 
   // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────
   const zoneOverlays = useMemo(() => {
@@ -589,32 +567,26 @@ export function WarehouseMapView({
               On web the floor plan is embedded inside the SVG canvas below so
               that both layers share one SVG viewport (no separate CSS-scaled
               div, therefore no rasterisation blur at any zoom level).
-              On native, <SvgUri> is rendered at the SVG's natural viewBox
-              dimensions (SVG_VIEWBOX_W × SVG_VIEWBOX_H) and a compensating
-              scale-down transform brings it back to screen size.  The
-              platform rasterises at full viewBox resolution, so when the
-              user zooms in there is always enough pixel density — no blur. */}
+              On native, <SvgUri> is rendered directly at svgRenderW × svgRenderH;
+              the SVG's own viewBox handles coordinate scaling.  This avoids
+              exceeding iOS's maximum GPU texture size which caused patchwork
+              tiles and blur when rasterising at the SVG's full viewBox
+              resolution (3592 × 2457 pts × 3× DPR ≈ 10 776 × 7 372 px). */}
           {Platform.OS !== "web" ? (
             svgUri ? (
-              // Outer view establishes the layout footprint (screen-width × proportional height).
-              // Inner view is rendered at the SVG's natural dimensions then scaled down
-              // so that at zoom=1 it looks identical to a screen-width render, but the
-              // raster has enough pixels to stay crisp at any zoom up to MAX_SCALE.
-              <View style={{ width: svgRenderW, height: svgRenderH }}>
-                {/* Animated.View so the compensating transform updates on the
-                    UI thread in the same frame as onLayout — no flicker on
-                    device rotation or window resize. The shared values
-                    svgRenderWV/svgRenderHV are written synchronously inside
-                    onLayout before the JS state setters fire, so this view
-                    never lags by one render. */}
-                <Animated.View
-                  style={[
-                    overscaleStyle,
-                    isDark && styles.svgDarkFilter,
-                  ]}
-                >
-                  <SvgUri uri={svgUri} width={SVG_VIEWBOX_W} height={SVG_VIEWBOX_H} />
-                </Animated.View>
+              // Render SvgUri directly at svgRenderW × svgRenderH.
+              // The SVG's own viewBox handles coordinate scaling so no manual
+              // transform is needed.  Rendering at the natural viewBox resolution
+              // (3592 × 2457 pts) via an overscale wrapper caused iOS to exceed
+              // its maximum GPU texture size (~10 776 × 7 372 px at 3× DPR),
+              // resulting in patchwork tiles and blur.
+              <View
+                style={[
+                  { width: svgRenderW, height: svgRenderH },
+                  isDark && styles.svgDarkFilter,
+                ]}
+              >
+                <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
               </View>
             ) : !svgLoading ? (
               <View
