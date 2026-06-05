@@ -36,6 +36,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
+import { useApp, type DimensionUnit } from "@/contexts/AppContext";
 import { cancelMeasure, isLiDARSupported, measureObject, NativeLidarDepthView } from "lidar-measure";
 
 /**
@@ -76,13 +77,30 @@ type RescanAxis = "length" | "width" | "height";
 
 const LIDAR_TIMEOUT_S = 4;
 
-function parseField(s: string): number | null {
-  const n = parseFloat(s);
-  return isNaN(n) || n < 0 ? null : Math.round(n * 10) / 10;
+/** Format a mm value for display in the chosen unit. */
+function fmtForUnit(v: number | null | undefined, unit: DimensionUnit): string {
+  if (v == null) return "";
+  switch (unit) {
+    case "cm": return (Math.round((v / 10) * 10) / 10).toFixed(1);
+    case "in": return (v / 25.4).toFixed(2);
+    default:   return String(Math.round(v));
+  }
 }
 
-function fmt(v: number | null | undefined): string {
-  return v == null ? "" : String(Math.round(v));
+/** Parse a field string (in display unit) and return the value in mm, or null. */
+function parseFieldToMm(s: string, unit: DimensionUnit): number | null {
+  const n = parseFloat(s);
+  if (isNaN(n) || n < 0) return null;
+  switch (unit) {
+    case "cm": return Math.round(n * 10 * 10) / 10;
+    case "in": return Math.round(n * 25.4 * 10) / 10;
+    default:   return Math.round(n * 10) / 10;
+  }
+}
+
+/** Human-readable suffix for a dimension unit. */
+function unitLabel(unit: DimensionUnit): string {
+  return unit;
 }
 
 export function MeasurePartScreen({
@@ -93,6 +111,8 @@ export function MeasurePartScreen({
   adminToken,
 }: MeasurePartScreenProps) {
   const colors = useColors();
+  const { settings, updateSetting } = useApp();
+  const unit = settings.dimensionUnit;
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>("preview");
   const [estimateError, setEstimateError] = useState<string | null>(null);
@@ -105,6 +125,10 @@ export function MeasurePartScreen({
   const [diameterStr, setDiameterStr] = useState("");
 
   const [rescanningAxis, setRescanningAxis] = useState<RescanAxis | null>(null);
+
+  // Track the unit used to populate the current field strings so we can
+  // re-convert in place when the user switches units mid-session.
+  const fieldUnitRef = useRef<DimensionUnit>(unit);
 
   const scanPulse = useRef(new Animated.Value(0)).current;
   const scanLoopRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -145,13 +169,36 @@ export function MeasurePartScreen({
       setPhase("preview");
       setEstimateError(null);
       setRescanningAxis(null);
-      setLengthStr(fmt(initialDims?.length));
-      setWidthStr(fmt(initialDims?.width));
-      setHeightStr(fmt(initialDims?.height));
-      setDiameterStr(fmt(initialDims?.diameter));
+      fieldUnitRef.current = unit;
+      setLengthStr(fmtForUnit(initialDims?.length, unit));
+      setWidthStr(fmtForUnit(initialDims?.width, unit));
+      setHeightStr(fmtForUnit(initialDims?.height, unit));
+      setDiameterStr(fmtForUnit(initialDims?.diameter, unit));
       if (!permission?.granted) requestPermission();
     }
   }, [visible, initialDims, permission, requestPermission]);
+
+  // ── Re-convert field values when the unit changes while the modal is open ──
+  useEffect(() => {
+    if (!visible) {
+      fieldUnitRef.current = unit;
+      return;
+    }
+    const oldUnit = fieldUnitRef.current;
+    if (oldUnit === unit) return;
+    fieldUnitRef.current = unit;
+
+    const convert = (s: string) => {
+      if (!s) return s;
+      const mm = parseFieldToMm(s, oldUnit);
+      return fmtForUnit(mm, unit);
+    };
+
+    setLengthStr(prev => convert(prev));
+    setWidthStr(prev => convert(prev));
+    setHeightStr(prev => convert(prev));
+    setDiameterStr(prev => convert(prev));
+  }, [unit, visible]);
 
   // ── Countdown timer for LiDAR scan phase ──────────────────────────────────
   useEffect(() => {
@@ -193,9 +240,9 @@ export function MeasurePartScreen({
     setEstimateError(null);
     try {
       const dims = await measureObject(LIDAR_TIMEOUT_S);
-      setLengthStr(fmt(dims.length));
-      setWidthStr(fmt(dims.width));
-      setHeightStr(fmt(dims.height));
+      setLengthStr(fmtForUnit(dims.length, unit));
+      setWidthStr(fmtForUnit(dims.width, unit));
+      setHeightStr(fmtForUnit(dims.height, unit));
       setDiameterStr("");
       setPhase("confirm");
     } catch (err) {
@@ -210,7 +257,7 @@ export function MeasurePartScreen({
         `${msg}\n\nYou can use photo estimation or enter dimensions manually.`
       );
     }
-  }, []);
+  }, [unit]);
 
   // ── LiDAR per-axis re-scan ──────────────────────────────────────────────────
 
@@ -218,9 +265,9 @@ export function MeasurePartScreen({
     setRescanningAxis(axis);
     try {
       const dims = await measureObject(LIDAR_TIMEOUT_S);
-      if (axis === "length") setLengthStr(fmt(dims.length));
-      else if (axis === "width") setWidthStr(fmt(dims.width));
-      else if (axis === "height") setHeightStr(fmt(dims.height));
+      if (axis === "length") setLengthStr(fmtForUnit(dims.length, unit));
+      else if (axis === "width") setWidthStr(fmtForUnit(dims.width, unit));
+      else if (axis === "height") setHeightStr(fmtForUnit(dims.height, unit));
     } catch (err) {
       const msg = err instanceof Error ? err.message : "LiDAR scan failed";
       Alert.alert(
@@ -230,7 +277,7 @@ export function MeasurePartScreen({
     } finally {
       setRescanningAxis(null);
     }
-  }, []);
+  }, [unit]);
 
   // ── AI photo-estimate path ─────────────────────────────────────────────────
 
@@ -270,10 +317,10 @@ export function MeasurePartScreen({
       }
 
       const dims = (await response.json()) as PartDimensions;
-      setLengthStr(fmt(dims.length));
-      setWidthStr(fmt(dims.width));
-      setHeightStr(fmt(dims.height));
-      setDiameterStr(fmt(dims.diameter));
+      setLengthStr(fmtForUnit(dims.length, unit));
+      setWidthStr(fmtForUnit(dims.width, unit));
+      setHeightStr(fmtForUnit(dims.height, unit));
+      setDiameterStr(fmtForUnit(dims.diameter, unit));
       setPhase("confirm");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Estimation failed";
@@ -284,16 +331,16 @@ export function MeasurePartScreen({
         `${msg}\n\nYou can enter dimensions manually.`
       );
     }
-  }, [adminToken]);
+  }, [adminToken, unit]);
 
   const handleConfirm = useCallback(() => {
     onConfirm({
-      length: parseField(lengthStr),
-      width: parseField(widthStr),
-      height: parseField(heightStr),
-      diameter: parseField(diameterStr),
+      length: parseFieldToMm(lengthStr, unit),
+      width: parseFieldToMm(widthStr, unit),
+      height: parseFieldToMm(heightStr, unit),
+      diameter: parseFieldToMm(diameterStr, unit),
     });
-  }, [lengthStr, widthStr, heightStr, diameterStr, onConfirm]);
+  }, [lengthStr, widthStr, heightStr, diameterStr, unit, onConfirm]);
 
   const goManual = useCallback(() => {
     setPhase("confirm");
@@ -330,7 +377,7 @@ export function MeasurePartScreen({
             regular CameraView so photo-estimate still works. */}
         {(phase === "lidar_scanning" || rescanningAxis !== null) &&
         NativeLidarDepthView ? (
-          <NativeLidarDepthView style={StyleSheet.absoluteFill} />
+          <NativeLidarDepthView style={StyleSheet.absoluteFill} unit={unit} />
         ) : hasCameraAccess ? (
           <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
         ) : (
@@ -563,9 +610,34 @@ export function MeasurePartScreen({
                 </Text>
                 <Text style={ms.confirmSub}>
                   {lengthStr || widthStr || heightStr
-                    ? "Review and adjust before saving. All values in mm."
-                    : "All values in mm. Leave blank to skip."}
+                    ? `Review and adjust before saving. All values in ${unitLabel(unit)}.`
+                    : `All values in ${unitLabel(unit)}. Leave blank to skip.`}
                 </Text>
+
+                {/* Unit picker */}
+                <View style={ms.unitPickerRow}>
+                  {(["mm", "cm", "in"] as DimensionUnit[]).map((u) => (
+                    <Pressable
+                      key={u}
+                      onPress={() => {
+                        updateSetting("dimensionUnit", u);
+                      }}
+                      style={[
+                        ms.unitPickerBtn,
+                        unit === u && ms.unitPickerBtnActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          ms.unitPickerBtnText,
+                          unit === u && ms.unitPickerBtnTextActive,
+                        ]}
+                      >
+                        {u}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
 
                 <View style={ms.fieldsGrid}>
                   {fieldDefs.map(({ label, value, set, axis }) => {
@@ -620,8 +692,8 @@ export function MeasurePartScreen({
                 {lengthStr && widthStr && heightStr ? (
                   <Text style={ms.dimPreview}>
                     {[
-                      `${lengthStr} × ${widthStr} × ${heightStr} mm`,
-                      diameterStr ? `⌀ ${diameterStr} mm` : null,
+                      `${lengthStr} × ${widthStr} × ${heightStr} ${unitLabel(unit)}`,
+                      diameterStr ? `⌀ ${diameterStr} ${unitLabel(unit)}` : null,
                     ]
                       .filter(Boolean)
                       .join("   ")}
@@ -663,6 +735,33 @@ const CORNER = 22;
 const CORNER_W = 3;
 
 const ms = StyleSheet.create({
+  // ── Unit picker ─────────────────────────────────────────────────────────────
+  unitPickerRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 4,
+  },
+  unitPickerBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  unitPickerBtnActive: {
+    borderColor: "#10b981",
+    backgroundColor: "rgba(16,185,129,0.18)",
+  },
+  unitPickerBtnText: {
+    color: "rgba(255,255,255,0.6)",
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+  },
+  unitPickerBtnTextActive: {
+    color: "#10b981",
+  },
+
   root: { flex: 1, backgroundColor: "#000" },
   cameraBg: { backgroundColor: "#111" },
   dimOverlay: { backgroundColor: "rgba(0,0,0,0.45)" },

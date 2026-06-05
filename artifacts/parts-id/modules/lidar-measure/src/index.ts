@@ -60,7 +60,10 @@ export function measureObject(timeoutSeconds = 4): Promise<LidarDimensions> {
  *
  * iOS only — on other platforms this resolves to null and is not rendered.
  */
-const NativeLidarDepthView: React.ComponentType<{ style?: object }> | null =
+const NativeLidarDepthView: React.ComponentType<{
+  style?: object;
+  unit?: string;
+}> | null =
   Platform.OS === "ios"
     ? (() => {
         try {

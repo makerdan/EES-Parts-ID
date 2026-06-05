@@ -28,12 +28,14 @@ import type { ResumeProgress } from "@/types/catalogPdf";
 export const SETTINGS_KEY = "parts_id_settings_v1";
 export type TextSize = "small" | "normal" | "large";
 export type ThemeMode = "light" | "dark" | "system";
+export type DimensionUnit = "mm" | "cm" | "in";
 export type AppSettings = {
   textSize: TextSize;
   defaultConfidenceThreshold: number;
   themeMode: ThemeMode;
   shelfViewEnabled: boolean;
   scanSound: boolean;
+  dimensionUnit: DimensionUnit;
 };
 export type ToastVariant = "info" | "success" | "error";
 
@@ -43,10 +45,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeMode: "system",
   shelfViewEnabled: true,
   scanSound: true,
+  dimensionUnit: "mm",
 };
 
 const VALID_TEXT_SIZES: TextSize[] = ["small", "normal", "large"];
 const VALID_THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
+const VALID_DIMENSION_UNITS: DimensionUnit[] = ["mm", "cm", "in"];
 
 export async function loadSettings(): Promise<AppSettings> {
   try {
@@ -62,6 +66,9 @@ export async function loadSettings(): Promise<AppSettings> {
       themeMode: VALID_THEME_MODES.includes(parsed.themeMode as ThemeMode)
         ? (parsed.themeMode as ThemeMode)
         : DEFAULT_SETTINGS.themeMode,
+      dimensionUnit: VALID_DIMENSION_UNITS.includes(parsed.dimensionUnit as DimensionUnit)
+        ? (parsed.dimensionUnit as DimensionUnit)
+        : DEFAULT_SETTINGS.dimensionUnit,
     };
   } catch { return DEFAULT_SETTINGS; }
 }
