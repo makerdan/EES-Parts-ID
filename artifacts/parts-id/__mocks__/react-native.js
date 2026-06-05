@@ -61,4 +61,8 @@ module.exports = {
     get: () => ({ width: 390, height: 844 }),
     addEventListener: () => ({ remove: () => {} }),
   },
+  AppState: {
+    currentState: "active",
+    addEventListener: jest.fn(() => ({ remove: jest.fn() })),
+  },
 };
