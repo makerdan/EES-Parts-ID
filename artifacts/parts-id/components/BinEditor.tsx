@@ -16,6 +16,7 @@ import { useUpdateItemBins } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 
 interface BinEditorProps {
   item: InventoryItem | null;
@@ -122,6 +123,7 @@ export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={[styles.container, { backgroundColor: colors.background }]}
       >
+        <DismissKeyboard>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <View style={{ flex: 1 }}>
@@ -245,6 +247,7 @@ export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
             )}
           </Pressable>
         </View>
+        </DismissKeyboard>
       </KeyboardAvoidingView>
     </Modal>
   );

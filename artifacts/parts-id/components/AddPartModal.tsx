@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -137,9 +138,10 @@ export function AddPartModal({
       onRequestClose={createdItem ? handleDone : onClose}
     >
       <KeyboardAvoidingView
-        style={[styles.overlay, { backgroundColor: colors.overlay }]}
+        style={{ flex: 1, backgroundColor: colors.overlay }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
+        <DismissKeyboard style={styles.overlayInner}>
         <View style={[styles.sheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
 
           {createdItem ? (
@@ -276,14 +278,14 @@ export function AddPartModal({
             </>
           )}
         </View>
+        </DismissKeyboard>
       </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
+  overlayInner: {
     alignItems: "center",
     justifyContent: "center",
     padding: 24,

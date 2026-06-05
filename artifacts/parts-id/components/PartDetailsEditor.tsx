@@ -16,6 +16,7 @@ import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-
 import { useQueryClient } from "@tanstack/react-query";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -207,6 +208,7 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={[styles.container, { backgroundColor: colors.background }]}
       >
+        <DismissKeyboard>
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -409,6 +411,7 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
             )}
           </Pressable>
         </View>
+        </DismissKeyboard>
       </KeyboardAvoidingView>
     </Modal>
   );

@@ -612,6 +612,7 @@ function PartsListView({
       <FlatList
         data={allParts}
         keyExtractor={p => `${p.item.id}-${p.bin.raw}`}
+        keyboardShouldPersistTaps="handled"
         renderItem={({ item: part }) => (
           <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
             <ResultCard
@@ -807,6 +808,7 @@ export function BrowseByAisle({
         <FlatList
           data={hierarchy.aisles}
           keyExtractor={a => String(a.aisleNum)}
+          keyboardShouldPersistTaps="handled"
           refreshControl={
             onRefresh ? (
               <RefreshControl
@@ -879,6 +881,7 @@ export function BrowseByAisle({
             ref={sectionsListRef}
             data={filteredSections}
             keyExtractor={s => String(s.sectionNum)}
+            keyboardShouldPersistTaps="handled"
             onScroll={e => { sectionsScrollOffset.current = e.nativeEvent.contentOffset.y; }}
             scrollEventThrottle={16}
             onLayout={() => {

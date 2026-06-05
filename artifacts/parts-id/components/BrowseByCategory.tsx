@@ -219,6 +219,7 @@ function CategoryGrid({
       contentContainerStyle={styles.gridContent}
       columnWrapperStyle={styles.gridRow}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
       renderItem={({ item }) => {
         const isEmpty = item.count === 0;
         return (
@@ -274,6 +275,7 @@ function SubcategoryList({
       keyExtractor={item => item.slug}
       contentContainerStyle={styles.listContent}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
       ListHeaderComponent={() => (
         <Pressable
           style={[styles.listRow, styles.allRow, {
@@ -343,6 +345,7 @@ function ItemTypeList({
       keyExtractor={item => item.slug}
       contentContainerStyle={styles.listContent}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
       ListHeaderComponent={() => (
         <Pressable
           style={[styles.listRow, styles.allRow, {

@@ -17,6 +17,7 @@ import { setBaseUrl } from "@workspace/api-client-react";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppProvider, useApp } from "@/contexts/AppContext";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { FEATHER_FONT_B64 } from "@/assets/fonts/featherBase64";
 import { prefetchSvgAsset } from "@/components/WarehouseMapView";
 
@@ -105,17 +106,19 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1 }}>
             <AppProvider>
-              <Stack screenOptions={{ headerShown: false }}>
-                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                <Stack.Screen name="login" options={{ headerShown: false }} />
-                <Stack.Screen name="catalog-review" options={{ headerShown: false }} />
-                <Stack.Screen name="edit-item" options={{ headerShown: false }} />
-                <Stack.Screen name="ai-log" options={{ headerShown: false }} />
-                <Stack.Screen name="admin-inbox" options={{ headerShown: false }} />
-                <Stack.Screen name="admin" options={{ headerShown: false }} />
-                <Stack.Screen name="floor-plan-upload" options={{ headerShown: false }} />
-              </Stack>
-              <AuthGate />
+              <DismissKeyboard>
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen name="login" options={{ headerShown: false }} />
+                  <Stack.Screen name="catalog-review" options={{ headerShown: false }} />
+                  <Stack.Screen name="edit-item" options={{ headerShown: false }} />
+                  <Stack.Screen name="ai-log" options={{ headerShown: false }} />
+                  <Stack.Screen name="admin-inbox" options={{ headerShown: false }} />
+                  <Stack.Screen name="admin" options={{ headerShown: false }} />
+                  <Stack.Screen name="floor-plan-upload" options={{ headerShown: false }} />
+                </Stack>
+                <AuthGate />
+              </DismissKeyboard>
             </AppProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>

@@ -17,6 +17,7 @@ import { secondaryBtnBase } from "@/styles/shared";
 import { fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl, type CacheEntry } from "@/utils/chipCache";
 import { ContactSheet } from "@/components/ContactSheet";
 import { useApp } from "@/contexts/AppContext";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -268,6 +269,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={[modalStyles.container, { backgroundColor: colors.background }]}
         >
+          <DismissKeyboard>
           {/* Header */}
           <View style={[modalStyles.header, { borderBottomColor: colors.border }]}>
             <View>
@@ -492,6 +494,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
               </Pressable>
             </View>
           ) : null}
+          </DismissKeyboard>
         </KeyboardAvoidingView>
       </Modal>
 

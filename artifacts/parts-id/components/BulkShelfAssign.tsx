@@ -26,6 +26,7 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { resolveShelfAssign } from "@/utils/barcodeResolver";
 import { useQueryClient } from "@tanstack/react-query";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 
 const BULK_SESSION_KEY = "parts_id_bulk_shelf_session_v1";
 /**
@@ -483,6 +484,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
       onRequestClose={handleClose}
     >
       <SafeAreaView style={[bsStyles.safe, { backgroundColor: colors.background }]}>
+        <DismissKeyboard>
         {/* Header */}
         <View style={[bsStyles.header, { borderBottomColor: colors.border }]}>
           <Text style={[bsStyles.headerTitle, { color: colors.foreground }]}>
@@ -497,7 +499,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
 
         {/* ── Input step ───────────────────────────────────────────────────── */}
         {step === "input" ? (
-          <ScrollView contentContainerStyle={bsStyles.inputScroll}>
+          <ScrollView contentContainerStyle={bsStyles.inputScroll} keyboardShouldPersistTaps="handled">
             {sessionChecked && resumeSession ? (
               <View
                 style={[
@@ -686,7 +688,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
             </View>
 
             {/* Item list */}
-            <ScrollView style={bsStyles.itemList} contentContainerStyle={{ paddingBottom: 8 }}>
+            <ScrollView style={bsStyles.itemList} contentContainerStyle={{ paddingBottom: 8 }} keyboardShouldPersistTaps="handled">
               {shelfItems.map(item => {
                 const row = itemRowStates[item.id];
                 const hasExistingBarcode =
@@ -952,6 +954,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
             </View>
           </View>
         )}
+        </DismissKeyboard>
       </SafeAreaView>
     </Modal>
   );
