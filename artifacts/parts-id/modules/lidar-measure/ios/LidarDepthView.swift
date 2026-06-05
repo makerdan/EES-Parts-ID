@@ -24,6 +24,18 @@ public class LidarDepthView: ExpoView, ARSCNViewDelegate, ARSessionDelegate {
     /// Radius of each edge cylinder in metres.
     private static let edgeRadius: CGFloat = 0.003
 
+    // MARK: - Dimension label nodes
+
+    /// SCNText label showing the width (X extent) of the bounding box in cm.
+    private let labelNodeX = SCNNode()
+    /// SCNText label showing the height (Y extent) of the bounding box in cm.
+    private let labelNodeY = SCNNode()
+    /// SCNText label showing the depth (Z extent) of the bounding box in cm.
+    private let labelNodeZ = SCNNode()
+
+    /// Font size for dimension labels in metres (≈ 2.5 cm).
+    private static let labelFontSize: CGFloat = 0.025
+
     // MARK: - Init
 
     public required init(appContext: AppContext? = nil) {
@@ -157,6 +169,7 @@ public class LidarDepthView: ExpoView, ARSCNViewDelegate, ARSessionDelegate {
     // MARK: - Bounding-box geometry
 
     /// Build 12 placeholder edge nodes once; updateBoundingBox() repositions them.
+    /// Also creates the three dimension label nodes with billboard constraints.
     private func buildEdgeGeometries() {
         for _ in 0 ..< 12 {
             let cylinder = SCNCylinder(radius: Self.edgeRadius, height: 1)
@@ -168,10 +181,39 @@ public class LidarDepthView: ExpoView, ARSCNViewDelegate, ARSessionDelegate {
             let node = SCNNode(geometry: cylinder)
             boundingBoxNode.addChildNode(node)
         }
+
+        // Build the three dimension label nodes and attach them to the bounding-box container.
+        for labelNode in [labelNodeX, labelNodeY, labelNodeZ] {
+            let text = SCNText(string: "", extrusionDepth: 0)
+            text.font = UIFont.monospacedDigitSystemFont(ofSize: Self.labelFontSize, weight: .semibold)
+            text.flatness = 0.4  // reduce polygon count
+
+            let mat = SCNMaterial()
+            mat.diffuse.contents = UIColor.white
+            mat.emission.contents = UIColor.white
+            mat.isDoubleSided = true
+            text.materials = [mat]
+
+            labelNode.geometry = text
+
+            // Scale the SCNText geometry so its unit matches metres in scene space.
+            // SCNText renders at points; 1 pt ≈ 1/72 inch, so we need a uniform scale
+            // to bring the text down to the scene's metre scale.
+            labelNode.scale = SCNVector3(0.001, 0.001, 0.001)
+
+            // Always face the camera regardless of viewing angle.
+            let billboard = SCNBillboardConstraint()
+            billboard.freeAxes = .all
+            labelNode.constraints = [billboard]
+
+            boundingBoxNode.addChildNode(labelNode)
+        }
+
         boundingBoxNode.isHidden = true
     }
 
-    /// Reposition the 12 edge nodes so they form the AABB outline.
+    /// Reposition the 12 edge nodes so they form the AABB outline,
+    /// and update the three dimension labels with live cm measurements.
     private func updateBoundingBox(aabb: AABB) {
         let x0 = aabb.minX, x1 = aabb.maxX
         let y0 = aabb.minY, y1 = aabb.maxY
@@ -204,6 +246,45 @@ public class LidarDepthView: ExpoView, ARSCNViewDelegate, ARSessionDelegate {
             let node = edgeNodes[i]
             positionEdge(node: node, from: spec.start, to: spec.end)
         }
+
+        // Update dimension label text and positions.
+        // Each label sits slightly outside the midpoint of a representative edge
+        // so it doesn't overlap the box geometry.
+        let widthCm  = (x1 - x0) * 100
+        let heightCm = (y1 - y0) * 100
+        let depthCm  = (z1 - z0) * 100
+
+        let offsetOut: Float = 0.04  // 4 cm clearance from the box face
+
+        // Width label (X axis) — along the bottom-front edge, offset toward -Z
+        if let text = labelNodeX.geometry as? SCNText {
+            text.string = String(format: "W %.1f cm", widthCm)
+        }
+        labelNodeX.position = SCNVector3(
+            (x0 + x1) * 0.5,
+            y0,
+            z1 + offsetOut
+        )
+
+        // Height label (Y axis) — along the right-front edge, offset toward +X
+        if let text = labelNodeY.geometry as? SCNText {
+            text.string = String(format: "H %.1f cm", heightCm)
+        }
+        labelNodeY.position = SCNVector3(
+            x1 + offsetOut,
+            (y0 + y1) * 0.5,
+            z1
+        )
+
+        // Depth label (Z axis) — along the bottom-right edge, offset toward -Y
+        if let text = labelNodeZ.geometry as? SCNText {
+            text.string = String(format: "D %.1f cm", depthCm)
+        }
+        labelNodeZ.position = SCNVector3(
+            x1,
+            y0 - offsetOut,
+            (z0 + z1) * 0.5
+        )
     }
 
     /// Orient and size a cylinder node to span from `start` to `end` in world space.
