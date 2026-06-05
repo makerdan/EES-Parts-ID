@@ -1,0 +1,10 @@
+{
+  "name": "lidar-measure",
+  "version": "1.0.0",
+  "description": "ARKit LiDAR bounding-box measurement for Expo (iOS only)",
+  "main": "src/index.ts",
+  "files": ["src", "ios", "expo-module.config.json"],
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

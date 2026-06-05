@@ -1,21 +1,20 @@
 /**
  * MeasurePartScreen
  *
- * iOS-only camera screen that:
- *   1. Shows a live camera viewfinder so the admin can frame the part.
- *   2. Captures a photo and sends it to POST /inventory/estimate-dimensions,
- *      which calls OpenAI Vision to compute a bounding-box estimate.
- *   3. Shows the AI-estimated values in editable fields so the admin can
- *      adjust them before confirming.
+ * iOS-only camera screen that offers two dimension-capture paths:
  *
- * "Enter manually instead" skips straight to the editable form for cases
- * where the camera estimate is not needed or available.
+ *   1. LiDAR Scan (iPhone 12 Pro+ / iPad Pro 2020+)
+ *      Starts a native ARKit scene-reconstruction session for ~4 s, then reads
+ *      the bounding-box of the nearest detected surface in real mm.
+ *      Implemented in modules/lidar-measure (Swift / ARKit).
  *
- * NOTE: Real-time depth sensing (ARKit LiDAR) requires a bare Expo workflow
- * with a custom native bridge and is out of scope here.  This component uses
- * OpenAI Vision on a captured photo to produce computed (non-random) estimates.
+ *   2. AI Photo Estimate (all other iOS devices)
+ *      Captures a JPEG and calls POST /inventory/estimate-dimensions, which
+ *      uses OpenAI Vision to infer a bounding-box estimate.
  *
- * Gating: iOS only — callers must hide the trigger on Android and web.
+ *   3. Manual entry — always available as a fallback.
+ *
+ * Gating: iOS only — callers must hide the trigger on Android and Web.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -34,6 +33,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
+import { isLiDARSupported, measureObject } from "lidar-measure";
 
 /**
  * Returns true when the current iOS device is known to include LiDAR hardware
@@ -42,14 +42,13 @@ import { useColors } from "@/hooks/useColors";
  * In production on a non-LiDAR device the button is hidden by the caller.
  */
 export function isLiDARCapableDevice(): boolean {
-  if (!Device.modelName) return true; // unknown / simulator — allow access for testing
+  if (!Device.modelName) return true;
   const m = Device.modelName;
-  // iPhone Pro models starting with iPhone 12 Pro have LiDAR
   const iPhoneProPattern = /iPhone (1[2-9]|[2-9]\d+) Pro/i;
-  // All iPad Pro models from 2020 onwards have LiDAR
   const iPadProPattern = /iPad Pro/i;
   return iPhoneProPattern.test(m) || iPadProPattern.test(m);
 }
+
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "http://localhost:8080/api";
@@ -64,15 +63,14 @@ export interface PartDimensions {
 interface MeasurePartScreenProps {
   visible: boolean;
   onClose: () => void;
-  /** Called when the admin confirms the dimensions. */
   onConfirm: (dims: PartDimensions) => void;
-  /** Pre-populate fields when re-editing existing dimensions. */
   initialDims?: PartDimensions | null;
-  /** Admin token required to call the estimate endpoint. */
   adminToken: string;
 }
 
-type Phase = "preview" | "estimating" | "confirm";
+type Phase = "preview" | "lidar_scanning" | "estimating" | "confirm";
+
+const LIDAR_TIMEOUT_S = 4;
 
 function parseField(s: string): number | null {
   const n = parseFloat(s);
@@ -94,6 +92,7 @@ export function MeasurePartScreen({
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>("preview");
   const [estimateError, setEstimateError] = useState<string | null>(null);
+  const [lidarAvailable] = useState<boolean>(() => isLiDARSupported());
 
   const [lengthStr, setLengthStr] = useState("");
   const [widthStr, setWidthStr] = useState("");
@@ -113,6 +112,31 @@ export function MeasurePartScreen({
       if (!permission?.granted) requestPermission();
     }
   }, [visible, initialDims, permission, requestPermission]);
+
+  // ── LiDAR scan path ────────────────────────────────────────────────────────
+
+  const handleLidarScan = useCallback(async () => {
+    setPhase("lidar_scanning");
+    setEstimateError(null);
+    try {
+      const dims = await measureObject(LIDAR_TIMEOUT_S);
+      setLengthStr(fmt(dims.length));
+      setWidthStr(fmt(dims.width));
+      setHeightStr(fmt(dims.height));
+      setDiameterStr("");
+      setPhase("confirm");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "LiDAR scan failed";
+      setEstimateError(msg);
+      setPhase("preview");
+      Alert.alert(
+        "LiDAR scan failed",
+        `${msg}\n\nYou can use photo estimation or enter dimensions manually.`
+      );
+    }
+  }, []);
+
+  // ── AI photo-estimate path ─────────────────────────────────────────────────
 
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current) return;
@@ -143,11 +167,13 @@ export function MeasurePartScreen({
       });
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({})) as { error?: string };
+        const err = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
         throw new Error(err.error ?? `Server error ${response.status}`);
       }
 
-      const dims = await response.json() as PartDimensions;
+      const dims = (await response.json()) as PartDimensions;
       setLengthStr(fmt(dims.length));
       setWidthStr(fmt(dims.width));
       setHeightStr(fmt(dims.height));
@@ -157,7 +183,10 @@ export function MeasurePartScreen({
       const msg = err instanceof Error ? err.message : "Estimation failed";
       setEstimateError(msg);
       setPhase("preview");
-      Alert.alert("Estimation failed", `${msg}\n\nYou can enter dimensions manually.`);
+      Alert.alert(
+        "Estimation failed",
+        `${msg}\n\nYou can enter dimensions manually.`
+      );
     }
   }, [adminToken]);
 
@@ -178,12 +207,11 @@ export function MeasurePartScreen({
   if (!visible) return null;
 
   const hasCameraAccess = Platform.OS !== "web" && permission?.granted;
-  const isEstimating = phase === "estimating";
+  const isScanning = phase === "estimating" || phase === "lidar_scanning";
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={ms.root}>
-        {/* Live camera background */}
         {hasCameraAccess ? (
           <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
         ) : (
@@ -194,11 +222,17 @@ export function MeasurePartScreen({
         <SafeAreaView style={ms.safeArea}>
           {/* Header */}
           <View style={ms.header}>
-            <Pressable onPress={onClose} style={ms.closeBtn} disabled={isEstimating}>
+            <Pressable onPress={onClose} style={ms.closeBtn} disabled={isScanning}>
               <Feather name="x" size={20} color="#fff" />
             </Pressable>
             <Text style={ms.headerTitle}>
-              {phase === "estimating" ? "Estimating…" : phase === "confirm" ? "Review Dimensions" : "Photo Estimate"}
+              {phase === "lidar_scanning"
+                ? "LiDAR Scanning…"
+                : phase === "estimating"
+                ? "Estimating…"
+                : phase === "confirm"
+                ? "Review Dimensions"
+                : "Measure Part"}
             </Text>
             <View style={{ width: 40 }} />
           </View>
@@ -213,33 +247,97 @@ export function MeasurePartScreen({
                 <View style={[ms.vfCorner, ms.vfBR]} />
                 <Text style={ms.vfLabel}>📐</Text>
               </View>
-              <Text style={ms.instructionText}>
-                Frame the part so all sides are visible, then tap Capture.
-              </Text>
-              <Text style={ms.subText}>
-                AI will estimate dimensions from the photo.
-              </Text>
+
               {estimateError ? (
                 <Text style={ms.errorText}>{estimateError}</Text>
               ) : null}
+
+              {/* LiDAR primary path */}
+              {lidarAvailable && (
+                <>
+                  <Text style={ms.instructionText}>
+                    Point at the part so all sides are visible, then tap Scan.
+                  </Text>
+                  <Text style={ms.subText}>
+                    LiDAR measures dimensions in real-time — no photo needed.
+                  </Text>
+                  <Pressable onPress={handleLidarScan} style={ms.lidarBtn}>
+                    <Feather
+                      name="maximize"
+                      size={18}
+                      color="#fff"
+                      style={{ marginRight: 8 }}
+                    />
+                    <Text style={ms.lidarBtnText}>Scan with LiDAR</Text>
+                  </Pressable>
+                  <View style={ms.dividerRow}>
+                    <View style={ms.dividerLine} />
+                    <Text style={ms.dividerText}>or</Text>
+                    <View style={ms.dividerLine} />
+                  </View>
+                </>
+              )}
+
+              {/* Photo estimate secondary / primary path */}
+              {!lidarAvailable && (
+                <>
+                  <Text style={ms.instructionText}>
+                    Frame the part so all sides are visible, then tap Capture.
+                  </Text>
+                  <Text style={ms.subText}>
+                    AI will estimate dimensions from the photo.
+                  </Text>
+                </>
+              )}
+
               {!permission?.granted && Platform.OS !== "web" ? (
                 <Pressable onPress={requestPermission} style={ms.permBtn}>
-                  <Feather name="camera" size={14} color="#fff" style={{ marginRight: 6 }} />
+                  <Feather
+                    name="camera"
+                    size={14}
+                    color="#fff"
+                    style={{ marginRight: 6 }}
+                  />
                   <Text style={ms.permBtnText}>Enable Camera</Text>
                 </Pressable>
               ) : (
-                <Pressable onPress={handleCapture} style={ms.captureBtn}>
-                  <Feather name="camera" size={18} color="#fff" style={{ marginRight: 8 }} />
-                  <Text style={ms.captureBtnText}>Capture &amp; Estimate</Text>
+                <Pressable
+                  onPress={handleCapture}
+                  style={[
+                    ms.captureBtn,
+                    lidarAvailable && ms.captureBtnSecondary,
+                  ]}
+                >
+                  <Feather
+                    name="camera"
+                    size={18}
+                    color="#fff"
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text style={ms.captureBtnText}>
+                    {lidarAvailable ? "Photo Estimate Instead" : "Capture & Estimate"}
+                  </Text>
                 </Pressable>
               )}
+
               <Pressable onPress={goManual} style={ms.manualBtn}>
                 <Text style={ms.manualBtnText}>Enter manually instead</Text>
               </Pressable>
             </View>
           )}
 
-          {/* ── Estimating phase ── */}
+          {/* ── LiDAR scanning phase ── */}
+          {phase === "lidar_scanning" && (
+            <View style={ms.phaseContainer}>
+              <ActivityIndicator size="large" color="#10b981" />
+              <Text style={ms.instructionText}>Scanning with LiDAR…</Text>
+              <Text style={ms.subText}>
+                Hold still — reading depth data ({LIDAR_TIMEOUT_S} s)
+              </Text>
+            </View>
+          )}
+
+          {/* ── AI estimating phase ── */}
           {phase === "estimating" && (
             <View style={ms.phaseContainer}>
               <ActivityIndicator size="large" color="#3b82f6" />
@@ -253,11 +351,13 @@ export function MeasurePartScreen({
             <View style={ms.confirmContainer}>
               <View style={ms.confirmCard}>
                 <Text style={ms.confirmTitle}>
-                  {(lengthStr || widthStr || heightStr) ? "AI Estimated Dimensions" : "Enter Dimensions"}
+                  {lengthStr || widthStr || heightStr
+                    ? "Measured Dimensions"
+                    : "Enter Dimensions"}
                 </Text>
                 <Text style={ms.confirmSub}>
-                  {(lengthStr || widthStr || heightStr)
-                    ? "AI estimates — review and adjust before saving. All values in mm."
+                  {lengthStr || widthStr || heightStr
+                    ? "Review and adjust before saving. All values in mm."
                     : "All values in mm. Leave blank to skip."}
                 </Text>
 
@@ -265,16 +365,22 @@ export function MeasurePartScreen({
                   {(
                     [
                       { label: "Length", value: lengthStr, set: setLengthStr },
-                      { label: "Width",  value: widthStr,  set: setWidthStr },
+                      { label: "Width", value: widthStr, set: setWidthStr },
                       { label: "Height", value: heightStr, set: setHeightStr },
-                      { label: "Diameter (opt.)", value: diameterStr, set: setDiameterStr },
+                      {
+                        label: "Diameter (opt.)",
+                        value: diameterStr,
+                        set: setDiameterStr,
+                      },
                     ] as const
                   ).map(({ label, value, set }) => (
                     <View key={label} style={ms.fieldGroup}>
                       <Text style={ms.fieldLabel}>{label}</Text>
                       <TextInput
                         value={value}
-                        onChangeText={v => set(v.replace(/[^0-9.]/g, ""))}
+                        onChangeText={(v) =>
+                          set(v.replace(/[^0-9.]/g, ""))
+                        }
                         placeholder="–"
                         placeholderTextColor="#aaa"
                         keyboardType="numeric"
@@ -285,18 +391,23 @@ export function MeasurePartScreen({
                   ))}
                 </View>
 
-                {(lengthStr && widthStr && heightStr) ? (
+                {lengthStr && widthStr && heightStr ? (
                   <Text style={ms.dimPreview}>
                     {[
                       `${lengthStr} × ${widthStr} × ${heightStr} mm`,
                       diameterStr ? `⌀ ${diameterStr} mm` : null,
-                    ].filter(Boolean).join("   ")}
+                    ]
+                      .filter(Boolean)
+                      .join("   ")}
                   </Text>
                 ) : null}
 
                 <View style={ms.btnRow}>
-                  <Pressable onPress={() => setPhase("preview")} style={ms.rescanBtn}>
-                    <Text style={ms.rescanBtnText}>Re-capture</Text>
+                  <Pressable
+                    onPress={() => setPhase("preview")}
+                    style={ms.rescanBtn}
+                  >
+                    <Text style={ms.rescanBtnText}>Re-scan</Text>
                   </Pressable>
                   <Pressable onPress={handleConfirm} style={ms.confirmBtn}>
                     <Text style={ms.confirmBtnText}>Save Dimensions</Text>
@@ -351,11 +462,26 @@ const ms = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  vfCorner: { position: "absolute", width: CORNER, height: CORNER, borderColor: "#fff" },
+  vfCorner: {
+    position: "absolute",
+    width: CORNER,
+    height: CORNER,
+    borderColor: "#fff",
+  },
   vfTL: { top: 0, left: 0, borderTopWidth: CORNER_W, borderLeftWidth: CORNER_W },
   vfTR: { top: 0, right: 0, borderTopWidth: CORNER_W, borderRightWidth: CORNER_W },
-  vfBL: { bottom: 0, left: 0, borderBottomWidth: CORNER_W, borderLeftWidth: CORNER_W },
-  vfBR: { bottom: 0, right: 0, borderBottomWidth: CORNER_W, borderRightWidth: CORNER_W },
+  vfBL: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: CORNER_W,
+    borderLeftWidth: CORNER_W,
+  },
+  vfBR: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: CORNER_W,
+    borderRightWidth: CORNER_W,
+  },
   vfLabel: { fontSize: 32 },
   instructionText: {
     color: "#fff",
@@ -378,6 +504,27 @@ const ms = StyleSheet.create({
     textAlign: "center",
     maxWidth: 280,
   },
+  lidarBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#10b981",
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  lidarBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_700Bold" },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    width: 240,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: "rgba(255,255,255,0.25)" },
+  dividerText: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+  },
   permBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -395,6 +542,9 @@ const ms = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
   },
+  captureBtnSecondary: {
+    backgroundColor: "rgba(255,255,255,0.15)",
+  },
   captureBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_700Bold" },
   manualBtn: { paddingVertical: 8 },
   manualBtnText: {
@@ -411,7 +561,12 @@ const ms = StyleSheet.create({
     gap: 10,
   },
   confirmTitle: { fontSize: 16, fontFamily: "Inter_700Bold", color: "#111" },
-  confirmSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#888", marginTop: -4 },
+  confirmSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: "#888",
+    marginTop: -4,
+  },
   fieldsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   fieldGroup: { width: "47%", gap: 4 },
   fieldLabel: {

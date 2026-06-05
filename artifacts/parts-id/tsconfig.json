@@ -6,6 +6,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "lidar-measure": [
+        "./modules/lidar-measure/src/index"
       ]
     }
   },
