@@ -11,6 +11,8 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useUpdateItemBarcodes } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
@@ -30,6 +32,10 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
   const [newBarcode, setNewBarcode] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
+
+  const [permission, requestPermission] = useCameraPermissions();
+  const scannerLockRef = useRef(false);
   const updateMutation = useUpdateItemBarcodes();
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
@@ -40,6 +46,26 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
     setSaveStatus("idle");
     setErrorMsg(null);
   }, [item?.id]);
+
+  const openScanner = useCallback(async () => {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) return;
+    }
+    scannerLockRef.current = false;
+    setScannerOpen(true);
+  }, [permission, requestPermission]);
+
+  const handleBarcodeScanned = useCallback(({ data }: { data: string }) => {
+    if (scannerLockRef.current) return;
+    scannerLockRef.current = true;
+    setScannerOpen(false);
+    const trimmed = data.trim();
+    if (trimmed) {
+      setBarcodes(prev => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+      setSaveStatus("idle");
+    }
+  }, []);
 
   const addBarcode = useCallback(() => {
     const trimmed = newBarcode.trim();
@@ -106,136 +132,188 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
     : "";
 
   return (
-    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={[styles.container, { backgroundColor: colors.background }]}
-      >
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Text style={[styles.title, { color: colors.foreground }]}>Edit Barcodes</Text>
-              {saveStatus !== "idle" ? (
-                <View style={[styles.statusBadge, { backgroundColor: statusColor + "22" }]}>
-                  {isSaving ? (
-                    <ActivityIndicator size="small" color={statusColor} style={{ marginRight: 4 }} />
-                  ) : null}
-                  <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
-                </View>
-              ) : null}
-            </View>
-            <Text style={[styles.sub, { color: colors.mutedForeground }]} numberOfLines={1}>
-              {item.vendor} · {item.catalog}
-            </Text>
-          </View>
-          <Pressable onPress={onClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]}>
-            <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
-          </Pressable>
-        </View>
-
-        <ScrollView style={{ flex: 1, padding: 16 }} keyboardShouldPersistTaps="handled">
-          {item.description ? (
-            <Text style={[styles.desc, { color: colors.mutedForeground }]} numberOfLines={2}>
-              {item.description}
-            </Text>
-          ) : null}
-
-          <Text style={[styles.hint, { color: colors.mutedForeground }]}>
-            Tap a barcode to remove it. Tap Save when you're done.
-          </Text>
-
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
-            BARCODES ({barcodes.length})
-          </Text>
-          <View style={styles.chipRow}>
-            {barcodes.map((b) => (
-              <Pressable
-                key={b}
-                onPress={() => removeBarcode(b)}
-                style={[styles.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
-              >
-                <Text style={[styles.chipText, { color: colors.foreground }]}>{b}</Text>
-                <Text style={[styles.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {barcodes.length === 0 ? (
-            <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
-              No barcodes yet. Scan or type one below.
-            </Text>
-          ) : null}
-
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>
-            ADD BARCODE
-          </Text>
-          <View style={styles.addRow}>
-            <TextInput
-              value={newBarcode}
-              onChangeText={setNewBarcode}
-              placeholder="Type or paste barcode…"
-              placeholderTextColor={colors.mutedForeground}
-              style={[
-                styles.addInput,
-                { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
-              ]}
-              onSubmitEditing={addBarcode}
-              returnKeyType="done"
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
-            <Pressable
-              onPress={addBarcode}
-              disabled={!newBarcode.trim()}
-              style={[
-                styles.addBtn,
-                { backgroundColor: newBarcode.trim() ? colors.primary : colors.muted },
-              ]}
-            >
-              <Text style={[styles.addBtnText, { color: newBarcode.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
-                + Add
+    <>
+      <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={[styles.container, { backgroundColor: colors.background }]}
+        >
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={[styles.title, { color: colors.foreground }]}>Edit Barcodes</Text>
+                {saveStatus !== "idle" ? (
+                  <View style={[styles.statusBadge, { backgroundColor: statusColor + "22" }]}>
+                    {isSaving ? (
+                      <ActivityIndicator size="small" color={statusColor} style={{ marginRight: 4 }} />
+                    ) : null}
+                    <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={[styles.sub, { color: colors.mutedForeground }]} numberOfLines={1}>
+                {item.vendor} · {item.catalog}
               </Text>
+            </View>
+            <Pressable onPress={onClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]}>
+              <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
             </Pressable>
           </View>
 
-          {errorMsg ? (
-            <Text style={[styles.errorText, { color: colors.destructive }]}>{errorMsg}</Text>
-          ) : null}
-        </ScrollView>
+          <ScrollView style={{ flex: 1, padding: 16 }} keyboardShouldPersistTaps="handled">
+            {item.description ? (
+              <Text style={[styles.desc, { color: colors.mutedForeground }]} numberOfLines={2}>
+                {item.description}
+              </Text>
+            ) : null}
 
-        <View style={[styles.footer, { borderTopColor: colors.border }]}>
-          <Pressable
-            onPress={onClose}
-            style={[styles.cancelBtn, { borderColor: colors.border }]}
-          >
-            <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleSave}
-            disabled={isSaving || !hasChanges}
-            style={[
-              styles.saveBtn,
-              { backgroundColor: isSaving || !hasChanges ? colors.muted : colors.primary },
-            ]}
-          >
-            {isSaving ? (
-              <ActivityIndicator color={colors.primaryForeground} />
-            ) : (
-              <Text
+            <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+              Tap a barcode to remove it. Tap Save when you're done.
+            </Text>
+
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>
+              BARCODES ({barcodes.length})
+            </Text>
+            <View style={styles.chipRow}>
+              {barcodes.map((b) => (
+                <Pressable
+                  key={b}
+                  onPress={() => removeBarcode(b)}
+                  style={[styles.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
+                >
+                  <Text style={[styles.chipText, { color: colors.foreground }]}>{b}</Text>
+                  <Text style={[styles.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {barcodes.length === 0 ? (
+              <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
+                No barcodes yet. Scan or type one below.
+              </Text>
+            ) : null}
+
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>
+              ADD BARCODE
+            </Text>
+            <View style={styles.addRow}>
+              <TextInput
+                value={newBarcode}
+                onChangeText={setNewBarcode}
+                placeholder="Type barcode…"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="number-pad"
                 style={[
-                  styles.saveBtnText,
-                  { color: isSaving || !hasChanges ? colors.mutedForeground : colors.primaryForeground },
+                  styles.addInput,
+                  { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
+                ]}
+                onSubmitEditing={addBarcode}
+                returnKeyType="done"
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              {Platform.OS !== "web" ? (
+                <Pressable
+                  onPress={openScanner}
+                  style={[styles.scanBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                  accessibilityLabel="Scan barcode with camera"
+                >
+                  <Feather name="camera" size={18} color={colors.foreground} />
+                </Pressable>
+              ) : null}
+              <Pressable
+                onPress={addBarcode}
+                disabled={!newBarcode.trim()}
+                style={[
+                  styles.addBtn,
+                  { backgroundColor: newBarcode.trim() ? colors.primary : colors.muted },
                 ]}
               >
-                Save
-              </Text>
-            )}
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+                <Text style={[styles.addBtnText, { color: newBarcode.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
+                  + Add
+                </Text>
+              </Pressable>
+            </View>
+
+            {errorMsg ? (
+              <Text style={[styles.errorText, { color: colors.destructive }]}>{errorMsg}</Text>
+            ) : null}
+          </ScrollView>
+
+          <View style={[styles.footer, { borderTopColor: colors.border }]}>
+            <Pressable
+              onPress={onClose}
+              style={[styles.cancelBtn, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSave}
+              disabled={isSaving || !hasChanges}
+              style={[
+                styles.saveBtn,
+                { backgroundColor: isSaving || !hasChanges ? colors.muted : colors.primary },
+              ]}
+            >
+              {isSaving ? (
+                <ActivityIndicator color={colors.primaryForeground} />
+              ) : (
+                <Text
+                  style={[
+                    styles.saveBtnText,
+                    { color: isSaving || !hasChanges ? colors.mutedForeground : colors.primaryForeground },
+                  ]}
+                >
+                  Save
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Barcode scanner modal — native only, rendered outside the pageSheet */}
+      {Platform.OS !== "web" ? (
+        <Modal
+          visible={scannerOpen}
+          animationType="slide"
+          onRequestClose={() => setScannerOpen(false)}
+        >
+          <View style={styles.scanModal}>
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              onBarcodeScanned={handleBarcodeScanned}
+              barcodeScannerSettings={{
+                barcodeTypes: ["ean13", "ean8", "code128", "code39", "upc_a", "upc_e", "qr"],
+              }}
+            />
+            <View style={styles.scanOverlay}>
+              <View style={[styles.scanHeader, { backgroundColor: "rgba(0,0,0,0.45)" }]}>
+                <Pressable onPress={() => setScannerOpen(false)} style={styles.scanCloseBtn}>
+                  <Feather name="x" size={20} color="#fff" />
+                </Pressable>
+                <Text style={styles.scanTitle}>Scan Barcode</Text>
+                <View style={{ width: 40 }} />
+              </View>
+              <View style={styles.viewfinderWrapper}>
+                <View style={styles.viewfinder}>
+                  <View style={[styles.vfCorner, styles.vfTL]} />
+                  <View style={[styles.vfCorner, styles.vfTR]} />
+                  <View style={[styles.vfCorner, styles.vfBL]} />
+                  <View style={[styles.vfCorner, styles.vfBR]} />
+                </View>
+              </View>
+              <Text style={styles.scanHint}>Point at a barcode to add it automatically</Text>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+    </>
   );
 }
+
+const CORNER = 20;
+const CORNER_W = 3;
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -291,6 +369,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter_400Regular",
   },
+  scanBtn: {
+    width: 44,
+    borderWidth: 1,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   addBtn: {
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -320,4 +405,47 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   saveBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  // Scanner modal
+  scanModal: { flex: 1, backgroundColor: "#000" },
+  scanOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "space-between",
+    paddingBottom: 48,
+  },
+  scanHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 56,
+    paddingBottom: 16,
+  },
+  scanCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scanTitle: { color: "#fff", fontSize: 17, fontFamily: "Inter_600SemiBold" },
+  viewfinderWrapper: { flex: 1, alignItems: "center", justifyContent: "center" },
+  viewfinder: { width: 260, height: 160, position: "relative" },
+  vfCorner: {
+    position: "absolute",
+    width: CORNER,
+    height: CORNER,
+    borderColor: "#fff",
+  },
+  vfTL: { top: 0, left: 0, borderTopWidth: CORNER_W, borderLeftWidth: CORNER_W },
+  vfTR: { top: 0, right: 0, borderTopWidth: CORNER_W, borderRightWidth: CORNER_W },
+  vfBL: { bottom: 0, left: 0, borderBottomWidth: CORNER_W, borderLeftWidth: CORNER_W },
+  vfBR: { bottom: 0, right: 0, borderBottomWidth: CORNER_W, borderRightWidth: CORNER_W },
+  scanHint: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+    paddingHorizontal: 32,
+  },
 });
