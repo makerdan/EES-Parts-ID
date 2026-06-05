@@ -161,6 +161,7 @@ export default function MapScreen() {
           shelfViewEnabled={settings.shelfViewEnabled}
           fontScale={textFontScale}
           onClose={handleBrowseClose}
+          onRefresh={refetchZones}
           initialAisle={drilldown?.aisleNum}
           sectionParity={drilldown?.sectionParity}
           sectionNumbers={drilldown?.sectionNumbers}

@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -129,13 +130,15 @@ export default function AdminInboxScreen() {
 
   const [rows, setRows] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const unreadCount = rows.filter((r) => !r.readAt).length;
 
-  const fetchMessages = useCallback(async () => {
+  const fetchMessages = useCallback(async (isRefresh = false) => {
     if (!adminToken) return;
-    setLoading(true);
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const res = await fetch(`${API_BASE}/contact`, {
@@ -147,7 +150,8 @@ export default function AdminInboxScreen() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load inbox");
     } finally {
-      setLoading(false);
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
     }
   }, [adminToken]);
 
@@ -190,7 +194,7 @@ export default function AdminInboxScreen() {
             {rows.length} message{rows.length !== 1 ? "s" : ""}
           </Text>
         </View>
-        <Pressable onPress={fetchMessages} style={styles.refreshBtn} accessibilityLabel="Refresh">
+        <Pressable onPress={() => fetchMessages()} style={styles.refreshBtn} accessibilityLabel="Refresh">
           <Feather name="refresh-cw" size={17} color={colors.mutedForeground} />
         </Pressable>
       </View>
@@ -202,7 +206,7 @@ export default function AdminInboxScreen() {
       ) : error ? (
         <View style={styles.centered}>
           <Text style={[styles.errorText, { color: colors.destructive }]}>⚠ {error}</Text>
-          <Pressable onPress={fetchMessages} style={[styles.retryBtn, { borderColor: colors.border }]}>
+          <Pressable onPress={() => fetchMessages()} style={[styles.retryBtn, { borderColor: colors.border }]}>
             <Text style={[styles.retryText, { color: colors.primary }]}>Retry</Text>
           </Pressable>
         </View>
@@ -211,6 +215,14 @@ export default function AdminInboxScreen() {
           data={rows}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchMessages(true)}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
           renderItem={({ item }) => (
             <MessageItem
               row={item}

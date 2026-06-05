@@ -18,6 +18,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -50,6 +51,7 @@ export interface BrowseByAisleProps {
   onEditKeywords?: (item: InventoryItem) => void;
   onEditBins?: (item: InventoryItem) => void;
   onPartAdded?: () => void;
+  onRefresh?: () => void | Promise<void>;
   initialAisle?: number;
   sectionParity?: "odd" | "even";
   sectionNumbers?: number[];
@@ -614,6 +616,7 @@ export function BrowseByAisle({
   onEditKeywords,
   onEditBins,
   onPartAdded,
+  onRefresh,
   initialAisle,
   sectionParity,
   sectionNumbers,
@@ -624,6 +627,7 @@ export function BrowseByAisle({
   const colors = useColors();
   const [addPartVisible, setAddPartVisible] = useState(false);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
+  const [aisleRefreshing, setAisleRefreshing] = useState(false);
 
   const hierarchy: AisleHierarchy = useMemo(
     () => buildAisleHierarchy(inventory),
@@ -750,6 +754,19 @@ export function BrowseByAisle({
         <FlatList
           data={hierarchy.aisles}
           keyExtractor={a => String(a.aisleNum)}
+          refreshControl={
+            onRefresh ? (
+              <RefreshControl
+                refreshing={aisleRefreshing}
+                onRefresh={async () => {
+                  setAisleRefreshing(true);
+                  try { await onRefresh(); } finally { setAisleRefreshing(false); }
+                }}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+              />
+            ) : undefined
+          }
           ListHeaderComponent={
             isSyncing ? (
               <View style={{ flexDirection: "row", alignItems: "center", padding: 12, gap: 8 }}>
