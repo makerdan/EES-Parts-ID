@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
@@ -44,6 +45,22 @@ export function AddPartModal({
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ catalog?: string; vendor?: string; bin?: string }>({});
   const [createdItem, setCreatedItem] = useState<InventoryItem | null>(null);
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopyBin = async () => {
+    if (!createdItem?.binLocations?.length) return;
+    await Clipboard.setStringAsync(createdItem.binLocations[0]);
+    setCopied(true);
+    if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (visible) {
@@ -118,6 +135,7 @@ export function AddPartModal({
   };
 
   const handleDone = () => {
+    setCopied(false);
     setCreatedItem(null);
     onClose();
   };
@@ -126,11 +144,13 @@ export function AddPartModal({
     if (createdItem && onAddDetails) {
       onAddDetails(createdItem);
     }
+    setCopied(false);
     setCreatedItem(null);
     onClose();
   };
 
   const handleAddAnother = () => {
+    setCopied(false);
     setCatalog("");
     setVendor("");
     setBinLocation(defaultBin);
@@ -166,6 +186,21 @@ export function AddPartModal({
                 {createdItem.vendor} / {createdItem.catalog} registered at{" "}
                 <Text style={{ fontWeight: "700", color: colors.foreground }}>{binLocation}</Text>
               </Text>
+              {createdItem.binLocations?.length ? (
+                <Pressable
+                  onPress={handleCopyBin}
+                  style={({ pressed }) => [
+                    styles.binChip,
+                    { backgroundColor: colors.muted, borderColor: copied ? colors.success : colors.border, opacity: pressed ? 0.7 : 1 },
+                  ]}
+                >
+                  <Text style={[styles.binChipLabel, { color: colors.mutedForeground }]}>Bin</Text>
+                  <Text style={[styles.binChipValue, { color: colors.foreground }]}>{createdItem.binLocations[0]}</Text>
+                  <Text style={[styles.binChipHint, { color: copied ? colors.success : colors.mutedForeground }]}>
+                    {copied ? "Copied!" : "Tap to copy"}
+                  </Text>
+                </Pressable>
+              ) : null}
               {onAddDetails ? (
                 <Text style={[styles.detailsHint, { color: colors.mutedForeground }]}>
                   Would you like to enrich it with a description, additional bins, or keywords?
@@ -409,6 +444,30 @@ const styles = StyleSheet.create({
   actionsColumn: {
     gap: 8,
     marginTop: 4,
+  },
+  binChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  binChipLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  binChipValue: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+  },
+  binChipHint: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
   },
   cancelBtn: {
     flex: 1,

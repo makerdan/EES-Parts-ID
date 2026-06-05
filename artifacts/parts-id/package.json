@@ -44,6 +44,7 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.10",
     "expo-location": "~19.0.8",
+    "expo-modules-core": "~3.0.30",
     "expo-router": "~6.0.24",
     "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.12",
@@ -75,13 +76,14 @@
   "dependencies": {
     "@react-native-community/netinfo": "^11.4.1",
     "buffer": "^6.0.3",
-    "lidar-measure": "workspace:*",
     "expo-asset": "^12.0.13",
     "expo-av": "~16.0.8",
+    "expo-clipboard": "^8.0.8",
     "expo-device": "^8.0.10",
     "expo-file-system": "~19.0.23",
     "expo-image-manipulator": "~14.0.8",
     "expo-screen-orientation": "^9.0.9",
-    "expo-sharing": "~14.0.8"
+    "expo-sharing": "~14.0.8",
+    "lidar-measure": "file:./modules/lidar-measure"
   }
 }
