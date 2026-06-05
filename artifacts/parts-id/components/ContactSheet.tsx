@@ -13,6 +13,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColors } from "@/hooks/useColors";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 
 const DEVICE_TOKEN_KEY = "contact_device_token";
 
@@ -148,7 +149,7 @@ export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props
           <Text style={[styles.label, { color: colors.mutedForeground, marginTop: 16 }]}>
             MESSAGE
           </Text>
-          <TextInput
+          <KeyboardDoneInput
             value={body}
             onChangeText={setBody}
             placeholder="Describe what you need or what went wrong…"
