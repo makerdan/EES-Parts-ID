@@ -25,6 +25,7 @@ jest.mock("lidar-measure", () => ({
   measureObject: jest.fn().mockRejectedValue(
     new Error("LiDAR not available in test environment")
   ),
+  cancelMeasure: jest.fn(),
   NativeLidarDepthView: null,
 }));
 
@@ -58,8 +59,9 @@ import { isLiDARSupported, measureObject } from "lidar-measure";
 const mockIsLiDARSupported = isLiDARSupported as jest.Mock;
 const mockMeasureObject = measureObject as jest.Mock;
 
-import { Alert } from "react-native";
+import { Alert, AppState } from "react-native";
 const mockAlert = Alert.alert as jest.Mock;
+const mockAppStateAddListener = AppState.addEventListener as jest.Mock;
 
 // ─── Component under test ─────────────────────────────────────────────────────
 
@@ -322,6 +324,44 @@ describe("MeasurePartScreen – lidar_scanning → preview (error path)", () => 
       "LiDAR scan failed",
       expect.stringContaining("LiDAR scan failed")
     );
+  });
+});
+
+// ─── Phase: lidar_scanning → preview (AppState background interrupt) ─────────
+
+describe("MeasurePartScreen – lidar_scanning → preview (background interrupt)", () => {
+  /**
+   * Helper: start a scan that stays pending, then fire the AppState listener
+   * with the given nextState, then assert the phase resets to preview.
+   */
+  async function runInterruptTest(nextState: "background" | "inactive") {
+    mockIsLiDARSupported.mockReturnValue(true);
+    // Never resolves during the test — we want the scan to still be in-flight
+    mockMeasureObject.mockReturnValue(new Promise(() => {}));
+
+    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    await press(tree.root, "Scan with LiDAR");
+
+    // The component must now be in lidar_scanning phase and have registered
+    // an AppState listener.  Grab the change-handler from the mock.
+    expect(mockAppStateAddListener).toHaveBeenCalledWith("change", expect.any(Function));
+    const changeHandler: (s: string) => void =
+      mockAppStateAddListener.mock.calls[mockAppStateAddListener.mock.calls.length - 1][1];
+
+    // Simulate the app moving to background / inactive while scanning.
+    await act(async () => {
+      changeHandler(nextState);
+    });
+
+    expect(hasText(tree.root, "Measure Part")).toBe(true);
+  }
+
+  it("resets to preview when app moves to background mid-scan", async () => {
+    await runInterruptTest("background");
+  });
+
+  it("resets to preview when app becomes inactive mid-scan", async () => {
+    await runInterruptTest("inactive");
   });
 });
 
