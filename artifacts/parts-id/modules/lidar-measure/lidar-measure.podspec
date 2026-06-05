@@ -14,10 +14,16 @@ Pod::Spec.new do |s|
   s.swift_version  = '5.4'
   s.source         = { git: '' }
   s.static_framework = true
+  s.module_name    = 'LidarMeasure'
 
   s.dependency 'ExpoModulesCore'
 
   s.source_files   = 'ios/**/*.swift'
+  s.exclude_files  = 'ios/**/*Tests.swift'
 
   s.frameworks     = 'ARKit', 'SceneKit'
+
+  s.test_spec 'LidarMeasureTests' do |test|
+    test.source_files = 'ios/LidarMeasureModuleTests.swift'
+  end
 end
