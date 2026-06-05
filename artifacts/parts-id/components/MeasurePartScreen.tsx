@@ -409,6 +409,12 @@ export function MeasurePartScreen({
               {/* Photo estimate secondary / primary path */}
               {!lidarAvailable && (
                 <>
+                  <View style={ms.lidarUnsupportedBanner}>
+                    <Feather name="info" size={15} color="#f59e0b" style={{ marginRight: 8, marginTop: 1 }} />
+                    <Text style={ms.lidarUnsupportedText}>
+                      LiDAR measurement requires a LiDAR-capable device (iPhone 12 Pro or later, or iPad Pro 2020 or later). Use photo estimation or enter dimensions manually.
+                    </Text>
+                  </View>
                   <Text style={ms.instructionText}>
                     Frame the part so all sides are visible, then tap Capture.
                   </Text>
@@ -840,6 +846,24 @@ const ms = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.15)",
   },
   captureBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_700Bold" },
+  lidarUnsupportedBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "rgba(245,158,11,0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(245,158,11,0.4)",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    maxWidth: 300,
+  },
+  lidarUnsupportedText: {
+    flex: 1,
+    color: "#fde68a",
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 18,
+  },
   manualBtn: { paddingVertical: 8 },
   manualBtnText: {
     color: "rgba(255,255,255,0.6)",
