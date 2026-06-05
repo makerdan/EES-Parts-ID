@@ -202,6 +202,18 @@ describe("MeasurePartScreen – preview phase", () => {
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
     expect(hasText(tree.root, "Enter manually instead")).toBe(true);
   });
+
+  it("shows LiDAR unsupported message when lidar is unavailable", async () => {
+    mockIsLiDARSupported.mockReturnValue(false);
+    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(tree.root, "LiDAR measurement requires a LiDAR-capable device")).toBe(true);
+  });
+
+  it("does not show LiDAR unsupported message when lidar is available", async () => {
+    mockIsLiDARSupported.mockReturnValue(true);
+    const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
+    expect(hasText(tree.root, "LiDAR measurement requires a LiDAR-capable device")).toBe(false);
+  });
 });
 
 // ─── Manual entry shortcut ────────────────────────────────────────────────────
