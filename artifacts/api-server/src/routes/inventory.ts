@@ -166,6 +166,12 @@ router.post("/search", async (req, res) => {
     const lenMin: number | null = (_minRaw != null && !isNaN(Number(_minRaw))) ? Number(_minRaw) : null;
     const lenMax: number | null = (_maxRaw != null && !isNaN(Number(_maxRaw))) ? Number(_maxRaw) : null;
 
+    // Normalize diameter bounds the same way.
+    const _diaMinRaw = minDiameter ?? (req.query["minDiameter"] != null ? parseFloat(req.query["minDiameter"] as string) : null);
+    const _diaMaxRaw = maxDiameter ?? (req.query["maxDiameter"] != null ? parseFloat(req.query["maxDiameter"] as string) : null);
+    const diaMin: number | null = (_diaMinRaw != null && !isNaN(Number(_diaMinRaw))) ? Number(_diaMinRaw) : null;
+    const diaMax: number | null = (_diaMaxRaw != null && !isNaN(Number(_diaMaxRaw))) ? Number(_diaMaxRaw) : null;
+
     // Reusable helper: builds the SQL fragment that uses the expression index on
     // ((dimensions->>'length')::numeric). Returns sql`` (no-op) when no bound is set.
     const buildLengthClause = (alias: "i" | "" = "i") => {
@@ -173,6 +179,15 @@ router.post("/search", async (req, res) => {
       if (lenMin !== null && lenMax !== null) return sql`AND ${col} BETWEEN ${lenMin} AND ${lenMax}`;
       if (lenMin !== null) return sql`AND ${col} >= ${lenMin}`;
       if (lenMax !== null) return sql`AND ${col} <= ${lenMax}`;
+      return sql``;
+    };
+
+    // Reusable helper: builds the SQL fragment for diameter bounds.
+    const buildDiameterClause = (alias: "i" | "" = "i") => {
+      const col = alias ? sql`(${sql.raw(alias)}.dimensions->>'diameter')::numeric` : sql`(dimensions->>'diameter')::numeric`;
+      if (diaMin !== null && diaMax !== null) return sql`AND ${col} BETWEEN ${diaMin} AND ${diaMax}`;
+      if (diaMin !== null) return sql`AND ${col} >= ${diaMin}`;
+      if (diaMax !== null) return sql`AND ${col} <= ${diaMax}`;
       return sql``;
     };
 
@@ -243,7 +258,7 @@ router.post("/search", async (req, res) => {
       ? categoryKeywords.map(escapeRegex).join("|")
       : null;
 
-    const hasSizeFilter = lenMin !== null || lenMax !== null;
+    const hasSizeFilter = lenMin !== null || lenMax !== null || diaMin !== null || diaMax !== null;
 
     if (!allSearchText.trim() && !categorySlug && !hasSizeFilter) {
       return void res.json({ results: [], totalMatches: 0, belowThreshold: 0 });
@@ -252,13 +267,14 @@ router.post("/search", async (req, res) => {
     // Dedicated path: non-uncategorized category browse with no text query.
     // Returns every item whose chip text matches the node's keyword union via
     // a SQL-literal regex so the GIN trigram index can be used.
-    // Length-range filter (if any) is pushed into SQL so the expression index fires.
+    // Length-range and diameter-range filters (if any) are pushed into SQL.
     if (categorySlug && !isCategoryUncategorized && catSqlRegex && !allSearchText.trim()) {
       const catLengthClause = buildLengthClause("");
+      const catDiameterClause = buildDiameterClause("");
       const catItems = await db
         .select()
         .from(inventoryTable)
-        .where(sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} ${catLengthClause}`)
+        .where(sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} ${catLengthClause} ${catDiameterClause}`)
         .orderBy(inventoryTable.vendor, inventoryTable.catalog)
         .limit(200);
       return void res.json({
@@ -278,14 +294,20 @@ router.post("/search", async (req, res) => {
     // Special path: uncategorized browse with no search text — return all items that
     // don't match any taxonomy keyword (same inverse-regex logic as the post-filter).
     if (isCategoryUncategorized && !allSearchText.trim()) {
-      const allItems = await db.select().from(inventoryTable);
+      // Push size bounds into SQL so only matching rows are fetched before
+      // the JS-side inverse-taxonomy exclusion runs.
+      const uncatSizeConditions = [
+        lenMin !== null ? sql`(dimensions->>'length')::numeric >= ${lenMin}` : undefined,
+        lenMax !== null ? sql`(dimensions->>'length')::numeric <= ${lenMax}` : undefined,
+        diaMin !== null ? sql`(dimensions->>'diameter')::numeric >= ${diaMin}` : undefined,
+        diaMax !== null ? sql`(dimensions->>'diameter')::numeric <= ${diaMax}` : undefined,
+      ].filter((c): c is NonNullable<typeof c> => c !== undefined);
+      const uncatSizeWhere = uncatSizeConditions.length > 0 ? and(...uncatSizeConditions) : undefined;
+      const allItems = await db.select().from(inventoryTable).where(uncatSizeWhere);
       const allTaxKws = getAllTaxonomyKeywords(TAXONOMY);
       const uncatItems = allItems.filter(item => {
         const text = itemFullText(item);
         if (allTaxKws.some(kw => text.includes(kw))) return false;
-        const dimLen = item.dimensions?.length ?? null;
-        if (lenMin !== null && (dimLen == null || dimLen < lenMin)) return false;
-        if (lenMax !== null && (dimLen == null || dimLen > lenMax)) return false;
         return true;
       });
       return void res.json({
@@ -303,14 +325,27 @@ router.post("/search", async (req, res) => {
     }
 
     // Dedicated path: size-range filter with no text query and no category.
-    // Scans the table using the expression index and returns results ordered by length.
+    // Scans the table using the expression indexes on length and/or diameter.
     if (hasSizeFilter && !allSearchText.trim() && !categorySlug) {
-      const sizeOnlyClause = buildLengthClause("");
+      const sizeOnlyLengthClause = buildLengthClause("");
+      const sizeOnlyDiameterClause = buildDiameterClause("");
+      const hasLenFilter = lenMin !== null || lenMax !== null;
+      const hasDiaFilter = diaMin !== null || diaMax !== null;
+      // Require the relevant dimension to be non-null so the expression index fires.
+      const dimPresenceClause = hasLenFilter && hasDiaFilter
+        ? sql`((dimensions->>'length')::numeric IS NOT NULL OR (dimensions->>'diameter')::numeric IS NOT NULL)`
+        : hasLenFilter
+          ? sql`(dimensions->>'length')::numeric IS NOT NULL`
+          : sql`(dimensions->>'diameter')::numeric IS NOT NULL`;
+      const orderClause = hasLenFilter
+        ? sql`ORDER BY (dimensions->>'length')::numeric ASC`
+        : sql`ORDER BY (dimensions->>'diameter')::numeric ASC`;
       const sizeItems = await db.execute(sql`
         SELECT * FROM inventory
-        WHERE (dimensions->>'length')::numeric IS NOT NULL
-        ${sizeOnlyClause}
-        ORDER BY (dimensions->>'length')::numeric ASC
+        WHERE ${dimPresenceClause}
+        ${sizeOnlyLengthClause}
+        ${sizeOnlyDiameterClause}
+        ${orderClause}
         LIMIT 200
       `);
       const sizeRows = (sizeItems as { rows: unknown[] }).rows as typeof inventoryTable.$inferSelect[];
