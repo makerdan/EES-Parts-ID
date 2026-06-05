@@ -138,6 +138,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
   /** Ref holding the id of the item currently being assigned, to block concurrent assignments. */
   const assigningRef = useRef<number | null>(null);
   const [assigningId, setAssigningId] = useState<number | null>(null);
+  const [undoingId, setUndoingId] = useState<number | null>(null);
 
   /**
    * Tracks the last committed barcode value + timestamp to enforce the
@@ -360,6 +361,39 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     } finally {
       assigningRef.current = null;
       setAssigningId(null);
+    }
+  }, [updateBarcodesMutation, queryClient, showToast]);
+
+  /**
+   * Undo a barcode assignment made during this session.
+   * Removes the barcode from the item on the remote API and offline cache,
+   * then resets the row back to "Unassigned" so a new barcode can be scanned.
+   */
+  const handleUndoAssignment = useCallback(async (item: InventoryItem, barcode: string) => {
+    setUndoingId(item.id);
+    try {
+      const liveItem = allItemsRef.current.find(i => i.id === item.id);
+      const currentBarcodes = (liveItem ?? item).barcodes ?? [];
+      const newBarcodes = currentBarcodes.filter(b => b !== barcode);
+      const updated = await updateBarcodesMutation.mutateAsync({
+        id: item.id,
+        data: { barcodes: newBarcodes },
+      });
+      const listKeyPrefix = getListInventoryQueryKey()[0];
+      await queryClient.invalidateQueries({
+        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+      });
+      await upsertItemInBarcodeCache(updated);
+      setItemRowStates(prev => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+      showToast("Barcode assignment undone", "info");
+    } catch {
+      showToast("Could not undo — please try again", "error");
+    } finally {
+      setUndoingId(null);
     }
   }, [updateBarcodesMutation, queryClient, showToast]);
 
@@ -835,7 +869,8 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
                 const isTargeted = targetItemId === item.id;
                 const syncStatus = row?.syncStatus ?? null;
                 const isConflict = !!row?.conflictBarcode;
-                const isPendingSync = syncStatus === "pending" || assigningId === item.id;
+                const isUndoing = undoingId === item.id;
+                const isPendingSync = syncStatus === "pending" || assigningId === item.id || isUndoing;
                 const isError = syncStatus === "error";
                 const flash = row?.flash ?? false;
 
@@ -934,11 +969,22 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
                       {isPendingSync ? (
                         <ActivityIndicator size="small" color={colors.primary} />
                       ) : isDone ? (
-                        <View style={[bsStyles.badge, { backgroundColor: colors.success + "22" }]}>
-                          <Text style={[bsStyles.badgeText, { color: colors.success }]}>
-                            ✓ Assigned
-                          </Text>
-                        </View>
+                        <>
+                          {assignedBarcode ? (
+                            <Pressable
+                              onPress={() => { void handleUndoAssignment(item, assignedBarcode); }}
+                              style={[bsStyles.undoBtn, { backgroundColor: colors.destructive + "15", borderColor: colors.destructive + "33" }]}
+                              hitSlop={4}
+                            >
+                              <Text style={[bsStyles.undoBtnText, { color: colors.destructive }]}>Undo</Text>
+                            </Pressable>
+                          ) : null}
+                          <View style={[bsStyles.badge, { backgroundColor: colors.success + "22" }]}>
+                            <Text style={[bsStyles.badgeText, { color: colors.success }]}>
+                              ✓ Assigned
+                            </Text>
+                          </View>
+                        </>
                       ) : isConflict ? (
                         <View
                           style={[bsStyles.badge, { backgroundColor: colors.destructive + "18" }]}
@@ -1188,9 +1234,11 @@ const bsStyles = StyleSheet.create({
   itemBin: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   itemBarcode: { fontSize: 10, fontFamily: "Inter_400Regular" },
   conflictText: { fontSize: 11, fontFamily: "Inter_500Medium", lineHeight: 15, marginTop: 2 },
-  itemRight: { alignItems: "flex-end" },
+  itemRight: { alignItems: "flex-end", gap: 4 },
   badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  undoBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1 },
+  undoBtnText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   cameraSection: { borderTopWidth: 1 },
   cameraPermBox: { paddingHorizontal: 16, paddingVertical: 16, alignItems: "center", gap: 10 },
   permText: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
