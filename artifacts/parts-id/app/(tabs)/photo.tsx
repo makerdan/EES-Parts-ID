@@ -23,6 +23,7 @@ import type { ScanEntry } from "@/utils/scanHistory";
 import { useColors } from "@/hooks/useColors";
 import { useApp, type PinnedPart } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
 import BarcodeScreen from "@/components/BarcodeScreen";
@@ -65,6 +66,8 @@ export default function PhotoScreen() {
   const [adminBridgeMeasureItem, setAdminBridgeMeasureItem] = useState<InventoryItem | null>(null);
   /** Bin codes of the auto-pinned top result — controls inline "Navigate to Map" banner. */
   const [mapPromptBins, setMapPromptBins] = useState<string[]>([]);
+  /** Item opened in the full detail/edit sheet — shows the "Map it!" button. */
+  const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
 
   /**
    * Called when the worker explicitly taps "Show on Map" on a specific result
@@ -657,7 +660,7 @@ export default function PhotoScreen() {
               </View>
               <ResultCard
                 result={{ item: barcodeResult, confidence: 1.0, matchReason: "barcode scan", seriesBase: null, seriesLabel: null, variants: [] }}
-                onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+                onEditItem={isAdmin ? (item) => setDetailsItem(item) : undefined}
                 onShowOnMap={handleShowOnMap}
                 onVariantsToggle={handleVariantsToggle(barcodeResult)}
                 rank={0}
@@ -730,7 +733,7 @@ export default function PhotoScreen() {
                 <ResultCard
                   key={result.item.id}
                   result={result}
-                  onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+                  onEditItem={isAdmin ? (item) => setDetailsItem(item) : undefined}
                   onShowOnMap={handleShowOnMap}
                   onVariantsToggle={handleVariantsToggle(result.item)}
                   rank={index}
@@ -790,6 +793,13 @@ export default function PhotoScreen() {
       >
         <BarcodeScreen onClose={() => setBarcodeMoreVisible(false)} />
       </Modal>
+
+      <PartDetailsEditor
+        item={detailsItem}
+        adminToken={adminToken}
+        onClose={() => setDetailsItem(null)}
+        onShowOnMap={handleShowOnMap}
+      />
 
       <ReferenceModal />
 
