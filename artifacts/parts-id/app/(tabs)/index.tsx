@@ -108,6 +108,7 @@ const DEFAULT_FILTERS: FilterValues = {
   maxHeight: "",
   minDiameter: "",
   maxDiameter: "",
+  includeNullDimensions: false,
   // 16 required chip dimensions
   category: "",
   amperage: "",
@@ -561,7 +562,7 @@ export default function SearchScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingMeasureSearch]));
 
-  const handleChange = (key: keyof FilterValues, value: string | number) => {
+  const handleChange = (key: keyof FilterValues, value: string | number | boolean) => {
     setFilters(f => ({ ...f, [key]: value }));
     // Any manual filter edit dismisses the "similar size" suggestion banner
     setShowSimilarSizeBanner(false);

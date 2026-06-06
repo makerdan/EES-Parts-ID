@@ -57,6 +57,7 @@ export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
     ...(minDiameterNum != null && !isNaN(minDiameterNum) ? { minDiameter: minDiameterNum } : {}),
     ...(maxDiameterNum != null && !isNaN(maxDiameterNum) ? { maxDiameter: maxDiameterNum } : {}),
     ...(categorySlug ? { categorySlug } : {}),
+    includeNullDimensions: f.includeNullDimensions,
   };
 }
 

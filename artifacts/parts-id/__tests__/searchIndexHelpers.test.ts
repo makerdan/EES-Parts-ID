@@ -38,6 +38,7 @@ type FilterValues = {
   maxHeight: string;
   minDiameter: string;
   maxDiameter: string;
+  includeNullDimensions: boolean;
   category: string;
   amperage: string;
   colorChip: string;
@@ -73,6 +74,7 @@ const BLANK: FilterValues = {
   maxHeight: "",
   minDiameter: "",
   maxDiameter: "",
+  includeNullDimensions: false,
   category: "",
   amperage: "",
   colorChip: "",
