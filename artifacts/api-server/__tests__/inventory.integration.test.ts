@@ -915,6 +915,108 @@ describe("POST /api/inventory/search — includeNullDimensions toggle", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /api/inventory — binPrefix filter
+// Exercises the immutable_array_to_string() expression used by the GIN index.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GET /api/inventory — binPrefix filter", () => {
+  const BIN_PREFIX = "JEST-ITG-BIN-";
+
+  const BIN_FIXTURES = [
+    {
+      vendor: "JEST-BIN-VENDOR",
+      catalog: `${BIN_PREFIX}FIRST`,
+      description: "Bin prefix test item — match is first element",
+      binLocations: ["RACK-A01", "SHELF-Z99"],
+    },
+    {
+      vendor: "JEST-BIN-VENDOR",
+      catalog: `${BIN_PREFIX}SECOND`,
+      description: "Bin prefix test item — match is second element",
+      binLocations: ["SHELF-Z99", "RACK-A02"],
+    },
+    {
+      vendor: "JEST-BIN-VENDOR",
+      catalog: `${BIN_PREFIX}NOMATCH`,
+      description: "Bin prefix test item — no matching bin",
+      binLocations: ["SHELF-Z99", "SHELF-Z01"],
+    },
+    {
+      vendor: "JEST-BIN-VENDOR",
+      catalog: `${BIN_PREFIX}SHORT`,
+      description: "Bin prefix test item — short prefix match",
+      binLocations: ["AA-01", "SHELF-Z99"],
+    },
+  ];
+
+  beforeAll(async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { sql: sqlOp } = await import("drizzle-orm");
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} LIKE ${BIN_PREFIX + "%"}`);
+    await seedFixtures(BIN_FIXTURES);
+  }, 15_000);
+
+  afterAll(async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { sql: sqlOp } = await import("drizzle-orm");
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} LIKE ${BIN_PREFIX + "%"}`);
+  }, 15_000);
+
+  it("returns only rows whose bin_locations contain an entry starting with the prefix", async () => {
+    const res = await supertest(app)
+      .get("/api/inventory")
+      .query({ binPrefix: "RACK-A" })
+      .expect(200);
+
+    expect(Array.isArray(res.body.items)).toBe(true);
+    const catalogs: string[] = res.body.items.map(
+      (r: { catalog: string }) => r.catalog,
+    );
+
+    expect(catalogs).toContain(`${BIN_PREFIX}FIRST`);
+    expect(catalogs).toContain(`${BIN_PREFIX}SECOND`);
+    expect(catalogs).not.toContain(`${BIN_PREFIX}NOMATCH`);
+    expect(catalogs).not.toContain(`${BIN_PREFIX}SHORT`);
+  });
+
+  it("matches when the prefix-bearing entry is not the first element of bin_locations (OR branch)", async () => {
+    // SECOND has ["SHELF-Z99", "RACK-A02"] — the RACK-A match is in position [1].
+    // The OR branch in the SQL expression covers this case.
+    const res = await supertest(app)
+      .get("/api/inventory")
+      .query({ binPrefix: "RACK-A" })
+      .expect(200);
+
+    const catalogs: string[] = res.body.items.map(
+      (r: { catalog: string }) => r.catalog,
+    );
+    expect(catalogs).toContain(`${BIN_PREFIX}SECOND`);
+  });
+
+  it("returns correct results for a prefix shorter than 3 characters (no trigram acceleration, seq-scan fallback)", async () => {
+    // A 2-character prefix like "AA" is below the pg_trgm similarity threshold,
+    // so the GIN index is not used and Postgres falls back to a sequential scan.
+    // The query result must still be correct.
+    const res = await supertest(app)
+      .get("/api/inventory")
+      .query({ binPrefix: "AA" })
+      .expect(200);
+
+    const catalogs: string[] = res.body.items.map(
+      (r: { catalog: string }) => r.catalog,
+    );
+    expect(catalogs).toContain(`${BIN_PREFIX}SHORT`);
+    expect(catalogs).not.toContain(`${BIN_PREFIX}FIRST`);
+    expect(catalogs).not.toContain(`${BIN_PREFIX}SECOND`);
+    expect(catalogs).not.toContain(`${BIN_PREFIX}NOMATCH`);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Contract: POST /api/inventory/search response shape matches OpenAPI spec
 // ─────────────────────────────────────────────────────────────────────────────
 
