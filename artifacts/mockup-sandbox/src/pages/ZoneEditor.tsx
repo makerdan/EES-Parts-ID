@@ -1313,7 +1313,7 @@ export function ZoneEditor() {
           <ModeBtn active={mode === "pan"} onClick={() => { setMode("pan"); }}>
             Pan / Select
           </ModeBtn>
-          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setPendingRect(null); }}>
+          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setPendingRect(null); parityOverrideRef.current = false; setForm({ aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0 }); }}>
             Draw Zone
           </ModeBtn>
           <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setPendingRect(null); }}>
@@ -1544,37 +1544,7 @@ export function ZoneEditor() {
         <div style={styles.sidebar}>
           {/* Context-sensitive form area */}
           <SideSection style={{ flex: "0 1 auto", overflowY: "auto", minHeight: 0 }}>
-            {pendingRect ? (
-              <>
-                <div style={styles.formTitle}>New Zone</div>
-                <div style={styles.coordInfo}>
-                  {pendingRect.x.toFixed(0)},{pendingRect.y.toFixed(0)} ·{" "}
-                  {pendingRect.w.toFixed(0)}×{pendingRect.h.toFixed(0)}
-                </div>
-                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} parityOverride={parityOverrideRef} />
-                {duplicateConflict && (
-                  <div style={styles.dupWarning}>
-                    ⚠ Zone "{duplicateConflict.label}" already uses aisle{" "}
-                    {duplicateConflict.aisleId} ({duplicateConflict.sectionParity}). Saving
-                    anyway will create an overlapping mapping.
-                  </div>
-                )}
-                <Row>
-                  <Btn color="#3b82f6" onClick={handleCreate} disabled={saving || !!aisleIdError}>
-                    {saving ? "Saving…" : "Save Zone"}
-                  </Btn>
-                  <Btn
-                    color="#6b7280"
-                    onClick={() => {
-                      setPendingRect(null);
-                      setDraftRect(null);
-                    }}
-                  >
-                    Cancel
-                  </Btn>
-                </Row>
-              </>
-            ) : isMulti ? (
+            {isMulti ? (
               <>
                 <div style={styles.formTitle}>{selectedIds.size} zones selected</div>
                 <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 10, lineHeight: 1.4 }}>
@@ -1657,60 +1627,91 @@ export function ZoneEditor() {
                   </Btn>
                 </Row>
               </>
-            ) : selectedZone ? (
+            ) : (pendingRect || selectedZone || mode === "draw") ? (
               <>
-                <div style={styles.formTitle}>Zone #{selectedZone.id}</div>
-                <div style={styles.coordInfo}>
-                  {selectedZone.svgX.toFixed(1)},{selectedZone.svgY.toFixed(1)}{" "}
-                  · {selectedZone.svgWidth.toFixed(1)}×
-                  {selectedZone.svgHeight.toFixed(1)}
+                <div style={styles.formTitle}>
+                  {selectedZone && !pendingRect ? `Zone #${selectedZone.id}` : "New Zone"}
                 </div>
+                {pendingRect && (
+                  <div style={styles.coordInfo}>
+                    {pendingRect.x.toFixed(0)},{pendingRect.y.toFixed(0)} ·{" "}
+                    {pendingRect.w.toFixed(0)}×{pendingRect.h.toFixed(0)}
+                  </div>
+                )}
+                {selectedZone && !pendingRect && (
+                  <div style={styles.coordInfo}>
+                    {selectedZone.svgX.toFixed(1)},{selectedZone.svgY.toFixed(1)}{" "}
+                    · {selectedZone.svgWidth.toFixed(1)}×
+                    {selectedZone.svgHeight.toFixed(1)}
+                  </div>
+                )}
                 <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} parityOverride={parityOverrideRef} />
-                {duplicateConflict && (
+                {duplicateConflict && (pendingRect || selectedZone) && (
                   <div style={styles.dupWarning}>
                     ⚠ Zone "{duplicateConflict.label}" already uses aisle{" "}
                     {duplicateConflict.aisleId} ({duplicateConflict.sectionParity}). Saving
                     anyway will create an overlapping mapping.
                   </div>
                 )}
-                <Row style={{ flexWrap: "wrap" }}>
-                  <Btn
-                    color="#0070ff"
-                    onClick={handleDuplicate}
-                    disabled={saving}
-                  >
-                    Duplicate
-                  </Btn>
-                  <Btn
-                    color="#7c3aed"
-                    onClick={copyCoords}
-                  >
-                    Copy coords
-                  </Btn>
-                  <Btn
-                    color="#6b7280"
-                    onClick={() => setSelectedIds(new Set())}
-                  >
-                    Deselect
-                  </Btn>
-                  <Btn
-                    color="#dc2626"
-                    onClick={handleDelete}
-                    disabled={saving}
-                  >
-                    Delete
-                  </Btn>
-                </Row>
+                {pendingRect && (
+                  <Row>
+                    <Btn color="#3b82f6" onClick={handleCreate} disabled={saving || !!aisleIdError}>
+                      {saving ? "Saving…" : "Save Zone"}
+                    </Btn>
+                    <Btn
+                      color="#6b7280"
+                      onClick={() => {
+                        setPendingRect(null);
+                        setDraftRect(null);
+                      }}
+                    >
+                      Cancel
+                    </Btn>
+                  </Row>
+                )}
+                {selectedZone && !pendingRect && (
+                  <Row style={{ flexWrap: "wrap" }}>
+                    <Btn
+                      color="#0070ff"
+                      onClick={handleDuplicate}
+                      disabled={saving}
+                    >
+                      Duplicate
+                    </Btn>
+                    <Btn
+                      color="#7c3aed"
+                      onClick={copyCoords}
+                    >
+                      Copy coords
+                    </Btn>
+                    <Btn
+                      color="#6b7280"
+                      onClick={() => setSelectedIds(new Set())}
+                    >
+                      Deselect
+                    </Btn>
+                    <Btn
+                      color="#dc2626"
+                      onClick={handleDelete}
+                      disabled={saving}
+                    >
+                      Delete
+                    </Btn>
+                  </Row>
+                )}
+                {!pendingRect && !selectedZone && mode === "draw" && (
+                  <div style={styles.emptyHint}>
+                    Click and drag on the map to draw a new zone.
+                  </div>
+                )}
               </>
             ) : (
               <div style={styles.emptyHint}>
-                {mode === "draw"
-                  ? "Click and drag on the map to draw a new zone."
-                  : mode === "fill"
-                    ? fillLoading
-                      ? "Detecting zone bounds…"
-                      : "Click inside any enclosed white area on the floor plan to auto-detect its bounding rectangle."
-                    : "Click a zone to select it. Shift+click to multi-select. Shift+drag background for rubber-band select."}
+                {mode === "fill"
+                  ? fillLoading
+                    ? "Detecting zone bounds…"
+                    : "Click inside any enclosed white area on the floor plan to auto-detect its bounding rectangle."
+                  : "Click a zone to select it. Shift+click to multi-select. Shift+drag background for rubber-band select."}
               </div>
             )}
           </SideSection>
