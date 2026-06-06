@@ -13,6 +13,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Fuse from "fuse.js";
 import { useSearchInventory } from "@workspace/api-client-react";
@@ -47,6 +48,7 @@ import {
 } from "@/utils/searchHelpers";
 import type { QueryCache } from "@/utils/searchHelpers";
 import { useTrackScreen } from "@/utils/useTrackScreen";
+import { searchResetEvent } from "@/utils/searchResetEvent";
 
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -219,6 +221,11 @@ export default function SearchScreen() {
   // one is already in flight (e.g. user taps Refresh while a background retry
   // is running), which would race on setSyncProgress and the Fuse index.
   const isSyncingRef = useRef(false);
+  // Ref to the FlatList so the tab-press reset can scroll back to the top.
+  const flatListRef = useRef<FlatList<FlatListItem> | null>(null);
+  // Ref to the latest handleClear so the tab-press subscription (mounted once)
+  // always calls the up-to-date version without a stale closure.
+  const handleClearRef = useRef<() => void>(() => {});
   // Track latest filters in a ref so the onError closure always reads current values
   const filtersRef = useRef<FilterValues>(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -611,6 +618,19 @@ export default function SearchScreen() {
     setPinnedParts([]);
   };
 
+  // Keep handleClearRef pointing at the latest closure so the tab-press
+  // subscription effect (mounted once) never calls a stale version.
+  useEffect(() => { handleClearRef.current = handleClear; });
+
+  // Subscribe to the search-reset event emitted by _layout.tsx when the user
+  // taps the Search tab while it is already focused.
+  useEffect(() => {
+    return searchResetEvent.subscribe(() => {
+      handleClearRef.current();
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    });
+  }, []);
+
   // Re-run the last search with each dimension bound widened by ±10%
   const handleSimilarSizeSearch = () => {
     const f = filtersRef.current;
@@ -762,11 +782,17 @@ export default function SearchScreen() {
                 </Text>
               </Pressable>
             ) : cachedCount > 0 ? (
-              <View style={[styles.statusBadge, { backgroundColor: colors.primary + "18" }]}>
+              <Pressable
+                onPress={() => {
+                  syncAllInventory();
+                  NetInfo.fetch().then(state => setIsOffline(!state.isConnected));
+                }}
+                style={[styles.statusBadge, { backgroundColor: colors.primary + "18" }]}
+              >
                 <Text style={[styles.statusBadgeText, { color: colors.primary }]}>
                   {`✓ Ready · ${cachedCount} items`}
                 </Text>
-              </View>
+              </Pressable>
             ) : null}
             {isOffline ? (
               <View style={[styles.offlineBadge, { backgroundColor: colors.warning + "22" }]}>
@@ -1167,6 +1193,7 @@ export default function SearchScreen() {
       ) : (
       <>
         <FlatList
+          ref={flatListRef}
           data={flatListData}
           keyExtractor={item => item.kind === "sizeUnknownHeader" ? "__size-unknown-header__" : String(item.result.item.id) + (item.kind === "sizeUnknown" ? "-unknown" : "")}
           style={{ flex: 1 }}
