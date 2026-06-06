@@ -668,7 +668,7 @@ export function ZoneEditor() {
           } else {
             // Redo create → re-POST; update zone ids in-place for symmetry
             const newZones = await Promise.all(entry.zones.map(async (z) => {
-              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, label: z.label, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return ((await r.json()) as { zone: Zone }).zone;
             }));
@@ -682,7 +682,7 @@ export function ZoneEditor() {
           if (!fwd) {
             // Undo delete → re-POST; update ids in-place for redo symmetry
             const newZones = await Promise.all(entry.zones.map(async (z) => {
-              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, label: z.label, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return ((await r.json()) as { zone: Zone }).zone;
             }));
@@ -2142,7 +2142,6 @@ export function ZoneForm({
             onChange({
               ...form,
               aisleId: e.target.value,
-              label: form.label || e.target.value,
             })
           }
           placeholder="e.g. 12"
