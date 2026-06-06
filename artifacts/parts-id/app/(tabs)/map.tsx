@@ -210,8 +210,14 @@ export default function MapScreen() {
   const [showZoneEditorTooltip, setShowZoneEditorTooltip] = useState(false);
   const zoneTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const zoneEditorLongPressed = useRef(false);
+  const [showCycleCountTooltip, setShowCycleCountTooltip] = useState(false);
+  const cycleCountTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cycleCountLongPressed = useRef(false);
 
-  useEffect(() => () => { if (zoneTooltipTimer.current) clearTimeout(zoneTooltipTimer.current); }, []);
+  useEffect(() => () => {
+    if (zoneTooltipTimer.current) clearTimeout(zoneTooltipTimer.current);
+    if (cycleCountTooltipTimer.current) clearTimeout(cycleCountTooltipTimer.current);
+  }, []);
   const [countedZoneIds, setCountedZoneIds] = useState<Set<number>>(new Set());
 
   React.useEffect(() => {
@@ -289,20 +295,45 @@ export default function MapScreen() {
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Warehouse Map</Text>
         <View style={styles.headerActions}>
-          <Pressable
-            onPress={() => setCycleMode((v) => !v)}
-            style={[
-              styles.iconBtn,
-              { borderColor: cycleMode ? colors.primary : colors.border },
-            ]}
-            accessibilityLabel={cycleMode ? "Hide cycle count layer" : "Show cycle count layer"}
-          >
-            <Feather
-              name="layers"
-              size={15}
-              color={cycleMode ? colors.primary : colors.mutedForeground}
-            />
-          </Pressable>
+          <View style={styles.cycleCountWrapper}>
+            <Pressable
+              onPress={() => {
+                if (cycleCountLongPressed.current) {
+                  cycleCountLongPressed.current = false;
+                  return;
+                }
+                setCycleMode((v) => !v);
+              }}
+              onLongPress={() => {
+                cycleCountLongPressed.current = true;
+                if (cycleCountTooltipTimer.current) clearTimeout(cycleCountTooltipTimer.current);
+                setShowCycleCountTooltip(true);
+                cycleCountTooltipTimer.current = setTimeout(() => setShowCycleCountTooltip(false), 1500);
+              }}
+              onHoverIn={() => setShowCycleCountTooltip(true)}
+              onHoverOut={() => setShowCycleCountTooltip(false)}
+              delayLongPress={400}
+              style={[
+                styles.iconBtn,
+                { borderColor: cycleMode ? colors.primary : colors.border },
+              ]}
+              accessibilityLabel={cycleMode ? "Hide cycle count layer" : "Show cycle count layer"}
+              accessibilityHint="Long-press to see label"
+            >
+              <Feather
+                name="layers"
+                size={15}
+                color={cycleMode ? colors.primary : colors.mutedForeground}
+              />
+            </Pressable>
+            {showCycleCountTooltip && (
+              <View style={[styles.zoneEditorTooltip, { backgroundColor: colors.foreground }]}>
+                <Text style={[styles.zoneEditorTooltipText, { color: colors.background }]}>
+                  Cycle Count
+                </Text>
+              </View>
+            )}
+          </View>
           {/* Zone Editor: only shown to authenticated admins (isAdmin === true). Audit: no other entry point exists — the button below is the sole access path. */}
           {isAdmin && (
             <View style={styles.zoneEditorWrapper}>
@@ -451,6 +482,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  cycleCountWrapper: {
+    position: "relative",
   },
   zoneEditorWrapper: {
     position: "relative",
