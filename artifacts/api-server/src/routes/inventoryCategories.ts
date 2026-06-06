@@ -23,11 +23,43 @@ function buildPattern(keywords: string[]): string | null {
 // This is equivalent to one COUNT(*) FILTER (WHERE chip ~* pat) per item type
 // but avoids evaluating 132 separate regex patterns inside PostgreSQL for every
 // of the 7 000+ rows (which times out at ~14 s).
-router.get("/categories", async (_req, res) => {
+//
+// Optional dimension query params (all in mm):
+//   minWidth, maxWidth, minHeight, maxHeight, minDiameter, maxDiameter
+// When any are present the SQL WHERE clause is narrowed so counts reflect
+// only items that match the size filter.
+router.get("/categories", async (req, res) => {
   try {
-    // ── Step 1: fetch all chip texts in one SQL query ─────────────────────────
+    // ── Parse optional dimension filter params ────────────────────────────────
+    function parseDim(v: unknown): number | null {
+      const n = parseFloat(v as string);
+      return v != null && v !== "" && !isNaN(n) ? n : null;
+    }
+    const minWidth    = parseDim(req.query["minWidth"]);
+    const maxWidth    = parseDim(req.query["maxWidth"]);
+    const minHeight   = parseDim(req.query["minHeight"]);
+    const maxHeight   = parseDim(req.query["maxHeight"]);
+    const minDiameter = parseDim(req.query["minDiameter"]);
+    const maxDiameter = parseDim(req.query["maxDiameter"]);
+
+    // Build WHERE conditions using the same expression pattern as the indexed
+    // columns so Postgres can use expression indexes.
+    const dimClauses: ReturnType<typeof sql>[] = [];
+    if (minWidth    !== null) dimClauses.push(sql`(dimensions->>'width')::numeric    >= ${minWidth}`);
+    if (maxWidth    !== null) dimClauses.push(sql`(dimensions->>'width')::numeric    <= ${maxWidth}`);
+    if (minHeight   !== null) dimClauses.push(sql`(dimensions->>'height')::numeric   >= ${minHeight}`);
+    if (maxHeight   !== null) dimClauses.push(sql`(dimensions->>'height')::numeric   <= ${maxHeight}`);
+    if (minDiameter !== null) dimClauses.push(sql`(dimensions->>'diameter')::numeric >= ${minDiameter}`);
+    if (maxDiameter !== null) dimClauses.push(sql`(dimensions->>'diameter')::numeric <= ${maxDiameter}`);
+
+    // Combine clauses with AND; empty when no dim filter is active.
+    const whereFragment = dimClauses.length > 0
+      ? sql`WHERE ${dimClauses.reduce((acc, clause) => sql`${acc} AND ${clause}`)}`
+      : sql``;
+
+    // ── Step 1: fetch chip texts (filtered by dimensions when active) ─────────
     const raw = await db.execute(
-      sql`SELECT inventory_chip_text(vendor, catalog, description, ai_keywords) AS chip FROM inventory`
+      sql`SELECT inventory_chip_text(vendor, catalog, description, ai_keywords) AS chip FROM inventory ${whereFragment}`
     );
     const chips = (raw.rows as { chip: string | null }[]).map(r => r.chip ?? "");
 

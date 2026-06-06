@@ -115,11 +115,45 @@ export function BrowseByCategory({
     onDimFilterChange("maxDiameter", "");
   };
 
+  // Debounce dim filters so we don't fire a new request on every keystroke.
+  // We stringify the active values into a single key; when it stabilises after
+  // 400 ms of inactivity we trigger a fresh fetch.
+  const dimKey = [
+    dimFilters.minWidth, dimFilters.maxWidth,
+    dimFilters.minHeight, dimFilters.maxHeight,
+    dimFilters.minDiameter, dimFilters.maxDiameter,
+  ].join("|");
+
+  const [debouncedDimKey, setDebouncedDimKey] = useState(dimKey);
+  const dimFiltersRef = useRef(dimFilters);
+  dimFiltersRef.current = dimFilters;
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedDimKey(dimKey), 400);
+    return () => clearTimeout(timer);
+  }, [dimKey]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`${API_BASE}/inventory/categories`)
+
+    // Build URL — append any active dimension filters as query params so the
+    // server can narrow counts to items that match the current size filter.
+    const params = new URLSearchParams();
+    const f = dimFiltersRef.current;
+    if (f.minWidth.trim())    params.set("minWidth",    f.minWidth.trim());
+    if (f.maxWidth.trim())    params.set("maxWidth",    f.maxWidth.trim());
+    if (f.minHeight.trim())   params.set("minHeight",   f.minHeight.trim());
+    if (f.maxHeight.trim())   params.set("maxHeight",   f.maxHeight.trim());
+    if (f.minDiameter.trim()) params.set("minDiameter", f.minDiameter.trim());
+    if (f.maxDiameter.trim()) params.set("maxDiameter", f.maxDiameter.trim());
+    const qs = params.toString();
+    const url = qs
+      ? `${API_BASE}/inventory/categories?${qs}`
+      : `${API_BASE}/inventory/categories`;
+
+    fetch(url)
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json() as Promise<CategoriesResponse>;
@@ -127,7 +161,8 @@ export function BrowseByCategory({
       .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
       .catch(e => { if (!cancelled) { setError(String(e)); setLoading(false); } });
     return () => { cancelled = true; };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedDimKey]);
 
   function handleBack() {
     if (level === "itemTypes") {
