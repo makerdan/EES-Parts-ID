@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Image,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -38,6 +39,7 @@ export default function PhotoScreen() {
   useTrackScreen("Photo ID");
   const colors = useColors();
   const { textFontScale, isAdmin, adminToken, setPinnedParts, setPendingMeasureSearch, showToast } = useApp();
+  const [measureVisible, setMeasureVisible] = useState(false);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");
@@ -454,13 +456,15 @@ export default function PhotoScreen() {
                   <MaterialCommunityIcons name="barcode-scan" size={24} color={colors.foreground} />
                   <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Scan Barcode</Text>
                 </Pressable>
-                <Pressable
-                  onPress={() => { setPinnedParts([]); setMeasureSearchVisible(true); }}
-                  style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
-                >
-                  <MaterialCommunityIcons name="ruler" size={24} color={colors.foreground} />
-                  <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Measure</Text>
-                </Pressable>
+                {isAdmin && adminToken && Platform.OS === "ios" ? (
+                  <Pressable
+                    onPress={() => { setPinnedParts([]); setMeasureVisible(true); }}
+                    style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
+                  >
+                    <Feather name="maximize" size={24} color={colors.foreground} />
+                    <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Measure</Text>
+                  </Pressable>
+                ) : null}
               </View>
             )}
 
@@ -788,27 +792,22 @@ export default function PhotoScreen() {
 
       <ReferenceModal />
 
-      {/* Measure-to-Search modal — accessible to all users */}
-      <MeasurePartScreen
-        visible={measureSearchVisible}
-        onClose={() => setMeasureSearchVisible(false)}
-        onConfirm={handleMeasureSearchConfirm}
-        adminToken={adminToken ?? ""}
-      />
-
-      {/* Admin bridge: MeasurePartScreen in catalog-entry mode.
-          Opens when admin taps "Measure Now" on the inline bridge card.
-          Saving navigates to map; closing skips measurement and stays. */}
       {isAdmin && adminToken ? (
         <MeasurePartScreen
-          visible={adminBridgeMeasureItem !== null}
-          onClose={() => setAdminBridgeMeasureItem(null)}
-          onConfirm={handleAdminBridgeConfirm}
+          visible={measureVisible}
+          onClose={() => setMeasureVisible(false)}
+          onConfirm={(dims: PartDimensions) => {
+            const parts: string[] = [];
+            if (dims.length != null) parts.push(`${Math.round(dims.length)}mm`);
+            if (dims.width != null) parts.push(`${Math.round(dims.width)}mm`);
+            if (dims.height != null) parts.push(`${Math.round(dims.height)}mm`);
+            if (dims.diameter != null) parts.push(`${Math.round(dims.diameter)}mm`);
+            if (parts.length > 0) setPendingMeasureSearch(parts.join(" "));
+            setMeasureVisible(false);
+            router.navigate("/");
+          }}
           adminToken={adminToken}
         />
-      ) : null}
-
-
     </SafeAreaView>
   );
 }
