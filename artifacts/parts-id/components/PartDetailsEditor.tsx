@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import type { InventoryItem } from "@workspace/api-client-react";
+import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
 import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
@@ -353,6 +353,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
       });
     }
 
+    let capturedImageUrl: string | null | undefined = undefined;
+
     if (newPhotoData) {
       ops.push({
         field: "photo",
@@ -366,6 +368,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
             const data = await res.json().catch(() => ({})) as { error?: string };
             throw new Error(data.error ?? `HTTP ${res.status}`);
           }
+          const data = await res.json() as { imageUrl?: string | null };
+          capturedImageUrl = data.imageUrl ?? null;
         }),
       });
     } else if (removeCurrentPhoto && current.imageUrl) {
@@ -381,6 +385,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
             const data = await res.json().catch(() => ({})) as { error?: string };
             throw new Error(data.error ?? `HTTP ${res.status}`);
           }
+          capturedImageUrl = null;
         }),
       });
     }
@@ -411,6 +416,38 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
       setSaveStatus("error");
     } else {
       const listKeyPrefix = getListInventoryQueryKey()[0];
+
+      if (capturedImageUrl !== undefined) {
+        const patchedImageUrl = capturedImageUrl;
+        queryClient.setQueriesData<InventoryListResponse>(
+          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+          (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              items: old.items.map((i) =>
+                i.id === current.id ? { ...i, imageUrl: patchedImageUrl } : i,
+              ),
+            };
+          },
+        );
+        queryClient.setQueriesData<SearchInventoryResponse>(
+          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+          (old) => {
+            if (!old) return old;
+            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+              r.item.id === current.id
+                ? { ...r, item: { ...r.item, imageUrl: patchedImageUrl } }
+                : r;
+            return {
+              ...old,
+              results: old.results.map(patchResult),
+              sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
+            };
+          },
+        );
+      }
+
       await queryClient.invalidateQueries({
         predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
       });

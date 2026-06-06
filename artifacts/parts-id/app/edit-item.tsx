@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import type { InventoryItem } from "@workspace/api-client-react";
+import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
 import {
   useUpdateItemBins,
   useUpdateItemBarcodes,
@@ -282,6 +282,8 @@ export default function EditItemScreen() {
         );
       }
 
+        let capturedImageUrl: string | null | undefined = undefined;
+
       if (newPhotoData) {
         saves.push(
           fetch(`${API_BASE}/inventory/${current.id}/photo`, {
@@ -293,6 +295,8 @@ export default function EditItemScreen() {
               const d = await res.json().catch(() => ({})) as { error?: string };
               throw new Error(d.error ?? `HTTP ${res.status}`);
             }
+            const d = await res.json() as { imageUrl?: string | null };
+            capturedImageUrl = d.imageUrl ?? null;
           }),
         );
       } else if (removeCurrentPhoto && current.imageUrl) {
@@ -306,6 +310,7 @@ export default function EditItemScreen() {
               const d = await res.json().catch(() => ({})) as { error?: string };
               throw new Error(d.error ?? `HTTP ${res.status}`);
             }
+            capturedImageUrl = null;
           }),
         );
       }
@@ -313,6 +318,38 @@ export default function EditItemScreen() {
       if (saves.length > 0) {
         await Promise.all(saves);
         const listKeyPrefix = getListInventoryQueryKey()[0];
+
+        if (capturedImageUrl !== undefined) {
+          const patchedImageUrl = capturedImageUrl;
+          queryClient.setQueriesData<InventoryListResponse>(
+            { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+            (old) => {
+              if (!old) return old;
+              return {
+                ...old,
+                items: old.items.map((i) =>
+                  i.id === current.id ? { ...i, imageUrl: patchedImageUrl } : i,
+                ),
+              };
+            },
+          );
+          queryClient.setQueriesData<SearchInventoryResponse>(
+            { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+            (old) => {
+              if (!old) return old;
+              const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+                r.item.id === current.id
+                  ? { ...r, item: { ...r.item, imageUrl: patchedImageUrl } }
+                  : r;
+              return {
+                ...old,
+                results: old.results.map(patchResult),
+                sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
+              };
+            },
+          );
+        }
+
         await queryClient.invalidateQueries({
           predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
         });
