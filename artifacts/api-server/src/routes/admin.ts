@@ -58,7 +58,7 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
   const auth = req.headers["authorization"] ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!token || !verifyAdminToken(token, secret)) {
-    res.status(403).json({ error: "Forbidden" });
+    res.status(401).json({ error: "Unauthorized" });
     return;
   }
   next();
