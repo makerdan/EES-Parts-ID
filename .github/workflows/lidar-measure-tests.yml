@@ -22,12 +22,30 @@ jobs:
         with:
           version: 9
 
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Expo prebuild (generates ios/)
         working-directory: artifacts/parts-id
         run: pnpm exec expo prebuild --platform ios --no-install
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            artifacts/parts-id/ios/Pods
+            ~/.cocoapods
+          key: cocoapods-${{ runner.os }}-${{ hashFiles('artifacts/parts-id/ios/Podfile.lock') }}
+          restore-keys: |
+            cocoapods-${{ runner.os }}-
 
       - name: Pod install
         working-directory: artifacts/parts-id/ios
