@@ -290,6 +290,46 @@ export function ZoneOverlayItem({
     fillOpacity: fillOpacitySV.value,
   }));
 
+  // ── Bin-code badge callout (pill above the 3D pin head) ──────────────────────
+  // Computed once; all values are in SVG viewBox coordinates so they scale
+  // naturally with pinch/zoom.  The worklet divides by scale.value to keep the
+  // badge at a constant visual size (same strategy as strokeWidth / fontSize).
+  const badgeBaseFontSize = Math.max(18, Math.min(30, zone.svgHeight / 4.5));
+  const badgeLabelLen = (binLabel ?? "").length || 8;
+  const badgeCx = zone.svgX + zone.svgWidth / 2;
+  const badgeMarkerR = Math.max(10, Math.min(30, zone.svgWidth / 6));
+  // Pin tip sits at zone vertical center; ball center is markerR*1.85 above it,
+  // so ball top = tipCy − markerR*(1.85+1) = tipCy − markerR*2.85.
+  const badgePinTipCy = zone.svgY + zone.svgHeight / 2;
+  const badgeBallTopY = badgePinTipCy - badgeMarkerR * 2.85;
+
+  const badgeRectAnimatedProps = useAnimatedProps(() => {
+    "worklet";
+    const fs = badgeBaseFontSize / scale.value;
+    const bw = badgeLabelLen * fs * 0.64 + fs * 1.1;
+    const bh = fs * 1.6;
+    const gap = fs * 0.4;
+    return {
+      width: bw,
+      height: bh,
+      x: badgeCx - bw / 2,
+      y: badgeBallTopY - bh - gap,
+      rx: bh / 2,
+      ry: bh / 2,
+    };
+  });
+
+  const badgeTextAnimatedProps = useAnimatedProps(() => {
+    "worklet";
+    const fs = badgeBaseFontSize / scale.value;
+    const bh = fs * 1.6;
+    const gap = fs * 0.4;
+    return {
+      fontSize: fs,
+      y: badgeBallTopY - bh / 2 - gap,
+    };
+  });
+
   if (cycleMode) {
     const fillColor = isCounted ? "#22c55ecc" : colors.primary + "18";
     const strokeColor = isCounted ? "#16a34a" : colors.primary + "50";
@@ -398,18 +438,24 @@ export function ZoneOverlayItem({
           />
         );
       })() : null}
-      {binLabel ? (
-        <SvgText
-          x={zone.svgX + zone.svgWidth / 2}
-          y={zone.svgY + zone.svgHeight * 0.72}
-          fontSize={Math.max(14, Math.min(22, zone.svgHeight / 5))}
-          textAnchor="middle"
-          alignmentBaseline="middle"
-          fill={isPinned ? "#b45309" : "#6d28d9"}
-          fontFamily="monospace"
-        >
-          {binLabel}
-        </SvgText>
+      {binLabel && (isPinned || isVariantPinned) ? (
+        <G>
+          <AnimatedRect
+            fill={isPinned ? "#f59e0b" : "#8b5cf6"}
+            animatedProps={badgeRectAnimatedProps}
+          />
+          <AnimatedSvgText
+            x={badgeCx}
+            textAnchor="middle"
+            alignmentBaseline="middle"
+            fill="#fff"
+            fontFamily="monospace"
+            fontWeight="bold"
+            animatedProps={badgeTextAnimatedProps}
+          >
+            {binLabel}
+          </AnimatedSvgText>
+        </G>
       ) : null}
       <AnimatedSvgText
         x={zone.svgX + zone.svgWidth / 2}
