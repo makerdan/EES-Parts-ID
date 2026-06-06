@@ -12,15 +12,26 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useColors } from "@/hooks/useColors";
-
 export type ErrorFallbackProps = {
   error: Error;
   resetError: () => void;
 };
 
+// Safe fallback colours — no context dependency so this renders even when
+// AppProvider is not an ancestor (e.g. ErrorBoundary wraps AppProvider).
+const FB = {
+  background: "#ffffff",
+  card: "#f4f4f5",
+  foreground: "#09090b",
+  mutedForeground: "#71717a",
+  primary: "#f59e0b",
+  primaryForeground: "#000000",
+  overlay: "rgba(0,0,0,0.5)",
+  border: "#e4e4e7",
+};
+
 export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
-  const colors = useColors();
+  const colors = FB;
   const insets = useSafeAreaInsets();
 
   const [isModalVisible, setIsModalVisible] = useState(false);
