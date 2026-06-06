@@ -29,6 +29,7 @@ import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
+import { swallowOrientationNotAvailable } from "@/utils/orientationLock";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const CYCLE_COUNTED_KEY = "CYCLE_COUNTED_IDS";
@@ -70,15 +71,7 @@ export default function MapScreen() {
       // Defer orientation unlock past the tab-switch animation so it does not
       // block the JS thread during the transition and cause a visible freeze.
       const orientTimer = setTimeout(() => {
-        void ScreenOrientation.unlockAsync().catch((err: unknown) => {
-          if (
-            err instanceof Error &&
-            err.message.includes("not available")
-          ) {
-            return;
-          }
-          throw err;
-        });
+        void ScreenOrientation.unlockAsync().catch(swallowOrientationNotAvailable);
       }, 300);
 
       const focus = pendingMapFocusRef.current;
@@ -95,15 +88,7 @@ export default function MapScreen() {
         clearTimeout(orientTimer);
         void ScreenOrientation.lockAsync(
           ScreenOrientation.OrientationLock.PORTRAIT_UP,
-        ).catch((err: unknown) => {
-          if (
-            err instanceof Error &&
-            err.message.includes("not available")
-          ) {
-            return;
-          }
-          throw err;
-        });
+        ).catch(swallowOrientationNotAvailable);
       };
     }, [refetchZones, setPendingMapFocus]),
   );
