@@ -16,6 +16,14 @@
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+/** Tightly-cropped bounding box of the actual floor-plan drawing. */
+export interface SvgContentViewBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface SvgData {
   /** Full fetched SVG text (web only; kept for reference). */
   xml: string;
@@ -27,6 +35,13 @@ export interface SvgData {
   innerXml: string;
   /** Resolved local-file URI passed to <SvgUri> on native. */
   uri: string;
+  /**
+   * Parsed viewBox of the actual warehouse drawing within the SVG coordinate
+   * space.  Cached here so the initial viewport can be computed synchronously
+   * on repeat cold-starts without re-parsing the XML string.
+   * Absent when the SVG has not been parsed yet (e.g. empty fallback entry).
+   */
+  contentViewBox?: SvgContentViewBox;
 }
 
 /** AsyncStorage key for the persisted floor-plan entry. Exported for tests. */
@@ -60,6 +75,7 @@ export function initPersistRead(): Promise<void> {
           xml: string;
           innerXml: string;
           uri: string;
+          contentViewBox?: SvgContentViewBox;
         };
         // Reject malformed entries — all four string fields are required.
         if (
@@ -70,8 +86,21 @@ export function initPersistRead(): Promise<void> {
         ) {
           return;
         }
+        // Validate contentViewBox if present — must be a numeric quad.
+        let contentViewBox: SvgContentViewBox | undefined;
+        if (stored.contentViewBox && typeof stored.contentViewBox === "object") {
+          const { x, y, w, h } = stored.contentViewBox;
+          if (
+            typeof x === "number" && isFinite(x) &&
+            typeof y === "number" && isFinite(y) &&
+            typeof w === "number" && isFinite(w) && w > 0 &&
+            typeof h === "number" && isFinite(h) && h > 0
+          ) {
+            contentViewBox = { x, y, w, h };
+          }
+        }
         _cachedHash = stored.hash;
-        _cache = { xml: stored.xml, innerXml: stored.innerXml, uri: stored.uri };
+        _cache = { xml: stored.xml, innerXml: stored.innerXml, uri: stored.uri, contentViewBox };
       } catch {
         // Corrupted JSON — silently discard; will fall back to network load.
       }

@@ -50,6 +50,7 @@ import {
   initPersistRead,
   setCached,
   setFallbackEmpty,
+  type SvgContentViewBox,
   type SvgData,
 } from "@/utils/floorPlanCache";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -86,6 +87,64 @@ const IOS_MAX_TEXTURE_PX = 8192;
 function clamp(val: number, min: number, max: number) {
   "worklet";
   return val < min ? min : val > max ? max : val;
+}
+
+// Re-export SvgContentViewBox as ContentViewBox for internal use in this module.
+type ContentViewBox = SvgContentViewBox;
+
+const FIT_PADDING = 16;
+
+/**
+ * Parse the `viewBox="x y w h"` attribute from an SVG XML string.
+ * Returns null when the attribute is absent or malformed.
+ */
+function parseContentViewBox(xml: string): ContentViewBox | null {
+  const match = xml.match(/viewBox="([^"]+)"/);
+  if (!match) return null;
+  const parts = match[1].trim().split(/[\s,]+/).map(Number);
+  if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return null;
+  return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+}
+
+/**
+ * Compute a "fit to content" viewport that centres the content rect inside the
+ * container using a meet-style scale with FIT_PADDING on every side.
+ *
+ * The SVG render area is svgRenderW × svgRenderH (= containerW × containerW/aspect)
+ * and is centred in the container.  The Animated.View transform is
+ *   [translateX, translateY, scale]
+ * where scale pivots around the view centre, then the translation shifts it.
+ * So the content centre in screen space = containerCentre + (tx, ty) + (dx, dy)*s
+ * where dx/dy is the content-centre offset from the SVG render-area centre.
+ * Setting that to zero gives tx = -dx*s, ty = -dy*s.
+ */
+function fitContentViewport(
+  contentVB: ContentViewBox,
+  containerW: number,
+  containerH: number,
+  svgVBW: number,
+  svgVBH: number,
+): { scale: number; tx: number; ty: number } {
+  const svgRenderW = containerW;
+  const svgRenderH = containerW / (svgVBW / svgVBH);
+  const pixelW = (contentVB.w / svgVBW) * svgRenderW;
+  const pixelH = (contentVB.h / svgVBH) * svgRenderH;
+  const availW = containerW - FIT_PADDING * 2;
+  const availH = containerH - FIT_PADDING * 2;
+  const rawScale = Math.min(availW / pixelW, availH / pixelH);
+  const fittedScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, rawScale));
+  const contentCenterX = ((contentVB.x + contentVB.w / 2) / svgVBW) * svgRenderW;
+  const contentCenterY = ((contentVB.y + contentVB.h / 2) / svgVBH) * svgRenderH;
+  const dx = contentCenterX - svgRenderW / 2;
+  const dy = contentCenterY - svgRenderH / 2;
+  // Do NOT clamp to pan bounds here.  The centering translation is geometrically
+  // correct: it moves exactly the content-centre to the container-centre.
+  // Pan bounds (maxX/maxY) are derived from the full SVG render area, which is
+  // often larger than the container in X but smaller in Y (letterboxed portrait).
+  // Clamping ty to maxY=0 in the letterboxed case would leave the content
+  // off-centre — the opposite of what this function is meant to achieve.
+  // The gesture handlers apply their own per-axis clamping during user interaction.
+  return { scale: fittedScale, tx: -dx * fittedScale, ty: -dy * fittedScale };
 }
 
 // Animated wrappers for SVG primitives — lets useAnimatedProps drive
@@ -138,6 +197,7 @@ async function _loadFloorPlanFromServer(): Promise<void> {
   if (!svgRes.ok) throw new Error("floor-plan svg fetch failed");
   const xml = await svgRes.text();
 
+  const contentViewBox = parseContentViewBox(xml) ?? undefined;
   let newData: SvgData;
   if (Platform.OS === "web") {
     // Strip the outer <svg> wrapper so the content can be embedded
@@ -145,10 +205,10 @@ async function _loadFloorPlanFromServer(): Promise<void> {
     const innerXml = xml
       .replace(/^[\s\S]*?<svg[^>]*>/, "")
       .replace(/<\/svg>\s*$/, "");
-    newData = { xml, innerXml, uri: "" };
+    newData = { xml, innerXml, uri: "", contentViewBox };
   } else {
     // On native, SvgUri can render directly from an http:// URL.
-    newData = { xml, innerXml: "", uri: `${SVG_API_BASE}/floor-plan/svg` };
+    newData = { xml, innerXml: "", uri: `${SVG_API_BASE}/floor-plan/svg`, contentViewBox };
   }
   setCached(hash, newData);
 }
@@ -175,13 +235,13 @@ async function _loadFloorPlanFromBundle(): Promise<void> {
     const innerXml = xml
       .replace(/^[\s\S]*?<svg[^>]*>/, "")
       .replace(/<\/svg>\s*$/, "");
-    newData = { xml, innerXml, uri: "" };
+    newData = { xml, innerXml, uri: "", contentViewBox: parseContentViewBox(xml) ?? undefined };
   } else {
     // Fetch the SVG text so the tile renderer can use SvgXml with per-tile
     // viewBox crops at high zoom.  This is a local-file read so it is fast.
     const res = await fetch(uri);
     const xml = res.ok ? await res.text() : "";
-    newData = { xml, innerXml: "", uri };
+    newData = { xml, innerXml: "", uri, contentViewBox: parseContentViewBox(xml) ?? undefined };
   }
   // Write to both in-memory cache and AsyncStorage so the next cold start
   // skips the network fetch.  Also updates the stored hash so subsequent
@@ -378,6 +438,27 @@ export function WarehouseMapView({
   // whether layout or the storage read wins the race.
   const pendingRestore = useRef<{ s: number; tx: number; ty: number } | null>(null);
 
+  // Parsed content viewBox from the SVG XML — the tightly cropped bounding
+  // box of the actual warehouse drawing within the full 3592×2457 coordinate
+  // space.  Initialised synchronously from the cache when data is available;
+  // the cache stores the parsed value alongside the XML so no re-parse is
+  // needed on repeat cold-starts.
+  const [contentVB, setContentVB] = useState<ContentViewBox | null>(
+    () => getCachedData()?.contentViewBox ?? null,
+  );
+  const contentVBRef = useRef<ContentViewBox | null>(contentVB);
+
+  // True when we need to apply a fit-to-content viewport as soon as both the
+  // container dimensions and the content viewBox are known.  Set when the
+  // AsyncStorage read returns null (no saved viewport).
+  const pendingFit = useRef(false);
+
+  // Indirection ref so onLayout (declared before the shared values) can call
+  // applyFitIfReady (which needs the shared values) without a forward-reference
+  // TypeScript error.  Assigned during each render before the first layout fires.
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  const applyFitIfReadyRef = useRef<() => void>(() => {});
+
   const onLayout = useCallback(
     (e: LayoutChangeEvent) => {
       const { width, height } = e.nativeEvent.layout;
@@ -415,6 +496,10 @@ export function WarehouseMapView({
           translateY.value = clampedTY;
           savedTX.value = clampedTX;
           savedTY.value = clampedTY;
+        } else {
+          // No saved viewport — try to apply the fit-to-content position now
+          // that we have real container dimensions.
+          applyFitIfReadyRef.current();
         }
         return;
       }
@@ -472,6 +557,65 @@ export function WarehouseMapView({
     }, 300);
   }, []);
 
+  // ── Fit-to-content helpers ─────────────────────────────────────────────────
+  // Declared after persistViewport so applyFit can reference it without
+  // triggering the temporal dead zone.
+
+  /**
+   * Apply the fit viewport immediately (no animation) if pendingFit is set and
+   * both the container dimensions and the parsed content viewBox are available.
+   * Called from onLayout (first call) and from the svgXml-parse effect.
+   */
+  const applyFitIfReady = useCallback(() => {
+    if (!pendingFit.current) return;
+    const vb = contentVBRef.current;
+    const w = containerWRef.current;
+    const h = containerHRef.current;
+    if (!vb || w === 0) return;
+    pendingFit.current = false;
+    const { scale: s, tx, ty } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
+    scale.value = s;
+    savedScale.value = s;
+    translateX.value = tx;
+    translateY.value = ty;
+    savedTX.value = tx;
+    savedTY.value = ty;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the indirection ref current so onLayout always calls the latest version.
+  applyFitIfReadyRef.current = applyFitIfReady;
+
+  /**
+   * Animate to the fit-to-content viewport.  Falls back to scale=1/tx=0/ty=0
+   * if the SVG viewBox has not been parsed yet.  Used by the Fit button and the
+   * double-tap-to-reset gesture.
+   */
+  const applyFit = useCallback(() => {
+    const vb = contentVBRef.current;
+    const w = containerWRef.current;
+    const h = containerHRef.current;
+    if (!vb || w === 0) {
+      scale.value = withSpring(1, { damping: 18, stiffness: 200 });
+      translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
+      translateY.value = withSpring(0, { damping: 18, stiffness: 200 });
+      savedScale.value = 1;
+      savedTX.value = 0;
+      savedTY.value = 0;
+      persistViewport(1, 0, 0);
+      return;
+    }
+    const { scale: s, tx, ty } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
+    scale.value = withSpring(s, { damping: 18, stiffness: 200 });
+    translateX.value = withSpring(tx, { damping: 18, stiffness: 200 });
+    translateY.value = withSpring(ty, { damping: 18, stiffness: 200 });
+    savedScale.value = s;
+    savedTX.value = tx;
+    savedTY.value = ty;
+    persistViewport(s, tx, ty);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistViewport]);
+
   // Flush any pending debounced write and cancel the timer on unmount so a
   // stale timeout never fires against an unmounted component.
   useEffect(() => {
@@ -493,7 +637,14 @@ export function WarehouseMapView({
   useEffect(() => {
     AsyncStorage.getItem(VIEWPORT_KEY)
       .then((raw) => {
-        if (!raw) return;
+        if (!raw) {
+          // No saved viewport — signal that a fit-to-content position should
+          // be applied as soon as both the container and the SVG viewBox are
+          // ready.  applyFitIfReady() checks both conditions.
+          pendingFit.current = true;
+          applyFitIfReadyRef.current();
+          return;
+        }
         try {
           const { s, tx, ty } = JSON.parse(raw) as { s: number; tx: number; ty: number };
           if (
@@ -692,6 +843,32 @@ export function WarehouseMapView({
     })();
   }, []);
 
+  // Parse the content viewBox from the SVG XML as soon as it is available.
+  // The parsed rect is the tightly cropped bounding box of the actual warehouse
+  // drawing within the full 3592×2457 coordinate space and is used by
+  // fitContentViewport() for correct initial positioning and Fit-button behaviour.
+  // Also back-fills the in-memory cache (contentViewBox field) so that if the
+  // cache was restored from AsyncStorage before this effect ran (e.g. the stored
+  // entry predates this field), it is populated for the rest of the session.
+  useEffect(() => {
+    if (!svgXml) return;
+    const cached = getCachedData();
+    // Use the cached contentViewBox if it was already stored alongside the XML;
+    // fall back to parsing the XML string only when the field is absent.
+    const vb = cached?.contentViewBox ?? parseContentViewBox(svgXml);
+    if (!vb) return;
+    if (cached && !cached.contentViewBox) {
+      // Back-fill the in-memory cache so future calls to getCachedData() are synchronous.
+      cached.contentViewBox = vb;
+    }
+    setContentVB(vb);
+    contentVBRef.current = vb;
+    // If the viewport restore effect already signalled that we need a fit
+    // (no saved viewport) but the viewBox wasn't ready at that point, apply it now.
+    applyFitIfReady();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svgXml]);
+
   // ── Tile XML memoisation ──────────────────────────────────────────────────
   // Produces SvgXml strings for each visible tile by replacing the viewBox
   // attribute in the cached SVG text.  Recomputes only when the visible range
@@ -805,13 +982,7 @@ export function WarehouseMapView({
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
-      scale.value = withSpring(1);
-      savedScale.value = 1;
-      translateX.value = withSpring(0);
-      translateY.value = withSpring(0);
-      savedTX.value = 0;
-      savedTY.value = 0;
-      runOnJS(persistViewport)(1, 0, 0);
+      runOnJS(applyFit)();
     });
 
   const mainGesture = Gesture.Exclusive(
@@ -855,15 +1026,9 @@ export function WarehouseMapView({
   }, [applyZoom]);
 
   const handleFitScreen = useCallback(() => {
-    scale.value = withSpring(1, { damping: 18, stiffness: 200 });
-    translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
-    translateY.value = withSpring(0, { damping: 18, stiffness: 200 });
-    savedScale.value = 1;
-    savedTX.value = 0;
-    savedTY.value = 0;
-    persistViewport(1, 0, 0);
+    applyFit();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [persistViewport]);
+  }, [applyFit]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
