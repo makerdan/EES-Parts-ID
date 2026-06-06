@@ -411,6 +411,9 @@ export function ZoneEditor() {
   // Mutex: prevents concurrent undo/redo from corrupting the stack when the
   // user holds Cmd+Z or fires repeated keypresses during an async operation.
   const undoRedoBusyRef = useRef(false);
+  // Reactive counts — mirrors the ref lengths so toolbar buttons re-render.
+  const [undoCount, setUndoCount] = useState(0);
+  const [redoCount, setRedoCount] = useState(0);
 
   useEffect(() => { tfRef.current = tf; }, [tf]);
   useEffect(() => { zonesRef.current = zones; }, [zones]);
@@ -506,6 +509,8 @@ export function ZoneEditor() {
   const pushUndo = useCallback((entry: UndoEntry) => {
     undoStackRef.current = [...undoStackRef.current.slice(-(UNDO_LIMIT - 1)), entry];
     redoStackRef.current = [];
+    setUndoCount(undoStackRef.current.length);
+    setRedoCount(0);
   }, []);
 
   // ── API helpers ─────────────────────────────────────────────────────────────
@@ -711,6 +716,8 @@ export function ZoneEditor() {
         redoStackRef.current = redoStackRef.current.slice(0, -1);
         undoStackRef.current = [...undoStackRef.current, entry];
       }
+      setUndoCount(undoStackRef.current.length);
+      setRedoCount(redoStackRef.current.length);
       await fetchZones();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -1560,6 +1567,41 @@ export function ZoneEditor() {
           <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setPendingRect(null); }}>
             ⬛ Fill
           </ModeBtn>
+          <div style={{ width: 1, background: "rgba(255,255,255,0.3)", margin: "0 2px" }} />
+          <button
+            title={undoCount > 0 ? `Undo (${undoCount})` : "Nothing to undo"}
+            disabled={undoCount === 0}
+            onClick={() => { void applyUndoRedoRef.current?.("undo"); }}
+            style={{
+              padding: "3px 8px",
+              borderRadius: 4,
+              background: "transparent",
+              color: undoCount > 0 ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.3)",
+              border: "1px solid rgba(255,255,255,0.5)",
+              cursor: undoCount > 0 ? "pointer" : "default",
+              fontSize: 14,
+              lineHeight: 1,
+            }}
+          >
+            ↩
+          </button>
+          <button
+            title={redoCount > 0 ? `Redo (${redoCount})` : "Nothing to redo"}
+            disabled={redoCount === 0}
+            onClick={() => { void applyUndoRedoRef.current?.("redo"); }}
+            style={{
+              padding: "3px 8px",
+              borderRadius: 4,
+              background: "transparent",
+              color: redoCount > 0 ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.3)",
+              border: "1px solid rgba(255,255,255,0.5)",
+              cursor: redoCount > 0 ? "pointer" : "default",
+              fontSize: 14,
+              lineHeight: 1,
+            }}
+          >
+            ↪
+          </button>
         </div>
         {mode === "fill" && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 8 }}>
