@@ -18,8 +18,13 @@ interface ResultCardProps {
   onShowOnMap?: (item: InventoryItem) => void;
   /** Admin-only: opens the measurement screen for this unmeasured item. */
   onMeasure?: (item: InventoryItem) => void;
-  /** Called when the variants section is toggled open/closed (only fires when variants exist). */
-  onVariantsToggle?: (variants: InventoryItem[], isOpen: boolean) => void;
+  /**
+   * Called when the variants section is expanded or collapsed.
+   * Only fires when the result has at least one variant.
+   * Receives the full variants array and the new expanded state so the caller
+   * can add / remove map location pins grouped by item.
+   */
+  onVariantsToggle?: (variants: InventoryItem[], expanded: boolean) => void;
   rank: number;
   fontScale?: number;
   /** When true, shows a "Size not measured" badge because no dimension data is stored for this item */
@@ -92,7 +97,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
   const hasVariants = variants && variants.length > 0;
   const hasKeywords = item.aiKeywords && item.aiKeywords.length > 0;
 
-  const handleToggle = () => {
+  const handlePress = () => {
     const next = !expanded;
     setExpanded(next);
     if (hasVariants && onVariantsToggle) {
@@ -101,7 +106,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
   };
 
   return (
-    <Pressable onPress={handleToggle}>
+    <Pressable onPress={handlePress}>
       <View
         style={[
           cardStyles.container,
