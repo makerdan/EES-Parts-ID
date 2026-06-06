@@ -9,7 +9,7 @@ type RGBA = [r: number, g: number, b: number, a: number];
 
 const WHITE: RGBA = [255, 255, 255, 255]; // lum 255 — light
 const BLACK: RGBA = [0, 0, 0, 255];       // lum 0   — dark
-const TRANSPARENT: RGBA = [0, 0, 0, 0];   // alpha < 128 — treated as light
+const TRANSPARENT: RGBA = [0, 0, 0, 0];   // alpha < 128 — treated as wall (dark)
 
 /**
  * Build a synthetic ImageData-shaped object. jsdom does not expose the
@@ -94,22 +94,25 @@ describe("floodFillBounds — pure BFS logic", () => {
   });
 
   describe("transparent pixels", () => {
-    it("treats a fully transparent pixel as light (returns non-null)", () => {
+    it("treats a fully transparent pixel as a wall (returns null)", () => {
       const img = solidImage(3, 3, TRANSPARENT);
-      expect(floodFillBounds(img, 1, 1)).not.toBeNull();
+      expect(floodFillBounds(img, 1, 1)).toBeNull();
     });
 
-    it("includes transparent pixels in the connected region bounds", () => {
-      const img = solidImage(4, 4, TRANSPARENT);
-      const result = floodFillBounds(img, 0, 0);
-      expect(result).toEqual({ x: 0, y: 0, w: 4, h: 4 });
+    it("returns null when the seed is transparent even if surrounded by white", () => {
+      // Centre pixel transparent, all others white.
+      const img = makeImageData(3, 3, (x, y) =>
+        x === 1 && y === 1 ? TRANSPARENT : WHITE,
+      );
+      expect(floodFillBounds(img, 1, 1)).toBeNull();
     });
 
-    it("mixes transparent and white pixels — both treated as light", () => {
-      // Left half transparent, right half white, no dark pixels.
-      const img = makeImageData(6, 2, (x) => (x < 3 ? TRANSPARENT : WHITE));
+    it("transparent pixels act as walls — white region does not bleed through them", () => {
+      // Left half white, right half transparent; seed on left side.
+      const img = makeImageData(6, 2, (x) => (x < 3 ? WHITE : TRANSPARENT));
       const result = floodFillBounds(img, 0, 0);
-      expect(result).toEqual({ x: 0, y: 0, w: 6, h: 2 });
+      // Only the white (left) half is reachable — transparent pixels block the fill.
+      expect(result).toEqual({ x: 0, y: 0, w: 3, h: 2 });
     });
   });
 
@@ -209,6 +212,8 @@ describe("ZoneEditor fill mode — integration", () => {
     const allWhiteData = new Uint8ClampedArray(RASTER_W * RASTER_H * 4).fill(255);
     const fakeImageData = { data: allWhiteData, width: RASTER_W, height: RASTER_H, colorSpace: "srgb" } as unknown as ImageData;
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      fillStyle: "",
+      fillRect: vi.fn(),
       drawImage: vi.fn(),
       getImageData: vi.fn().mockReturnValue(fakeImageData),
     } as unknown as CanvasRenderingContext2D);
