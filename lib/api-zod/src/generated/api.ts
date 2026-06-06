@@ -901,9 +901,10 @@ export const ListWarehouseZonesResponse = zod.object({
 /**
  * @summary Create a warehouse zone overlay (admin)
  */
+
 export const CreateWarehouseZoneBody = zod.object({
-  aisleId: zod.string(),
-  label: zod.string(),
+  aisleId: zod.string().min(1),
+  label: zod.string().min(1),
   sectionParity: zod.enum(["odd", "even", "all"]).optional(),
   isInventory: zod.boolean().optional(),
   svgX: zod.number(),
@@ -921,8 +922,8 @@ export const UpdateWarehouseZoneParams = zod.object({
 });
 
 export const UpdateWarehouseZoneBody = zod.object({
-  aisleId: zod.string().optional(),
-  label: zod.string().optional(),
+  aisleId: zod.string().min(1).optional(),
+  label: zod.string().min(1).optional(),
   sectionParity: zod.enum(["odd", "even", "all"]).optional(),
   isInventory: zod.boolean().optional(),
   svgX: zod.number().optional(),

@@ -1,9 +1,15 @@
 import { Router } from "express";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { warehouseZoneTable, inventoryTable } from "@workspace/db";
 import { devOnly } from "../middlewares/devOnly";
 import { CreateWarehouseZoneBody, UpdateWarehouseZoneBody } from "@workspace/api-zod";
+
+/** Strips leading zeros from numeric aisle ID strings ("08" → "8", "A1" → "A1"). */
+function normalizeAisleId(v: string): string {
+  const t = v.trim();
+  return /^\d+$/.test(t) ? String(parseInt(t, 10)) : t;
+}
 
 const router = Router();
 
@@ -23,40 +29,64 @@ router.get("/", async (_req, res) => {
 // GET /warehouse-zones/coverage
 // Returns the count of items with no valid bin and the set of aisle IDs found in
 // inventory bins that have no corresponding zone defined.
+//
+// Canonical aisle ID format: leading-zero-stripped numeric string (e.g. "01" → "1").
+// Zones are stored in this format; inventory bin prefixes (zero-padded "01") are
+// normalised server-side before comparison so both sides always match.
 router.get("/coverage", async (_req, res) => {
   try {
-    const [zones, items] = await Promise.all([
-      db.select({ aisleId: warehouseZoneTable.aisleId }).from(warehouseZoneTable),
-      db.select({ binLocations: inventoryTable.binLocations }).from(inventoryTable),
-    ]);
+    const result = await db.execute<{
+      unsorted_count: number;
+      uncovered_aisles: string[];
+    }>(sql`
+      WITH
+      -- Count inventory items that have no valid bin location.
+      -- A valid bin matches the 2-digit-2-digit-3-digit warehouse format.
+      unsorted AS (
+        SELECT COUNT(*)::int AS cnt
+        FROM ${inventoryTable} i
+        WHERE NOT EXISTS (
+          SELECT 1 FROM unnest(i.bin_locations) AS b
+          WHERE b ~ '^[0-9]{2}-[0-9]{2}-[0-9]{3}$'
+        )
+      ),
+      -- Distinct aisle IDs present in inventory bins, normalised by stripping
+      -- leading zeros (e.g. '01' → '1') to match the canonical zone format.
+      inv_aisles AS (
+        SELECT DISTINCT
+          CAST(CAST(split_part(b, '-', 1) AS integer) AS text) AS aisle_id
+        FROM ${inventoryTable}, unnest(bin_locations) AS t(b)
+        WHERE b ~ '^[0-9]{2}-[0-9]{2}-[0-9]{3}$'
+      ),
+      -- Zone aisle IDs, also normalised (zones are already stored stripped,
+      -- but we normalise defensively in case any padded values were inserted).
+      zone_aisles AS (
+        SELECT DISTINCT
+          CASE
+            WHEN aisle_id ~ '^[0-9]+$'
+            THEN CAST(CAST(aisle_id AS integer) AS text)
+            ELSE aisle_id
+          END AS aisle_id
+        FROM ${warehouseZoneTable}
+      )
+      SELECT
+        (SELECT cnt FROM unsorted) AS unsorted_count,
+        COALESCE(
+          ARRAY(
+            SELECT ia.aisle_id
+            FROM inv_aisles ia
+            WHERE ia.aisle_id NOT IN (SELECT aisle_id FROM zone_aisles)
+            ORDER BY ia.aisle_id::integer
+          ),
+          '{}'::text[]
+        ) AS uncovered_aisles
+    `);
 
-    const BIN_RE = /^(\d{2})-(\d{2})-(\d{3})$/;
-    let unsortedCount = 0;
-    const inventoryAisleIds = new Set<string>();
-
-    for (const item of items) {
-      const bins = item.binLocations ?? [];
-      let hasValid = false;
-      for (const raw of bins) {
-        const m = BIN_RE.exec(raw.trim());
-        if (m) {
-          hasValid = true;
-          // m[1] is already 2-digit zero-padded from the regex
-          inventoryAisleIds.add(m[1]!);
-        }
-      }
-      if (!hasValid) unsortedCount++;
-    }
-
-    // Normalise zone aisle IDs to 2-digit zero-padded for comparison
-    const zoneAisleIds = new Set(
-      zones.map((z) => z.aisleId.trim().padStart(2, "0")),
-    );
-    const uncoveredAisles = [...inventoryAisleIds]
-      .filter((a) => !zoneAisleIds.has(a))
-      .sort();
-
-    res.json({ unsortedCount, uncoveredAisles });
+    const row = result.rows[0];
+    res.json({
+      unsortedCount: row?.unsorted_count ?? 0,
+      uncoveredAisles: row?.uncovered_aisles ?? [],
+    });
   } catch {
     res.status(500).json({ error: "Failed to compute coverage" });
   }
@@ -71,7 +101,7 @@ router.post("/", devOnly, async (req, res) => {
   }
   try {
     const {
-      aisleId,
+      aisleId: rawAisleId,
       label,
       sectionParity,
       isInventory,
@@ -81,6 +111,7 @@ router.post("/", devOnly, async (req, res) => {
       svgHeight,
       sortOrder,
     } = parsed.data;
+    const aisleId = normalizeAisleId(rawAisleId);
     const [zone] = await db
       .insert(warehouseZoneTable)
       .values({
@@ -115,6 +146,9 @@ router.patch("/:id", devOnly, async (req, res) => {
   }
   try {
     const updates = parsed.data;
+    if (updates.aisleId !== undefined) {
+      updates.aisleId = normalizeAisleId(updates.aisleId);
+    }
     const [zone] = await db
       .update(warehouseZoneTable)
       .set({ ...updates, updatedAt: new Date() })

@@ -1072,8 +1072,10 @@ components:
       properties:
         aisleId:
           type: string
+          minLength: 1
         label:
           type: string
+          minLength: 1
         sectionParity:
           type: string
           enum: [odd, even, all]
@@ -1102,8 +1104,10 @@ components:
       properties:
         aisleId:
           type: string
+          minLength: 1
         label:
           type: string
+          minLength: 1
         sectionParity:
           type: string
           enum: [odd, even, all]

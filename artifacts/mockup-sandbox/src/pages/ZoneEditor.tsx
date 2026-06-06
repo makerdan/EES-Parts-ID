@@ -362,6 +362,8 @@ export function ZoneEditor() {
   const svgDimsRef = useRef(svgDims);
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
+  // Web Worker for BFS flood-fill — keeps the UI thread free during large fills.
+  const fillWorkerRef = useRef<Worker | null>(null);
 
   useEffect(() => { tfRef.current = tf; }, [tf]);
   useEffect(() => { zonesRef.current = zones; }, [zones]);
@@ -375,6 +377,18 @@ export function ZoneEditor() {
     fillSensitivityRef.current = fillSensitivity;
     try { localStorage.setItem("zoneEditorFillSensitivity", fillSensitivity); } catch {}
   }, [fillSensitivity]);
+
+  // Instantiate the fill Web Worker once on mount; terminate it on unmount.
+  // Worker is not available in test environments (jsdom) so guard accordingly.
+  useEffect(() => {
+    if (typeof Worker === "undefined") return;
+    const worker = new Worker(
+      new URL("../workers/fillWorker.ts", import.meta.url),
+      { type: "module" },
+    );
+    fillWorkerRef.current = worker;
+    return () => { worker.terminate(); fillWorkerRef.current = null; };
+  }, []);
 
   // Fetch the latest uploaded floor plan. Tries the local API first; if it
   // returns 404 (nothing uploaded in this env), falls back to the production
@@ -485,6 +499,7 @@ export function ZoneEditor() {
 
   // ── Keyboard delete shortcut ─────────────────────────────────────────────
   // Delete or Backspace removes all selected zones, unless focus is in a text field.
+  // A confirmation dialog (same as the sidebar Delete button) is shown first.
   useEffect(() => {
     const onKeyDown = async (e: KeyboardEvent) => {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
@@ -497,6 +512,14 @@ export function ZoneEditor() {
       const ids = [...selectedIdsRef.current];
       if (ids.length === 0) return;
       e.preventDefault();
+      const ok = await showConfirm(
+        ids.length === 1 ? "Delete zone" : `Delete ${ids.length} zones`,
+        ids.length === 1
+          ? "Delete this zone? This cannot be undone."
+          : `Delete ${ids.length} zones? This cannot be undone.`,
+        true,
+      );
+      if (!ok) return;
       setSaving(true);
       try {
         await Promise.all(
@@ -545,14 +568,14 @@ export function ZoneEditor() {
     if (!pendingRect) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
     if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 12)"); return; }
-    const label = form.label.trim() || form.aisleId.trim();
+    const label = form.label.trim() || normalizeAisleId(form.aisleId);
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE}/warehouse-zones`, {
         method: "POST",
         headers: headers(),
         body: JSON.stringify({
-          aisleId: form.aisleId.trim(),
+          aisleId: normalizeAisleId(form.aisleId),
           label,
           sectionParity: form.sectionParity,
           isInventory: form.isInventory,
@@ -588,8 +611,8 @@ export function ZoneEditor() {
     setSaving(true);
     try {
       await patchZone(selectedId, {
-        aisleId: form.aisleId.trim(),
-        label: form.label.trim() || form.aisleId.trim(),
+        aisleId: normalizeAisleId(form.aisleId),
+        label: form.label.trim() || normalizeAisleId(form.aisleId),
         sectionParity: form.sectionParity,
         isInventory: form.isInventory,
         sortOrder: form.sortOrder,
@@ -631,15 +654,15 @@ export function ZoneEditor() {
         method: "POST",
         headers: headers(),
         body: JSON.stringify({
-          aisleId: form.aisleId.trim(),
-          label: form.label.trim() || form.aisleId.trim(),
+          aisleId: normalizeAisleId(form.aisleId),
+          label: form.label.trim() || normalizeAisleId(form.aisleId),
           sectionParity: form.sectionParity,
           isInventory: form.isInventory,
           svgX: selectedZone.svgX + selectedZone.svgWidth + 2,
           svgY: selectedZone.svgY,
           svgWidth: selectedZone.svgWidth,
           svgHeight: selectedZone.svgHeight,
-          sortOrder: 0,
+          sortOrder: form.sortOrder,
         }),
       });
       if (!res.ok) {
@@ -803,8 +826,8 @@ export function ZoneEditor() {
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
         await patchZone(selectedId, {
-          aisleId: form.aisleId.trim(),
-          label: form.label.trim() || form.aisleId.trim(),
+          aisleId: normalizeAisleId(form.aisleId),
+          label: form.label.trim() || normalizeAisleId(form.aisleId),
           sectionParity: form.sectionParity,
           isInventory: form.isInventory,
           sortOrder: form.sortOrder,
@@ -837,24 +860,58 @@ export function ZoneEditor() {
     if (fillLoadingRef.current) return;
     setFillLoading(true);
     try {
-      const raster = await rasterizeSvg(svgInnerRef.current, svgDimsRef.current);
+      const worker = fillWorkerRef.current;
       const pt = getSvgPt(clientX, clientY);
-
-      // Map SVG user-unit coordinates to raster pixel coordinates.
       const dims = svgDimsRef.current;
-      const px = Math.round((pt.x / dims.w) * raster.w);
-      const py = Math.round((pt.y / dims.h) * raster.h);
+
+      // Compute raster pixel coordinates from SVG user-unit click position.
+      // The worker resolves these using a 1024-px-wide raster internally.
+      const maxPx = 1024;
+      const aspect = dims.h / dims.w;
+      const cw = Math.min(Math.round(dims.w), maxPx);
+      const ch = Math.max(1, Math.round(cw * aspect));
+      const px = Math.round((pt.x / dims.w) * cw);
+      const py = Math.round((pt.y / dims.h) * ch);
 
       const darkThreshold = FILL_SENSITIVITY_THRESHOLD[fillSensitivityRef.current];
-      const bounds = floodFillBounds(raster.imageData, px, py, darkThreshold);
+
+      // Delegate the heavy BFS + rasterisation to the Web Worker so the UI
+      // stays responsive during large floor plan fills.
+      let bounds: { x: number; y: number; w: number; h: number } | null = null;
+      if (worker) {
+        bounds = await new Promise<{ x: number; y: number; w: number; h: number } | null>(
+          (resolve, reject) => {
+            const onMessage = (ev: MessageEvent) => {
+              worker.removeEventListener("message", onMessage);
+              worker.removeEventListener("error", onError);
+              const data = ev.data as { ok: boolean; bounds?: typeof bounds; error?: string };
+              if (data.ok) resolve(data.bounds ?? null);
+              else reject(new Error(data.error ?? "Fill worker error"));
+            };
+            const onError = (ev: ErrorEvent) => {
+              worker.removeEventListener("message", onMessage);
+              worker.removeEventListener("error", onError);
+              reject(new Error(ev.message ?? "Fill worker error"));
+            };
+            worker.addEventListener("message", onMessage);
+            worker.addEventListener("error", onError);
+            worker.postMessage({ svgInner: svgInnerRef.current, dims, px, py, darkThreshold });
+          },
+        );
+      } else {
+        // Fallback to main-thread implementation when the worker isn't ready.
+        const raster = await rasterizeSvg(svgInnerRef.current, dims);
+        bounds = floodFillBounds(raster.imageData, px, py, darkThreshold);
+      }
+
       if (!bounds) {
         toast.error("Click inside a light area, not on a wall or line.");
         return;
       }
 
       // Convert pixel bounding box back to SVG user units.
-      const scaleX = dims.w / raster.w;
-      const scaleY = dims.h / raster.h;
+      const scaleX = dims.w / cw;
+      const scaleY = dims.h / ch;
       const rect = {
         x: bounds.x * scaleX,
         y: bounds.y * scaleY,
@@ -1014,11 +1071,23 @@ export function ZoneEditor() {
           );
           if (hits.length > 0) {
             if (state.shift) {
-              setSelectedIds((prev) => new Set([...prev, ...hits.map((z) => z.id)]));
+              // Shift+rubber-band toggles zones in/out of selection, matching
+              // Shift+click behavior. A pending (not-yet-saved) zone is also
+              // preserved so the user doesn't lose their drawn rect.
+              setSelectedIds((prev) => {
+                const next = new Set(prev);
+                for (const z of hits) {
+                  if (next.has(z.id)) next.delete(z.id);
+                  else next.add(z.id);
+                }
+                return next;
+              });
+              // Don't discard a pending zone when Shift+rubber-banding — the
+              // user is adding to a selection, not starting fresh.
             } else {
               setSelectedIds(new Set(hits.map((z) => z.id)));
+              setPendingRect(null);
             }
-            setPendingRect(null);
           }
         }
         return;
@@ -1049,8 +1118,6 @@ export function ZoneEditor() {
       if (state.t === "multiMove") {
         const origins = multiDragOriginsRef.current;
         // Only save if there was actual movement
-        const dx = e.clientX;
-        void dx; // used via getSvgPt below
         const currentDelta = (() => {
           if (!svgRef.current) return null;
           const rect = svgRef.current.getBoundingClientRect();
@@ -1059,22 +1126,25 @@ export function ZoneEditor() {
         })();
         setMultiDragDelta(null);
         if (!currentDelta || (Math.abs(currentDelta.x) < 0.5 && Math.abs(currentDelta.y) < 0.5)) return;
-        try {
-          await Promise.all(
-            [...origins.entries()].map(([id, orig]) =>
-              patchZone(id, { svgX: orig.x + currentDelta.x, svgY: orig.y + currentDelta.y }),
-            ),
-          );
+        // Use allSettled so a partial failure is surfaced rather than silently lost.
+        const results = await Promise.allSettled(
+          [...origins.entries()].map(([id, orig]) =>
+            patchZone(id, { svgX: orig.x + currentDelta.x, svgY: orig.y + currentDelta.y }),
+          ),
+        );
+        const failCount = results.filter((r) => r.status === "rejected").length;
+        const okCount = results.length - failCount;
+        if (failCount === 0) {
           toast.success(`Moved ${origins.size} zone${origins.size !== 1 ? "s" : ""}`);
-          await fetch(`${API_BASE}/warehouse-zones`)
-            .then((r) => r.json())
-            .then((d) => { setZones(d.zones ?? []); });
-        } catch (err) {
-          toast.error(err instanceof Error ? err.message : String(err));
-          await fetch(`${API_BASE}/warehouse-zones`)
-            .then((r) => r.json())
-            .then((d) => { setZones(d.zones ?? []); });
+        } else {
+          toast.error(
+            `${okCount} zone${okCount !== 1 ? "s" : ""} moved, ${failCount} failed — check network`,
+          );
         }
+        // Always refetch to restore consistent UI state after partial failures.
+        await fetch(`${API_BASE}/warehouse-zones`)
+          .then((r) => r.json())
+          .then((d) => { setZones(d.zones ?? []); });
         return;
       }
 
@@ -1336,9 +1406,9 @@ export function ZoneEditor() {
                 cursor: "pointer",
               }}
             >
-              <option value="low">Low — color maps</option>
-              <option value="medium">Medium</option>
-              <option value="high">High — B&W maps</option>
+              <option value="low">Loose — color maps</option>
+              <option value="medium">Balanced</option>
+              <option value="high">Strict — B&amp;W maps</option>
             </select>
           </div>
         )}
@@ -1346,7 +1416,7 @@ export function ZoneEditor() {
           scroll-zoom · {mode === "pan"
             ? "drag to pan · Shift+drag to select · Shift+click to multi-select · drag selected to move all"
             : mode === "fill"
-              ? "click inside an enclosed area to auto-detect its bounds"
+              ? "click inside an enclosed area to auto-detect its bounds · switches back to Pan after each fill"
               : "drag to draw"}
           {" "}· {(tf.s * 100).toFixed(0)}%
         </span>
@@ -1410,7 +1480,12 @@ export function ZoneEditor() {
                       textAnchor="middle"
                       dominantBaseline="middle"
                       fontSize={
-                        Math.min(zone.svgWidth, zone.svgHeight) * 0.18
+                        // Clamp to at least 1 screen-pixel so tiny zones don't
+                        // render invisible 0 px text. If the zone is smaller
+                        // than 3 screen pixels the text is hidden entirely.
+                        Math.min(zone.svgWidth, zone.svgHeight) * 3 < 3 / tf.s
+                          ? 0
+                          : Math.max(Math.min(zone.svgWidth, zone.svgHeight) * 0.18, 1 / tf.s)
                       }
                       fill={sel ? "#f59e0b" : "#000"}
                       stroke="#fff"
