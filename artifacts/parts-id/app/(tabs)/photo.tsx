@@ -39,7 +39,7 @@ export default function PhotoScreen() {
   "use no memo";
   useTrackScreen("Photo ID");
   const colors = useColors();
-  const { textFontScale, isAdmin, adminToken, setPinnedParts, setPendingMeasureSearch, showToast } = useApp();
+  const { textFontScale, isAdmin, adminToken, setPinnedParts, setPendingMapFocus, setPendingMeasureSearch, showToast } = useApp();
   const [measureVisible, setMeasureVisible] = useState(false);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
@@ -93,8 +93,12 @@ export default function PhotoScreen() {
       return;
     }
     setPinnedParts(newPins);
+    setPendingMapFocus({
+      aisleNum: firstParsed.aisle,
+      label: `Aisle ${String(firstParsed.aisle).padStart(2, "0")} · Section ${firstParsed.section}`,
+    });
     router.navigate("/(tabs)/map");
-  }, [setPinnedParts, showToast]);
+  }, [setPendingMapFocus, setPinnedParts, showToast]);
 
   /**
    * Curried: returns the onVariantsToggle handler for a specific ResultCard.

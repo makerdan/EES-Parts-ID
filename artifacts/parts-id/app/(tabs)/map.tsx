@@ -54,7 +54,7 @@ export default function MapScreen() {
   useTrackScreen("Map");
   const colors = useColors();
   const router = useRouter();
-  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts } = useApp();
+  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts, showToast } = useApp();
 
   const pinnedAisleNums = useMemo(
     () => new Set(pinnedParts.filter(p => !p.variant).map(p => p.aisleNum)),
@@ -402,6 +402,10 @@ export default function MapScreen() {
         variantSectionsMap={variantSections.size > 0 ? variantSections : undefined}
         focusAisleNum={focusAisleNum}
         onFocusConsumed={() => setFocusAisleNum(null)}
+        onFocusFailed={() => {
+          showToast("No map zone found for this aisle — check the warehouse configuration.");
+          setFocusAisleNum(null);
+        }}
       />
 
       <AisleSummarySheet

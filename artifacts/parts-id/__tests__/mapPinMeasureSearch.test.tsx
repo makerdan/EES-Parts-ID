@@ -93,6 +93,17 @@ jest.mock("@workspace/api-client-react", () => ({
   lookupByBarcode:    jest.fn(),
 }));
 
+// ─── @react-native-community/netinfo ─────────────────────────────────────────
+
+jest.mock("@react-native-community/netinfo", () => ({
+  __esModule: true,
+  default: {
+    addEventListener: jest.fn(() => jest.fn()),
+    fetch: jest.fn().mockResolvedValue({ isConnected: true }),
+  },
+  NetInfoStateType: { unknown: "unknown", none: "none", wifi: "wifi", cellular: "cellular" },
+}));
+
 // ─── @react-native-async-storage/async-storage ───────────────────────────────
 
 jest.mock("@react-native-async-storage/async-storage", () => ({
