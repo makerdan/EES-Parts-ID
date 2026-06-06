@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-pnpm install --frozen-lockfile
+CI=true pnpm install --frozen-lockfile
 pnpm --filter db push --force
 
 # Push latest main branch to GitHub after every successful merge.
