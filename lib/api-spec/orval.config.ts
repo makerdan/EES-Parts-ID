@@ -39,6 +39,9 @@ export default defineConfig({
         },
       },
     },
+    hooks: {
+      afterAllFilesWrite: "node ./post-codegen.mjs",
+    },
   },
   zod: {
     input: {
