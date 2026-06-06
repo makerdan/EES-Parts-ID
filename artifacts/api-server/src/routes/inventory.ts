@@ -13,6 +13,7 @@ import { batchProcessWithSSE } from "@workspace/integrations-openai-ai-server/ba
 import Fuse from "fuse.js";
 import { verifyAdminToken } from "./admin";
 import { expandMeasurements } from "../utils/measurementConversion";
+import { logger } from "../lib/logger";
 import {
   normalizeMeasurement,
   parseCatalogNumber,
@@ -1891,8 +1892,42 @@ router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
 // ── Rate limiter for the open estimate-dimensions/search endpoint ──────────────
 // Stores per-IP request timestamps; prunes entries older than the window on each
 // hit so memory stays bounded even under sustained traffic.
-const ESTIMATE_SEARCH_RATE_LIMIT = 10; // requests
-const ESTIMATE_SEARCH_WINDOW_MS = 60_000; // per 60 seconds
+//
+// Both values are configurable via environment variables so operators can tune
+// them without a code change or redeploy:
+//   ESTIMATE_SEARCH_RATE_LIMIT  — max requests per window (default 10)
+//   ESTIMATE_SEARCH_WINDOW_MS   — sliding window length in ms (default 60000)
+function parsePositiveInt(raw: string | undefined, defaultValue: number, name: string): number {
+  if (raw == null) return defaultValue;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    logger.warn(
+      { envVar: name, rawValue: raw, default: defaultValue },
+      `Invalid value for ${name} — must be a positive integer; using default`,
+    );
+    return defaultValue;
+  }
+  return parsed;
+}
+
+const ESTIMATE_SEARCH_RATE_LIMIT: number = parsePositiveInt(
+  process.env["ESTIMATE_SEARCH_RATE_LIMIT"],
+  10,
+  "ESTIMATE_SEARCH_RATE_LIMIT",
+);
+const ESTIMATE_SEARCH_WINDOW_MS: number = parsePositiveInt(
+  process.env["ESTIMATE_SEARCH_WINDOW_MS"],
+  60_000,
+  "ESTIMATE_SEARCH_WINDOW_MS",
+);
+
+logger.info(
+  {
+    ESTIMATE_SEARCH_RATE_LIMIT,
+    ESTIMATE_SEARCH_WINDOW_MS,
+  },
+  "estimate-dimensions/search rate limit config",
+);
 
 const estimateSearchHits = new Map<string, number[]>();
 
