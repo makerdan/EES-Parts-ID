@@ -78,6 +78,20 @@
       "when": 1749168000000,
       "tag": "0010_dimensions_diameter_index",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1749254400000,
+      "tag": "0011_dimensions_width_height_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1749340800000,
+      "tag": "0012_admin_preferences",
+      "breakpoints": true
     }
   ]
 }
