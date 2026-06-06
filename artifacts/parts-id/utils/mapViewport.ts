@@ -90,3 +90,100 @@ export function makeTileViewBox(
   const vbH = svgVBH / N;
   return `${col * vbW} ${row * vbH} ${vbW} ${vbH}`;
 }
+
+/**
+ * Clamp a pinch-gesture (or programmatic) scale to the valid zoom range
+ * [MIN_SCALE, MAX_SCALE].  Any value below MIN_SCALE is brought up to it;
+ * any value above MAX_SCALE is brought down to it.
+ *
+ * Applied in gesture handlers, the +/− button callback, and when restoring
+ * a persisted viewport — a single, testable rule for all zoom paths.
+ */
+export function clampScale(s: number): number {
+  return Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+}
+
+/**
+ * Compute the maximum safe translation (pan limits) for a given container
+ * size and scale.
+ *
+ * The SVG renders at containerW × (containerW / SVG_ASPECT) points.  At a
+ * given scale the rendered area grows by that factor.  Each axis allows panning
+ * up to half the overflow past the container edge (because the transform pivots
+ * around the view centre).  When the scaled map is smaller than the container
+ * on an axis — i.e. in the "letterboxed" portrait case for Y — that axis
+ * returns 0 and no panning is permitted.
+ *
+ * Returns { maxX, maxY } — always ≥ 0.
+ */
+export function panBounds(
+  containerW: number,
+  containerH: number,
+  scale: number,
+): { maxX: number; maxY: number } {
+  const svgRenderH = containerW / SVG_ASPECT;
+  return {
+    maxX: Math.max(0, (containerW * scale - containerW) / 2),
+    maxY: Math.max(0, (svgRenderH * scale - containerH) / 2),
+  };
+}
+
+/**
+ * The number of tile rows (and columns) to use at a given scale.
+ *
+ * numTiles = ceil(scale) so the grid advances by integer steps only.
+ * Examples:
+ *   scale 0.8–1.0 → 1  (single texture, no split)
+ *   scale 1.01–2.0 → 2  (2×2 = 4 tiles)
+ *   scale 2.01–3.0 → 3  (3×3 = 9 tiles)
+ *
+ * NOTE: The actual number of tiles rendered is further capped by the device's
+ * maximum texture size (IOS_MAX_TEXTURE_PX) inside WarehouseMapView.  That cap
+ * is device-specific.  This function returns the pure formula result.
+ */
+export function numTilesForScale(scale: number): number {
+  return Math.ceil(scale);
+}
+
+/**
+ * Compute the column and row range of tiles that are visible (or nearly
+ * visible) in the current viewport.  Includes a 1-tile buffer on every edge
+ * to prevent pop-in on slow scrolls, and is clamped to [0, N−1].
+ *
+ * Mirrors the worklet-side calculation in WarehouseMapView so the same logic
+ * can be unit-tested without Reanimated.
+ *
+ * @param N          Tile grid dimension (N×N grid).
+ * @param svgRenderW Rendered SVG width in points (equals containerW).
+ * @param scale      Current zoom scale.
+ * @param tx         Current X translation (viewport transform, centred pivot).
+ * @param ty         Current Y translation.
+ * @param containerW Container width in points.
+ * @param containerH Container height in points.
+ */
+export function visibleTileRange(
+  N: number,
+  svgRenderW: number,
+  scale: number,
+  tx: number,
+  ty: number,
+  containerW: number,
+  containerH: number,
+): { c0: number; c1: number; r0: number; r1: number } {
+  if (N <= 1 || svgRenderW <= 0) {
+    return { c0: 0, c1: Math.max(0, N - 1), r0: 0, r1: Math.max(0, N - 1) };
+  }
+  const H = svgRenderW / SVG_ASPECT;
+  const tileW = svgRenderW / N;
+  const tileH = H / N;
+  const visCX = svgRenderW / 2 - tx / scale;
+  const visCY = H / 2 - ty / scale;
+  const visW = containerW / scale;
+  const visH = containerH / scale;
+  return {
+    c0: Math.max(0, Math.floor((visCX - visW / 2) / tileW) - 1),
+    c1: Math.min(N - 1, Math.ceil((visCX + visW / 2) / tileW)),
+    r0: Math.max(0, Math.floor((visCY - visH / 2) / tileH) - 1),
+    r1: Math.min(N - 1, Math.ceil((visCY + visH / 2) / tileH)),
+  };
+}

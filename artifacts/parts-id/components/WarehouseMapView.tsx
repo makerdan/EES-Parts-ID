@@ -80,6 +80,8 @@ import {
   parseContentViewBox,
   fitContentViewport,
   makeTileViewBox,
+  clampScale,
+  panBounds,
   type ContentViewBox,
 } from "@/utils/mapViewport";
 
@@ -613,10 +615,7 @@ export function WarehouseMapView({
         const pending = pendingRestore.current;
         if (pending !== null) {
           pendingRestore.current = null;
-          const scaledW = width * pending.s;
-          const scaledH = rh * pending.s;
-          const maxX = Math.max(0, (scaledW - width) / 2);
-          const maxY = Math.max(0, (scaledH - height) / 2);
+          const { maxX, maxY } = panBounds(width, height, pending.s);
           const clampedTX = Math.max(-maxX, Math.min(maxX, pending.tx));
           const clampedTY = Math.max(-maxY, Math.min(maxY, pending.ty));
           translateX.value = clampedTX;
@@ -649,10 +648,7 @@ export function WarehouseMapView({
       const centredTX = savedTX.value * sizeRatio;
       const centredTY = savedTY.value * sizeRatio;
 
-      const scaledW = width * currentScale;
-      const scaledH = rh * currentScale;
-      const maxX = Math.max(0, (scaledW - width) / 2);
-      const maxY = Math.max(0, (scaledH - height) / 2);
+      const { maxX, maxY } = panBounds(width, height, currentScale);
       const newTX = clamp(centredTX, -maxX, maxX);
       const newTY = clamp(centredTY, -maxY, maxY);
       translateX.value = withSpring(newTX, { damping: 18, stiffness: 200 });
@@ -830,7 +826,7 @@ export function WarehouseMapView({
             typeof tx === "number" && isFinite(tx) &&
             typeof ty === "number" && isFinite(ty)
           ) {
-            const clampedS = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+            const clampedS = clampScale(s);
             scale.value = clampedS;
             savedScale.value = clampedS;
 
@@ -842,10 +838,7 @@ export function WarehouseMapView({
             if (w > 0) {
               // Layout has already fired — we have real dimensions.
               const rh = w / SVG_ASPECT;
-              const scaledW = w * clampedS;
-              const scaledH = rh * clampedS;
-              const maxX = Math.max(0, (scaledW - w) / 2);
-              const maxY = Math.max(0, (scaledH - h) / 2);
+              const { maxX, maxY } = panBounds(w, h, clampedS);
               const clampedTX = Math.max(-maxX, Math.min(maxX, tx));
               const clampedTY = Math.max(-maxY, Math.min(maxY, ty));
               translateX.value = clampedTX;
@@ -1224,11 +1217,8 @@ export function WarehouseMapView({
   // ── Programmatic zoom helpers (zoom buttons) ────────────────────────────────
   const applyZoom = useCallback((targetScale: number) => {
     const oldScale = savedScale.value;
-    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, targetScale));
-    const scaledW = svgRenderW * newScale;
-    const scaledH = svgRenderH * newScale;
-    const maxX = Math.max(0, (scaledW - containerW) / 2);
-    const maxY = Math.max(0, (scaledH - containerH) / 2);
+    const newScale = clampScale(targetScale);
+    const { maxX, maxY } = panBounds(containerW, containerH, newScale);
     // Scale the existing translation by the zoom ratio so the visible center
     // stays anchored. At zoom=1 the map center is at tx=0; as the user pans,
     // tx/ty drift. Multiplying by newScale/oldScale keeps the same map point
