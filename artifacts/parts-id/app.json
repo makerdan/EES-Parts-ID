@@ -38,7 +38,8 @@
       "expo-web-browser",
       "expo-asset",
       "expo-screen-orientation",
-      "expo-audio"
+      "expo-audio",
+      "./modules/lidar-measure/app.plugin.js"
     ],
     "experiments": {
       "typedRoutes": true,
