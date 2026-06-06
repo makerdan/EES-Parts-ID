@@ -208,6 +208,11 @@ export default function MapScreen() {
 
   // ── Cycle count layer ──────────────────────────────────────────────────────
   const [cycleMode, setCycleMode] = useState(false);
+  const [showZoneEditorTooltip, setShowZoneEditorTooltip] = useState(false);
+  const zoneTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zoneEditorLongPressed = useRef(false);
+
+  useEffect(() => () => { if (zoneTooltipTimer.current) clearTimeout(zoneTooltipTimer.current); }, []);
   const [countedZoneIds, setCountedZoneIds] = useState<Set<number>>(new Set());
 
   React.useEffect(() => {
@@ -309,13 +314,38 @@ export default function MapScreen() {
           </Pressable>
           {/* Zone Editor: only shown to authenticated admins (isAdmin === true). Audit: no other entry point exists — the button below is the sole access path. */}
           {isAdmin && (
-            <Pressable
-              onPress={() => Linking.openURL(ZONE_EDITOR_URL)}
-              style={[styles.iconBtn, { borderColor: colors.border }]}
-              accessibilityLabel="Open Zone Editor"
-            >
-              <Feather name="edit-2" size={15} color={colors.foreground} />
-            </Pressable>
+            <View style={styles.zoneEditorWrapper}>
+              <Pressable
+                onPress={() => {
+                  if (zoneEditorLongPressed.current) {
+                    zoneEditorLongPressed.current = false;
+                    return;
+                  }
+                  Linking.openURL(ZONE_EDITOR_URL);
+                }}
+                onLongPress={() => {
+                  zoneEditorLongPressed.current = true;
+                  if (zoneTooltipTimer.current) clearTimeout(zoneTooltipTimer.current);
+                  setShowZoneEditorTooltip(true);
+                  zoneTooltipTimer.current = setTimeout(() => setShowZoneEditorTooltip(false), 1500);
+                }}
+                onHoverIn={() => setShowZoneEditorTooltip(true)}
+                onHoverOut={() => setShowZoneEditorTooltip(false)}
+                delayLongPress={400}
+                style={[styles.iconBtn, { borderColor: colors.border }]}
+                accessibilityLabel="Open Zone Editor"
+                accessibilityHint="Long-press to see label"
+              >
+                <Feather name="edit-2" size={15} color={colors.foreground} />
+              </Pressable>
+              {showZoneEditorTooltip && (
+                <View style={[styles.zoneEditorTooltip, { backgroundColor: colors.foreground }]}>
+                  <Text style={[styles.zoneEditorTooltipText, { color: colors.background }]}>
+                    Zone Editor
+                  </Text>
+                </View>
+              )}
+            </View>
           )}
         </View>
       </View>
@@ -430,6 +460,22 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  zoneEditorWrapper: {
+    position: "relative",
+  },
+  zoneEditorTooltip: {
+    position: "absolute",
+    top: 35,
+    right: 0,
+    borderRadius: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    zIndex: 100,
+  },
+  zoneEditorTooltipText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
   },
   iconBtn: {
     borderWidth: 1,
