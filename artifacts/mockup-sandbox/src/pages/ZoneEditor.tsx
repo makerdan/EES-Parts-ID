@@ -161,13 +161,22 @@ const HANDLE_PX = 6; // handle visual size in screen pixels
 
 // Maps the user-facing Fill sensitivity setting to a luminance threshold.
 // "Light" pixels (lum >= darkThreshold) are treated as walkable space.
-//   Low  → 100 — lets colored areas (lum 100-180) pass as walkable; good for color-coded maps
-//   Medium → 160 — balanced; works for lightly tinted or greyscale maps
-//   High → 200 — only near-white pixels are walkable; best for standard B&W maps
-const FILL_SENSITIVITY_THRESHOLD: Record<"low" | "medium" | "high", number> = {
-  low: 100,
-  medium: 160,
-  high: 200,
+// Lower threshold = more permissive (more pixels treated as walkable).
+//   ultraLoose  →  40 — accepts almost everything; dark-tinted areas included
+//   extraLoose  →  70 — very permissive; most colored/tinted areas pass
+//   low         → 100 — lets colored areas (lum 100-180) pass; good for color-coded maps
+//   medium      → 160 — balanced; works for lightly tinted or greyscale maps
+//   high        → 200 — only near-white pixels walkable; best for standard B&W maps
+//   extraStrict → 220 — very near-white only; ignores light greys
+//   ultraStrict → 240 — almost pure white only; maximum wall discrimination
+const FILL_SENSITIVITY_THRESHOLD: Record<"ultraLoose" | "extraLoose" | "low" | "medium" | "high" | "extraStrict" | "ultraStrict", number> = {
+  ultraLoose:  40,
+  extraLoose:  70,
+  low:        100,
+  medium:     160,
+  high:       200,
+  extraStrict: 220,
+  ultraStrict: 240,
 };
 const MIN_ZONE_PX = 8; // minimum zone size in screen pixels before it's discarded
 const API_BASE = `${window.location.origin}/api`;
@@ -277,10 +286,14 @@ export function ZoneEditor() {
   // True while the async rasterize+fill operation is in progress.
   const [fillLoading, setFillLoading] = useState(false);
   // Fill sensitivity: persisted to localStorage so it survives page reload.
-  const [fillSensitivity, setFillSensitivity] = useState<"low" | "medium" | "high">(() => {
+  const [fillSensitivity, setFillSensitivity] = useState<"ultraLoose" | "extraLoose" | "low" | "medium" | "high" | "extraStrict" | "ultraStrict">(() => {
     try {
       const stored = localStorage.getItem("zoneEditorFillSensitivity");
-      if (stored === "low" || stored === "medium" || stored === "high") return stored;
+      if (
+        stored === "ultraLoose" || stored === "extraLoose" ||
+        stored === "low" || stored === "medium" || stored === "high" ||
+        stored === "extraStrict" || stored === "ultraStrict"
+      ) return stored;
     } catch {}
     return "high";
   });
@@ -1364,7 +1377,7 @@ export function ZoneEditor() {
             <label style={{ fontSize: 12, color: "#aaa", whiteSpace: "nowrap" }}>Fill sensitivity:</label>
             <select
               value={fillSensitivity}
-              onChange={(e) => setFillSensitivity(e.target.value as "low" | "medium" | "high")}
+              onChange={(e) => setFillSensitivity(e.target.value as typeof fillSensitivity)}
               style={{
                 fontSize: 12,
                 background: "#222",
@@ -1375,9 +1388,13 @@ export function ZoneEditor() {
                 cursor: "pointer",
               }}
             >
+              <option value="ultraLoose">Ultra loose — dark areas</option>
+              <option value="extraLoose">Extra loose — tinted maps</option>
               <option value="low">Loose — color maps</option>
               <option value="medium">Balanced</option>
               <option value="high">Strict — B&amp;W maps</option>
+              <option value="extraStrict">Extra strict — near-white</option>
+              <option value="ultraStrict">Ultra strict — pure white</option>
             </select>
           </div>
         )}
