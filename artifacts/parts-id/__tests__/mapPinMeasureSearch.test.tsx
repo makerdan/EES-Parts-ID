@@ -252,7 +252,7 @@ jest.mock("react-native-reanimated", () => {
 jest.mock("react-native-gesture-handler", () => {
   const chain = () => {
     const c: Record<string, unknown> = {};
-    ["minPointers", "minDistance", "onUpdate", "onEnd", "numberOfTaps"].forEach(
+    ["minPointers", "minDistance", "onBegin", "onUpdate", "onEnd", "numberOfTaps"].forEach(
       (m) => { c[m] = () => c; }
     );
     return c;
