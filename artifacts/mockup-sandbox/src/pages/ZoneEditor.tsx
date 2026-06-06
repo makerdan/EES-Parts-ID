@@ -156,6 +156,17 @@ function floodFillBounds(
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HANDLE_PX = 6; // handle visual size in screen pixels
+
+// Maps the user-facing Fill sensitivity setting to a luminance threshold.
+// "Light" pixels (lum >= darkThreshold) are treated as walkable space.
+//   Low  → 100 — lets colored areas (lum 100-180) pass as walkable; good for color-coded maps
+//   Medium → 160 — balanced; works for lightly tinted or greyscale maps
+//   High → 200 — only near-white pixels are walkable; best for standard B&W maps
+const FILL_SENSITIVITY_THRESHOLD: Record<"low" | "medium" | "high", number> = {
+  low: 100,
+  medium: 160,
+  high: 200,
+};
 const MIN_ZONE_PX = 8; // minimum zone size in screen pixels before it's discarded
 const API_BASE = `${window.location.origin}/api`;
 const INITIAL_SCALE = 0.18; // start zoomed out to show whole floor plan
@@ -263,6 +274,14 @@ export function ZoneEditor() {
   const [mode, setMode] = useState<Mode>("pan");
   // True while the async rasterize+fill operation is in progress.
   const [fillLoading, setFillLoading] = useState(false);
+  // Fill sensitivity: persisted to localStorage so it survives page reload.
+  const [fillSensitivity, setFillSensitivity] = useState<"low" | "medium" | "high">(() => {
+    try {
+      const stored = localStorage.getItem("zoneEditorFillSensitivity");
+      if (stored === "low" || stored === "medium" || stored === "high") return stored;
+    } catch {}
+    return "high";
+  });
 
   // Multi-select: a Set of selected zone IDs
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -336,6 +355,7 @@ export function ZoneEditor() {
   const svgInnerRef = useRef(svgInner);
   const svgDimsRef = useRef(svgDims);
   const fillLoadingRef = useRef(false);
+  const fillSensitivityRef = useRef(fillSensitivity);
 
   useEffect(() => { tfRef.current = tf; }, [tf]);
   useEffect(() => { zonesRef.current = zones; }, [zones]);
@@ -345,6 +365,10 @@ export function ZoneEditor() {
   useEffect(() => { svgInnerRef.current = svgInner; }, [svgInner]);
   useEffect(() => { svgDimsRef.current = svgDims; }, [svgDims]);
   useEffect(() => { fillLoadingRef.current = fillLoading; }, [fillLoading]);
+  useEffect(() => {
+    fillSensitivityRef.current = fillSensitivity;
+    try { localStorage.setItem("zoneEditorFillSensitivity", fillSensitivity); } catch {}
+  }, [fillSensitivity]);
 
   // Fetch the latest uploaded floor plan. Tries the local API first; if it
   // returns 404 (nothing uploaded in this env), falls back to the production
@@ -815,9 +839,10 @@ export function ZoneEditor() {
       const px = Math.round((pt.x / dims.w) * raster.w);
       const py = Math.round((pt.y / dims.h) * raster.h);
 
-      const bounds = floodFillBounds(raster.imageData, px, py);
+      const darkThreshold = FILL_SENSITIVITY_THRESHOLD[fillSensitivityRef.current];
+      const bounds = floodFillBounds(raster.imageData, px, py, darkThreshold);
       if (!bounds) {
-        toast.error("Click inside a white area, not on a line.");
+        toast.error("Click inside a light area, not on a wall or line.");
         return;
       }
 
@@ -1289,11 +1314,33 @@ export function ZoneEditor() {
             ⬛ Fill
           </ModeBtn>
         </div>
+        {mode === "fill" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
+            <label style={{ fontSize: 12, color: "#aaa", whiteSpace: "nowrap" }}>Fill sensitivity:</label>
+            <select
+              value={fillSensitivity}
+              onChange={(e) => setFillSensitivity(e.target.value as "low" | "medium" | "high")}
+              style={{
+                fontSize: 12,
+                background: "#222",
+                color: "#eee",
+                border: "1px solid #555",
+                borderRadius: 4,
+                padding: "2px 6px",
+                cursor: "pointer",
+              }}
+            >
+              <option value="low">Low — color maps</option>
+              <option value="medium">Medium</option>
+              <option value="high">High — B&W maps</option>
+            </select>
+          </div>
+        )}
         <span style={styles.hint}>
           scroll-zoom · {mode === "pan"
             ? "drag to pan · Shift+drag to select · Shift+click to multi-select · drag selected to move all"
             : mode === "fill"
-              ? "click inside an enclosed white area to auto-detect its bounds"
+              ? "click inside an enclosed area to auto-detect its bounds"
               : "drag to draw"}
           {" "}· {(tf.s * 100).toFixed(0)}%
         </span>
