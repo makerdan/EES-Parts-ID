@@ -182,6 +182,10 @@ export default function SearchScreen() {
   const [syncRetryPending, setSyncRetryPending] = useState(false);
   const syncRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncRetryAttemptRef = useRef(0);
+  // Concurrency guard: prevents a second syncAllInventory from starting while
+  // one is already in flight (e.g. user taps Refresh while a background retry
+  // is running), which would race on setSyncProgress and the Fuse index.
+  const isSyncingRef = useRef(false);
   // Track latest filters in a ref so the onError closure always reads current values
   const filtersRef = useRef<FilterValues>(filters);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
@@ -263,6 +267,10 @@ export default function SearchScreen() {
 
   // Fetch all inventory items in pages and build the Fuse cache
   const syncAllInventory = useCallback(async () => {
+    // Prevent concurrent syncs from racing on setSyncProgress and the Fuse index.
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
+
     // Cancel any pending auto-retry before starting a new attempt
     if (syncRetryTimerRef.current !== null) {
       clearTimeout(syncRetryTimerRef.current);
@@ -284,6 +292,27 @@ export default function SearchScreen() {
         (loaded, total) => setSyncProgress({ loaded, total }),
       );
       buildFuseIndex(allItems);
+
+      // Prune cached search results whose items were deleted server-side.
+      // The full sync gives us the authoritative item set; any cached entry
+      // referencing an id no longer present is stale and must be removed so
+      // offline searches never surface deleted inventory.
+      const liveIds = new Set(allItems.map(item => item.id));
+      loadQueryCache().then(cache => {
+        let dirty = false;
+        const pruned: QueryCache<SearchResult> = {};
+        for (const [key, entry] of Object.entries(cache)) {
+          const kept = entry.results.filter(r => liveIds.has(r.item.id));
+          if (kept.length !== entry.results.length) dirty = true;
+          if (kept.length > 0) {
+            pruned[key] = { ...entry, results: kept };
+          } else {
+            dirty = true; // entry fully emptied — drop it
+          }
+        }
+        if (dirty) saveQueryCache(pruned);
+      }).catch(() => {});
+
       syncRetryAttemptRef.current = 0; // success — reset backoff counter
       try {
         const syncedAt = Date.now();
@@ -313,6 +342,7 @@ export default function SearchScreen() {
       }, delay);
     } finally {
       setSyncProgress(null);
+      isSyncingRef.current = false;
     }
   }, [buildFuseIndex]);
 
