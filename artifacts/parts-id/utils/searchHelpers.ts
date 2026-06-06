@@ -166,6 +166,35 @@ export async function runSearchPipeline<R>(opts: {
   }
 }
 
+// ── Cache maintenance ─────────────────────────────────────────────────────────
+
+/**
+ * Remove every cached search result entry that references the given item ID.
+ *
+ * Call this after a successful edit so stale results for the modified item are
+ * not served from the local AsyncStorage cache before the next network refresh.
+ *
+ * The caller is responsible for persisting the returned cache to AsyncStorage
+ * when `changed` is true.
+ */
+export function evictItemFromQueryCache<R extends { item: { id: number } }>(
+  cache: QueryCache<R>,
+  itemId: number,
+): { pruned: QueryCache<R>; changed: boolean } {
+  let changed = false;
+  const pruned: QueryCache<R> = {};
+  for (const [key, entry] of Object.entries(cache)) {
+    const kept = entry.results.filter(r => r.item.id !== itemId);
+    if (kept.length !== entry.results.length) changed = true;
+    if (kept.length > 0) {
+      pruned[key] = { ...entry, results: kept };
+    } else {
+      changed = true;
+    }
+  }
+  return { pruned, changed };
+}
+
 // ── Background inventory sync ─────────────────────────────────────────────────
 
 export type PageFetcher<T> = (

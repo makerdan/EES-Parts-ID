@@ -184,7 +184,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
             if (isAdmin) {
               setNotFoundCode(code);
             } else {
-              setTimeout(resetScan, 2200);
+              setTimeout(resetScan, 4500);
             }
           } else if (status === null) {
             const offlineItem = await lookupByBarcodeOffline(code);

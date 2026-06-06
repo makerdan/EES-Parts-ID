@@ -14,7 +14,9 @@ import {
 import * as Clipboard from "expo-clipboard";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
+import * as FileSystem from "expo-file-system";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
 import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
@@ -24,10 +26,11 @@ import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { isLiDARSupported } from "lidar-measure";
 import { RetryImage } from "@/components/RetryImage";
+import { QUERY_CACHE_KEY, evictItemFromQueryCache } from "@/utils/searchHelpers";
+import type { QueryCache } from "@/utils/searchHelpers";
 
 interface CapturedPhoto {
   uri: string;
-  base64: string;
 }
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -153,11 +156,11 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     try {
       const result = await photoCameraRef.current.takePictureAsync({
         quality: 0.6,
-        base64: true,
+        base64: false,
         exif: false,
       });
-      if (result && result.base64) {
-        setNewPhotoData({ uri: result.uri, base64: result.base64 });
+      if (result?.uri) {
+        setNewPhotoData({ uri: result.uri });
         setRemoveCurrentPhoto(false);
         setSaveStatus("idle");
       }
@@ -373,21 +376,26 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     let capturedImageUrl: string | null | undefined = undefined;
 
     if (newPhotoData) {
+      const photoUri = newPhotoData.uri;
       ops.push({
         field: "photo",
         restoreFn: () => {},
-        promise: fetch(`${API_BASE}/inventory/${current.id}/photo`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-          body: JSON.stringify({ imageBase64: newPhotoData.base64, mimeType: "image/jpeg" }),
-        }).then(async (res) => {
+        promise: (async () => {
+          const base64 = await FileSystem.readAsStringAsync(photoUri, {
+            encoding: "base64",
+          });
+          const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+            body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg" }),
+          });
           if (!res.ok) {
             const data = await res.json().catch(() => ({})) as { error?: string };
             throw new Error(data.error ?? `HTTP ${res.status}`);
           }
           const data = await res.json() as { imageUrl?: string | null };
           capturedImageUrl = data.imageUrl ?? null;
-        }),
+        })(),
       });
     } else if (removeCurrentPhoto && current.imageUrl) {
       ops.push({
@@ -469,6 +477,18 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
         predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
       });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+      // Evict stale search result cache entries for this item from AsyncStorage
+      // so the next query returns fresh data rather than serving old field values.
+      try {
+        const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
+        if (raw) {
+          const cache = JSON.parse(raw) as QueryCache<SearchResult>;
+          const { pruned, changed } = evictItemFromQueryCache(cache, current.id);
+          if (changed) await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+        }
+      } catch {
+        // Non-fatal — worst case the search cache TTL will expire naturally
+      }
       setSaveStatus("saved");
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
       closeTimerRef.current = setTimeout(() => { closeTimerRef.current = null; onClose(); }, 500);

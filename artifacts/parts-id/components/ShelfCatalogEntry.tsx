@@ -13,6 +13,7 @@ import {
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -38,7 +39,6 @@ interface ShelfCatalogEntryProps {
 
 interface CapturedPhoto {
   uri: string;
-  base64: string;
 }
 
 interface DuplicateState {
@@ -226,7 +226,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
           "Content-Type": "application/json",
           Authorization: `Bearer ${adminToken}`,
         },
-        body: JSON.stringify({ imageBase64: capturedPhoto.base64, mimeType: "image/jpeg" }),
+        body: JSON.stringify({ imageBase64: await FileSystem.readAsStringAsync(capturedPhoto.uri, { encoding: "base64" }), mimeType: "image/jpeg" }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
@@ -392,11 +392,11 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
     try {
       const result = await cameraRef.current.takePictureAsync({
         quality: 0.6,
-        base64: true,
+        base64: false,
         exif: false,
       });
-      if (result && result.base64) {
-        setPhoto({ uri: result.uri, base64: result.base64 });
+      if (result?.uri) {
+        setPhoto({ uri: result.uri });
       }
       setCameraOpen(false);
     } catch (err) {

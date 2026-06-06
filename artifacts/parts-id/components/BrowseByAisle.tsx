@@ -605,6 +605,9 @@ function PartsListView({
         data={allParts}
         keyExtractor={p => `${p.item.id}-${p.bin.raw}`}
         keyboardShouldPersistTaps="handled"
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={8}
+        windowSize={10}
         renderItem={({ item: part }) => (
           <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>
             <ResultCard
@@ -802,6 +805,9 @@ export function BrowseByAisle({
           data={hierarchy.aisles}
           keyExtractor={a => String(a.aisleNum)}
           keyboardShouldPersistTaps="handled"
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          windowSize={10}
           refreshControl={
             onRefresh ? (
               <RefreshControl
@@ -875,6 +881,9 @@ export function BrowseByAisle({
             data={filteredSections}
             keyExtractor={s => String(s.sectionNum)}
             keyboardShouldPersistTaps="handled"
+            removeClippedSubviews={true}
+            maxToRenderPerBatch={10}
+            windowSize={10}
             onScroll={e => { sectionsScrollOffset.current = e.nativeEvent.contentOffset.y; }}
             scrollEventThrottle={16}
             onLayout={() => {

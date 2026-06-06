@@ -160,8 +160,17 @@ export function MeasurePartScreen({
   useEffect(() => { unitRef.current = unit; }, [unit]);
 
   // Track the unit used to populate the current field strings so we can
-  // re-convert in place when the user switches units mid-session.
+  // re-derive display strings when the user switches units mid-session.
   const fieldUnitRef = useRef<DimensionUnit>(unit);
+
+  // Canonical dimension values in mm. Updated when LiDAR / AI writes a value
+  // programmatically, or when the user commits a field on blur. Display
+  // strings are always derived from these, avoiding lossy re-parsing of
+  // partially-typed text when the unit changes.
+  const lengthMmRef   = useRef<number | null>(initialDims?.length   ?? null);
+  const widthMmRef    = useRef<number | null>(initialDims?.width    ?? null);
+  const heightMmRef   = useRef<number | null>(initialDims?.height   ?? null);
+  const diameterMmRef = useRef<number | null>(initialDims?.diameter ?? null);
 
   const scanPulse = useRef(new Animated.Value(0)).current;
   const scanLoopRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -209,6 +218,11 @@ export function MeasurePartScreen({
       // (which would reset measured values whenever the user switches units).
       const currentUnit = unitRef.current;
       fieldUnitRef.current = currentUnit;
+      // Seed canonical mm refs from initialDims
+      lengthMmRef.current   = initialDims?.length   ?? null;
+      widthMmRef.current    = initialDims?.width    ?? null;
+      heightMmRef.current   = initialDims?.height   ?? null;
+      diameterMmRef.current = initialDims?.diameter ?? null;
       setLengthStr(fmtForUnit(initialDims?.length, currentUnit));
       setWidthStr(fmtForUnit(initialDims?.width, currentUnit));
       setHeightStr(fmtForUnit(initialDims?.height, currentUnit));
@@ -217,26 +231,17 @@ export function MeasurePartScreen({
     }
   }, [visible, initialDims, permission, requestPermission]);
 
-  // ── Re-convert field values when the unit changes while the modal is open ──
+  // Re-derive display strings from canonical mm refs when the unit changes.
+  // Using the mm refs rather than re-parsing display strings avoids precision
+  // loss and prevents partially-typed values from being corrupted mid-edit.
   useEffect(() => {
-    if (!visible) {
-      fieldUnitRef.current = unit;
-      return;
-    }
-    const oldUnit = fieldUnitRef.current;
-    if (oldUnit === unit) return;
+    if (!visible) { fieldUnitRef.current = unit; return; }
+    if (fieldUnitRef.current === unit) return;
     fieldUnitRef.current = unit;
-
-    const convert = (s: string) => {
-      if (!s) return s;
-      const mm = parseFieldToMm(s, oldUnit);
-      return fmtForUnit(mm, unit);
-    };
-
-    setLengthStr(prev => convert(prev));
-    setWidthStr(prev => convert(prev));
-    setHeightStr(prev => convert(prev));
-    setDiameterStr(prev => convert(prev));
+    setLengthStr(fmtForUnit(lengthMmRef.current, unit));
+    setWidthStr(fmtForUnit(widthMmRef.current, unit));
+    setHeightStr(fmtForUnit(heightMmRef.current, unit));
+    setDiameterStr(fmtForUnit(diameterMmRef.current, unit));
   }, [unit, visible]);
 
   // ── Countdown timer for LiDAR scan phase ──────────────────────────────────
@@ -279,6 +284,10 @@ export function MeasurePartScreen({
     setEstimateError(null);
     try {
       const dims = await measureObject(LIDAR_TIMEOUT_S);
+      lengthMmRef.current   = dims.length ?? null;
+      widthMmRef.current    = dims.width  ?? null;
+      heightMmRef.current   = dims.height ?? null;
+      diameterMmRef.current = null;
       setLengthStr(fmtForUnit(dims.length, unit));
       setWidthStr(fmtForUnit(dims.width, unit));
       setHeightStr(fmtForUnit(dims.height, unit));
@@ -304,9 +313,9 @@ export function MeasurePartScreen({
     setRescanningAxis(axis);
     try {
       const dims = await measureObject(LIDAR_TIMEOUT_S);
-      if (axis === "length") setLengthStr(fmtForUnit(dims.length, unit));
-      else if (axis === "width") setWidthStr(fmtForUnit(dims.width, unit));
-      else if (axis === "height") setHeightStr(fmtForUnit(dims.height, unit));
+      if (axis === "length") { lengthMmRef.current = dims.length ?? null; setLengthStr(fmtForUnit(dims.length, unit)); }
+      else if (axis === "width") { widthMmRef.current = dims.width ?? null; setWidthStr(fmtForUnit(dims.width, unit)); }
+      else if (axis === "height") { heightMmRef.current = dims.height ?? null; setHeightStr(fmtForUnit(dims.height, unit)); }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "LiDAR scan failed";
       Alert.alert(
@@ -365,6 +374,10 @@ export function MeasurePartScreen({
       }
 
       const dims = (await response.json()) as PartDimensions;
+      lengthMmRef.current   = dims.length   ?? null;
+      widthMmRef.current    = dims.width    ?? null;
+      heightMmRef.current   = dims.height   ?? null;
+      diameterMmRef.current = dims.diameter ?? null;
       setLengthStr(fmtForUnit(dims.length, unit));
       setWidthStr(fmtForUnit(dims.width, unit));
       setHeightStr(fmtForUnit(dims.height, unit));
@@ -437,6 +450,10 @@ export function MeasurePartScreen({
 
       const dims = (await response.json()) as PartDimensions;
       // Show the pre-estimate values as "Previous" so admins can compare.
+      lengthMmRef.current   = dims.length   ?? null;
+      widthMmRef.current    = dims.width    ?? null;
+      heightMmRef.current   = dims.height   ?? null;
+      diameterMmRef.current = dims.diameter ?? null;
       setPreviousMmDims(prevSnapshot);
       setLengthStr(fmtForUnit(dims.length, unit));
       setWidthStr(fmtForUnit(dims.width, unit));
@@ -478,14 +495,15 @@ export function MeasurePartScreen({
     label: string;
     value: string;
     set: (v: string) => void;
+    onBlur: () => void;
     axis?: RescanAxis;
   };
 
   const fieldDefs: FieldDef[] = [
-    { label: "Length", value: lengthStr, set: setLengthStr, axis: "length" },
-    { label: "Width", value: widthStr, set: setWidthStr, axis: "width" },
-    { label: "Height", value: heightStr, set: setHeightStr, axis: "height" },
-    { label: "Diameter (opt.)", value: diameterStr, set: setDiameterStr },
+    { label: "Length",          value: lengthStr,   set: setLengthStr,   onBlur: () => { lengthMmRef.current   = parseFieldToMm(lengthStr,   unit); }, axis: "length" },
+    { label: "Width",           value: widthStr,    set: setWidthStr,    onBlur: () => { widthMmRef.current    = parseFieldToMm(widthStr,    unit); }, axis: "width"  },
+    { label: "Height",          value: heightStr,   set: setHeightStr,   onBlur: () => { heightMmRef.current   = parseFieldToMm(heightStr,   unit); }, axis: "height" },
+    { label: "Diameter (opt.)", value: diameterStr, set: setDiameterStr, onBlur: () => { diameterMmRef.current = parseFieldToMm(diameterStr, unit); } },
   ];
 
   return (
@@ -766,7 +784,7 @@ export function MeasurePartScreen({
                 </View>
 
                 <View style={ms.fieldsGrid}>
-                  {fieldDefs.map(({ label, value, set, axis }) => {
+                  {fieldDefs.map(({ label, value, set, onBlur, axis }) => {
                     const isRescanning = axis != null && rescanningAxis === axis;
                     const anyRescanning = rescanningAxis !== null;
                     return (
@@ -800,6 +818,7 @@ export function MeasurePartScreen({
                           onChangeText={(v) =>
                             set(v.replace(/[^0-9.]/g, ""))
                           }
+                          onBlur={onBlur}
                           placeholder="–"
                           placeholderTextColor="#aaa"
                           keyboardType="numeric"
