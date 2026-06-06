@@ -352,7 +352,6 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
           colors={fakeColors}
           onZoneTap={jest.fn()}
           cycleMode={false}
-          cycleLocked={false}
           isCounted={false}
           isPinned={true}
         />,
@@ -378,7 +377,7 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
           colors={fakeColors}
           onZoneTap={jest.fn()}
           cycleMode={false}
-          cycleLocked={false}
+
           isCounted={false}
           isPinned={true}
         />,
@@ -404,7 +403,7 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
           colors={fakeColors}
           onZoneTap={jest.fn()}
           cycleMode={false}
-          cycleLocked={false}
+
           isCounted={false}
           isPinned={true}
           pinnedSections={[20, 60]}
@@ -438,7 +437,7 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
           colors={fakeColors}
           onZoneTap={jest.fn()}
           cycleMode={false}
-          cycleLocked={false}
+
           isCounted={false}
           isPinned={true}
         />,
