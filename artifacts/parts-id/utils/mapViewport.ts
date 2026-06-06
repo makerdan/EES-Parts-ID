@@ -75,6 +75,94 @@ export function fitContentViewport(
   return { scale: fittedScale, tx: -dx * fittedScale, ty: -dy * fittedScale };
 }
 
+/** Minimal zone geometry used by the focus-pan handler. */
+export interface ZoneGeometry {
+  aisleId: string;
+  svgX: number;
+  svgY: number;
+  svgWidth: number;
+  svgHeight: number;
+}
+
+/**
+ * Exported for testing: pure function containing the pan-without-zoom logic
+ * extracted from the `focusAisleNum` useEffect in WarehouseMapView.
+ *
+ * Takes the current viewport values as plain numbers (not SharedValue objects)
+ * so tests can call it without any Reanimated setup.  The effect passes
+ * `scale.value`, `translateX.value`, `translateY.value` as arguments and
+ * applies the returned `{tx,ty}` with `withSpring` — crucially, `scale` is
+ * never written.
+ *
+ * Returns `{tx, ty}` when a pan is needed, or `null` when the zone is already
+ * visible or cannot be found.
+ *
+ * Contract: the return object contains ONLY `tx` and `ty` — no `scale` field.
+ * A regression that reintroduced forced zooming would be caught immediately
+ * by the test suite (`focusAislePan.test.ts`).
+ */
+export function runFocusAisleEffect(opts: {
+  focusAisleNum: number;
+  zones: ReadonlyArray<ZoneGeometry>;
+  containerW: number;
+  containerH: number;
+  /** The current zoom level — read to compute pan offset; never changed. */
+  currentScale: number;
+  currentTX: number;
+  currentTY: number;
+}): { tx: number; ty: number } | null {
+  const { focusAisleNum, zones, containerW, containerH, currentScale, currentTX, currentTY } = opts;
+  if (containerW === 0 || containerH === 0 || !zones.length) return null;
+
+  const zone = zones.find(z => parseInt(z.aisleId, 10) === focusAisleNum);
+  if (!zone) return null;
+
+  const cx = zone.svgX + zone.svgWidth  / 2;
+  const cy = zone.svgY + zone.svgHeight / 2;
+
+  const svgRW   = containerW;
+  const svgRH   = containerW / SVG_ASPECT;
+  const scaleRW = (1 / SVG_VIEWBOX_W) * svgRW * currentScale;
+  const scaleRH = (1 / SVG_VIEWBOX_H) * svgRH * currentScale;
+  const zoneL   = zone.svgX                    * scaleRW + currentTX;
+  const zoneR   = (zone.svgX + zone.svgWidth)  * scaleRW + currentTX;
+  const zoneT   = zone.svgY                    * scaleRH + currentTY;
+  const zoneB   = (zone.svgY + zone.svgHeight) * scaleRH + currentTY;
+
+  if (zoneR > 0 && zoneL < containerW && zoneB > 0 && zoneT < containerH) return null;
+
+  // Return pan target — scale is deliberately absent: focus only pans, never zooms.
+  return computeFocusPan(currentScale, cx, cy, containerW, containerH);
+}
+
+/**
+ * Compute the translation offsets needed to pan the viewport so that a zone
+ * (identified by its centre in SVG coordinates) is centred in the container.
+ *
+ * This mirrors the pan-without-zoom logic inside the `focusAisleNum` effect of
+ * WarehouseMapView: the caller's current `scale` value is used as-is — this
+ * function never modifies or returns a new scale.
+ *
+ * Returned `tx` / `ty` are the new `translateX.value` / `translateY.value`
+ * to apply (e.g. via withSpring) after the calculation.
+ */
+export function computeFocusPan(
+  currentScale: number,
+  zoneCx: number,
+  zoneCy: number,
+  containerW: number,
+  containerH: number,
+): { tx: number; ty: number } {
+  const svgRW = containerW;
+  const svgRH = containerW / SVG_ASPECT;
+  const scaleRW = (1 / SVG_VIEWBOX_W) * svgRW * currentScale;
+  const scaleRH = (1 / SVG_VIEWBOX_H) * svgRH * currentScale;
+  return {
+    tx: containerW / 2 - zoneCx * scaleRW,
+    ty: containerH / 2 - zoneCy * scaleRH,
+  };
+}
+
 /**
  * Compute the viewBox string for tile (col, row) in an N×N grid.
  * Used to replace the SVG's viewBox attribute when rendering individual tiles.
