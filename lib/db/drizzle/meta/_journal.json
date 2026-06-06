@@ -99,6 +99,13 @@
       "when": 1749427200000,
       "tag": "0013_bin_locations_gin_index",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1749513600000,
+      "tag": "0014_zone_aisle_parity_unique",
+      "breakpoints": true
     }
   ]
 }
