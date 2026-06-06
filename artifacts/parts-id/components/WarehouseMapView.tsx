@@ -892,7 +892,11 @@ export function WarehouseMapView({
     const h = containerHRef.current;
     if (!vb || w === 0) return;
     pendingFit.current = false;
-    const { scale: s, tx, ty } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
+    const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
+    const s = clampScale(rawS * 1.5);
+    const ratio = rawS > 0 ? s / rawS : 1;
+    const tx = rawTX * ratio;
+    const ty = rawTY * ratio;
     scale.value = s;
     savedScale.value = s;
     translateX.value = tx;
@@ -924,7 +928,11 @@ export function WarehouseMapView({
       persistViewport(1, 0, 0);
       return;
     }
-    const { scale: s, tx, ty } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
+    const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
+    const s = clampScale(rawS * 1.5);
+    const ratio = rawS > 0 ? s / rawS : 1;
+    const tx = rawTX * ratio;
+    const ty = rawTY * ratio;
     scale.value = withSpring(s, { damping: 26, stiffness: 220 });
     translateX.value = withSpring(tx, { damping: 26, stiffness: 220 });
     translateY.value = withSpring(ty, { damping: 26, stiffness: 220 });
