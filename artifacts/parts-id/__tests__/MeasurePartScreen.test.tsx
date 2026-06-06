@@ -632,3 +632,233 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
     ).toBe("Bearer admin-token-xyz");
   });
 });
+
+// ─── AI photo-estimate error handling ─────────────────────────────────────────
+//
+// Verifies that handleCapture (initial capture) and handleCaptureOnConfirm
+// (re-estimate from the confirm screen) surface errors correctly instead of
+// leaving the screen silently stuck in the "estimating" phase.
+//
+// handleCapture errors  → Alert shown + phase returns to "preview"
+// handleCaptureOnConfirm errors → inline confirmEstimateError shown
+
+describe("MeasurePartScreen – AI photo-estimate error handling", () => {
+  const expoCamera = require("expo-camera") as {
+    __mockTakePictureAsync: jest.Mock;
+  };
+
+  let mockFetch: jest.SpyInstance;
+
+  beforeEach(() => {
+    mockIsLiDARSupported.mockReturnValue(false);
+
+    expoCamera.__mockTakePictureAsync.mockResolvedValue({
+      base64: "fake-base64-data",
+      uri: "file://fake-uri",
+    });
+  });
+
+  afterEach(() => {
+    mockFetch?.mockRestore();
+  });
+
+  // ── handleCapture: non-OK HTTP response ───────────────────────────────────
+
+  it("initial capture (non-admin): non-OK 500 shows Alert and returns to preview", async () => {
+    mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: "Internal Server Error" }),
+    } as Response);
+
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "Estimation failed",
+      expect.stringContaining("Internal Server Error")
+    );
+    expect(hasText(tree.root, "Measure Part")).toBe(true);
+  });
+
+  it("initial capture (admin): non-OK 500 shows Alert and returns to preview", async () => {
+    mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({}),
+    } as Response);
+
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "Estimation failed",
+      expect.stringContaining("Server error 500")
+    );
+    expect(hasText(tree.root, "Measure Part")).toBe(true);
+  });
+
+  // ── handleCapture: network failure (fetch rejection) ──────────────────────
+
+  it("initial capture (non-admin): network error shows Alert and returns to preview", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockRejectedValue(new Error("Network request failed"));
+
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "Estimation failed",
+      expect.stringContaining("Network request failed")
+    );
+    expect(hasText(tree.root, "Measure Part")).toBe(true);
+  });
+
+  it("initial capture (admin): network error shows Alert and returns to preview", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockRejectedValue(new Error("Network request failed"));
+
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockAlert).toHaveBeenCalledWith(
+      "Estimation failed",
+      expect.stringContaining("Network request failed")
+    );
+    expect(hasText(tree.root, "Measure Part")).toBe(true);
+  });
+
+  // ── handleCaptureOnConfirm: non-OK HTTP response → inline error ───────────
+
+  it("re-estimate (non-admin): non-OK 500 shows inline error on confirm screen", async () => {
+    // First call (reaching confirm via initial capture) succeeds; second call fails.
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ error: "Re-estimate server error" }),
+      } as Response);
+
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    // Reach confirm screen via the initial capture path.
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+
+    // Trigger re-estimation which will fail.
+    await press(tree.root, "Photo Estimate");
+    await flushPromises();
+
+    expect(hasText(tree.root, "Re-estimate server error")).toBe(true);
+    // Screen stays on confirm, not preview.
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+  });
+
+  it("re-estimate (admin): non-OK 500 shows inline error on confirm screen", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({}),
+      } as Response);
+
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+
+    await press(tree.root, "Photo Estimate");
+    await flushPromises();
+
+    expect(hasText(tree.root, "Server error 500")).toBe(true);
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+  });
+
+  // ── handleCaptureOnConfirm: network failure → inline error ────────────────
+
+  it("re-estimate (non-admin): network error shows inline error on confirm screen", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+      } as Response)
+      .mockRejectedValueOnce(new Error("Network request failed"));
+
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+
+    await press(tree.root, "Photo Estimate");
+    await flushPromises();
+
+    expect(hasText(tree.root, "Network request failed")).toBe(true);
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+  });
+
+  it("re-estimate (admin): network error shows inline error on confirm screen", async () => {
+    mockFetch = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+      } as Response)
+      .mockRejectedValueOnce(new Error("Network request failed"));
+
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+
+    await press(tree.root, "Photo Estimate");
+    await flushPromises();
+
+    expect(hasText(tree.root, "Network request failed")).toBe(true);
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+  });
+});
