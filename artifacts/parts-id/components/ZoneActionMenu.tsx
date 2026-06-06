@@ -26,13 +26,6 @@ interface ZoneActionMenuProps {
 export function ZoneActionMenu({ zone, onGoToSection, onDismiss }: ZoneActionMenuProps) {
   const colors = useColors();
 
-  const parityHint =
-    zone.sectionParity === "odd"
-      ? "Odd sections"
-      : zone.sectionParity === "even"
-      ? "Even sections"
-      : null;
-
   return (
     <View
       style={[
@@ -47,11 +40,6 @@ export function ZoneActionMenu({ zone, onGoToSection, onDismiss }: ZoneActionMen
           <Text style={[menuStyles.zoneLabel, { color: colors.foreground }]}>
             {zone.label}
           </Text>
-          {parityHint ? (
-            <Text style={[menuStyles.parityHint, { color: colors.mutedForeground }]}>
-              {parityHint}
-            </Text>
-          ) : null}
         </View>
         <Pressable
           onPress={onDismiss}

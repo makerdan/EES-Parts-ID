@@ -21,7 +21,7 @@ export type ApiWarehouseZone = {
   id: number;
   aisleId: string;
   label: string;
-  sectionParity: "odd" | "even" | "all";
+  sectionNum: number;
   isInventory: boolean;
   svgX: number;
   svgY: number;

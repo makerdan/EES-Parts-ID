@@ -5,14 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { UpdateWarehouseZoneBodySectionParity } from "./updateWarehouseZoneBodySectionParity";
 
 export interface UpdateWarehouseZoneBody {
   /** @minLength 1 */
   aisleId?: string;
   /** @minLength 1 */
   label?: string;
-  sectionParity?: UpdateWarehouseZoneBodySectionParity;
+  sectionNum?: number;
   isInventory?: boolean;
   svgX?: number;
   svgY?: number;

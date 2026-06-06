@@ -34,7 +34,7 @@ interface Zone {
   id: number;
   aisleId: string;
   label: string;
-  sectionParity: "all" | "odd" | "even";
+  sectionNum: number;
   isInventory: boolean;
   svgX: number;
   svgY: number;

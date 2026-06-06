@@ -1014,9 +1014,8 @@ components:
           type: string
         label:
           type: string
-        sectionParity:
-          type: string
-          enum: [odd, even, all]
+        sectionNum:
+          type: integer
         isInventory:
           type: boolean
         svgX:
@@ -1039,7 +1038,7 @@ components:
         - id
         - aisleId
         - label
-        - sectionParity
+        - sectionNum
         - isInventory
         - svgX
         - svgY
@@ -1076,9 +1075,8 @@ components:
         label:
           type: string
           minLength: 1
-        sectionParity:
-          type: string
-          enum: [odd, even, all]
+        sectionNum:
+          type: integer
         isInventory:
           type: boolean
         svgX:
@@ -1108,9 +1106,8 @@ components:
         label:
           type: string
           minLength: 1
-        sectionParity:
-          type: string
-          enum: [odd, even, all]
+        sectionNum:
+          type: integer
         isInventory:
           type: boolean
         svgX:

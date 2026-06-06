@@ -43,7 +43,6 @@ function summarise(zone: WarehouseZone, inventory: InventoryItem[]): SummaryStat
   const filteredSecs = filterSections(
     Array.from(sectionSet).map(n => ({ sectionNum: n, label: `Section ${n}`, shelves: [], partCount: 0 })),
     zone.sectionNumbers,
-    zone.sectionParity,
   );
 
   const kwCounts: Record<string, number> = {};
@@ -81,14 +80,9 @@ export function AisleSummarySheet({ zone, inventory, onClose, onBrowse }: AisleS
 
   if (!zone || !summary) return null;
 
-  const parityHint =
-    zone.sectionParity === "odd"
-      ? "Odd sections only"
-      : zone.sectionParity === "even"
-      ? "Even sections only"
-      : zone.sectionNumbers && zone.sectionNumbers.length > 0
-      ? `Sections: ${zone.sectionNumbers.join(", ")}`
-      : null;
+  const sectionHint = zone.sectionNumbers && zone.sectionNumbers.length > 0
+    ? `Section ${zone.sectionNumbers.join(", ")}`
+    : null;
 
   return (
     <Modal
@@ -104,8 +98,8 @@ export function AisleSummarySheet({ zone, inventory, onClose, onBrowse }: AisleS
 
         <Text style={[sheetStyles.title, { color: colors.foreground }]}>{zone.label}</Text>
 
-        {parityHint ? (
-          <Text style={[sheetStyles.parityHint, { color: colors.mutedForeground }]}>{parityHint}</Text>
+        {sectionHint ? (
+          <Text style={[sheetStyles.parityHint, { color: colors.mutedForeground }]}>{sectionHint}</Text>
         ) : null}
 
         {/* Stats row */}

@@ -340,7 +340,7 @@ function makeZone(overrides: Partial<ApiWarehouseZone> = {}): ApiWarehouseZone {
     id:            7,
     aisleId:       "7",
     label:         "07",
-    sectionParity: "odd",
+    sectionNum:    1,
     isInventory:   true,
     svgX:          100,
     svgY:          200,
@@ -425,10 +425,10 @@ describe("MapScreen — zone tap sets selectedZone and shows ZoneActionMenu", ()
 // 2. "GoTo Section" clears selectedZone and opens BrowseByAisle at correct aisle/parity
 // =============================================================================
 
-describe("MapScreen — GoTo Section opens BrowseByAisle with correct aisle and parity", () => {
+describe("MapScreen — GoTo Section opens BrowseByAisle with correct aisle and section", () => {
   it("replaces the map view with BrowseByAisle on onGoToSection", async () => {
     const tree = await renderMapScreen();
-    const zone = makeZone({ aisleId: "7", sectionParity: "odd" });
+    const zone = makeZone({ aisleId: "7", sectionNum: 1 });
 
     await act(async () => {
       (capturedMapViewProps.onZoneTap as (z: ApiWarehouseZone) => void)(zone);
@@ -445,8 +445,8 @@ describe("MapScreen — GoTo Section opens BrowseByAisle with correct aisle and 
 
     // BrowseByAisle receives the correct initialAisle (parsed from aisleId "7" → 7).
     expect(capturedBrowseProps.initialAisle).toBe(7);
-    // ...and the sectionParity from the zone.
-    expect(capturedBrowseProps.sectionParity).toBe("odd");
+    // ...and the sectionNumbers from the zone.
+    expect(capturedBrowseProps.sectionNumbers).toEqual([1]);
   });
 
   it("clears the selected zone so ZoneActionMenu is no longer visible after navigation", async () => {
@@ -464,9 +464,9 @@ describe("MapScreen — GoTo Section opens BrowseByAisle with correct aisle and 
     expect(menu).toBeNull();
   });
 
-  it("passes sectionParity='even' when the zone has even parity", async () => {
+  it("passes sectionNumbers=[2] when the zone has sectionNum 2", async () => {
     await renderMapScreen();
-    const zone = makeZone({ aisleId: "4", sectionParity: "even" });
+    const zone = makeZone({ aisleId: "4", sectionNum: 2 });
 
     await act(async () => {
       (capturedMapViewProps.onZoneTap as (z: ApiWarehouseZone) => void)(zone);
@@ -476,7 +476,7 @@ describe("MapScreen — GoTo Section opens BrowseByAisle with correct aisle and 
     });
 
     expect(capturedBrowseProps.initialAisle).toBe(4);
-    expect(capturedBrowseProps.sectionParity).toBe("even");
+    expect(capturedBrowseProps.sectionNumbers).toEqual([2]);
   });
 
   it("does NOT call the router (no push/navigate) when going to a section", async () => {
@@ -602,7 +602,7 @@ describe("MapScreen — outside-tap overlay clears selectedZone without navigati
 describe("MapScreen — long-press opens AisleSummarySheet (not zone action menu)", () => {
   it("sets the summaryZone (AisleSummarySheet receives the zone) on long-press", async () => {
     await renderMapScreen();
-    const zone = makeZone({ aisleId: "12", label: "12", sectionParity: "all" });
+    const zone = makeZone({ aisleId: "12", label: "12", sectionNum: 0 });
 
     await act(async () => {
       (capturedMapViewProps.onZoneLongPress as (z: ApiWarehouseZone) => void)(zone);

@@ -275,20 +275,11 @@ export interface AiIdentifyResponse {
   results: SearchResult[];
 }
 
-export type WarehouseZoneItemSectionParity =
-  (typeof WarehouseZoneItemSectionParity)[keyof typeof WarehouseZoneItemSectionParity];
-
-export const WarehouseZoneItemSectionParity = {
-  odd: "odd",
-  even: "even",
-  all: "all",
-} as const;
-
 export interface WarehouseZoneItem {
   id: number;
   aisleId: string;
   label: string;
-  sectionParity: WarehouseZoneItemSectionParity;
+  sectionNum: number;
   isInventory: boolean;
   svgX: number;
   svgY: number;
@@ -307,21 +298,12 @@ export interface WarehouseZoneResponse {
   zone: WarehouseZoneItem;
 }
 
-export type CreateWarehouseZoneBodySectionParity =
-  (typeof CreateWarehouseZoneBodySectionParity)[keyof typeof CreateWarehouseZoneBodySectionParity];
-
-export const CreateWarehouseZoneBodySectionParity = {
-  odd: "odd",
-  even: "even",
-  all: "all",
-} as const;
-
 export interface CreateWarehouseZoneBody {
   /** @minLength 1 */
   aisleId: string;
   /** @minLength 1 */
   label: string;
-  sectionParity?: CreateWarehouseZoneBodySectionParity;
+  sectionNum?: number;
   isInventory?: boolean;
   svgX: number;
   svgY: number;
@@ -330,21 +312,12 @@ export interface CreateWarehouseZoneBody {
   sortOrder?: number;
 }
 
-export type UpdateWarehouseZoneBodySectionParity =
-  (typeof UpdateWarehouseZoneBodySectionParity)[keyof typeof UpdateWarehouseZoneBodySectionParity];
-
-export const UpdateWarehouseZoneBodySectionParity = {
-  odd: "odd",
-  even: "even",
-  all: "all",
-} as const;
-
 export interface UpdateWarehouseZoneBody {
   /** @minLength 1 */
   aisleId?: string;
   /** @minLength 1 */
   label?: string;
-  sectionParity?: UpdateWarehouseZoneBodySectionParity;
+  sectionNum?: number;
   isInventory?: boolean;
   svgX?: number;
   svgY?: number;

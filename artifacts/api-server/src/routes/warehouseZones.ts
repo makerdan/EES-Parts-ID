@@ -103,7 +103,7 @@ router.post("/", devOnly, async (req, res) => {
     const {
       aisleId: rawAisleId,
       label,
-      sectionParity,
+      sectionNum,
       isInventory,
       svgX,
       svgY,
@@ -117,7 +117,7 @@ router.post("/", devOnly, async (req, res) => {
       .values({
         aisleId,
         label,
-        sectionParity: sectionParity ?? "all",
+        sectionNum: sectionNum ?? 0,
         isInventory: isInventory ?? true,
         svgX,
         svgY,

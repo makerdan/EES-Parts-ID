@@ -15,9 +15,6 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { sql } from "drizzle-orm";
 
-export const SECTION_PARITY_VALUES = ["odd", "even", "all"] as const;
-export type SectionParity = (typeof SECTION_PARITY_VALUES)[number];
-
 export const inventoryTable = pgTable(
   "inventory",
   {
@@ -131,7 +128,7 @@ export const warehouseZoneTable = pgTable(
     id: serial("id").primaryKey(),
     aisleId: text("aisle_id").notNull(),
     label: text("label").notNull(),
-    sectionParity: text("section_parity").notNull().default("all"),
+    sectionNum: integer("section_num").notNull().default(0),
     isInventory: boolean("is_inventory").notNull().default(true),
     svgX: real("svg_x").notNull(),
     svgY: real("svg_y").notNull(),
@@ -142,15 +139,9 @@ export const warehouseZoneTable = pgTable(
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    check(
-      "warehouse_zone_section_parity_check",
-      sql`${table.sectionParity} IN ('odd', 'even', 'all')`,
-    ),
-    // Prevent concurrent duplicate writes: no two zones may share the same
-    // aisle_id + section_parity combination.
-    uniqueIndex("warehouse_zone_aisle_parity_idx").on(
+    uniqueIndex("warehouse_zone_aisle_section_idx").on(
       table.aisleId,
-      table.sectionParity,
+      table.sectionNum,
     ),
   ],
 );

@@ -140,16 +140,16 @@ describe("filterSections", () => {
     expect(filterSections(sections)).toHaveLength(4);
   });
 
-  it("filters by sectionNumbers (takes precedence)", () => {
-    const result = filterSections(sections, [1, 3], "even");
+  it("filters by sectionNumbers", () => {
+    const result = filterSections(sections, [1, 3]);
     expect(result.map(s => s.sectionNum)).toEqual([1, 3]);
   });
 
-  it("filters by sectionParity odd", () => {
-    expect(filterSections(sections, undefined, "odd").map(s => s.sectionNum)).toEqual([1, 3]);
+  it("returns all sections when sectionNumbers is undefined", () => {
+    expect(filterSections(sections, undefined)).toHaveLength(4);
   });
 
-  it("filters by sectionParity even", () => {
-    expect(filterSections(sections, undefined, "even").map(s => s.sectionNum)).toEqual([2, 4]);
+  it("returns all sections when sectionNumbers is empty", () => {
+    expect(filterSections(sections, [])).toHaveLength(4);
   });
 });
