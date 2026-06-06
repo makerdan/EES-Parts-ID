@@ -9,8 +9,6 @@
 export interface CreateWarehouseZoneBody {
   /** @minLength 1 */
   aisleId: string;
-  /** @minLength 1 */
-  label: string;
   sectionNum?: number;
   isInventory?: boolean;
   svgX: number;

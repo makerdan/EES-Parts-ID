@@ -102,7 +102,6 @@ router.post("/", requireAdminAuth, async (req, res) => {
   try {
     const {
       aisleId: rawAisleId,
-      label,
       sectionNum,
       isInventory,
       svgX,
@@ -116,7 +115,6 @@ router.post("/", requireAdminAuth, async (req, res) => {
       .insert(warehouseZoneTable)
       .values({
         aisleId,
-        label,
         sectionNum: sectionNum ?? 0,
         isInventory: isInventory ?? true,
         svgX,

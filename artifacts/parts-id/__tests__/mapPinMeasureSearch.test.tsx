@@ -774,7 +774,7 @@ describe("WarehouseMapView – focusAisleNum effect calls onFocusConsumed when n
     // A zone list that has no entry with aisleId "1" so the find() misses.
     const zones: Parameters<typeof WarehouseMapView>[0]["zones"] = [
       {
-        id: 99, aisleId: "99", label: "Aisle 99",
+        id: 99, aisleId: "99",
         sectionNum: 0, isInventory: true,
         svgX: 100, svgY: 100, svgWidth: 200, svgHeight: 150,
         sortOrder: 0, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z",

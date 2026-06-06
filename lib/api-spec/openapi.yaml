@@ -1012,8 +1012,6 @@ components:
           type: integer
         aisleId:
           type: string
-        label:
-          type: string
         sectionNum:
           type: integer
         isInventory:
@@ -1037,7 +1035,6 @@ components:
       required:
         - id
         - aisleId
-        - label
         - sectionNum
         - isInventory
         - svgX
@@ -1072,9 +1069,6 @@ components:
         aisleId:
           type: string
           minLength: 1
-        label:
-          type: string
-          minLength: 1
         sectionNum:
           type: integer
         isInventory:
@@ -1091,7 +1085,6 @@ components:
           type: integer
       required:
         - aisleId
-        - label
         - svgX
         - svgY
         - svgWidth
@@ -1101,9 +1094,6 @@ components:
       type: object
       properties:
         aisleId:
-          type: string
-          minLength: 1
-        label:
           type: string
           minLength: 1
         sectionNum:

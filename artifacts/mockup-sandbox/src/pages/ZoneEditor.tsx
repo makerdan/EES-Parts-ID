@@ -196,7 +196,6 @@ const INITIAL_SCALE = 0.18; // start zoomed out to show whole floor plan
 interface Zone {
   id: number;
   aisleId: string;
-  label: string;
   sectionNum: number;
   isInventory: boolean;
   svgX: number;
@@ -215,7 +214,7 @@ type Mode = "pan" | "draw" | "fill";
 const UNDO_LIMIT = 50;
 type PositionSnap = { svgX: number; svgY: number };
 type GeomSnap    = { svgX: number; svgY: number; svgWidth: number; svgHeight: number };
-type MetaSnap    = Partial<Pick<Zone, "aisleId" | "label" | "sectionNum" | "isInventory" | "sortOrder">>;
+type MetaSnap    = Partial<Pick<Zone, "aisleId" | "sectionNum" | "isInventory" | "sortOrder">>;
 
 type UndoEntry =
   | { type: "move";       id: number; before: PositionSnap; after: PositionSnap }
@@ -228,7 +227,6 @@ type UndoEntry =
 
 export interface FormState {
   aisleId: string;
-  label: string;
   sectionNum: number;
   isInventory: boolean;
   sortOrder: number;
@@ -360,7 +358,7 @@ export function ZoneEditor() {
   // Original positions of every selected zone at the start of a multi-move drag
   const multiDragOriginsRef = useRef<Map<number, Pt>>(new Map());
   const [form, setForm] = useState<FormState>({
-    aisleId: "", label: "", sectionNum: 0, isInventory: true, sortOrder: 0,
+    aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0,
   });
   const [saving, setSaving] = useState(false);
 
@@ -736,7 +734,6 @@ export function ZoneEditor() {
     if (!pendingRect) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
     if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 12)"); return; }
-    const label = form.label.trim() || normalizeAisleId(form.aisleId);
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE}/warehouse-zones`, {
@@ -744,7 +741,6 @@ export function ZoneEditor() {
         headers: headers(),
         body: JSON.stringify({
           aisleId: normalizeAisleId(form.aisleId),
-          label,
           sectionNum: form.sectionNum,
           isInventory: form.isInventory,
           svgX: pendingRect.x,
@@ -759,11 +755,11 @@ export function ZoneEditor() {
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
       const { zone } = await res.json() as { zone: Zone };
-      toast.success(`Zone "${zone.label}" created`);
+      toast.success(`Zone for aisle "${zone.aisleId}" created`);
       pushUndo({ type: "create", zones: [zone] });
       setPendingRect(null);
       setSelectedIds(new Set([zone.id]));
-      setForm({ aisleId: zone.aisleId, label: zone.label, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
+      setForm({ aisleId: zone.aisleId, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -781,7 +777,6 @@ export function ZoneEditor() {
     try {
       const afterMeta: MetaSnap = {
         aisleId: normalizeAisleId(form.aisleId),
-        label: form.label.trim() || normalizeAisleId(form.aisleId),
         sectionNum: form.sectionNum,
         isInventory: form.isInventory,
         sortOrder: form.sortOrder,
@@ -828,7 +823,6 @@ export function ZoneEditor() {
         headers: headers(),
         body: JSON.stringify({
           aisleId: normalizeAisleId(form.aisleId),
-          label: form.label.trim() || normalizeAisleId(form.aisleId),
           sectionNum: form.sectionNum,
           isInventory: form.isInventory,
           svgX: selectedZone.svgX + selectedZone.svgWidth + 2,
@@ -846,7 +840,7 @@ export function ZoneEditor() {
       toast.success(`Duplicated → placed to the right`);
       pushUndo({ type: "create", zones: [zone] });
       setSelectedIds(new Set([zone.id]));
-      setForm({ aisleId: zone.aisleId, label: zone.label, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
+      setForm({ aisleId: zone.aisleId, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -866,7 +860,6 @@ export function ZoneEditor() {
             headers: headers(),
             body: JSON.stringify({
               aisleId: z.aisleId,
-              label: z.label,
               sectionNum: z.sectionNum,
               isInventory: z.isInventory,
               sortOrder: z.sortOrder,
@@ -977,7 +970,7 @@ export function ZoneEditor() {
     if (!selectedId) return;
     const z = zones.find((z) => z.id === selectedId);
     if (z) {
-      const synced: FormState = { aisleId: z.aisleId, label: z.label, sectionNum: z.sectionNum, isInventory: z.isInventory, sortOrder: z.sortOrder };
+      const synced: FormState = { aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, sortOrder: z.sortOrder };
       prevSelectedIdRef.current = selectedId;
       setForm(synced);
       lastSavedFormRef.current = synced;
@@ -1015,7 +1008,6 @@ export function ZoneEditor() {
       try {
         const afterMeta: MetaSnap = {
           aisleId: normalizeAisleId(form.aisleId),
-          label: form.label.trim() || normalizeAisleId(form.aisleId),
           sectionNum: form.sectionNum,
           isInventory: form.isInventory,
           sortOrder: form.sortOrder,
@@ -1096,7 +1088,7 @@ export function ZoneEditor() {
       // Commit as pendingRect — opens the sidebar form (same flow as Draw mode).
       setPendingRect(rect);
       setSelectedIds(new Set());
-      setForm({ aisleId: "", label: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
+      setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
 
       // Auto-switch back to Pan so a stray click doesn't trigger another fill.
       setMode("pan");
@@ -1213,7 +1205,7 @@ export function ZoneEditor() {
         }
         setPendingRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
         setSelectedIds(new Set());
-        setForm({ aisleId: "", label: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
+        setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
         return;
       }
 
@@ -1564,7 +1556,7 @@ export function ZoneEditor() {
           <ModeBtn active={mode === "pan"} onClick={() => { setMode("pan"); }}>
             Pan / Select
           </ModeBtn>
-          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setPendingRect(null); setForm({ aisleId: "", label: "", sectionNum: 0, isInventory: true, sortOrder: 0 }); }}>
+          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setPendingRect(null); setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 }); }}>
             Draw Zone
           </ModeBtn>
           <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setPendingRect(null); }}>
@@ -1766,7 +1758,7 @@ export function ZoneEditor() {
                       paintOrder="stroke"
                       style={{ pointerEvents: "none", userSelect: "none" }}
                     >
-                      {zone.label}
+                      {zone.aisleId}
                     </text>
 
                     {/* Corner handles (single-selected zone only) */}
@@ -1994,8 +1986,7 @@ export function ZoneEditor() {
                 <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} />
                 {duplicateConflict && (pendingRect || selectedZone) && (
                   <div style={styles.dupWarning}>
-                    ⚠ Zone "{duplicateConflict.label}" already uses aisle{" "}
-                    {duplicateConflict.aisleId} §{duplicateConflict.sectionNum}. Saving
+                    ⚠ Zone {duplicateConflict.aisleId} §{duplicateConflict.sectionNum} already exists. Saving
                     anyway will create an overlapping mapping.
                   </div>
                 )}
@@ -2111,9 +2102,9 @@ export function ZoneEditor() {
                     background: sel ? "rgba(245,158,11,0.08)" : "transparent",
                   }}
                 >
-                  <div style={styles.zoneItemLabel}>{zone.label}</div>
+                  <div style={styles.zoneItemLabel}>{zone.aisleId}</div>
                   <div style={styles.zoneItemMeta}>
-                    Aisle {zone.aisleId} · §{zone.sectionNum}
+                    §{zone.sectionNum}
                     {zone.isInventory ? "" : " · non-inv"}
                   </div>
                 </div>
@@ -2165,15 +2156,6 @@ export function ZoneForm({
             {aisleIdError}
           </div>
         )}
-      </div>
-      <div>
-        <Label>Label</Label>
-        <input
-          value={form.label}
-          onChange={(e) => onChange({ ...form, label: e.target.value })}
-          placeholder="e.g. 12A"
-          style={styles.input}
-        />
       </div>
       <div>
         <Label>Section #</Label>

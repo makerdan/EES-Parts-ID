@@ -360,7 +360,7 @@ export function ZoneOverlayItem({
           alignmentBaseline="middle"
           animatedProps={textAnimatedProps}
         >
-          {zone.label}
+          {zone.aisleId}
         </AnimatedSvgText>
       </G>
     );
@@ -467,7 +467,7 @@ export function ZoneOverlayItem({
         alignmentBaseline="middle"
         animatedProps={textAnimatedProps}
       >
-        {zone.label}
+        {zone.aisleId}
       </AnimatedSvgText>
     </G>
   );

@@ -379,10 +379,8 @@ describe("POST /admin/logout — token revocation", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Zone write endpoints require admin auth", () => {
-  const AUTH_ZONE_LABEL = "JEST-ZONE-AUTH";
   const ZONE_BODY = {
     aisleId: "JEST-AUTH",
-    label: AUTH_ZONE_LABEL,
     svgX: 0,
     svgY: 0,
     svgWidth: 100,
@@ -392,7 +390,7 @@ describe("Zone write endpoints require admin auth", () => {
   async function cleanupAuthZone() {
     await db
       .delete(warehouseZoneTable)
-      .where(sql`${warehouseZoneTable.label} LIKE ${"JEST-ZONE-AUTH%"}`);
+      .where(sql`${warehouseZoneTable.aisleId} = ${"JEST-AUTH"}`);
   }
 
   beforeAll(async () => {
@@ -440,7 +438,7 @@ describe("Zone write endpoints require admin auth", () => {
   it("PATCH /api/warehouse-zones/:id without token → 401", async () => {
     const res = await supertest(app)
       .patch("/api/warehouse-zones/1")
-      .send({ label: "new-label" })
+      .send({ svgX: 50 })
       .expect(401);
 
     expect(res.body).toHaveProperty("error");

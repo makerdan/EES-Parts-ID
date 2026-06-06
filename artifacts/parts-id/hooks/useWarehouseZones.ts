@@ -20,7 +20,6 @@ const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
 export type ApiWarehouseZone = {
   id: number;
   aisleId: string;
-  label: string;
   sectionNum: number;
   isInventory: boolean;
   svgX: number;
