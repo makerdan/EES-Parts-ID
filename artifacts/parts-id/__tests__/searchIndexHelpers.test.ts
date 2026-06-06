@@ -275,6 +275,64 @@ describe("buildSearchBody", () => {
     const body = buildSearchBody(BLANK);
     expect(Object.prototype.hasOwnProperty.call(body, "maxDiameter")).toBe(false);
   });
+
+  it("includes minWidth in the body when set", () => {
+    const f: FilterValues = { ...BLANK, minWidth: "0.5" };
+    const body = buildSearchBody(f);
+    expect(body.minWidth).toBe(0.5);
+  });
+
+  it("includes maxWidth in the body when set", () => {
+    const f: FilterValues = { ...BLANK, maxWidth: "2.75" };
+    const body = buildSearchBody(f);
+    expect(body.maxWidth).toBe(2.75);
+  });
+
+  it("includes both minWidth and maxWidth when both are set", () => {
+    const f: FilterValues = { ...BLANK, minWidth: "1", maxWidth: "3" };
+    const body = buildSearchBody(f);
+    expect(body.minWidth).toBe(1);
+    expect(body.maxWidth).toBe(3);
+  });
+
+  it("omits minWidth from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "minWidth")).toBe(false);
+  });
+
+  it("omits maxWidth from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "maxWidth")).toBe(false);
+  });
+
+  it("includes minHeight in the body when set", () => {
+    const f: FilterValues = { ...BLANK, minHeight: "0.5" };
+    const body = buildSearchBody(f);
+    expect(body.minHeight).toBe(0.5);
+  });
+
+  it("includes maxHeight in the body when set", () => {
+    const f: FilterValues = { ...BLANK, maxHeight: "2.75" };
+    const body = buildSearchBody(f);
+    expect(body.maxHeight).toBe(2.75);
+  });
+
+  it("includes both minHeight and maxHeight when both are set", () => {
+    const f: FilterValues = { ...BLANK, minHeight: "1", maxHeight: "3" };
+    const body = buildSearchBody(f);
+    expect(body.minHeight).toBe(1);
+    expect(body.maxHeight).toBe(3);
+  });
+
+  it("omits minHeight from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "minHeight")).toBe(false);
+  });
+
+  it("omits maxHeight from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "maxHeight")).toBe(false);
+  });
 });
 
 // ── buildQueryKey ─────────────────────────────────────────────────────────────
@@ -327,6 +385,54 @@ describe("buildQueryKey", () => {
   it("produces a different key for different maxDiameter values", () => {
     const a = { ...BLANK, maxDiameter: "3" };
     const b = { ...BLANK, maxDiameter: "5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when minWidth changes", () => {
+    const a = { ...BLANK, minWidth: "" };
+    const b = { ...BLANK, minWidth: "1.5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when maxWidth changes", () => {
+    const a = { ...BLANK, maxWidth: "" };
+    const b = { ...BLANK, maxWidth: "4" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different minWidth values", () => {
+    const a = { ...BLANK, minWidth: "1" };
+    const b = { ...BLANK, minWidth: "2" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different maxWidth values", () => {
+    const a = { ...BLANK, maxWidth: "3" };
+    const b = { ...BLANK, maxWidth: "5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when minHeight changes", () => {
+    const a = { ...BLANK, minHeight: "" };
+    const b = { ...BLANK, minHeight: "1.5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when maxHeight changes", () => {
+    const a = { ...BLANK, maxHeight: "" };
+    const b = { ...BLANK, maxHeight: "4" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different minHeight values", () => {
+    const a = { ...BLANK, minHeight: "1" };
+    const b = { ...BLANK, minHeight: "2" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different maxHeight values", () => {
+    const a = { ...BLANK, maxHeight: "3" };
+    const b = { ...BLANK, maxHeight: "5" };
     expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
   });
 });
