@@ -902,14 +902,19 @@ export function WarehouseMapView({
   // Falls back to single-texture SvgUri (with capped oversample) while svgXml
   // is not yet available (first cold start before the bundle fetch completes).
 
+  // True while a pinch gesture is in flight; gates tier rebuilds during pinch,
+  // matching the springActive gate used for button-driven zooms.  The tier is
+  // committed once on pinch end so there is never a mid-gesture tile swap.
+  const pinchActive = useSharedValue(false);
+
   // Track the integer zoom tier on the JS thread (avoids churn during pinch).
   const [renderZoom, setRenderZoom] = useState(1);
   useAnimatedReaction(
     () => Math.ceil(scale.value),
     (tier, prevTier) => {
-      // Skip mid-flight updates while a button spring is running; the spring's
-      // onEnd callback will commit the final tier once it settles.
-      if (tier !== prevTier && !springActive.value) {
+      // Unified settle gate: skip mid-flight updates while a button spring OR a
+      // pinch gesture is in progress.  Both paths commit the final tier on end.
+      if (tier !== prevTier && !springActive.value && !pinchActive.value) {
         runOnJS(setRenderZoom)(tier);
       }
     },
@@ -1118,11 +1123,42 @@ export function WarehouseMapView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [svgXml]);
 
+  // ── Crossfade between tile tiers ─────────────────────────────────────────
+  // When the integer zoom tier advances (numTiles changes), the old tile grid
+  // is kept mounted in a fade-out layer while the new grid fades in over 150 ms
+  // so there is never a blank frame at the boundary.
+  //
+  // The snapshot of the previous tier's tiles is captured during render via
+  // two refs that are updated at the end of every render cycle:
+  //   prevRenderZoomRef  — renderZoom from the last render
+  //   prevTilesRef       — tiles[] from the last render
+  // On the render where renderZoom changes, these still hold the OLD values
+  // (they were written at the end of the previous render), giving us the
+  // exact tile set to fade out.
+  interface TileSpec { col: number; row: number; xml: string; }
+  interface FadeLayer { tiles: TileSpec[]; numTiles: number; }
+
+  const prevRenderZoomRef = useRef(renderZoom);
+  const prevTilesRef = useRef<TileSpec[]>([]);
+  const pendingFadeRef = useRef<FadeLayer | null>(null);
+  const [fadeOutLayer, setFadeOutLayer] = useState<FadeLayer | null>(null);
+  const fadeOutOpacity = useSharedValue(0);
+  const tileLayerOpacity = useSharedValue(1);
+
+  // Detect a tier change BEFORE the tiles useMemo recomputes so we can
+  // snapshot the old tiles still stored in prevTilesRef.
+  const isTierChange = Platform.OS !== "web" && renderZoom !== prevRenderZoomRef.current;
+  if (isTierChange && prevTilesRef.current.length > 0) {
+    pendingFadeRef.current = {
+      tiles: prevTilesRef.current,
+      numTiles: prevRenderZoomRef.current,
+    };
+  }
+
   // ── Tile XML memoisation ──────────────────────────────────────────────────
   // Produces SvgXml strings for each visible tile by replacing the viewBox
   // attribute in the cached SVG text.  Recomputes only when the visible range
   // or numTiles changes — not on every animation frame.
-  interface TileSpec { col: number; row: number; xml: string; }
   const tiles = useMemo<TileSpec[]>(() => {
     // Web: the floor plan is embedded directly inside the shared SVG viewport
     // via dangerouslySetInnerHTML — no separate tiling layer, no Metal texture-
@@ -1147,6 +1183,43 @@ export function WarehouseMapView({
     }
     return result;
   }, [numTiles, svgXml, visibleRange]);
+
+  // Update the snapshot refs at the END of every render so next render sees
+  // the values from this render (ref mutations during render are safe in React).
+  prevRenderZoomRef.current = renderZoom;
+  prevTilesRef.current = tiles;
+
+  // Trigger the crossfade animation whenever the tile tier commits.
+  // pendingFadeRef holds the old tiles captured during this render (above).
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const snap = pendingFadeRef.current;
+    pendingFadeRef.current = null;
+    if (!snap || snap.tiles.length === 0) {
+      // No old tiles to cross-dissolve (e.g. first zoom past 1 → 2), but
+      // still fade the new tile layer in so it appears without a hard pop.
+      tileLayerOpacity.value = 0;
+      tileLayerOpacity.value = withTiming(1, { duration: 150 });
+      return;
+    }
+    setFadeOutLayer(snap);
+    // New layer: snap opacity from 0 → 1 so tiles appear as they paint.
+    tileLayerOpacity.value = 0;
+    tileLayerOpacity.value = withTiming(1, { duration: 150 });
+    // Old layer: fade out in sync, then unmount.
+    fadeOutOpacity.value = 1;
+    fadeOutOpacity.value = withTiming(0, { duration: 150 }, (finished) => {
+      if (finished) runOnJS(setFadeOutLayer)(null);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderZoom]);
+
+  const tileLayerAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: tileLayerOpacity.value,
+  }));
+  const fadeOutAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: fadeOutOpacity.value,
+  }));
 
   // Skeleton shimmer — pulsing opacity while SVG is fetching.
   // Starts unmounted when the cache is already populated so there is no
@@ -1178,6 +1251,11 @@ export function WarehouseMapView({
 
   // ── Pinch gesture ──────────────────────────────────────────────────────────
   const pinchGesture = Gesture.Pinch()
+    .onBegin(() => {
+      // Gate tile-tier changes while the finger is on screen.  The tier is
+      // committed once on onEnd so tile rebuilds never happen mid-gesture.
+      pinchActive.value = true;
+    })
     .onUpdate((e) => {
       const newScale = clamp(savedScale.value * e.scale, MIN_SCALE, MAX_SCALE);
       scale.value = newScale;
@@ -1206,9 +1284,13 @@ export function WarehouseMapView({
       translateY.value = clamp(newTY, -maxY, maxY);
     })
     .onEnd(() => {
+      // Release the gate and commit the settled tier — mirrors the button
+      // spring path so the unified useAnimatedReaction gate works for both.
+      pinchActive.value = false;
       savedScale.value = scale.value;
       savedTX.value = translateX.value;
       savedTY.value = translateY.value;
+      runOnJS(setRenderZoom)(Math.ceil(scale.value));
       runOnJS(persistViewport)(scale.value, translateX.value, translateY.value);
     });
 
@@ -1371,45 +1453,76 @@ export function WarehouseMapView({
                   isDark && styles.svgDarkFilter,
                 ]}
               >
-                {numTiles > 1 && tiles.length > 0 ? (
-                  // Tiled path — render only visible tiles
-                  tiles.map(({ col, row, xml: tileXml }) => (
+                {/* ── Crossfade fade-out layer ──────────────────────────────
+                    Holds the previous tier's tiles while new tiles render.
+                    Fades from 1→0 over 150 ms in sync with the new layer
+                    fading in, so there is never a blank frame at the boundary.
+                    Rendered BELOW the main layer so the new tiles always
+                    appear on top as they paint. */}
+                {fadeOutLayer && fadeOutLayer.numTiles > 1 && (
+                  <Animated.View
+                    style={[StyleSheet.absoluteFill, fadeOutAnimatedStyle]}
+                    pointerEvents="none"
+                  >
+                    {fadeOutLayer.tiles.map(({ col, row, xml: tileXml }) => (
+                      <View
+                        key={`fade-${col}-${row}`}
+                        style={{
+                          width: svgRenderW,
+                          height: svgRenderH,
+                          position: "absolute",
+                          left: (col + 0.5) * (svgRenderW / fadeOutLayer.numTiles) - svgRenderW / 2,
+                          top: (row + 0.5) * (svgRenderH / fadeOutLayer.numTiles) - svgRenderH / 2,
+                          transform: [{ scale: 1 / fadeOutLayer.numTiles }],
+                        }}
+                      >
+                        <SvgXml xml={tileXml} width={svgRenderW} height={svgRenderH} />
+                      </View>
+                    ))}
+                  </Animated.View>
+                )}
+                {/* ── Main tile layer — fades in on tier change ─────────── */}
+                <Animated.View style={[StyleSheet.absoluteFill, tileLayerAnimatedStyle]}>
+                  {numTiles > 1 && tiles.length > 0 ? (
+                    // Tiled path — render only visible tiles
+                    tiles.map(({ col, row, xml: tileXml }) => (
+                      <View
+                        key={`${col}-${row}`}
+                        style={{
+                          width: svgRenderW,
+                          height: svgRenderH,
+                          position: "absolute",
+                          // Centre the tile's layout box so that scale(1/N)
+                          // pivots exactly around the tile's visual centre.
+                          left: (col + 0.5) * (svgRenderW / numTiles) - svgRenderW / 2,
+                          top: (row + 0.5) * (svgRenderH / numTiles) - svgRenderH / 2,
+                          transform: [{ scale: 1 / numTiles }],
+                        }}
+                      >
+                        <SvgXml xml={tileXml} width={svgRenderW} height={svgRenderH} />
+                      </View>
+                    ))
+                  ) : svgXml ? (
+                    // Single-tile path — SVG text already loaded; render directly
+                    // with SvgXml so no second network round-trip is needed.
+                    <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
+                  ) : (
+                    // Cold-start fallback — svgXml not yet available; use SvgUri
+                    // which can render from the URI while the XML fetch completes.
                     <View
-                      key={`${col}-${row}`}
                       style={{
-                        width: svgRenderW,
-                        height: svgRenderH,
+                        width: hiResW,
+                        height: hiResH,
                         position: "absolute",
-                        // Centre the tile's layout box so that scale(1/N)
-                        // pivots exactly around the tile's visual centre.
-                        left: (col + 0.5) * (svgRenderW / numTiles) - svgRenderW / 2,
-                        top: (row + 0.5) * (svgRenderH / numTiles) - svgRenderH / 2,
-                        transform: [{ scale: 1 / numTiles }],
+                        left: (svgRenderW - hiResW) / 2,
+                        top: (svgRenderH - hiResH) / 2,
+                        transform: [{ scale: 1 / oversample }],
                       }}
                     >
-                      <SvgXml xml={tileXml} width={svgRenderW} height={svgRenderH} />
+                      <SvgUri uri={svgUri} width={hiResW} height={hiResH} />
                     </View>
-                  ))
-                ) : svgXml ? (
-                  // Single-tile path — SVG text already loaded; render directly
-                  // with SvgXml so no second network round-trip is needed.
-                  <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
-                ) : (
-                  // Cold-start fallback — svgXml not yet available; use SvgUri
-                  // which can render from the URI while the XML fetch completes.
-                  <View
-                    style={{
-                      width: hiResW,
-                      height: hiResH,
-                      position: "absolute",
-                      left: (svgRenderW - hiResW) / 2,
-                      top: (svgRenderH - hiResH) / 2,
-                      transform: [{ scale: 1 / oversample }],
-                    }}
-                  >
-                    <SvgUri uri={svgUri} width={hiResW} height={hiResH} />
-                  </View>
-                )}
+                  )}
+                </Animated.View>
               </View>
             ) : !svgLoading ? (
               <View
