@@ -270,6 +270,7 @@ export interface AiReferenceBody {
 export type ListInventoryParams = {
   page?: number;
   limit?: number;
+  binPrefix?: string;
 };
 
 export type LookupDictionaryParams = {
