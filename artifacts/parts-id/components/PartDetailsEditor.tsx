@@ -31,7 +31,15 @@ interface CapturedPhoto {
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
+  : "";
+
+if (__DEV__ && !process.env.EXPO_PUBLIC_DOMAIN) {
+  // eslint-disable-next-line no-console
+  console.error(
+    "[PartDetailsEditor] EXPO_PUBLIC_DOMAIN is not set — all API calls will fail. " +
+    "Set the environment variable before starting the dev server.",
+  );
+}
 
 function fmtDim(v: number | null | undefined): string {
   if (v == null) return "";

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   loadScanHistory,
   saveScanHistory,
@@ -16,20 +16,30 @@ import {
  */
 export function useScanHistory() {
   const [history, setHistory] = useState<ScanEntry[]>([]);
+  // Ref keeps addEntry's closure stable (no dep on history) while always
+  // seeing the latest list so prependEntry deduplicates correctly.
+  const historyRef = useRef<ScanEntry[]>([]);
 
   useEffect(() => {
-    loadScanHistory().then(setHistory).catch(() => {});
+    loadScanHistory().then((loaded) => {
+      historyRef.current = loaded;
+      setHistory(loaded);
+    }).catch(() => {});
   }, []);
 
-  const addEntry = useCallback((entry: ScanEntry) => {
-    setHistory((prev) => {
-      const next = prependEntry(prev, entry);
-      saveScanHistory(next).catch(() => {});
-      return next;
-    });
+  const addEntry = useCallback(async (entry: ScanEntry) => {
+    const next = prependEntry(historyRef.current, entry);
+    historyRef.current = next;
+    setHistory(next);
+    try {
+      await saveScanHistory(next);
+    } catch (err) {
+      console.error("[useScanHistory] Failed to persist scan history:", err);
+    }
   }, []);
 
   const clear = useCallback(() => {
+    historyRef.current = [];
     setHistory([]);
     clearScanHistory().catch(() => {});
   }, []);

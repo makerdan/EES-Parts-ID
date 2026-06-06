@@ -2107,4 +2107,28 @@ All values must be positive numbers (mm) or null.`,
   }
 });
 
+// ── DELETE /inventory/:id ─────────────────────────────────────────────────────
+// Hard-deletes a single inventory item by id. Admin-protected.
+// Used by the client as an atomic rollback when a multi-step add (create then
+// PATCH dimensions) fails partway through, preventing dimension-less orphans.
+router.delete("/:id", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    if (!id) return void res.status(400).json({ error: "Invalid item id" });
+
+    const [deleted] = await db
+      .delete(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .returning({ id: inventoryTable.id });
+
+    if (!deleted) return void res.status(404).json({ error: "Item not found" });
+
+    invalidateReferenceAnswerCache().catch(() => {});
+    res.status(200).json({ deleted: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to delete item" });
+  }
+});
+
 export default router;
