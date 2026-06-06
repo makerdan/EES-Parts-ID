@@ -65,7 +65,7 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from "react-native-reanimated";
-import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml, Circle } from "react-native-svg";
+import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml, Path, Ellipse } from "react-native-svg";
 
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
@@ -332,35 +332,32 @@ function ZoneOverlayItem({
         const cx = zone.svgX + zone.svgWidth / 2;
 
         if (sectionNums && sectionNums.length > 0) {
-          // Render one Circle per distinct section so workers can see exactly
+          // Render one 3D pin per distinct section so workers can see exactly
           // which part of the aisle to walk to (top = section 00, bottom = 99).
           return sectionNums.map((sec, i) => {
             const frac = Math.max(0.05, Math.min(0.95, sec / 99));
             const cy = zone.svgY + frac * zone.svgHeight;
             return (
-              <Circle
+              <MapPin3D
                 key={i}
                 cx={cx}
                 cy={cy}
-                r={markerR}
+                size={markerR}
                 fill={pinFill}
                 stroke={pinStroke}
-                strokeWidth={3}
               />
             );
           });
         }
-        // Fallback: no section data — show emoji at zone top
+        // Fallback: no section data — show 3D pin at zone top
         return (
-          <SvgText
-            x={cx}
-            y={zone.svgY + 40}
-            fontSize={36}
-            textAnchor="middle"
-            alignmentBaseline="middle"
-          >
-            {isPinned ? "📍" : "🔵"}
-          </SvgText>
+          <MapPin3D
+            cx={cx}
+            cy={zone.svgY + 40}
+            size={markerR}
+            fill={pinFill}
+            stroke={pinStroke}
+          />
         );
       })() : null}
       {binLabel ? (
@@ -408,9 +405,9 @@ export interface WarehouseMapViewProps {
   variantAisleNums?: ReadonlySet<number>;
   /** Maps aisleNum → first bin code (e.g. "17-06-204") to render as a label inside the pinned zone. */
   pinnedBinLabels?: ReadonlyMap<number, string>;
-  /** Maps aisleNum → list of section numbers for primary pins — drives section-level Circle markers. */
+  /** Maps aisleNum → list of section numbers for primary pins — drives section-level 3D pin markers. */
   pinnedSectionsMap?: ReadonlyMap<number, number[]>;
-  /** Maps aisleNum → list of section numbers for variant pins — drives section-level Circle markers. */
+  /** Maps aisleNum → list of section numbers for variant pins — drives section-level 3D pin markers. */
   variantSectionsMap?: ReadonlyMap<number, number[]>;
   /**
    * When set, the map animates its viewport to center on this aisle's zone.
@@ -421,6 +418,53 @@ export interface WarehouseMapViewProps {
   onFocusConsumed?: () => void;
   /** Called when focusAisleNum is set but no matching zone exists on the map. */
   onFocusFailed?: () => void;
+}
+
+/** 3D-style teardrop pin rendered entirely in SVG viewBox coordinates.
+ *  `cx`, `cy` — tip (bottom point) of the pin.
+ *  `size`     — ball radius; controls overall scale.
+ */
+function MapPin3D({
+  cx,
+  cy,
+  size,
+  fill,
+  stroke,
+}: {
+  cx: number;
+  cy: number;
+  size: number;
+  fill: string;
+  stroke: string;
+}) {
+  const r = size;
+  const bcy = cy - r * 1.85;
+  const path =
+    `M ${cx},${cy} ` +
+    `C ${cx - r * 0.38},${cy - r * 0.55} ${cx - r},${cy - r * 1.1} ${cx - r},${bcy} ` +
+    `A ${r},${r} 0 1,1 ${cx + r},${bcy} ` +
+    `C ${cx + r},${cy - r * 1.1} ${cx + r * 0.38},${cy - r * 0.55} ${cx},${cy} Z`;
+  const gx = cx - r * 0.28;
+  const gy = bcy - r * 0.32;
+  return (
+    <G>
+      <Ellipse
+        cx={cx}
+        cy={cy + r * 0.18}
+        rx={r * 0.42}
+        ry={r * 0.16}
+        fill="rgba(0,0,0,0.18)"
+      />
+      <Path d={path} fill={fill} stroke={stroke} strokeWidth={2} strokeLinejoin="round" />
+      <Ellipse
+        cx={gx}
+        cy={gy}
+        rx={r * 0.21}
+        ry={r * 0.13}
+        fill="rgba(255,255,255,0.55)"
+      />
+    </G>
+  );
 }
 
 export function WarehouseMapView({
@@ -612,21 +656,35 @@ export function WarehouseMapView({
       return;
     }
 
-    const TARGET_SCALE = 2.5;
+    const currentScale = scale.value;    // keep whatever zoom the user is at
+    const currentTX = translateX.value;
+    const currentTY = translateY.value;
     const svgRW = w;                      // svgRenderW = containerW
     const svgRH = w / SVG_ASPECT;        // svgRenderH
     const cx = zone.svgX + zone.svgWidth / 2;
     const cy = zone.svgY + zone.svgHeight / 2;
-    const tx = w / 2 - (cx / SVG_VIEWBOX_W) * svgRW * TARGET_SCALE;
-    const ty = h / 2 - (cy / SVG_VIEWBOX_H) * svgRH * TARGET_SCALE;
 
-    scale.value = withSpring(TARGET_SCALE, { damping: 18, stiffness: 200 });
-    savedScale.value = TARGET_SCALE;
-    translateX.value = withSpring(tx, { damping: 18, stiffness: 200 });
-    savedTX.value = tx;
-    translateY.value = withSpring(ty, { damping: 18, stiffness: 200 });
-    savedTY.value = ty;
-    persistViewport(TARGET_SCALE, tx, ty);
+    // Check if the zone is already visible in the current viewport.
+    // SVG viewBox point (px, py) maps to screen as:
+    //   screenX = (px / SVG_VIEWBOX_W) * svgRW * scale + translateX
+    const scaleRW = (1 / SVG_VIEWBOX_W) * svgRW * currentScale;
+    const scaleRH = (1 / SVG_VIEWBOX_H) * svgRH * currentScale;
+    const zoneL = zone.svgX * scaleRW + currentTX;
+    const zoneR = (zone.svgX + zone.svgWidth) * scaleRW + currentTX;
+    const zoneT = zone.svgY * scaleRH + currentTY;
+    const zoneB = (zone.svgY + zone.svgHeight) * scaleRH + currentTY;
+    const isVisible = zoneR > 0 && zoneL < w && zoneB > 0 && zoneT < h;
+
+    if (!isVisible) {
+      // Pan to centre the zone; do not change zoom level.
+      const tx = w / 2 - cx * scaleRW;
+      const ty = h / 2 - cy * scaleRH;
+      translateX.value = withSpring(tx, { damping: 18, stiffness: 200 });
+      savedTX.value = tx;
+      translateY.value = withSpring(ty, { damping: 18, stiffness: 200 });
+      savedTY.value = ty;
+      persistViewport(currentScale, tx, ty);
+    }
     // Notify parent that this focus has been consumed so it can clear
     // focusAisleNum and prevent repeated re-centering on future tab visits.
     onFocusConsumed?.();
