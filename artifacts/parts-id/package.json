@@ -32,7 +32,7 @@
     "@workspace/zone-validation": "workspace:*",
     "babel-plugin-react-compiler": "^19.0.0-beta-e993439-20250117",
     "eslint": "^8.57.0",
-    "eslint-config-expo": "^7.0.0",
+    "eslint-config-expo": "^10.0.0",
     "expo": "~54.0.35",
     "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",
@@ -47,7 +47,6 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.10",
     "expo-location": "~19.0.8",
-    "expo-modules-core": "~3.0.30",
     "expo-router": "~6.0.24",
     "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.12",
@@ -87,6 +86,6 @@
     "expo-image-manipulator": "~14.0.8",
     "expo-screen-orientation": "^9.0.9",
     "expo-sharing": "~14.0.8",
-    "lidar-measure": "file:./modules/lidar-measure"
+    "lidar-measure": "link:./modules/lidar-measure"
   }
 }
