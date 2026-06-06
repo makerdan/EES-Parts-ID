@@ -47,6 +47,7 @@ interface PartDetailsEditorProps {
   item: InventoryItem | null;
   adminToken: string | null;
   onClose: () => void;
+  onShowOnMap?: (item: InventoryItem) => void;
 }
 
 /**
@@ -59,7 +60,7 @@ interface PartDetailsEditorProps {
  * On non-LiDAR iOS devices the "Estimate" (photo AI) path is shown instead.
  * Android and Web see neither — manual entry only.
  */
-export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEditorProps) {
+export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: PartDetailsEditorProps) {
   "use no memo";
   const colors = useColors();
   const queryClient = useQueryClient();
@@ -761,6 +762,16 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
           </ScrollView>
 
           <View style={[styles.footer, { borderTopColor: colors.border }]}>
+            {onShowOnMap && item ? (
+              <Pressable
+                onPress={() => { onClose(); onShowOnMap(item); }}
+                style={[styles.mapBtn, { backgroundColor: colors.accentForeground + "18", borderColor: colors.accentForeground + "44" }]}
+                accessibilityLabel="Show this part on the map"
+              >
+                <Feather name="map-pin" size={14} color={colors.accentForeground} />
+                <Text style={[styles.mapBtnText, { color: colors.accentForeground }]}>Map it!</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               onPress={onClose}
               style={[styles.cancelBtn, { borderColor: colors.border }]}
@@ -1086,6 +1097,17 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     gap: 10,
   },
+  mapBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+  },
+  mapBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   cancelBtn: {
     flex: 1,
     borderWidth: 1,
