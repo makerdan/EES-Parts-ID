@@ -55,7 +55,12 @@ const VALID_DIMENSION_UNITS: DimensionUnit[] = ["mm", "cm", "in"];
 export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await AsyncStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
+    if (!raw) {
+      // First launch — write defaults immediately so every downstream consumer
+      // (context, conversion helpers, unit picker) always reads a persisted value.
+      await saveSettings(DEFAULT_SETTINGS);
+      return DEFAULT_SETTINGS;
+    }
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     return {
       ...DEFAULT_SETTINGS,

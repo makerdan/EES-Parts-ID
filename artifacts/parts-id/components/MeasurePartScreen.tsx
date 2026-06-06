@@ -78,7 +78,7 @@ type RescanAxis = "length" | "width" | "height";
 const LIDAR_TIMEOUT_S = 4;
 
 /** Format a mm value for display in the chosen unit. */
-function fmtForUnit(v: number | null | undefined, unit: DimensionUnit): string {
+export function fmtForUnit(v: number | null | undefined, unit: DimensionUnit): string {
   if (v == null) return "";
   switch (unit) {
     case "cm": return (Math.round((v / 10) * 10) / 10).toFixed(1);
@@ -88,7 +88,7 @@ function fmtForUnit(v: number | null | undefined, unit: DimensionUnit): string {
 }
 
 /** Parse a field string (in display unit) and return the value in mm, or null. */
-function parseFieldToMm(s: string, unit: DimensionUnit): number | null {
+export function parseFieldToMm(s: string, unit: DimensionUnit): number | null {
   const n = parseFloat(s);
   if (isNaN(n) || n < 0) return null;
   switch (unit) {
