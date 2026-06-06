@@ -13,3 +13,10 @@ export const AdminProfilePayloadSchema = z.object({
 });
 
 export type AdminProfilePayload = z.infer<typeof AdminProfilePayloadSchema>;
+
+export const ShelfPreferencesPayloadSchema = z.object({
+  shelfPrefix: z.string().max(10).optional(),
+  shelfStep: z.number().int().min(1).max(100).optional(),
+});
+
+export type ShelfPreferencesPayload = z.infer<typeof ShelfPreferencesPayloadSchema>;

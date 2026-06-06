@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import crypto from "node:crypto";
 import { db, adminPreferencesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { AdminProfilePayloadSchema } from "@workspace/api-zod";
+import { AdminProfilePayloadSchema, ShelfPreferencesPayloadSchema } from "@workspace/api-zod";
 
 const router = Router();
 
@@ -154,6 +154,68 @@ router.put("/profile", requireAdminAuth, async (req, res) => {
     return res.json({ dimensionUnit, textSize, themeMode, defaultConfidenceThreshold, scanSound });
   } catch (err) {
     return res.status(500).json({ error: "Failed to update admin profile" });
+  }
+});
+
+// ── GET /admin/shelf-preferences ─────────────────────────────────────────────
+// Returns persisted shelf prefix and step for the admin account.
+router.get("/shelf-preferences", requireAdminAuth, async (_req, res) => {
+  try {
+    const rows = await db
+      .select()
+      .from(adminPreferencesTable)
+      .where(eq(adminPreferencesTable.id, 1))
+      .limit(1);
+
+    if (rows.length === 0) {
+      return res.json({ shelfPrefix: null, shelfStep: null });
+    }
+
+    const row = rows[0];
+    return res.json({ shelfPrefix: row.shelfPrefix ?? null, shelfStep: row.shelfStep ?? null });
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch shelf preferences" });
+  }
+});
+
+// ── PATCH /admin/shelf-preferences ───────────────────────────────────────────
+// Upserts shelf prefix and/or step for the admin account.
+router.patch("/shelf-preferences", requireAdminAuth, async (req, res) => {
+  const parsed = ShelfPreferencesPayloadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid payload" });
+  }
+
+  const { shelfPrefix, shelfStep } = parsed.data;
+
+  const setFields: Record<string, unknown> = { updatedAt: new Date() };
+  if (shelfPrefix !== undefined) setFields.shelfPrefix = shelfPrefix;
+  if (shelfStep !== undefined) setFields.shelfStep = shelfStep;
+
+  try {
+    await db
+      .insert(adminPreferencesTable)
+      .values({
+        id: 1,
+        shelfPrefix: shelfPrefix ?? null,
+        shelfStep: shelfStep ?? null,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: adminPreferencesTable.id,
+        set: setFields,
+      });
+
+    const rows = await db
+      .select()
+      .from(adminPreferencesTable)
+      .where(eq(adminPreferencesTable.id, 1))
+      .limit(1);
+
+    const row = rows[0];
+    return res.json({ shelfPrefix: row?.shelfPrefix ?? null, shelfStep: row?.shelfStep ?? null });
+  } catch {
+    return res.status(500).json({ error: "Failed to update shelf preferences" });
   }
 });
 
