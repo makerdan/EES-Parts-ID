@@ -54,6 +54,10 @@ router.get("/", async (req, res) => {
     const minDiameter = req.query["minDiameter"] != null ? parseFloat(req.query["minDiameter"] as string) : null;
     const maxDiameter = req.query["maxDiameter"] != null ? parseFloat(req.query["maxDiameter"] as string) : null;
 
+    const binPrefix = typeof req.query["binPrefix"] === "string" && req.query["binPrefix"].trim()
+      ? req.query["binPrefix"].trim()
+      : null;
+
     // Build optional dimension WHERE conditions using the same expression pattern
     // as the indexed columns so Postgres can use the expression indexes.
     const dimConditions = and(
@@ -66,6 +70,21 @@ router.get("/", async (req, res) => {
         maxHeight   != null && !isNaN(maxHeight)   ? sql`(dimensions->>'height')::numeric   <= ${maxHeight}`   : undefined,
         minDiameter != null && !isNaN(minDiameter) ? sql`(dimensions->>'diameter')::numeric >= ${minDiameter}` : undefined,
         maxDiameter != null && !isNaN(maxDiameter) ? sql`(dimensions->>'diameter')::numeric <= ${maxDiameter}` : undefined,
+        // Bin-prefix filter: match any row whose bin_locations array contains at
+        // least one entry starting with the given prefix (case-insensitive).
+        //
+        // The query uses array_to_string(bin_locations, E'\n') so that the
+        // pg_trgm trigram GIN index (idx_inventory_bin_locs_prefix_trgm) can
+        // accelerate it. Two ILIKE branches cover all positions in the array:
+        //   - First element:  string starts with prefix (no leading wildcard)
+        //   - Later elements: string contains '\n' + prefix (leading wildcard, but
+        //     pg_trgm can still use trigrams when the prefix is ≥3 chars)
+        binPrefix != null
+          ? sql`(
+              array_to_string(${inventoryTable.binLocations}, E'\n') ILIKE ${binPrefix + '%'}
+              OR array_to_string(${inventoryTable.binLocations}, E'\n') ILIKE ${'%\n' + binPrefix + '%'}
+            )`
+          : undefined,
       ].filter((c): c is NonNullable<typeof c> => c !== undefined),
     );
 

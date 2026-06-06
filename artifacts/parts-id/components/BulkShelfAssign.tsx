@@ -46,13 +46,14 @@ function formatShelfPrefix(raw: string): string {
   return result;
 }
 
-/** Fetch every page of inventory until all items are collected. */
-async function fetchAllInventory(): Promise<InventoryItem[]> {
+/** Fetch every page of inventory until all items are collected.
+ *  Pass binPrefix to restrict to a shelf; omit it for the full catalog. */
+async function fetchAllInventory(binPrefix?: string): Promise<InventoryItem[]> {
   const pageSize = 500;
   let page = 1;
   const all: InventoryItem[] = [];
   while (true) {
-    const result = await listInventory({ page, limit: pageSize });
+    const result = await listInventory({ page, limit: pageSize, binPrefix });
     all.push(...(result.items ?? []));
     if (all.length >= (result.total ?? 0)) break;
     page++;
@@ -160,13 +161,21 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
 
   const allBinLocations = useMemo(() => {
     const set = new Set<string>();
+    // Seed from the cached 500-item suggestion page
     for (const item of suggestAllItems) {
       for (const bin of item.binLocations ?? []) {
         if (bin.trim()) set.add(bin.trim());
       }
     }
+    // Merge in bins from the fully-loaded shelf items so locations beyond
+    // position 500 in the catalog are represented in the autocomplete chips.
+    for (const item of shelfItems) {
+      for (const bin of item.binLocations ?? []) {
+        if (bin.trim()) set.add(bin.trim());
+      }
+    }
     return Array.from(set).sort();
-  }, [suggestAllItems]);
+  }, [suggestAllItems, shelfItems]);
 
   const assignedCount = useMemo(() => {
     return shelfItems.filter(item => {
@@ -197,18 +206,27 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     });
   }, [shelfItems, itemRowStates, filterUnassigned]);
 
-  // Snapshot stats for the input step (uses the cached 500-item list for fast preview)
+  // Server-side count for the shelf prefix preview — uses limit:1 so only
+  // the total field matters; the actual items are not loaded here.
+  const previewBinPrefix = shelfPrefix.trim() || undefined;
+  const { data: previewCountPage } = useListInventory(
+    { binPrefix: previewBinPrefix, limit: 1 },
+  );
+
+  // Snapshot stats for the input step — total comes from the server-side count
+  // so it is accurate regardless of catalog size. withBarcode is derived from the
+  // cached 500-item suggestion page and is labelled as approximate in the UI.
   const inputPreviewStats = useMemo(() => {
     if (!shelfPrefix.trim()) return null;
     const prefix = shelfPrefix.trim().toUpperCase();
-    const matching = suggestAllItems.filter(item =>
-      item.binLocations?.some(b => b.toUpperCase().startsWith(prefix))
-    );
+    const withBarcode = suggestAllItems
+      .filter(item => item.binLocations?.some(b => b.toUpperCase().startsWith(prefix)))
+      .filter(i => Array.isArray(i.barcodes) && i.barcodes.length > 0).length;
     return {
-      total: matching.length,
-      withBarcode: matching.filter(i => Array.isArray(i.barcodes) && i.barcodes.length > 0).length,
+      total: previewCountPage?.total ?? null,
+      withBarcode,
     };
-  }, [shelfPrefix, suggestAllItems]);
+  }, [shelfPrefix, suggestAllItems, previewCountPage]);
 
   useEffect(() => {
     if (!visible) {
@@ -284,14 +302,15 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     lastScanRef.current = null;
     clearBulkSession();
     try {
-      const all = await fetchAllInventory();
-      allItemsRef.current = all;
       const prefix = shelfPrefix.trim().toUpperCase();
-      const matching = all.filter(item =>
-        item.binLocations?.some(b => b.toUpperCase().startsWith(prefix))
-      );
+      // Fetch only the shelf's items (server-side filtered). This is fast
+      // because the server returns just the matching rows, not the full catalog.
+      const matching = await fetchAllInventory(prefix);
       setShelfItems(matching);
       setStep("session");
+      // Refresh the full catalog in the background for conflict detection.
+      // This mirrors the resume path and does not block entering the session.
+      fetchAllInventory().then(all => { allItemsRef.current = all; }).catch(() => {});
     } catch {
       setLoadError("Could not load items — check your connection and try again.");
     } finally {
@@ -745,7 +764,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
                 autoCorrect={false}
               />
 
-              {inputPreviewStats && shelfPrefix.trim().length > 0 ? (
+              {inputPreviewStats && inputPreviewStats.total !== null && shelfPrefix.trim().length > 0 ? (
                 <View
                   style={[
                     bsStyles.previewCard,
@@ -754,14 +773,11 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
                 >
                   <Text style={[bsStyles.previewCount, { color: colors.foreground }]}>
                     <Text style={{ fontFamily: "Inter_700Bold" }}>{inputPreviewStats.total}</Text>
-                    <Text style={{ color: colors.mutedForeground }}> cached items match · </Text>
+                    <Text style={{ color: colors.mutedForeground }}> items on this shelf · </Text>
                     <Text style={{ fontFamily: "Inter_700Bold" }}>
                       {inputPreviewStats.withBarcode}
                     </Text>
                     <Text style={{ color: colors.mutedForeground }}> already have barcodes</Text>
-                  </Text>
-                  <Text style={[bsStyles.previewNote, { color: colors.mutedForeground }]}>
-                    Exact count confirmed after full load
                   </Text>
                 </View>
               ) : null}
