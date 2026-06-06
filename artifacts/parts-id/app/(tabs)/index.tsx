@@ -1450,6 +1450,7 @@ export default function SearchScreen() {
         item={detailsItem}
         adminToken={adminToken}
         onClose={() => setDetailsItem(null)}
+        onShowOnMap={handleShowOnMap}
       />
 
       <ReferenceModal open={showReference} onClose={() => setShowReference(false)} />
