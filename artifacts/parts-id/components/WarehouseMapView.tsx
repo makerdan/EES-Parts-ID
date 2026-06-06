@@ -221,6 +221,8 @@ interface ZoneOverlayItemProps {
   isCounted: boolean;
   isPinned?: boolean;
   isVariantPinned?: boolean;
+  /** When true, renders a highlighted ring/fill to indicate this zone is currently selected. */
+  isSelected?: boolean;
   /** Bin code label to render inside the zone when it is pinned (e.g. "17-06-204"). */
   binLabel?: string;
   /** Section numbers (0-99) for primary result pins — shown as proportionally-positioned markers within the zone. */
@@ -239,6 +241,7 @@ export function ZoneOverlayItem({
   isCounted,
   isPinned,
   isVariantPinned,
+  isSelected,
   binLabel,
   pinnedSections,
   variantSections,
@@ -247,7 +250,8 @@ export function ZoneOverlayItem({
   const baseFontSize = Math.max(24, Math.min(48, zone.svgHeight / 3));
 
   // Baseline stroke widths at scale=1; divide by scale.value to keep visual weight constant.
-  const baseStroke = cycleMode ? (isCounted ? 10 : 4) : (isActive ? 8 : 4);
+  // Selected zones get a thicker stroke so the user can see which zone is active.
+  const baseStroke = cycleMode ? (isCounted ? 10 : 4) : (isSelected ? 14 : isActive ? 8 : 4);
 
   const rectAnimatedProps = useAnimatedProps(() => ({
     strokeWidth: baseStroke / scale.value,
@@ -325,6 +329,8 @@ export function ZoneOverlayItem({
     ? "rgba(245, 158, 11, 0.28)"
     : isVariantPinned
     ? "rgba(139, 92, 246, 0.28)"
+    : isSelected
+    ? "rgba(0, 112, 255, 0.22)"
     : isActive
     ? "rgba(0, 112, 255, 0.14)"
     : "rgba(0, 112, 255, 0.06)";
@@ -459,6 +465,16 @@ export interface WarehouseMapViewProps {
   selectMode?: boolean;
   /** Called when the user toggles select mode via the in-map button. */
   onSelectModeChange?: (enabled: boolean) => void;
+  /**
+   * ID of the zone currently selected (action menu open). The matching zone
+   * is rendered with a highlighted stroke and fill tint.
+   */
+  selectedZoneId?: number;
+  /**
+   * Called when the user starts a pan gesture on the map. Use this to dismiss
+   * any selection state (e.g. the zone action menu).
+   */
+  onPanStart?: () => void;
 }
 
 /** 3D-style teardrop pin rendered entirely in SVG viewBox coordinates.
@@ -551,6 +567,8 @@ export function WarehouseMapView({
   onFocusFailed,
   selectMode = false,
   onSelectModeChange,
+  selectedZoneId,
+  onPanStart,
 }: WarehouseMapViewProps) {
   "use no memo";
   const colors = useColors();
@@ -1420,10 +1438,20 @@ export function WarehouseMapView({
       runOnJS(persistViewport)(scale.value, translateX.value, translateY.value);
     });
 
+  // Stable ref for onPanStart so the worklet always calls the latest version
+  // without needing to re-create the gesture on every render.
+  const onPanStartRef = useRef<(() => void) | undefined>(onPanStart);
+  useEffect(() => { onPanStartRef.current = onPanStart; }, [onPanStart]);
+  const _firePanStart = useCallback(() => { onPanStartRef.current?.(); }, []);
+
   // ── Pan gesture (minDistance prevents tap interference) ────────────────────
   const panGesture = Gesture.Pan()
     .minPointers(1)
     .minDistance(6)
+    .onBegin(() => {
+      'worklet';
+      runOnJS(_firePanStart)();
+    })
     .onUpdate((e) => {
       const scaledW = containerWV.value * scale.value;
       const scaledH = (containerWV.value / SVG_ASPECT) * scale.value;
@@ -1533,6 +1561,7 @@ export function WarehouseMapView({
           isCounted={countedZoneIds?.has(zone.id) ?? false}
           isPinned={isPinned}
           isVariantPinned={isVariantPinned}
+          isSelected={!cycleMode && zone.id === selectedZoneId}
           binLabel={(isPinned || isVariantPinned) ? pinnedBinLabels?.get(aisleNum) : undefined}
           pinnedSections={isPinned ? pinnedSectionsMap?.get(aisleNum) : undefined}
           variantSections={isVariantPinned ? variantSectionsMap?.get(aisleNum) : undefined}
@@ -1540,7 +1569,7 @@ export function WarehouseMapView({
       );
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, selectMode, countedZoneIds, pinnedAisleNums, variantAisleNums, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap]);
+  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, selectMode, countedZoneIds, pinnedAisleNums, variantAisleNums, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap, selectedZoneId]);
 
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {

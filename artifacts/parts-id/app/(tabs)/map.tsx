@@ -25,6 +25,7 @@ import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AisleSummarySheet } from "@/components/AisleSummarySheet";
+import { ZoneActionMenu } from "@/components/ZoneActionMenu";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { parseBin } from "@/lib/aisleHierarchy";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
@@ -202,6 +203,7 @@ export default function MapScreen() {
 
   const [drilldown, setDrilldown] = useState<WarehouseZone | null>(null);
   const [summaryZone, setSummaryZone] = useState<WarehouseZone | null>(null);
+  const [selectedZone, setSelectedZone] = useState<ApiWarehouseZone | null>(null);
   const inventoryRef = useRef<InventoryItem[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
@@ -246,7 +248,21 @@ export default function MapScreen() {
   }, []);
 
   const handleZoneTap = useCallback((zone: ApiWarehouseZone) => {
-    setDrilldown(toAisleZone(zone));
+    setSelectedZone(zone);
+  }, []);
+
+  const handleGoToSection = useCallback(() => {
+    if (!selectedZone) return;
+    setDrilldown(toAisleZone(selectedZone));
+    setSelectedZone(null);
+  }, [selectedZone]);
+
+  const handleZoneMenuDismiss = useCallback(() => {
+    setSelectedZone(null);
+  }, []);
+
+  const handleMapPanStart = useCallback(() => {
+    setSelectedZone(null);
   }, []);
 
   const handleZoneLongPress = useCallback((zone: ApiWarehouseZone) => {
@@ -437,30 +453,49 @@ export default function MapScreen() {
         </View>
       ) : null}
 
-      <WarehouseMapView
-        zones={zones}
-        zonesLoading={zonesLoading}
-        zonesError={zonesError}
-        onZonesRetry={refetchZones}
-        onZoneTap={handleZoneTap}
-        onZoneLongPress={handleZoneLongPress}
-        isAdmin={isAdmin}
-        cycleMode={cycleMode}
-        selectMode={selectMode}
-        onSelectModeChange={setSelectMode}
-        countedZoneIds={countedZoneIds}
-        pinnedAisleNums={pinnedAisleNums.size > 0 ? pinnedAisleNums : undefined}
-        variantAisleNums={variantAisleNums.size > 0 ? variantAisleNums : undefined}
-        pinnedBinLabels={pinnedBinLabels.size > 0 ? pinnedBinLabels : undefined}
-        pinnedSectionsMap={pinnedSections.size > 0 ? pinnedSections : undefined}
-        variantSectionsMap={variantSections.size > 0 ? variantSections : undefined}
-        focusAisleNum={focusAisleNum}
-        onFocusConsumed={() => setFocusAisleNum(null)}
-        onFocusFailed={() => {
-          setFocusFailedBanner(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
-          setFocusAisleNum(null);
-        }}
-      />
+      <View style={styles.mapWrapper}>
+        <WarehouseMapView
+          zones={zones}
+          zonesLoading={zonesLoading}
+          zonesError={zonesError}
+          onZonesRetry={refetchZones}
+          onZoneTap={handleZoneTap}
+          onZoneLongPress={handleZoneLongPress}
+          isAdmin={isAdmin}
+          cycleMode={cycleMode}
+          selectMode={selectMode}
+          onSelectModeChange={setSelectMode}
+          countedZoneIds={countedZoneIds}
+          pinnedAisleNums={pinnedAisleNums.size > 0 ? pinnedAisleNums : undefined}
+          variantAisleNums={variantAisleNums.size > 0 ? variantAisleNums : undefined}
+          pinnedBinLabels={pinnedBinLabels.size > 0 ? pinnedBinLabels : undefined}
+          pinnedSectionsMap={pinnedSections.size > 0 ? pinnedSections : undefined}
+          variantSectionsMap={variantSections.size > 0 ? variantSections : undefined}
+          focusAisleNum={focusAisleNum}
+          onFocusConsumed={() => setFocusAisleNum(null)}
+          onFocusFailed={() => {
+            setFocusFailedBanner(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
+            setFocusAisleNum(null);
+          }}
+          selectedZoneId={selectedZone?.id}
+          onPanStart={handleMapPanStart}
+        />
+
+        {selectedZone !== null && (
+          <>
+            <Pressable
+              style={styles.menuDismissOverlay}
+              onPress={handleZoneMenuDismiss}
+              accessibilityLabel="Dismiss zone menu"
+            />
+            <ZoneActionMenu
+              zone={selectedZone}
+              onGoToSection={handleGoToSection}
+              onDismiss={handleZoneMenuDismiss}
+            />
+          </>
+        )}
+      </View>
 
       <AisleSummarySheet
         zone={summaryZone}
@@ -474,6 +509,18 @@ export default function MapScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
+  mapWrapper: {
+    flex: 1,
+    position: "relative",
+  },
+  menuDismissOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
