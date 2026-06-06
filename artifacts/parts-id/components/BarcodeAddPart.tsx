@@ -12,7 +12,7 @@ import {
 import { useFocusEffect } from "expo-router";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import * as Haptics from "expo-haptics";
-import { Audio } from "expo-av";
+import { createAudioPlayer, type AudioPlayer } from "expo-audio";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
@@ -62,27 +62,26 @@ function formatShelfPrefix(raw: string): string {
 }
 
 // ── Sound helper ───────────────────────────────────────────────────────────
-let chimeSound: Audio.Sound | null = null;
+// expo-audio (SDK 52+) replaces expo-av: players are created synchronously
+// via createAudioPlayer() and expose play()/seekTo() directly.
+let chimePlayer: AudioPlayer | null = null;
 
-async function loadChime(): Promise<void> {
+function loadChime(): void {
+  if (chimePlayer) return;
   try {
-    if (chimeSound) return;
-    const { sound } = await Audio.Sound.createAsync(
-      require("../assets/sounds/scan-chime.wav"),
-      { shouldPlay: false, volume: 0.7 },
-    );
-    chimeSound = sound;
+    chimePlayer = createAudioPlayer(require("../assets/sounds/scan-chime.wav"));
+    chimePlayer.volume = 0.7;
   } catch {
-    chimeSound = null;
+    chimePlayer = null;
   }
 }
 
 async function playChime(): Promise<void> {
   try {
-    if (!chimeSound) await loadChime();
-    if (!chimeSound) return;
-    await chimeSound.setPositionAsync(0);
-    await chimeSound.playAsync();
+    if (!chimePlayer) loadChime();
+    if (!chimePlayer) return;
+    chimePlayer.seekTo(0);
+    chimePlayer.play();
   } catch {
     // Non-fatal
   }
@@ -212,7 +211,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
 
   // Load chime on mount
   useEffect(() => {
-    loadChime().catch(() => {});
+    loadChime(); // synchronous; errors handled internally
   }, []);
 
   // Check for a saved session on mount

@@ -56,6 +56,30 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "http://localhost:8080/api";
 
+// ── LiDAR error-code → user-friendly hint ────────────────────────────────────
+// The native LidarMeasureModule rejects with one of these code strings embedded
+// in the error message.  Map each to an actionable hint shown below the raw
+// error text so the user knows what to do next.
+const LIDAR_HINTS: Record<string, string> = {
+  ERR_LIDAR_NOT_SUPPORTED:
+    "LiDAR is not available on this device. Use photo estimation or enter dimensions manually.",
+  ERR_NO_FRAME:
+    "Move closer to the object and try again.",
+  ERR_NO_MESH:
+    "No surface detected — aim directly at a nearby object and try again.",
+  ERR_ZERO_DIMS:
+    "The object may be too small or too far away. Try adjusting your distance.",
+  ERR_INTERRUPTED:
+    "Scan was interrupted. Please try again.",
+};
+
+function getLidarHint(errMsg: string): string {
+  for (const [code, hint] of Object.entries(LIDAR_HINTS)) {
+    if (errMsg.includes(code)) return hint;
+  }
+  return "You can use photo estimation or enter dimensions manually.";
+}
+
 export interface PartDimensions {
   length?: number | null;
   width?: number | null;
@@ -266,7 +290,7 @@ export function MeasurePartScreen({
       setPhase("preview");
       Alert.alert(
         "LiDAR scan failed",
-        `${msg}\n\nYou can use photo estimation or enter dimensions manually.`
+        `${msg}\n\n${getLidarHint(msg)}`
       );
     }
   }, [unit]);
@@ -284,7 +308,7 @@ export function MeasurePartScreen({
       const msg = err instanceof Error ? err.message : "LiDAR scan failed";
       Alert.alert(
         "Re-scan failed",
-        `${msg}\n\nYou can adjust the value manually.`
+        `${msg}\n\n${getLidarHint(msg)}`
       );
     } finally {
       setRescanningAxis(null);
@@ -625,8 +649,7 @@ export function MeasurePartScreen({
           {/* ── Per-axis rescan depth overlay ── */}
           {phase === "confirm" && rescanningAxis !== null && (
             <View
-              style={ms.axisOverlayContainer}
-              pointerEvents="none"
+              style={[ms.axisOverlayContainer, { pointerEvents: "none" }]}
             >
               <Animated.View
                 style={[

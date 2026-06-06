@@ -4,6 +4,7 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
+    "predev": "pnpm --filter @workspace/api-spec run codegen",
     "dev": "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT --non-interactive",
     "build": "node --max-old-space-size=4096 scripts/build.js",
     "serve": "node server/serve.js",
@@ -79,7 +80,7 @@
     "@react-native-community/netinfo": "^11.4.1",
     "buffer": "^6.0.3",
     "expo-asset": "^12.0.13",
-    "expo-av": "~16.0.8",
+    "expo-audio": "~1.1.1",
     "expo-clipboard": "^8.0.8",
     "expo-device": "^8.0.10",
     "expo-file-system": "~19.0.23",

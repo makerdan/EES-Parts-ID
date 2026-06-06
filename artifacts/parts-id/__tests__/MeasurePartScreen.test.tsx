@@ -15,7 +15,16 @@
  *   - onConfirm callback with parsed dimensions
  */
 
+// Required for act() to work correctly in the node test environment.
+// Without this flag React 19 logs "not configured to support act()" warnings
+// for every state update that occurs inside act() boundaries.
+// @ts-ignore — global augmentation for test environment only
+global.IS_REACT_ACT_ENVIRONMENT = true;
+
 import React from "react";
+// TODO: react-test-renderer is deprecated in React 19 and will be removed in a
+// future release.  Migrate to @testing-library/react-native once the
+// MeasurePartScreen mocking surface stabilises.
 import renderer, { act } from "react-test-renderer";
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
@@ -143,6 +152,21 @@ function hasText(root: TestInst, text: string): boolean {
  */
 let activeTree: renderer.ReactTestRenderer | null = null;
 let rejectPendingMeasure: ((e: Error) => void) | null = null;
+
+// ─── Suppress react-test-renderer deprecation warning ────────────────────────
+// react-test-renderer is deprecated in React 19.  Suppress the noisy console
+// warning here until this suite is migrated to @testing-library/react-native.
+let originalConsoleError: typeof console.error;
+beforeAll(() => {
+  originalConsoleError = console.error.bind(console);
+  jest.spyOn(console, "error").mockImplementation((msg: unknown, ...args: unknown[]) => {
+    if (typeof msg === "string" && msg.includes("react-test-renderer is deprecated")) return;
+    originalConsoleError(msg, ...args);
+  });
+});
+afterAll(() => {
+  (console.error as jest.Mock).mockRestore?.();
+});
 
 // ─── Render helper (wraps in act so effects flush before assertions) ──────────
 

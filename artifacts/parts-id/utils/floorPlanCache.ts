@@ -160,6 +160,23 @@ export function setFallbackEmpty(): void {
 // ── Test helpers ──────────────────────────────────────────────────────────────
 // Prefixed with underscore to signal internal-only use.
 
+/**
+ * Invalidate the in-memory cache and reset the read promise so a subsequent
+ * `loadSvgAsset()` call triggers a fresh server fetch.
+ *
+ * Call this when the server reports a new floor-plan hash while the app is
+ * running (ETag-style live-update detection in WarehouseMapView).  The
+ * AsyncStorage entry is intentionally left intact so a crash during the
+ * re-fetch falls back to the previous version on the next cold start.
+ */
+export function resetForServerUpdate(): void {
+  _cache = null;
+  _cachedHash = null;
+  // Replace the pending read promise with an already-resolved one so the
+  // next SVG load effect does not block waiting for a stale AsyncStorage read.
+  _readPromise = Promise.resolve();
+}
+
 /** Reset all module state.  Call in beforeEach() in unit tests. */
 export function _resetForTests(): void {
   _cache = null;

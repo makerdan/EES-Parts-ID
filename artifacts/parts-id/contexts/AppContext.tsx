@@ -10,7 +10,7 @@ import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Appearance, Platform, StyleSheet, Text, View, useColorScheme } from "react-native";
 import colorTokens from "@/constants/colors";
-import { setAuthTokenGetter } from "@workspace/api-client-react";
+import { setAuthTokenGetter, setBaseUrl } from "@workspace/api-client-react";
 import {
   reportStorageError,
   setStorageErrorHandler,
@@ -275,6 +275,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Guard: if the generated API client module failed to load (e.g. codegen has
+  // not run yet and Metro resolved a stub), setBaseUrl/setAuthTokenGetter will
+  // be undefined at runtime.  Detect this early so we can show a clear recovery
+  // UI instead of silently crashing individual query hooks.
+  const [apiInitError, setApiInitError] = useState(false);
 
   // Keep adminToken accessible to the generated API client (which calls a
   // module-level getter on every request). Without this, admin-protected
@@ -283,8 +288,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const adminTokenRef = useRef<string | null>(null);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
   useEffect(() => {
-    setAuthTokenGetter(() => adminTokenRef.current);
-    return () => setAuthTokenGetter(null);
+    try {
+      // If setBaseUrl or setAuthTokenGetter are not functions the generated API
+      // client module did not load (codegen hasn't run or Metro resolved a stub).
+      // Fail fast so the user sees a clear recovery message instead of silent 404s.
+      if (typeof setBaseUrl !== "function" || typeof setAuthTokenGetter !== "function") {
+        setApiInitError(true);
+        return;
+      }
+      // Configure the base URL once on mount so all generated hooks point at
+      // the correct API origin without requiring each call site to repeat it.
+      if (API_BASE) setBaseUrl(API_BASE);
+      setAuthTokenGetter(() => adminTokenRef.current);
+    } catch {
+      // API client module threw during initialisation — still show the error UI.
+      setApiInitError(true);
+    }
+    return () => {
+      try { setAuthTokenGetter(null); } catch {}
+    };
   }, []);
 
   // Registry of in-memory reset handlers fired on logout (e.g. SearchScreen
@@ -452,6 +474,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  if (apiInitError) {
+    return (
+      <View style={apiErrStyles.container}>
+        <Text style={apiErrStyles.title}>Server unavailable</Text>
+        <Text style={apiErrStyles.hint}>Restart the app to reconnect.</Text>
+      </View>
+    );
+  }
+
   return (
     <AppContext.Provider value={{
       isAuthenticated,
@@ -504,6 +535,12 @@ function BrandedToast({ message, type }: { message: string; type: ToastVariant }
   );
 }
 
+const apiErrStyles = StyleSheet.create({
+  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
+  title: { fontSize: 18, fontWeight: "700", marginBottom: 8, textAlign: "center" },
+  hint: { fontSize: 14, textAlign: "center", opacity: 0.7 },
+});
+
 const toastStyles = StyleSheet.create({
   wrap: {
     position: "absolute",
@@ -520,15 +557,7 @@ const toastStyles = StyleSheet.create({
     maxWidth: 480,
     overflow: "hidden",
     elevation: 4,
-    ...Platform.select({
-      web: { boxShadow: "0 2px 8px rgba(0,0,0,0.15)" },
-      default: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 8,
-      },
-    }),
+    boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
   },
   accent: {
     width: 4,

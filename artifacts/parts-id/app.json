@@ -37,7 +37,8 @@
       "expo-font",
       "expo-web-browser",
       "expo-asset",
-      "expo-screen-orientation"
+      "expo-screen-orientation",
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

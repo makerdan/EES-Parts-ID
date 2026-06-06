@@ -48,6 +48,7 @@ import {
   getIfValid,
   hasCachedData,
   initPersistRead,
+  resetForServerUpdate,
   setCached,
   setFallbackEmpty,
   type SvgContentViewBox,
@@ -756,8 +757,57 @@ export function WarehouseMapView({
   // svgXml: full SVG text used by the tile renderer (SvgXml + modified viewBox)
   const [svgXml, setSvgXml] = useState(() => getCachedData()?.xml ?? "");
   const [svgLoading, setSvgLoading] = useState(() => !hasCachedData());
+
+  // ── Server floor-plan ETag wiring ────────────────────────────────────────
+  // Poll /floor-plan/meta every 60 s while mounted.  When the server returns a
+  // different hash than the one first seen after mount (i.e. an admin uploaded a
+  // new floor plan), increment serverHashChanged to re-run the SVG load effect
+  // and pull the updated SVG without requiring an app restart.
+  const [serverHashChanged, setServerHashChanged] = useState(0);
+  const knownServerHashRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (hasCachedData()) return; // already cached (in-memory) — nothing to do
+    if (!SVG_API_BASE) return;
+    let cancelled = false;
+    async function checkServerHash() {
+      try {
+        const res = await fetch(`${SVG_API_BASE}/floor-plan/meta`);
+        if (!res.ok || cancelled) return;
+        const { hash } = await res.json() as { hash: string };
+        if (cancelled) return;
+        if (knownServerHashRef.current === null) {
+          // Record baseline hash on first successful fetch.
+          knownServerHashRef.current = hash;
+        } else if (hash !== knownServerHashRef.current) {
+          // Hash changed while mounted — trigger a cache-busting SVG reload.
+          knownServerHashRef.current = hash;
+          setServerHashChanged(n => n + 1);
+        }
+      } catch {
+        // Non-fatal — server may be temporarily unavailable.
+      }
+    }
+    checkServerHash(); // immediate first check to establish baseline
+    const id = setInterval(checkServerHash, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  // Load the SVG floor plan.  Runs once on mount (serverHashChanged === 0) and
+  // again whenever the server reports a new floor-plan hash (serverHashChanged > 0).
+  useEffect(() => {
+    const isServerUpdate = serverHashChanged > 0;
+
+    if (!isServerUpdate && hasCachedData()) return; // already cached, no server update
+
+    if (isServerUpdate) {
+      // Admin uploaded a new floor plan while the app was open.  Bust the
+      // in-memory cache and reset the load promise so loadSvgAsset() issues
+      // a fresh fetch instead of returning the stale cached entry.
+      resetForServerUpdate();
+      _svgLoadPromise = null;
+      setSvgUri(""); setInnerXml(""); setSvgXml("");
+      setSvgLoading(true);
+    }
 
     (async () => {
       // Wait for the AsyncStorage read that was kicked off at module load.
@@ -768,7 +818,7 @@ export function WarehouseMapView({
       // getCachedData() returns SvgData | null — no cast needed here since it
       // is a function call (TypeScript narrows const locals correctly).
       const afterPersist = getCachedData();
-      if (afterPersist !== null) {
+      if (afterPersist !== null && !isServerUpdate) {
         // Persisted data available — update state right away so the skeleton
         // never appears for returning users.
         setSvgUri(afterPersist.uri);
@@ -779,8 +829,8 @@ export function WarehouseMapView({
 
       // Resolve the asset and validate the hash.  If the hash matches the
       // persisted entry, loadSvgAsset() returns after Asset.loadAsync with
-      // no network fetch.  If the hash has changed (new build), it re-fetches
-      // and writes the updated entry back to AsyncStorage.
+      // no network fetch.  If the hash has changed (new build or server update),
+      // it re-fetches and writes the updated entry back to AsyncStorage.
       await loadSvgAsset();
       const afterLoad = getCachedData();
       if (afterLoad) {
@@ -790,7 +840,8 @@ export function WarehouseMapView({
       }
       setSvgLoading(false);
     })();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverHashChanged]);
 
   // Parse the content viewBox from the SVG XML as soon as it is available.
   // The parsed rect is the tightly cropped bounding box of the actual warehouse
@@ -824,6 +875,11 @@ export function WarehouseMapView({
   // or numTiles changes — not on every animation frame.
   interface TileSpec { col: number; row: number; xml: string; }
   const tiles = useMemo<TileSpec[]>(() => {
+    // Web: the floor plan is embedded directly inside the shared SVG viewport
+    // via dangerouslySetInnerHTML — no separate tiling layer, no Metal texture-
+    // size concern, and no gap artefacts between adjacent tiles.
+    // Native only: adaptive N×N tiling keeps each tile within the GPU texture
+    // limit while matching the compositor resolution at every zoom level.
     if (numTiles <= 1 || !svgXml || Platform.OS === "web") return [];
     const N = numTiles;
     const { c0, c1, r0, r1, N: rangeN } = visibleRange;
@@ -1334,10 +1390,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     gap: 6,
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 3,
+    boxShadow: "0 2px 4px rgba(0,0,0,0.12)",
   },
   badgeText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   emptyOverlay: {
@@ -1377,10 +1430,7 @@ const styles = StyleSheet.create({
     bottom: 96,
     borderRadius: 8,
     overflow: "hidden",
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 3,
+    boxShadow: "0 2px 4px rgba(0,0,0,0.12)",
   },
   zoomBtn: {
     width: 36,

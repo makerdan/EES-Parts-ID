@@ -945,7 +945,7 @@ export function BrowseByAisle({
       {isAdmin ? (
         <Pressable
           onPress={() => { setPendingBin(crumbsBin()); setAddPartVisible(true); }}
-          style={[browseStyles.addPartFab, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
+          style={[browseStyles.addPartFab, { backgroundColor: colors.primary }]}
         >
           <Feather name="plus" size={22} color={colors.primaryForeground} />
         </Pressable>
@@ -988,9 +988,6 @@ const browseStyles = StyleSheet.create({
     borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    elevation: 6,
+    boxShadow: "0 3px 6px rgba(0,0,0,0.35)",
   },
 });
