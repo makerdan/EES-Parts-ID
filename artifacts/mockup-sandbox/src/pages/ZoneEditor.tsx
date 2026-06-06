@@ -159,25 +159,36 @@ export function floodFillBounds(
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HANDLE_PX = 6; // handle visual size in screen pixels
 
-// Maps the user-facing Fill sensitivity setting to a luminance threshold.
-// "Light" pixels (lum >= darkThreshold) are treated as walkable space.
+// Preset sensitivity levels. Each has:
+//   pos       — position on the 0-100 slider (evenly distributed)
+//   label     — full user-facing name
+//   short     — abbreviated label shown below the tick mark
+//   threshold — luminance value; pixels with lum >= threshold are treated as walkable
 // Lower threshold = more permissive (more pixels treated as walkable).
-//   ultraLoose  →  40 — accepts almost everything; dark-tinted areas included
-//   extraLoose  →  70 — very permissive; most colored/tinted areas pass
-//   low         → 100 — lets colored areas (lum 100-180) pass; good for color-coded maps
-//   medium      → 160 — balanced; works for lightly tinted or greyscale maps
-//   high        → 200 — only near-white pixels walkable; best for standard B&W maps
-//   extraStrict → 220 — very near-white only; ignores light greys
-//   ultraStrict → 240 — almost pure white only; maximum wall discrimination
-const FILL_SENSITIVITY_THRESHOLD: Record<"ultraLoose" | "extraLoose" | "low" | "medium" | "high" | "extraStrict" | "ultraStrict", number> = {
-  ultraLoose:  40,
-  extraLoose:  70,
-  low:        100,
-  medium:     160,
-  high:       200,
-  extraStrict: 220,
-  ultraStrict: 240,
-};
+const FILL_PRESETS = [
+  { pos:   0, label: "Ultra loose",  short: "U-Lo",   threshold:  40 },
+  { pos:  17, label: "Extra loose",  short: "X-Lo",   threshold:  70 },
+  { pos:  33, label: "Loose",        short: "Loose",  threshold: 100 },
+  { pos:  50, label: "Balanced",     short: "Bal",    threshold: 160 },
+  { pos:  67, label: "Strict",       short: "Strict", threshold: 200 },
+  { pos:  83, label: "Extra strict", short: "X-Str",  threshold: 220 },
+  { pos: 100, label: "Ultra strict", short: "U-Str",  threshold: 240 },
+] as const;
+
+// Map a 0-100 slider value to a luminance dark threshold via piecewise-linear
+// interpolation between the preset anchor points.
+function sliderToThreshold(v: number): number {
+  const clamped = Math.max(0, Math.min(100, v));
+  for (let i = 0; i < FILL_PRESETS.length - 1; i++) {
+    const a = FILL_PRESETS[i];
+    const b = FILL_PRESETS[i + 1];
+    if (clamped <= b.pos) {
+      const t = (clamped - a.pos) / (b.pos - a.pos);
+      return Math.round(a.threshold + t * (b.threshold - a.threshold));
+    }
+  }
+  return FILL_PRESETS[FILL_PRESETS.length - 1].threshold;
+}
 const MIN_ZONE_PX = 8; // minimum zone size in screen pixels before it's discarded
 const API_BASE = `${window.location.origin}/api`;
 const INITIAL_SCALE = 0.18; // start zoomed out to show whole floor plan
@@ -300,17 +311,22 @@ export function ZoneEditor() {
   const [mode, setMode] = useState<Mode>("pan");
   // True while the async rasterize+fill operation is in progress.
   const [fillLoading, setFillLoading] = useState(false);
-  // Fill sensitivity: persisted to localStorage so it survives page reload.
-  const [fillSensitivity, setFillSensitivity] = useState<"ultraLoose" | "extraLoose" | "low" | "medium" | "high" | "extraStrict" | "ultraStrict">(() => {
+  // Fill sensitivity: slider position 0-100, persisted to localStorage.
+  const [fillSensitivity, setFillSensitivity] = useState<number>(() => {
     try {
       const stored = localStorage.getItem("zoneEditorFillSensitivity");
-      if (
-        stored === "ultraLoose" || stored === "extraLoose" ||
-        stored === "low" || stored === "medium" || stored === "high" ||
-        stored === "extraStrict" || stored === "ultraStrict"
-      ) return stored;
+      if (stored !== null) {
+        const n = Number(stored);
+        if (!isNaN(n) && n >= 0 && n <= 100) return Math.round(n);
+        // Legacy: named keys from before the slider was introduced
+        const legacy: Record<string, number> = {
+          ultraLoose: 0, extraLoose: 17, low: 33, medium: 50,
+          high: 67, extraStrict: 83, ultraStrict: 100,
+        };
+        if (stored in legacy) return legacy[stored]!;
+      }
     } catch {}
-    return "high";
+    return 67; // default: Strict (was "high")
   });
 
   // Multi-select: a Set of selected zone IDs
@@ -408,7 +424,7 @@ export function ZoneEditor() {
   useEffect(() => { fillLoadingRef.current = fillLoading; }, [fillLoading]);
   useEffect(() => {
     fillSensitivityRef.current = fillSensitivity;
-    try { localStorage.setItem("zoneEditorFillSensitivity", fillSensitivity); } catch {}
+    try { localStorage.setItem("zoneEditorFillSensitivity", String(fillSensitivity)); } catch {}
   }, [fillSensitivity]);
 
 
@@ -1047,7 +1063,7 @@ export function ZoneEditor() {
       const px = Math.round((pt.x / dims.w) * cw);
       const py = Math.round((pt.y / dims.h) * ch);
 
-      const darkThreshold = FILL_SENSITIVITY_THRESHOLD[fillSensitivityRef.current];
+      const darkThreshold = sliderToThreshold(fillSensitivityRef.current);
 
       // Run rasterise + BFS on the main thread. The 1024-px raster completes
       // in well under 100 ms for typical floor plans — no perceptible jank.
@@ -1555,29 +1571,82 @@ export function ZoneEditor() {
           </ModeBtn>
         </div>
         {mode === "fill" && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
-            <label style={{ fontSize: 12, color: "#aaa", whiteSpace: "nowrap" }}>Fill sensitivity:</label>
-            <select
-              value={fillSensitivity}
-              onChange={(e) => setFillSensitivity(e.target.value as typeof fillSensitivity)}
-              style={{
-                fontSize: 12,
-                background: "#222",
-                color: "#eee",
-                border: "1px solid #555",
-                borderRadius: 4,
-                padding: "2px 6px",
-                cursor: "pointer",
-              }}
-            >
-              <option value="ultraLoose">Ultra loose — dark areas</option>
-              <option value="extraLoose">Extra loose — tinted maps</option>
-              <option value="low">Loose — color maps</option>
-              <option value="medium">Balanced</option>
-              <option value="high">Strict — B&amp;W maps</option>
-              <option value="extraStrict">Extra strict — near-white</option>
-              <option value="ultraStrict">Ultra strict — pure white</option>
-            </select>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 8 }}>
+            <label style={{ fontSize: 11, color: "#ddd", whiteSpace: "nowrap" }}>
+              Sensitivity:
+            </label>
+            {/* Slider + tick marks */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+              <input
+                type="range"
+                min={0} max={100} step={1}
+                value={fillSensitivity}
+                onChange={(e) => setFillSensitivity(Number(e.target.value))}
+                style={{
+                  width: 196,
+                  margin: 0,
+                  accentColor: "#f59e0b",
+                  cursor: "pointer",
+                }}
+              />
+              {/* Clickable preset ticks — positioned to match the slider track */}
+              <div style={{ position: "relative", width: 196, height: 22, marginTop: 1 }}>
+                {FILL_PRESETS.map(({ pos, label, short }) => {
+                  const active = fillSensitivity === pos;
+                  // The range thumb is centered at 0% and 100%, with ~8px inset
+                  // on each side. Track width ≈ 196 - 16 = 180px.
+                  const leftPx = 8 + (pos / 100) * 180;
+                  return (
+                    <button
+                      key={pos}
+                      title={label}
+                      onClick={() => setFillSensitivity(pos)}
+                      style={{
+                        position: "absolute",
+                        left: leftPx,
+                        top: 0,
+                        transform: "translateX(-50%)",
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        cursor: "pointer",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: 1,
+                      }}
+                    >
+                      <div style={{
+                        width: active ? 2 : 1,
+                        height: active ? 6 : 4,
+                        background: active ? "#f59e0b" : "rgba(255,255,255,0.4)",
+                        borderRadius: 1,
+                      }} />
+                      <span style={{
+                        fontSize: 8,
+                        lineHeight: 1.1,
+                        color: active ? "#f59e0b" : "rgba(255,255,255,0.45)",
+                        fontWeight: active ? 700 : 400,
+                        whiteSpace: "nowrap",
+                        userSelect: "none",
+                      }}>
+                        {short}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Active level name */}
+            <span style={{
+              fontSize: 11,
+              color: "#f59e0b",
+              whiteSpace: "nowrap",
+              minWidth: 76,
+              fontWeight: 500,
+            }}>
+              {FILL_PRESETS.find((p) => p.pos === fillSensitivity)?.label ?? "Custom"}
+            </span>
           </div>
         )}
         <span style={styles.hint}>
