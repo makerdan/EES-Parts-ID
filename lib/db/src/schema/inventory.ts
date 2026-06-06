@@ -78,6 +78,16 @@ export const inventoryTable = pgTable(
       "btree",
       sql`((dimensions->>'diameter')::numeric)`,
     ),
+    index("idx_inventory_bin_locations_gin").using("gin", table.binLocations),
+    // immutable_array_to_string() is the project-wide IMMUTABLE wrapper around
+    // array_to_string(arr, sep). PostgreSQL requires IMMUTABLE functions in index
+    // expressions; array_to_string is only STABLE so the wrapper (defined in
+    // _untracked_0001_fts_ai_keywords.sql) is required. Queries must use the same
+    // expression to get the index scan — see inventory route binPrefix filter.
+    index("idx_inventory_bin_locs_prefix_trgm").using(
+      "gin",
+      sql`immutable_array_to_string(bin_locations, E'\n') gin_trgm_ops`,
+    ),
   ],
 );
 
