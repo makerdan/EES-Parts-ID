@@ -4,6 +4,7 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { useColors, useIsDark } from "@/hooks/useColors";
+import { searchResetEvent } from "@/utils/searchResetEvent";
 
 export default function TabLayout() {
   const colors = useColors();
@@ -47,6 +48,13 @@ export default function TabLayout() {
           title: "Search",
           tabBarIcon: ({ color }) => <Feather name="search" size={22} color={color} />,
         }}
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            if (navigation.isFocused()) {
+              searchResetEvent.emit();
+            }
+          },
+        })}
       />
       <Tabs.Screen
         name="photo"
