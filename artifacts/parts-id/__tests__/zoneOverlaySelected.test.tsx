@@ -368,13 +368,13 @@ describe("ZoneOverlayItem — isSelected prop controls the selection fill colour
 
 describe("WarehouseMapView — selectedZoneId routes isSelected only to the matching zone", () => {
   const zoneA: ApiWarehouseZone = {
-    id: 10, aisleId: "10", label: "10",
+    id: 10, aisleId: "10",
     sectionNum: 0, isInventory: true,
     svgX: 0, svgY: 0, svgWidth: 300, svgHeight: 400,
     sortOrder: 0, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z",
   };
   const zoneB: ApiWarehouseZone = {
-    id: 20, aisleId: "20", label: "20",
+    id: 20, aisleId: "20",
     sectionNum: 0, isInventory: true,
     svgX: 400, svgY: 0, svgWidth: 300, svgHeight: 400,
     sortOrder: 1, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z",

@@ -127,7 +127,6 @@ export const warehouseZoneTable = pgTable(
   {
     id: serial("id").primaryKey(),
     aisleId: text("aisle_id").notNull(),
-    label: text("label").notNull(),
     sectionNum: integer("section_num").notNull().default(0),
     isInventory: boolean("is_inventory").notNull().default(true),
     svgX: real("svg_x").notNull(),

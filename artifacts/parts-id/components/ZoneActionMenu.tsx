@@ -38,8 +38,13 @@ export function ZoneActionMenu({ zone, onGoToSection, onDismiss }: ZoneActionMen
       <View style={menuStyles.header}>
         <View>
           <Text style={[menuStyles.zoneLabel, { color: colors.foreground }]}>
-            {zone.label}
+            Aisle {zone.aisleId}
           </Text>
+          {zone.sectionNum > 0 && (
+            <Text style={[menuStyles.parityHint, { color: colors.mutedForeground }]}>
+              Section {zone.sectionNum}
+            </Text>
+          )}
         </View>
         <Pressable
           onPress={onDismiss}
@@ -61,7 +66,7 @@ export function ZoneActionMenu({ zone, onGoToSection, onDismiss }: ZoneActionMen
             borderColor: colors.primary + "44",
           },
         ]}
-        accessibilityLabel={`Go to sections list for ${zone.label}`}
+        accessibilityLabel={`Go to sections list for aisle ${zone.aisleId}`}
         accessibilityRole="button"
       >
         <View style={[menuStyles.iconWrap, { backgroundColor: colors.primary + "22" }]}>

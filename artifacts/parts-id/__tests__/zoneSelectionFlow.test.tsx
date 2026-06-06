@@ -123,7 +123,7 @@ jest.mock("@/components/ZoneActionMenu", () => ({
     capturedZoneActionMenuProps = props;
     return React.createElement(
       "zone-action-menu",
-      { "data-zone-label": (props.zone as { label?: string })?.label },
+      { "data-zone-aisleId": (props.zone as { aisleId?: string })?.aisleId },
     );
   },
 }));
@@ -339,7 +339,6 @@ function makeZone(overrides: Partial<ApiWarehouseZone> = {}): ApiWarehouseZone {
   return {
     id:            7,
     aisleId:       "7",
-    label:         "07",
     sectionNum:    1,
     isInventory:   true,
     svgX:          100,
@@ -400,12 +399,12 @@ describe("MapScreen — zone tap sets selectedZone and shows ZoneActionMenu", ()
     // ZoneActionMenu should now be in the tree.
     const menu = findByType(tree.root, "zone-action-menu");
     expect(menu).not.toBeNull();
-    expect(menu!.props["data-zone-label"]).toBe("07");
+    expect(menu!.props["data-zone-aisleId"]).toBe("7");
   });
 
   it("passes the selected zone's id back to WarehouseMapView as selectedZoneId", async () => {
     await renderMapScreen();
-    const zone = makeZone({ id: 42, label: "42" });
+    const zone = makeZone({ id: 42 });
 
     await act(async () => {
       (capturedMapViewProps.onZoneTap as (z: ApiWarehouseZone) => void)(zone);
@@ -602,7 +601,7 @@ describe("MapScreen — outside-tap overlay clears selectedZone without navigati
 describe("MapScreen — long-press opens AisleSummarySheet (not zone action menu)", () => {
   it("sets the summaryZone (AisleSummarySheet receives the zone) on long-press", async () => {
     await renderMapScreen();
-    const zone = makeZone({ aisleId: "12", label: "12", sectionNum: 0 });
+    const zone = makeZone({ aisleId: "12", sectionNum: 0 });
 
     await act(async () => {
       (capturedMapViewProps.onZoneLongPress as (z: ApiWarehouseZone) => void)(zone);
@@ -611,7 +610,6 @@ describe("MapScreen — long-press opens AisleSummarySheet (not zone action menu
     // AisleSummarySheet is always rendered; its zone prop should now reflect the long-pressed zone.
     expect(capturedSummaryZone).not.toBeNull();
     expect((capturedSummaryZone as { aisleNum: number }).aisleNum).toBe(12);
-    expect((capturedSummaryZone as { label: string }).label).toBe("12");
   });
 
   it("does NOT show ZoneActionMenu after a long-press", async () => {

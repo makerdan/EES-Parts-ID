@@ -884,7 +884,6 @@ export const ListWarehouseZonesResponse = zod.object({
     zod.object({
       id: zod.number(),
       aisleId: zod.string(),
-      label: zod.string(),
       sectionNum: zod.number(),
       isInventory: zod.boolean(),
       svgX: zod.number(),
@@ -904,7 +903,6 @@ export const ListWarehouseZonesResponse = zod.object({
 
 export const CreateWarehouseZoneBody = zod.object({
   aisleId: zod.string().min(1),
-  label: zod.string().min(1),
   sectionNum: zod.number().optional(),
   isInventory: zod.boolean().optional(),
   svgX: zod.number(),
@@ -923,7 +921,6 @@ export const UpdateWarehouseZoneParams = zod.object({
 
 export const UpdateWarehouseZoneBody = zod.object({
   aisleId: zod.string().min(1).optional(),
-  label: zod.string().min(1).optional(),
   sectionNum: zod.number().optional(),
   isInventory: zod.boolean().optional(),
   svgX: zod.number().optional(),
@@ -937,7 +934,6 @@ export const UpdateWarehouseZoneResponse = zod.object({
   zone: zod.object({
     id: zod.number(),
     aisleId: zod.string(),
-    label: zod.string(),
     sectionNum: zod.number(),
     isInventory: zod.boolean(),
     svgX: zod.number(),

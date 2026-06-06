@@ -49,17 +49,15 @@ afterEach(async () => {
 });
 
 // ── Cleanup helpers ───────────────────────────────────────────────────────────
-const ZONE_LABEL_PREFIX = "JEST-ZONE-";
 
 async function cleanupZones() {
   await db
     .delete(warehouseZoneTable)
-    .where(sql`${warehouseZoneTable.label} LIKE ${"JEST-ZONE-%"}`);
+    .where(sql`${warehouseZoneTable.aisleId} LIKE ${"JEST-%"}`);
 }
 
 const BASE_ZONE = {
-  aisleId: "A1",
-  label: `${ZONE_LABEL_PREFIX}001`,
+  aisleId: "JEST-A1",
   svgX: 10,
   svgY: 20,
   svgWidth: 100,
@@ -86,10 +84,9 @@ describe("GET /api/warehouse-zones", () => {
 
     const res = await supertest(app).get("/api/warehouse-zones").expect(200);
     const found = res.body.zones.find(
-      (z: { label: string }) => z.label === BASE_ZONE.label,
+      (z: { aisleId: string }) => z.aisleId === BASE_ZONE.aisleId,
     );
     expect(found).toBeDefined();
-    expect(found.aisleId).toBe("A1");
   });
 });
 
@@ -125,8 +122,7 @@ describe("POST /api/warehouse-zones", () => {
       .expect(201);
 
     expect(res.body).toHaveProperty("zone");
-    expect(res.body.zone.label).toBe(BASE_ZONE.label);
-    expect(res.body.zone.aisleId).toBe("A1");
+    expect(res.body.zone.aisleId).toBe(BASE_ZONE.aisleId);
     expect(typeof res.body.zone.id).toBe("number");
   });
 
@@ -156,7 +152,7 @@ describe("POST /api/warehouse-zones", () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ aisleId: "A1", label: `${ZONE_LABEL_PREFIX}BAD` })
+      .send({ aisleId: "JEST-A1" })
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
@@ -181,7 +177,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
   it("returns 401 without an admin token", async () => {
     const res = await supertest(app)
       .patch("/api/warehouse-zones/1")
-      .send({ label: `${ZONE_LABEL_PREFIX}NOPE` })
+      .send({ svgX: 99 })
       .expect(401);
 
     expect(res.body).toHaveProperty("error");
@@ -191,13 +187,13 @@ describe("PATCH /api/warehouse-zones/:id", () => {
     const res = await supertest(app)
       .patch("/api/warehouse-zones/1")
       .set("Authorization", "Bearer bad-token")
-      .send({ label: `${ZONE_LABEL_PREFIX}NOPE` })
+      .send({ svgX: 99 })
       .expect(401);
 
     expect(res.body).toHaveProperty("error");
   });
 
-  it("updates the label and returns the updated zone", async () => {
+  it("updates aisleId and returns the updated zone", async () => {
     const create = await supertest(app)
       .post("/api/warehouse-zones")
       .set("Authorization", `Bearer ${adminToken}`)
@@ -205,15 +201,14 @@ describe("PATCH /api/warehouse-zones/:id", () => {
       .expect(201);
 
     const id: number = create.body.zone.id;
-    const newLabel = `${ZONE_LABEL_PREFIX}UPDATED`;
 
     const res = await supertest(app)
       .patch(`/api/warehouse-zones/${id}`)
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ label: newLabel })
+      .send({ aisleId: "JEST-A2" })
       .expect(200);
 
-    expect(res.body.zone.label).toBe(newLabel);
+    expect(res.body.zone.aisleId).toBe("JEST-A2");
     expect(res.body.zone.id).toBe(id);
   });
 
@@ -240,7 +235,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
     const res = await supertest(app)
       .patch("/api/warehouse-zones/999999999")
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ label: `${ZONE_LABEL_PREFIX}GHOST` })
+      .send({ svgX: 99 })
       .expect(404);
 
     expect(res.body).toHaveProperty("error");
@@ -250,7 +245,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
     const res = await supertest(app)
       .patch("/api/warehouse-zones/not-a-number")
       .set("Authorization", `Bearer ${adminToken}`)
-      .send({ label: `${ZONE_LABEL_PREFIX}X` })
+      .send({ svgX: 99 })
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
@@ -369,15 +364,11 @@ describe("DELETE /api/warehouse-zones/:id", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("GET /api/warehouse-zones/coverage", () => {
-  const COVERAGE_LABEL_A = `${ZONE_LABEL_PREFIX}COV-A`;
-
   async function cleanupCoverageFixtures() {
     await cleanupFixtures();
     await db
       .delete(warehouseZoneTable)
-      .where(
-        sql`${warehouseZoneTable.label} IN (${COVERAGE_LABEL_A})`,
-      );
+      .where(sql`${warehouseZoneTable.aisleId} = ${"87"}`);
   }
 
   beforeAll(async () => {
@@ -449,7 +440,6 @@ describe("GET /api/warehouse-zones/coverage", () => {
       .set("Authorization", `Bearer ${adminToken}`)
       .send({
         aisleId: "87",
-        label: COVERAGE_LABEL_A,
         svgX: 0,
         svgY: 0,
         svgWidth: 10,

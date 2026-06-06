@@ -41,9 +41,13 @@ const ZONE_EDITOR_URL = process.env.EXPO_PUBLIC_DOMAIN
   : "http://localhost:8081/__mockup/zone-editor";
 
 function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
+  const aisleNum = parseInt(zone.aisleId, 10) || 0;
+  const label = zone.sectionNum > 0
+    ? `Aisle ${zone.aisleId} · §${zone.sectionNum}`
+    : `Aisle ${zone.aisleId}`;
   return {
-    aisleNum: parseInt(zone.aisleId, 10) || 0,
-    label: zone.label,
+    aisleNum,
+    label,
     sectionNumbers: [zone.sectionNum],
   };
 }

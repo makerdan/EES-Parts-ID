@@ -278,7 +278,6 @@ export interface AiIdentifyResponse {
 export interface WarehouseZoneItem {
   id: number;
   aisleId: string;
-  label: string;
   sectionNum: number;
   isInventory: boolean;
   svgX: number;
@@ -301,8 +300,6 @@ export interface WarehouseZoneResponse {
 export interface CreateWarehouseZoneBody {
   /** @minLength 1 */
   aisleId: string;
-  /** @minLength 1 */
-  label: string;
   sectionNum?: number;
   isInventory?: boolean;
   svgX: number;
@@ -315,8 +312,6 @@ export interface CreateWarehouseZoneBody {
 export interface UpdateWarehouseZoneBody {
   /** @minLength 1 */
   aisleId?: string;
-  /** @minLength 1 */
-  label?: string;
   sectionNum?: number;
   isInventory?: boolean;
   svgX?: number;
