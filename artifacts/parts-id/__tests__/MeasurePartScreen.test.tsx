@@ -82,11 +82,26 @@ jest.mock("lidar-measure", () => ({
 // re-fires after every state update and resets phase back to "preview",
 // cancelling any phase transition we want to test.
 jest.mock("expo-camera", () => {
+  const React = require("react");
   const permission = { granted: true };
   const requestPermission = jest.fn().mockResolvedValue({ granted: true });
+  // Stable mock for takePictureAsync — exposed via __mockTakePictureAsync so
+  // tests that exercise the AI photo-estimate path can configure it per call.
+  const mockTakePictureAsync = jest.fn();
   return {
-    CameraView: function CameraView() { return null; },
+    // forwardRef so cameraRef.current is populated with the imperative handle
+    // that exposes takePictureAsync.  Plain function components don't forward
+    // refs, which would leave cameraRef.current null and cause handleCapture to
+    // return early before reaching the fetch call we want to assert on.
+    CameraView: React.forwardRef(function CameraView(
+      _props: Record<string, unknown>,
+      ref: React.Ref<{ takePictureAsync: jest.Mock }>
+    ) {
+      React.useImperativeHandle(ref, () => ({ takePictureAsync: mockTakePictureAsync }));
+      return null;
+    }),
     useCameraPermissions: jest.fn(() => [permission, requestPermission]),
+    __mockTakePictureAsync: mockTakePictureAsync,
   };
 });
 
@@ -495,5 +510,125 @@ describe("MeasurePartScreen – onConfirm callback", () => {
       height: null,
       diameter: null,
     });
+  });
+});
+
+// ─── AI photo-estimate endpoint routing ───────────────────────────────────────
+//
+// Verifies that handleCapture (initial capture) and handleCaptureOnConfirm
+// (re-estimate from the confirm screen) both pick the correct API endpoint and
+// Authorization header based on whether adminToken is present.
+//
+// Non-admin path  → /estimate-dimensions/search, no Authorization header
+// Admin path      → /estimate-dimensions,        Authorization: Bearer <token>
+
+describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
+  // Grab the stable takePictureAsync mock exposed by the expo-camera module mock.
+  // This reference is valid for the lifetime of the test suite because jest.mock
+  // is hoisted and the factory only runs once.
+  const expoCamera = require("expo-camera") as {
+    __mockTakePictureAsync: jest.Mock;
+  };
+
+  let mockFetch: jest.SpyInstance;
+
+  beforeEach(() => {
+    // Use the camera path (no LiDAR) so the Capture & Estimate button is shown.
+    mockIsLiDARSupported.mockReturnValue(false);
+
+    // The camera ref must be non-null for handleCapture to proceed; the
+    // forwardRef CameraView mock handles that via useImperativeHandle.
+    expoCamera.__mockTakePictureAsync.mockResolvedValue({
+      base64: "fake-base64-data",
+      uri: "file://fake-uri",
+    });
+
+    mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({ length: 150, width: 80, height: 40, diameter: null }),
+    } as Response);
+  });
+
+  afterEach(() => {
+    mockFetch.mockRestore();
+  });
+
+  // ── Initial capture (preview → estimating) ────────────────────────────────
+
+  it("initial capture: non-admin fetches /estimate-dimensions/search without Authorization", async () => {
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/estimate-dimensions\/search$/);
+    expect(
+      (init.headers as Record<string, string>)["Authorization"]
+    ).toBeUndefined();
+  });
+
+  it("initial capture: admin fetches /estimate-dimensions with Authorization header", async () => {
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    await press(tree.root, "Capture & Estimate");
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/estimate-dimensions$/);
+    expect(url).not.toMatch(/\/estimate-dimensions\/search/);
+    expect(
+      (init.headers as Record<string, string>)["Authorization"]
+    ).toBe("Bearer admin-token-xyz");
+  });
+
+  // ── Re-estimate from confirm screen ──────────────────────────────────────
+
+  it("re-estimate from confirm: non-admin fetches /estimate-dimensions/search without Authorization", async () => {
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="" />
+    );
+
+    // Reach the confirm screen via manual-entry shortcut.
+    await press(tree.root, "Enter manually instead");
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+
+    await press(tree.root, "Photo Estimate");
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/estimate-dimensions\/search$/);
+    expect(
+      (init.headers as Record<string, string>)["Authorization"]
+    ).toBeUndefined();
+  });
+
+  it("re-estimate from confirm: admin fetches /estimate-dimensions with Authorization header", async () => {
+    const tree = await render(
+      <MeasurePartScreen {...DEFAULT_PROPS} adminToken="admin-token-xyz" />
+    );
+
+    // Reach the confirm screen via manual-entry shortcut.
+    await press(tree.root, "Enter manually instead");
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+
+    await press(tree.root, "Photo Estimate");
+    await flushPromises();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/estimate-dimensions$/);
+    expect(url).not.toMatch(/\/estimate-dimensions\/search/);
+    expect(
+      (init.headers as Record<string, string>)["Authorization"]
+    ).toBe("Bearer admin-token-xyz");
   });
 });
