@@ -1013,9 +1013,12 @@ export function WarehouseMapView({
   useAnimatedReaction(
     () => Math.ceil(scale.value),
     (tier, prevTier) => {
-      // Unified settle gate: skip mid-flight updates while a button spring OR a
-      // pinch gesture is in progress.  Both paths commit the final tier on end.
-      if (tier !== prevTier && !springActive.value && !pinchActive.value) {
+      // Allow mid-pinch tier advances: removing the pinchActive gate lets the
+      // tile grid ratchet up as soon as the pinch scale crosses an integer
+      // boundary during the gesture.  The crossfade system handles the visual
+      // transition seamlessly so there is no blank frame at the swap.
+      // springActive is still gated so button-driven springs commit once on end.
+      if (tier !== prevTier && !springActive.value) {
         runOnJS(setRenderZoom)(tier);
       }
     },
@@ -1453,7 +1456,7 @@ export function WarehouseMapView({
     springActive.value = true;
     springGeneration.value += 1;
     const myGen = springGeneration.value;
-    scale.value = withSpring(newScale, { damping: 18, stiffness: 200 }, () => {
+    scale.value = withSpring(newScale, { damping: 26, stiffness: 220 }, () => {
       'worklet';
       // Guard: only the most-recent spring clears the gate and commits a tier.
       // If the user tapped zoom again, springGeneration was already incremented
@@ -1462,8 +1465,8 @@ export function WarehouseMapView({
       springActive.value = false;
       runOnJS(setRenderZoom)(Math.ceil(newScale));
     });
-    translateX.value = withSpring(newTX, { damping: 18, stiffness: 200 });
-    translateY.value = withSpring(newTY, { damping: 18, stiffness: 200 });
+    translateX.value = withSpring(newTX, { damping: 26, stiffness: 220 });
+    translateY.value = withSpring(newTY, { damping: 26, stiffness: 220 });
     savedScale.value = newScale;
     savedTX.value = newTX;
     savedTY.value = newTY;
