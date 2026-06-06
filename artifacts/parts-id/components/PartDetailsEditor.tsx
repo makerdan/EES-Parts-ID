@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -205,7 +206,16 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setNewBin("");
   };
 
-  const removeBin = (bin: string) => setBins(bins.filter((b) => b !== bin));
+  const removeBin = (bin: string) => {
+    Alert.alert(
+      "Remove Bin",
+      `Remove bin location "${bin}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove", style: "destructive", onPress: () => setBins(bins.filter((b) => b !== bin)) },
+      ],
+    );
+  };
 
   const addKeyword = () => {
     const trimmed = newKeyword.trim().toLowerCase();
@@ -214,7 +224,16 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setNewKeyword("");
   };
 
-  const removeKeyword = (kw: string) => setKeywords(keywords.filter((k) => k !== kw));
+  const removeKeyword = (kw: string) => {
+    Alert.alert(
+      "Remove Keyword",
+      `Remove keyword "${kw}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove", style: "destructive", onPress: () => setKeywords(keywords.filter((k) => k !== kw)) },
+      ],
+    );
+  };
 
   const [dimSaveStatus, setDimSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [dimSaveError, setDimSaveError] = useState<string | null>(null);
@@ -560,6 +579,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
             <Pressable
               onPress={onClose}
               style={[styles.closeBtn, { backgroundColor: colors.muted }]}
+              accessibilityLabel="Close editor"
+              accessibilityRole="button"
             >
               <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
             </Pressable>
@@ -588,6 +609,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                   <Pressable
                     onPress={() => { setRemoveCurrentPhoto(true); setNewPhotoData(null); setSaveStatus("idle"); }}
                     style={[styles.photoRemoveBtn, { backgroundColor: colors.destructive }]}
+                    accessibilityLabel="Remove photo"
+                    accessibilityRole="button"
                   >
                     <Text style={{ color: "#fff", fontSize: 11, fontFamily: "Inter_700Bold" }}>✕</Text>
                   </Pressable>
@@ -624,6 +647,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
               placeholderTextColor={colors.mutedForeground}
               multiline
               numberOfLines={3}
+              maxLength={500}
               style={[
                 styles.descInput,
                 { backgroundColor: colors.muted, borderColor: fieldSaveErrors.description ? colors.destructive : colors.border, color: colors.foreground },
@@ -683,6 +707,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 onChangeText={setNewBin}
                 placeholder="e.g. A1-04"
                 placeholderTextColor={colors.mutedForeground}
+                maxLength={30}
                 style={[
                   styles.addInput,
                   { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
@@ -744,6 +769,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 onChangeText={setNewKeyword}
                 placeholder="Type keyword and press Add…"
                 placeholderTextColor={colors.mutedForeground}
+                maxLength={60}
                 style={[
                   styles.addInput,
                   { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
@@ -945,7 +971,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
             />
             <View style={styles.cameraOverlay}>
               <View style={styles.cameraHeader}>
-                <Pressable onPress={() => setPhotoCameraOpen(false)} style={styles.cameraCloseBtn}>
+                <Pressable onPress={() => setPhotoCameraOpen(false)} style={styles.cameraCloseBtn} accessibilityLabel="Close camera" accessibilityRole="button">
                   <Feather name="x" size={20} color="#fff" />
                 </Pressable>
                 <Text style={styles.cameraTitle}>Capture Item Photo</Text>

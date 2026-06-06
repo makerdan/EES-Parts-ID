@@ -148,6 +148,8 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
                 onPress={(e) => { e.stopPropagation?.(); onEditItem(item); }}
                 hitSlop={8}
                 style={[cardStyles.editItemBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                accessibilityLabel={`Edit ${item.catalog}`}
+                accessibilityRole="button"
               >
                 <Text style={[cardStyles.editItemBtnText, { color: colors.primary }]}>✏️ Edit</Text>
               </Pressable>

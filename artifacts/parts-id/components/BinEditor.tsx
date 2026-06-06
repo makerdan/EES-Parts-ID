@@ -142,7 +142,7 @@ export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
               {item.vendor} · {item.catalog}
             </Text>
           </View>
-          <Pressable onPress={onClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]}>
+          <Pressable onPress={onClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]} accessibilityLabel="Close bin editor" accessibilityRole="button">
             <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
           </Pressable>
         </View>
@@ -189,6 +189,7 @@ export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
               onChangeText={setNewBin}
               placeholder="e.g. A1-04"
               placeholderTextColor={colors.mutedForeground}
+              maxLength={30}
               style={[
                 styles.addInput,
                 { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },
