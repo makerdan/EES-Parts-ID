@@ -2,14 +2,11 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import crypto from "node:crypto";
 import { db, adminPreferencesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { AdminProfilePayloadSchema } from "@workspace/api-zod";
 
 const router = Router();
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-const VALID_DIMENSION_UNITS = new Set(["mm", "cm", "in"]);
-const VALID_TEXT_SIZES = new Set(["small", "normal", "large"]);
-const VALID_THEME_MODES = new Set(["light", "dark", "system"]);
 
 /**
  * Sign a timestamp with ADMIN_PASSWORD using HMAC-SHA256.
@@ -123,38 +120,12 @@ router.get("/profile", requireAdminAuth, async (_req, res) => {
 // ── PUT /admin/profile ────────────────────────────────────────────────────────
 // Upserts admin preferences for all portable AppSettings fields.
 router.put("/profile", requireAdminAuth, async (req, res) => {
-  const body = req.body as {
-    dimensionUnit?: string;
-    textSize?: string;
-    themeMode?: string;
-    defaultConfidenceThreshold?: number;
-    scanSound?: boolean;
-  };
+  const parsed = AdminProfilePayloadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid payload" });
+  }
 
-  const { dimensionUnit, textSize, themeMode, defaultConfidenceThreshold, scanSound } = body;
-
-  if (!dimensionUnit || !VALID_DIMENSION_UNITS.has(dimensionUnit)) {
-    return res.status(400).json({ error: `dimensionUnit must be one of: mm, cm, in` });
-  }
-  if (!textSize || !VALID_TEXT_SIZES.has(textSize)) {
-    return res.status(400).json({ error: `textSize must be one of: small, normal, large` });
-  }
-  if (!themeMode || !VALID_THEME_MODES.has(themeMode)) {
-    return res.status(400).json({ error: `themeMode must be one of: light, dark, system` });
-  }
-  if (
-    defaultConfidenceThreshold === undefined ||
-    defaultConfidenceThreshold === null ||
-    typeof defaultConfidenceThreshold !== "number" ||
-    !Number.isInteger(defaultConfidenceThreshold) ||
-    defaultConfidenceThreshold < 0 ||
-    defaultConfidenceThreshold > 100
-  ) {
-    return res.status(400).json({ error: `defaultConfidenceThreshold must be an integer between 0 and 100` });
-  }
-  if (typeof scanSound !== "boolean") {
-    return res.status(400).json({ error: `scanSound must be a boolean` });
-  }
+  const { dimensionUnit, textSize, themeMode, defaultConfidenceThreshold, scanSound } = parsed.data;
 
   try {
     await db
