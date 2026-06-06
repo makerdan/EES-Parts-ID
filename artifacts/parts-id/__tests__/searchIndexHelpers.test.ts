@@ -364,6 +364,36 @@ describe("buildSearchBody", () => {
     const body = buildSearchBody(BLANK);
     expect(Object.prototype.hasOwnProperty.call(body, "maxLength")).toBe(false);
   });
+
+  it("forwards includeNullDimensions: true unchanged", () => {
+    const f: FilterValues = { ...BLANK, includeNullDimensions: true };
+    const body = buildSearchBody(f);
+    expect(body.includeNullDimensions).toBe(true);
+  });
+
+  it("forwards includeNullDimensions: false unchanged", () => {
+    const f: FilterValues = { ...BLANK, includeNullDimensions: false };
+    const body = buildSearchBody(f);
+    expect(body.includeNullDimensions).toBe(false);
+  });
+
+  it("always includes includeNullDimensions in the output regardless of other filters", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "includeNullDimensions")).toBe(true);
+  });
+
+  it("includeNullDimensions is true when combined with dimension range filters", () => {
+    const f: FilterValues = {
+      ...BLANK,
+      minLength: "10",
+      maxLength: "100",
+      includeNullDimensions: true,
+    };
+    const body = buildSearchBody(f);
+    expect(body.includeNullDimensions).toBe(true);
+    expect(body.minLength).toBe(10);
+    expect(body.maxLength).toBe(100);
+  });
 });
 
 // ── buildQueryKey ─────────────────────────────────────────────────────────────
@@ -488,6 +518,12 @@ describe("buildQueryKey", () => {
   it("produces a different key for different maxLength values", () => {
     const a = { ...BLANK, maxLength: "3" };
     const b = { ...BLANK, maxLength: "5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when includeNullDimensions changes", () => {
+    const a = { ...BLANK, includeNullDimensions: false };
+    const b = { ...BLANK, includeNullDimensions: true };
     expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
   });
 });
