@@ -25,6 +25,8 @@ import { KeywordEditor } from "@/components/KeywordEditor";
 import { BinEditor } from "@/components/BinEditor";
 import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { BrowseByCategory } from "@/components/BrowseByCategory";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode, type DimensionUnit } from "@/contexts/AppContext";
@@ -143,6 +145,7 @@ export default function SearchScreen() {
   const [editItem, setEditItem] = useState<InventoryItem | null>(null);
   const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
   const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
+  const [measureItem, setMeasureItem] = useState<InventoryItem | null>(null);
 
   const handleShowOnMap = useCallback((item: InventoryItem) => {
     const bins = item.binLocations ?? [];
@@ -573,6 +576,30 @@ export default function SearchScreen() {
       reportStorageError("Could not save offline inventory cache", err);
     });
   }, [buildFuseIndex]);
+
+  const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
+    const item = measureItem;
+    setMeasureItem(null);
+    if (!item || !adminToken) return;
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${item.id}/dimensions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify(dims),
+      });
+      if (!res.ok) throw new Error(`PATCH dimensions failed: ${res.status}`);
+      const updated = fuseItemsRef.current.map(it =>
+        it.id === item.id ? { ...it, dimensions: dims } : it,
+      );
+      buildFuseIndex(updated);
+      AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(updated)).catch(err => {
+        reportStorageError("Could not save offline inventory cache", err);
+      });
+      showToast("Dimensions saved.");
+    } catch {
+      showToast("Could not save dimensions — please try again.");
+    }
+  }, [measureItem, adminToken, buildFuseIndex, showToast]);
 
   const rawResults: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
   const results: SearchResult[] = rawResults.map(r =>
@@ -1223,6 +1250,7 @@ export default function SearchScreen() {
                 onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
                 onEditDetails={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
                 onShowOnMap={handleShowOnMap}
+                onMeasure={isAdmin && listItem.kind === "sizeUnknown" ? setMeasureItem : undefined}
                 rank={index}
                 fontScale={textFontScale}
                 sizeUnknown={listItem.kind === "sizeUnknown"}
@@ -1317,6 +1345,16 @@ export default function SearchScreen() {
         onClose={() => setBarcodeEditItem(null)}
         onBarcodesChanged={handleBarcodesChanged}
       />
+
+      {isAdmin && adminToken ? (
+        <MeasurePartScreen
+          visible={measureItem !== null}
+          onClose={() => setMeasureItem(null)}
+          onConfirm={handleMeasureConfirm}
+          initialDims={null}
+          adminToken={adminToken}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }

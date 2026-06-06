@@ -24,6 +24,8 @@ interface ResultCardProps {
   onEditDetails?: (item: InventoryItem) => void;
   /** Navigate to warehouse map and open this part's zone. */
   onShowOnMap?: (item: InventoryItem) => void;
+  /** Admin-only: opens the measurement screen for this unmeasured item. */
+  onMeasure?: (item: InventoryItem) => void;
   rank: number;
   fontScale?: number;
   /** When true, shows a "Size not measured" badge because no dimension data is stored for this item */
@@ -86,7 +88,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, onEditDetails, onShowOnMap, rank, fontScale = 1.0, sizeUnknown = false }: ResultCardProps) {
+export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, onEditDetails, onShowOnMap, onMeasure, rank, fontScale = 1.0, sizeUnknown = false }: ResultCardProps) {
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
@@ -193,10 +195,21 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
 
         {/* Dimensions badge — shown inline on the card when present, or "Size not measured" when item is in the size-unknown group */}
         {sizeUnknown ? (
-          <View style={[cardStyles.dimBadge, { backgroundColor: colors.warning + "18", borderWidth: 1, borderColor: colors.warning + "44" }]}>
-            <Text style={[cardStyles.dimIcon, { color: colors.warning }]}>📏</Text>
-            <Text style={[cardStyles.dimText, { color: colors.warning }]}>Size not measured</Text>
-          </View>
+          onMeasure ? (
+            <Pressable
+              onPress={(e) => { e.stopPropagation?.(); onMeasure(item); }}
+              hitSlop={8}
+              style={[cardStyles.dimBadge, { backgroundColor: colors.warning + "18", borderWidth: 1, borderColor: colors.warning + "88" }]}
+            >
+              <Text style={[cardStyles.dimIcon, { color: colors.warning }]}>📏</Text>
+              <Text style={[cardStyles.dimText, { color: colors.warning }]}>Size not measured — tap to measure</Text>
+            </Pressable>
+          ) : (
+            <View style={[cardStyles.dimBadge, { backgroundColor: colors.warning + "18", borderWidth: 1, borderColor: colors.warning + "44" }]}>
+              <Text style={[cardStyles.dimIcon, { color: colors.warning }]}>📏</Text>
+              <Text style={[cardStyles.dimText, { color: colors.warning }]}>Size not measured</Text>
+            </View>
+          )
         ) : (item as unknown as { dimensions?: PartDimensions | null }).dimensions &&
          Object.values((item as unknown as { dimensions: PartDimensions }).dimensions).some(v => v != null) ? (
           <View style={[cardStyles.dimBadge, { backgroundColor: colors.muted }]}>
