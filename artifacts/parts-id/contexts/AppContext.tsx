@@ -10,7 +10,7 @@ import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Appearance, AppState, Platform, StyleSheet, Text, View, useColorScheme } from "react-native";
 import colorTokens from "@/constants/colors";
-import { setAuthTokenGetter, setBaseUrl } from "@workspace/api-client-react";
+import { setAuthTokenGetter, setBaseUrl, setUnauthorizedHandler } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
 import {
   reportStorageError,
@@ -363,6 +363,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }, 4000);
   }, []);
 
+  // When the generated API client receives a 401, force the admin session to
+  // end locally and surface a re-login prompt — the stored token is no longer
+  // valid (either expired or server-side revoked via POST /admin/logout).
+  useEffect(() => {
+    try {
+      if (typeof setUnauthorizedHandler !== "function") return;
+      setUnauthorizedHandler(() => {
+        secureDelete(ADMIN_TOKEN_KEY).catch(() => {});
+        setAdminToken(null);
+        showToast("Admin session expired. Please log in again.", "error");
+      });
+    } catch {}
+    return () => {
+      try { setUnauthorizedHandler(null); } catch {}
+    };
+  }, [showToast]);
+
   // Wire the storage-error reporter to the toast surface so silent write
   // failures (full disk, locked keychain, web localStorage quota) become
   // visible to the user instead of being swallowed.
@@ -522,6 +539,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logoutAdmin = useCallback(async () => {
+    const token = adminTokenRef.current;
+    // Best-effort server-side revocation: tells the server to invalidate all
+    // outstanding tokens so other devices/sessions are also signed out.
+    // We intentionally do not await or surface errors here — local logout
+    // completes regardless of network availability.
+    if (token && API_BASE) {
+      fetch(`${API_BASE}/admin/logout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
     await secureDelete(ADMIN_TOKEN_KEY);
     setAdminToken(null);
   }, []);

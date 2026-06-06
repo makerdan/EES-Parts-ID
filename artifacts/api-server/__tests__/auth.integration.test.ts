@@ -41,7 +41,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
-import { signAdminToken } from "../src/routes/admin";
+import { signAdminToken, setRevokedBefore } from "../src/routes/admin";
 import { closePool } from "./helpers/testDb";
 import { db, warehouseZoneTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
@@ -53,6 +53,11 @@ let adminToken: string;
 beforeAll(() => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
+});
+
+beforeEach(() => {
+  // Reset in-memory revocation state so each test starts clean
+  setRevokedBefore(0);
 });
 
 afterAll(async () => {
@@ -270,6 +275,102 @@ describe("Valid admin token — request proceeds past auth", () => {
     expect(res.status).not.toBe(401);
     expect(res.status).not.toBe(403);
     expect([200, 404]).toContain(res.status);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/logout — token revocation
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /admin/logout — token revocation", () => {
+  it("returns 401 without a token", async () => {
+    const res = await supertest(app)
+      .post("/api/admin/logout")
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 401 with a wrong-secret token", async () => {
+    const wrongToken = signAdminToken(Date.now(), "wrong-secret");
+    const res = await supertest(app)
+      .post("/api/admin/logout")
+      .set("Authorization", `Bearer ${wrongToken}`)
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 200 with a valid token and includes revokedAt", async () => {
+    const token = signAdminToken(Date.now(), ADMIN_SECRET);
+    const res = await supertest(app)
+      .post("/api/admin/logout")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    expect(res.body).toHaveProperty("success", true);
+    expect(res.body).toHaveProperty("revokedAt");
+    expect(typeof res.body.revokedAt).toBe("number");
+  });
+
+  it("token that was valid before logout returns 401 on a subsequent request", async () => {
+    // Issue a token, then revoke all tokens via logout
+    const token = signAdminToken(Date.now(), ADMIN_SECRET);
+
+    // Confirm the token is valid before logout
+    const preBefore = await supertest(app)
+      .get("/api/admin/profile")
+      .set("Authorization", `Bearer ${token}`);
+    expect(preBefore.status).not.toBe(401);
+
+    // Perform server-side logout (small sleep so revokedBefore > token ts)
+    await new Promise(r => setTimeout(r, 5));
+    await supertest(app)
+      .post("/api/admin/logout")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    // Same token must now be rejected
+    const postRes = await supertest(app)
+      .get("/api/admin/profile")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(401);
+
+    expect(postRes.body).toHaveProperty("error");
+  });
+
+  it("a new token issued after logout is accepted", async () => {
+    const oldToken = signAdminToken(Date.now(), ADMIN_SECRET);
+
+    // Logout: advance the revocation fence
+    await new Promise(r => setTimeout(r, 5));
+    await supertest(app)
+      .post("/api/admin/logout")
+      .set("Authorization", `Bearer ${oldToken}`)
+      .expect(200);
+
+    // Issue a fresh token (timestamp strictly after revokedBefore)
+    await new Promise(r => setTimeout(r, 5));
+    const newToken = signAdminToken(Date.now(), ADMIN_SECRET);
+
+    const res = await supertest(app)
+      .get("/api/admin/profile")
+      .set("Authorization", `Bearer ${newToken}`);
+
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+  });
+
+  it("expired token is still rejected after logout even if issued after revokedBefore", async () => {
+    // Sign with a timestamp 25 hours in the past
+    const expiredToken = signAdminToken(Date.now() - 25 * 60 * 60 * 1000, ADMIN_SECRET);
+
+    const res = await supertest(app)
+      .post("/api/admin/logout")
+      .set("Authorization", `Bearer ${expiredToken}`)
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
   });
 });
 
