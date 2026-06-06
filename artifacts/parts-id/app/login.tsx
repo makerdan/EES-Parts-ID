@@ -6,9 +6,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { router } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
@@ -146,7 +146,7 @@ export default function LoginScreen() {
           Electrical parts identification{"\n"}& warehouse lookup
         </Text>
         <Text style={styles.label}>Password</Text>
-        <TextInput
+        <KeyboardDoneInput
           style={styles.input}
           value={password}
           onChangeText={setPassword}

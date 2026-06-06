@@ -8,9 +8,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -209,7 +209,7 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
               ADD BARCODE
             </Text>
             <View style={styles.addRow}>
-              <TextInput
+              <KeyboardDoneInput
                 value={newBarcode}
                 onChangeText={setNewBarcode}
                 placeholder="Type barcode…"

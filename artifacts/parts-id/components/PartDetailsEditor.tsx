@@ -8,10 +8,10 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
   Modal,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as Clipboard from "expo-clipboard";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -640,7 +640,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
 
             {/* Description */}
             <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>DESCRIPTION</Text>
-            <TextInput
+            <KeyboardDoneInput
               value={description}
               onChangeText={setDescription}
               placeholder="Brief description of the part…"
@@ -702,7 +702,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
               </Text>
             )}
             <View style={[styles.addRow, { marginTop: 10 }]}>
-              <TextInput
+              <KeyboardDoneInput
                 value={newBin}
                 onChangeText={setNewBin}
                 placeholder="e.g. A1-04"
@@ -764,7 +764,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
               </Text>
             )}
             <View style={[styles.addRow, { marginTop: 10 }]}>
-              <TextInput
+              <KeyboardDoneInput
                 value={newKeyword}
                 onChangeText={setNewKeyword}
                 placeholder="Type keyword and press Add…"
@@ -831,7 +831,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
             <View style={styles.dimGrid}>
               <View style={styles.dimField}>
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Length</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={dimLength}
                   onChangeText={v => { setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
@@ -842,7 +842,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
               </View>
               <View style={styles.dimField}>
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Width</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={dimWidth}
                   onChangeText={v => { setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
@@ -853,7 +853,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
               </View>
               <View style={styles.dimField}>
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Height</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={dimHeight}
                   onChangeText={v => { setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"
@@ -864,7 +864,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
               </View>
               <View style={styles.dimField}>
                 <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Diameter</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={dimDiameter}
                   onChangeText={v => { setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                   placeholder="–"

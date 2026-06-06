@@ -8,9 +8,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import {
   useSearchInventory,
@@ -159,7 +159,7 @@ export function CatalogPickerModal({
         </View>
 
         <View style={{ padding: 12 }}>
-          <TextInput
+          <KeyboardDoneInput
             value={query}
             onChangeText={setQuery}
             placeholder={prefix ? `Search parts on shelf ${shelfPrefix}…` : "Search or enter new catalog #…"}
@@ -180,7 +180,7 @@ export function CatalogPickerModal({
             <Text style={[pickerStyles.createFormLabel, { color: colors.mutedForeground }]}>
               Vendor code <Text style={{ color: colors.destructive }}>*</Text>
             </Text>
-            <TextInput
+            <KeyboardDoneInput
               value={newVendor}
               onChangeText={(t) => { setNewVendor(t); setVendorError(null); }}
               placeholder="e.g. HUBBELL"
@@ -200,7 +200,7 @@ export function CatalogPickerModal({
             <Text style={[pickerStyles.createFormLabel, { color: colors.mutedForeground }]}>
               Primary bin location <Text style={{ color: colors.mutedForeground }}>(optional)</Text>
             </Text>
-            <TextInput
+            <KeyboardDoneInput
               value={newBinLocation}
               onChangeText={setNewBinLocation}
               placeholder="e.g. A-12-3"

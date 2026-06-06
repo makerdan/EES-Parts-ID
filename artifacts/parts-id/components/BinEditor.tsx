@@ -8,9 +8,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useUpdateItemBins } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
@@ -184,7 +184,7 @@ export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
             ADD BIN
           </Text>
           <View style={styles.addRow}>
-            <TextInput
+            <KeyboardDoneInput
               value={newBin}
               onChangeText={setNewBin}
               placeholder="e.g. A1-04"

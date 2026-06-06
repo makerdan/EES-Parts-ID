@@ -9,9 +9,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { resizeImage } from "@/utils/resizeImage";
@@ -554,7 +554,7 @@ export default function PhotoScreen() {
             ].map(({ label, value, key, ph }) => (
               <View key={key} style={{ marginBottom: 10 }}>
                 <Text style={[styles.fieldLabel, { color: colors.foreground }]}>{label}:</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={value}
                   onChangeText={(v) => {
                     if (key === "textNumbers") setTextNumbers(v);
