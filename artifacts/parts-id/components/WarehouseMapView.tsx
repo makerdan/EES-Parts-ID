@@ -55,14 +55,17 @@ import {
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
+  useAnimatedProps,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withSpring,
   withTiming,
+  type SharedValue,
 } from "react-native-reanimated";
 import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml } from "react-native-svg";
+
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 
@@ -84,6 +87,11 @@ function clamp(val: number, min: number, max: number) {
   "worklet";
   return val < min ? min : val > max ? max : val;
 }
+
+// Animated wrappers for SVG primitives — lets useAnimatedProps drive
+// strokeWidth and fontSize on the UI thread with zero JS re-renders.
+const AnimatedRect = Animated.createAnimatedComponent(Rect);
+const AnimatedSvgText = Animated.createAnimatedComponent(SvgText);
 
 // ── Module-level SVG cache ────────────────────────────────────────────────────
 // Managed by utils/floorPlanCache (two-tier: in-memory + AsyncStorage).
@@ -181,6 +189,123 @@ async function _loadFloorPlanFromBundle(): Promise<void> {
   setCached(currentHash, newData);
 }
 
+
+// ── Per-zone overlay element ──────────────────────────────────────────────────
+// Isolated into its own component so useAnimatedProps (which must be called
+// unconditionally at the top of a component) can legally be called once per
+// zone.  strokeWidth and fontSize are driven on the UI thread via
+// useAnimatedProps — zero JS re-renders occur during pinch or spring animations.
+// Zone geometry (x/y/w/h) remains static; only visual-weight properties animate.
+interface ZoneOverlayItemProps {
+  zone: ApiWarehouseZone;
+  scale: SharedValue<number>;
+  colors: ReturnType<typeof useColors>;
+  onZoneTap: (zone: ApiWarehouseZone) => void;
+  onZoneLongPress?: (zone: ApiWarehouseZone) => void;
+  cycleMode: boolean;
+  cycleLocked: boolean;
+  isCounted: boolean;
+}
+
+function ZoneOverlayItem({
+  zone,
+  scale,
+  colors,
+  onZoneTap,
+  onZoneLongPress,
+  cycleMode,
+  cycleLocked,
+  isCounted,
+}: ZoneOverlayItemProps) {
+  const isActive = zone.isInventory;
+  const baseFontSize = Math.max(24, Math.min(48, zone.svgHeight / 3));
+
+  // Baseline stroke widths at scale=1; divide by scale.value to keep visual weight constant.
+  const baseStroke = cycleMode ? (isCounted ? 10 : 4) : (isActive ? 8 : 4);
+
+  const rectAnimatedProps = useAnimatedProps(() => ({
+    strokeWidth: baseStroke / scale.value,
+  }));
+
+  const textAnimatedProps = useAnimatedProps(() => ({
+    fontSize: baseFontSize / scale.value,
+  }));
+
+  if (cycleMode) {
+    const fillColor = isCounted ? "#22c55ecc" : colors.primary + "18";
+    const strokeColor = isCounted ? "#16a34a" : colors.primary + "50";
+    const labelColor = isCounted ? "#fff" : colors.primary + "80";
+    return (
+      <G
+        {...(Platform.OS !== "web" && (!cycleLocked && isActive) && {
+          onLongPress: () => onZoneLongPress?.(zone),
+          delayLongPress: 400,
+        })}
+      >
+        <AnimatedRect
+          x={zone.svgX}
+          y={zone.svgY}
+          width={zone.svgWidth}
+          height={zone.svgHeight}
+          fill={fillColor}
+          stroke={strokeColor}
+          animatedProps={rectAnimatedProps}
+        />
+        <AnimatedSvgText
+          x={zone.svgX + zone.svgWidth / 2}
+          y={zone.svgY + zone.svgHeight / 2}
+          fontWeight="bold"
+          fill={labelColor}
+          textAnchor="middle"
+          alignmentBaseline="middle"
+          animatedProps={textAnimatedProps}
+        >
+          {zone.label}
+        </AnimatedSvgText>
+      </G>
+    );
+  }
+
+  const ZONE_GAP = 5;
+  const fillColor = isActive ? "rgba(0, 112, 255, 0.14)" : "rgba(0, 112, 255, 0.06)";
+  const strokeColor = "#0070ff";
+  const labelColor = "#000000";
+
+  return (
+    <G
+      {...(Platform.OS === "web"
+        ? (isActive ? { onClick: () => onZoneTap(zone) } : undefined)
+        : {
+            onPress: isActive ? () => onZoneTap(zone) : undefined,
+            onLongPress: isActive ? () => onZoneLongPress?.(zone) : undefined,
+            delayLongPress: 400,
+          }
+      )}
+    >
+      <AnimatedRect
+        x={zone.svgX + ZONE_GAP}
+        y={zone.svgY + ZONE_GAP}
+        width={zone.svgWidth - ZONE_GAP * 2}
+        height={zone.svgHeight - ZONE_GAP * 2}
+        fill={fillColor}
+        stroke={strokeColor}
+        strokeDasharray={isActive ? undefined : "20 10"}
+        animatedProps={rectAnimatedProps}
+      />
+      <AnimatedSvgText
+        x={zone.svgX + zone.svgWidth / 2}
+        y={zone.svgY + zone.svgHeight / 2}
+        fontWeight="bold"
+        fill={labelColor}
+        textAnchor="middle"
+        alignmentBaseline="middle"
+        animatedProps={textAnimatedProps}
+      >
+        {zone.label}
+      </AnimatedSvgText>
+    </G>
+  );
+}
 
 export interface WarehouseMapViewProps {
   zones: ApiWarehouseZone[];
@@ -437,20 +562,6 @@ export function WarehouseMapView({
       if (tier !== prevTier) {
         runOnJS(setRenderZoom)(tier);
       }
-    },
-  );
-
-  // Track the display scale for overlay compensation: zone stroke widths and
-  // font sizes are specified in viewBox coordinates.  When the gesture
-  // transform scales the canvas up, those values grow proportionally, making
-  // borders appear thick and labels huge at high zoom.  Dividing by
-  // displayScale before passing to SVG props keeps visual weight constant.
-  // Rounded to 1 d.p. so the reaction doesn't fire on every micro-gesture.
-  const [displayScale, setDisplayScale] = useState(1);
-  useAnimatedReaction(
-    () => Math.round(scale.value * 10) / 10,
-    (rounded, prev) => {
-      if (rounded !== prev) runOnJS(setDisplayScale)(rounded);
     },
   );
 
@@ -763,99 +874,27 @@ export function WarehouseMapView({
   }));
 
   // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────
+  // Each ZoneOverlayItem uses useAnimatedProps to drive strokeWidth and fontSize
+  // on the UI thread — visual weight stays constant as zoom changes with zero
+  // JS re-renders during pinch or button-driven spring animations.
+  // Zone geometry (x/y/w/h) is static and correctly tracks the floor plan.
   const zoneOverlays = useMemo(() => {
     if (!zones.length) return null;
-    // Stroke widths and font sizes are in viewBox units.  The gesture transform
-    // scales the whole canvas, so a 4-unit stroke appears 4×scale units wide
-    // on screen.  Dividing by displayScale keeps the visual weight constant at
-    // every zoom level.  Clamp to a minimum of 0.5 to stay visible at extreme
-    // zoom, and maximum of 1 so values never exceed their baseline at scale<1.
-    const inv = 1 / Math.max(displayScale, 0.5);
-
-    return zones.map((zone) => {
-      const isActive = zone.isInventory;
-
-      if (cycleMode) {
-        const isCounted = countedZoneIds?.has(zone.id) ?? false;
-        const fillColor = isCounted ? "#22c55ecc" : colors.primary + "18";
-        const strokeColor = isCounted ? "#16a34a" : colors.primary + "50";
-        const strokeWidth = (isCounted ? 10 : 4) * inv;
-        const labelColor = isCounted ? "#fff" : colors.primary + "80";
-        return (
-          <G
-            key={zone.id}
-            {...(Platform.OS !== "web" && (!cycleLocked && isActive) && {
-              onLongPress: () => onZoneLongPress?.(zone),
-              delayLongPress: 400,
-            })}
-          >
-            <Rect
-              x={zone.svgX}
-              y={zone.svgY}
-              width={zone.svgWidth}
-              height={zone.svgHeight}
-              fill={fillColor}
-              stroke={strokeColor}
-              strokeWidth={strokeWidth}
-            />
-            <SvgText
-              x={zone.svgX + zone.svgWidth / 2}
-              y={zone.svgY + zone.svgHeight / 2}
-              fontSize={Math.max(24, Math.min(48, zone.svgHeight / 3)) * inv}
-              fontWeight="bold"
-              fill={labelColor}
-              textAnchor="middle"
-              alignmentBaseline="middle"
-            >
-              {zone.label}
-            </SvgText>
-          </G>
-        );
-      }
-
-      const ZONE_GAP = 5;
-      const fillColor = isActive ? "rgba(0, 112, 255, 0.14)" : "rgba(0, 112, 255, 0.06)";
-      const strokeColor = "#0070ff";
-      const strokeWidth = (isActive ? 8 : 4) * inv;
-      const labelColor = "#000000";
-
-      return (
-        <G
-          key={zone.id}
-          {...(Platform.OS === "web"
-            ? (isActive ? { onClick: () => onZoneTap(zone) } : undefined)
-            : {
-                onPress: isActive ? () => onZoneTap(zone) : undefined,
-                onLongPress: isActive ? () => onZoneLongPress?.(zone) : undefined,
-                delayLongPress: 400,
-              }
-          )}
-        >
-          <Rect
-            x={zone.svgX + ZONE_GAP}
-            y={zone.svgY + ZONE_GAP}
-            width={zone.svgWidth - ZONE_GAP * 2}
-            height={zone.svgHeight - ZONE_GAP * 2}
-            fill={fillColor}
-            stroke={strokeColor}
-            strokeWidth={strokeWidth}
-            strokeDasharray={isActive ? undefined : "20 10"}
-          />
-          <SvgText
-            x={zone.svgX + zone.svgWidth / 2}
-            y={zone.svgY + zone.svgHeight / 2}
-            fontSize={Math.max(24, Math.min(48, zone.svgHeight / 3)) * inv}
-            fontWeight="bold"
-            fill={labelColor}
-            textAnchor="middle"
-            alignmentBaseline="middle"
-          >
-            {zone.label}
-          </SvgText>
-        </G>
-      );
-    });
-  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, cycleLocked, countedZoneIds, displayScale]);
+    return zones.map((zone) => (
+      <ZoneOverlayItem
+        key={zone.id}
+        zone={zone}
+        scale={scale}
+        colors={colors}
+        onZoneTap={onZoneTap}
+        onZoneLongPress={onZoneLongPress}
+        cycleMode={cycleMode}
+        cycleLocked={cycleLocked}
+        isCounted={countedZoneIds?.has(zone.id) ?? false}
+      />
+    ));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, cycleLocked, countedZoneIds]);
 
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
@@ -1022,7 +1061,12 @@ export function WarehouseMapView({
               child <g> element (dangerouslySetInnerHTML), keeping floor plan
               and zones in one SVG viewport for crisp rendering at any zoom.
               On native: the zone rects are layered on top of the <SvgUri>
-              rendered above via absoluteFill. */}
+              rendered above via absoluteFill.
+              Each ZoneOverlayItem drives its own strokeWidth and fontSize via
+              useAnimatedProps on the UI thread — visual weight stays constant
+              as zoom changes, with zero JS re-renders during pinch or spring
+              animations. Zone geometry (x/y/w/h) fills the full SVG viewBox,
+              so alignment with the floor plan is always exact. */}
           <Svg
             style={StyleSheet.absoluteFill}
             viewBox={`0 0 ${SVG_VIEWBOX_W} ${SVG_VIEWBOX_H}`}
