@@ -70,14 +70,19 @@ import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml } from "react-native-svg"
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 
-// Must match the viewBox attribute of the floor-plan SVG served by /api/floor-plan/svg.
-// Run: curl .../api/floor-plan/svg | grep -oP 'viewBox="[^"]+"' | head -1
-const SVG_VIEWBOX_W = 7329.6001;
-const SVG_VIEWBOX_H = 4997.2798;
-const SVG_ASPECT = SVG_VIEWBOX_W / SVG_VIEWBOX_H;
-
-const MIN_SCALE = 0.8;
-const MAX_SCALE = 50;
+// Pure viewport math is in utils/mapViewport — exported for testing.
+import {
+  SVG_VIEWBOX_W,
+  SVG_VIEWBOX_H,
+  SVG_ASPECT,
+  MIN_SCALE,
+  MAX_SCALE,
+  FIT_PADDING,
+  parseContentViewBox,
+  fitContentViewport,
+  makeTileViewBox,
+  type ContentViewBox,
+} from "@/utils/mapViewport";
 
 const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
 
@@ -89,64 +94,6 @@ const IOS_MAX_TEXTURE_PX = 8192;
 function clamp(val: number, min: number, max: number) {
   "worklet";
   return val < min ? min : val > max ? max : val;
-}
-
-// Re-export SvgContentViewBox as ContentViewBox for internal use in this module.
-type ContentViewBox = SvgContentViewBox;
-
-const FIT_PADDING = 16;
-
-/**
- * Parse the `viewBox="x y w h"` attribute from an SVG XML string.
- * Returns null when the attribute is absent or malformed.
- */
-function parseContentViewBox(xml: string): ContentViewBox | null {
-  const match = xml.match(/viewBox="([^"]+)"/);
-  if (!match) return null;
-  const parts = match[1].trim().split(/[\s,]+/).map(Number);
-  if (parts.length !== 4 || parts.some((n) => !isFinite(n))) return null;
-  return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
-}
-
-/**
- * Compute a "fit to content" viewport that centres the content rect inside the
- * container using a meet-style scale with FIT_PADDING on every side.
- *
- * The SVG render area is svgRenderW × svgRenderH (= containerW × containerW/aspect)
- * and is centred in the container.  The Animated.View transform is
- *   [translateX, translateY, scale]
- * where scale pivots around the view centre, then the translation shifts it.
- * So the content centre in screen space = containerCentre + (tx, ty) + (dx, dy)*s
- * where dx/dy is the content-centre offset from the SVG render-area centre.
- * Setting that to zero gives tx = -dx*s, ty = -dy*s.
- */
-function fitContentViewport(
-  contentVB: ContentViewBox,
-  containerW: number,
-  containerH: number,
-  svgVBW: number,
-  svgVBH: number,
-): { scale: number; tx: number; ty: number } {
-  const svgRenderW = containerW;
-  const svgRenderH = containerW / (svgVBW / svgVBH);
-  const pixelW = (contentVB.w / svgVBW) * svgRenderW;
-  const pixelH = (contentVB.h / svgVBH) * svgRenderH;
-  const availW = containerW - FIT_PADDING * 2;
-  const availH = containerH - FIT_PADDING * 2;
-  const rawScale = Math.min(availW / pixelW, availH / pixelH);
-  const fittedScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, rawScale));
-  const contentCenterX = ((contentVB.x + contentVB.w / 2) / svgVBW) * svgRenderW;
-  const contentCenterY = ((contentVB.y + contentVB.h / 2) / svgVBH) * svgRenderH;
-  const dx = contentCenterX - svgRenderW / 2;
-  const dy = contentCenterY - svgRenderH / 2;
-  // Do NOT clamp to pan bounds here.  The centering translation is geometrically
-  // correct: it moves exactly the content-centre to the container-centre.
-  // Pan bounds (maxX/maxY) are derived from the full SVG render area, which is
-  // often larger than the container in X but smaller in Y (letterboxed portrait).
-  // Clamping ty to maxY=0 in the letterboxed case would leave the content
-  // off-centre — the opposite of what this function is meant to achieve.
-  // The gesture handlers apply their own per-axis clamping during user interaction.
-  return { scale: fittedScale, tx: -dx * fittedScale, ty: -dy * fittedScale };
 }
 
 // Animated wrappers for SVG primitives — lets useAnimatedProps drive
@@ -882,15 +829,13 @@ export function WarehouseMapView({
     const { c0, c1, r0, r1, N: rangeN } = visibleRange;
     // Wait until the reaction has caught up to the current N.
     if (rangeN !== N) return [];
-    const vbW = SVG_VIEWBOX_W / N;
-    const vbH = SVG_VIEWBOX_H / N;
     const result: TileSpec[] = [];
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) {
         // Replace the viewBox attribute so this tile renders only its slice.
         const tileXml = svgXml.replace(
           /viewBox="[^"]+"/,
-          `viewBox="${c * vbW} ${r * vbH} ${vbW} ${vbH}"`,
+          `viewBox="${makeTileViewBox(c, r, N, SVG_VIEWBOX_W, SVG_VIEWBOX_H)}"`,
         );
         result.push({ col: c, row: r, xml: tileXml });
       }
