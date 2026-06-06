@@ -40,6 +40,14 @@ export type PinnedPart = {
   groupId?: number;
 };
 
+/** Dimensions captured by the Measure tab, passed back to an item edit form. */
+export type LidarDims = {
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  diameter?: number | null;
+};
+
 export type MeasureSearchParams = {
   minLength?: string;
   maxLength?: string;
@@ -252,6 +260,9 @@ interface AppContextValue {
   // Cross-tab: dimension-keyword search set by the Photo tab Measure flow
   pendingMeasureSearch: MeasureSearchParams | null;
   setPendingMeasureSearch: (search: MeasureSearchParams | null) => void;
+  // Cross-tab: LiDAR dims captured in the Measure tab to pre-fill an item form
+  pendingLidarDims: LidarDims | null;
+  setPendingLidarDims: (dims: LidarDims | null) => void;
   // Persisted resume-progress state so the card survives screen navigation
   resumeProgress: Record<number, ResumeProgress>;
   setResumeProgress: React.Dispatch<React.SetStateAction<Record<number, ResumeProgress>>>;
@@ -299,6 +310,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
   const [pinnedParts, setPinnedParts] = useState<PinnedPart[]>([]);
   const [pendingMeasureSearch, setPendingMeasureSearch] = useState<MeasureSearchParams | null>(null);
+  const [pendingLidarDims, setPendingLidarDims] = useState<LidarDims | null>(null);
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Guard: if the generated API client module failed to load (e.g. codegen has
@@ -553,6 +565,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setPinnedParts,
       pendingMeasureSearch,
       setPendingMeasureSearch,
+      pendingLidarDims,
+      setPendingLidarDims,
       resumeProgress,
       setResumeProgress,
     }}>
