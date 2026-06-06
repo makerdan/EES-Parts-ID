@@ -272,11 +272,15 @@ export default function SearchScreen() {
   const settingsRef = useRef(settings);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
-  // Keep the Settings modal text input in sync with the slider / persisted value.
-  // This runs on every settings change so the input always reflects what was saved.
+  // Reset the Settings-modal confidence text input to the current persisted value
+  // when the modal opens.  Syncing on every settings change would reset the field
+  // mid-keystroke (e.g. while the user types a custom value), causing a flicker.
   useEffect(() => {
-    setConfThresholdInput(String(settings.defaultConfidenceThreshold));
-  }, [settings.defaultConfidenceThreshold]);
+    if (showLogoutModal) {
+      setConfThresholdInput(String(settings.defaultConfidenceThreshold));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showLogoutModal]);
 
   // Apply the persisted default confidence threshold to the active search
   // filters whenever it changes in Settings (and once after settings finish
@@ -1246,6 +1250,9 @@ export default function SearchScreen() {
           ref={flatListRef}
           data={flatListData}
           keyExtractor={item => item.kind === "sizeUnknownHeader" ? "__size-unknown-header__" : String(item.result.item.id) + (item.kind === "sizeUnknown" ? "-unknown" : "")}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={8}
+          windowSize={10}
           style={{ flex: 1 }}
           refreshControl={
             <RefreshControl

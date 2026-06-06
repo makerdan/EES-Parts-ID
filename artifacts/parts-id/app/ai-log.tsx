@@ -157,6 +157,9 @@ export default function AiLogScreen() {
           data={rows}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          windowSize={10}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
