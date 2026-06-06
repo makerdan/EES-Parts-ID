@@ -251,11 +251,11 @@ interface AppContextValue {
   pendingMapFocus: MapFocus | null;
   setPendingMapFocus: (focus: MapFocus | null) => void;
   // Cross-tab: parts currently pinned on the map from a search session
-  pinnedParts: InventoryItem[];
-  setPinnedParts: (parts: InventoryItem[]) => void;
-  // Cross-tab: dimension-keyword search string set by the Photo tab Measure flow
-  pendingMeasureSearch: string | null;
-  setPendingMeasureSearch: (search: string | null) => void;
+  pinnedParts: PinnedPart[];
+  setPinnedParts: React.Dispatch<React.SetStateAction<PinnedPart[]>>;
+  // Cross-tab: dimension filter params set by the Photo tab Measure flow
+  pendingMeasureSearch: MeasureSearchParams | null;
+  setPendingMeasureSearch: (search: MeasureSearchParams | null) => void;
   // Persisted resume-progress state so the card survives screen navigation
   resumeProgress: Record<number, ResumeProgress>;
   setResumeProgress: React.Dispatch<React.SetStateAction<Record<number, ResumeProgress>>>;
@@ -301,8 +301,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [toastState, setToastState] = useState<{ message: string; type: ToastVariant } | null>(null);
   const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
-  const [pinnedParts, setPinnedParts] = useState<InventoryItem[]>([]);
-  const [pendingMeasureSearch, setPendingMeasureSearch] = useState<string | null>(null);
+  const [pinnedParts, setPinnedParts] = useState<PinnedPart[]>([]);
+  const [pendingMeasureSearch, setPendingMeasureSearch] = useState<MeasureSearchParams | null>(null);
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Guard: if the generated API client module failed to load (e.g. codegen has
