@@ -96,4 +96,6 @@ module.exports = {
     currentState: "active",
     addEventListener: jest.fn(() => ({ remove: jest.fn() })),
   },
+  KeyboardAvoidingView: make("rn-keyboard-avoiding-view"),
+  NativeModules: {},
 };
