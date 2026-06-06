@@ -224,6 +224,97 @@ jest.mock("@/utils/searchHelpers", () => ({
 
 jest.mock("@/utils/useTrackScreen", () => ({ useTrackScreen: jest.fn() }));
 
+// ─── react-native-reanimated (needed by WarehouseMapView) ─────────────────────
+
+jest.mock("react-native-reanimated", () => {
+  const React = require("react");
+  const makeShared = (v: unknown) => ({ value: v });
+  const AnimatedView = ({ children, style }: { children?: React.ReactNode; style?: unknown }) =>
+    React.createElement("rn-animated-view", { style }, children);
+  const createAnimatedComponent = (C: unknown) => C;
+  return {
+    __esModule: true,
+    useSharedValue: makeShared,
+    useAnimatedStyle: () => ({}),
+    useAnimatedProps: () => ({}),
+    useAnimatedReaction: () => {},
+    withSpring: (v: unknown) => v,
+    withRepeat: (a: unknown) => a,
+    withTiming: (v: unknown) => v,
+    runOnJS: (fn: unknown) => fn,
+    Animated: { createAnimatedComponent, View: AnimatedView },
+    default:  { createAnimatedComponent, View: AnimatedView },
+  };
+});
+
+// ─── react-native-gesture-handler (needed by WarehouseMapView) ───────────────
+
+jest.mock("react-native-gesture-handler", () => {
+  const chain = () => {
+    const c: Record<string, unknown> = {};
+    ["minPointers", "minDistance", "onUpdate", "onEnd", "numberOfTaps"].forEach(
+      (m) => { c[m] = () => c; }
+    );
+    return c;
+  };
+  return {
+    Gesture: {
+      Pan: chain,
+      Pinch: chain,
+      Tap: chain,
+      Simultaneous: (...args: unknown[]) => args[0],
+      Exclusive: (...args: unknown[]) => args[0],
+    },
+    GestureDetector: ({ children }: { children: React.ReactNode }) =>
+      React.createElement(React.Fragment, null, children),
+  };
+});
+
+// ─── react-native-svg (needed by WarehouseMapView) ───────────────────────────
+
+jest.mock("react-native-svg", () => ({
+  Svg: () => null,
+  Rect: () => null,
+  G: () => null,
+  Text: () => null,
+  SvgUri: () => null,
+  SvgXml: () => null,
+  Circle: () => null,
+}));
+
+// ─── expo-asset (needed by WarehouseMapView) ──────────────────────────────────
+
+jest.mock("expo-asset", () => ({
+  Asset: {
+    fromModule: () => ({ downloadAsync: async () => {}, localUri: "" }),
+  },
+}));
+
+// ─── @/utils/floorPlanCache (needed by WarehouseMapView) ─────────────────────
+
+jest.mock("@/utils/floorPlanCache", () => ({
+  getCachedData:     jest.fn().mockReturnValue(null),
+  getIfValid:        jest.fn().mockReturnValue(null),
+  hasCachedData:     jest.fn().mockReturnValue(false),
+  initPersistRead:   jest.fn().mockReturnValue(Promise.resolve()),
+  resetForServerUpdate: jest.fn(),
+  setCached:         jest.fn(),
+  setFallbackEmpty:  jest.fn(),
+}));
+
+// ─── @/utils/mapViewport (needed by WarehouseMapView) ────────────────────────
+
+jest.mock("@/utils/mapViewport", () => ({
+  SVG_VIEWBOX_W:       3592.55,
+  SVG_VIEWBOX_H:       2457.41,
+  SVG_ASPECT:          3592.55 / 2457.41,
+  MIN_SCALE:           0.5,
+  MAX_SCALE:           5,
+  parseContentViewBox: jest.fn().mockReturnValue(null),
+  fitContentViewport:  jest.fn(),
+  makeTileViewBox:     jest.fn(),
+}));
+
 // ─── PhotoScreen-specific mocks ───────────────────────────────────────────────
 
 jest.mock("expo-image-picker", () => ({
@@ -356,6 +447,7 @@ afterEach(async () => {
 
 import SearchScreen from "../app/(tabs)/index";
 import PhotoScreen  from "../app/(tabs)/photo";
+import { WarehouseMapView } from "../components/WarehouseMapView";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -438,6 +530,22 @@ describe("SearchScreen – handleShowOnMap calls setPinnedParts", () => {
 
     expect(mockShowToast).toHaveBeenCalled();
     expect(mockRouterNavigate).not.toHaveBeenCalledWith("/(tabs)/map");
+  });
+
+  it("pins aisle 0 when the first bin segment is 00 and navigates to the map tab", async () => {
+    await renderSearch();
+
+    const item = {
+      id: 5, catalog: "AISLE-ZERO",
+      binLocations: ["00-02-001"], description: "",
+    };
+
+    await act(async () => { capturedOnShowOnMap!(item); });
+
+    expect(mockSetPinnedParts).toHaveBeenCalledWith([
+      { binCode: "00-02-001", label: "AISLE-ZERO", aisleNum: 0 },
+    ]);
+    expect(mockRouterNavigate).toHaveBeenCalledWith("/(tabs)/map");
   });
 });
 
@@ -640,5 +748,75 @@ describe("PhotoScreen – MeasurePartScreen confirm (admin search mode)", () => 
       minHeight: "", maxHeight: "",
       minDiameter: "38", maxDiameter: "38",
     });
+  });
+});
+
+// =============================================================================
+// 5. WarehouseMapView – focusAisleNum effect: no-zone-found cleanup path
+//
+//    When focusAisleNum is set but zones.find() returns undefined, the effect
+//    must call onFocusConsumed (and onFocusFailed) to release the pending focus
+//    so the parent does not re-trigger the animation on every subsequent render.
+//
+//    The effect is gated on containerW > 0 (i.e. a layout event has fired), so
+//    we locate the outer View with an onLayout prop in the rendered tree and
+//    call it with synthetic dimensions before asserting.
+// =============================================================================
+
+describe("WarehouseMapView – focusAisleNum effect calls onFocusConsumed when no zone matches", () => {
+  it("calls onFocusConsumed exactly once and onFocusFailed exactly once", async () => {
+    useApp.mockReturnValue(makeAppMock());
+
+    const onFocusConsumed = jest.fn();
+    const onFocusFailed   = jest.fn();
+
+    // A zone list that has no entry with aisleId "1" so the find() misses.
+    const zones: Parameters<typeof WarehouseMapView>[0]["zones"] = [
+      {
+        id: 99, aisleId: "99", label: "Aisle 99",
+        sectionParity: "all", isInventory: true,
+        svgX: 100, svgY: 100, svgWidth: 200, svgHeight: 150,
+        sortOrder: 0, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z",
+      },
+    ];
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <WarehouseMapView
+          zones={zones}
+          zonesLoading={false}
+          zonesError={false}
+          onZonesRetry={jest.fn()}
+          onZoneTap={jest.fn()}
+          focusAisleNum={1}
+          onFocusConsumed={onFocusConsumed}
+          onFocusFailed={onFocusFailed}
+        />
+      );
+    });
+    activeTree = tree;
+    await flushPromises();
+
+    // containerWRef starts at 0 — the guard (w === 0) blocks the zone lookup.
+    // Simulate a layout event on the outer View to give the component real
+    // dimensions, which re-runs the focusAisleNum effect past the guard.
+    const viewWithLayout = tree.root.findAll(
+      (n) => typeof n.props.onLayout === "function",
+      { deep: true }
+    )[0];
+    expect(viewWithLayout).toBeDefined();
+
+    await act(async () => {
+      viewWithLayout.props.onLayout({
+        nativeEvent: { layout: { width: 400, height: 800 } },
+      });
+    });
+    await flushPromises();
+
+    // zones has aisleId "99" but focusAisleNum is 1 → no match →
+    // cleanup callbacks must each fire exactly once.
+    expect(onFocusConsumed).toHaveBeenCalledTimes(1);
+    expect(onFocusFailed).toHaveBeenCalledTimes(1);
   });
 });

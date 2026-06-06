@@ -98,4 +98,9 @@ module.exports = {
   },
   KeyboardAvoidingView: make("rn-keyboard-avoiding-view"),
   NativeModules: {},
+  useColorScheme: () => "light",
+  PixelRatio: {
+    get: () => 2,
+    roundToNearestPixel: (v) => Math.round(v),
+  },
 };
