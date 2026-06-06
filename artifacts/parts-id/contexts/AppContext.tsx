@@ -106,6 +106,33 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "";
 
+async function fetchAdminProfile(token: string): Promise<{ dimensionUnit?: string } | null> {
+  try {
+    const resp = await fetch(`${API_BASE}/admin/profile`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) return null;
+    return await resp.json() as { dimensionUnit?: string };
+  } catch {
+    return null;
+  }
+}
+
+async function pushAdminProfile(token: string, dimensionUnit: string): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/admin/profile`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ dimensionUnit }),
+    });
+  } catch {
+    // Background sync — swallow errors silently
+  }
+}
+
 export type { LogoutHandler };
 
 export type MapFocus = {
@@ -239,6 +266,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSettings(s);
       applyThemeMode(s.themeMode);
       setIsLoading(false);
+
+      // Background: if already logged in as admin, pull server profile and
+      // apply dimensionUnit so the setting follows the admin across devices.
+      if (token) {
+        fetchAdminProfile(token).then(profile => {
+          if (!profile?.dimensionUnit) return;
+          if (!VALID_DIMENSION_UNITS.includes(profile.dimensionUnit as DimensionUnit)) return;
+          const unit = profile.dimensionUnit as DimensionUnit;
+          setSettings(prev => {
+            if (prev.dimensionUnit === unit) return prev;
+            const next = { ...prev, dimensionUnit: unit };
+            saveSettings(next);
+            return next;
+          });
+        });
+      }
     }).catch(() => {
       // SecureStore failure (e.g. keychain unavailable) — start in clean logged-out state
       setIsLoading(false);
@@ -250,6 +293,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const next = { ...prev, [key]: value };
       saveSettings(next);
       if (key === "themeMode") applyThemeMode(value as ThemeMode);
+      // Background: push dimensionUnit change to the server so it follows the
+      // admin across devices. Uses the ref so the closure doesn't go stale.
+      if (key === "dimensionUnit" && adminTokenRef.current) {
+        pushAdminProfile(adminTokenRef.current, value as string);
+      }
       return next;
     });
   }, []);
@@ -303,6 +351,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       await secureSet(ADMIN_TOKEN_KEY, body.token);
       setAdminToken(body.token);
+
+      // Background: pull server profile so dimensionUnit is immediately
+      // applied on this device without blocking the login response.
+      fetchAdminProfile(body.token).then(profile => {
+        if (!profile?.dimensionUnit) return;
+        if (!VALID_DIMENSION_UNITS.includes(profile.dimensionUnit as DimensionUnit)) return;
+        const unit = profile.dimensionUnit as DimensionUnit;
+        setSettings(prev => {
+          if (prev.dimensionUnit === unit) return prev;
+          const next = { ...prev, dimensionUnit: unit };
+          saveSettings(next);
+          return next;
+        });
+      });
+
       return { success: true };
     } catch {
       return { success: false, error: "Could not reach the server. Check your connection." };
