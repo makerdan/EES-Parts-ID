@@ -225,7 +225,6 @@ export type { LogoutHandler };
 
 export type MapFocus = {
   aisleNum: number;
-  sectionNumbers?: number[];
   label?: string;
 };
 

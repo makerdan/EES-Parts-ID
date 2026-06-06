@@ -419,6 +419,8 @@ export interface WarehouseMapViewProps {
   focusAisleNum?: number | null;
   /** Called after the auto-focus animation fires so the parent can clear focusAisleNum. */
   onFocusConsumed?: () => void;
+  /** Called when focusAisleNum is set but no matching zone exists on the map. */
+  onFocusFailed?: () => void;
 }
 
 export function WarehouseMapView({
@@ -439,6 +441,7 @@ export function WarehouseMapView({
   variantSectionsMap,
   focusAisleNum,
   onFocusConsumed,
+  onFocusFailed,
 }: WarehouseMapViewProps) {
   "use no memo";
   const colors = useColors();
@@ -598,12 +601,16 @@ export function WarehouseMapView({
   // taps "Show on Map" from Search / Photo), animate the viewport so the
   // target aisle is centred and at a comfortable zoom level.
   useEffect(() => {
-    if (!focusAisleNum) return;
+    if (focusAisleNum == null) return;
     const w = containerWRef.current;
     const h = containerHRef.current;
     if (w === 0 || h === 0 || !zones.length) return;
     const zone = zones.find(z => parseInt(z.aisleId, 10) === focusAisleNum);
-    if (!zone) return;
+    if (!zone) {
+      onFocusFailed?.();
+      onFocusConsumed?.();
+      return;
+    }
 
     const TARGET_SCALE = 2.5;
     const svgRW = w;                      // svgRenderW = containerW
