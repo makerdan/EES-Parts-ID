@@ -1888,12 +1888,59 @@ router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
   }
 });
 
+// ── Rate limiter for the open estimate-dimensions/search endpoint ──────────────
+// Stores per-IP request timestamps; prunes entries older than the window on each
+// hit so memory stays bounded even under sustained traffic.
+const ESTIMATE_SEARCH_RATE_LIMIT = 10; // requests
+const ESTIMATE_SEARCH_WINDOW_MS = 60_000; // per 60 seconds
+
+const estimateSearchHits = new Map<string, number[]>();
+
+// Evict map entries whose most-recent hit is older than the window, preventing
+// unbounded growth when callers are not seen again (runs every 5 minutes).
+setInterval(() => {
+  const cutoff = Date.now() - ESTIMATE_SEARCH_WINDOW_MS;
+  for (const [key, hits] of estimateSearchHits) {
+    if (hits.length === 0 || hits[hits.length - 1] < cutoff) {
+      estimateSearchHits.delete(key);
+    }
+  }
+}, 5 * 60_000).unref();
+
+function estimateSearchRateLimiter(
+  req: import("express").Request,
+  res: import("express").Response,
+  next: import("express").NextFunction,
+): void {
+  // req.ip is resolved by Express using the trust-proxy setting configured in
+  // app.ts (trust proxy = 1).  This correctly peels exactly one proxy hop from
+  // X-Forwarded-For, so clients cannot spoof an arbitrary IP by injecting their
+  // own X-Forwarded-For header.
+  const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+
+  const now = Date.now();
+  const windowStart = now - ESTIMATE_SEARCH_WINDOW_MS;
+
+  const hits = (estimateSearchHits.get(ip) ?? []).filter((t) => t > windowStart);
+
+  if (hits.length >= ESTIMATE_SEARCH_RATE_LIMIT) {
+    res.status(429).json({
+      error: `Rate limit exceeded — maximum ${ESTIMATE_SEARCH_RATE_LIMIT} requests per minute for dimension estimation.`,
+    });
+    return;
+  }
+
+  hits.push(now);
+  estimateSearchHits.set(ip, hits);
+  next();
+}
+
 // ── POST /inventory/estimate-dimensions/search ────────────────────────────────
 // Open to all users (no admin token required): accepts a photo and uses OpenAI
 // Vision to estimate dimensions for search-mode use only (Measure-to-Search).
 // Results are NOT persisted — the estimates are returned so the client can run
 // a dimension-filter search.  Identical AI prompt to the admin endpoint.
-router.post("/estimate-dimensions/search", async (req, res) => {
+router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req, res) => {
   try {
     const { imageBase64, mimeType = "image/jpeg" } = req.body as {
       imageBase64: string;
