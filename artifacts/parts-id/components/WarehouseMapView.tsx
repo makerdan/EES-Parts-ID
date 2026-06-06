@@ -452,6 +452,13 @@ export interface WarehouseMapViewProps {
   onFocusConsumed?: () => void;
   /** Called when focusAisleNum is set but no matching zone exists on the map. */
   onFocusFailed?: () => void;
+  /**
+   * When true, tapping a zone fires onZoneTap (select mode).
+   * When false (default), zone taps are suppressed and the map is pan-only.
+   */
+  selectMode?: boolean;
+  /** Called when the user toggles select mode via the in-map button. */
+  onSelectModeChange?: (enabled: boolean) => void;
 }
 
 /** 3D-style teardrop pin rendered entirely in SVG viewBox coordinates.
@@ -542,6 +549,8 @@ export function WarehouseMapView({
   focusAisleNum,
   onFocusConsumed,
   onFocusFailed,
+  selectMode = false,
+  onSelectModeChange,
 }: WarehouseMapViewProps) {
   "use no memo";
   const colors = useColors();
@@ -1495,6 +1504,7 @@ export function WarehouseMapView({
       { translateY: translateY.value },
       { scale: scale.value },
     ],
+    ...(Platform.OS === "web" ? { cursor: "grab" } : {}),
   }));
 
   // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────
@@ -1517,7 +1527,7 @@ export function WarehouseMapView({
           zone={zone}
           scale={scale}
           colors={colors}
-          onZoneTap={onZoneTap}
+          onZoneTap={selectMode ? onZoneTap : () => undefined}
           onZoneLongPress={onZoneLongPress}
           cycleMode={cycleMode}
           isCounted={countedZoneIds?.has(zone.id) ?? false}
@@ -1530,7 +1540,7 @@ export function WarehouseMapView({
       );
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, countedZoneIds, pinnedAisleNums, variantAisleNums, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap]);
+  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, selectMode, countedZoneIds, pinnedAisleNums, variantAisleNums, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap]);
 
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
@@ -1836,13 +1846,28 @@ export function WarehouseMapView({
         </View>
       )}
 
-      {/* Zoom controls — bottom-right cluster: + on top, − below, fit at bottom */}
+      {/* Zoom controls — bottom-right cluster: Select on top, + below, − below, fit at bottom */}
       <View style={styles.zoomControls}>
+        <Pressable
+          onPress={() => onSelectModeChange?.(!selectMode)}
+          style={({ pressed }) => [
+            styles.zoomBtn,
+            styles.zoomBtnTop,
+            {
+              backgroundColor: selectMode ? colors.primary : colors.card,
+              borderColor: selectMode ? colors.primary : colors.border,
+              opacity: pressed ? 0.7 : 1,
+            },
+          ]}
+          accessibilityLabel={selectMode ? "Disable select mode" : "Enable select mode"}
+        >
+          <Feather name="crosshair" size={15} color={selectMode ? "#fff" : colors.foreground} />
+        </Pressable>
         <Pressable
           onPress={handleZoomIn}
           style={({ pressed }) => [
             styles.zoomBtn,
-            styles.zoomBtnTop,
+            styles.zoomBtnMid,
             { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
           ]}
           accessibilityLabel="Zoom in"
