@@ -8,7 +8,9 @@
 import type { UpdateWarehouseZoneBodySectionParity } from "./updateWarehouseZoneBodySectionParity";
 
 export interface UpdateWarehouseZoneBody {
+  /** @minLength 1 */
   aisleId?: string;
+  /** @minLength 1 */
   label?: string;
   sectionParity?: UpdateWarehouseZoneBodySectionParity;
   isInventory?: boolean;

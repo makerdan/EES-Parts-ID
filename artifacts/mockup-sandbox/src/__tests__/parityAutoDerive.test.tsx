@@ -72,8 +72,10 @@ describe("deriveParity — pure label parsing", () => {
       expect(deriveParity("A12")).toBeNull();
     });
 
-    it("returns null for a space-prefixed string", () => {
-      expect(deriveParity(" 12")).toBeNull();
+    it("derives parity for a space-prefixed string (trimmed before match)", () => {
+      // Trimming is intentional: labels like " 12" from pasted input should
+      // still auto-derive their parity rather than silently failing.
+      expect(deriveParity(" 12")).toBe("even");
     });
 
     it("returns null for a hyphen-prefixed string '-1'", () => {

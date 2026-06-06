@@ -317,7 +317,9 @@ export const CreateWarehouseZoneBodySectionParity = {
 } as const;
 
 export interface CreateWarehouseZoneBody {
+  /** @minLength 1 */
   aisleId: string;
+  /** @minLength 1 */
   label: string;
   sectionParity?: CreateWarehouseZoneBodySectionParity;
   isInventory?: boolean;
@@ -338,7 +340,9 @@ export const UpdateWarehouseZoneBodySectionParity = {
 } as const;
 
 export interface UpdateWarehouseZoneBody {
+  /** @minLength 1 */
   aisleId?: string;
+  /** @minLength 1 */
   label?: string;
   sectionParity?: UpdateWarehouseZoneBodySectionParity;
   isInventory?: boolean;

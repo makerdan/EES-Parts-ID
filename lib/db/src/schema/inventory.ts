@@ -146,6 +146,12 @@ export const warehouseZoneTable = pgTable(
       "warehouse_zone_section_parity_check",
       sql`${table.sectionParity} IN ('odd', 'even', 'all')`,
     ),
+    // Prevent concurrent duplicate writes: no two zones may share the same
+    // aisle_id + section_parity combination.
+    uniqueIndex("warehouse_zone_aisle_parity_idx").on(
+      table.aisleId,
+      table.sectionParity,
+    ),
   ],
 );
 
