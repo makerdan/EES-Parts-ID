@@ -737,7 +737,7 @@ export function ZoneEditor() {
     const trimmedAisle = multiAisleId.trim();
     if (trimmedAisle && trimmedAisle !== lastMultiAisleIdRef.current) {
       if (!isValidAisleId(trimmedAisle)) return;
-      updates.aisleId = trimmedAisle;
+      updates.aisleId = normalizeAisleId(trimmedAisle);
     }
     if (multiParity && multiParity !== lastMultiParityRef.current) {
       updates.sectionParity = multiParity;
@@ -844,14 +844,18 @@ export function ZoneEditor() {
 
   const handleFillClick = useCallback(async (clientX: number, clientY: number) => {
     // Re-entrancy guard: ignore concurrent fill requests.
+    // Set the ref synchronously so a rapid second click is blocked immediately,
+    // before React has a chance to flush the setFillLoading(true) state update
+    // and re-run the useEffect that keeps fillLoadingRef in sync.
     if (fillLoadingRef.current) return;
+    fillLoadingRef.current = true;
     setFillLoading(true);
     try {
       const pt = getSvgPt(clientX, clientY);
       const dims = svgDimsRef.current;
 
       // Compute raster pixel coordinates from SVG user-unit click position.
-      // The worker resolves these using a 1024-px-wide raster internally.
+      // Rasterisation and BFS run on the main thread using a 1024-px-wide canvas.
       const maxPx = 1024;
       const aspect = dims.h / dims.w;
       const cw = Math.min(Math.round(dims.w), maxPx);
@@ -897,6 +901,9 @@ export function ZoneEditor() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Fill failed");
     } finally {
+      // Reset the ref synchronously so the guard is lifted immediately,
+      // matching the synchronous set at the top of the function.
+      fillLoadingRef.current = false;
       setFillLoading(false);
     }
   }, [getSvgPt]);
@@ -1644,7 +1651,7 @@ export function ZoneEditor() {
                         return;
                       }
                       const updates: Partial<Zone> = {};
-                      if (multiAisleId.trim()) updates.aisleId = multiAisleId.trim();
+                      if (multiAisleId.trim()) updates.aisleId = normalizeAisleId(multiAisleId.trim());
                       if (multiParity) updates.sectionParity = multiParity;
                       if (Object.keys(updates).length === 0) return;
                       void handleMultiSave(updates);
