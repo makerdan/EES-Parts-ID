@@ -8,6 +8,8 @@ const router = Router();
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 const VALID_DIMENSION_UNITS = new Set(["mm", "cm", "in"]);
+const VALID_TEXT_SIZES = new Set(["small", "normal", "large"]);
+const VALID_THEME_MODES = new Set(["light", "dark", "system"]);
 
 /**
  * Sign a timestamp with ADMIN_PASSWORD using HMAC-SHA256.
@@ -86,7 +88,7 @@ router.post("/login", (req, res) => {
 });
 
 // ── GET /admin/profile ────────────────────────────────────────────────────────
-// Returns the persisted admin preferences (dimensionUnit).
+// Returns the persisted admin preferences (all portable AppSettings fields).
 router.get("/profile", requireAdminAuth, async (_req, res) => {
   try {
     const rows = await db
@@ -96,34 +98,89 @@ router.get("/profile", requireAdminAuth, async (_req, res) => {
       .limit(1);
 
     if (rows.length === 0) {
-      return res.json({ dimensionUnit: "mm" });
+      return res.json({
+        dimensionUnit: "mm",
+        textSize: "normal",
+        themeMode: "system",
+        defaultConfidenceThreshold: 50,
+        scanSound: true,
+      });
     }
 
-    return res.json({ dimensionUnit: rows[0].dimensionUnit });
+    const row = rows[0];
+    return res.json({
+      dimensionUnit: row.dimensionUnit,
+      textSize: row.textSize,
+      themeMode: row.themeMode,
+      defaultConfidenceThreshold: row.defaultConfidenceThreshold,
+      scanSound: row.scanSound,
+    });
   } catch (err) {
     return res.status(500).json({ error: "Failed to fetch admin profile" });
   }
 });
 
 // ── PUT /admin/profile ────────────────────────────────────────────────────────
-// Upserts admin preferences. Currently supports: dimensionUnit.
+// Upserts admin preferences for all portable AppSettings fields.
 router.put("/profile", requireAdminAuth, async (req, res) => {
-  const { dimensionUnit } = req.body as { dimensionUnit?: string };
+  const body = req.body as {
+    dimensionUnit?: string;
+    textSize?: string;
+    themeMode?: string;
+    defaultConfidenceThreshold?: number;
+    scanSound?: boolean;
+  };
+
+  const { dimensionUnit, textSize, themeMode, defaultConfidenceThreshold, scanSound } = body;
 
   if (!dimensionUnit || !VALID_DIMENSION_UNITS.has(dimensionUnit)) {
     return res.status(400).json({ error: `dimensionUnit must be one of: mm, cm, in` });
+  }
+  if (!textSize || !VALID_TEXT_SIZES.has(textSize)) {
+    return res.status(400).json({ error: `textSize must be one of: small, normal, large` });
+  }
+  if (!themeMode || !VALID_THEME_MODES.has(themeMode)) {
+    return res.status(400).json({ error: `themeMode must be one of: light, dark, system` });
+  }
+  if (
+    defaultConfidenceThreshold === undefined ||
+    defaultConfidenceThreshold === null ||
+    typeof defaultConfidenceThreshold !== "number" ||
+    !Number.isInteger(defaultConfidenceThreshold) ||
+    defaultConfidenceThreshold < 0 ||
+    defaultConfidenceThreshold > 100
+  ) {
+    return res.status(400).json({ error: `defaultConfidenceThreshold must be an integer between 0 and 100` });
+  }
+  if (typeof scanSound !== "boolean") {
+    return res.status(400).json({ error: `scanSound must be a boolean` });
   }
 
   try {
     await db
       .insert(adminPreferencesTable)
-      .values({ id: 1, dimensionUnit, updatedAt: new Date() })
+      .values({
+        id: 1,
+        dimensionUnit,
+        textSize,
+        themeMode,
+        defaultConfidenceThreshold,
+        scanSound,
+        updatedAt: new Date(),
+      })
       .onConflictDoUpdate({
         target: adminPreferencesTable.id,
-        set: { dimensionUnit, updatedAt: new Date() },
+        set: {
+          dimensionUnit,
+          textSize,
+          themeMode,
+          defaultConfidenceThreshold,
+          scanSound,
+          updatedAt: new Date(),
+        },
       });
 
-    return res.json({ dimensionUnit });
+    return res.json({ dimensionUnit, textSize, themeMode, defaultConfidenceThreshold, scanSound });
   } catch (err) {
     return res.status(500).json({ error: "Failed to update admin profile" });
   }
