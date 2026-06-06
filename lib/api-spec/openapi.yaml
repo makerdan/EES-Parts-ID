@@ -47,6 +47,11 @@ paths:
           schema:
             type: integer
             default: 50
+        - name: binPrefix
+          in: query
+          schema:
+            type: string
+          description: Filter items to those stored in bins starting with this prefix
       responses:
         "200":
           description: Paginated inventory
@@ -692,6 +697,24 @@ components:
         maxLength:
           type: number
           description: Maximum part length in mm (size-range filter)
+        minWidth:
+          type: number
+          description: Minimum part width in mm (size-range filter)
+        maxWidth:
+          type: number
+          description: Maximum part width in mm (size-range filter)
+        minHeight:
+          type: number
+          description: Minimum part height in mm (size-range filter)
+        maxHeight:
+          type: number
+          description: Maximum part height in mm (size-range filter)
+        minDiameter:
+          type: number
+          description: Minimum part diameter in mm (size-range filter)
+        maxDiameter:
+          type: number
+          description: Maximum part diameter in mm (size-range filter)
       required: []
 
     SearchResult:
@@ -721,6 +744,13 @@ components:
 
     SearchInventoryResponse:
       type: object
+      description: >
+        Response shape for POST /inventory/search.
+
+        `results` contains items that matched all filters; `sizeUnknownResults` is a
+        trailing group of items whose relevant dimension field is NULL and are therefore
+        excluded from size-range filtering but still shown under a "Size not measured"
+        section header in the UI.
       properties:
         results:
           type: array
@@ -737,6 +767,14 @@ components:
             type: object
             additionalProperties:
               type: integer
+        sizeUnknownResults:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+          description: Items that have no data for the active size dimension(s); shown as a trailing "size unknown" group
+        sizeUnknownCount:
+          type: integer
+          description: Count of items excluded from the main results because the relevant dimension field is NULL
       required:
         - results
         - totalMatches

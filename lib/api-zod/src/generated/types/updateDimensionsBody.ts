@@ -6,13 +6,16 @@
  * OpenAPI spec version: 0.1.0
  */
 
+/**
+ * Partial-merge update for physical dimensions; omitted fields are preserved.
+ */
 export interface UpdateDimensionsBody {
-  /** Length in mm */
+  /** Longest dimension in mm */
   length?: number | null;
   /** Width in mm */
   width?: number | null;
   /** Height in mm */
   height?: number | null;
-  /** Dominant diameter in mm */
+  /** Diameter in mm (for round/cylindrical parts) */
   diameter?: number | null;
 }

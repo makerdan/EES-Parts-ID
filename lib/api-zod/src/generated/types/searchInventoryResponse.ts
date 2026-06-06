@@ -8,6 +8,11 @@
 import type { SearchInventoryResponseDimensionCounts } from "./searchInventoryResponseDimensionCounts";
 import type { SearchResult } from "./searchResult";
 
+/**
+ * Response shape for POST /inventory/search.
+`results` contains items that matched all filters; `sizeUnknownResults` is a trailing group of items whose relevant dimension field is NULL and are therefore excluded from size-range filtering but still shown under a "Size not measured" section header in the UI.
+
+ */
 export interface SearchInventoryResponse {
   results: SearchResult[];
   totalMatches: number;

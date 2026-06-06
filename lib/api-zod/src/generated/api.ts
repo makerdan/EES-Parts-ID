@@ -24,6 +24,10 @@ export const listInventoryQueryLimitDefault = 50;
 export const ListInventoryQueryParams = zod.object({
   page: zod.coerce.number().default(listInventoryQueryPageDefault),
   limit: zod.coerce.number().default(listInventoryQueryLimitDefault),
+  binPrefix: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter items to those stored in bins starting with this prefix"),
 });
 
 export const ListInventoryResponse = zod.object({
@@ -42,20 +46,25 @@ export const ListInventoryResponse = zod.object({
       barcodes: zod
         .array(zod.string())
         .describe("Barcode values associated with this part"),
-      enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
+      enrichedAt: zod.coerce.date().nullish(),
       imageUrl: zod
         .string()
         .nullish()
         .describe(
           "URL of the catalog image extracted from a PDF import, served via the API proxy",
         ),
-      dimensions: zod.object({
-        length: zod.number().nullish(),
-        width: zod.number().nullish(),
-        height: zod.number().nullish(),
-        diameter: zod.number().nullish(),
-      }).nullish().describe("Physical dimensions in millimetres"),
-      createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
+      dimensions: zod
+        .object({
+          length: zod.number().nullish(),
+          width: zod.number().nullish(),
+          height: zod.number().nullish(),
+          diameter: zod.number().nullish(),
+        })
+        .nullish()
+        .describe(
+          "Physical dimensions in millimetres (length, width, height, diameter)",
+        ),
+      createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     }),
   ),
@@ -63,6 +72,38 @@ export const ListInventoryResponse = zod.object({
   page: zod.number(),
   limit: zod.number(),
 });
+
+/**
+ * @summary Get the taxonomy category tree with live item counts
+ */
+export const ListInventoryCategoriesResponse = zod
+  .object({
+    categories: zod.array(
+      zod.object({
+        slug: zod.string(),
+        label: zod.string(),
+        color: zod.string(),
+        count: zod.number(),
+        subcategories: zod.array(
+          zod.object({
+            slug: zod.string(),
+            label: zod.string(),
+            count: zod.number(),
+            itemTypes: zod.array(
+              zod.object({
+                slug: zod.string(),
+                label: zod.string(),
+                count: zod.number(),
+              }),
+            ),
+          }),
+        ),
+      }),
+    ),
+  })
+  .describe(
+    'Full taxonomy tree. The last element in `categories` is always the uncategorized catch-all node (slug: \"uncategorized\") with a single sub-category \"needs-review\" containing item type \"unclassified-items\".\n',
+  );
 
 /**
  * @summary Search inventory with multi-strategy cascade
@@ -128,51 +169,51 @@ export const SearchInventoryBody = zod.object({
     .string()
     .optional()
     .describe("Pole count chip filter (breakers\/switches)"),
-  minLength: zod.number().optional().describe("Minimum part length in mm (size-range filter)"),
-  maxLength: zod.number().optional().describe("Maximum part length in mm (size-range filter)"),
-  minDiameter: zod.number().optional().describe("Minimum part diameter in mm (diameter-range filter)"),
-  maxDiameter: zod.number().optional().describe("Maximum part diameter in mm (diameter-range filter)"),
+  categorySlug: zod
+    .string()
+    .optional()
+    .describe(
+      "Taxonomy category\/subcategory\/item-type slug to pre-filter results",
+    ),
+  minLength: zod
+    .number()
+    .optional()
+    .describe("Minimum part length in mm (size-range filter)"),
+  maxLength: zod
+    .number()
+    .optional()
+    .describe("Maximum part length in mm (size-range filter)"),
+  minWidth: zod
+    .number()
+    .optional()
+    .describe("Minimum part width in mm (size-range filter)"),
+  maxWidth: zod
+    .number()
+    .optional()
+    .describe("Maximum part width in mm (size-range filter)"),
+  minHeight: zod
+    .number()
+    .optional()
+    .describe("Minimum part height in mm (size-range filter)"),
+  maxHeight: zod
+    .number()
+    .optional()
+    .describe("Maximum part height in mm (size-range filter)"),
+  minDiameter: zod
+    .number()
+    .optional()
+    .describe("Minimum part diameter in mm (size-range filter)"),
+  maxDiameter: zod
+    .number()
+    .optional()
+    .describe("Maximum part diameter in mm (size-range filter)"),
 });
 
-export const SearchInventoryResponse = zod.object({
-  results: zod.array(
-    zod.object({
-      item: zod.object({
-        id: zod.number(),
-        vendor: zod.string(),
-        catalog: zod.string(),
-        description: zod.string(),
-        binLocations: zod
-          .array(zod.string())
-          .describe(
-            "Bin locations where this part is stored (a part may live in multiple bins)",
-          ),
-        aiKeywords: zod.array(zod.string()),
-        barcodes: zod
-          .array(zod.string())
-          .describe("Barcode values associated with this part"),
-        enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
-        imageUrl: zod
-          .string()
-          .nullish()
-          .describe(
-            "URL of the catalog image extracted from a PDF import, served via the API proxy",
-          ),
-        dimensions: zod.object({
-          length: zod.number().nullish(),
-          width: zod.number().nullish(),
-          height: zod.number().nullish(),
-          diameter: zod.number().nullish(),
-        }).nullish().describe("Physical dimensions in millimetres"),
-        createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
-        updatedAt: zod.coerce.date(),
-      }),
-      confidence: zod.number(),
-      matchReason: zod.string(),
-      seriesBase: zod.string().nullish(),
-      seriesLabel: zod.string().nullish(),
-      variants: zod.array(
-        zod.object({
+export const SearchInventoryResponse = zod
+  .object({
+    results: zod.array(
+      zod.object({
+        item: zod.object({
           id: zod.number(),
           vendor: zod.string(),
           catalog: zod.string(),
@@ -186,34 +227,173 @@ export const SearchInventoryResponse = zod.object({
           barcodes: zod
             .array(zod.string())
             .describe("Barcode values associated with this part"),
-          enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
+          enrichedAt: zod.coerce.date().nullish(),
           imageUrl: zod
             .string()
             .nullish()
             .describe(
               "URL of the catalog image extracted from a PDF import, served via the API proxy",
             ),
-          dimensions: zod.object({
-            length: zod.number().nullish(),
-            width: zod.number().nullish(),
-            height: zod.number().nullish(),
-            diameter: zod.number().nullish(),
-          }).nullish().describe("Physical dimensions in millimetres"),
-          createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
+          dimensions: zod
+            .object({
+              length: zod.number().nullish(),
+              width: zod.number().nullish(),
+              height: zod.number().nullish(),
+              diameter: zod.number().nullish(),
+            })
+            .nullish()
+            .describe(
+              "Physical dimensions in millimetres (length, width, height, diameter)",
+            ),
+          createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
         }),
-      ),
-    }),
-  ),
-  totalMatches: zod.number(),
-  belowThreshold: zod.number(),
-  dimensionCounts: zod
-    .record(zod.string(), zod.record(zod.string(), zod.number()))
-    .optional()
-    .describe(
-      "Per-chip-dimension live match counts (dimKey → optionLabel → count)",
+        confidence: zod.number(),
+        matchReason: zod.string(),
+        seriesBase: zod.string().nullish(),
+        seriesLabel: zod.string().nullish(),
+        variants: zod.array(
+          zod.object({
+            id: zod.number(),
+            vendor: zod.string(),
+            catalog: zod.string(),
+            description: zod.string(),
+            binLocations: zod
+              .array(zod.string())
+              .describe(
+                "Bin locations where this part is stored (a part may live in multiple bins)",
+              ),
+            aiKeywords: zod.array(zod.string()),
+            barcodes: zod
+              .array(zod.string())
+              .describe("Barcode values associated with this part"),
+            enrichedAt: zod.coerce.date().nullish(),
+            imageUrl: zod
+              .string()
+              .nullish()
+              .describe(
+                "URL of the catalog image extracted from a PDF import, served via the API proxy",
+              ),
+            dimensions: zod
+              .object({
+                length: zod.number().nullish(),
+                width: zod.number().nullish(),
+                height: zod.number().nullish(),
+                diameter: zod.number().nullish(),
+              })
+              .nullish()
+              .describe(
+                "Physical dimensions in millimetres (length, width, height, diameter)",
+              ),
+            createdAt: zod.coerce.date(),
+            updatedAt: zod.coerce.date(),
+          }),
+        ),
+      }),
     ),
-});
+    totalMatches: zod.number(),
+    belowThreshold: zod.number(),
+    dimensionCounts: zod
+      .record(zod.string(), zod.record(zod.string(), zod.number()))
+      .optional()
+      .describe(
+        "Per-chip-dimension live match counts (dimKey → optionLabel → count)",
+      ),
+    sizeUnknownResults: zod
+      .array(
+        zod.object({
+          item: zod.object({
+            id: zod.number(),
+            vendor: zod.string(),
+            catalog: zod.string(),
+            description: zod.string(),
+            binLocations: zod
+              .array(zod.string())
+              .describe(
+                "Bin locations where this part is stored (a part may live in multiple bins)",
+              ),
+            aiKeywords: zod.array(zod.string()),
+            barcodes: zod
+              .array(zod.string())
+              .describe("Barcode values associated with this part"),
+            enrichedAt: zod.coerce.date().nullish(),
+            imageUrl: zod
+              .string()
+              .nullish()
+              .describe(
+                "URL of the catalog image extracted from a PDF import, served via the API proxy",
+              ),
+            dimensions: zod
+              .object({
+                length: zod.number().nullish(),
+                width: zod.number().nullish(),
+                height: zod.number().nullish(),
+                diameter: zod.number().nullish(),
+              })
+              .nullish()
+              .describe(
+                "Physical dimensions in millimetres (length, width, height, diameter)",
+              ),
+            createdAt: zod.coerce.date(),
+            updatedAt: zod.coerce.date(),
+          }),
+          confidence: zod.number(),
+          matchReason: zod.string(),
+          seriesBase: zod.string().nullish(),
+          seriesLabel: zod.string().nullish(),
+          variants: zod.array(
+            zod.object({
+              id: zod.number(),
+              vendor: zod.string(),
+              catalog: zod.string(),
+              description: zod.string(),
+              binLocations: zod
+                .array(zod.string())
+                .describe(
+                  "Bin locations where this part is stored (a part may live in multiple bins)",
+                ),
+              aiKeywords: zod.array(zod.string()),
+              barcodes: zod
+                .array(zod.string())
+                .describe("Barcode values associated with this part"),
+              enrichedAt: zod.coerce.date().nullish(),
+              imageUrl: zod
+                .string()
+                .nullish()
+                .describe(
+                  "URL of the catalog image extracted from a PDF import, served via the API proxy",
+                ),
+              dimensions: zod
+                .object({
+                  length: zod.number().nullish(),
+                  width: zod.number().nullish(),
+                  height: zod.number().nullish(),
+                  diameter: zod.number().nullish(),
+                })
+                .nullish()
+                .describe(
+                  "Physical dimensions in millimetres (length, width, height, diameter)",
+                ),
+              createdAt: zod.coerce.date(),
+              updatedAt: zod.coerce.date(),
+            }),
+          ),
+        }),
+      )
+      .optional()
+      .describe(
+        'Items that have no data for the active size dimension(s); shown as a trailing \"size unknown\" group',
+      ),
+    sizeUnknownCount: zod
+      .number()
+      .optional()
+      .describe(
+        "Count of items excluded from the main results because the relevant dimension field is NULL",
+      ),
+  })
+  .describe(
+    'Response shape for POST \/inventory\/search.\n`results` contains items that matched all filters; `sizeUnknownResults` is a trailing group of items whose relevant dimension field is NULL and are therefore excluded from size-range filtering but still shown under a \"Size not measured\" section header in the UI.\n',
+  );
 
 /**
  * @summary Add or update inventory items (upsert by vendor+catalog)
@@ -286,12 +466,98 @@ export const UpdateItemBinsResponse = zod.object({
     .describe(
       "URL of the catalog image extracted from a PDF import, served via the API proxy",
     ),
-  dimensions: zod.object({
+  dimensions: zod
+    .object({
+      length: zod.number().nullish(),
+      width: zod.number().nullish(),
+      height: zod.number().nullish(),
+      diameter: zod.number().nullish(),
+    })
+    .nullish()
+    .describe(
+      "Physical dimensions in millimetres (length, width, height, diameter)",
+    ),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Estimate part dimensions from a photo using AI Vision (admin)
+ */
+export const EstimateDimensionsBody = zod.object({
+  imageBase64: zod
+    .string()
+    .describe("Base64-encoded JPEG or PNG photo of the part"),
+  mimeType: zod
+    .string()
+    .optional()
+    .describe("MIME type of the image (default image\/jpeg)"),
+});
+
+export const EstimateDimensionsResponse = zod
+  .object({
     length: zod.number().nullish(),
     width: zod.number().nullish(),
     height: zod.number().nullish(),
     diameter: zod.number().nullish(),
-  }).nullish().describe("Physical dimensions in millimetres"),
+  })
+  .describe(
+    "AI-estimated dimensions in millimetres; null for any field the model cannot estimate with confidence",
+  );
+
+/**
+ * @summary Save / merge physical dimensions for an inventory item (admin)
+ */
+export const UpdateItemDimensionsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateItemDimensionsBody = zod
+  .object({
+    length: zod.number().nullish().describe("Longest dimension in mm"),
+    width: zod.number().nullish().describe("Width in mm"),
+    height: zod.number().nullish().describe("Height in mm"),
+    diameter: zod
+      .number()
+      .nullish()
+      .describe("Diameter in mm (for round\/cylindrical parts)"),
+  })
+  .describe(
+    "Partial-merge update for physical dimensions; omitted fields are preserved.",
+  );
+
+export const UpdateItemDimensionsResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  description: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Bin locations where this part is stored (a part may live in multiple bins)",
+    ),
+  aiKeywords: zod.array(zod.string()),
+  barcodes: zod
+    .array(zod.string())
+    .describe("Barcode values associated with this part"),
+  enrichedAt: zod.coerce.date().nullish(),
+  imageUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+    ),
+  dimensions: zod
+    .object({
+      length: zod.number().nullish(),
+      width: zod.number().nullish(),
+      height: zod.number().nullish(),
+      diameter: zod.number().nullish(),
+    })
+    .nullish()
+    .describe(
+      "Physical dimensions in millimetres (length, width, height, diameter)",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -324,12 +590,17 @@ export const LookupByBarcodeResponse = zod.object({
     .describe(
       "URL of the catalog image extracted from a PDF import, served via the API proxy",
     ),
-  dimensions: zod.object({
-    length: zod.number().nullish(),
-    width: zod.number().nullish(),
-    height: zod.number().nullish(),
-    diameter: zod.number().nullish(),
-  }).nullish().describe("Physical dimensions in millimetres"),
+  dimensions: zod
+    .object({
+      length: zod.number().nullish(),
+      width: zod.number().nullish(),
+      height: zod.number().nullish(),
+      diameter: zod.number().nullish(),
+    })
+    .nullish()
+    .describe(
+      "Physical dimensions in millimetres (length, width, height, diameter)",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -368,12 +639,17 @@ export const UpdateItemBarcodesResponse = zod.object({
     .describe(
       "URL of the catalog image extracted from a PDF import, served via the API proxy",
     ),
-  dimensions: zod.object({
-    length: zod.number().nullish(),
-    width: zod.number().nullish(),
-    height: zod.number().nullish(),
-    diameter: zod.number().nullish(),
-  }).nullish().describe("Physical dimensions in millimetres"),
+  dimensions: zod
+    .object({
+      length: zod.number().nullish(),
+      width: zod.number().nullish(),
+      height: zod.number().nullish(),
+      diameter: zod.number().nullish(),
+    })
+    .nullish()
+    .describe(
+      "Physical dimensions in millimetres (length, width, height, diameter)",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -394,12 +670,6 @@ export const UpdateItemDescriptionResponse = zod.object({
   vendor: zod.string(),
   catalog: zod.string(),
   description: zod.string(),
-  dimensions: zod.object({
-    length: zod.number().nullish(),
-    width: zod.number().nullish(),
-    height: zod.number().nullish(),
-    diameter: zod.number().nullish(),
-  }).nullish().describe("Physical dimensions in millimetres"),
   binLocations: zod
     .array(zod.string())
     .describe(
@@ -415,6 +685,17 @@ export const UpdateItemDescriptionResponse = zod.object({
     .nullish()
     .describe(
       "URL of the catalog image extracted from a PDF import, served via the API proxy",
+    ),
+  dimensions: zod
+    .object({
+      length: zod.number().nullish(),
+      width: zod.number().nullish(),
+      height: zod.number().nullish(),
+      diameter: zod.number().nullish(),
+    })
+    .nullish()
+    .describe(
+      "Physical dimensions in millimetres (length, width, height, diameter)",
     ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
@@ -436,12 +717,6 @@ export const UpdateItemKeywordsResponse = zod.object({
   vendor: zod.string(),
   catalog: zod.string(),
   description: zod.string(),
-  dimensions: zod.object({
-    length: zod.number().nullish(),
-    width: zod.number().nullish(),
-    height: zod.number().nullish(),
-    diameter: zod.number().nullish(),
-  }).nullish().describe("Physical dimensions in millimetres"),
   binLocations: zod
     .array(zod.string())
     .describe(
@@ -457,6 +732,17 @@ export const UpdateItemKeywordsResponse = zod.object({
     .nullish()
     .describe(
       "URL of the catalog image extracted from a PDF import, served via the API proxy",
+    ),
+  dimensions: zod
+    .object({
+      length: zod.number().nullish(),
+      width: zod.number().nullish(),
+      height: zod.number().nullish(),
+      diameter: zod.number().nullish(),
+    })
+    .nullish()
+    .describe(
+      "Physical dimensions in millimetres (length, width, height, diameter)",
     ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
@@ -517,20 +803,25 @@ export const AiIdentifyPartResponse = zod.object({
         barcodes: zod
           .array(zod.string())
           .describe("Barcode values associated with this part"),
-        enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
+        enrichedAt: zod.coerce.date().nullish(),
         imageUrl: zod
           .string()
           .nullish()
           .describe(
             "URL of the catalog image extracted from a PDF import, served via the API proxy",
           ),
-        dimensions: zod.object({
-          length: zod.number().nullish(),
-          width: zod.number().nullish(),
-          height: zod.number().nullish(),
-          diameter: zod.number().nullish(),
-        }).nullish().describe("Physical dimensions in millimetres"),
-        createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
+        dimensions: zod
+          .object({
+            length: zod.number().nullish(),
+            width: zod.number().nullish(),
+            height: zod.number().nullish(),
+            diameter: zod.number().nullish(),
+          })
+          .nullish()
+          .describe(
+            "Physical dimensions in millimetres (length, width, height, diameter)",
+          ),
+        createdAt: zod.coerce.date(),
         updatedAt: zod.coerce.date(),
       }),
       confidence: zod.number(),
@@ -552,20 +843,25 @@ export const AiIdentifyPartResponse = zod.object({
           barcodes: zod
             .array(zod.string())
             .describe("Barcode values associated with this part"),
-          enrichedAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }).nullish(),
+          enrichedAt: zod.coerce.date().nullish(),
           imageUrl: zod
             .string()
             .nullish()
             .describe(
               "URL of the catalog image extracted from a PDF import, served via the API proxy",
             ),
-          dimensions: zod.object({
-            length: zod.number().nullish(),
-            width: zod.number().nullish(),
-            height: zod.number().nullish(),
-            diameter: zod.number().nullish(),
-          }).nullish().describe("Physical dimensions in millimetres"),
-          createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
+          dimensions: zod
+            .object({
+              length: zod.number().nullish(),
+              width: zod.number().nullish(),
+              height: zod.number().nullish(),
+              diameter: zod.number().nullish(),
+            })
+            .nullish()
+            .describe(
+              "Physical dimensions in millimetres (length, width, height, diameter)",
+            ),
+          createdAt: zod.coerce.date(),
           updatedAt: zod.coerce.date(),
         }),
       ),
@@ -596,7 +892,7 @@ export const ListWarehouseZonesResponse = zod.object({
       svgWidth: zod.number(),
       svgHeight: zod.number(),
       sortOrder: zod.number(),
-      createdAt: zod.coerce.date().refine((d) => !isNaN(d.getTime()) && d.getFullYear() > 1970, { message: "Invalid date value" }),
+      createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     }),
   ),
@@ -614,7 +910,7 @@ export const CreateWarehouseZoneBody = zod.object({
   svgY: zod.number(),
   svgWidth: zod.number(),
   svgHeight: zod.number(),
-  sortOrder: zod.number().int().nonnegative().optional(),
+  sortOrder: zod.number().optional(),
 });
 
 /**
@@ -633,7 +929,7 @@ export const UpdateWarehouseZoneBody = zod.object({
   svgY: zod.number().optional(),
   svgWidth: zod.number().optional(),
   svgHeight: zod.number().optional(),
-  sortOrder: zod.number().int().nonnegative().optional(),
+  sortOrder: zod.number().optional(),
 });
 
 export const UpdateWarehouseZoneResponse = zod.object({
@@ -662,35 +958,6 @@ export const DeleteWarehouseZoneParams = zod.object({
 
 export const DeleteWarehouseZoneResponse = zod.object({
   deleted: zod.boolean(),
-});
-
-/**
- * @summary Save / merge physical dimensions for an inventory item (admin)
- */
-export const UpdateItemDimensionsParams = zod.object({
-  id: zod.coerce.number(),
-});
-
-export const UpdateItemDimensionsBody = zod.object({
-  length: zod.number().nullish().describe("Longest dimension in mm"),
-  width: zod.number().nullish().describe("Width in mm"),
-  height: zod.number().nullish().describe("Height in mm"),
-  diameter: zod.number().nullish().describe("Diameter in mm (for round/cylindrical parts)"),
-});
-
-/**
- * @summary Estimate part dimensions from a photo using AI Vision (admin)
- */
-export const EstimateDimensionsBody = zod.object({
-  imageBase64: zod.string().describe("Base64-encoded JPEG or PNG photo of the part"),
-  mimeType: zod.string().optional().describe("MIME type of the image (default image/jpeg)"),
-});
-
-export const EstimateDimensionsResponse = zod.object({
-  length: zod.number().nullish(),
-  width: zod.number().nullish(),
-  height: zod.number().nullish(),
-  diameter: zod.number().nullish(),
 });
 
 /**

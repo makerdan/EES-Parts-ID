@@ -37,6 +37,7 @@ import {
   closePool,
   STANDARD_FIXTURES,
 } from "./helpers/testDb";
+import { SearchInventoryResponse } from "@workspace/api-zod";
 
 // ── Test configuration ────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-integration-test-secret";
@@ -811,5 +812,40 @@ describe("PATCH /api/inventory/:id/bins", () => {
       .set("Authorization", `Bearer ${adminToken}`)
       .send({ binLocations: ["A-1"] })
       .expect(404);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contract: POST /api/inventory/search response shape matches OpenAPI spec
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/inventory/search — OpenAPI contract", () => {
+  it("response body parses cleanly against the generated SearchInventoryResponse zod schema", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-BR120" })
+      .expect(200);
+
+    const parsed = SearchInventoryResponse.safeParse(res.body);
+    if (!parsed.success) {
+      throw new Error(
+        `Response shape violates OpenAPI contract for SearchInventoryResponse:\n${JSON.stringify(parsed.error.issues, null, 2)}`,
+      );
+    }
+  });
+
+  it("response body with sizeUnknownResults parses cleanly against the schema", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-BR120", minLength: 1, maxLength: 9999 })
+      .expect(200);
+
+    const parsed = SearchInventoryResponse.safeParse(res.body);
+    if (!parsed.success) {
+      throw new Error(
+        `Response shape violates OpenAPI contract for SearchInventoryResponse (with size filter):\n${JSON.stringify(parsed.error.issues, null, 2)}`,
+      );
+    }
+    expect(Array.isArray(parsed.data.sizeUnknownResults)).toBe(true);
   });
 });

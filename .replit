@@ -32,6 +32,10 @@ args = "expo-doctor"
 task = "workflow.run"
 args = "lint"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "codegen:check"
+
 [[workflows.workflow]]
 name = "typecheck"
 author = "agent"
@@ -72,6 +76,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/parts-id run lint"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "codegen:check"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-spec run codegen:check"
 
 [workflows.workflow.metadata]
 isValidation = true
