@@ -167,7 +167,7 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
                 {item.vendor} · {item.catalog}
               </Text>
             </View>
-            <Pressable onPress={onClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]}>
+            <Pressable onPress={onClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]} accessibilityLabel="Close barcode editor" accessibilityRole="button">
               <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
             </Pressable>
           </View>
@@ -229,6 +229,7 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
                   onPress={openScanner}
                   style={[styles.scanBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
                   accessibilityLabel="Scan barcode with camera"
+                  accessibilityRole="button"
                 >
                   <Feather name="camera" size={18} color={colors.foreground} />
                 </Pressable>
@@ -301,7 +302,7 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
             />
             <View style={styles.scanOverlay}>
               <View style={[styles.scanHeader, { backgroundColor: "rgba(0,0,0,0.45)" }]}>
-                <Pressable onPress={() => setScannerOpen(false)} style={styles.scanCloseBtn}>
+                <Pressable onPress={() => setScannerOpen(false)} style={styles.scanCloseBtn} accessibilityLabel="Close barcode scanner" accessibilityRole="button">
                   <Feather name="x" size={20} color="#fff" />
                 </Pressable>
                 <Text style={styles.scanTitle}>Scan Barcode</Text>

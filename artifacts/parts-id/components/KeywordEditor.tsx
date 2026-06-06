@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -181,7 +182,14 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   };
 
   const removeKeyword = (kw: string) => {
-    handleKeywordsChange(keywords.filter((k) => k !== kw));
+    Alert.alert(
+      "Remove Keyword",
+      `Remove keyword "${kw}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove", style: "destructive", onPress: () => handleKeywordsChange(keywords.filter((k) => k !== kw)) },
+      ],
+    );
   };
 
   const handleClose = () => {
@@ -259,7 +267,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
               {item.vendor} · {item.catalog}
             </Text>
           </View>
-          <Pressable onPress={handleClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]}>
+          <Pressable onPress={handleClose} style={[styles.closeBtn, { backgroundColor: colors.muted }]} accessibilityLabel="Close keyword editor" accessibilityRole="button">
             <Text style={{ color: colors.foreground, fontSize: 14 }}>✕</Text>
           </Pressable>
         </View>
@@ -306,6 +314,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
               onChangeText={setNewKeyword}
               placeholder="Type keyword and press Add…"
               placeholderTextColor={colors.mutedForeground}
+              maxLength={60}
               style={[
                 styles.addInput,
                 { flex: 1, backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground },

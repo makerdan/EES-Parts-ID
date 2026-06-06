@@ -492,10 +492,11 @@ export function MapPin3D({
 
   useEffect(() => {
     if (isNew) {
+      pinScale.value = 0;
       pinScale.value = withSpring(1, { damping: 8, stiffness: 180, mass: 0.7 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isNew]);
 
   const pinAnimatedProps = useAnimatedProps(() => {
     "worklet";

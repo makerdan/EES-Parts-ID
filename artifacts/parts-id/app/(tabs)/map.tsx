@@ -198,6 +198,8 @@ export default function MapScreen() {
     }, [refetchZones, setPendingMapFocus]),
   );
 
+  const [focusFailedBanner, setFocusFailedBanner] = useState<string | null>(null);
+
   const [browseOpen, setBrowseOpen] = useState(false);
   const [drilldown, setDrilldown] = useState<WarehouseZone | null>(null);
   const [summaryZone, setSummaryZone] = useState<WarehouseZone | null>(null);
@@ -384,6 +386,30 @@ export default function MapScreen() {
         </View>
       )}
 
+      {focusFailedBanner ? (
+        <View style={[styles.focusFailBanner, { backgroundColor: colors.warning + "18", borderBottomColor: colors.warning + "44" }]}>
+          <Text style={[styles.focusFailBannerText, { color: colors.warning, flex: 1 }]} numberOfLines={2}>
+            {focusFailedBanner}
+          </Text>
+          <Pressable
+            onPress={() => { setFocusFailedBanner(null); router.navigate("/"); }}
+            style={[styles.focusFailBackBtn, { backgroundColor: colors.warning, }]}
+            accessibilityLabel="Back to search results"
+            accessibilityRole="button"
+          >
+            <Text style={styles.focusFailBackBtnText}>Back to results</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setFocusFailedBanner(null)}
+            hitSlop={8}
+            accessibilityLabel="Dismiss zone not found message"
+            accessibilityRole="button"
+          >
+            <Feather name="x" size={16} color={colors.warning} />
+          </Pressable>
+        </View>
+      ) : null}
+
       <WarehouseMapView
         zones={zones}
         zonesLoading={zonesLoading}
@@ -403,7 +429,7 @@ export default function MapScreen() {
         focusAisleNum={focusAisleNum}
         onFocusConsumed={() => setFocusAisleNum(null)}
         onFocusFailed={() => {
-          showToast(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
+          setFocusFailedBanner(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
           setFocusAisleNum(null);
         }}
       />
@@ -514,5 +540,29 @@ const styles = StyleSheet.create({
   pinBannerClearText: {
     fontSize: 12,
     fontFamily: "Inter_500Medium",
+  },
+  focusFailBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  focusFailBannerText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    lineHeight: 18,
+  },
+  focusFailBackBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    flexShrink: 0,
+  },
+  focusFailBackBtnText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: "#fff",
   },
 });

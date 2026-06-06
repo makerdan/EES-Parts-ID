@@ -1320,7 +1320,17 @@ export default function SearchScreen() {
                 </Text>
               </View>
             ) : null}
-            {isOffline && offlineResults !== null && offlineResults.length === 0 ? (
+            {isOffline && cachedCount === 0 ? (
+              <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
+                <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 8 }}>📡</Text>
+                <Text style={[styles.errorText, { color: colors.warning, textAlign: "center", fontFamily: "Inter_600SemiBold", marginBottom: 4 }]}>
+                  Offline search unavailable
+                </Text>
+                <Text style={[styles.errorText, { color: colors.warning, textAlign: "center" }]}>
+                  Connect to the internet and search once to enable offline mode.
+                </Text>
+              </View>
+            ) : isOffline && offlineResults !== null && offlineResults.length === 0 ? (
               <View style={[styles.errorCard, { backgroundColor: colors.warning + "11", borderColor: colors.warning + "44" }]}>
                 <Text style={[styles.errorText, { color: colors.warning }]}>
                   Offline — no cached items match your search. Connect to load more results.

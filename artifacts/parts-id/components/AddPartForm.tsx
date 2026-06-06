@@ -208,6 +208,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
             autoCapitalize="characters"
             autoCorrect={false}
             returnKeyType="next"
+            maxLength={40}
           />
           {fieldErrors.catalog ? (
             <Text style={[apfStyles.fieldError, { color: colors.destructive }]}>{fieldErrors.catalog}</Text>
@@ -225,6 +226,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
             autoCapitalize="characters"
             autoCorrect={false}
             returnKeyType="next"
+            maxLength={40}
           />
           {fieldErrors.vendor ? (
             <Text style={[apfStyles.fieldError, { color: colors.destructive }]}>{fieldErrors.vendor}</Text>
@@ -243,6 +245,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
             autoCorrect={false}
             returnKeyType="done"
             onSubmitEditing={handleSubmit}
+            maxLength={30}
           />
           {fieldErrors.bin ? (
             <Text style={[apfStyles.fieldError, { color: colors.destructive }]}>{fieldErrors.bin}</Text>
