@@ -99,6 +99,7 @@ function clamp(val: number, min: number, max: number) {
 // strokeWidth and fontSize on the UI thread with zero JS re-renders.
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 const AnimatedSvgText = Animated.createAnimatedComponent(SvgText);
+const AnimatedG = Animated.createAnimatedComponent(G);
 
 // ── Module-level SVG cache ────────────────────────────────────────────────────
 // Managed by utils/floorPlanCache (two-tier: in-memory + AsyncStorage).
@@ -252,6 +253,13 @@ function ZoneOverlayItem({
     fontSize: baseFontSize / scale.value,
   }));
 
+  // Track whether this zone was already pinned when it first rendered so we
+  // can distinguish "newly placed" (animate) from "restored on load" (no animation).
+  const isPinnedNow = !!(isPinned || isVariantPinned);
+  const prevPinnedRef = useRef<boolean>(isPinnedNow);
+  const isNewPin = isPinnedNow && !prevPinnedRef.current;
+  prevPinnedRef.current = isPinnedNow;
+
   if (cycleMode) {
     const fillColor = isCounted ? "#22c55ecc" : colors.primary + "18";
     const strokeColor = isCounted ? "#16a34a" : colors.primary + "50";
@@ -345,6 +353,7 @@ function ZoneOverlayItem({
                 size={markerR}
                 fill={pinFill}
                 stroke={pinStroke}
+                isNew={isNewPin}
               />
             );
           });
@@ -357,6 +366,7 @@ function ZoneOverlayItem({
             size={markerR}
             fill={pinFill}
             stroke={pinStroke}
+            isNew={isNewPin}
           />
         );
       })() : null}
@@ -423,6 +433,8 @@ export interface WarehouseMapViewProps {
 /** 3D-style teardrop pin rendered entirely in SVG viewBox coordinates.
  *  `cx`, `cy` — tip (bottom point) of the pin.
  *  `size`     — ball radius; controls overall scale.
+ *  `isNew`    — when true, plays a spring pop entrance animation on mount.
+ *               Leave false (default) for pins restored from a previous session.
  */
 function MapPin3D({
   cx,
@@ -430,12 +442,14 @@ function MapPin3D({
   size,
   fill,
   stroke,
+  isNew = false,
 }: {
   cx: number;
   cy: number;
   size: number;
   fill: string;
   stroke: string;
+  isNew?: boolean;
 }) {
   const r = size;
   const bcy = cy - r * 1.85;
@@ -446,8 +460,26 @@ function MapPin3D({
     `C ${cx + r},${cy - r * 1.1} ${cx + r * 0.38},${cy - r * 0.55} ${cx},${cy} Z`;
   const gx = cx - r * 0.28;
   const gy = bcy - r * 0.32;
+
+  const pinScale = useSharedValue(isNew ? 0 : 1);
+
+  useEffect(() => {
+    if (isNew) {
+      pinScale.value = withSpring(1, { damping: 8, stiffness: 180, mass: 0.7 });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const pinAnimatedProps = useAnimatedProps(() => {
+    "worklet";
+    const s = pinScale.value;
+    return {
+      transform: `translate(${cx} ${cy}) scale(${s}) translate(${-cx} ${-cy})`,
+    };
+  });
+
   return (
-    <G>
+    <AnimatedG animatedProps={pinAnimatedProps}>
       <Ellipse
         cx={cx}
         cy={cy + r * 0.18}
@@ -463,7 +495,7 @@ function MapPin3D({
         ry={r * 0.13}
         fill="rgba(255,255,255,0.55)"
       />
-    </G>
+    </AnimatedG>
   );
 }
 
