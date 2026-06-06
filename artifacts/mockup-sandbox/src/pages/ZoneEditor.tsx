@@ -201,6 +201,21 @@ interface Pt { x: number; y: number }
 type Handle = "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
 type Mode = "pan" | "draw" | "fill";
 
+// ── Undo / Redo types ──────────────────────────────────────────────────────
+const UNDO_LIMIT = 50;
+type PositionSnap = { svgX: number; svgY: number };
+type GeomSnap    = { svgX: number; svgY: number; svgWidth: number; svgHeight: number };
+type MetaSnap    = Partial<Pick<Zone, "aisleId" | "label" | "sectionParity" | "isInventory" | "sortOrder">>;
+
+type UndoEntry =
+  | { type: "move";       id: number; before: PositionSnap; after: PositionSnap }
+  | { type: "resize";     id: number; before: GeomSnap;     after: GeomSnap }
+  | { type: "batchMove";  moves: Array<{ id: number; before: PositionSnap; after: PositionSnap }> }
+  | { type: "create";     zones: Zone[] }   // undo = delete; redo = re-POST (ids updated in-place)
+  | { type: "delete";     zones: Zone[] }   // undo = re-POST; redo = delete (ids updated in-place)
+  | { type: "edit";       id: number; before: MetaSnap; after: MetaSnap }
+  | { type: "multiEdit";  changes: Array<{ id: number; before: MetaSnap; after: MetaSnap }> };
+
 export interface FormState {
   aisleId: string;
   label: string;
@@ -376,6 +391,13 @@ export function ZoneEditor() {
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
 
+  // ── Undo / Redo stacks (in-memory, cleared on reload) ────────────────────
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const redoStackRef = useRef<UndoEntry[]>([]);
+  // Mutex: prevents concurrent undo/redo from corrupting the stack when the
+  // user holds Cmd+Z or fires repeated keypresses during an async operation.
+  const undoRedoBusyRef = useRef(false);
+
   useEffect(() => { tfRef.current = tf; }, [tf]);
   useEffect(() => { zonesRef.current = zones; }, [zones]);
   useEffect(() => { dragZoneRef.current = dragZone; }, [dragZone]);
@@ -466,6 +488,12 @@ export function ZoneEditor() {
     return findDuplicateConflict(zones, selectedId, form.aisleId, form.sectionParity);
   }, [zones, form.aisleId, form.sectionParity, selectedId]);
 
+  // ── Undo / Redo helpers ──────────────────────────────────────────────────
+  const pushUndo = useCallback((entry: UndoEntry) => {
+    undoStackRef.current = [...undoStackRef.current.slice(-(UNDO_LIMIT - 1)), entry];
+    redoStackRef.current = [];
+  }, []);
+
   // ── API helpers ─────────────────────────────────────────────────────────────
   const headers = useCallback(
     (): Record<string, string> => ({ "Content-Type": "application/json" }),
@@ -497,6 +525,23 @@ export function ZoneEditor() {
 
   useEffect(() => { void fetchZones(); }, [fetchZones]);
 
+  // ── Keyboard undo / redo shortcuts (Cmd+Z / Ctrl+Z, Cmd+Shift+Z / Ctrl+Shift+Z) ──
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      ) return;
+      e.preventDefault();
+      void applyUndoRedoRef.current?.(e.shiftKey ? "redo" : "undo");
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   // ── Keyboard delete shortcut ─────────────────────────────────────────────
   // Delete or Backspace removes all selected zones, unless focus is in a text field.
   // A confirmation dialog (same as the sidebar Delete button) is shown first.
@@ -515,11 +560,12 @@ export function ZoneEditor() {
       const ok = await showConfirm(
         ids.length === 1 ? "Delete zone" : `Delete ${ids.length} zones`,
         ids.length === 1
-          ? "Delete this zone? This cannot be undone."
-          : `Delete ${ids.length} zones? This cannot be undone.`,
+          ? "Delete this zone? You can undo with Cmd+Z / Ctrl+Z."
+          : `Delete ${ids.length} zones? You can undo with Cmd+Z / Ctrl+Z.`,
         true,
       );
       if (!ok) return;
+      const zonesToDelete = zonesRef.current.filter((z) => ids.includes(z.id));
       setSaving(true);
       try {
         await Promise.all(
@@ -535,6 +581,7 @@ export function ZoneEditor() {
         toast.success(
           ids.length === 1 ? "Zone deleted" : `${ids.length} zones deleted`,
         );
+        if (zonesToDelete.length > 0) pushUndo({ type: "delete", zones: zonesToDelete });
         setSelectedIds(new Set());
         await fetchZones();
       } catch (err) {
@@ -545,7 +592,7 @@ export function ZoneEditor() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [fetchZones]);
+  }, [fetchZones, pushUndo]);
 
   const patchZone = useCallback(
     async (id: number, updates: Partial<Zone>): Promise<boolean> => {
@@ -562,6 +609,103 @@ export function ZoneEditor() {
     },
     [headers],
   );
+
+  // ── Apply an undo or redo entry against the server ───────────────────────
+  // Uses a ref so the keyboard handler below never captures a stale closure.
+  const applyUndoRedoRef = useRef<((dir: "undo" | "redo") => Promise<void>) | null>(null);
+
+  const applyUndoRedo = useCallback(async (dir: "undo" | "redo") => {
+    if (undoRedoBusyRef.current) return; // drop concurrent key repeats
+    undoRedoBusyRef.current = true;
+    const srcStack = dir === "undo" ? undoStackRef.current : redoStackRef.current;
+    if (srcStack.length === 0) { undoRedoBusyRef.current = false; return; }
+    const entry = srcStack[srcStack.length - 1]!;
+    const fwd = dir === "redo";
+    const jsonHdr = { "Content-Type": "application/json" };
+    try {
+      switch (entry.type) {
+        case "move":
+          await patchZone(entry.id, fwd ? entry.after : entry.before);
+          toast.success(fwd ? "Redo: position applied" : "Undo: position restored");
+          break;
+        case "resize":
+          await patchZone(entry.id, fwd ? entry.after : entry.before);
+          toast.success(fwd ? "Redo: size applied" : "Undo: size restored");
+          break;
+        case "batchMove":
+          await Promise.all(entry.moves.map((m) => patchZone(m.id, fwd ? m.after : m.before)));
+          toast.success(fwd ? "Redo: positions applied" : "Undo: positions restored");
+          break;
+        case "create": {
+          if (!fwd) {
+            // Undo create → delete the zone(s)
+            await Promise.all(entry.zones.map(async (z) => {
+              const r = await fetch(`${API_BASE}/warehouse-zones/${z.id}`, { method: "DELETE", headers: jsonHdr });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            }));
+            const n = entry.zones.length;
+            toast.success(n === 1 ? "Undo: zone removed" : `Undo: ${n} zones removed`);
+          } else {
+            // Redo create → re-POST; update zone ids in-place for symmetry
+            const newZones = await Promise.all(entry.zones.map(async (z) => {
+              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, label: z.label, sectionParity: z.sectionParity, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return ((await r.json()) as { zone: Zone }).zone;
+            }));
+            entry.zones = newZones;
+            const n = newZones.length;
+            toast.success(n === 1 ? "Redo: zone recreated" : `Redo: ${n} zones recreated`);
+          }
+          break;
+        }
+        case "delete": {
+          if (!fwd) {
+            // Undo delete → re-POST; update ids in-place for redo symmetry
+            const newZones = await Promise.all(entry.zones.map(async (z) => {
+              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, label: z.label, sectionParity: z.sectionParity, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return ((await r.json()) as { zone: Zone }).zone;
+            }));
+            entry.zones = newZones;
+            const n = newZones.length;
+            toast.success(n === 1 ? "Undo: zone restored" : `Undo: ${n} zones restored`);
+          } else {
+            // Redo delete → delete the zone(s)
+            await Promise.all(entry.zones.map(async (z) => {
+              const r = await fetch(`${API_BASE}/warehouse-zones/${z.id}`, { method: "DELETE", headers: jsonHdr });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            }));
+            const n = entry.zones.length;
+            toast.success(n === 1 ? "Redo: zone deleted" : `Redo: ${n} zones deleted`);
+          }
+          break;
+        }
+        case "edit":
+          await patchZone(entry.id, fwd ? entry.after : entry.before);
+          toast.success(fwd ? "Redo: edit reapplied" : "Undo: edit reverted");
+          break;
+        case "multiEdit":
+          await Promise.all(entry.changes.map((c) => patchZone(c.id, fwd ? c.after : c.before)));
+          toast.success(fwd ? "Redo: edits reapplied" : "Undo: edits reverted");
+          break;
+      }
+      // Move the entry between stacks
+      if (dir === "undo") {
+        undoStackRef.current = undoStackRef.current.slice(0, -1);
+        redoStackRef.current = [...redoStackRef.current, entry];
+      } else {
+        redoStackRef.current = redoStackRef.current.slice(0, -1);
+        undoStackRef.current = [...undoStackRef.current, entry];
+      }
+      await fetchZones();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      undoRedoBusyRef.current = false;
+    }
+  }, [patchZone, fetchZones]);
+
+  useEffect(() => { applyUndoRedoRef.current = applyUndoRedo; }, [applyUndoRedo]);
 
   // ── Form actions ────────────────────────────────────────────────────────────
   const handleCreate = async () => {
@@ -592,6 +736,7 @@ export function ZoneEditor() {
       }
       const { zone } = await res.json() as { zone: Zone };
       toast.success(`Zone "${zone.label}" created`);
+      pushUndo({ type: "create", zones: [zone] });
       setPendingRect(null);
       setSelectedIds(new Set([zone.id]));
       parityOverrideRef.current = false;
@@ -608,15 +753,18 @@ export function ZoneEditor() {
     if (!selectedId) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
     if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 12)"); return; }
+    const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
     setSaving(true);
     try {
-      await patchZone(selectedId, {
+      const afterMeta: MetaSnap = {
         aisleId: normalizeAisleId(form.aisleId),
         label: form.label.trim() || normalizeAisleId(form.aisleId),
         sectionParity: form.sectionParity,
         isInventory: form.isInventory,
         sortOrder: form.sortOrder,
-      });
+      };
+      await patchZone(selectedId, afterMeta);
+      pushUndo({ type: "edit", id: selectedId, before: beforeMeta, after: afterMeta });
       toast.success("Zone updated");
       await fetchZones();
     } catch (e) {
@@ -628,7 +776,8 @@ export function ZoneEditor() {
 
   const handleDelete = async () => {
     if (!selectedId) return;
-    if (!await showConfirm("Delete zone", "Delete this zone? This cannot be undone.", true)) return;
+    if (!await showConfirm("Delete zone", "Delete this zone? You can undo with Cmd+Z / Ctrl+Z.", true)) return;
+    const zoneToDelete = zones.find((z) => z.id === selectedId);
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE}/warehouse-zones/${selectedId}`, {
@@ -637,6 +786,7 @@ export function ZoneEditor() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       toast.success("Zone deleted");
+      if (zoneToDelete) pushUndo({ type: "delete", zones: [zoneToDelete] });
       setSelectedIds(new Set());
       await fetchZones();
     } catch (e) {
@@ -671,6 +821,7 @@ export function ZoneEditor() {
       }
       const { zone } = await res.json() as { zone: Zone };
       toast.success(`Duplicated → placed to the right`);
+      pushUndo({ type: "create", zones: [zone] });
       setSelectedIds(new Set([zone.id]));
       parityOverrideRef.current = false;
       setForm({ aisleId: zone.aisleId, label: zone.label, sectionParity: zone.sectionParity, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
@@ -713,6 +864,7 @@ export function ZoneEditor() {
       );
       const newIds = new Set(results.map((r) => r.zone.id));
       toast.success(`Duplicated ${newIds.size} zone${newIds.size !== 1 ? "s" : ""} — drag to reposition`);
+      pushUndo({ type: "create", zones: results.map((r) => r.zone) });
       setSelectedIds(newIds);
       await fetchZones();
     } catch (e) {
@@ -729,9 +881,17 @@ export function ZoneEditor() {
     if (updates.sectionParity) parts.push(`Section Parity → ${updates.sectionParity}`);
     const what = parts.length ? parts.join(", ") : "selected properties";
     if (!await showConfirm(`Update ${n} zone${n !== 1 ? "s" : ""}`, what)) return;
+    const undoChanges = [...selectedIds].map((id) => {
+      const z = zonesRef.current.find((z) => z.id === id);
+      const before: MetaSnap = {};
+      if (updates.aisleId !== undefined) before.aisleId = z?.aisleId;
+      if (updates.sectionParity !== undefined) before.sectionParity = z?.sectionParity;
+      return { id, before, after: updates as MetaSnap };
+    });
     setMultiSaving(true);
     try {
       await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
+      pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
       if (updates.sectionParity !== undefined) lastMultiParityRef.current = updates.sectionParity as typeof multiParity;
       toast.success(`Updated ${n} zones`);
@@ -756,9 +916,17 @@ export function ZoneEditor() {
       updates.sectionParity = multiParity;
     }
     if (Object.keys(updates).length === 0) return;
+    const undoChanges = [...selectedIds].map((id) => {
+      const z = zonesRef.current.find((z) => z.id === id);
+      const before: MetaSnap = {};
+      if (updates.aisleId !== undefined) before.aisleId = z?.aisleId;
+      if (updates.sectionParity !== undefined) before.sectionParity = z?.sectionParity;
+      return { id, before, after: updates as MetaSnap };
+    });
     setMultiSaving(true);
     try {
       await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
+      pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
       if (updates.sectionParity !== undefined) lastMultiParityRef.current = updates.sectionParity as typeof multiParity;
       const n = selectedIds.size;
@@ -824,14 +992,17 @@ export function ZoneEditor() {
 
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
+      const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
       try {
-        await patchZone(selectedId, {
+        const afterMeta: MetaSnap = {
           aisleId: normalizeAisleId(form.aisleId),
           label: form.label.trim() || normalizeAisleId(form.aisleId),
           sectionParity: form.sectionParity,
           isInventory: form.isInventory,
           sortOrder: form.sortOrder,
-        });
+        };
+        await patchZone(selectedId, afterMeta);
+        pushUndo({ type: "edit", id: selectedId, before: beforeMeta, after: afterMeta });
         lastSavedFormRef.current = { ...form };
         toast.success("Saved");
         await fetchZones();
@@ -1077,12 +1248,15 @@ export function ZoneEditor() {
 
       if ((state.t === "move" || state.t === "resize") && dragZoneRef.current) {
         const zone = dragZoneRef.current;
+        const original = zonesRef.current.find((z) => z.id === zone.id);
         try {
           if (state.t === "move") {
             await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY });
+            if (original) pushUndo({ type: "move", id: zone.id, before: { svgX: original.svgX, svgY: original.svgY }, after: { svgX: zone.svgX, svgY: zone.svgY } });
             toast.success("Position saved");
           } else {
             await patchZone(zone.id, { svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight });
+            if (original) pushUndo({ type: "resize", id: zone.id, before: { svgX: original.svgX, svgY: original.svgY, svgWidth: original.svgWidth, svgHeight: original.svgHeight }, after: { svgX: zone.svgX, svgY: zone.svgY, svgWidth: zone.svgWidth, svgHeight: zone.svgHeight } });
             toast.success("Size saved");
           }
           await fetch(`${API_BASE}/warehouse-zones`)
@@ -1117,6 +1291,14 @@ export function ZoneEditor() {
         const failCount = results.filter((r) => r.status === "rejected").length;
         const okCount = results.length - failCount;
         if (failCount === 0) {
+          pushUndo({
+            type: "batchMove",
+            moves: [...origins.entries()].map(([id, orig]) => ({
+              id,
+              before: { svgX: orig.x, svgY: orig.y },
+              after: { svgX: orig.x + currentDelta.x, svgY: orig.y + currentDelta.y },
+            })),
+          });
           toast.success(`Moved ${origins.size} zone${origins.size !== 1 ? "s" : ""}`);
         } else {
           toast.error(
@@ -1139,7 +1321,7 @@ export function ZoneEditor() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp as EventListener);
     };
-  }, [getSvgPt, patchZone]);
+  }, [getSvgPt, patchZone, pushUndo]);
 
   // ── React event handlers (attached to SVG element) ──────────────────────────
   const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
