@@ -8,6 +8,7 @@ module.exports = {
     "^expo-clipboard$": "<rootDir>/__mocks__/expo-clipboard.js",
     "^expo-image-manipulator$": "<rootDir>/__mocks__/expo-image-manipulator.js",
     "^expo-secure-store$": "<rootDir>/__mocks__/expo-secure-store.js",
+    "^expo-file-system$": "<rootDir>/__mocks__/expo-file-system.js",
     "^expo-file-system/legacy$": "<rootDir>/__mocks__/expo-file-system-legacy.js",
     "^expo-secure-store$": "<rootDir>/__mocks__/expo-secure-store.js",
     "^@/contexts/AppContext$": "<rootDir>/__mocks__/contexts/AppContext.js",
