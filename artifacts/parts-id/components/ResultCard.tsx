@@ -330,6 +330,18 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
               </View>
             ) : null}
 
+            {/* Measure Part button — admin-only, shown in expanded section for unmeasured items */}
+            {sizeUnknown && onMeasure ? (
+              <Pressable
+                onPress={(e) => { e.stopPropagation?.(); onMeasure(item); }}
+                style={[cardStyles.editDetailsBtn, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "88", marginTop: 12 }]}
+              >
+                <Text style={[cardStyles.editDetailsBtnText, { color: colors.warning }]}>
+                  📏 Measure Part
+                </Text>
+              </Pressable>
+            ) : null}
+
             {/* Edit Details button — admin-only, bottom of expanded card */}
             {onEditDetails ? (
               <Pressable
