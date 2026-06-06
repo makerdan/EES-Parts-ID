@@ -37,6 +37,7 @@ import * as Device from "expo-device";
 import { Feather } from "@expo/vector-icons";
 import { useApp, type DimensionUnit } from "@/contexts/AppContext";
 import { cancelMeasure, isLiDARSupported, measureObject, NativeLidarDepthView } from "lidar-measure";
+import { getDeviceId } from "@/utils/deviceId";
 
 /**
  * Returns true when the current iOS device is known to include LiDAR hardware
@@ -340,10 +341,12 @@ export function MeasurePartScreen({
         ? `${API_BASE}/inventory/estimate-dimensions`
         : `${API_BASE}/inventory/estimate-dimensions/search`;
 
+      const deviceId = await getDeviceId();
       const response = await fetch(estimateUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-Device-ID": deviceId,
           ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
         },
         body: JSON.stringify({
@@ -398,10 +401,12 @@ export function MeasurePartScreen({
         ? `${API_BASE}/inventory/estimate-dimensions`
         : `${API_BASE}/inventory/estimate-dimensions/search`;
 
+      const deviceId = await getDeviceId();
       const response = await fetch(reEstimateUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "X-Device-ID": deviceId,
           ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
         },
         body: JSON.stringify({
