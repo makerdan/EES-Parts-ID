@@ -262,6 +262,28 @@ function ZoneOverlayItem({
   const isNewPin = isPinnedNow && !prevPinnedRef.current;
   prevPinnedRef.current = isPinnedNow;
 
+  // Animate the rect fill opacity 0→1 when a zone first gets pinned.
+  // fillOpacitySV stays at 1 for all other cases (normal zone fill, cycle mode)
+  // so existing colours render at their intended opacity with no regressions.
+  const fillOpacitySV = useSharedValue(1);
+  // Separate ref updated inside the effect so it correctly captures the
+  // previous value at the time the effect fires (not during render).
+  const prevPinnedForFillRef = useRef<boolean>(isPinnedNow);
+  useEffect(() => {
+    const wasAlreadyPinned = prevPinnedForFillRef.current;
+    prevPinnedForFillRef.current = isPinnedNow;
+    if (isPinnedNow && !wasAlreadyPinned) {
+      // New placement — snap to 0 then animate in over 250 ms.
+      fillOpacitySV.value = 0;
+      fillOpacitySV.value = withTiming(1, { duration: 250 });
+    }
+  }, [isPinnedNow]);
+
+  const rectPinAnimatedProps = useAnimatedProps(() => ({
+    strokeWidth: baseStroke / scale.value,
+    fillOpacity: fillOpacitySV.value,
+  }));
+
   if (cycleMode) {
     const fillColor = isCounted ? "#22c55ecc" : colors.primary + "18";
     const strokeColor = isCounted ? "#16a34a" : colors.primary + "50";
@@ -331,7 +353,7 @@ function ZoneOverlayItem({
         fill={pinFillColor}
         stroke={strokeColor}
         strokeDasharray={(!isPinned && !isVariantPinned && !isActive) ? "20 10" : undefined}
-        animatedProps={rectAnimatedProps}
+        animatedProps={rectPinAnimatedProps}
       />
       {(isPinned || isVariantPinned) ? (() => {
         // Section numbers for this zone's pins (0–99, proportional within aisle height).
