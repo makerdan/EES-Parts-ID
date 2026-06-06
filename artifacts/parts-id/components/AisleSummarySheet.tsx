@@ -96,7 +96,7 @@ export function AisleSummarySheet({ zone, inventory, onClose, onBrowse }: AisleS
         {/* Handle bar */}
         <View style={[sheetStyles.handle, { backgroundColor: colors.border }]} />
 
-        <Text style={[sheetStyles.title, { color: colors.foreground }]}>{zone.label}</Text>
+        <Text style={[sheetStyles.title, { color: colors.foreground }]}>{`Aisle ${zone.aisleNum}`}</Text>
 
         {sectionHint ? (
           <Text style={[sheetStyles.parityHint, { color: colors.mutedForeground }]}>{sectionHint}</Text>

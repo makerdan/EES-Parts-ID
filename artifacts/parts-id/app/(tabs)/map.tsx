@@ -42,12 +42,8 @@ const ZONE_EDITOR_URL = process.env.EXPO_PUBLIC_DOMAIN
 
 function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
   const aisleNum = parseInt(zone.aisleId, 10) || 0;
-  const label = zone.sectionNum > 0
-    ? `Aisle ${zone.aisleId} · §${zone.sectionNum}`
-    : `Aisle ${zone.aisleId}`;
   return {
     aisleNum,
-    label,
     sectionNumbers: [zone.sectionNum],
   };
 }

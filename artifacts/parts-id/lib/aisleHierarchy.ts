@@ -59,7 +59,6 @@ export type AisleHierarchy = {
 export type WarehouseZone = {
   aisleNum: number;
   sectionNumbers?: number[];
-  label: string;
 };
 
 export function parseBin(raw: string): ParsedBin | null {
