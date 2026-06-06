@@ -91,6 +91,8 @@ async function readNewestCacheTimestamp(): Promise<string> {
   }
 }
 
+const INCLUDE_NULL_DIM_KEY = "@partsid/include_null_dimensions";
+
 const DEFAULT_FILTERS: FilterValues = {
   keywords: "",
   catalog: "",
@@ -140,6 +142,33 @@ export default function SearchScreen() {
   const activeCategorySlugRef = useRef<string | null>(null);
   useEffect(() => { activeCategorySlugRef.current = activeCategorySlug; }, [activeCategorySlug]);
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
+  const hasLoadedIncludeNullDim = useRef(false);
+
+  // Restore the 'include unmeasured parts' toggle from the previous session.
+  useEffect(() => {
+    AsyncStorage.getItem(INCLUDE_NULL_DIM_KEY)
+      .then(stored => {
+        if (stored !== null) {
+          setFilters(prev => ({ ...prev, includeNullDimensions: stored === "1" }));
+        }
+        hasLoadedIncludeNullDim.current = true;
+      })
+      .catch(() => {
+        hasLoadedIncludeNullDim.current = true;
+      });
+  }, []);
+
+  // Persist the toggle whenever it changes (skip the initial render).
+  useEffect(() => {
+    if (!hasLoadedIncludeNullDim.current) return;
+    AsyncStorage.setItem(
+      INCLUDE_NULL_DIM_KEY,
+      filters.includeNullDimensions ? "1" : "0",
+    ).catch(err => {
+      reportStorageError("Could not save include-unmeasured-parts preference", err);
+    });
+  }, [filters.includeNullDimensions]);
+
   const [filterHeaderHeight, setFilterHeaderHeight] = useState(120);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [measureItem, setMeasureItem] = useState<InventoryItem | null>(null);
