@@ -102,23 +102,23 @@ describe("POST /api/warehouse-zones", () => {
     expect(typeof res.body.zone.id).toBe("number");
   });
 
-  it("defaults sectionParity to 'all' when omitted", async () => {
+  it("defaults sectionNum to 0 when omitted", async () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
       .send(BASE_ZONE)
       .expect(201);
 
-    expect(res.body.zone.sectionParity).toBe("all");
+    expect(res.body.zone.sectionNum).toBe(0);
   });
 
-  it("accepts explicit sectionParity values: odd, even, all", async () => {
-    for (const parity of ["odd", "even", "all"]) {
+  it("accepts explicit sectionNum values", async () => {
+    for (const sectionNum of [1, 2, 6, 99]) {
       await cleanupZones();
       const res = await supertest(app)
         .post("/api/warehouse-zones")
-        .send({ ...BASE_ZONE, sectionParity: parity })
+        .send({ ...BASE_ZONE, sectionNum })
         .expect(201);
-      expect(res.body.zone.sectionParity).toBe(parity);
+      expect(res.body.zone.sectionNum).toBe(sectionNum);
     }
   });
 
@@ -131,14 +131,13 @@ describe("POST /api/warehouse-zones", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 400 when sectionParity is an invalid value", async () => {
+  it("returns 400 when sectionNum is not a number", async () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
-      .send({ ...BASE_ZONE, sectionParity: "invalid" })
+      .send({ ...BASE_ZONE, sectionNum: "not-a-number" })
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
-    expect(res.body.error).toMatch(/odd|even|all/i);
   });
 
   it("returns 403 in production mode", async () => {
@@ -216,7 +215,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns 400 for an invalid sectionParity in the update", async () => {
+  it("returns 400 when sectionNum is not a number in the update", async () => {
     const create = await supertest(app)
       .post("/api/warehouse-zones")
       .send(BASE_ZONE)
@@ -226,7 +225,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
 
     const res = await supertest(app)
       .patch(`/api/warehouse-zones/${id}`)
-      .send({ sectionParity: "bad-value" })
+      .send({ sectionNum: "bad-value" })
       .expect(400);
 
     expect(res.body).toHaveProperty("error");

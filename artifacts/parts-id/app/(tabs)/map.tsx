@@ -44,10 +44,7 @@ function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
   return {
     aisleNum: parseInt(zone.aisleId, 10) || 0,
     label: zone.label,
-    sectionParity:
-      zone.sectionParity === "odd" || zone.sectionParity === "even"
-        ? zone.sectionParity
-        : undefined,
+    sectionNumbers: [zone.sectionNum],
   };
 }
 
@@ -165,7 +162,8 @@ export default function MapScreen() {
     const ids = new Set<number>();
     for (const zone of zones) {
       const aisleNum = parseInt(zone.aisleId, 10);
-      if (pinnedSections.has(aisleNum)) ids.add(zone.id);
+      const sections = pinnedSections.get(aisleNum);
+      if (sections && sections.includes(zone.sectionNum)) ids.add(zone.id);
     }
     return ids;
   }, [zones, pinnedSections]);
@@ -175,7 +173,8 @@ export default function MapScreen() {
     const ids = new Set<number>();
     for (const zone of zones) {
       const aisleNum = parseInt(zone.aisleId, 10);
-      if (variantSections.has(aisleNum)) ids.add(zone.id);
+      const sections = variantSections.get(aisleNum);
+      if (sections && sections.includes(zone.sectionNum)) ids.add(zone.id);
     }
     return ids;
   }, [zones, variantSections]);
@@ -317,7 +316,6 @@ export default function MapScreen() {
           onClose={handleBrowseClose}
           onRefresh={refetchZones}
           initialAisle={drilldown?.aisleNum}
-          sectionParity={drilldown?.sectionParity}
           sectionNumbers={drilldown?.sectionNumbers}
         />
       </SafeAreaView>

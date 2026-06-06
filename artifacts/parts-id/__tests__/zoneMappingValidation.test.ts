@@ -14,12 +14,12 @@ import {
   isValidAisleId,
   findDuplicateConflict,
 } from "@workspace/zone-validation";
-import type { SectionParity, ZoneLike } from "@workspace/zone-validation";
+import type { ZoneLike } from "@workspace/zone-validation";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-function makeZone(id: number, aisleId: string, sectionParity: SectionParity): ZoneLike {
-  return { id, aisleId, sectionParity };
+function makeZone(id: number, aisleId: string, sectionNum: number): ZoneLike {
+  return { id, aisleId, sectionNum };
 }
 
 // ── isValidAisleId ────────────────────────────────────────────────────────────
@@ -78,87 +78,67 @@ describe("isValidAisleId", () => {
 // ── findDuplicateConflict ─────────────────────────────────────────────────────
 
 describe("findDuplicateConflict", () => {
-  it("returns the conflicting zone on an exact match (same aisleId, same parity)", () => {
-    const zones = [makeZone(1, "08", "odd")];
-    const result = findDuplicateConflict(zones, null, "08", "odd");
+  it("returns the conflicting zone on an exact match (same aisleId, same sectionNum)", () => {
+    const zones = [makeZone(1, "08", 1)];
+    const result = findDuplicateConflict(zones, null, "08", 1);
     expect(result).not.toBeNull();
     expect(result!.id).toBe(1);
   });
 
-  it("conflicts when existing zone is 'all' and incoming parity is 'odd'", () => {
-    const zones = [makeZone(1, "08", "all")];
-    expect(findDuplicateConflict(zones, null, "08", "odd")).not.toBeNull();
+  it("returns null for same aisleId but different sectionNum", () => {
+    const zones = [makeZone(1, "08", 1)];
+    expect(findDuplicateConflict(zones, null, "08", 2)).toBeNull();
   });
 
-  it("conflicts when existing zone is 'all' and incoming parity is 'even'", () => {
-    const zones = [makeZone(1, "08", "all")];
-    expect(findDuplicateConflict(zones, null, "08", "even")).not.toBeNull();
-  });
-
-  it("conflicts when incoming parity is 'all' and existing zone is 'odd'", () => {
-    const zones = [makeZone(1, "08", "odd")];
-    expect(findDuplicateConflict(zones, null, "08", "all")).not.toBeNull();
-  });
-
-  it("conflicts when incoming parity is 'all' and existing zone is 'even'", () => {
-    const zones = [makeZone(1, "08", "even")];
-    expect(findDuplicateConflict(zones, null, "08", "all")).not.toBeNull();
-  });
-
-  it("returns null for same aisleId but non-overlapping parities (odd vs even)", () => {
-    const zones = [makeZone(1, "08", "odd")];
-    expect(findDuplicateConflict(zones, null, "08", "even")).toBeNull();
-  });
-
-  it("returns null when aisleId differs, even if parity matches", () => {
-    const zones = [makeZone(1, "08", "all")];
-    expect(findDuplicateConflict(zones, null, "12", "all")).toBeNull();
+  it("returns null when aisleId differs, even if sectionNum matches", () => {
+    const zones = [makeZone(1, "08", 1)];
+    expect(findDuplicateConflict(zones, null, "12", 1)).toBeNull();
   });
 
   it("excludes the zone identified by excludeId (the zone being edited)", () => {
-    const zones = [makeZone(1, "08", "odd")];
-    expect(findDuplicateConflict(zones, 1, "08", "odd")).toBeNull();
+    const zones = [makeZone(1, "08", 1)];
+    expect(findDuplicateConflict(zones, 1, "08", 1)).toBeNull();
   });
 
   it("does not exclude other zones when excludeId is set", () => {
-    const zones = [makeZone(1, "08", "odd"), makeZone(2, "08", "odd")];
-    const result = findDuplicateConflict(zones, 1, "08", "odd");
+    const zones = [makeZone(1, "08", 1), makeZone(2, "08", 1)];
+    const result = findDuplicateConflict(zones, 1, "08", 1);
     expect(result).not.toBeNull();
     expect(result!.id).toBe(2);
   });
 
   it("returns null when the zones list is empty", () => {
-    expect(findDuplicateConflict([], null, "08", "all")).toBeNull();
+    expect(findDuplicateConflict([], null, "08", 1)).toBeNull();
   });
 
   it("trims whitespace from the aisleId argument before comparing", () => {
-    const zones = [makeZone(1, "08", "odd")];
-    expect(findDuplicateConflict(zones, null, " 08 ", "odd")).not.toBeNull();
+    const zones = [makeZone(1, "08", 1)];
+    expect(findDuplicateConflict(zones, null, " 08 ", 1)).not.toBeNull();
   });
 
   it("returns the first conflicting zone when multiple conflicts exist", () => {
-    const zones = [makeZone(1, "08", "all"), makeZone(2, "08", "odd")];
-    const result = findDuplicateConflict(zones, null, "08", "odd");
+    const zones = [makeZone(1, "08", 1), makeZone(2, "08", 1)];
+    const result = findDuplicateConflict(zones, null, "08", 1);
     expect(result!.id).toBe(1);
   });
 
   it("treats '08' and '8' as the same aisle (leading-zero equivalence)", () => {
-    const zones = [makeZone(1, "8", "odd")];
-    expect(findDuplicateConflict(zones, null, "08", "odd")).not.toBeNull();
+    const zones = [makeZone(1, "8", 1)];
+    expect(findDuplicateConflict(zones, null, "08", 1)).not.toBeNull();
   });
 
   it("treats '8' and '08' as the same aisle (reverse direction)", () => {
-    const zones = [makeZone(1, "08", "odd")];
-    expect(findDuplicateConflict(zones, null, "8", "odd")).not.toBeNull();
+    const zones = [makeZone(1, "08", 1)];
+    expect(findDuplicateConflict(zones, null, "8", 1)).not.toBeNull();
   });
 
   it("detects a conflict when the stored aisleId has a trailing space", () => {
-    const zones = [makeZone(1, "8 ", "odd")];
-    expect(findDuplicateConflict(zones, null, "8", "odd")).not.toBeNull();
+    const zones = [makeZone(1, "8 ", 1)];
+    expect(findDuplicateConflict(zones, null, "8", 1)).not.toBeNull();
   });
 
   it("detects a conflict when the stored aisleId has a leading space", () => {
-    const zones = [makeZone(1, " 8", "all")];
-    expect(findDuplicateConflict(zones, null, "8", "even")).not.toBeNull();
+    const zones = [makeZone(1, " 8", 1)];
+    expect(findDuplicateConflict(zones, null, "8", 1)).not.toBeNull();
   });
 });

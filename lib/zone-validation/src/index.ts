@@ -3,12 +3,10 @@
  * the test suite.  No external dependencies — safe to import from any context.
  */
 
-export type SectionParity = "all" | "odd" | "even";
-
 export interface ZoneLike {
   id: number;
   aisleId: string;
-  sectionParity: SectionParity;
+  sectionNum: number;
 }
 
 /**
@@ -32,15 +30,12 @@ export function isValidAisleId(v: string): boolean {
 
 /**
  * Returns the first zone in `zones` that would conflict with the given
- * `aisleId` + `parity` combination, or `null` when no conflict exists.
+ * `aisleId` + `sectionNum` combination, or `null` when no conflict exists.
  *
  * The zone identified by `excludeId` is skipped (pass the id of the zone
  * currently being edited so it does not conflict with itself).
  *
- * A conflict exists when:
- *   - same aisleId AND same sectionParity (exact duplicate), OR
- *   - same aisleId AND either side is "all" (all overlaps odd/even and
- *     vice-versa).
+ * A conflict exists when the same aisleId AND same sectionNum are already used.
  *
  * Both the incoming aisleId and each stored aisleId are normalized (leading
  * zeros stripped, surrounding whitespace trimmed) before comparison, so
@@ -50,18 +45,14 @@ export function findDuplicateConflict<T extends ZoneLike>(
   zones: T[],
   excludeId: number | null,
   aisleId: string,
-  parity: SectionParity,
+  sectionNum: number,
 ): T | null {
   const normalized = normalizeAisleId(aisleId);
   return (
     zones.find((z) => {
       if (z.id === excludeId) return false;
       if (normalizeAisleId(z.aisleId) !== normalized) return false;
-      return (
-        z.sectionParity === parity ||
-        z.sectionParity === "all" ||
-        parity === "all"
-      );
+      return z.sectionNum === sectionNum;
     }) ?? null
   );
 }

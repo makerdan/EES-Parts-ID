@@ -21,7 +21,6 @@ import React, {
 } from "react";
 import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
-import { deriveParity } from "../utils/deriveParity";
 import { isValidAisleId, findDuplicateConflict, normalizeAisleId } from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
 
@@ -198,7 +197,7 @@ interface Zone {
   id: number;
   aisleId: string;
   label: string;
-  sectionParity: "all" | "odd" | "even";
+  sectionNum: number;
   isInventory: boolean;
   svgX: number;
   svgY: number;
@@ -216,7 +215,7 @@ type Mode = "pan" | "draw" | "fill";
 const UNDO_LIMIT = 50;
 type PositionSnap = { svgX: number; svgY: number };
 type GeomSnap    = { svgX: number; svgY: number; svgWidth: number; svgHeight: number };
-type MetaSnap    = Partial<Pick<Zone, "aisleId" | "label" | "sectionParity" | "isInventory" | "sortOrder">>;
+type MetaSnap    = Partial<Pick<Zone, "aisleId" | "label" | "sectionNum" | "isInventory" | "sortOrder">>;
 
 type UndoEntry =
   | { type: "move";       id: number; before: PositionSnap; after: PositionSnap }
@@ -230,7 +229,7 @@ type UndoEntry =
 export interface FormState {
   aisleId: string;
   label: string;
-  sectionParity: "all" | "odd" | "even";
+  sectionNum: number;
   isInventory: boolean;
   sortOrder: number;
 }
@@ -355,18 +354,17 @@ export function ZoneEditor() {
   // Original positions of every selected zone at the start of a multi-move drag
   const multiDragOriginsRef = useRef<Map<number, Pt>>(new Map());
   const [form, setForm] = useState<FormState>({
-    aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0,
+    aisleId: "", label: "", sectionNum: 0, isInventory: true, sortOrder: 0,
   });
-  const parityOverrideRef = useRef(false);
   const [saving, setSaving] = useState(false);
 
   // Multi-select form fields
   const [multiAisleId, setMultiAisleId] = useState("");
-  const [multiParity, setMultiParity] = useState<"" | "all" | "odd" | "even">("");
+  const [multiSectionNum, setMultiSectionNum] = useState("");
   const [multiSaving, setMultiSaving] = useState(false);
   // Track last-saved values so blur auto-save can diff against them
   const lastMultiAisleIdRef = useRef("");
-  const lastMultiParityRef = useRef<"" | "all" | "odd" | "even">("");
+  const lastMultiSectionNumRef = useRef("");
   const [coverage, setCoverage] = useState<{
     unsortedCount: number;
     uncoveredAisles: string[];
@@ -497,12 +495,12 @@ export function ZoneEditor() {
       selectedId !== null &&
       normalizeAisleId(form.aisleId) ===
         normalizeAisleId(lastSavedFormRef.current?.aisleId ?? "") &&
-      form.sectionParity === lastSavedFormRef.current?.sectionParity
+      form.sectionNum === lastSavedFormRef.current?.sectionNum
     ) {
       return null;
     }
-    return findDuplicateConflict(zones, selectedId, form.aisleId, form.sectionParity);
-  }, [zones, form.aisleId, form.sectionParity, selectedId]);
+    return findDuplicateConflict(zones, selectedId, form.aisleId, form.sectionNum);
+  }, [zones, form.aisleId, form.sectionNum, selectedId]);
 
   // ── Undo / Redo helpers ──────────────────────────────────────────────────
   const pushUndo = useCallback((entry: UndoEntry) => {
@@ -664,7 +662,7 @@ export function ZoneEditor() {
           } else {
             // Redo create → re-POST; update zone ids in-place for symmetry
             const newZones = await Promise.all(entry.zones.map(async (z) => {
-              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, label: z.label, sectionParity: z.sectionParity, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, label: z.label, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return ((await r.json()) as { zone: Zone }).zone;
             }));
@@ -678,7 +676,7 @@ export function ZoneEditor() {
           if (!fwd) {
             // Undo delete → re-POST; update ids in-place for redo symmetry
             const newZones = await Promise.all(entry.zones.map(async (z) => {
-              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, label: z.label, sectionParity: z.sectionParity, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, label: z.label, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return ((await r.json()) as { zone: Zone }).zone;
             }));
@@ -737,7 +735,7 @@ export function ZoneEditor() {
         body: JSON.stringify({
           aisleId: normalizeAisleId(form.aisleId),
           label,
-          sectionParity: form.sectionParity,
+          sectionNum: form.sectionNum,
           isInventory: form.isInventory,
           svgX: pendingRect.x,
           svgY: pendingRect.y,
@@ -755,8 +753,7 @@ export function ZoneEditor() {
       pushUndo({ type: "create", zones: [zone] });
       setPendingRect(null);
       setSelectedIds(new Set([zone.id]));
-      parityOverrideRef.current = false;
-      setForm({ aisleId: zone.aisleId, label: zone.label, sectionParity: zone.sectionParity, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
+      setForm({ aisleId: zone.aisleId, label: zone.label, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -775,7 +772,7 @@ export function ZoneEditor() {
       const afterMeta: MetaSnap = {
         aisleId: normalizeAisleId(form.aisleId),
         label: form.label.trim() || normalizeAisleId(form.aisleId),
-        sectionParity: form.sectionParity,
+        sectionNum: form.sectionNum,
         isInventory: form.isInventory,
         sortOrder: form.sortOrder,
       };
@@ -822,7 +819,7 @@ export function ZoneEditor() {
         body: JSON.stringify({
           aisleId: normalizeAisleId(form.aisleId),
           label: form.label.trim() || normalizeAisleId(form.aisleId),
-          sectionParity: form.sectionParity,
+          sectionNum: form.sectionNum,
           isInventory: form.isInventory,
           svgX: selectedZone.svgX + selectedZone.svgWidth + 2,
           svgY: selectedZone.svgY,
@@ -839,8 +836,7 @@ export function ZoneEditor() {
       toast.success(`Duplicated → placed to the right`);
       pushUndo({ type: "create", zones: [zone] });
       setSelectedIds(new Set([zone.id]));
-      parityOverrideRef.current = false;
-      setForm({ aisleId: zone.aisleId, label: zone.label, sectionParity: zone.sectionParity, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
+      setForm({ aisleId: zone.aisleId, label: zone.label, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -861,7 +857,7 @@ export function ZoneEditor() {
             body: JSON.stringify({
               aisleId: z.aisleId,
               label: z.label,
-              sectionParity: z.sectionParity,
+              sectionNum: z.sectionNum,
               isInventory: z.isInventory,
               sortOrder: z.sortOrder,
               svgX: z.svgX,
@@ -894,14 +890,14 @@ export function ZoneEditor() {
     const n = selectedIds.size;
     const parts: string[] = [];
     if (updates.aisleId) parts.push(`Aisle ID → ${updates.aisleId}`);
-    if (updates.sectionParity) parts.push(`Section Parity → ${updates.sectionParity}`);
+    if (updates.sectionNum !== undefined) parts.push(`Section # → ${updates.sectionNum}`);
     const what = parts.length ? parts.join(", ") : "selected properties";
     if (!await showConfirm(`Update ${n} zone${n !== 1 ? "s" : ""}`, what)) return;
     const undoChanges = [...selectedIds].map((id) => {
       const z = zonesRef.current.find((z) => z.id === id);
       const before: MetaSnap = {};
       if (updates.aisleId !== undefined) before.aisleId = z?.aisleId;
-      if (updates.sectionParity !== undefined) before.sectionParity = z?.sectionParity;
+      if (updates.sectionNum !== undefined) before.sectionNum = z?.sectionNum;
       return { id, before, after: updates as MetaSnap };
     });
     setMultiSaving(true);
@@ -909,7 +905,7 @@ export function ZoneEditor() {
       await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
-      if (updates.sectionParity !== undefined) lastMultiParityRef.current = updates.sectionParity as typeof multiParity;
+      if (updates.sectionNum !== undefined) lastMultiSectionNumRef.current = String(updates.sectionNum);
       toast.success(`Updated ${n} zones`);
       await fetchZones();
     } catch (e) {
@@ -928,15 +924,17 @@ export function ZoneEditor() {
       if (!isValidAisleId(trimmedAisle)) return;
       updates.aisleId = normalizeAisleId(trimmedAisle);
     }
-    if (multiParity && multiParity !== lastMultiParityRef.current) {
-      updates.sectionParity = multiParity;
+    const trimmedSectionNum = multiSectionNum.trim();
+    if (trimmedSectionNum && trimmedSectionNum !== lastMultiSectionNumRef.current) {
+      const parsed = parseInt(trimmedSectionNum, 10);
+      if (!isNaN(parsed)) updates.sectionNum = parsed;
     }
     if (Object.keys(updates).length === 0) return;
     const undoChanges = [...selectedIds].map((id) => {
       const z = zonesRef.current.find((z) => z.id === id);
       const before: MetaSnap = {};
       if (updates.aisleId !== undefined) before.aisleId = z?.aisleId;
-      if (updates.sectionParity !== undefined) before.sectionParity = z?.sectionParity;
+      if (updates.sectionNum !== undefined) before.sectionNum = z?.sectionNum;
       return { id, before, after: updates as MetaSnap };
     });
     setMultiSaving(true);
@@ -944,7 +942,7 @@ export function ZoneEditor() {
       await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
-      if (updates.sectionParity !== undefined) lastMultiParityRef.current = updates.sectionParity as typeof multiParity;
+      if (updates.sectionNum !== undefined) lastMultiSectionNumRef.current = String(updates.sectionNum);
       const n = selectedIds.size;
       toast.success(`Saved ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
@@ -969,12 +967,7 @@ export function ZoneEditor() {
     if (!selectedId) return;
     const z = zones.find((z) => z.id === selectedId);
     if (z) {
-      const synced: FormState = { aisleId: z.aisleId, label: z.label, sectionParity: z.sectionParity, isInventory: z.isInventory, sortOrder: z.sortOrder };
-      // Only reset the manual-override flag when the selected zone actually changes,
-      // not when the zones list refreshes for the same zone (e.g. after a save).
-      if (selectedId !== prevSelectedIdRef.current) {
-        parityOverrideRef.current = false;
-      }
+      const synced: FormState = { aisleId: z.aisleId, label: z.label, sectionNum: z.sectionNum, isInventory: z.isInventory, sortOrder: z.sortOrder };
       prevSelectedIdRef.current = selectedId;
       setForm(synced);
       lastSavedFormRef.current = synced;
@@ -987,13 +980,13 @@ export function ZoneEditor() {
     const list = zones.filter((z) => selectedIds.has(z.id));
     if (list.length === 0) return;
     const aisles = new Set(list.map((z) => z.aisleId));
-    const parities = new Set(list.map((z) => z.sectionParity));
+    const sectionNums = new Set(list.map((z) => z.sectionNum));
     const syncedAisle = aisles.size === 1 ? [...aisles][0]! : "";
-    const syncedParity = parities.size === 1 ? [...parities][0]! as typeof multiParity : "";
+    const syncedSectionNum = sectionNums.size === 1 ? String([...sectionNums][0]!) : "";
     setMultiAisleId(syncedAisle);
-    setMultiParity(syncedParity);
+    setMultiSectionNum(syncedSectionNum);
     lastMultiAisleIdRef.current = syncedAisle;
-    lastMultiParityRef.current = syncedParity;
+    lastMultiSectionNumRef.current = syncedSectionNum;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds, zones, isMulti]);
 
@@ -1013,7 +1006,7 @@ export function ZoneEditor() {
         const afterMeta: MetaSnap = {
           aisleId: normalizeAisleId(form.aisleId),
           label: form.label.trim() || normalizeAisleId(form.aisleId),
-          sectionParity: form.sectionParity,
+          sectionNum: form.sectionNum,
           isInventory: form.isInventory,
           sortOrder: form.sortOrder,
         };
@@ -1093,8 +1086,7 @@ export function ZoneEditor() {
       // Commit as pendingRect — opens the sidebar form (same flow as Draw mode).
       setPendingRect(rect);
       setSelectedIds(new Set());
-      parityOverrideRef.current = false;
-      setForm({ aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0 });
+      setForm({ aisleId: "", label: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
 
       // Auto-switch back to Pan so a stray click doesn't trigger another fill.
       setMode("pan");
@@ -1211,8 +1203,7 @@ export function ZoneEditor() {
         }
         setPendingRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
         setSelectedIds(new Set());
-        parityOverrideRef.current = false;
-        setForm({ aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0 });
+        setForm({ aisleId: "", label: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
         return;
       }
 
@@ -1479,8 +1470,8 @@ export function ZoneEditor() {
     () => new Set(selectedZoneList.map((z) => z.aisleId)),
     [selectedZoneList],
   );
-  const multiParities = useMemo(
-    () => new Set(selectedZoneList.map((z) => z.sectionParity)),
+  const multiSectionNums = useMemo(
+    () => new Set(selectedZoneList.map((z) => z.sectionNum)),
     [selectedZoneList],
   );
 
@@ -1563,7 +1554,7 @@ export function ZoneEditor() {
           <ModeBtn active={mode === "pan"} onClick={() => { setMode("pan"); }}>
             Pan / Select
           </ModeBtn>
-          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setPendingRect(null); parityOverrideRef.current = false; setForm({ aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0 }); }}>
+          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setPendingRect(null); setForm({ aisleId: "", label: "", sectionNum: 0, isInventory: true, sortOrder: 0 }); }}>
             Draw Zone
           </ModeBtn>
           <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setPendingRect(null); }}>
@@ -1885,22 +1876,17 @@ export function ZoneEditor() {
                     )}
                   </div>
                   <div>
-                    <Label>Section Parity — all selected</Label>
-                    <select
-                      value={multiParity}
-                      onChange={(e) => setMultiParity(e.target.value as typeof multiParity)}
+                    <Label>Section # — all selected</Label>
+                    <input
+                      type="number"
+                      value={multiSectionNum}
+                      onChange={(e) => setMultiSectionNum(e.target.value)}
+                      placeholder={multiSectionNums.size > 1 ? "— mixed —" : "e.g. 6"}
                       style={styles.input}
-                    >
-                      <option value="">
-                        {multiParities.size > 1 ? "— mixed —" : "— select —"}
-                      </option>
-                      <option value="all">All sections</option>
-                      <option value="odd">Odd sections only</option>
-                      <option value="even">Even sections only</option>
-                    </select>
-                    {multiParities.size > 1 && (
+                    />
+                    {multiSectionNums.size > 1 && (
                       <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>
-                        Mixed: {[...multiParities].join(", ")}
+                        Mixed: {[...multiSectionNums].join(", ")}
                       </div>
                     )}
                   </div>
@@ -1910,7 +1896,7 @@ export function ZoneEditor() {
                     color="#3b82f6"
                     disabled={
                       multiSaving ||
-                      (!multiAisleId.trim() && !multiParity) ||
+                      (!multiAisleId.trim() && !multiSectionNum.trim()) ||
                       (!!multiAisleId.trim() && !isValidAisleId(multiAisleId))
                     }
                     onClick={() => {
@@ -1920,7 +1906,10 @@ export function ZoneEditor() {
                       }
                       const updates: Partial<Zone> = {};
                       if (multiAisleId.trim()) updates.aisleId = normalizeAisleId(multiAisleId.trim());
-                      if (multiParity) updates.sectionParity = multiParity;
+                      if (multiSectionNum.trim()) {
+                        const parsed = parseInt(multiSectionNum.trim(), 10);
+                        if (!isNaN(parsed)) updates.sectionNum = parsed;
+                      }
                       if (Object.keys(updates).length === 0) return;
                       void handleMultiSave(updates);
                     }}
@@ -1957,11 +1946,11 @@ export function ZoneEditor() {
                     {selectedZone.svgHeight.toFixed(1)}
                   </div>
                 )}
-                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} parityOverride={parityOverrideRef} />
+                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} />
                 {duplicateConflict && (pendingRect || selectedZone) && (
                   <div style={styles.dupWarning}>
                     ⚠ Zone "{duplicateConflict.label}" already uses aisle{" "}
-                    {duplicateConflict.aisleId} ({duplicateConflict.sectionParity}). Saving
+                    {duplicateConflict.aisleId} §{duplicateConflict.sectionNum}. Saving
                     anyway will create an overlapping mapping.
                   </div>
                 )}
@@ -2079,7 +2068,7 @@ export function ZoneEditor() {
                 >
                   <div style={styles.zoneItemLabel}>{zone.label}</div>
                   <div style={styles.zoneItemMeta}>
-                    Aisle {zone.aisleId} · {zone.sectionParity}
+                    Aisle {zone.aisleId} · §{zone.sectionNum}
                     {zone.isInventory ? "" : " · non-inv"}
                   </div>
                 </div>
@@ -2102,12 +2091,10 @@ export function ZoneForm({
   form,
   onChange,
   aisleIdError,
-  parityOverride,
 }: {
   form: FormState;
   onChange: (f: FormState) => void;
   aisleIdError?: string | null;
-  parityOverride: React.MutableRefObject<boolean>;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -2135,57 +2122,23 @@ export function ZoneForm({
         )}
       </div>
       <div>
-        <Label>Section #</Label>
+        <Label>Label</Label>
         <input
           value={form.label}
-          onChange={(e) => {
-            const label = e.target.value;
-            const updated: FormState = { ...form, label };
-            if (!parityOverride.current) {
-              const derived = deriveParity(label);
-              if (derived !== null) updated.sectionParity = derived;
-            }
-            onChange(updated);
-          }}
+          onChange={(e) => onChange({ ...form, label: e.target.value })}
           placeholder="e.g. 12A"
           style={styles.input}
         />
       </div>
       <div>
-        <Label>
-          Section Parity
-          {!parityOverride.current && deriveParity(form.label) !== null && (
-            <span
-              data-testid="parity-auto-hint"
-              style={{
-                marginLeft: 5,
-                fontSize: 9,
-                fontStyle: "italic",
-                fontWeight: 400,
-                letterSpacing: "0.03em",
-                opacity: 0.75,
-                textTransform: "none",
-              }}
-            >
-              (auto)
-            </span>
-          )}
-        </Label>
-        <select
-          value={form.sectionParity}
-          onChange={(e) => {
-            parityOverride.current = true;
-            onChange({
-              ...form,
-              sectionParity: e.target.value as FormState["sectionParity"],
-            });
-          }}
+        <Label>Section #</Label>
+        <input
+          type="number"
+          value={form.sectionNum}
+          onChange={(e) => onChange({ ...form, sectionNum: parseInt(e.target.value, 10) || 0 })}
+          placeholder="e.g. 6"
           style={styles.input}
-        >
-          <option value="all">All sections</option>
-          <option value="odd">Odd sections only</option>
-          <option value="even">Even sections only</option>
-        </select>
+        />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <input

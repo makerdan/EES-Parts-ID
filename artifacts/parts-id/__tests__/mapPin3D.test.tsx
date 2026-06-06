@@ -202,7 +202,7 @@ function makeZone(overrides: Partial<ApiWarehouseZone> = {}): ApiWarehouseZone {
     id: 1,
     aisleId: "5",
     label: "05",
-    sectionParity: "all",
+    sectionNum: 0,
     isInventory: true,
     svgX: 100,
     svgY: 200,
@@ -393,7 +393,7 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
     await act(async () => { tree.unmount(); });
   });
 
-  it("a pinned zone with section data renders svg-path for each section marker", async () => {
+  it("a pinned zone with section data renders one centered svg-path marker", async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
@@ -406,17 +406,18 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
 
           isCounted={false}
           isPinned={true}
-          pinnedSections={[20, 60]}
+          pinnedSections={[20]}
         />,
       );
     });
 
-    // Two sections → two MapPin3D instances → at least two svg-path elements.
+    // With sectionNum matching, the zone IS already the exact section —
+    // one centered MapPin3D is rendered (not one per section number).
     const paths = tree.root.findAll(
       (n) => (n.type as string) === "svg-path",
       { deep: true },
     );
-    expect(paths.length).toBeGreaterThanOrEqual(2);
+    expect(paths.length).toBeGreaterThanOrEqual(1);
 
     const circles = tree.root.findAll(
       (n) => (n.type as string) === "svg-circle",

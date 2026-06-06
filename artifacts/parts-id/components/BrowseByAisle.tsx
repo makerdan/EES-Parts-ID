@@ -51,7 +51,6 @@ export interface BrowseByAisleProps {
   onPartAdded?: () => void;
   onRefresh?: () => void | Promise<void>;
   initialAisle?: number;
-  sectionParity?: "odd" | "even";
   sectionNumbers?: number[];
   adminToken?: string | null;
   isAdmin?: boolean;
@@ -643,7 +642,6 @@ export function BrowseByAisle({
   onPartAdded,
   onRefresh,
   initialAisle,
-  sectionParity,
   sectionNumbers,
   adminToken,
   isAdmin = false,
@@ -671,8 +669,8 @@ export function BrowseByAisle({
 
   const filteredSections = useMemo(() => {
     if (!crumbs.aisle) return [];
-    return filterSections(crumbs.aisle.sections, sectionNumbers, sectionParity);
-  }, [crumbs.aisle, sectionNumbers, sectionParity]);
+    return filterSections(crumbs.aisle.sections, sectionNumbers);
+  }, [crumbs.aisle, sectionNumbers]);
 
   const sectionsListRef = useRef<FlatList<SectionNode> | null>(null);
   const sectionsScrollOffset = useRef(0);
@@ -680,13 +678,13 @@ export function BrowseByAisle({
   const lastDrilledKey = useRef<string | null>(null);
   useEffect(() => {
     if (initialAisle == null) return;
-    const key = `${initialAisle}-${sectionParity ?? ""}-${(sectionNumbers ?? []).join(",")}`;
+    const key = `${initialAisle}-${(sectionNumbers ?? []).join(",")}`;
     if (lastDrilledKey.current === key) return;
     lastDrilledKey.current = key;
     const aisleNode = hierarchy.aisles.find(a => a.aisleNum === initialAisle);
     if (!aisleNode) return;
     setCrumbs({ aisle: aisleNode, section: null });
-  }, [initialAisle, sectionParity, sectionNumbers, hierarchy]);
+  }, [initialAisle, sectionNumbers, hierarchy]);
 
   const goBack = useCallback(() => {
     if (crumbs.section !== null) {

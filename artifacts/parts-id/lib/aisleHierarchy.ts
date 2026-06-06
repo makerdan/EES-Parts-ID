@@ -59,7 +59,6 @@ export type AisleHierarchy = {
 export type WarehouseZone = {
   aisleNum: number;
   sectionNumbers?: number[];
-  sectionParity?: "odd" | "even";
   label: string;
 };
 
@@ -130,40 +129,12 @@ export function buildAisleHierarchy(inventory: InventoryItem[]): AisleHierarchy 
   return { aisles, unsorted: { parts: unsorted } };
 }
 
-/**
- * Returns true when at least one section number satisfies the parity constraint.
- *   "all"  → always passes (zone covers the whole aisle)
- *   "odd"  → passes when any section number is odd
- *   "even" → passes when any section number is even
- * When sections is empty or undefined, returns true as a safe fallback so that
- * zones without section data are still shown rather than silently hidden.
- */
-export function sectionMatchesParity(
-  sectionParity: "odd" | "even" | "all",
-  sections: number[] | undefined,
-): boolean {
-  if (sectionParity === "all") return true;
-  if (!sections || sections.length === 0) return true;
-  if (sectionParity === "odd") return sections.some(s => s % 2 !== 0);
-  return sections.some(s => s % 2 === 0);
-}
-
 export function filterSections(
   sections: SectionNode[],
   sectionNumbers?: number[],
-  sectionParity?: "odd" | "even",
 ): SectionNode[] {
   if (sectionNumbers && sectionNumbers.length > 0) {
     return sections.filter(s => sectionNumbers.includes(s.sectionNum));
-  }
-  if (sectionParity) {
-    // NOTE: section 00 is treated as even (0 % 2 === 0). This is intentional —
-    // section zero is a real bin location and even-parity zones should cover it.
-    // Do NOT change this to exclude 0 or treat it as "no section"; doing so
-    // would silently drop parts stored in section 00 from even-parity zones.
-    return sections.filter(s =>
-      sectionParity === "odd" ? s.sectionNum % 2 !== 0 : s.sectionNum % 2 === 0,
-    );
   }
   return sections;
 }
