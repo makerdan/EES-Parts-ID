@@ -285,6 +285,54 @@ describe("MapPin3D — renders Path, not Circle", () => {
 });
 
 // =============================================================================
+// MapPin3D — colour-coding contract
+//
+// These tests pin the exact fill values so a refactor that swaps amber/purple
+// constants is caught immediately.  The SVG mock passes all props through, so
+// node.props.fill reflects exactly what MapPin3D passes to <Path>.
+// =============================================================================
+
+describe("MapPin3D — colour-coding contract", () => {
+  it("amber primary result: the teardrop Path carries fill='#f59e0b'", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <MapPin3D cx={100} cy={200} size={20} fill="#f59e0b" stroke="#b45309" />,
+      );
+    });
+
+    const paths = tree.root.findAll(
+      (n) => (n.type as string) === "svg-path",
+      { deep: true },
+    );
+    expect(paths.length).toBeGreaterThan(0);
+    const teardrop = paths.find((n) => n.props.fill === "#f59e0b");
+    expect(teardrop).toBeDefined();
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("purple related-size result: the teardrop Path carries fill='#8b5cf6'", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <MapPin3D cx={50} cy={80} size={15} fill="#8b5cf6" stroke="#6d28d9" />,
+      );
+    });
+
+    const paths = tree.root.findAll(
+      (n) => (n.type as string) === "svg-path",
+      { deep: true },
+    );
+    expect(paths.length).toBeGreaterThan(0);
+    const teardrop = paths.find((n) => n.props.fill === "#8b5cf6");
+    expect(teardrop).toBeDefined();
+
+    await act(async () => { tree.unmount(); });
+  });
+});
+
+// =============================================================================
 // ZoneOverlayItem — pinned zone uses MapPin3D (Path), not Circle
 //
 // These tests verify the actual integration point: when a zone is pinned,
@@ -376,6 +424,33 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
       { deep: true },
     );
     expect(circles).toHaveLength(0);
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("a pinned zone passes the amber palette (#f59e0b fill) to its MapPin3D", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ZoneOverlayItem
+          zone={makeZone()}
+          scale={fakeScale}
+          colors={fakeColors}
+          onZoneTap={jest.fn()}
+          cycleMode={false}
+          cycleLocked={false}
+          isCounted={false}
+          isPinned={true}
+        />,
+      );
+    });
+
+    const paths = tree.root.findAll(
+      (n) => (n.type as string) === "svg-path",
+      { deep: true },
+    );
+    const amberPath = paths.find((n) => n.props.fill === "#f59e0b");
+    expect(amberPath).toBeDefined();
 
     await act(async () => { tree.unmount(); });
   });
