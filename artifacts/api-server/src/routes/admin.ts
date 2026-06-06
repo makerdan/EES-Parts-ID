@@ -8,6 +8,22 @@ const router = Router();
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+// ── Token revocation state ────────────────────────────────────────────────────
+// In-memory timestamp: tokens issued AT OR BEFORE this time are rejected.
+// Calling POST /admin/logout sets this to Date.now(), invalidating all
+// outstanding tokens without requiring a server restart.
+let _revokedBefore = 0;
+
+/** Exposed for testing only — lets tests reset revocation state between runs. */
+export function setRevokedBefore(ts: number): void {
+  _revokedBefore = ts;
+}
+
+/** Exposed for testing — returns the current revocation threshold. */
+export function getRevokedBefore(): number {
+  return _revokedBefore;
+}
+
 /**
  * Sign a timestamp with ADMIN_PASSWORD using HMAC-SHA256.
  * Returns a token string: "<timestamp>.<hex-sig>"
@@ -20,9 +36,12 @@ export function signAdminToken(ts: number, secret: string): string {
 
 /**
  * Verify a signed admin token.
- * Returns true if valid and not expired.
+ * Returns true if valid, not expired, and issued after `notBefore`.
+ *
+ * @param notBefore  Unix ms timestamp — tokens issued AT OR BEFORE this time
+ *                   are rejected (revocation fence).  Defaults to 0 (no fence).
  */
-export function verifyAdminToken(token: string, secret: string): boolean {
+export function verifyAdminToken(token: string, secret: string, notBefore = 0): boolean {
   try {
     const decoded = Buffer.from(token, "base64url").toString("utf8");
     const dotIdx = decoded.indexOf(".");
@@ -43,7 +62,8 @@ export function verifyAdminToken(token: string, secret: string): boolean {
     const ts = parseInt(payload, 10);
     if (isNaN(ts)) return false;
 
-    return Date.now() - ts < TOKEN_TTL_MS;
+    // Token must not be expired AND must have been issued AFTER the revocation fence
+    return Date.now() - ts < TOKEN_TTL_MS && ts > notBefore;
   } catch {
     return false;
   }
@@ -57,7 +77,7 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
   }
   const auth = req.headers["authorization"] ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!token || !verifyAdminToken(token, secret)) {
+  if (!token || !verifyAdminToken(token, secret, _revokedBefore)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -82,6 +102,15 @@ router.post("/login", (req, res) => {
 
   const token = signAdminToken(Date.now(), adminPassword);
   return res.json({ token, expiresIn: TOKEN_TTL_MS / 1000 });
+});
+
+// ── POST /admin/logout ────────────────────────────────────────────────────────
+// Revokes all outstanding tokens immediately by advancing the revocation fence
+// to the current time.  Any token whose issue timestamp is <= revokedBefore
+// will be rejected on the next request, without requiring a server restart.
+router.post("/logout", requireAdminAuth, (_req, res) => {
+  _revokedBefore = Date.now();
+  return res.json({ success: true, revokedAt: _revokedBefore });
 });
 
 // ── GET /admin/profile ────────────────────────────────────────────────────────
