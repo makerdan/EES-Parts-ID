@@ -10,6 +10,9 @@
  *   - parseFieldToMm: correct mm value for all three units, round-trips cleanly
  */
 
+// @ts-ignore — global augmentation for test environment only
+global.IS_REACT_ACT_ENVIRONMENT = true;
+
 // ── Transitive mocks for AppContext (expo-secure-store uses ESM) ──────────────
 
 jest.mock("expo-secure-store", () => ({
