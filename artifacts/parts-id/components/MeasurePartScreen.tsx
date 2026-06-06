@@ -150,6 +150,7 @@ export function MeasurePartScreen({
   const [rescanningAxis, setRescanningAxis] = useState<RescanAxis | null>(null);
   const [isReestimating, setIsReestimating] = useState(false);
   const [confirmEstimateError, setConfirmEstimateError] = useState<string | null>(null);
+  const [previousMmDims, setPreviousMmDims] = useState<PartDimensions | null>(null);
 
   // Stable ref to the current unit so the initialization effect can read the
   // latest value without listing `unit` as a reactive dependency (which would
@@ -203,6 +204,7 @@ export function MeasurePartScreen({
       setRescanningAxis(null);
       setIsReestimating(false);
       setConfirmEstimateError(null);
+      setPreviousMmDims(null);
       // Read from unitRef so this effect does not re-run on unit changes
       // (which would reset measured values whenever the user switches units).
       const currentUnit = unitRef.current;
@@ -386,6 +388,17 @@ export function MeasurePartScreen({
     setIsReestimating(true);
     setConfirmEstimateError(null);
 
+    // Snapshot the current field values (in mm) before the network call so
+    // we can show them as "Previous" if the re-estimate succeeds.
+    const snapL = parseFieldToMm(lengthStr, unit);
+    const snapW = parseFieldToMm(widthStr, unit);
+    const snapH = parseFieldToMm(heightStr, unit);
+    const snapD = parseFieldToMm(diameterStr, unit);
+    const prevSnapshot: PartDimensions | null =
+      snapL != null || snapW != null || snapH != null || snapD != null
+        ? { length: snapL, width: snapW, height: snapH, diameter: snapD }
+        : null;
+
     try {
       const photo = await cameraRef.current.takePictureAsync({
         base64: true,
@@ -423,6 +436,8 @@ export function MeasurePartScreen({
       }
 
       const dims = (await response.json()) as PartDimensions;
+      // Show the pre-estimate values as "Previous" so admins can compare.
+      setPreviousMmDims(prevSnapshot);
       setLengthStr(fmtForUnit(dims.length, unit));
       setWidthStr(fmtForUnit(dims.width, unit));
       setHeightStr(fmtForUnit(dims.height, unit));
@@ -433,9 +448,10 @@ export function MeasurePartScreen({
     } finally {
       setIsReestimating(false);
     }
-  }, [adminToken, unit]);
+  }, [adminToken, unit, lengthStr, widthStr, heightStr, diameterStr]);
 
   const handleConfirm = useCallback(() => {
+    setPreviousMmDims(null);
     onConfirm({
       length: parseFieldToMm(lengthStr, unit),
       width: parseFieldToMm(widthStr, unit),
@@ -799,6 +815,23 @@ export function MeasurePartScreen({
                     );
                   })}
                 </View>
+
+                {previousMmDims && (
+                  <Text style={ms.previousDimsText}>
+                    {[
+                      (previousMmDims.length != null ||
+                        previousMmDims.width != null ||
+                        previousMmDims.height != null)
+                        ? `Previous: ${fmtForUnit(previousMmDims.length, unit)} × ${fmtForUnit(previousMmDims.width, unit)} × ${fmtForUnit(previousMmDims.height, unit)} ${unitLabel(unit)}`
+                        : null,
+                      previousMmDims.diameter != null
+                        ? `⌀ ${fmtForUnit(previousMmDims.diameter, unit)} ${unitLabel(unit)}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join("   ")}
+                  </Text>
+                )}
 
                 {lengthStr && widthStr && heightStr ? (
                   <Text style={ms.dimPreview}>
@@ -1174,6 +1207,14 @@ const ms = StyleSheet.create({
   fieldInputRescanning: {
     borderColor: "#10b981",
     backgroundColor: "#f0fdf8",
+  },
+  previousDimsText: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: "rgba(255,255,255,0.45)",
+    textAlign: "center",
+    letterSpacing: 0.2,
+    marginTop: 2,
   },
   dimPreview: {
     fontSize: 13,
