@@ -124,7 +124,9 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
       const data = await res.json() as { item: InventoryItem };
       const newItem = data.item;
 
-      // If dimensions were entered, persist them — surface any failure to the admin
+      // If dimensions were entered, persist them in a second call.
+      // If the PATCH fails, roll back by deleting the just-created part so we
+      // never leave a dimension-less orphan in the database.
       const hasDims = dimLength || dimWidth || dimHeight || dimDiameter;
       if (hasDims) {
         const dimRes = await fetch(`${API_BASE}/inventory/${newItem.id}/dimensions`, {
@@ -142,7 +144,16 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
         });
         if (!dimRes.ok) {
           const dimErr = await dimRes.json().catch(() => ({})) as { error?: string };
-          setError(dimErr.error ?? "Part was added but dimensions could not be saved. You can edit them from the part detail screen.");
+          // Roll back: delete the created part to avoid leaving an orphan without dimensions.
+          try {
+            await fetch(`${API_BASE}/inventory/${newItem.id}`, {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${adminToken}` },
+            });
+          } catch {
+            // Best-effort cleanup — ignore if it also fails.
+          }
+          setError(dimErr.error ?? "Could not save dimensions. The part was not created. Please try again.");
           return;
         }
       }
