@@ -526,6 +526,32 @@ export default function SearchScreen() {
   // reset it without capturing a stale closure.
   searchMutationRef.current = searchMutation;
 
+  // Consume a pending measure search set by the Photo tab's Measure flow.
+  // When the Photo tab resolves dimensions and navigates the user back here,
+  // this effect picks up the MeasureSearchParams object, applies the dimension
+  // bounds to the active filters, and fires a search automatically.
+  useFocusEffect(useCallback(() => {
+    if (!pendingMeasureSearch) return;
+    setPendingMeasureSearch(null);
+    const merged: FilterValues = {
+      ...filtersRef.current,
+      minLength:   pendingMeasureSearch.minLength   ?? "",
+      maxLength:   pendingMeasureSearch.maxLength   ?? "",
+      minWidth:    pendingMeasureSearch.minWidth    ?? "",
+      maxWidth:    pendingMeasureSearch.maxWidth    ?? "",
+      minHeight:   pendingMeasureSearch.minHeight   ?? "",
+      maxHeight:   pendingMeasureSearch.maxHeight   ?? "",
+      minDiameter: pendingMeasureSearch.minDiameter ?? "",
+      maxDiameter: pendingMeasureSearch.maxDiameter ?? "",
+    };
+    setFilters(merged);
+    setTimeout(() => {
+      const body = buildSearchBody(merged, activeCategorySlugRef.current);
+      searchMutation.mutate({ data: body });
+    }, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingMeasureSearch]));
+
   const handleChange = (key: keyof FilterValues, value: string | number) => {
     setFilters(f => ({ ...f, [key]: value }));
     // Any manual filter edit dismisses the "similar size" suggestion banner

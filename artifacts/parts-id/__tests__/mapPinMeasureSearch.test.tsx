@@ -439,7 +439,14 @@ describe("SearchScreen – useFocusEffect consumes pendingMeasureSearch", () => 
   afterEach(() => { jest.runAllTimers(); jest.useRealTimers(); });
 
   it("calls setPendingMeasureSearch(null) to consume the pending value", async () => {
-    await renderSearch({ pendingMeasureSearch: "100mm 50mm 25mm" });
+    await renderSearch({
+      pendingMeasureSearch: {
+        minLength: "100", maxLength: "100",
+        minWidth: "50", maxWidth: "50",
+        minHeight: "25", maxHeight: "25",
+        minDiameter: "", maxDiameter: "",
+      },
+    });
 
     // Manually fire the focus callback (simulates the screen coming into focus).
     await act(async () => { capturedFocusEffect?.(); });
@@ -447,12 +454,19 @@ describe("SearchScreen – useFocusEffect consumes pendingMeasureSearch", () => 
     expect(mockSetPendingMeasureSearch).toHaveBeenCalledWith(null);
   });
 
-  it("fires searchMutation.mutate inside the 0ms setTimeout with keywords set to the measure string", async () => {
+  it("fires searchMutation.mutate inside the 0ms setTimeout with dimension filters applied", async () => {
     const { buildSearchBody } = require("@/utils/searchHelpers") as {
       buildSearchBody: jest.Mock;
     };
 
-    await renderSearch({ pendingMeasureSearch: "150mm 75mm 30mm" });
+    await renderSearch({
+      pendingMeasureSearch: {
+        minLength: "150", maxLength: "150",
+        minWidth: "75", maxWidth: "75",
+        minHeight: "30", maxHeight: "30",
+        minDiameter: "", maxDiameter: "",
+      },
+    });
 
     await act(async () => {
       capturedFocusEffect?.();
@@ -461,10 +475,10 @@ describe("SearchScreen – useFocusEffect consumes pendingMeasureSearch", () => 
     });
 
     expect(mockSearchMutate).toHaveBeenCalled();
-    // buildSearchBody must have been called with keywords set to the measure string.
+    // buildSearchBody must have been called with the dimension bounds applied.
     // Second arg is activeCategorySlugRef.current which is null by default.
     expect(buildSearchBody).toHaveBeenCalledWith(
-      expect.objectContaining({ keywords: "150mm 75mm 30mm" }),
+      expect.objectContaining({ minLength: "150", maxLength: "150", minWidth: "75", maxWidth: "75", minHeight: "30", maxHeight: "30" }),
       null,
     );
   });
@@ -574,7 +588,7 @@ describe("PhotoScreen – mapPromptBins set after identify+search with binned to
 // =============================================================================
 
 describe("PhotoScreen – MeasurePartScreen confirm (admin search mode)", () => {
-  it("calls setPendingMeasureSearch with a space-joined dimension string", async () => {
+  it("calls setPendingMeasureSearch with a MeasureSearchParams object", async () => {
     await renderPhoto({ isAdmin: true, adminToken: "test-token" });
 
     // MeasurePartScreen was rendered by the admin ternary; onConfirm is captured.
@@ -584,7 +598,12 @@ describe("PhotoScreen – MeasurePartScreen confirm (admin search mode)", () => 
       capturedMeasureConfirm!({ length: 200, width: 100, height: 50, diameter: null });
     });
 
-    expect(mockSetPendingMeasureSearch).toHaveBeenCalledWith("200mm 100mm 50mm");
+    expect(mockSetPendingMeasureSearch).toHaveBeenCalledWith({
+      minLength: "200", maxLength: "200",
+      minWidth: "100", maxWidth: "100",
+      minHeight: "50", maxHeight: "50",
+      minDiameter: "", maxDiameter: "",
+    });
   });
 
   it("navigates to '/' (Search tab root) after confirming dimensions", async () => {
@@ -597,13 +616,18 @@ describe("PhotoScreen – MeasurePartScreen confirm (admin search mode)", () => 
     expect(mockRouterNavigate).toHaveBeenCalledWith("/");
   });
 
-  it("builds a single-term string for diameter-only dims", async () => {
+  it("builds a MeasureSearchParams object for diameter-only dims", async () => {
     await renderPhoto({ isAdmin: true, adminToken: "test-token" });
 
     await act(async () => {
       capturedMeasureConfirm!({ length: null, width: null, height: null, diameter: 38 });
     });
 
-    expect(mockSetPendingMeasureSearch).toHaveBeenCalledWith("38mm");
+    expect(mockSetPendingMeasureSearch).toHaveBeenCalledWith({
+      minLength: "", maxLength: "",
+      minWidth: "", maxWidth: "",
+      minHeight: "", maxHeight: "",
+      minDiameter: "38", maxDiameter: "38",
+    });
   });
 });
