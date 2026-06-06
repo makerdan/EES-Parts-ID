@@ -1,0 +1,603 @@
+/**
+ * ZoneEditorUndoRedo.test.tsx
+ *
+ * Integration tests for the ZoneEditor undo/redo stack.
+ *
+ * Coverage:
+ *   - pushUndo capped at 50 (oldest entry dropped when exceeded)
+ *   - Undo of move   → PATCH with original position
+ *   - Undo of resize → PATCH with original geometry
+ *   - Undo of create → DELETE the created zone
+ *   - Undo of delete → re-POST the zone data
+ *   - Undo of batchMove → PATCH each zone to its pre-drag position
+ *   - Redo after undo  → PATCH with the "after" position
+ *   - Redo stack cleared when a new operation is pushed
+ */
+
+import React from "react";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  afterEach,
+} from "vitest";
+import { render, act, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
+import { ZoneEditor } from "../pages/ZoneEditor";
+
+// ─── Constants mirroring the component ────────────────────────────────────────
+const UNDO_LIMIT = 50;
+
+// ─── Sample zone fixtures ──────────────────────────────────────────────────────
+const ZONE_1 = {
+  id: 1, aisleId: "12", label: "12", sectionNum: 1,
+  isInventory: true, svgX: 100, svgY: 100, svgWidth: 200, svgHeight: 150, sortOrder: 0,
+};
+
+const ZONE_2 = {
+  id: 2, aisleId: "13", label: "13", sectionNum: 1,
+  isInventory: true, svgX: 400, svgY: 100, svgWidth: 200, svgHeight: 150, sortOrder: 1,
+};
+
+// ─── Fetch mock factory ────────────────────────────────────────────────────────
+function makeFetchMock(zones = [ZONE_1]) {
+  return vi.fn((url: string, init?: RequestInit) => {
+    const method = (init?.method ?? "GET").toUpperCase();
+    const s = String(url);
+
+    if (method === "GET" && s.includes("/floor-plan/svg"))
+      return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(""), json: () => Promise.resolve({}) });
+
+    if (method === "GET" && s.includes("/warehouse-zones/coverage"))
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ unsortedCount: 0, uncoveredAisles: [] }), text: () => Promise.resolve("") });
+
+    if (method === "GET" && s.includes("/warehouse-zones"))
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ zones }), text: () => Promise.resolve("") });
+
+    if (method === "PATCH")
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+
+    if (method === "POST" && s.includes("/warehouse-zones"))
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ zone: { ...ZONE_1, id: 99 } }), text: () => Promise.resolve("") });
+
+    if (method === "DELETE")
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+  });
+}
+
+// ─── Render helper ────────────────────────────────────────────────────────────
+async function setupEditor(zones = [ZONE_1]) {
+  const fetchMock = makeFetchMock(zones);
+  global.fetch = fetchMock as typeof global.fetch;
+
+  let container!: HTMLElement;
+
+  await act(async () => {
+    ({ container } = render(<ZoneEditor />));
+  });
+
+  // Stub SVG getBoundingClientRect so screenToSvg is deterministic:
+  //   svgPt(clientX, clientY) = { x: clientX / 0.18, y: clientY / 0.18 }
+  const svgEl = container.querySelector("svg") as SVGSVGElement;
+  vi.spyOn(svgEl, "getBoundingClientRect").mockReturnValue({
+    left: 0, top: 0, right: 800, bottom: 600,
+    width: 800, height: 600, x: 0, y: 0,
+    toJSON: () => ({}),
+  } as DOMRect);
+
+  return { container, svgEl, fetchMock };
+}
+
+// ─── Coordinate notes ─────────────────────────────────────────────────────────
+// INITIAL_SCALE = 0.18, tf = {x:0, y:0, s:0.18}, getBCR.left = top = 0
+//   screenToSvg(cx, cy) = { x: cx/0.18, y: cy/0.18 }
+//
+// ZONE_1 (svgX=100, svgY=100, svgW=200, svgH=150):
+//   screen center ≈ ((100+100)*0.18, (100+75)*0.18) = (36, 31.5)
+const DRAG_FROM = { clientX: 36, clientY: 31 };  // inside ZONE_1
+const DRAG_TO   = { clientX: 150, clientY: 120 }; // arbitrary destination
+
+// ─── DOM helpers ──────────────────────────────────────────────────────────────
+
+function getZoneFillRects(container: HTMLElement): SVGRectElement[] {
+  return [...container.querySelectorAll("rect")].filter(
+    (r) => r.getAttribute("fill")?.startsWith("rgba(0, 112, 255"),
+  ) as SVGRectElement[];
+}
+
+function getHandleRects(container: HTMLElement): SVGRectElement[] {
+  return [...container.querySelectorAll("rect")].filter(
+    (r) => r.getAttribute("fill") === "#f59e0b",
+  ) as SVGRectElement[];
+}
+
+// ─── Assertion helpers ────────────────────────────────────────────────────────
+
+/** Returns all PATCH call bodies for the given zone id (from a slice of calls). */
+function patchBodiesFrom(
+  calls: [unknown, RequestInit][],
+  zoneId: number,
+): Record<string, unknown>[] {
+  return calls
+    .filter(
+      ([url, init]) =>
+        String(url).includes(`/warehouse-zones/${zoneId}`) &&
+        (init?.method ?? "").toUpperCase() === "PATCH",
+    )
+    .map(([, init]) => JSON.parse(init.body as string));
+}
+
+/** Returns all POST call bodies for /warehouse-zones (from a slice of calls). */
+function postBodiesFrom(calls: [unknown, RequestInit][]): Record<string, unknown>[] {
+  return calls
+    .filter(
+      ([url, init]) =>
+        String(url).includes("/warehouse-zones") &&
+        !String(url).match(/\/warehouse-zones\/\d+$/) &&
+        (init?.method ?? "").toUpperCase() === "POST",
+    )
+    .map(([, init]) => JSON.parse(init.body as string));
+}
+
+/** Returns all DELETE call entries for the given zone id (from a slice of calls). */
+function deleteCallsFrom(
+  calls: [unknown, RequestInit][],
+  zoneId: number,
+): [unknown, RequestInit][] {
+  return calls.filter(
+    ([url, init]) =>
+      String(url).includes(`/warehouse-zones/${zoneId}`) &&
+      (init?.method ?? "").toUpperCase() === "DELETE",
+  );
+}
+
+/** Snapshot the current fetchMock call count and return a helper that reads
+ *  only NEW calls since the snapshot. */
+function callsAfter(fetchMock: ReturnType<typeof makeFetchMock>) {
+  const offset = fetchMock.mock.calls.length;
+  return () => fetchMock.mock.calls.slice(offset) as [unknown, RequestInit][];
+}
+
+// ─── Interaction helpers ──────────────────────────────────────────────────────
+
+/** Simulate a move drag on ZONE_1's fill rect. */
+async function simulateMove(
+  zoneRect: SVGRectElement,
+  from = DRAG_FROM,
+  to = DRAG_TO,
+) {
+  await act(async () => {
+    fireEvent.mouseDown(zoneRect, { ...from, button: 0 });
+  });
+  await act(async () => {
+    document.dispatchEvent(new MouseEvent("mousemove", { ...to, bubbles: true }));
+  });
+  await act(async () => {
+    document.dispatchEvent(new MouseEvent("mouseup", { ...to, bubbles: true }));
+  });
+  // Drain the async onUp handler (PATCH + setZones) by waiting for multiple
+  // microtask/macrotask cycles.
+  for (let i = 0; i < 3; i++) {
+    await act(async () => { await Promise.resolve(); });
+  }
+  await act(async () => {});
+}
+
+/** Press Ctrl+Z and wait for the async applyUndoRedo to settle. */
+async function pressUndo(
+  fetchMock: ReturnType<typeof makeFetchMock>,
+  expectPatch = true,
+) {
+  const newCalls = callsAfter(fetchMock);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }),
+  );
+  if (expectPatch) {
+    // Wait until the undo's PATCH call appears in the mock (confirms async op completed)
+    await waitFor(
+      () => {
+        const patches = newCalls().filter(
+          ([, init]) => (init?.method ?? "").toUpperCase() === "PATCH",
+        );
+        expect(patches.length).toBeGreaterThan(0);
+      },
+      { timeout: 3000 },
+    );
+  }
+  await act(async () => {});
+}
+
+/** Press Ctrl+Shift+Z and wait for the async applyUndoRedo to settle. */
+async function pressRedo(
+  fetchMock: ReturnType<typeof makeFetchMock>,
+  expectPatch = true,
+) {
+  const newCalls = callsAfter(fetchMock);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true, bubbles: true }),
+  );
+  if (expectPatch) {
+    await waitFor(
+      () => {
+        const patches = newCalls().filter(
+          ([, init]) => (init?.method ?? "").toUpperCase() === "PATCH",
+        );
+        expect(patches.length).toBeGreaterThan(0);
+      },
+      { timeout: 3000 },
+    );
+  }
+  await act(async () => {});
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe("ZoneEditor — undo / redo stack", () => {
+  // Explicitly call @testing-library cleanup after every test so that
+  // different test instances never pollute each other's DOM queries.
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  // ── 1. Undo of move ──────────────────────────────────────────────────────────
+  it("undo move — PATCHes the zone back to its original position", async () => {
+    const { container, fetchMock } = await setupEditor();
+
+    await simulateMove(getZoneFillRects(container)[0]!);
+
+    const afterMove = callsAfter(fetchMock);
+    const movePatch = patchBodiesFrom(
+      fetchMock.mock.calls as [unknown, RequestInit][],
+      1,
+    );
+    expect(movePatch).toHaveLength(1);
+    expect(movePatch[0]!.svgX).not.toBeCloseTo(ZONE_1.svgX);
+
+    await pressUndo(fetchMock);
+
+    const undoPatches = patchBodiesFrom(afterMove(), 1);
+    expect(undoPatches).toHaveLength(1);
+    expect(undoPatches[0]!.svgX).toBeCloseTo(ZONE_1.svgX);
+    expect(undoPatches[0]!.svgY).toBeCloseTo(ZONE_1.svgY);
+  });
+
+  // ── 2. Undo of resize ────────────────────────────────────────────────────────
+  it("undo resize — PATCHes the zone back to its original geometry", async () => {
+    const { container, fetchMock } = await setupEditor();
+
+    // Select ZONE_1 by clicking its rect then releasing at the same spot
+    // (no mousemove → dragZoneRef stays null → no PATCH, just selection).
+    const zoneRect = getZoneFillRects(container)[0]!;
+    await act(async () => {
+      fireEvent.mouseDown(zoneRect, { ...DRAG_FROM, button: 0 });
+    });
+    await act(async () => {
+      document.dispatchEvent(
+        new MouseEvent("mouseup", { ...DRAG_FROM, bubbles: true }),
+      );
+    });
+    await act(async () => {});
+
+    // Corner/edge handles are now visible for the single-selected zone
+    const handles = getHandleRects(container);
+    expect(handles.length).toBeGreaterThan(0);
+
+    // Drag a handle to resize
+    await act(async () => {
+      fireEvent.mouseDown(handles[0]!, { ...DRAG_FROM, button: 0 });
+    });
+    await act(async () => {
+      document.dispatchEvent(
+        new MouseEvent("mousemove", { ...DRAG_TO, bubbles: true }),
+      );
+    });
+    await act(async () => {
+      document.dispatchEvent(
+        new MouseEvent("mouseup", { ...DRAG_TO, bubbles: true }),
+      );
+    });
+    for (let i = 0; i < 3; i++) {
+      await act(async () => { await Promise.resolve(); });
+    }
+    await act(async () => {});
+
+    const resizePatches = (fetchMock.mock.calls as [unknown, RequestInit][])
+      .filter(
+        ([url, init]) =>
+          String(url).includes("/warehouse-zones/1") &&
+          (init?.method ?? "").toUpperCase() === "PATCH" &&
+          "svgWidth" in JSON.parse(init.body as string),
+      );
+    expect(resizePatches).toHaveLength(1);
+    const resizedGeom = JSON.parse(
+      (resizePatches[0]![1] as RequestInit).body as string,
+    );
+    expect(resizedGeom.svgWidth).not.toBeCloseTo(ZONE_1.svgWidth);
+
+    const afterResize = callsAfter(fetchMock);
+    await pressUndo(fetchMock);
+
+    const undoPatches = patchBodiesFrom(afterResize(), 1);
+    expect(undoPatches).toHaveLength(1);
+    expect(undoPatches[0]!.svgX).toBeCloseTo(ZONE_1.svgX);
+    expect(undoPatches[0]!.svgY).toBeCloseTo(ZONE_1.svgY);
+    expect(undoPatches[0]!.svgWidth).toBeCloseTo(ZONE_1.svgWidth);
+    expect(undoPatches[0]!.svgHeight).toBeCloseTo(ZONE_1.svgHeight);
+  });
+
+  // ── 3. Undo of create ────────────────────────────────────────────────────────
+  it("undo create — DELETEs the zone that was just saved", async () => {
+    const { container, svgEl, fetchMock } = await setupEditor([]);
+
+    // Enter draw mode using within(container) to avoid ambiguity
+    await act(async () => {
+      const drawBtn = within(container).getAllByText("Draw Zone")[0]!;
+      fireEvent.click(drawBtn);
+    });
+
+    // Draw a rect large enough (> MIN_ZONE_PX = 8 / 0.18 ≈ 44 svg units):
+    //   svgPt(10,10) ≈ (55.6, 55.6), svgPt(60,50) ≈ (333, 278) → 278×222 SVG units
+    const drawFrom = { clientX: 10, clientY: 10 };
+    const drawTo   = { clientX: 60, clientY: 50 };
+
+    await act(async () => {
+      fireEvent.mouseDown(svgEl, { ...drawFrom, button: 0 });
+    });
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent("mousemove", { ...drawTo, bubbles: true }));
+    });
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent("mouseup", { ...drawTo, bubbles: true }));
+    });
+    await act(async () => {});
+
+    // Fill in the aisle ID (required for Save Zone to be enabled)
+    await act(async () => {
+      const aisleInput = within(container).getByPlaceholderText("e.g. 12");
+      fireEvent.change(aisleInput, { target: { value: "15" } });
+    });
+
+    // Click "Save Zone" (scoped to this container)
+    const newCalls = callsAfter(fetchMock);
+    await act(async () => {
+      const saveBtn = within(container).getAllByText("Save Zone")[0]!;
+      fireEvent.click(saveBtn);
+    });
+
+    // Wait for the POST to appear
+    await waitFor(() => {
+      expect(postBodiesFrom(newCalls())).toHaveLength(1);
+    });
+    await act(async () => {});
+
+    // Undo should DELETE the newly created zone (id=99 from mock)
+    const afterCreate = callsAfter(fetchMock);
+    await pressUndo(fetchMock, false); // undo create deletes, not patches
+
+    await waitFor(() => {
+      expect(deleteCallsFrom(afterCreate(), 99)).toHaveLength(1);
+    });
+  });
+
+  // ── 4. Undo of delete ────────────────────────────────────────────────────────
+  it("undo delete — re-POSTs the zone to restore it", async () => {
+    const { container, fetchMock } = await setupEditor();
+
+    // Select ZONE_1 via the sidebar zone list (use within to scope query)
+    await act(async () => {
+      const metaEl = within(container).getAllByText(/Aisle 12/)[0]!;
+      fireEvent.click(metaEl.parentElement!);
+    });
+    await act(async () => {});
+
+    // Click the sidebar Delete button (first "Delete" found in this container)
+    await act(async () => {
+      const deleteBtns = within(container).getAllByText("Delete");
+      // Before the confirm dialog, there is only 1 Delete button (in the sidebar)
+      fireEvent.click(deleteBtns[0]!);
+    });
+    await act(async () => {});
+
+    // Confirm dialog is now visible. Its "Delete" button is the destructive confirm.
+    // The confirm dialog renders FIRST in the DOM tree, so its Delete button
+    // has index [0] among all Delete buttons.
+    await act(async () => {
+      const allDeleteBtns = within(container).getAllByText("Delete");
+      fireEvent.click(allDeleteBtns[0]!);
+    });
+
+    // Wait for the DELETE fetch call to appear
+    await waitFor(() => {
+      const delCalls = (fetchMock.mock.calls as [unknown, RequestInit][]).filter(
+        ([url, init]) =>
+          String(url).includes("/warehouse-zones/1") &&
+          (init?.method ?? "").toUpperCase() === "DELETE",
+      );
+      expect(delCalls).toHaveLength(1);
+    });
+    await act(async () => {});
+
+    // Undo delete → re-POST the zone
+    const afterDelete = callsAfter(fetchMock);
+    await pressUndo(fetchMock, false); // undo delete posts, not patches
+
+    await waitFor(() => {
+      const posts = postBodiesFrom(afterDelete());
+      expect(posts).toHaveLength(1);
+      expect(posts[0]).toMatchObject({
+        aisleId: ZONE_1.aisleId,
+        svgX: ZONE_1.svgX,
+        svgY: ZONE_1.svgY,
+        svgWidth: ZONE_1.svgWidth,
+        svgHeight: ZONE_1.svgHeight,
+      });
+    });
+  });
+
+  // ── 5. Undo of batchMove ─────────────────────────────────────────────────────
+  it("undo batchMove — PATCHes each zone back to its pre-drag position", async () => {
+    const { container, fetchMock } = await setupEditor([ZONE_1, ZONE_2]);
+
+    // Select ZONE_1 then Shift+click ZONE_2 via the sidebar zone list
+    await act(async () => {
+      const zone1Meta = within(container).getAllByText(/Aisle 12/)[0]!;
+      fireEvent.click(zone1Meta.parentElement!);
+    });
+    await act(async () => {});
+
+    await act(async () => {
+      const zone2Meta = within(container).getAllByText(/Aisle 13/)[0]!;
+      fireEvent.click(zone2Meta.parentElement!, { shiftKey: true });
+    });
+    await act(async () => {});
+
+    // With 2 zones selected, mousedown on ZONE_1's fill rect → multiMove
+    const zoneRects = getZoneFillRects(container);
+    expect(zoneRects.length).toBeGreaterThanOrEqual(2);
+
+    await act(async () => {
+      fireEvent.mouseDown(zoneRects[0]!, { ...DRAG_FROM, button: 0 });
+    });
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent("mousemove", { ...DRAG_TO, bubbles: true }));
+    });
+    await act(async () => {
+      document.dispatchEvent(new MouseEvent("mouseup", { ...DRAG_TO, bubbles: true }));
+    });
+    for (let i = 0; i < 3; i++) {
+      await act(async () => { await Promise.resolve(); });
+    }
+    await act(async () => {});
+
+    // Verify both zones were PATCHed
+    const allPatchCalls = (fetchMock.mock.calls as [unknown, RequestInit][]).filter(
+      ([, init]) => (init?.method ?? "").toUpperCase() === "PATCH",
+    );
+    expect(allPatchCalls.length).toBeGreaterThanOrEqual(2);
+
+    // Undo batchMove → restore both zones
+    const afterBatch = callsAfter(fetchMock);
+    await pressUndo(fetchMock);
+
+    await waitFor(() => {
+      const undo1 = patchBodiesFrom(afterBatch(), 1);
+      const undo2 = patchBodiesFrom(afterBatch(), 2);
+      expect(undo1).toHaveLength(1);
+      expect(undo2).toHaveLength(1);
+    });
+
+    const newCalls = afterBatch();
+    const undo1 = patchBodiesFrom(newCalls, 1);
+    const undo2 = patchBodiesFrom(newCalls, 2);
+    expect(undo1[0]!.svgX).toBeCloseTo(ZONE_1.svgX);
+    expect(undo1[0]!.svgY).toBeCloseTo(ZONE_1.svgY);
+    expect(undo2[0]!.svgX).toBeCloseTo(ZONE_2.svgX);
+    expect(undo2[0]!.svgY).toBeCloseTo(ZONE_2.svgY);
+  });
+
+  // ── 6. Redo after undo ──────────────────────────────────────────────────────
+  it("redo after undo — PATCHes the zone to the post-move position", async () => {
+    const { container, fetchMock } = await setupEditor();
+
+    await simulateMove(getZoneFillRects(container)[0]!);
+
+    // Capture the "after" position from the initial move PATCH
+    const movePatches = patchBodiesFrom(
+      fetchMock.mock.calls as [unknown, RequestInit][],
+      1,
+    );
+    expect(movePatches).toHaveLength(1);
+    const afterPos = movePatches[0]!;
+
+    await pressUndo(fetchMock);
+
+    // Now redo — track only calls that happen after this point
+    const afterUndo = callsAfter(fetchMock);
+    await pressRedo(fetchMock);
+
+    await waitFor(() => {
+      const redoPatches = patchBodiesFrom(afterUndo(), 1);
+      expect(redoPatches).toHaveLength(1);
+    });
+
+    const redoPatches = patchBodiesFrom(afterUndo(), 1);
+    expect(redoPatches[0]!.svgX).toBeCloseTo(afterPos.svgX as number);
+    expect(redoPatches[0]!.svgY).toBeCloseTo(afterPos.svgY as number);
+  });
+
+  // ── 7. Redo stack cleared on new operation ───────────────────────────────────
+  it("performing a new operation clears the redo stack", async () => {
+    const { container, fetchMock } = await setupEditor();
+
+    // Move → undo → redo stack now has one entry
+    await simulateMove(getZoneFillRects(container)[0]!);
+    await pressUndo(fetchMock);
+
+    // A second move pushes a new entry and clears the redo stack
+    await simulateMove(getZoneFillRects(container)[0]!);
+
+    // Attempt redo — should be a no-op (empty redo stack)
+    const afterSecondMove = callsAfter(fetchMock);
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true, bubbles: true }),
+    );
+
+    // Wait long enough for any spurious async operations to surface
+    await act(async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    await act(async () => {});
+
+    // No PATCH from redo (redo stack was cleared by the second move)
+    const redoPatches = patchBodiesFrom(afterSecondMove(), 1);
+    expect(redoPatches).toHaveLength(0);
+  });
+
+  // ── 8. Push limit — oldest entry dropped at UNDO_LIMIT + 1 ──────────────────
+  it(
+    `pushUndo is capped at ${UNDO_LIMIT}: the oldest entry is dropped when exceeded`,
+    async () => {
+      const { container, fetchMock } = await setupEditor();
+
+      // Push UNDO_LIMIT + 1 entries onto the undo stack via move drags.
+      // Each drag reuses the same from/to coords (the mock always returns the
+      // original position so the zone "snaps back" after each fetchZones,
+      // allowing the next move to start from the same state).
+      for (let i = 0; i < UNDO_LIMIT + 1; i++) {
+        await simulateMove(getZoneFillRects(container)[0]!);
+      }
+
+      // Undo UNDO_LIMIT + 1 times and count successful PATCHes.
+      let patchCount = 0;
+      for (let i = 0; i < UNDO_LIMIT + 1; i++) {
+        const snapshot = callsAfter(fetchMock);
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }),
+        );
+        // Wait a fixed amount: if a PATCH appears, this undo was live;
+        // if nothing appears after a short delay, the stack was already empty.
+        try {
+          await waitFor(
+            () => {
+              expect(patchBodiesFrom(snapshot(), 1)).toHaveLength(1);
+            },
+            { timeout: 800 },
+          );
+          patchCount++;
+        } catch {
+          // No PATCH appeared → undo stack was empty (no-op)
+        }
+        await act(async () => {});
+      }
+
+      // Exactly UNDO_LIMIT (50) undos should have triggered a PATCH;
+      // the (UNDO_LIMIT + 1)th was a no-op because the oldest entry was dropped.
+      expect(patchCount).toBe(UNDO_LIMIT);
+    },
+    // This test does 101 async operations; give it ample time.
+    30_000,
+  );
+});
