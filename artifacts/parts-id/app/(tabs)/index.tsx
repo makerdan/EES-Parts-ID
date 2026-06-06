@@ -195,30 +195,6 @@ export default function SearchScreen() {
     ]);
   }, [setPinnedParts]);
 
-  useFocusEffect(useCallback(() => {
-    if (!pendingMeasureSearch) return;
-    const params = pendingMeasureSearch;
-    setPendingMeasureSearch(null);
-    setFilters((prev) => ({
-      ...prev,
-      minLength: params.minLength ?? prev.minLength,
-      maxLength: params.maxLength ?? prev.maxLength,
-      minWidth: params.minWidth ?? prev.minWidth,
-      maxWidth: params.maxWidth ?? prev.maxWidth,
-      minHeight: params.minHeight ?? prev.minHeight,
-      maxHeight: params.maxHeight ?? prev.maxHeight,
-      minDiameter: params.minDiameter ?? prev.minDiameter,
-      maxDiameter: params.maxDiameter ?? prev.maxDiameter,
-    }));
-    // Clear any stale pins from a previous search before dispatching the new
-    // dimension-filter search, so the map starts clean for this session.
-    setPinnedParts([]);
-    // Trigger search immediately with the dimension filters applied
-    setTimeout(() => {
-      const body = buildSearchBody({ ...filtersRef.current, ...params }, activeCategorySlugRef.current);
-      searchMutation.mutate({ data: body });
-    }, 50);
-  }, [pendingMeasureSearch, setPendingMeasureSearch, setPinnedParts]));
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
