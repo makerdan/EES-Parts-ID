@@ -1890,12 +1890,31 @@ router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
 });
 
 // ── Rate limiter for the open estimate-dimensions/search endpoint ──────────────
-// Stores per-IP request timestamps; prunes entries older than the window on each
-// hit so memory stays bounded even under sustained traffic.
+// Dual-bucket strategy:
 //
-// Both values are configurable via environment variables so operators can tune
-// them without a code change or redeploy:
-//   ESTIMATE_SEARCH_RATE_LIMIT  — max requests per window (default 10)
+//   • Per-device bucket  (key = "device:<X-Device-ID>"):
+//       Applied when the client supplies a valid X-Device-ID header.
+//       Gives each install its own independent ESTIMATE_SEARCH_RATE_LIMIT
+//       quota so that multiple devices behind the same NAT / corporate Wi-Fi
+//       do not share a single pool.
+//
+//   • Per-IP bucket (key = "ip:<remoteIP>"):
+//       Always applied.  Acts as an anti-abuse ceiling so that a bad actor
+//       who rotates fake X-Device-ID values on every request cannot bypass
+//       the limiter — their IP bucket fills up regardless.
+//       When X-Device-ID is supplied, a higher ceiling
+//       (ESTIMATE_SEARCH_IP_CEILING) is used so that a handful of legitimate
+//       devices behind NAT can coexist comfortably.
+//       When the header is absent the standard limit applies (original behaviour).
+//
+// Both buckets must pass for the request to proceed; either one over its
+// limit yields a 429 with the same response shape as before.
+//
+// All three values are configurable via environment variables so operators can
+// tune them without a code change or redeploy:
+//   ESTIMATE_SEARCH_RATE_LIMIT  — max requests per window per device (default 10)
+//   ESTIMATE_SEARCH_IP_CEILING  — max requests per window per IP when device IDs
+//                                  are in use (default 50)
 //   ESTIMATE_SEARCH_WINDOW_MS   — sliding window length in ms (default 60000)
 function parsePositiveInt(raw: string | undefined, defaultValue: number, name: string): number {
   if (raw == null) return defaultValue;
@@ -1915,6 +1934,11 @@ const ESTIMATE_SEARCH_RATE_LIMIT: number = parsePositiveInt(
   10,
   "ESTIMATE_SEARCH_RATE_LIMIT",
 );
+const ESTIMATE_SEARCH_IP_CEILING: number = parsePositiveInt(
+  process.env["ESTIMATE_SEARCH_IP_CEILING"],
+  50,
+  "ESTIMATE_SEARCH_IP_CEILING",
+);
 const ESTIMATE_SEARCH_WINDOW_MS: number = parsePositiveInt(
   process.env["ESTIMATE_SEARCH_WINDOW_MS"],
   60_000,
@@ -1924,6 +1948,7 @@ const ESTIMATE_SEARCH_WINDOW_MS: number = parsePositiveInt(
 logger.info(
   {
     ESTIMATE_SEARCH_RATE_LIMIT,
+    ESTIMATE_SEARCH_IP_CEILING,
     ESTIMATE_SEARCH_WINDOW_MS,
   },
   "estimate-dimensions/search rate limit config",
@@ -1952,21 +1977,53 @@ function estimateSearchRateLimiter(
   // X-Forwarded-For, so clients cannot spoof an arbitrary IP by injecting their
   // own X-Forwarded-For header.
   const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+  const ipKey = `ip:${ip}`;
+
+  // Defensively parse the header — Express may expose it as string[] when the
+  // same header is sent multiple times.  Ignore the value in that case.
+  const rawDeviceId = req.headers["x-device-id"];
+  const deviceId =
+    typeof rawDeviceId === "string" ? rawDeviceId.trim() || undefined : undefined;
 
   const now = Date.now();
   const windowStart = now - ESTIMATE_SEARCH_WINDOW_MS;
 
-  const hits = (estimateSearchHits.get(ip) ?? []).filter((t) => t > windowStart);
+  // ── Per-device check (only when header is present) ──────────────────────────
+  if (deviceId !== undefined) {
+    const deviceKey  = `device:${deviceId}`;
+    const deviceHits = (estimateSearchHits.get(deviceKey) ?? []).filter(
+      (t) => t > windowStart,
+    );
+    if (deviceHits.length >= ESTIMATE_SEARCH_RATE_LIMIT) {
+      res.status(429).json({
+        error: `Rate limit exceeded — maximum ${ESTIMATE_SEARCH_RATE_LIMIT} requests per minute for dimension estimation.`,
+      });
+      return;
+    }
+    // Commit the device hit now; IP hit is committed below only if IP passes.
+    deviceHits.push(now);
+    estimateSearchHits.set(deviceKey, deviceHits);
+  }
 
-  if (hits.length >= ESTIMATE_SEARCH_RATE_LIMIT) {
+  // ── Per-IP check (always enforced) ──────────────────────────────────────────
+  // Use the higher ceiling when device IDs are in play so legitimate devices
+  // on a shared IP aren't collectively squeezed by the standard per-device limit.
+  const ipLimit = deviceId !== undefined
+    ? ESTIMATE_SEARCH_IP_CEILING
+    : ESTIMATE_SEARCH_RATE_LIMIT;
+
+  const ipHits = (estimateSearchHits.get(ipKey) ?? []).filter(
+    (t) => t > windowStart,
+  );
+  if (ipHits.length >= ipLimit) {
     res.status(429).json({
       error: `Rate limit exceeded — maximum ${ESTIMATE_SEARCH_RATE_LIMIT} requests per minute for dimension estimation.`,
     });
     return;
   }
 
-  hits.push(now);
-  estimateSearchHits.set(ip, hits);
+  ipHits.push(now);
+  estimateSearchHits.set(ipKey, ipHits);
   next();
 }
 
