@@ -106,19 +106,79 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "";
 
-async function fetchAdminProfile(token: string): Promise<{ dimensionUnit?: string } | null> {
+type AdminProfilePayload = {
+  dimensionUnit?: string;
+  textSize?: string;
+  themeMode?: string;
+  defaultConfidenceThreshold?: number;
+  scanSound?: boolean;
+};
+
+/**
+ * Merge a server profile payload into existing local settings, validating each
+ * field before applying it. Returns the same object reference if nothing changed
+ * so callers can use reference equality to skip unnecessary saves.
+ */
+function mergeProfileIntoSettings(prev: AppSettings, profile: AdminProfilePayload): AppSettings {
+  let next = prev;
+
+  if (
+    profile.dimensionUnit &&
+    VALID_DIMENSION_UNITS.includes(profile.dimensionUnit as DimensionUnit) &&
+    prev.dimensionUnit !== profile.dimensionUnit
+  ) {
+    next = { ...next, dimensionUnit: profile.dimensionUnit as DimensionUnit };
+  }
+
+  if (
+    profile.textSize &&
+    VALID_TEXT_SIZES.includes(profile.textSize as TextSize) &&
+    prev.textSize !== profile.textSize
+  ) {
+    next = { ...next, textSize: profile.textSize as TextSize };
+  }
+
+  if (
+    profile.themeMode &&
+    VALID_THEME_MODES.includes(profile.themeMode as ThemeMode) &&
+    prev.themeMode !== profile.themeMode
+  ) {
+    next = { ...next, themeMode: profile.themeMode as ThemeMode };
+  }
+
+  if (
+    typeof profile.defaultConfidenceThreshold === "number" &&
+    Number.isInteger(profile.defaultConfidenceThreshold) &&
+    profile.defaultConfidenceThreshold >= 0 &&
+    profile.defaultConfidenceThreshold <= 100 &&
+    prev.defaultConfidenceThreshold !== profile.defaultConfidenceThreshold
+  ) {
+    next = { ...next, defaultConfidenceThreshold: profile.defaultConfidenceThreshold };
+  }
+
+  if (
+    typeof profile.scanSound === "boolean" &&
+    prev.scanSound !== profile.scanSound
+  ) {
+    next = { ...next, scanSound: profile.scanSound };
+  }
+
+  return next;
+}
+
+async function fetchAdminProfile(token: string): Promise<AdminProfilePayload | null> {
   try {
     const resp = await fetch(`${API_BASE}/admin/profile`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!resp.ok) return null;
-    return await resp.json() as { dimensionUnit?: string };
+    return await resp.json() as AdminProfilePayload;
   } catch {
     return null;
   }
 }
 
-async function pushAdminProfile(token: string, dimensionUnit: string): Promise<void> {
+async function pushAdminProfile(token: string, settings: AppSettings): Promise<void> {
   try {
     await fetch(`${API_BASE}/admin/profile`, {
       method: "PUT",
@@ -126,7 +186,13 @@ async function pushAdminProfile(token: string, dimensionUnit: string): Promise<v
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ dimensionUnit }),
+      body: JSON.stringify({
+        dimensionUnit: settings.dimensionUnit,
+        textSize: settings.textSize,
+        themeMode: settings.themeMode,
+        defaultConfidenceThreshold: settings.defaultConfidenceThreshold,
+        scanSound: settings.scanSound,
+      }),
     });
   } catch {
     // Background sync — swallow errors silently
@@ -268,17 +334,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false);
 
       // Background: if already logged in as admin, pull server profile and
-      // apply dimensionUnit so the setting follows the admin across devices.
+      // apply all portable settings so the admin's preferences follow them across devices.
       if (token) {
         fetchAdminProfile(token).then(profile => {
-          if (!profile?.dimensionUnit) return;
-          if (!VALID_DIMENSION_UNITS.includes(profile.dimensionUnit as DimensionUnit)) return;
-          const unit = profile.dimensionUnit as DimensionUnit;
+          if (!profile) return;
           setSettings(prev => {
-            if (prev.dimensionUnit === unit) return prev;
-            const next = { ...prev, dimensionUnit: unit };
-            saveSettings(next);
-            return next;
+            const merged = mergeProfileIntoSettings(prev, profile);
+            if (merged === prev) return prev;
+            saveSettings(merged);
+            if (merged.themeMode !== prev.themeMode) applyThemeMode(merged.themeMode);
+            return merged;
           });
         });
       }
@@ -293,10 +358,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const next = { ...prev, [key]: value };
       saveSettings(next);
       if (key === "themeMode") applyThemeMode(value as ThemeMode);
-      // Background: push dimensionUnit change to the server so it follows the
-      // admin across devices. Uses the ref so the closure doesn't go stale.
-      if (key === "dimensionUnit" && adminTokenRef.current) {
-        pushAdminProfile(adminTokenRef.current, value as string);
+      // Background: push all portable settings to the server whenever any of
+      // them change so the admin's preferences follow them across devices.
+      const PORTABLE_KEYS: (keyof AppSettings)[] = [
+        "dimensionUnit", "textSize", "themeMode", "defaultConfidenceThreshold", "scanSound",
+      ];
+      if (PORTABLE_KEYS.includes(key) && adminTokenRef.current) {
+        pushAdminProfile(adminTokenRef.current, next);
       }
       return next;
     });
@@ -352,17 +420,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await secureSet(ADMIN_TOKEN_KEY, body.token);
       setAdminToken(body.token);
 
-      // Background: pull server profile so dimensionUnit is immediately
-      // applied on this device without blocking the login response.
+      // Background: pull server profile so all portable settings are
+      // immediately applied on this device without blocking the login response.
       fetchAdminProfile(body.token).then(profile => {
-        if (!profile?.dimensionUnit) return;
-        if (!VALID_DIMENSION_UNITS.includes(profile.dimensionUnit as DimensionUnit)) return;
-        const unit = profile.dimensionUnit as DimensionUnit;
+        if (!profile) return;
         setSettings(prev => {
-          if (prev.dimensionUnit === unit) return prev;
-          const next = { ...prev, dimensionUnit: unit };
-          saveSettings(next);
-          return next;
+          const merged = mergeProfileIntoSettings(prev, profile);
+          if (merged === prev) return prev;
+          saveSettings(merged);
+          if (merged.themeMode !== prev.themeMode) applyThemeMode(merged.themeMode);
+          return merged;
         });
       });
 
