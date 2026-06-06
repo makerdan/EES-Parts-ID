@@ -33,7 +33,126 @@ function extractSvgInner(svgRaw: string): string {
     .replace(/<\/svg>\s*$/, "");
 }
 
+// Extract the natural dimensions (viewBox or width/height) from a raw SVG string
+// so the rasterizer can render it at the correct aspect ratio.
+function extractSvgDims(svgRaw: string): { w: number; h: number } {
+  const vbMatch = svgRaw.match(/viewBox\s*=\s*["']([^"']+)["']/);
+  if (vbMatch) {
+    const parts = vbMatch[1].trim().split(/[\s,]+/).map(Number);
+    if (parts.length >= 4 && parts[2] > 0 && parts[3] > 0) {
+      return { w: parts[2], h: parts[3] };
+    }
+  }
+  const wMatch = svgRaw.match(/\bwidth\s*=\s*["']?(\d+(?:\.\d+)?)["']?/);
+  const hMatch = svgRaw.match(/\bheight\s*=\s*["']?(\d+(?:\.\d+)?)["']?/);
+  const w = wMatch ? parseFloat(wMatch[1]) : 2000;
+  const h = hMatch ? parseFloat(hMatch[1]) : 1000;
+  return { w, h };
+}
+
 const svgFallbackInner = extractSvgInner(warehouseMapFallback);
+const svgFallbackDims = extractSvgDims(warehouseMapFallback);
+
+// ── Flood-fill helpers (module-level, no React deps) ──────────────────────────
+
+// Cache keyed on svgInner string to avoid re-rasterizing on every click.
+let _rasterCache: { key: string; imageData: ImageData; w: number; h: number } | null = null;
+
+async function rasterizeSvg(
+  svgInner: string,
+  dims: { w: number; h: number },
+): Promise<{ imageData: ImageData; w: number; h: number }> {
+  if (_rasterCache && _rasterCache.key === svgInner) {
+    return { imageData: _rasterCache.imageData, w: _rasterCache.w, h: _rasterCache.h };
+  }
+  // Render at up to 1024 px wide to keep memory and processing time bounded.
+  const maxPx = 1024;
+  const aspect = dims.h / dims.w;
+  const cw = Math.min(Math.round(dims.w), maxPx);
+  const ch = Math.max(1, Math.round(cw * aspect));
+
+  const svgStr = [
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"`,
+    ` viewBox="0 0 ${dims.w} ${dims.h}" width="${cw}" height="${ch}">`,
+    svgInner,
+    `</svg>`,
+  ].join("");
+
+  const blob = new Blob([svgStr], { type: "image/svg+xml" });
+  const url = URL.createObjectURL(blob);
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { URL.revokeObjectURL(url); reject(new Error("No 2D canvas context")); return; }
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      const imageData = ctx.getImageData(0, 0, cw, ch);
+      _rasterCache = { key: svgInner, imageData, w: cw, h: ch };
+      resolve({ imageData, w: cw, h: ch });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Failed to rasterize floor plan SVG")); };
+    img.src = url;
+  });
+}
+
+// BFS flood fill returning the pixel bounding box of the connected light region.
+// Returns null if the seed pixel is dark (i.e. user clicked on a wall).
+function floodFillBounds(
+  imageData: ImageData,
+  startX: number,
+  startY: number,
+  darkThreshold = 200,
+): { x: number; y: number; w: number; h: number } | null {
+  const { data, width, height } = imageData;
+
+  const isLight = (x: number, y: number): boolean => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return false;
+    const i = (y * width + x) * 4;
+    const a = data[i + 3];
+    if (a < 128) return true; // transparent pixels treated as white background
+    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    return lum >= darkThreshold;
+  };
+
+  if (!isLight(startX, startY)) return null;
+
+  const visited = new Uint8Array(width * height);
+  // Use a flat integer stack (pos = y * width + x) with push/pop (O(1) dequeue).
+  const stack: number[] = [];
+  const seedPos = startY * width + startX;
+  visited[seedPos] = 1;
+  stack.push(seedPos);
+
+  let minX = startX, maxX = startX, minY = startY, maxY = startY;
+
+  while (stack.length > 0) {
+    const pos = stack.pop()!;
+    const x = pos % width;
+    const y = (pos / width) | 0;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+
+    const neighbors: [number, number][] = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+    for (const [nx, ny] of neighbors) {
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+        const vi = ny * width + nx;
+        if (!visited[vi] && isLight(nx, ny)) {
+          visited[vi] = 1;
+          stack.push(vi);
+        }
+      }
+    }
+  }
+
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HANDLE_PX = 6; // handle visual size in screen pixels
@@ -58,7 +177,7 @@ interface Zone {
 interface Tf { x: number; y: number; s: number }
 interface Pt { x: number; y: number }
 type Handle = "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
-type Mode = "pan" | "draw";
+type Mode = "pan" | "draw" | "fill";
 
 export interface FormState {
   aisleId: string;
@@ -76,7 +195,9 @@ type IxState =
   | { t: "move"; id: number; ox: number; oy: number }
   | { t: "resize"; id: number; handle: Handle; ax: number; ay: number }
   | { t: "rubber"; x1: number; y1: number; x2: number; y2: number; shift: boolean }
-  | { t: "multiMove"; startX: number; startY: number };
+  | { t: "multiMove"; startX: number; startY: number }
+  // Fill: waits for mouseup with < 5 px movement before triggering the async fill.
+  | { t: "fillPending"; sx: number; sy: number };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -136,8 +257,12 @@ export function ZoneEditor() {
   const [loadError, setLoadError] = useState("");
   // Floor plan SVG: starts with bundled fallback, then replaced by latest upload.
   const [svgInner, setSvgInner] = useState<string>(svgFallbackInner);
+  // Natural coordinate dimensions of the floor plan SVG (for rasterizer mapping).
+  const [svgDims, setSvgDims] = useState<{ w: number; h: number }>(svgFallbackDims);
   const [tf, setTf] = useState<Tf>({ x: 0, y: 0, s: INITIAL_SCALE });
   const [mode, setMode] = useState<Mode>("pan");
+  // True while the async rasterize+fill operation is in progress.
+  const [fillLoading, setFillLoading] = useState(false);
 
   // Multi-select: a Set of selected zone IDs
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -208,12 +333,18 @@ export function ZoneEditor() {
   const dragZoneRef = useRef<Zone | null>(null);
   const modeRef = useRef(mode);
   const selectedIdsRef = useRef(selectedIds);
+  const svgInnerRef = useRef(svgInner);
+  const svgDimsRef = useRef(svgDims);
+  const fillLoadingRef = useRef(false);
 
   useEffect(() => { tfRef.current = tf; }, [tf]);
   useEffect(() => { zonesRef.current = zones; }, [zones]);
   useEffect(() => { dragZoneRef.current = dragZone; }, [dragZone]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
+  useEffect(() => { svgInnerRef.current = svgInner; }, [svgInner]);
+  useEffect(() => { svgDimsRef.current = svgDims; }, [svgDims]);
+  useEffect(() => { fillLoadingRef.current = fillLoading; }, [fillLoading]);
 
   // Fetch the latest uploaded floor plan. Tries the local API first; if it
   // returns 404 (nothing uploaded in this env), falls back to the production
@@ -228,7 +359,11 @@ export function ZoneEditor() {
         try {
           const res = await fetch(url);
           if (res.ok) {
-            setSvgInner(extractSvgInner(await res.text()));
+            const raw = await res.text();
+            setSvgInner(extractSvgInner(raw));
+            setSvgDims(extractSvgDims(raw));
+            // Invalidate the raster cache whenever the floor plan changes.
+            _rasterCache = null;
             return;
           }
         } catch {}
@@ -661,6 +796,64 @@ export function ZoneEditor() {
     return screenToSvg(clientX, clientY, rect, tfRef.current);
   }, []);
 
+  // ── Fill-mode click handler ─────────────────────────────────────────────────
+  // Stable callback (reads from refs) — safe to call from any event handler.
+  const handleFillClickRef = useRef<(clientX: number, clientY: number) => Promise<void>>(
+    async () => { /* placeholder before first render */ }
+  );
+
+  const handleFillClick = useCallback(async (clientX: number, clientY: number) => {
+    // Re-entrancy guard: ignore concurrent fill requests.
+    if (fillLoadingRef.current) return;
+    setFillLoading(true);
+    try {
+      const raster = await rasterizeSvg(svgInnerRef.current, svgDimsRef.current);
+      const pt = getSvgPt(clientX, clientY);
+
+      // Map SVG user-unit coordinates to raster pixel coordinates.
+      const dims = svgDimsRef.current;
+      const px = Math.round((pt.x / dims.w) * raster.w);
+      const py = Math.round((pt.y / dims.h) * raster.h);
+
+      const bounds = floodFillBounds(raster.imageData, px, py);
+      if (!bounds) {
+        toast.error("Click inside a white area, not on a line.");
+        return;
+      }
+
+      // Convert pixel bounding box back to SVG user units.
+      const scaleX = dims.w / raster.w;
+      const scaleY = dims.h / raster.h;
+      const rect = {
+        x: bounds.x * scaleX,
+        y: bounds.y * scaleY,
+        w: bounds.w * scaleX,
+        h: bounds.h * scaleY,
+      };
+
+      // Flash the detected rectangle as a draftRect (~300 ms) for visual feedback.
+      setDraftRect(rect);
+      await new Promise<void>((r) => setTimeout(r, 300));
+      setDraftRect(null);
+
+      // Commit as pendingRect — opens the sidebar form (same flow as Draw mode).
+      setPendingRect(rect);
+      setSelectedIds(new Set());
+      parityOverrideRef.current = false;
+      setForm({ aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0 });
+
+      // Auto-switch back to Pan so a stray click doesn't trigger another fill.
+      setMode("pan");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Fill failed");
+    } finally {
+      setFillLoading(false);
+    }
+  }, [getSvgPt]);
+
+  // Keep the ref in sync so onSvgMouseDown always calls the latest version.
+  useEffect(() => { handleFillClickRef.current = handleFillClick; }, [handleFillClick]);
+
   // ── Document-level mouse handlers (global capture for drag reliability) ─────
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -763,6 +956,16 @@ export function ZoneEditor() {
         setSelectedIds(new Set());
         parityOverrideRef.current = false;
         setForm({ aisleId: "", label: "", sectionParity: "all", isInventory: true, sortOrder: 0 });
+        return;
+      }
+
+      // Fill: only trigger if the pointer barely moved (< 5 px) — true click, not drag.
+      if (state.t === "fillPending") {
+        const dx = e.clientX - state.sx;
+        const dy = e.clientY - state.sy;
+        if (Math.hypot(dx, dy) < 5) {
+          void handleFillClickRef.current(state.sx, state.sy);
+        }
         return;
       }
 
@@ -871,6 +1074,13 @@ export function ZoneEditor() {
           tx: tfRef.current.x, ty: tfRef.current.y,
         };
       }
+    } else if (modeRef.current === "fill") {
+      // Cancel any existing pending zone first (consistent with draw mode).
+      setPendingRect(null);
+      setDraftRect(null);
+      // Record screen position; the actual fill fires on mouseup if movement < 5px.
+      // This prevents accidental fills when the user was just trying to pan.
+      ixRef.current = { t: "fillPending", sx: e.clientX, sy: e.clientY };
     } else {
       const p = getSvgPt(e.clientX, e.clientY);
       ixRef.current = { t: "draw", x1: p.x, y1: p.y, x2: p.x, y2: p.y };
@@ -1069,17 +1279,22 @@ export function ZoneEditor() {
           ⚠ DEV TOOL — Warehouse Zone Editor — internal use only
         </span>
         <div style={styles.modeBar}>
-          <ModeBtn active={mode === "pan"} onClick={() => setMode("pan")}>
+          <ModeBtn active={mode === "pan"} onClick={() => { setMode("pan"); }}>
             Pan / Select
           </ModeBtn>
-          <ModeBtn active={mode === "draw"} onClick={() => setMode("draw")}>
+          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setPendingRect(null); }}>
             Draw Zone
+          </ModeBtn>
+          <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setPendingRect(null); }}>
+            ⬛ Fill
           </ModeBtn>
         </div>
         <span style={styles.hint}>
           scroll-zoom · {mode === "pan"
             ? "drag to pan · Shift+drag to select · Shift+click to multi-select · drag selected to move all"
-            : "drag to draw"}
+            : mode === "fill"
+              ? "click inside an enclosed white area to auto-detect its bounds"
+              : "drag to draw"}
           {" "}· {(tf.s * 100).toFixed(0)}%
         </span>
       </div>
@@ -1093,12 +1308,15 @@ export function ZoneEditor() {
             overflow="hidden"
             style={{
               ...styles.svg,
-              cursor:
-                mode === "pan"
+              cursor: fillLoading
+                ? "wait"
+                : mode === "pan"
                   ? ixRef.current.t === "pan"
                     ? "grabbing"
                     : "grab"
-                  : "crosshair",
+                  : mode === "fill"
+                    ? "crosshair"
+                    : "crosshair",
             }}
             onMouseDown={onSvgMouseDown}
           >
@@ -1420,7 +1638,11 @@ export function ZoneEditor() {
               <div style={styles.emptyHint}>
                 {mode === "draw"
                   ? "Click and drag on the map to draw a new zone."
-                  : "Click a zone to select it. Shift+click to multi-select. Shift+drag background for rubber-band select."}
+                  : mode === "fill"
+                    ? fillLoading
+                      ? "Detecting zone bounds…"
+                      : "Click inside any enclosed white area on the floor plan to auto-detect its bounding rectangle."
+                    : "Click a zone to select it. Shift+click to multi-select. Shift+drag background for rubber-band select."}
               </div>
             )}
           </SideSection>
