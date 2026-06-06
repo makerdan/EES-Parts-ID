@@ -29,6 +29,27 @@ export const SETTINGS_KEY = "parts_id_settings_v1";
 export type TextSize = "small" | "normal" | "large";
 export type ThemeMode = "light" | "dark" | "system";
 export type DimensionUnit = "mm" | "cm" | "in";
+
+export type PinnedPart = {
+  binCode: string;
+  label: string;
+  aisleNum: number;
+  variant?: boolean;
+  /** ID of the parent search result item — used to scope variant pin removal to a single card. */
+  groupId?: number;
+};
+
+export type MeasureSearchParams = {
+  minLength?: string;
+  maxLength?: string;
+  minWidth?: string;
+  maxWidth?: string;
+  minHeight?: string;
+  maxHeight?: string;
+  minDiameter?: string;
+  maxDiameter?: string;
+};
+
 export type AppSettings = {
   textSize: TextSize;
   defaultConfidenceThreshold: number;
@@ -228,6 +249,12 @@ interface AppContextValue {
   // Cross-tab navigation: pending zone to open on the Map tab
   pendingMapFocus: MapFocus | null;
   setPendingMapFocus: (focus: MapFocus | null) => void;
+  // Map pin overlay: parts whose bin locations should be highlighted on the map
+  pinnedParts: PinnedPart[];
+  setPinnedParts: React.Dispatch<React.SetStateAction<PinnedPart[]>>;
+  // Cross-tab measure-to-search: dimension values to pre-populate on the Search tab
+  pendingMeasureSearch: MeasureSearchParams | null;
+  setPendingMeasureSearch: (params: MeasureSearchParams | null) => void;
   // Persisted resume-progress state so the card survives screen navigation
   resumeProgress: Record<number, ResumeProgress>;
   setResumeProgress: React.Dispatch<React.SetStateAction<Record<number, ResumeProgress>>>;
@@ -273,6 +300,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [toastState, setToastState] = useState<{ message: string; type: ToastVariant } | null>(null);
   const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
+  const [pinnedParts, setPinnedParts] = useState<PinnedPart[]>([]);
+  const [pendingMeasureSearch, setPendingMeasureSearch] = useState<MeasureSearchParams | null>(null);
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Guard: if the generated API client module failed to load (e.g. codegen has
@@ -501,6 +530,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       registerLogoutHandler,
       pendingMapFocus,
       setPendingMapFocus,
+      pinnedParts,
+      setPinnedParts,
+      pendingMeasureSearch,
+      setPendingMeasureSearch,
       resumeProgress,
       setResumeProgress,
     }}>

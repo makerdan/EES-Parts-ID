@@ -51,7 +51,6 @@ import {
   resetForServerUpdate,
   setCached,
   setFallbackEmpty,
-  type SvgContentViewBox,
   type SvgData,
 } from "@/utils/floorPlanCache";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -66,7 +65,7 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from "react-native-reanimated";
-import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml } from "react-native-svg";
+import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml, Circle } from "react-native-svg";
 
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
@@ -78,7 +77,6 @@ import {
   SVG_ASPECT,
   MIN_SCALE,
   MAX_SCALE,
-  FIT_PADDING,
   parseContentViewBox,
   fitContentViewport,
   makeTileViewBox,
@@ -215,6 +213,14 @@ interface ZoneOverlayItemProps {
   cycleMode: boolean;
   cycleLocked: boolean;
   isCounted: boolean;
+  isPinned?: boolean;
+  isVariantPinned?: boolean;
+  /** Bin code label to render inside the zone when it is pinned (e.g. "17-06-204"). */
+  binLabel?: string;
+  /** Section numbers (0-99) for primary result pins — shown as proportionally-positioned markers within the zone. */
+  pinnedSections?: number[];
+  /** Section numbers (0-99) for variant result pins — shown as proportionally-positioned purple markers. */
+  variantSections?: number[];
 }
 
 function ZoneOverlayItem({
@@ -226,6 +232,11 @@ function ZoneOverlayItem({
   cycleMode,
   cycleLocked,
   isCounted,
+  isPinned,
+  isVariantPinned,
+  binLabel,
+  pinnedSections,
+  variantSections,
 }: ZoneOverlayItemProps) {
   const isActive = zone.isInventory;
   const baseFontSize = Math.max(24, Math.min(48, zone.svgHeight / 3));
@@ -277,8 +288,18 @@ function ZoneOverlayItem({
   }
 
   const ZONE_GAP = 5;
-  const fillColor = isActive ? "rgba(0, 112, 255, 0.14)" : "rgba(0, 112, 255, 0.06)";
-  const strokeColor = "#0070ff";
+  const pinFillColor = isPinned
+    ? "rgba(245, 158, 11, 0.28)"
+    : isVariantPinned
+    ? "rgba(139, 92, 246, 0.28)"
+    : isActive
+    ? "rgba(0, 112, 255, 0.14)"
+    : "rgba(0, 112, 255, 0.06)";
+  const strokeColor = isPinned
+    ? "#f59e0b"
+    : isVariantPinned
+    ? "#8b5cf6"
+    : "#0070ff";
   const labelColor = "#000000";
 
   return (
@@ -297,16 +318,69 @@ function ZoneOverlayItem({
         y={zone.svgY + ZONE_GAP}
         width={zone.svgWidth - ZONE_GAP * 2}
         height={zone.svgHeight - ZONE_GAP * 2}
-        fill={fillColor}
+        fill={pinFillColor}
         stroke={strokeColor}
-        strokeDasharray={isActive ? undefined : "20 10"}
+        strokeDasharray={(!isPinned && !isVariantPinned && !isActive) ? "20 10" : undefined}
         animatedProps={rectAnimatedProps}
       />
+      {(isPinned || isVariantPinned) ? (() => {
+        // Section numbers for this zone's pins (0–99, proportional within aisle height).
+        const sectionNums = isPinned ? pinnedSections : variantSections;
+        const pinFill = isPinned ? "#f59e0b" : "#8b5cf6";
+        const pinStroke = isPinned ? "#b45309" : "#6d28d9";
+        const markerR = Math.max(10, Math.min(30, zone.svgWidth / 6));
+        const cx = zone.svgX + zone.svgWidth / 2;
+
+        if (sectionNums && sectionNums.length > 0) {
+          // Render one Circle per distinct section so workers can see exactly
+          // which part of the aisle to walk to (top = section 00, bottom = 99).
+          return sectionNums.map((sec, i) => {
+            const frac = Math.max(0.05, Math.min(0.95, sec / 99));
+            const cy = zone.svgY + frac * zone.svgHeight;
+            return (
+              <Circle
+                key={i}
+                cx={cx}
+                cy={cy}
+                r={markerR}
+                fill={pinFill}
+                stroke={pinStroke}
+                strokeWidth={3}
+              />
+            );
+          });
+        }
+        // Fallback: no section data — show emoji at zone top
+        return (
+          <SvgText
+            x={cx}
+            y={zone.svgY + 40}
+            fontSize={36}
+            textAnchor="middle"
+            alignmentBaseline="middle"
+          >
+            {isPinned ? "📍" : "🔵"}
+          </SvgText>
+        );
+      })() : null}
+      {binLabel ? (
+        <SvgText
+          x={zone.svgX + zone.svgWidth / 2}
+          y={zone.svgY + zone.svgHeight * 0.72}
+          fontSize={Math.max(14, Math.min(22, zone.svgHeight / 5))}
+          textAnchor="middle"
+          alignmentBaseline="middle"
+          fill={isPinned ? "#b45309" : "#6d28d9"}
+          fontFamily="monospace"
+        >
+          {binLabel}
+        </SvgText>
+      ) : null}
       <AnimatedSvgText
         x={zone.svgX + zone.svgWidth / 2}
-        y={zone.svgY + zone.svgHeight / 2}
+        y={(isPinned || isVariantPinned) ? zone.svgY + zone.svgHeight / 2 + 20 : zone.svgY + zone.svgHeight / 2}
         fontWeight="bold"
-        fill={labelColor}
+        fill={isPinned ? "#b45309" : isVariantPinned ? "#6d28d9" : labelColor}
         textAnchor="middle"
         alignmentBaseline="middle"
         animatedProps={textAnimatedProps}
@@ -328,6 +402,23 @@ export interface WarehouseMapViewProps {
   cycleMode?: boolean;
   cycleLocked?: boolean;
   countedZoneIds?: ReadonlySet<number>;
+  /** Aisle numbers of primary search result pins — highlighted amber on the map. */
+  pinnedAisleNums?: ReadonlySet<number>;
+  /** Aisle numbers of variant/related-size pins — highlighted purple on the map. */
+  variantAisleNums?: ReadonlySet<number>;
+  /** Maps aisleNum → first bin code (e.g. "17-06-204") to render as a label inside the pinned zone. */
+  pinnedBinLabels?: ReadonlyMap<number, string>;
+  /** Maps aisleNum → list of section numbers for primary pins — drives section-level Circle markers. */
+  pinnedSectionsMap?: ReadonlyMap<number, number[]>;
+  /** Maps aisleNum → list of section numbers for variant pins — drives section-level Circle markers. */
+  variantSectionsMap?: ReadonlyMap<number, number[]>;
+  /**
+   * When set, the map animates its viewport to center on this aisle's zone.
+   * Consumed once; set to null after navigating away.
+   */
+  focusAisleNum?: number | null;
+  /** Called after the auto-focus animation fires so the parent can clear focusAisleNum. */
+  onFocusConsumed?: () => void;
 }
 
 export function WarehouseMapView({
@@ -341,6 +432,13 @@ export function WarehouseMapView({
   cycleMode = false,
   cycleLocked = false,
   countedZoneIds,
+  pinnedAisleNums,
+  variantAisleNums,
+  pinnedBinLabels,
+  pinnedSectionsMap,
+  variantSectionsMap,
+  focusAisleNum,
+  onFocusConsumed,
 }: WarehouseMapViewProps) {
   "use no memo";
   const colors = useColors();
@@ -494,6 +592,39 @@ export function WarehouseMapView({
   const translateY = useSharedValue(0);
   const savedTX = useSharedValue(0);
   const savedTY = useSharedValue(0);
+
+  // ── Auto-focus on pinned zone ───────────────────────────────────────────────
+  // When a `focusAisleNum` is provided (set by the Map tab when the worker
+  // taps "Show on Map" from Search / Photo), animate the viewport so the
+  // target aisle is centred and at a comfortable zoom level.
+  useEffect(() => {
+    if (!focusAisleNum) return;
+    const w = containerWRef.current;
+    const h = containerHRef.current;
+    if (w === 0 || h === 0 || !zones.length) return;
+    const zone = zones.find(z => parseInt(z.aisleId, 10) === focusAisleNum);
+    if (!zone) return;
+
+    const TARGET_SCALE = 2.5;
+    const svgRW = w;                      // svgRenderW = containerW
+    const svgRH = w / SVG_ASPECT;        // svgRenderH
+    const cx = zone.svgX + zone.svgWidth / 2;
+    const cy = zone.svgY + zone.svgHeight / 2;
+    const tx = w / 2 - (cx / SVG_VIEWBOX_W) * svgRW * TARGET_SCALE;
+    const ty = h / 2 - (cy / SVG_VIEWBOX_H) * svgRH * TARGET_SCALE;
+
+    scale.value = withSpring(TARGET_SCALE, { damping: 18, stiffness: 200 });
+    savedScale.value = TARGET_SCALE;
+    translateX.value = withSpring(tx, { damping: 18, stiffness: 200 });
+    savedTX.value = tx;
+    translateY.value = withSpring(ty, { damping: 18, stiffness: 200 });
+    savedTY.value = ty;
+    persistViewport(TARGET_SCALE, tx, ty);
+    // Notify parent that this focus has been consumed so it can clear
+    // focusAisleNum and prevent repeated re-centering on future tab visits.
+    onFocusConsumed?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusAisleNum, zones, containerW]);
 
   // ── Viewport persistence (AsyncStorage) ────────────────────────────────────
   // Restore the saved viewport once on mount, before the first layout clamp
@@ -1048,21 +1179,34 @@ export function WarehouseMapView({
   // Zone geometry (x/y/w/h) is static and correctly tracks the floor plan.
   const zoneOverlays = useMemo(() => {
     if (!zones.length) return null;
-    return zones.map((zone) => (
-      <ZoneOverlayItem
-        key={zone.id}
-        zone={zone}
-        scale={scale}
-        colors={colors}
-        onZoneTap={onZoneTap}
-        onZoneLongPress={onZoneLongPress}
-        cycleMode={cycleMode}
-        cycleLocked={cycleLocked}
-        isCounted={countedZoneIds?.has(zone.id) ?? false}
-      />
-    ));
+    return zones.map((zone) => {
+      const aisleNum = parseInt(zone.aisleId, 10);
+      const isPinned = !cycleMode && (pinnedAisleNums?.has(aisleNum) ?? false);
+      // Allow an aisle to be BOTH primary-pinned and variant-pinned simultaneously
+      // so variant locations in the same aisle as the selected part are still shown
+      // with their distinct purple treatment alongside the amber primary marker.
+      const isVariantPinned = !cycleMode && (variantAisleNums?.has(aisleNum) ?? false);
+      return (
+        <ZoneOverlayItem
+          key={zone.id}
+          zone={zone}
+          scale={scale}
+          colors={colors}
+          onZoneTap={onZoneTap}
+          onZoneLongPress={onZoneLongPress}
+          cycleMode={cycleMode}
+          cycleLocked={cycleLocked}
+          isCounted={countedZoneIds?.has(zone.id) ?? false}
+          isPinned={isPinned}
+          isVariantPinned={isVariantPinned}
+          binLabel={(isPinned || isVariantPinned) ? pinnedBinLabels?.get(aisleNum) : undefined}
+          pinnedSections={isPinned ? pinnedSectionsMap?.get(aisleNum) : undefined}
+          variantSections={isVariantPinned ? variantSectionsMap?.get(aisleNum) : undefined}
+        />
+      );
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, cycleLocked, countedZoneIds]);
+  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, cycleLocked, countedZoneIds, pinnedAisleNums, variantAisleNums, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap]);
 
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
