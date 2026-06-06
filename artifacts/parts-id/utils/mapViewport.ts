@@ -78,6 +78,7 @@ export function fitContentViewport(
 /** Minimal zone geometry used by the focus-pan handler. */
 export interface ZoneGeometry {
   aisleId: string;
+  sectionNum: number;
   svgX: number;
   svgY: number;
   svgWidth: number;
@@ -100,9 +101,16 @@ export interface ZoneGeometry {
  * Contract: the return object contains ONLY `tx` and `ty` — no `scale` field.
  * A regression that reintroduced forced zooming would be caught immediately
  * by the test suite (`focusAislePan.test.ts`).
+ *
+ * When `focusSectionNum` is provided the function first tries to find the zone
+ * that matches both the aisle and the section; if no such zone exists it falls
+ * back to the first zone in the aisle so the map still pans to a sensible
+ * location rather than doing nothing.
  */
 export function runFocusAisleEffect(opts: {
   focusAisleNum: number;
+  /** When set, the map centres on the specific section zone instead of the first aisle zone. */
+  focusSectionNum?: number;
   zones: ReadonlyArray<ZoneGeometry>;
   containerW: number;
   containerH: number;
@@ -111,10 +119,14 @@ export function runFocusAisleEffect(opts: {
   currentTX: number;
   currentTY: number;
 }): { tx: number; ty: number } | null {
-  const { focusAisleNum, zones, containerW, containerH, currentScale, currentTX, currentTY } = opts;
+  const { focusAisleNum, focusSectionNum, zones, containerW, containerH, currentScale, currentTX, currentTY } = opts;
   if (containerW === 0 || containerH === 0 || !zones.length) return null;
 
-  const zone = zones.find(z => parseInt(z.aisleId, 10) === focusAisleNum);
+  const aisleZones = zones.filter(z => parseInt(z.aisleId, 10) === focusAisleNum);
+  const zone =
+    focusSectionNum != null
+      ? (aisleZones.find(z => z.sectionNum === focusSectionNum) ?? aisleZones[0])
+      : aisleZones[0];
   if (!zone) return null;
 
   const cx = zone.svgX + zone.svgWidth  / 2;

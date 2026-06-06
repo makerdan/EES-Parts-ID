@@ -498,6 +498,12 @@ export interface WarehouseMapViewProps {
    * Consumed once; set to null after navigating away.
    */
   focusAisleNum?: number | null;
+  /**
+   * When set alongside focusAisleNum, centres on the specific section zone
+   * rather than the first zone found in the aisle. Falls back to the aisle's
+   * first zone if no matching section zone exists.
+   */
+  focusSectionNum?: number | null;
   /** Called after the auto-focus animation fires so the parent can clear focusAisleNum. */
   onFocusConsumed?: () => void;
   /** Called when focusAisleNum is set but no matching zone exists on the map. */
@@ -607,6 +613,7 @@ export function WarehouseMapView({
   pinnedSectionsMap,
   variantSectionsMap,
   focusAisleNum,
+  focusSectionNum,
   onFocusConsumed,
   onFocusFailed,
   selectMode = false,
@@ -834,6 +841,7 @@ export function WarehouseMapView({
     // written — this is the core no-zoom contract.
     const panTarget = runFocusAisleEffect({
       focusAisleNum,
+      focusSectionNum: focusSectionNum ?? undefined,
       zones,
       containerW: w,
       containerH: h,
