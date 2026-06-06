@@ -151,9 +151,10 @@ export default function MapScreen() {
   const pinnedPartsRef = useRef(pinnedParts);
   useEffect(() => { pinnedPartsRef.current = pinnedParts; }, [pinnedParts]);
 
-  // Aisle to auto-center the map on when the user navigates here via "Show on Map".
-  // Set from useFocusEffect when pendingMapFocus is consumed; null otherwise.
+  // Aisle (and optional section) to auto-center the map on when the user navigates
+  // here via "Show on Map". Set from useFocusEffect when pendingMapFocus is consumed.
   const [focusAisleNum, setFocusAisleNum] = useState<number | null>(null);
+  const [focusSectionNum, setFocusSectionNum] = useState<number | null>(null);
 
   // Zone data — owned at this level so useFocusEffect can trigger refetch
   const { zones, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
@@ -202,10 +203,10 @@ export default function MapScreen() {
       const focus = pendingMapFocusRef.current;
       if (focus) {
         setPendingMapFocus(null);
-        // Auto-center the map on the first primary pinned aisle so the worker
-        // does not have to scroll to find it.
-        const firstPrimary = pinnedPartsRef.current.find(p => !p.variant);
-        if (firstPrimary) setFocusAisleNum(firstPrimary.aisleNum);
+        // Auto-center the map on the first primary pinned aisle (and section when
+        // known) so the worker does not have to scroll to find the right zone.
+        setFocusAisleNum(focus.aisleNum);
+        setFocusSectionNum(focus.sectionNum ?? null);
       }
 
       return () => {
@@ -489,10 +490,12 @@ export default function MapScreen() {
           pinnedSectionsMap={pinnedSections.size > 0 ? pinnedSections : undefined}
           variantSectionsMap={variantSections.size > 0 ? variantSections : undefined}
           focusAisleNum={focusAisleNum}
-          onFocusConsumed={() => setFocusAisleNum(null)}
+          focusSectionNum={focusSectionNum}
+          onFocusConsumed={() => { setFocusAisleNum(null); setFocusSectionNum(null); }}
           onFocusFailed={() => {
             setFocusFailedBanner(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
             setFocusAisleNum(null);
+            setFocusSectionNum(null);
           }}
           selectedZoneId={selectedZone?.id}
           onPanStart={handleMapPanStart}

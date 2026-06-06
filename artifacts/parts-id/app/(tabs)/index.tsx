@@ -201,6 +201,7 @@ export default function SearchScreen() {
     setPinnedParts(newPins);
     setPendingMapFocus({
       aisleNum: firstParsed.aisle,
+      sectionNum: firstParsed.section,
       label: `Aisle ${String(firstParsed.aisle).padStart(2, "0")} · Section ${firstParsed.section}`,
     });
     router.navigate("/(tabs)/map");

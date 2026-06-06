@@ -230,6 +230,8 @@ export type { LogoutHandler };
 
 export type MapFocus = {
   aisleNum: number;
+  /** Section number of the primary bin, used to centre the map on the exact section zone. */
+  sectionNum?: number;
   label?: string;
 };
 

@@ -35,6 +35,7 @@ const CH = 761;   // containerH
 // visibility guard does NOT short-circuit the pan logic.
 const OUT_OF_VIEW_ZONE = {
   aisleId: "5",
+  sectionNum: 1,
   svgX:    5200,
   svgY:    3500,
   svgWidth:  200,
@@ -142,7 +143,7 @@ describe("runFocusAisleEffect — edge-case returns", () => {
     // Place the zone at (0,0) so it's definitely in view.
     const result = runFocusAisleEffect({
       focusAisleNum: 1,
-      zones: [{ aisleId: "1", svgX: 0, svgY: 0, svgWidth: 10, svgHeight: 10 }],
+      zones: [{ aisleId: "1", sectionNum: 1, svgX: 0, svgY: 0, svgWidth: 10, svgHeight: 10 }],
       containerW: CW,
       containerH: CH,
       currentScale: 1,
@@ -151,5 +152,89 @@ describe("runFocusAisleEffect — edge-case returns", () => {
     });
     // Zone is at the SVG origin → always visible at identity transform → no pan.
     expect(result).toBeNull();
+  });
+
+  it("centres on the matching section zone when focusSectionNum is provided", () => {
+    const sectionTwo = {
+      aisleId: "5",
+      sectionNum: 2,
+      svgX: 4800,
+      svgY: 3500,
+      svgWidth: 100,
+      svgHeight: 50,
+    };
+    const sectionTen = {
+      aisleId: "5",
+      sectionNum: 10,
+      svgX: 5200,
+      svgY: 3500,
+      svgWidth: 100,
+      svgHeight: 50,
+    };
+    const zonesWithTwoSections = [sectionTwo, sectionTen];
+
+    // Without focusSectionNum — should pick the first zone (sectionNum=2)
+    const withoutSection = runFocusAisleEffect({
+      focusAisleNum: 5,
+      zones: zonesWithTwoSections,
+      containerW: CW,
+      containerH: CH,
+      currentScale: 2.0,
+      currentTX: 0,
+      currentTY: 0,
+    });
+
+    // With focusSectionNum=10 — should centre on the sectionNum=10 zone
+    const withSection = runFocusAisleEffect({
+      focusAisleNum: 5,
+      focusSectionNum: 10,
+      zones: zonesWithTwoSections,
+      containerW: CW,
+      containerH: CH,
+      currentScale: 2.0,
+      currentTX: 0,
+      currentTY: 0,
+    });
+
+    expect(withoutSection).not.toBeNull();
+    expect(withSection).not.toBeNull();
+    // The two zones are at different svgX positions, so their pan targets must differ.
+    expect(withoutSection!.tx).not.toBeCloseTo(withSection!.tx, 3);
+  });
+
+  it("falls back to the first aisle zone when focusSectionNum matches nothing", () => {
+    const zonesWithTwoSections = [
+      { aisleId: "5", sectionNum: 2, svgX: 4800, svgY: 3500, svgWidth: 100, svgHeight: 50 },
+      { aisleId: "5", sectionNum: 10, svgX: 5200, svgY: 3500, svgWidth: 100, svgHeight: 50 },
+    ];
+
+    const withMissingSection = runFocusAisleEffect({
+      focusAisleNum: 5,
+      focusSectionNum: 99,
+      zones: zonesWithTwoSections,
+      containerW: CW,
+      containerH: CH,
+      currentScale: 2.0,
+      currentTX: 0,
+      currentTY: 0,
+    });
+
+    const withFirstSection = runFocusAisleEffect({
+      focusAisleNum: 5,
+      focusSectionNum: 2,
+      zones: zonesWithTwoSections,
+      containerW: CW,
+      containerH: CH,
+      currentScale: 2.0,
+      currentTX: 0,
+      currentTY: 0,
+    });
+
+    // Both should return a valid pan target
+    expect(withMissingSection).not.toBeNull();
+    expect(withFirstSection).not.toBeNull();
+    // Falling back to first zone (sectionNum=2) means same result as explicitly asking for it.
+    expect(withMissingSection!.tx).toBeCloseTo(withFirstSection!.tx, 3);
+    expect(withMissingSection!.ty).toBeCloseTo(withFirstSection!.ty, 3);
   });
 });
