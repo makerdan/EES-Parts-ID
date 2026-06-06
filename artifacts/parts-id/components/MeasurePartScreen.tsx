@@ -125,6 +125,8 @@ export function MeasurePartScreen({
   const [diameterStr, setDiameterStr] = useState("");
 
   const [rescanningAxis, setRescanningAxis] = useState<RescanAxis | null>(null);
+  const [isReestimating, setIsReestimating] = useState(false);
+  const [confirmEstimateError, setConfirmEstimateError] = useState<string | null>(null);
 
   // Track the unit used to populate the current field strings so we can
   // re-convert in place when the user switches units mid-session.
@@ -169,6 +171,8 @@ export function MeasurePartScreen({
       setPhase("preview");
       setEstimateError(null);
       setRescanningAxis(null);
+      setIsReestimating(false);
+      setConfirmEstimateError(null);
       fieldUnitRef.current = unit;
       setLengthStr(fmtForUnit(initialDims?.length, unit));
       setWidthStr(fmtForUnit(initialDims?.width, unit));
@@ -333,6 +337,56 @@ export function MeasurePartScreen({
     }
   }, [adminToken, unit]);
 
+  // ── AI photo re-estimate from confirm screen ───────────────────────────────
+
+  const handleCaptureOnConfirm = useCallback(async () => {
+    if (!cameraRef.current) return;
+    setIsReestimating(true);
+    setConfirmEstimateError(null);
+
+    try {
+      const photo = await cameraRef.current.takePictureAsync({
+        base64: true,
+        quality: 0.4,
+        skipProcessing: true,
+      });
+
+      if (!photo?.base64) {
+        throw new Error("Camera did not return image data");
+      }
+
+      const response = await fetch(`${API_BASE}/inventory/estimate-dimensions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          imageBase64: photo.base64,
+          mimeType: "image/jpeg",
+        }),
+      });
+
+      if (!response.ok) {
+        const err = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(err.error ?? `Server error ${response.status}`);
+      }
+
+      const dims = (await response.json()) as PartDimensions;
+      setLengthStr(fmtForUnit(dims.length, unit));
+      setWidthStr(fmtForUnit(dims.width, unit));
+      setHeightStr(fmtForUnit(dims.height, unit));
+      setDiameterStr(fmtForUnit(dims.diameter, unit));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Estimation failed";
+      setConfirmEstimateError(msg);
+    } finally {
+      setIsReestimating(false);
+    }
+  }, [adminToken, unit]);
+
   const handleConfirm = useCallback(() => {
     onConfirm({
       length: parseFieldToMm(lengthStr, unit),
@@ -353,7 +407,8 @@ export function MeasurePartScreen({
   const isScanning =
     phase === "estimating" ||
     phase === "lidar_scanning" ||
-    rescanningAxis !== null;
+    rescanningAxis !== null ||
+    isReestimating;
 
   type FieldDef = {
     label: string;
@@ -678,10 +733,11 @@ export function MeasurePartScreen({
                           placeholderTextColor="#aaa"
                           keyboardType="numeric"
                           returnKeyType="next"
-                          editable={!isRescanning}
+                          editable={!isRescanning && !isReestimating}
                           style={[
                             ms.fieldInput,
                             isRescanning && ms.fieldInputRescanning,
+                            isReestimating && ms.fieldInputReestimating,
                           ]}
                         />
                       </View>
@@ -700,23 +756,63 @@ export function MeasurePartScreen({
                   </Text>
                 ) : null}
 
+                {confirmEstimateError ? (
+                  <Text style={ms.confirmEstimateError}>
+                    {confirmEstimateError}
+                  </Text>
+                ) : null}
+
+                <Pressable
+                  onPress={handleCaptureOnConfirm}
+                  disabled={isReestimating || rescanningAxis !== null}
+                  style={[
+                    ms.photoEstimateBtn,
+                    (isReestimating || rescanningAxis !== null) &&
+                      ms.photoEstimateBtnDisabled,
+                  ]}
+                >
+                  {isReestimating ? (
+                    <ActivityIndicator
+                      size="small"
+                      color="#3b82f6"
+                      style={{ marginRight: 8 }}
+                    />
+                  ) : (
+                    <Feather
+                      name="camera"
+                      size={15}
+                      color={rescanningAxis !== null ? "#aaa" : "#3b82f6"}
+                      style={{ marginRight: 8 }}
+                    />
+                  )}
+                  <Text
+                    style={[
+                      ms.photoEstimateBtnText,
+                      (isReestimating || rescanningAxis !== null) &&
+                        ms.photoEstimateBtnTextDisabled,
+                    ]}
+                  >
+                    {isReestimating ? "Estimating…" : "Photo Estimate"}
+                  </Text>
+                </Pressable>
+
                 <View style={ms.btnRow}>
                   <Pressable
                     onPress={() => setPhase("preview")}
-                    disabled={rescanningAxis !== null}
+                    disabled={rescanningAxis !== null || isReestimating}
                     style={[
                       ms.rescanBtn,
-                      rescanningAxis !== null && ms.rescanBtnDisabled,
+                      (rescanningAxis !== null || isReestimating) && ms.rescanBtnDisabled,
                     ]}
                   >
                     <Text style={ms.rescanBtnText}>Re-scan all</Text>
                   </Pressable>
                   <Pressable
                     onPress={handleConfirm}
-                    disabled={rescanningAxis !== null}
+                    disabled={rescanningAxis !== null || isReestimating}
                     style={[
                       ms.confirmBtn,
-                      rescanningAxis !== null && ms.confirmBtnDisabled,
+                      (rescanningAxis !== null || isReestimating) && ms.confirmBtnDisabled,
                     ]}
                   >
                     <Text style={ms.confirmBtnText}>Save Dimensions</Text>
@@ -1055,6 +1151,38 @@ const ms = StyleSheet.create({
     opacity: 0.4,
   },
   confirmBtnText: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#fff" },
+  confirmEstimateError: {
+    color: "#ef4444",
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+  },
+  photoEstimateBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#3b82f6",
+    borderRadius: 10,
+    paddingVertical: 11,
+    backgroundColor: "rgba(59,130,246,0.06)",
+  },
+  photoEstimateBtnDisabled: {
+    borderColor: "#ddd",
+    backgroundColor: "rgba(0,0,0,0.03)",
+  },
+  photoEstimateBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: "#3b82f6",
+  },
+  photoEstimateBtnTextDisabled: {
+    color: "#aaa",
+  },
+  fieldInputReestimating: {
+    borderColor: "#3b82f6",
+    backgroundColor: "#eff6ff",
+  },
   axisOverlayContainer: {
     position: "absolute",
     top: 0,
