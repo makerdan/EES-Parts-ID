@@ -10,7 +10,6 @@ module.exports = {
     "^expo-secure-store$": "<rootDir>/__mocks__/expo-secure-store.js",
     "^expo-file-system$": "<rootDir>/__mocks__/expo-file-system.js",
     "^expo-file-system/legacy$": "<rootDir>/__mocks__/expo-file-system-legacy.js",
-    "^expo-secure-store$": "<rootDir>/__mocks__/expo-secure-store.js",
     "^@/contexts/AppContext$": "<rootDir>/__mocks__/contexts/AppContext.js",
     "^@react-native-community/netinfo$": "<rootDir>/__mocks__/netinfo.js",
     "^lidar-measure$": "<rootDir>/__mocks__/lidar-measure.js",
