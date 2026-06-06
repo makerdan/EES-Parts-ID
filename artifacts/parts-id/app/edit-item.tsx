@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
@@ -56,7 +56,7 @@ export default function EditItemScreen() {
   useTrackScreen("Edit Item");
   const colors = useColors();
   const router = useRouter();
-  const { adminToken, isLoading } = useApp();
+  const { adminToken, isLoading, pendingLidarDims, setPendingLidarDims } = useApp();
   const { item: itemParam, section: sectionParam } = useLocalSearchParams<{ item: string; section?: string }>();
   const queryClient = useQueryClient();
   const scrollViewRef = useRef<ScrollView>(null);
@@ -93,6 +93,22 @@ export default function EditItemScreen() {
   useEffect(() => {
     setLidarAvailable(isLiDARSupported());
   }, []);
+
+  // Read LiDAR dims captured in the Measure tab and pre-fill the dimension
+  // fields.  The Measure tab stores dims in AppContext (pendingLidarDims) and
+  // navigates back here; we consume and clear them on the next focus.
+  useFocusEffect(
+    useCallback(() => {
+      if (!pendingLidarDims) return;
+      const d = pendingLidarDims;
+      setPendingLidarDims(null);
+      if (d.length != null) setDimLength(String(Math.round(d.length * 10) / 10));
+      if (d.width != null) setDimWidth(String(Math.round(d.width * 10) / 10));
+      if (d.height != null) setDimHeight(String(Math.round(d.height * 10) / 10));
+      if (d.diameter != null) setDimDiameter(String(Math.round(d.diameter * 10) / 10));
+      setSaveStatus("idle");
+    }, [pendingLidarDims, setPendingLidarDims])
+  );
 
   // Scroll to a specific section when navigated here with a section param
   useEffect(() => {
@@ -601,7 +617,15 @@ export default function EditItemScreen() {
             {Platform.OS === "ios" ? (
               lidarAvailable ? (
                 <Pressable
-                  onPress={() => setMeasureOpen(true)}
+                  onPress={() => {
+                    const label = item ? `${item.vendor} · ${item.catalog}` : "";
+                    // Navigate to the dedicated Measure tab — it stores confirmed
+                    // dims in AppContext.pendingLidarDims and navigates back here,
+                    // where useFocusEffect picks them up and pre-fills the form.
+                    (router.navigate as (url: string) => void)(
+                      `/(tabs)/measure?fromItemForm=true&itemLabel=${encodeURIComponent(label)}`
+                    );
+                  }}
                   style={[s.measureBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "55" }]}
                   accessibilityLabel="Measure dimensions with LiDAR"
                 >
