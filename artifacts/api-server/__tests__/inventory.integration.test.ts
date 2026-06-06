@@ -915,6 +915,79 @@ describe("POST /api/inventory/search — includeNullDimensions toggle", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /api/inventory/search — includeNullDimensions defaults to true
+// Guards against a future change silently reverting the default and excluding
+// unmeasured parts from search results.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/inventory/search — includeNullDimensions defaults to true", () => {
+  const PREFIX = "JEST-ITG-IND-DEFAULT-";
+  const MEASURED_CATALOG = `${PREFIX}MEASURED`;
+  const UNMEASURED_CATALOG = `${PREFIX}UNMEASURED`;
+
+  beforeAll(async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { sql: sqlOp } = await import("drizzle-orm");
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} LIKE ${`${PREFIX}%`}`);
+    await db.insert(inventoryTable).values([
+      {
+        vendor: "JEST-IND-VENDOR",
+        catalog: MEASURED_CATALOG,
+        description: "JEST-ITG-IND-DEFAULT part with measured length",
+        binLocations: [],
+        dimensions: { length: 10 },
+      },
+      {
+        vendor: "JEST-IND-VENDOR",
+        catalog: UNMEASURED_CATALOG,
+        description: "JEST-ITG-IND-DEFAULT part without dimensions",
+        binLocations: [],
+      },
+    ]);
+  }, 15_000);
+
+  afterAll(async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { sql: sqlOp } = await import("drizzle-orm");
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} LIKE ${`${PREFIX}%`}`);
+  }, 15_000);
+
+  it("plain keyword search (no includeNullDimensions flag) returns both measured and unmeasured items", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-IND-DEFAULT" })
+      .expect(200);
+
+    const catalogs = res.body.results.map(
+      (r: { item: { catalog: string } }) => r.item.catalog,
+    );
+    expect(catalogs).toContain(MEASURED_CATALOG);
+    expect(catalogs).toContain(UNMEASURED_CATALOG);
+  });
+
+  it("keyword + minLength search (no includeNullDimensions flag) places unmeasured item in sizeUnknownResults", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-IND-DEFAULT", minLength: 1 })
+      .expect(200);
+
+    const unknownCatalogs = (res.body.sizeUnknownResults ?? []).map(
+      (r: { item: { catalog: string } }) => r.item.catalog,
+    );
+    expect(unknownCatalogs).toContain(UNMEASURED_CATALOG);
+    const mainCatalogs = res.body.results.map(
+      (r: { item: { catalog: string } }) => r.item.catalog,
+    );
+    expect(mainCatalogs).toContain(MEASURED_CATALOG);
+    expect(mainCatalogs).not.toContain(UNMEASURED_CATALOG);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/inventory — binPrefix filter
 // Exercises the immutable_array_to_string() expression used by the GIN index.
 // ─────────────────────────────────────────────────────────────────────────────
