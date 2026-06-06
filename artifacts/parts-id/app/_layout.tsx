@@ -115,7 +115,6 @@ export default function RootLayout() {
                   <Stack.Screen name="ai-log" options={{ headerShown: false }} />
                   <Stack.Screen name="admin-inbox" options={{ headerShown: false }} />
                   <Stack.Screen name="admin" options={{ headerShown: false }} />
-                  <Stack.Screen name="floor-plan-upload" options={{ headerShown: false }} />
                 </Stack>
                 <AuthGate />
               </DismissKeyboard>
