@@ -333,6 +333,35 @@ describe("buildSearchBody", () => {
     const body = buildSearchBody(BLANK);
     expect(Object.prototype.hasOwnProperty.call(body, "maxHeight")).toBe(false);
   });
+
+  it("includes minLength in the body when set", () => {
+    const f: FilterValues = { ...BLANK, minLength: "0.5" };
+    const body = buildSearchBody(f);
+    expect(body.minLength).toBe(0.5);
+  });
+
+  it("includes maxLength in the body when set", () => {
+    const f: FilterValues = { ...BLANK, maxLength: "2.75" };
+    const body = buildSearchBody(f);
+    expect(body.maxLength).toBe(2.75);
+  });
+
+  it("includes both minLength and maxLength when both are set", () => {
+    const f: FilterValues = { ...BLANK, minLength: "1", maxLength: "3" };
+    const body = buildSearchBody(f);
+    expect(body.minLength).toBe(1);
+    expect(body.maxLength).toBe(3);
+  });
+
+  it("omits minLength from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "minLength")).toBe(false);
+  });
+
+  it("omits maxLength from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "maxLength")).toBe(false);
+  });
 });
 
 // ── buildQueryKey ─────────────────────────────────────────────────────────────
@@ -433,6 +462,30 @@ describe("buildQueryKey", () => {
   it("produces a different key for different maxHeight values", () => {
     const a = { ...BLANK, maxHeight: "3" };
     const b = { ...BLANK, maxHeight: "5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when minLength changes", () => {
+    const a = { ...BLANK, minLength: "" };
+    const b = { ...BLANK, minLength: "1.5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when maxLength changes", () => {
+    const a = { ...BLANK, maxLength: "" };
+    const b = { ...BLANK, maxLength: "4" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different minLength values", () => {
+    const a = { ...BLANK, minLength: "1" };
+    const b = { ...BLANK, minLength: "2" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different maxLength values", () => {
+    const a = { ...BLANK, maxLength: "3" };
+    const b = { ...BLANK, maxLength: "5" };
     expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
   });
 });
