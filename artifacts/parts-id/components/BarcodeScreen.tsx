@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -7,7 +7,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
@@ -23,12 +22,11 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { lookupByBarcodeOffline, upsertItemInBarcodeCache, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
 import { resolveBarcodeCode } from "@/utils/barcodeResolver";
 import { ResultCard } from "@/components/ResultCard";
-import { BarcodeEditor } from "@/components/BarcodeEditor";
-import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { useQueryClient } from "@tanstack/react-query";
 import { useScanHistory } from "@/hooks/useScanHistory";
 import type { ScanEntry } from "@/utils/scanHistory";
 import { groupScansByDate } from "@/utils/scanHistory";
+import { router } from "expo-router";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -81,8 +79,6 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const [isOfflineMatch, setIsOfflineMatch] = useState(false);
   const [fuseSyncedAt, setFuseSyncedAt] = useState<number | null>(null);
   const [showAssignPicker, setShowAssignPicker] = useState(false);
-  const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
-  const [detailsEditItem, setDetailsEditItem] = useState<InventoryItem | null>(null);
   const [historyPreviewItem, setHistoryPreviewItem] = useState<InventoryItem | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
@@ -294,7 +290,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
     );
   }
 
-  const isCameraActive = !showAssignPicker && !barcodeEditItem;
+  const isCameraActive = !showAssignPicker;
   const canCapture = scanPhase === "idle" && !!pendingCode;
 
   return (
@@ -577,8 +573,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
             </Text>
             <ResultCard
               result={{ item: matchedItem, confidence: 1.0, matchReason: isOfflineMatch ? "offline match" : "barcode match", seriesBase: null, seriesLabel: null, variants: [] }}
-              onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
-              onEditItem={isAdmin ? setDetailsEditItem : undefined}
+              onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
               rank={0}
               fontScale={textFontScale}
             />
@@ -633,24 +628,6 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
         onCancel={() => setShowAssignPicker(false)}
       />
 
-      {/* ── Barcode editor modal ─────────────────────────────────────────────── */}
-      <BarcodeEditor
-        item={barcodeEditItem}
-        onClose={() => setBarcodeEditItem(null)}
-        onBarcodesChanged={(id, barcodes) => {
-          if (matchedItem?.id === id) {
-            setMatchedItem((prev) => prev ? { ...prev, barcodes } : prev);
-          }
-        }}
-      />
-
-      {/* ── Part details editor modal ─────────────────────────────────────────── */}
-      <PartDetailsEditor
-        item={detailsEditItem}
-        adminToken={adminToken}
-        onClose={() => setDetailsEditItem(null)}
-      />
-
       {/* ── History item preview modal ────────────────────────────────────────── */}
       <Modal
         visible={!!historyPreviewItem}
@@ -676,8 +653,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                   seriesLabel: null,
                   variants: [],
                 }}
-                onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
-                onEditItem={isAdmin ? setDetailsEditItem : undefined}
+                onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
                 rank={0}
                 fontScale={textFontScale}
               />

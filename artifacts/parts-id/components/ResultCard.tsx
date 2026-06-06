@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import {
-  Animated,
   Pressable,
   StyleSheet,
   Text,
@@ -13,15 +12,8 @@ import { useColors } from "@/hooks/useColors";
 
 interface ResultCardProps {
   result: SearchResult;
-  onEditKeywords?: (item: InventoryItem) => void;
-  /** Admin-only: opens the bin editor for this part. */
-  onEditBins?: (item: InventoryItem) => void;
-  /** Admin-only: opens the barcode editor for this part. */
-  onEditBarcodes?: (item: InventoryItem) => void;
   /** Admin-only: opens the full part details editor. */
   onEditItem?: (item: InventoryItem) => void;
-  /** Admin-only: navigates to the dedicated Edit Details screen. */
-  onEditDetails?: (item: InventoryItem) => void;
   /** Navigate to warehouse map and open this part's zone. */
   onShowOnMap?: (item: InventoryItem) => void;
   /** Admin-only: opens the measurement screen for this unmeasured item. */
@@ -88,11 +80,11 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes, onEditItem, onEditDetails, onShowOnMap, onMeasure, rank, fontScale = 1.0, sizeUnknown = false }: ResultCardProps) {
+export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, rank, fontScale = 1.0, sizeUnknown = false }: ResultCardProps) {
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
-  const { item, confidence, matchReason, seriesLabel, variants } = result;
+  const { item, confidence, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
 
   const hasVariants = variants && variants.length > 0;
@@ -153,7 +145,7 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
           {item.description || "No description"}
         </Text>
 
-        {/* Bin location(s) — a single part can live in multiple bins */}
+        {/* Bin location(s) — read-only */}
         {item.binLocations && item.binLocations.length > 0 ? (
           <View style={[cardStyles.binRow, { backgroundColor: colors.accent }]}>
             <Text style={[cardStyles.binIcon, { color: colors.accentForeground }]}>📍</Text>
@@ -165,35 +157,22 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
               <Pressable
                 onPress={(e) => { e.stopPropagation?.(); onShowOnMap(item); }}
                 hitSlop={8}
-                style={[cardStyles.binEditBtn, { borderColor: colors.accentForeground + "44", marginRight: onEditBins ? 4 : 0 }]}
+                style={[cardStyles.binActionBtn, { borderColor: colors.accentForeground + "44" }]}
               >
-                <Text style={[cardStyles.binEditText, { color: colors.accentForeground }]}>🗺 Map</Text>
-              </Pressable>
-            ) : null}
-            {onEditBins ? (
-              <Pressable
-                onPress={(e) => { e.stopPropagation?.(); onEditBins(item); }}
-                hitSlop={8}
-                style={[cardStyles.binEditBtn, { borderColor: colors.accentForeground + "44" }]}
-              >
-                <Text style={[cardStyles.binEditText, { color: colors.accentForeground }]}>✏️ Edit</Text>
+                <Text style={[cardStyles.binActionText, { color: colors.accentForeground }]}>🗺 Map</Text>
               </Pressable>
             ) : null}
           </View>
-        ) : onEditBins ? (
-          <Pressable
-            onPress={(e) => { e.stopPropagation?.(); onEditBins(item); }}
-            style={[cardStyles.binRow, { backgroundColor: colors.muted }]}
-          >
+        ) : (
+          <View style={[cardStyles.binRow, { backgroundColor: colors.muted }]}>
             <Text style={[cardStyles.binIcon, { color: colors.mutedForeground }]}>📍</Text>
             <Text style={[cardStyles.binText, { color: colors.mutedForeground, flex: 1 }]}>
               No bin assigned
             </Text>
-            <Text style={[cardStyles.binEditText, { color: colors.primary }]}>+ Add bin</Text>
-          </Pressable>
-        ) : null}
+          </View>
+        )}
 
-        {/* Dimensions badge — shown inline on the card when present, or "Size not measured" when item is in the size-unknown group */}
+        {/* Dimensions badge */}
         {sizeUnknown ? (
           onMeasure ? (
             <Pressable
@@ -267,19 +246,9 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
                   No barcodes assigned.
                 </Text>
               )}
-              {onEditBarcodes ? (
-                <Pressable
-                  onPress={() => onEditBarcodes(item)}
-                  style={[cardStyles.editBtn, { borderColor: colors.border }]}
-                >
-                  <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
-                    ✏️ Edit Barcodes
-                  </Text>
-                </Pressable>
-              ) : null}
             </View>
 
-            {/* Keywords — always shown when expanded; edit button always accessible */}
+            {/* Keywords section */}
             <View style={cardStyles.section}>
               <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
                 AI KEYWORDS
@@ -296,19 +265,9 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
                 </View>
               ) : (
                 <Text style={[cardStyles.keywordText, { color: colors.mutedForeground, marginBottom: 6 }]}>
-                  No keywords yet — tap Edit to add some.
+                  No keywords yet.
                 </Text>
               )}
-              {onEditKeywords ? (
-                <Pressable
-                  onPress={() => onEditKeywords(item)}
-                  style={[cardStyles.editBtn, { borderColor: colors.border }]}
-                >
-                  <Text style={[cardStyles.editBtnText, { color: colors.primary }]}>
-                    ✏️ Edit Keywords
-                  </Text>
-                </Pressable>
-              ) : null}
             </View>
 
             {/* Variants */}
@@ -328,30 +287,6 @@ export function ResultCard({ result, onEditKeywords, onEditBins, onEditBarcodes,
                   ) : null}
                 </View>
               </View>
-            ) : null}
-
-            {/* Measure Part button — admin-only, shown in expanded section for unmeasured items */}
-            {sizeUnknown && onMeasure ? (
-              <Pressable
-                onPress={(e) => { e.stopPropagation?.(); onMeasure(item); }}
-                style={[cardStyles.editDetailsBtn, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "88", marginTop: 12 }]}
-              >
-                <Text style={[cardStyles.editDetailsBtnText, { color: colors.warning }]}>
-                  📏 Measure Part
-                </Text>
-              </Pressable>
-            ) : null}
-
-            {/* Edit Details button — admin-only, bottom of expanded card */}
-            {onEditDetails ? (
-              <Pressable
-                onPress={(e) => { e.stopPropagation?.(); onEditDetails(item); }}
-                style={[cardStyles.editDetailsBtn, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "55" }]}
-              >
-                <Text style={[cardStyles.editDetailsBtnText, { color: colors.primary }]}>
-                  ✏️ Edit Details
-                </Text>
-              </Pressable>
             ) : null}
 
             {/* Last enriched */}
@@ -437,13 +372,13 @@ const cardStyles = StyleSheet.create({
   },
   binIcon: { fontSize: 14 },
   binText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  binEditBtn: {
+  binActionBtn: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 4,
     borderWidth: 1,
   },
-  binEditText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  binActionText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   section: { marginTop: 12 },
   sectionTitle: {
     fontSize: 11,
@@ -456,24 +391,6 @@ const cardStyles = StyleSheet.create({
   keyword: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
   keywordText: { fontSize: 12, fontFamily: "Inter_400Regular" },
   variantRow: { flexDirection: "row", flexWrap: "wrap" },
-  editBtn: {
-    marginTop: 10,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    alignSelf: "flex-start",
-  },
-  editBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  editDetailsBtn: {
-    marginTop: 12,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    alignItems: "center",
-  },
-  editDetailsBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   enrichedAt: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 8 },
   moreText: { fontSize: 12, fontFamily: "Inter_400Regular", alignSelf: "center", marginBottom: 6 },
   chevron: { textAlign: "center", fontSize: 12, marginTop: 8 },
@@ -501,4 +418,3 @@ const cardStyles = StyleSheet.create({
     borderRadius: 8,
   },
 });
-

@@ -21,9 +21,6 @@ import { useColors } from "@/hooks/useColors";
 import { FilterPanel, ConfidenceSlider, type FilterValues } from "@/components/FilterPanel";
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
-import { KeywordEditor } from "@/components/KeywordEditor";
-import { BinEditor } from "@/components/BinEditor";
-import { BarcodeEditor } from "@/components/BarcodeEditor";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
@@ -142,9 +139,6 @@ export default function SearchScreen() {
   const [filters, setFilters] = useState<FilterValues>(DEFAULT_FILTERS);
   const [filterHeaderHeight, setFilterHeaderHeight] = useState(120);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
-  const [editItem, setEditItem] = useState<InventoryItem | null>(null);
-  const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
-  const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
   const [measureItem, setMeasureItem] = useState<InventoryItem | null>(null);
 
   const handleShowOnMap = useCallback((item: InventoryItem) => {
@@ -168,10 +162,6 @@ export default function SearchScreen() {
     // Bins exist but none matched the expected format (e.g. "A-01-001")
     showToast(`No map zone found for "${bins[0]}" — bin format not recognised.`);
   }, [setPendingMapFocus, showToast]);
-  // Local override of bin lists keyed by item.id, applied on top of whatever
-  // results are currently displayed (online searchMutation.data, offlineResults,
-  // or Fuse fallback). Lets bin edits show up immediately without a re-search.
-  const [binOverrides, setBinOverrides] = useState<Record<number, string[]>>({});
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
@@ -239,9 +229,6 @@ export default function SearchScreen() {
       setActiveCategoryLabel(null);
       activeCategorySlugRef.current = null;
       setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
-      setEditItem(null);
-      setBinEditItem(null);
-      setBinOverrides({});
       setOfflineResults(null);
       setIsOffline(false);
       setOfflineCacheType(null);
@@ -428,10 +415,6 @@ export default function SearchScreen() {
         setIsOffline(false);
         setOfflineResults(null);
         setOfflineCacheType(null);
-        // Server response is the new source of truth — drop any local
-        // bin overlays so we don't keep showing stale local edits when the
-        // backend returns fresh data for the same items.
-        setBinOverrides({});
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
 
         // Cache all returned items for offline Fuse use
@@ -543,40 +526,6 @@ export default function SearchScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchMutation, runOfflineFallback]);
 
-  // Called by KeywordEditor after debounced save — update local Fuse index immediately
-  const handleKeywordsChanged = useCallback((id: number, keywords: string[]) => {
-    const items = fuseItemsRef.current.map(item =>
-      item.id === id ? { ...item, aiKeywords: keywords } : item,
-    );
-    buildFuseIndex(items);
-    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(err => {
-      reportStorageError("Could not save offline inventory cache", err);
-    });
-  }, [buildFuseIndex]);
-
-  // Called by BinEditor after a successful save — apply override to currently
-  // visible results AND update the offline Fuse cache so the change persists.
-  const handleBinsChanged = useCallback((id: number, binLocations: string[]) => {
-    setBinOverrides(prev => ({ ...prev, [id]: binLocations }));
-    const items = fuseItemsRef.current.map(it =>
-      it.id === id ? { ...it, binLocations } : it,
-    );
-    buildFuseIndex(items);
-    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(err => {
-      reportStorageError("Could not save offline inventory cache", err);
-    });
-  }, [buildFuseIndex]);
-
-  const handleBarcodesChanged = useCallback((id: number, barcodes: string[]) => {
-    const items = fuseItemsRef.current.map(it =>
-      it.id === id ? { ...it, barcodes } : it,
-    );
-    buildFuseIndex(items);
-    AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items)).catch(err => {
-      reportStorageError("Could not save offline inventory cache", err);
-    });
-  }, [buildFuseIndex]);
-
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
     const item = measureItem;
     setMeasureItem(null);
@@ -601,18 +550,9 @@ export default function SearchScreen() {
     }
   }, [measureItem, adminToken, buildFuseIndex, showToast]);
 
-  const rawResults: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
-  const results: SearchResult[] = rawResults.map(r =>
-    binOverrides[r.item.id]
-      ? { ...r, item: { ...r.item, binLocations: binOverrides[r.item.id]! } }
-      : r,
-  );
+  const results: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
   const rawSizeUnknownResults: SearchResult[] = isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []);
-  const sizeUnknownResults: SearchResult[] = rawSizeUnknownResults.map(r =>
-    binOverrides[r.item.id]
-      ? { ...r, item: { ...r.item, binLocations: binOverrides[r.item.id]! } }
-      : r,
-  );
+  const sizeUnknownResults: SearchResult[] = rawSizeUnknownResults;
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
 
@@ -1068,8 +1008,6 @@ export default function SearchScreen() {
           shelfViewEnabled={settings.shelfViewEnabled}
           fontScale={textFontScale}
           onClose={() => setMode("search")}
-          onEditKeywords={setEditItem}
-          onEditBins={isAdmin ? setBinEditItem : undefined}
           isAdmin={isAdmin}
           adminToken={adminToken}
           onPartAdded={() => syncAllInventory()}
@@ -1244,11 +1182,7 @@ export default function SearchScreen() {
             <View style={styles.resultItem}>
               <ResultCard
                 result={result}
-                onEditKeywords={setEditItem}
-                onEditBins={isAdmin ? setBinEditItem : undefined}
-                onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
                 onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
-                onEditDetails={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
                 onShowOnMap={handleShowOnMap}
                 onMeasure={isAdmin && listItem.kind === "sizeUnknown" ? setMeasureItem : undefined}
                 rank={index}
@@ -1327,24 +1261,6 @@ export default function SearchScreen() {
       />
 
       <ReferenceModal open={showReference} onClose={() => setShowReference(false)} />
-
-      <KeywordEditor
-        item={editItem}
-        onClose={() => setEditItem(null)}
-        onKeywordsChanged={handleKeywordsChanged}
-      />
-
-      <BinEditor
-        item={binEditItem}
-        onClose={() => setBinEditItem(null)}
-        onBinsChanged={handleBinsChanged}
-      />
-
-      <BarcodeEditor
-        item={barcodeEditItem}
-        onClose={() => setBarcodeEditItem(null)}
-        onBarcodesChanged={handleBarcodesChanged}
-      />
 
       {isAdmin && adminToken ? (
         <MeasurePartScreen
