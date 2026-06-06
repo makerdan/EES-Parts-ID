@@ -193,7 +193,7 @@ function DrillRow({
       duration: 1200,
       useNativeDriver: true,
     }).start();
-  }, [highlighted]);
+  }, [highlighted, glowOpacity]);
 
   return (
     <View style={{ position: "relative" }}>
@@ -485,8 +485,6 @@ function SectionShelfView({
     }, 80);
     return () => clearTimeout(timer);
   }, [selectedPart]);
-
-  const breadcrumb = `${section.label} · ${selectedPart?.bin.raw ?? ""}`;
 
   const orderedShelves = useMemo(
     () => [...section.shelves].sort((a, b) => a.shelfHundreds - b.shelfHundreds),

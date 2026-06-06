@@ -34,7 +34,7 @@ export default function PhotoScreen() {
   "use no memo";
   useTrackScreen("Photo ID");
   const colors = useColors();
-  const { textFontScale, isAdmin, adminToken } = useApp();
+  const { textFontScale, isAdmin } = useApp();
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");

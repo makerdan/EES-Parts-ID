@@ -41,7 +41,7 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
   useEffect(() => { itemRef.current = item; }, [item]);
 
   useEffect(() => {
-    setBarcodes(item?.barcodes ?? []);
+    setBarcodes(itemRef.current?.barcodes ?? []);
     setNewBarcode("");
     setSaveStatus("idle");
     setErrorMsg(null);
@@ -124,7 +124,7 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
       setErrorMsg(msg.includes("401") ? "Admin session expired. Re-unlock and try again." : "Could not save barcodes. Check connection and try again.");
       setSaveStatus("error");
     }
-  }, [barcodes, updateMutation, queryClient, onBarcodesChanged, onClose]);
+  }, [barcodes, newBarcode, updateMutation, queryClient, onBarcodesChanged, onClose]);
 
   if (!item) return null;
 

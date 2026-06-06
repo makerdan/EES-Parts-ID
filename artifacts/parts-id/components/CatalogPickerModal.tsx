@@ -48,6 +48,8 @@ export function CatalogPickerModal({
   const [vendorError, setVendorError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchMutation = useSearchInventory();
+  const searchMutationRef = useRef(searchMutation);
+  useEffect(() => { searchMutationRef.current = searchMutation; }, [searchMutation]);
   const createMutation = useUpsertInventoryBatch();
   const lookupMutation = useSearchInventory();
   const queryClient = useQueryClient();
@@ -75,7 +77,7 @@ export function CatalogPickerModal({
 
   useEffect(() => {
     if (!visible || !debouncedQuery.trim()) return;
-    searchMutation.mutate({ data: { keywords: debouncedQuery, confidenceThreshold: 20 } });
+    searchMutationRef.current.mutate({ data: { keywords: debouncedQuery, confidenceThreshold: 20 } });
   }, [debouncedQuery, visible]);
 
   const handleOpenCreateForm = useCallback(() => {

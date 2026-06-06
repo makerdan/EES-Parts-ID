@@ -277,7 +277,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
     } finally {
       setSubmitting(false);
     }
-  }, [submitting, catalog, vendor, currentBin, adminToken, photo, uploadPhoto, invalidateInventory, resetItemFields, advanceCounter, onClose]);
+  }, [submitting, catalog, vendor, currentBin, adminToken, photo, position, shelfPrefix, uploadPhoto, invalidateInventory, resetItemFields, advanceCounter, onClose]);
 
   const handleConfirmDuplicate = useCallback(async () => {
     if (!duplicate || !adminToken) return;

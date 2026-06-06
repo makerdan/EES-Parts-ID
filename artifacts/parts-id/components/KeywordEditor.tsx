@@ -29,6 +29,12 @@ interface KeywordEditorProps {
 
 const DEBOUNCE_MS = 900;
 
+type ItemSaveState = {
+  latest: string[];
+  lastSaved: string[];
+  saving: boolean;
+};
+
 export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEditorProps) {
   "use no memo";
   const colors = useColors();
@@ -44,20 +50,15 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   // drain loop from any other item the user might open or close: closing
   // item A while a save is in flight, then quickly opening item B, will
   // NOT cause B's keywords to be written to A's id (or vice-versa).
-  type ItemSaveState = {
-    latest: string[];      // most recent edit (incl. ones still debounced)
-    lastSaved: string[];   // last value successfully persisted
-    saving: boolean;       // true while drainSave loop is running for this id
-  };
   const stateByIdRef = useRef<Record<number, ItemSaveState>>({});
-  const ensureState = (id: number, kws: string[]): ItemSaveState => {
+  const ensureState = useCallback((id: number, kws: string[]): ItemSaveState => {
     let s = stateByIdRef.current[id];
     if (!s) {
       s = { latest: kws, lastSaved: kws, saving: false };
       stateByIdRef.current[id] = s;
     }
     return s;
-  };
+  }, []); // stateByIdRef is a stable ref — no reactive deps
   // Keep item in a ref so callbacks always see the latest value without stale closure issues
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
@@ -66,9 +67,10 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   // lives in `stateByIdRef`, so opening a different item never disturbs an
   // in-flight save for the previous item.
   useEffect(() => {
-    if (!item) return;
-    const kws = item.aiKeywords ?? [];
-    const s = ensureState(item.id, kws);
+    const it = itemRef.current;
+    if (!it) return;
+    const kws = it.aiKeywords ?? [];
+    const s = ensureState(it.id, kws);
     // If no save is running and there are no pending edits, refresh from
     // the latest server value; otherwise preserve the user's pending state.
     if (!s.saving && arraysEqual(s.latest, s.lastSaved)) {
@@ -77,7 +79,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
     }
     setKeywords(s.latest);
     setSaveStatus(s.saving ? "saving" : "idle");
-  }, [item?.id]);
+  }, [item?.id, ensureState]);
 
   // Drains pending edits in a loop for a *specific* item id. After each
   // save, if that item's `latest` has moved on (because the user kept
@@ -148,7 +150,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
         void performSaveForId(id);
       }, DEBOUNCE_MS);
     },
-    [performSaveForId],
+    [performSaveForId, ensureState],
   );
 
   // Cancel any pending debounce on unmount.

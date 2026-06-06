@@ -65,7 +65,6 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
   const queryClient = useQueryClient();
   const updateBinsMutation = useUpdateItemBins();
   const updateKeywordsMutation = useUpdateItemKeywords();
-
   const [description, setDescription] = useState(item?.description ?? "");
   const [bins, setBins] = useState<string[]>(item?.binLocations ?? []);
   const [newBin, setNewBin] = useState("");
@@ -137,11 +136,12 @@ export function PartDetailsEditor({ item, adminToken, onClose }: PartDetailsEdit
   }, [takingPhoto]);
 
   useEffect(() => {
-    if (!item) return;
-    const dims = (item as unknown as { dimensions?: PartDimensions | null })?.dimensions;
-    setDescription(item.description ?? "");
-    setBins(item.binLocations ?? []);
-    setKeywords(item.aiKeywords ?? []);
+    const current = itemRef.current;
+    if (!current) return;
+    const dims = (current as unknown as { dimensions?: PartDimensions | null })?.dimensions;
+    setDescription(current.description ?? "");
+    setBins(current.binLocations ?? []);
+    setKeywords(current.aiKeywords ?? []);
     setNewBin("");
     setNewKeyword("");
     setNewPhotoData(null);

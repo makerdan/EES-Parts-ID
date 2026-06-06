@@ -6,7 +6,7 @@ import "react-native";
 
 declare module "react-native" {
   interface ViewStyle {
-    filter?: ReadonlyArray<
+    filter?: readonly (
       | { invert: number }
       | { brightness: number }
       | { contrast: number }
@@ -14,6 +14,6 @@ declare module "react-native" {
       | { sepia: number }
       | { opacity: number }
       | { grayscale: number }
-    >;
+    )[];
   }
 }

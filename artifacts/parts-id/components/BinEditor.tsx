@@ -43,7 +43,7 @@ export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
 
   // Reset state whenever a different item is opened
   useEffect(() => {
-    setBins(item?.binLocations ?? []);
+    setBins(itemRef.current?.binLocations ?? []);
     setNewBin("");
     setSaveStatus("idle");
     setErrorMsg(null);

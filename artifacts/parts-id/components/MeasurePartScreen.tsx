@@ -35,7 +35,6 @@ import {
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
 import { Feather } from "@expo/vector-icons";
-import { useColors } from "@/hooks/useColors";
 import { useApp, type DimensionUnit } from "@/contexts/AppContext";
 import { cancelMeasure, isLiDARSupported, measureObject, NativeLidarDepthView } from "lidar-measure";
 
@@ -110,7 +109,6 @@ export function MeasurePartScreen({
   initialDims,
   adminToken,
 }: MeasurePartScreenProps) {
-  const colors = useColors();
   const { settings, updateSetting } = useApp();
   const unit = settings.dimensionUnit;
   const [permission, requestPermission] = useCameraPermissions();
@@ -127,6 +125,13 @@ export function MeasurePartScreen({
   const [rescanningAxis, setRescanningAxis] = useState<RescanAxis | null>(null);
   const [isReestimating, setIsReestimating] = useState(false);
   const [confirmEstimateError, setConfirmEstimateError] = useState<string | null>(null);
+
+  // Stable ref to the current unit so the initialization effect can read the
+  // latest value without listing `unit` as a reactive dependency (which would
+  // cause the effect — and therefore a full field reset — to fire every time
+  // the user switches units mid-session).
+  const unitRef = useRef<DimensionUnit>(unit);
+  useEffect(() => { unitRef.current = unit; }, [unit]);
 
   // Track the unit used to populate the current field strings so we can
   // re-convert in place when the user switches units mid-session.
@@ -173,11 +178,14 @@ export function MeasurePartScreen({
       setRescanningAxis(null);
       setIsReestimating(false);
       setConfirmEstimateError(null);
-      fieldUnitRef.current = unit;
-      setLengthStr(fmtForUnit(initialDims?.length, unit));
-      setWidthStr(fmtForUnit(initialDims?.width, unit));
-      setHeightStr(fmtForUnit(initialDims?.height, unit));
-      setDiameterStr(fmtForUnit(initialDims?.diameter, unit));
+      // Read from unitRef so this effect does not re-run on unit changes
+      // (which would reset measured values whenever the user switches units).
+      const currentUnit = unitRef.current;
+      fieldUnitRef.current = currentUnit;
+      setLengthStr(fmtForUnit(initialDims?.length, currentUnit));
+      setWidthStr(fmtForUnit(initialDims?.width, currentUnit));
+      setHeightStr(fmtForUnit(initialDims?.height, currentUnit));
+      setDiameterStr(fmtForUnit(initialDims?.diameter, currentUnit));
       if (!permission?.granted) requestPermission();
     }
   }, [visible, initialDims, permission, requestPermission]);

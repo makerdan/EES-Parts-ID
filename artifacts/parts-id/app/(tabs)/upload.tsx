@@ -34,12 +34,6 @@ import { secondaryBtnBase } from "@/styles/shared";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
-const API_BASE =
-  process.env.EXPO_PUBLIC_DOMAIN
-    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-    : "";
-
-
 import {
   type ParsedRow,
   type BinDiffRow,
@@ -49,6 +43,11 @@ import {
   preservedBinCount,
   serializeToCsv,
 } from "@/utils/binSkipLogic";
+
+const API_BASE =
+  process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+    : "";
 
 type BinDiffSummary = {
   willReplaceBins: number;
@@ -817,7 +816,7 @@ export default function UploadScreen() {
       setUploadSuccess(null);
       setRawCsv(rawText);
       setParsedRows(rows);
-    } catch (err) {
+    } catch {
       setUploadError("Failed to read file. Please try again.");
     }
   };

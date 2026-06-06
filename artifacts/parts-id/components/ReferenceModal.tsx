@@ -100,7 +100,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   // `chipLoading` — chip tap in flight; never drives the send-button spinner
   const [chipLoading, setChipLoading] = useState(false);
   const [isError, setIsError] = useState(false);
-  const [history, setHistory] = useState<Array<{ q: string; a: string }>>([]);
+  const [history, setHistory] = useState<{ q: string; a: string }[]>([]);
   const [inputCollapsed, setInputCollapsed] = useState(false);
   const [activeBreakerChips, setActiveBreakerChips] = useState<string[]>([]);
   const [contactVisible, setContactVisible] = useState(false);
