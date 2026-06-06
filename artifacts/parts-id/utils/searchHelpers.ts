@@ -23,6 +23,8 @@ export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
   const maxHeightNum = f.maxHeight.trim() !== "" ? parseFloat(f.maxHeight) : null;
   const minDiameterNum = f.minDiameter.trim() !== "" ? parseFloat(f.minDiameter) : null;
   const maxDiameterNum = f.maxDiameter.trim() !== "" ? parseFloat(f.maxDiameter) : null;
+  const minWeightNum = f.minWeight.trim() !== "" ? parseFloat(f.minWeight) : null;
+  const maxWeightNum = f.maxWeight.trim() !== "" ? parseFloat(f.maxWeight) : null;
   return {
     keywords: f.keywords,
     catalog: f.catalog,
@@ -56,6 +58,8 @@ export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
     ...(maxHeightNum != null && !isNaN(maxHeightNum) ? { maxHeight: maxHeightNum } : {}),
     ...(minDiameterNum != null && !isNaN(minDiameterNum) ? { minDiameter: minDiameterNum } : {}),
     ...(maxDiameterNum != null && !isNaN(maxDiameterNum) ? { maxDiameter: maxDiameterNum } : {}),
+    ...(minWeightNum != null && !isNaN(minWeightNum) ? { minWeight: minWeightNum } : {}),
+    ...(maxWeightNum != null && !isNaN(maxWeightNum) ? { maxWeight: maxWeightNum } : {}),
     ...(categorySlug ? { categorySlug } : {}),
     includeNullDimensions: f.includeNullDimensions,
   };

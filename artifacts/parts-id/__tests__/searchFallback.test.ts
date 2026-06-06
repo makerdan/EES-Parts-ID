@@ -40,7 +40,7 @@ type FilterValues = {
   minLength: string; maxLength: string;
   minWidth: string; maxWidth: string;
   minHeight: string; maxHeight: string;
-  minDiameter: string; maxDiameter: string;
+  minDiameter: string; maxDiameter: string; minWeight: string; maxWeight: string;
   includeNullDimensions: boolean;
   category: string; amperage: string; colorChip: string; manufacturer: string;
   sizeChip: string; rating: string; wireType: string; wireGauge: string;
@@ -52,7 +52,8 @@ const BLANK: FilterValues = {
   keywords: "", catalog: "", vendor: "", color: "", size: "", material: "",
   textNumbers: "", confidenceThreshold: 50, minLength: "", maxLength: "",
   minWidth: "", maxWidth: "", minHeight: "", maxHeight: "",
-  minDiameter: "", maxDiameter: "", includeNullDimensions: false,
+  minDiameter: "", maxDiameter: "", minWeight: "", maxWeight: "",
+  includeNullDimensions: false,
   category: "", amperage: "",
   colorChip: "", manufacturer: "", sizeChip: "", rating: "", wireType: "",
   wireGauge: "", conduitType: "", conduitSize: "", boxType: "", boxGangCount: "",
@@ -304,7 +305,8 @@ describe("runSearchPipeline — full 3-tier search sequence", () => {
     keywords: "", catalog: "", vendor: "", color: "", size: "", material: "",
     textNumbers: "", confidenceThreshold: 50, minLength: "", maxLength: "",
     minWidth: "", maxWidth: "", minHeight: "", maxHeight: "",
-    minDiameter: "", maxDiameter: "", includeNullDimensions: false,
+    minDiameter: "", maxDiameter: "", minWeight: "", maxWeight: "",
+    includeNullDimensions: false,
     category: "", amperage: "",
     colorChip: "", manufacturer: "", sizeChip: "", rating: "", wireType: "",
     wireGauge: "", conduitType: "", conduitSize: "", boxType: "", boxGangCount: "",

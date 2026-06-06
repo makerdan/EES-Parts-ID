@@ -111,6 +111,8 @@ const DEFAULT_FILTERS: FilterValues = {
   minDiameter: "",
   maxDiameter: "",
   includeNullDimensions: false,
+  minWeight: "",
+  maxWeight: "",
   // 16 required chip dimensions
   category: "",
   amperage: "",
