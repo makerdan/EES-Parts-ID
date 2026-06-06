@@ -689,6 +689,12 @@ export function WarehouseMapView({
   const translateY = useSharedValue(0);
   const savedTX = useSharedValue(0);
   const savedTY = useSharedValue(0);
+  // True while a button-triggered withSpring is in flight; gates tile rebuilds.
+  const springActive = useSharedValue(false);
+  // Monotonically-increasing counter. Incremented on every applyZoom call so
+  // the onEnd callback of a superseded (cancelled) spring can detect it is
+  // stale and must not clear the gate or commit a render tier.
+  const springGeneration = useSharedValue(0);
 
   // ── Auto-focus on pinned zone ───────────────────────────────────────────────
   // When a `focusAisleNum` is provided (set by the Map tab when the worker
@@ -903,7 +909,9 @@ export function WarehouseMapView({
   useAnimatedReaction(
     () => Math.ceil(scale.value),
     (tier, prevTier) => {
-      if (tier !== prevTier) {
+      // Skip mid-flight updates while a button spring is running; the spring's
+      // onEnd callback will commit the final tier once it settles.
+      if (tier !== prevTier && !springActive.value) {
         runOnJS(setRenderZoom)(tier);
       }
     },
@@ -1248,7 +1256,18 @@ export function WarehouseMapView({
     const ratio = oldScale > 0 ? newScale / oldScale : 1;
     const newTX = Math.max(-maxX, Math.min(maxX, translateX.value * ratio));
     const newTY = Math.max(-maxY, Math.min(maxY, translateY.value * ratio));
-    scale.value = withSpring(newScale, { damping: 18, stiffness: 200 });
+    springActive.value = true;
+    springGeneration.value += 1;
+    const myGen = springGeneration.value;
+    scale.value = withSpring(newScale, { damping: 18, stiffness: 200 }, () => {
+      'worklet';
+      // Guard: only the most-recent spring clears the gate and commits a tier.
+      // If the user tapped zoom again, springGeneration was already incremented
+      // and this callback belongs to a superseded spring — skip it entirely.
+      if (springGeneration.value !== myGen) return;
+      springActive.value = false;
+      runOnJS(setRenderZoom)(Math.ceil(newScale));
+    });
     translateX.value = withSpring(newTX, { damping: 18, stiffness: 200 });
     translateY.value = withSpring(newTY, { damping: 18, stiffness: 200 });
     savedScale.value = newScale;
