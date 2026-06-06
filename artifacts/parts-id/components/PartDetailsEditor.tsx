@@ -113,6 +113,16 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
 
+  const dimStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (dimStatusTimerRef.current) clearTimeout(dimStatusTimerRef.current);
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
   const openPhotoCamera = useCallback(async () => {
     if (!cameraPermission?.granted) {
       const result = await requestCameraPermission();
@@ -231,7 +241,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
         diameter: parseDimField(fmtDim(dims.diameter)),
       };
       setDimSaveStatus("saved");
-      setTimeout(() => setDimSaveStatus("idle"), 2500);
+      if (dimStatusTimerRef.current) clearTimeout(dimStatusTimerRef.current);
+      dimStatusTimerRef.current = setTimeout(() => { dimStatusTimerRef.current = null; setDimSaveStatus("idle"); }, 2500);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Save failed";
       setDimSaveError(
@@ -405,7 +416,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
       });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       setSaveStatus("saved");
-      setTimeout(() => onClose(), 500);
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = setTimeout(() => { closeTimerRef.current = null; onClose(); }, 500);
     }
   };
 

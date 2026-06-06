@@ -16,6 +16,7 @@ import { createAudioPlayer, type AudioPlayer } from "expo-audio";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import {
   useUpdateItemBarcodes,
   useListInventory,
@@ -117,7 +118,7 @@ interface BarcodeAddPartProps {
 export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   "use no memo";
   const colors = useColors();
-  const { isAdmin, settings, showToast } = useApp();
+  const { isAdmin, adminToken, settings, showToast } = useApp();
   const queryClient = useQueryClient();
 
   const [permission, requestPermission] = useCameraPermissions();
@@ -153,6 +154,8 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   const [assignPicker, setAssignPicker] = useState(false);
   const [lastAssigned, setLastAssigned] = useState<AssignmentEntry | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [conflictItem, setConflictItem] = useState<InventoryItem | null>(null);
+  const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
 
   // Pending barcode — set when camera detects a barcode, cleared on commit or reset
   const [pendingCode, setPendingCode] = useState<string | null>(null);
@@ -315,14 +318,15 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   const handleAssign = useCallback(
     async (item: InventoryItem) => {
       if (!scannedCode) return;
+      const code = scannedCode;
       setAssignPicker(false);
       setScanError(null);
       try {
         const existing = item.barcodes ?? [];
-        if (!existing.includes(scannedCode)) {
+        if (!existing.includes(code)) {
           const updated = await updateBarcodesMutation.mutateAsync({
             id: item.id,
-            data: { barcodes: [...existing, scannedCode] },
+            data: { barcodes: [...existing, code] },
           });
           const listKeyPrefix = getListInventoryQueryKey()[0];
           await queryClient.invalidateQueries({
@@ -331,10 +335,33 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           await upsertItemInBarcodeCache(updated);
         }
         await triggerScanFeedback(settings.scanSound);
-        setLastAssigned({ barcode: scannedCode, item });
+        setLastAssigned({ barcode: code, item });
         setScannedCode(null);
-      } catch {
-        setScanError("Could not assign barcode. Please try again.");
+      } catch (err) {
+        const status = err instanceof Error && "status" in err
+          ? (err as { status: number }).status
+          : null;
+        const isConflict = status === 409 ||
+          (err instanceof Error && (err.message.includes("409") || err.message.toLowerCase().includes("conflict")));
+        if (isConflict) {
+          const conflicting = allItemsRef.current.find(
+            i => i.id !== item.id && (i.barcodes ?? []).includes(code),
+          );
+          if (conflicting) {
+            setConflictItem(conflicting);
+            setScanError(
+              `This barcode is already assigned to "${conflicting.catalog}" (${conflicting.vendor}). Unlink it there first.`,
+            );
+          } else {
+            setConflictItem(null);
+            setScanError(
+              "This barcode is already assigned to another item. Unlink it there first.",
+            );
+          }
+        } else {
+          setConflictItem(null);
+          setScanError("Could not assign barcode. Please try again.");
+        }
       }
     },
     [scannedCode, updateBarcodesMutation, queryClient, triggerScanFeedback, settings.scanSound],
@@ -815,8 +842,20 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
       {/* Error */}
       {scanError ? (
         <View style={[apStyles.errorBanner, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "44" }]}>
-          <Text style={[apStyles.errorText, { color: colors.destructive }]}>{scanError}</Text>
-          <Pressable onPress={() => setScanError(null)} hitSlop={8}>
+          <View style={{ flex: 1, gap: 6 }}>
+            <Text style={[apStyles.errorText, { color: colors.destructive }]}>{scanError}</Text>
+            {conflictItem ? (
+              <Pressable
+                onPress={() => { setScanError(null); setDetailsItem(conflictItem); }}
+                style={[apStyles.conflictViewBtn, { borderColor: colors.destructive + "55" }]}
+              >
+                <Text style={[apStyles.conflictViewBtnText, { color: colors.destructive }]}>
+                  View {conflictItem.catalog} →
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+          <Pressable onPress={() => { setScanError(null); setConflictItem(null); }} hitSlop={8}>
             <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
           </Pressable>
         </View>
@@ -935,6 +974,12 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           setShelfScannedCode(null);
           clearPendingScan();
         }}
+      />
+
+      <PartDetailsEditor
+        item={detailsItem}
+        adminToken={adminToken}
+        onClose={() => setDetailsItem(null)}
       />
     </View>
   );
@@ -1147,7 +1192,15 @@ const apStyles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  errorText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1 },
+  errorText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  conflictViewBtn: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    alignSelf: "flex-start",
+  },
+  conflictViewBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   lastAssignedCard: {
     marginHorizontal: 16,
     marginTop: 12,

@@ -117,8 +117,12 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
       }
     } catch (err) {
       console.warn("KeywordEditor: save failed:", err);
-      if (itemRef.current?.id === id) setSaveStatus("error");
-      showToast("Couldn't save keyword changes. Tap Retry in the editor.", "error");
+      s.latest = s.lastSaved;
+      if (itemRef.current?.id === id) {
+        setKeywords(s.lastSaved);
+        setSaveStatus("error");
+      }
+      showToast("Save failed — changes reverted.", "error");
     } finally {
       s.saving = false;
     }
