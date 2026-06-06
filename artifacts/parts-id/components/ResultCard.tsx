@@ -174,7 +174,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
                 hitSlop={8}
                 style={[cardStyles.binActionBtn, { borderColor: colors.accentForeground + "44" }]}
               >
-                <Text style={[cardStyles.binActionText, { color: colors.accentForeground }]}>🗺 Map</Text>
+                <Text style={[cardStyles.binActionText, { color: colors.accentForeground }]}>Map it!</Text>
               </Pressable>
             ) : null}
           </View>
