@@ -42,6 +42,7 @@ export interface FilterValues {
   maxHeight: string;
   minDiameter: string;
   maxDiameter: string;
+  includeNullDimensions: boolean;
   // ── 16 structured chip dimensions (AND-logic on server) ───────────────────
   category: string;       // Part category / type
   amperage: string;       // Current rating
@@ -65,7 +66,7 @@ export type DimensionCounts = Record<string, Record<string, number>>;
 
 interface FilterPanelProps {
   values: FilterValues;
-  onChange: (key: keyof FilterValues, value: string | number) => void;
+  onChange: (key: keyof FilterValues, value: string | number | boolean) => void;
   /** Per-chip counts returned from the last search (key → option → count) */
   dimensionCounts?: DimensionCounts;
 }
@@ -401,6 +402,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
     onChange("maxHeight", "");
     onChange("minDiameter", "");
     onChange("maxDiameter", "");
+    onChange("includeNullDimensions", false);
   }, [onChange]);
 
   // ── Advanced Filters collapse state ──────────────────────────────────────
@@ -687,6 +689,27 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               </View>
             </View>
 
+            {/* ── Include items without measured dimensions toggle ── */}
+            <Pressable
+              onPress={() => onChange("includeNullDimensions", !values.includeNullDimensions)}
+              style={[nullDimStyles.row, { borderColor: values.includeNullDimensions ? colors.primary + "55" : colors.border, backgroundColor: values.includeNullDimensions ? colors.primary + "0d" : "transparent" }]}
+              hitSlop={4}
+            >
+              <View style={[nullDimStyles.checkbox, { borderColor: values.includeNullDimensions ? colors.primary : colors.border, backgroundColor: values.includeNullDimensions ? colors.primary : "transparent" }]}>
+                {values.includeNullDimensions && (
+                  <Feather name="check" size={11} color={colors.primaryForeground} />
+                )}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[nullDimStyles.label, { color: colors.foreground }]}>
+                  Include items without measured dimensions
+                </Text>
+                <Text style={[nullDimStyles.hint, { color: colors.mutedForeground }]}>
+                  Show parts with no LiDAR scan data alongside size-filtered results
+                </Text>
+              </View>
+            </Pressable>
+
             {/* ── Chip dimensions header + reset button ── */}
             <View style={chipAreaStyles.dimHeader}>
               <Text style={[chipAreaStyles.dimHeaderLabel, { color: colors.mutedForeground }]}>
@@ -779,6 +802,39 @@ const chipAreaStyles = StyleSheet.create({
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   liveLabel: { fontSize: 10, fontFamily: "Inter_400Regular", fontStyle: "italic" },
+});
+
+const nullDimStyles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+    flexShrink: 0,
+  },
+  label: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    marginBottom: 2,
+  },
+  hint: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 15,
+  },
 });
 
 const sliderStyles = StyleSheet.create({

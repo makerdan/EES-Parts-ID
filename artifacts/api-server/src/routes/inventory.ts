@@ -174,6 +174,7 @@ router.post("/search", async (req, res) => {
       maxHeight,
       minDiameter,
       maxDiameter,
+      includeNullDimensions = false,
     } = req.body as {
       keywords?: string;
       catalog?: string;
@@ -196,6 +197,7 @@ router.post("/search", async (req, res) => {
       maxHeight?: number | null;
       minDiameter?: number | null;
       maxDiameter?: number | null;
+      includeNullDimensions?: boolean;
     };
 
     // Normalize length bounds — body takes precedence; fall back to query string so
@@ -351,9 +353,9 @@ router.post("/search", async (req, res) => {
         .orderBy(inventoryTable.vendor, inventoryTable.catalog)
         .limit(200);
 
-      // When a size filter is active, also collect category items with no relevant dimension data.
+      // When a size filter is active and the caller opted in, also collect category items with no relevant dimension data.
       let catSizeUnknownItems: typeof inventoryTable.$inferSelect[] = [];
-      if (hasSizeFilter) {
+      if (hasSizeFilter && includeNullDimensions) {
         const catNullDimWhere = catHasLenFilter && catHasDiaFilter
           ? sql`inventory_chip_text(vendor, catalog, description, ai_keywords) ~* ${catSqlRegex} AND (dimensions->>'length') IS NULL AND (dimensions->>'diameter') IS NULL`
           : catHasLenFilter
@@ -410,9 +412,9 @@ router.post("/search", async (req, res) => {
         return true;
       });
 
-      // When a size filter is active, also fetch uncategorized items with no relevant dimension.
+      // When a size filter is active and the caller opted in, also fetch uncategorized items with no relevant dimension.
       let uncatSizeUnknownItems: typeof inventoryTable.$inferSelect[] = [];
-      if (hasSizeFilter) {
+      if (hasSizeFilter && includeNullDimensions) {
         const nullDimConditions = [
           uncatHasLenFilter ? sql`(dimensions->>'length') IS NULL` : undefined,
           uncatHasDiaFilter ? sql`(dimensions->>'diameter') IS NULL` : undefined,
@@ -496,10 +498,12 @@ router.post("/search", async (req, res) => {
           ${orderClause}
           LIMIT 200
         `),
-        db.select().from(inventoryTable)
-          .where(nullDimPresenceClause)
-          .orderBy(inventoryTable.vendor, inventoryTable.catalog)
-          .limit(200),
+        includeNullDimensions
+          ? db.select().from(inventoryTable)
+              .where(nullDimPresenceClause)
+              .orderBy(inventoryTable.vendor, inventoryTable.catalog)
+              .limit(200)
+          : Promise.resolve([] as typeof inventoryTable.$inferSelect[]),
       ]);
 
 
@@ -616,6 +620,8 @@ router.post("/search", async (req, res) => {
 
         // Push length-range filter into SQL so the LIMIT 200 cap applies after
         // filtering, not before — mirrors the chip-filter pattern above.
+        // When includeNullDimensions is true we also pass through rows with no
+        // length value so they can be collected as sizeUnknown by the JS layer.
         const lengthSqlClause = (() => {
           const minVal = minLength != null && !isNaN(Number(minLength)) ? Number(minLength) : null;
           const maxVal = maxLength != null && !isNaN(Number(maxLength)) ? Number(maxLength) : null;
@@ -623,6 +629,9 @@ router.post("/search", async (req, res) => {
           const parts = [];
           if (minVal != null) parts.push(sql`(i.dimensions->>'length')::numeric >= ${minVal}`);
           if (maxVal != null) parts.push(sql`(i.dimensions->>'length')::numeric <= ${maxVal}`);
+          if (includeNullDimensions) {
+            return sql`AND ((i.dimensions->>'length') IS NULL OR ((i.dimensions->>'length') IS NOT NULL AND ${sql.join(parts, sql` AND `)}))`;
+          }
           return sql`AND (i.dimensions->>'length') IS NOT NULL AND ${sql.join(parts, sql` AND `)}`;
         })();
 
@@ -633,6 +642,9 @@ router.post("/search", async (req, res) => {
           const parts = [];
           if (widMin != null) parts.push(sql`(i.dimensions->>'width')::numeric >= ${widMin}`);
           if (widMax != null) parts.push(sql`(i.dimensions->>'width')::numeric <= ${widMax}`);
+          if (includeNullDimensions) {
+            return sql`AND ((i.dimensions->>'width') IS NULL OR ((i.dimensions->>'width') IS NOT NULL AND ${sql.join(parts, sql` AND `)}))`;
+          }
           return sql`AND (i.dimensions->>'width') IS NOT NULL AND ${sql.join(parts, sql` AND `)}`;
         })();
 
@@ -643,6 +655,9 @@ router.post("/search", async (req, res) => {
           const parts = [];
           if (hgtMin != null) parts.push(sql`(i.dimensions->>'height')::numeric >= ${hgtMin}`);
           if (hgtMax != null) parts.push(sql`(i.dimensions->>'height')::numeric <= ${hgtMax}`);
+          if (includeNullDimensions) {
+            return sql`AND ((i.dimensions->>'height') IS NULL OR ((i.dimensions->>'height') IS NOT NULL AND ${sql.join(parts, sql` AND `)}))`;
+          }
           return sql`AND (i.dimensions->>'height') IS NOT NULL AND ${sql.join(parts, sql` AND `)}`;
         })();
 
@@ -655,6 +670,9 @@ router.post("/search", async (req, res) => {
           const parts = [];
           if (minVal != null) parts.push(sql`(i.dimensions->>'diameter')::numeric >= ${minVal}`);
           if (maxVal != null) parts.push(sql`(i.dimensions->>'diameter')::numeric <= ${maxVal}`);
+          if (includeNullDimensions) {
+            return sql`AND ((i.dimensions->>'diameter') IS NULL OR ((i.dimensions->>'diameter') IS NOT NULL AND ${sql.join(parts, sql` AND `)}))`;
+          }
           return sql`AND (i.dimensions->>'diameter') IS NOT NULL AND ${sql.join(parts, sql` AND `)}`;
         })();
 
@@ -877,7 +895,7 @@ router.post("/search", async (req, res) => {
       ? chipFiltered.filter(r => {
           const dimLen = r.item.dimensions?.length ?? null;
           if (dimLen == null) {
-            sizeUnknownSet.set(r.item.id, r);
+            if (includeNullDimensions) sizeUnknownSet.set(r.item.id, r);
             return false;
           }
           if (lenMin !== null && dimLen < lenMin) return false;
@@ -896,7 +914,7 @@ router.post("/search", async (req, res) => {
       ? lengthFiltered.filter(r => {
           const dims = (r.item as unknown as { dimensions?: { diameter?: number | null } | null }).dimensions;
           if (!dims || dims.diameter == null) {
-            if (!sizeUnknownSet.has(r.item.id)) sizeUnknownSet.set(r.item.id, r);
+            if (includeNullDimensions && !sizeUnknownSet.has(r.item.id)) sizeUnknownSet.set(r.item.id, r);
             return false;
           }
           const dia = dims.diameter;
