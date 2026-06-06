@@ -11,7 +11,9 @@ import {
 } from "react-native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { useColors } from "@/hooks/useColors";
-import { useApp } from "@/contexts/AppContext";
+import { useApp, type PinnedPart } from "@/contexts/AppContext";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
+import { parseBin } from "@/lib/aisleHierarchy";
 import {
   lookupByBarcode,
   useUpdateItemBarcodes,
@@ -64,7 +66,7 @@ interface BarcodeScreenProps {
 export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   "use no memo";
   const colors = useColors();
-  const { isAdmin, textFontScale } = useApp();
+  const { isAdmin, textFontScale, adminToken, setPinnedParts, showToast } = useApp();
   const queryClient = useQueryClient();
 
   const [permission, requestPermission] = useCameraPermissions();
@@ -81,11 +83,37 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   const [showAssignPicker, setShowAssignPicker] = useState(false);
   const [historyPreviewItem, setHistoryPreviewItem] = useState<InventoryItem | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
 
   // Pending barcode — set when camera detects a barcode, cleared on commit or reset
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const pendingCodeRef = useRef<string | null>(null);
   const pendingCommitRef = useRef<(() => Promise<void>) | null>(null);
+
+  const handleShowOnMap = useCallback((item: InventoryItem) => {
+    const bins = item.binLocations ?? [];
+    if (bins.length === 0) {
+      showToast("No bin location assigned — add a bin to this item first.");
+      return;
+    }
+    const newPins: PinnedPart[] = [];
+    let firstParsed: ReturnType<typeof parseBin> | null = null;
+    for (const bin of bins) {
+      const parsed = parseBin(bin);
+      if (parsed) {
+        if (!firstParsed) firstParsed = parsed;
+        newPins.push({ binCode: bin, label: item.catalog, aisleNum: parsed.aisle });
+      }
+    }
+    if (!firstParsed) {
+      showToast(`No map zone found for "${bins[0]}" — bin format not recognised.`);
+      return;
+    }
+    setPinnedParts(newPins);
+    setDetailsItem(null);
+    if (onClose) onClose();
+    router.navigate("/(tabs)/map");
+  }, [showToast, setPinnedParts, onClose]);
 
   const updateBarcodesMutation = useUpdateItemBarcodes();
   const { history, addEntry, clear: clearHistory } = useScanHistory();
@@ -573,7 +601,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
             </Text>
             <ResultCard
               result={{ item: matchedItem, confidence: 1.0, matchReason: isOfflineMatch ? "offline match" : "barcode match", seriesBase: null, seriesLabel: null, variants: [] }}
-              onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+              onEditItem={isAdmin ? (item) => setDetailsItem(item) : undefined}
               rank={0}
               fontScale={textFontScale}
             />
@@ -653,7 +681,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
                   seriesLabel: null,
                   variants: [],
                 }}
-                onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+                onEditItem={isAdmin ? (item) => { setHistoryPreviewItem(null); setDetailsItem(item); } : undefined}
                 rank={0}
                 fontScale={textFontScale}
               />
@@ -661,6 +689,13 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      <PartDetailsEditor
+        item={detailsItem}
+        adminToken={adminToken}
+        onClose={() => setDetailsItem(null)}
+        onShowOnMap={handleShowOnMap}
+      />
     </SafeAreaView>
   );
 }
