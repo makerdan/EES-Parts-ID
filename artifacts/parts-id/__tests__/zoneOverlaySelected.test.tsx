@@ -1,0 +1,461 @@
+/**
+ * @jest-environment node
+ *
+ * Regression tests: ZoneOverlayItem renders different fill colours depending on
+ * the isSelected prop, allowing the warehouse map to visually distinguish which
+ * zone the action menu is open for.
+ *
+ * Fill colour contract (non-pinned, non-cycle-mode):
+ *   isSelected=true          → "rgba(0, 112, 255, 0.22)"  (selection tint)
+ *   isSelected=false / unset → "rgba(0, 112, 255, 0.14)"  (standard active fill)
+ *   inactive zone            → "rgba(0, 112, 255, 0.06)"  (muted fill)
+ *
+ * The SVG mock maps each primitive to a unique lowercase tag so the instance
+ * tree carries an identifiable type string with all props forwarded.  The fill
+ * value is therefore visible as svg-rect.props.fill, matching exactly what
+ * ZoneOverlayItem passes to its AnimatedRect.
+ *
+ * Test pattern is identical to mapPin3D.test.tsx — ZoneOverlayItem is imported
+ * directly from the real component file; its dependencies (reanimated, gesture-
+ * handler, svg) are mocked inline below.
+ */
+
+// Required for act() to work correctly in the node test environment.
+// @ts-ignore
+global.IS_REACT_ACT_ENVIRONMENT = true;
+
+import React from "react";
+import renderer, { act } from "react-test-renderer";
+
+// ─── react-native-svg ─────────────────────────────────────────────────────────
+
+jest.mock("react-native-svg", () => {
+  const React = require("react");
+  function make(tag: string) {
+    return function SVGMock({
+      children,
+      ...props
+    }: {
+      children?: React.ReactNode;
+      [k: string]: unknown;
+    }) {
+      return React.createElement(tag, props, children);
+    };
+  }
+  return {
+    Svg:     make("svg-svg"),
+    G:       make("svg-g"),
+    Path:    make("svg-path"),
+    Ellipse: make("svg-ellipse"),
+    Circle:  make("svg-circle"),
+    Rect:    make("svg-rect"),
+    Text:    make("svg-text"),
+    SvgUri:  make("svg-uri"),
+    SvgXml:  make("svg-xml"),
+  };
+});
+
+// ─── react-native ─────────────────────────────────────────────────────────────
+
+jest.mock("react-native", () => ({
+  Platform:        { OS: "ios", select: (o: Record<string, unknown>) => o.ios ?? o.default },
+  StyleSheet:      { create: (s: unknown) => s, flatten: (s: unknown) => s },
+  View:            ({ children, onLayout }: { children?: React.ReactNode; onLayout?: (e: unknown) => void }) =>
+                     React.createElement("rn-view", { onLayout }, children),
+  Text:            ({ children }: { children?: React.ReactNode }) => React.createElement("rn-text", {}, children),
+  ActivityIndicator: () => null,
+  Pressable:       ({ children, onPress }: { children?: React.ReactNode; onPress?: () => void }) =>
+                     React.createElement("rn-pressable", { onPress }, children),
+  PixelRatio:      { get: () => 3 },
+  useColorScheme:  () => "light",
+  LayoutChangeEvent: {},
+  AppState:        { currentState: "active", addEventListener: jest.fn(() => ({ remove: jest.fn() })) },
+}));
+
+// ─── @expo/vector-icons ──────────────────────────────────────────────────────
+
+jest.mock("@expo/vector-icons", () => ({
+  Feather: () => null,
+  MaterialCommunityIcons: () => null,
+}));
+
+// ─── expo-asset ───────────────────────────────────────────────────────────────
+
+jest.mock("expo-asset", () => ({
+  Asset: {
+    fromModule: () => ({ downloadAsync: async () => {}, localUri: "" }),
+    loadAsync:  async () => [{ hash: "test", localUri: "", uri: "" }],
+  },
+}));
+
+// ─── @react-native-async-storage/async-storage ───────────────────────────────
+
+jest.mock("@react-native-async-storage/async-storage", () => ({
+  getItem:    jest.fn().mockResolvedValue(null),
+  setItem:    jest.fn().mockResolvedValue(undefined),
+  removeItem: jest.fn().mockResolvedValue(undefined),
+}));
+
+// ─── react-native-reanimated ──────────────────────────────────────────────────
+
+jest.mock("react-native-reanimated", () => {
+  const React = require("react");
+  const makeShared = (v: unknown) => ({ value: v });
+  const AnimatedView = ({ children, style }: { children?: React.ReactNode; style?: unknown }) =>
+    React.createElement("rn-animated-view", { style }, children);
+  const createAnimatedComponent = (C: unknown) => C;
+  return {
+    __esModule:           true,
+    useSharedValue:       makeShared,
+    useAnimatedStyle:     () => ({}),
+    useAnimatedProps:     () => ({}),
+    useAnimatedReaction:  () => {},
+    withSpring:           (v: unknown) => v,
+    withRepeat:           (a: unknown) => a,
+    withTiming:           (v: unknown) => v,
+    runOnJS:              (fn: unknown) => fn,
+    Animated: { createAnimatedComponent, View: AnimatedView },
+    default:  { createAnimatedComponent, View: AnimatedView },
+  };
+});
+
+// ─── react-native-gesture-handler ────────────────────────────────────────────
+
+jest.mock("react-native-gesture-handler", () => {
+  const React = require("react");
+  const chain = () => {
+    const c: Record<string, unknown> = {};
+    [
+      "minPointers", "minDistance", "onBegin", "onStart",
+      "onUpdate", "onChange", "onEnd", "onFinalize",
+      "numberOfTaps", "enabled",
+    ].forEach((m) => { c[m] = () => c; });
+    return c;
+  };
+  return {
+    Gesture: {
+      Pan:          chain,
+      Pinch:        chain,
+      Tap:          chain,
+      Simultaneous: (...args: unknown[]) => args[0],
+      Exclusive:    (...args: unknown[]) => args[0],
+    },
+    GestureDetector: ({ children }: { children: React.ReactNode }) =>
+      React.createElement(React.Fragment, null, children),
+  };
+});
+
+// ─── @/utils/floorPlanCache ───────────────────────────────────────────────────
+
+jest.mock("@/utils/floorPlanCache", () => ({
+  getCachedData:        jest.fn().mockReturnValue(null),
+  getIfValid:           jest.fn().mockReturnValue(null),
+  hasCachedData:        jest.fn().mockReturnValue(false),
+  initPersistRead:      jest.fn().mockReturnValue(Promise.resolve()),
+  resetForServerUpdate: jest.fn(),
+  setCached:            jest.fn(),
+  setFallbackEmpty:     jest.fn(),
+}));
+
+// ─── @/utils/mapViewport ─────────────────────────────────────────────────────
+
+jest.mock("@/utils/mapViewport", () => ({
+  SVG_VIEWBOX_W:       7329.6001,
+  SVG_VIEWBOX_H:       4997.2798,
+  SVG_ASPECT:          7329.6001 / 4997.2798,
+  MIN_SCALE:           0.8,
+  MAX_SCALE:           50,
+  FIT_PADDING:         16,
+  parseContentViewBox: jest.fn().mockReturnValue(null),
+  fitContentViewport:  jest.fn().mockReturnValue({ scale: 1, tx: 0, ty: 0 }),
+  makeTileViewBox:     jest.fn().mockReturnValue("0 0 100 100"),
+  computeFocusPan:     jest.fn().mockReturnValue({ tx: 0, ty: 0 }),
+}));
+
+// ─── @/hooks/useColors ───────────────────────────────────────────────────────
+
+jest.mock("@/hooks/useColors", () => ({
+  useColors: () => ({
+    background: "#fff", foreground: "#000", card: "#fff", border: "#ccc",
+    primary: "#3b82f6", primaryForeground: "#fff", muted: "#f1f5f9",
+    mutedForeground: "#64748b", destructive: "#ef4444",
+    success: "#22c55e", warning: "#f59e0b", accent: "#f1f5f9", accentForeground: "#000",
+  }),
+}));
+
+// ─── Suppress react-test-renderer deprecation warning ────────────────────────
+
+let origConsoleError: typeof console.error;
+beforeAll(() => {
+  origConsoleError = console.error.bind(console);
+  jest.spyOn(console, "error").mockImplementation(
+    (msg: unknown, ...args: unknown[]) => {
+      if (
+        typeof msg === "string" &&
+        (msg.includes("react-test-renderer is deprecated") ||
+          msg.includes("Warning:"))
+      ) return;
+      origConsoleError(msg, ...args);
+    },
+  );
+});
+afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
+
+// ─── Subjects under test ──────────────────────────────────────────────────────
+
+import { ZoneOverlayItem, WarehouseMapView } from "@/components/WarehouseMapView";
+import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
+
+// ─── Fixture helpers ──────────────────────────────────────────────────────────
+
+function makeZone(overrides: Partial<ApiWarehouseZone> = {}): ApiWarehouseZone {
+  return {
+    id:            1,
+    aisleId:       "5",
+    label:         "05",
+    sectionParity: "all",
+    isInventory:   true,
+    svgX:          100,
+    svgY:          200,
+    svgWidth:      300,
+    svgHeight:     400,
+    sortOrder:     1,
+    createdAt:     "2024-01-01T00:00:00.000Z",
+    updatedAt:     "2024-01-01T00:00:00.000Z",
+    ...overrides,
+  } as ApiWarehouseZone;
+}
+
+const fakeColors = {
+  background: "#fff", foreground: "#000", card: "#fff", border: "#ccc",
+  primary: "#3b82f6", primaryForeground: "#fff", muted: "#f1f5f9",
+  mutedForeground: "#64748b", destructive: "#ef4444",
+  success: "#22c55e", warning: "#f59e0b", accent: "#f1f5f9", accentForeground: "#000",
+} as ReturnType<typeof import("@/hooks/useColors").useColors>;
+
+const fakeScale = { value: 1 } as import("react-native-reanimated").SharedValue<number>;
+
+// =============================================================================
+// ZoneOverlayItem — isSelected prop controls the selection fill colour
+//
+// The fill colour distinguishes selection state on the Rect:
+//   isSelected=true  → "rgba(0, 112, 255, 0.22)"  (selection tint, thicker stroke)
+//   isSelected=false → "rgba(0, 112, 255, 0.14)"  (standard active zone fill)
+// =============================================================================
+
+describe("ZoneOverlayItem — isSelected prop controls the selection fill colour", () => {
+  it("isSelected=true renders the selection fill 'rgba(0, 112, 255, 0.22)' on the Rect", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ZoneOverlayItem
+          zone={makeZone()}
+          scale={fakeScale}
+          colors={fakeColors}
+          onZoneTap={jest.fn()}
+          cycleMode={false}
+          isCounted={false}
+          isSelected={true}
+        />,
+      );
+    });
+
+    const rects = tree.root.findAll(
+      (n) => (n.type as string) === "svg-rect",
+      { deep: true },
+    );
+    const selectedRect = rects.find((n) => n.props.fill === "rgba(0, 112, 255, 0.22)");
+    expect(selectedRect).toBeDefined();
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("isSelected=false renders the standard active fill 'rgba(0, 112, 255, 0.14)'", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ZoneOverlayItem
+          zone={makeZone()}
+          scale={fakeScale}
+          colors={fakeColors}
+          onZoneTap={jest.fn()}
+          cycleMode={false}
+          isCounted={false}
+          isSelected={false}
+        />,
+      );
+    });
+
+    const rects = tree.root.findAll(
+      (n) => (n.type as string) === "svg-rect",
+      { deep: true },
+    );
+
+    const activeRect = rects.find((n) => n.props.fill === "rgba(0, 112, 255, 0.14)");
+    expect(activeRect).toBeDefined();
+
+    // Must NOT render the selected fill.
+    const selectedRect = rects.find((n) => n.props.fill === "rgba(0, 112, 255, 0.22)");
+    expect(selectedRect).toBeUndefined();
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("isSelected=true does not render the standard active fill", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ZoneOverlayItem
+          zone={makeZone()}
+          scale={fakeScale}
+          colors={fakeColors}
+          onZoneTap={jest.fn()}
+          cycleMode={false}
+          isCounted={false}
+          isSelected={true}
+        />,
+      );
+    });
+
+    const rects = tree.root.findAll(
+      (n) => (n.type as string) === "svg-rect",
+      { deep: true },
+    );
+    const activeRect = rects.find((n) => n.props.fill === "rgba(0, 112, 255, 0.14)");
+    expect(activeRect).toBeUndefined();
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("inactive zone (isInventory=false) renders the muted fill 'rgba(0, 112, 255, 0.06)'", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <ZoneOverlayItem
+          zone={makeZone({ isInventory: false })}
+          scale={fakeScale}
+          colors={fakeColors}
+          onZoneTap={jest.fn()}
+          cycleMode={false}
+          isCounted={false}
+          isSelected={false}
+        />,
+      );
+    });
+
+    const rects = tree.root.findAll(
+      (n) => (n.type as string) === "svg-rect",
+      { deep: true },
+    );
+    const mutedRect = rects.find((n) => n.props.fill === "rgba(0, 112, 255, 0.06)");
+    expect(mutedRect).toBeDefined();
+
+    await act(async () => { tree.unmount(); });
+  });
+});
+
+// =============================================================================
+// WarehouseMapView — selectedZoneId routes isSelected to exactly the matching zone
+//
+// When selectedZoneId=N is passed to WarehouseMapView, only the ZoneOverlayItem
+// whose zone.id === N should render with the selection fill.  All other zones
+// must continue to render the standard active fill.
+//
+// The test fires a layout event to give WarehouseMapView a non-zero containerW
+// so that it exits its early-return guard and renders the SVG overlay with all
+// ZoneOverlayItem instances.
+// =============================================================================
+
+describe("WarehouseMapView — selectedZoneId routes isSelected only to the matching zone", () => {
+  const zoneA: ApiWarehouseZone = {
+    id: 10, aisleId: "10", label: "10",
+    sectionParity: "all", isInventory: true,
+    svgX: 0, svgY: 0, svgWidth: 300, svgHeight: 400,
+    sortOrder: 0, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z",
+  };
+  const zoneB: ApiWarehouseZone = {
+    id: 20, aisleId: "20", label: "20",
+    sectionParity: "all", isInventory: true,
+    svgX: 400, svgY: 0, svgWidth: 300, svgHeight: 400,
+    sortOrder: 1, createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:00Z",
+  };
+
+  it("only the zone matching selectedZoneId renders the selection fill", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <WarehouseMapView
+          zones={[zoneA, zoneB]}
+          zonesLoading={false}
+          zonesError={false}
+          onZonesRetry={jest.fn()}
+          onZoneTap={jest.fn()}
+          selectedZoneId={10}
+        />,
+      );
+    });
+
+    // Fire a layout event so containerW becomes > 0 and the zone overlay renders.
+    const viewsWithLayout = tree.root.findAll(
+      (n) => typeof n.props.onLayout === "function",
+      { deep: true },
+    );
+    expect(viewsWithLayout.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      viewsWithLayout[0].props.onLayout({
+        nativeEvent: { layout: { width: 400, height: 800 } },
+      });
+    });
+
+    const rects = tree.root.findAll(
+      (n) => (n.type as string) === "svg-rect",
+      { deep: true },
+    );
+
+    // Exactly one rect has the selection fill (zoneA, id=10).
+    const selectedRects = rects.filter((n) => n.props.fill === "rgba(0, 112, 255, 0.22)");
+    expect(selectedRects).toHaveLength(1);
+
+    // The non-selected zone (zoneB, id=20) retains the standard active fill.
+    const activeRects = rects.filter((n) => n.props.fill === "rgba(0, 112, 255, 0.14)");
+    expect(activeRects).toHaveLength(1);
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("no zone gets the selection fill when selectedZoneId is undefined", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <WarehouseMapView
+          zones={[zoneA, zoneB]}
+          zonesLoading={false}
+          zonesError={false}
+          onZonesRetry={jest.fn()}
+          onZoneTap={jest.fn()}
+        />,
+      );
+    });
+
+    const viewsWithLayout = tree.root.findAll(
+      (n) => typeof n.props.onLayout === "function",
+      { deep: true },
+    );
+    await act(async () => {
+      viewsWithLayout[0].props.onLayout({
+        nativeEvent: { layout: { width: 400, height: 800 } },
+      });
+    });
+
+    const rects = tree.root.findAll(
+      (n) => (n.type as string) === "svg-rect",
+      { deep: true },
+    );
+
+    const selectedRects = rects.filter((n) => n.props.fill === "rgba(0, 112, 255, 0.22)");
+    expect(selectedRects).toHaveLength(0);
+
+    await act(async () => { tree.unmount(); });
+  });
+});

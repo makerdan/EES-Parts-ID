@@ -1576,7 +1576,7 @@ export function WarehouseMapView({
       { translateY: translateY.value },
       { scale: scale.value },
     ],
-    ...(Platform.OS === "web" ? { cursor: "grab" } : {}),
+    ...(Platform.OS === "web" ? { cursor: "grab" as unknown as "auto" } : {}),
   }));
 
   // ── SVG zone overlays (viewBox coordinate space) ───────────────────────────
@@ -1933,7 +1933,6 @@ export function WarehouseMapView({
             },
           ]}
           accessibilityLabel={selectMode ? "Disable select mode" : "Enable select mode"}
-          title={selectMode ? "Disable select mode" : "Select zone"}
         >
           <Feather name="mouse-pointer" size={15} color={selectMode ? "#fff" : colors.foreground} />
         </Pressable>
@@ -1945,7 +1944,6 @@ export function WarehouseMapView({
             { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
           ]}
           accessibilityLabel="Zoom in"
-          title="Zoom in"
         >
           <Feather name="plus" size={16} color={colors.foreground} />
         </Pressable>
@@ -1957,7 +1955,6 @@ export function WarehouseMapView({
             { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
           ]}
           accessibilityLabel="Zoom out"
-          title="Zoom out"
         >
           <Feather name="minus" size={16} color={colors.foreground} />
         </Pressable>
@@ -1969,7 +1966,6 @@ export function WarehouseMapView({
             { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
           ]}
           accessibilityLabel="Fit to screen"
-          title="Fit to screen"
         >
           <Feather name="maximize" size={14} color={colors.mutedForeground} />
         </Pressable>

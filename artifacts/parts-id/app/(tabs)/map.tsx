@@ -58,34 +58,6 @@ export default function MapScreen() {
   const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts, showToast } = useApp();
 
   /**
-   * Resolves the exact zone IDs for primary pins by matching aisle + section
-   * against each zone's sectionParity.  Computed after zones load so the map
-   * highlights the specific zone (odd or even half, or "all") rather than
-   * every zone that shares the aisle number.
-   */
-  const pinnedZoneIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const zone of zones) {
-      const aisleNum = parseInt(zone.aisleId, 10);
-      const sections = pinnedSections.get(aisleNum);
-      if (!sections) continue;
-      if (sectionMatchesParity(zone.sectionParity, sections)) ids.add(zone.id);
-    }
-    return ids;
-  }, [zones, pinnedSections]);
-
-  /** Same as pinnedZoneIds but for variant/related-size pins. */
-  const variantZoneIds = useMemo(() => {
-    const ids = new Set<number>();
-    for (const zone of zones) {
-      const aisleNum = parseInt(zone.aisleId, 10);
-      const sections = variantSections.get(aisleNum);
-      if (!sections) continue;
-      if (sectionMatchesParity(zone.sectionParity, sections)) ids.add(zone.id);
-    }
-    return ids;
-  }, [zones, variantSections]);
-  /**
    * For each pinned aisle, build a label containing the actual bin code
    * (which encodes aisle + section + position, e.g. "17-06-204") and, when
    * multiple bins share the same aisle, the additional section numbers so the
@@ -184,6 +156,35 @@ export default function MapScreen() {
 
   // Zone data — owned at this level so useFocusEffect can trigger refetch
   const { zones, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
+
+  /**
+   * Resolves the exact zone IDs for primary pins by matching aisle + section
+   * against each zone's sectionParity.  Computed after zones load so the map
+   * highlights the specific zone (odd or even half, or "all") rather than
+   * every zone that shares the aisle number.
+   */
+  const pinnedZoneIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const zone of zones) {
+      const aisleNum = parseInt(zone.aisleId, 10);
+      const sections = pinnedSections.get(aisleNum);
+      if (!sections) continue;
+      if (sectionMatchesParity(zone.sectionParity, sections)) ids.add(zone.id);
+    }
+    return ids;
+  }, [zones, pinnedSections]);
+
+  /** Same as pinnedZoneIds but for variant/related-size pins. */
+  const variantZoneIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const zone of zones) {
+      const aisleNum = parseInt(zone.aisleId, 10);
+      const sections = variantSections.get(aisleNum);
+      if (!sections) continue;
+      if (sectionMatchesParity(zone.sectionParity, sections)) ids.add(zone.id);
+    }
+    return ids;
+  }, [zones, variantSections]);
 
   // Mirror pendingMapFocus into a ref so useFocusEffect can read it without
   // re-registering the effect every time the value changes.
