@@ -1,8 +1,8 @@
 /**
  * Integration tests for GET/POST/PATCH/DELETE /api/warehouse-zones.
  *
- * Mutation endpoints are dev-only (blocked in production via devOnly middleware).
- * No admin auth is required for mutations in dev mode.
+ * Mutation endpoints (POST, PATCH, DELETE) require a valid admin token.
+ * GET endpoints are unauthenticated (read-only).
  */
 
 // ── Mock OpenAI BEFORE app is imported ────────────────────────────────────────
@@ -24,9 +24,29 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
+import { signAdminToken } from "../src/routes/admin";
 import { seedFixtures, cleanupFixtures, closePool } from "./helpers/testDb";
 import { db, warehouseZoneTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
+const ADMIN_SECRET = "jest-zone-secret";
+let adminToken: string;
+
+beforeAll(async () => {
+  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
+  adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
+  await cleanupZones();
+}, 15_000);
+
+afterAll(async () => {
+  await cleanupZones();
+  await closePool();
+}, 15_000);
+
+afterEach(async () => {
+  await cleanupZones();
+});
 
 // ── Cleanup helpers ───────────────────────────────────────────────────────────
 const ZONE_LABEL_PREFIX = "JEST-ZONE-";
@@ -46,25 +66,12 @@ const BASE_ZONE = {
   svgHeight: 50,
 };
 
-beforeAll(async () => {
-  await cleanupZones();
-}, 15_000);
-
-afterAll(async () => {
-  await cleanupZones();
-  await closePool();
-}, 15_000);
-
-afterEach(async () => {
-  await cleanupZones();
-});
-
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/warehouse-zones
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("GET /api/warehouse-zones", () => {
-  it("returns 200 and a zones array", async () => {
+  it("returns 200 and a zones array (no auth required)", async () => {
     const res = await supertest(app).get("/api/warehouse-zones").expect(200);
     expect(res.body).toHaveProperty("zones");
     expect(Array.isArray(res.body.zones)).toBe(true);
@@ -73,6 +80,7 @@ describe("GET /api/warehouse-zones", () => {
   it("reflects a newly created zone in the list", async () => {
     await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send(BASE_ZONE)
       .expect(201);
 
@@ -90,9 +98,29 @@ describe("GET /api/warehouse-zones", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("POST /api/warehouse-zones", () => {
+  it("returns 401 without an admin token", async () => {
+    const res = await supertest(app)
+      .post("/api/warehouse-zones")
+      .send(BASE_ZONE)
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 401 with an invalid admin token", async () => {
+    const res = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", "Bearer not-a-valid-token")
+      .send(BASE_ZONE)
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
   it("creates a zone and returns 201 with the zone object", async () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send(BASE_ZONE)
       .expect(201);
 
@@ -105,6 +133,7 @@ describe("POST /api/warehouse-zones", () => {
   it("defaults sectionNum to 0 when omitted", async () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send(BASE_ZONE)
       .expect(201);
 
@@ -116,6 +145,7 @@ describe("POST /api/warehouse-zones", () => {
       await cleanupZones();
       const res = await supertest(app)
         .post("/api/warehouse-zones")
+        .set("Authorization", `Bearer ${adminToken}`)
         .send({ ...BASE_ZONE, sectionNum })
         .expect(201);
       expect(res.body.zone.sectionNum).toBe(sectionNum);
@@ -125,6 +155,7 @@ describe("POST /api/warehouse-zones", () => {
   it("returns 400 when required fields are missing", async () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ aisleId: "A1", label: `${ZONE_LABEL_PREFIX}BAD` })
       .expect(400);
 
@@ -134,26 +165,11 @@ describe("POST /api/warehouse-zones", () => {
   it("returns 400 when sectionNum is not a number", async () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ ...BASE_ZONE, sectionNum: "not-a-number" })
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
-  });
-
-  it("returns 403 in production mode", async () => {
-    const orig = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
-    try {
-      const res = await supertest(app)
-        .post("/api/warehouse-zones")
-        .send(BASE_ZONE)
-        .expect(403);
-
-      expect(res.body).toHaveProperty("error");
-      expect(res.body.error).toMatch(/disabled in production/i);
-    } finally {
-      process.env.NODE_ENV = orig;
-    }
   });
 });
 
@@ -162,9 +178,29 @@ describe("POST /api/warehouse-zones", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("PATCH /api/warehouse-zones/:id", () => {
+  it("returns 401 without an admin token", async () => {
+    const res = await supertest(app)
+      .patch("/api/warehouse-zones/1")
+      .send({ label: `${ZONE_LABEL_PREFIX}NOPE` })
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 401 with an invalid admin token", async () => {
+    const res = await supertest(app)
+      .patch("/api/warehouse-zones/1")
+      .set("Authorization", "Bearer bad-token")
+      .send({ label: `${ZONE_LABEL_PREFIX}NOPE` })
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
   it("updates the label and returns the updated zone", async () => {
     const create = await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send(BASE_ZONE)
       .expect(201);
 
@@ -173,6 +209,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
 
     const res = await supertest(app)
       .patch(`/api/warehouse-zones/${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ label: newLabel })
       .expect(200);
 
@@ -183,6 +220,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
   it("updates svgX, svgY coordinates", async () => {
     const create = await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send(BASE_ZONE)
       .expect(201);
 
@@ -190,6 +228,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
 
     const res = await supertest(app)
       .patch(`/api/warehouse-zones/${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ svgX: 99, svgY: 88 })
       .expect(200);
 
@@ -200,6 +239,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
   it("returns 404 when the zone id does not exist", async () => {
     const res = await supertest(app)
       .patch("/api/warehouse-zones/999999999")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ label: `${ZONE_LABEL_PREFIX}GHOST` })
       .expect(404);
 
@@ -209,6 +249,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
   it("returns 400 for a non-numeric id", async () => {
     const res = await supertest(app)
       .patch("/api/warehouse-zones/not-a-number")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ label: `${ZONE_LABEL_PREFIX}X` })
       .expect(400);
 
@@ -218,6 +259,7 @@ describe("PATCH /api/warehouse-zones/:id", () => {
   it("returns 400 when sectionNum is not a number in the update", async () => {
     const create = await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send(BASE_ZONE)
       .expect(201);
 
@@ -225,30 +267,11 @@ describe("PATCH /api/warehouse-zones/:id", () => {
 
     const res = await supertest(app)
       .patch(`/api/warehouse-zones/${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({ sectionNum: "bad-value" })
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
-  });
-
-  it("returns 403 in production mode", async () => {
-    const create = await supertest(app)
-      .post("/api/warehouse-zones")
-      .send(BASE_ZONE)
-      .expect(201);
-
-    const id: number = create.body.zone.id;
-
-    const orig = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
-    try {
-      await supertest(app)
-        .patch(`/api/warehouse-zones/${id}`)
-        .send({ label: `${ZONE_LABEL_PREFIX}PROD` })
-        .expect(403);
-    } finally {
-      process.env.NODE_ENV = orig;
-    }
   });
 });
 
@@ -257,9 +280,27 @@ describe("PATCH /api/warehouse-zones/:id", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("DELETE /api/warehouse-zones/:id", () => {
+  it("returns 401 without an admin token", async () => {
+    const res = await supertest(app)
+      .delete("/api/warehouse-zones/1")
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns 401 with an invalid admin token", async () => {
+    const res = await supertest(app)
+      .delete("/api/warehouse-zones/1")
+      .set("Authorization", "Bearer bad-token")
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
   it("deletes a zone and returns deleted: true", async () => {
     const create = await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send(BASE_ZONE)
       .expect(201);
 
@@ -267,6 +308,7 @@ describe("DELETE /api/warehouse-zones/:id", () => {
 
     const res = await supertest(app)
       .delete(`/api/warehouse-zones/${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
 
     expect(res.body).toEqual({ deleted: true });
@@ -275,11 +317,15 @@ describe("DELETE /api/warehouse-zones/:id", () => {
   it("zone no longer appears in the list after deletion", async () => {
     const create = await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send(BASE_ZONE)
       .expect(201);
 
     const id: number = create.body.zone.id;
-    await supertest(app).delete(`/api/warehouse-zones/${id}`).expect(200);
+    await supertest(app)
+      .delete(`/api/warehouse-zones/${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
 
     const list = await supertest(app).get("/api/warehouse-zones").expect(200);
     const found = list.body.zones.find(
@@ -291,6 +337,7 @@ describe("DELETE /api/warehouse-zones/:id", () => {
   it("returns 404 when deleting a zone that does not exist", async () => {
     const res = await supertest(app)
       .delete("/api/warehouse-zones/999999999")
+      .set("Authorization", `Bearer ${adminToken}`)
       .expect(404);
 
     expect(res.body).toHaveProperty("error");
@@ -299,28 +346,10 @@ describe("DELETE /api/warehouse-zones/:id", () => {
   it("returns 400 for a non-numeric id", async () => {
     const res = await supertest(app)
       .delete("/api/warehouse-zones/not-a-number")
+      .set("Authorization", `Bearer ${adminToken}`)
       .expect(400);
 
     expect(res.body).toHaveProperty("error");
-  });
-
-  it("returns 403 in production mode", async () => {
-    const create = await supertest(app)
-      .post("/api/warehouse-zones")
-      .send(BASE_ZONE)
-      .expect(201);
-
-    const id: number = create.body.zone.id;
-
-    const orig = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
-    try {
-      await supertest(app)
-        .delete(`/api/warehouse-zones/${id}`)
-        .expect(403);
-    } finally {
-      process.env.NODE_ENV = orig;
-    }
   });
 });
 
@@ -359,7 +388,7 @@ describe("GET /api/warehouse-zones/coverage", () => {
     await cleanupCoverageFixtures();
   }, 15_000);
 
-  it("returns 200 with unsortedCount and uncoveredAisles fields", async () => {
+  it("returns 200 with unsortedCount and uncoveredAisles fields (no auth required)", async () => {
     const res = await supertest(app)
       .get("/api/warehouse-zones/coverage")
       .expect(200);
@@ -414,9 +443,10 @@ describe("GET /api/warehouse-zones/coverage", () => {
       },
     ]);
 
-    // Create a zone for aisle "87" so it is covered
+    // Create a zone for aisle "87" so it is covered (requires admin auth)
     await supertest(app)
       .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
       .send({
         aisleId: "87",
         label: COVERAGE_LABEL_A,

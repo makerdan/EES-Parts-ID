@@ -11,8 +11,6 @@
  *     closest equivalent to an "authenticated non-admin" attempt; it also returns
  *     401 — not 403 — because the server cannot distinguish it from an arbitrary
  *     forged token.
- *   - The only 403 path in the API is the `devOnly` middleware that blocks
- *     write operations on warehouse zones when NODE_ENV==="production".
  *
  * Covers:
  * - Unauthenticated (no token) → 401 on every protected route
@@ -20,7 +18,8 @@
  * - Structurally valid token signed with wrong secret (non-admin equivalent) → 401
  * - Expired token → 401
  * - Valid admin token → request proceeds (2xx / route-specific response)
- * - devOnly (warehouse zone write) endpoints → 403 in production mode only
+ * - Zone write endpoints (POST, PATCH, DELETE) require admin auth → 401 without token
+ * - Zone read endpoints (GET) are unauthenticated
  */
 
 // ── Mock OpenAI BEFORE app is imported ────────────────────────────────────────
@@ -44,6 +43,8 @@ import supertest from "supertest";
 import app from "../src/app";
 import { signAdminToken } from "../src/routes/admin";
 import { closePool } from "./helpers/testDb";
+import { db, warehouseZoneTable } from "@workspace/db";
+import { sql } from "drizzle-orm";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-auth-middleware-secret";
@@ -273,53 +274,86 @@ describe("Valid admin token — request proceeds past auth", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// devOnly (warehouse zone writes) — 403 in production mode
+// Zone write endpoints — require admin auth
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("devOnly warehouse-zone writes → 403 in production mode", () => {
-  afterEach(() => {
-    process.env.NODE_ENV = "test";
+describe("Zone write endpoints require admin auth", () => {
+  const AUTH_ZONE_LABEL = "JEST-ZONE-AUTH";
+  const ZONE_BODY = {
+    aisleId: "JEST-AUTH",
+    label: AUTH_ZONE_LABEL,
+    svgX: 0,
+    svgY: 0,
+    svgWidth: 100,
+    svgHeight: 50,
+  };
+
+  async function cleanupAuthZone() {
+    await db
+      .delete(warehouseZoneTable)
+      .where(sql`${warehouseZoneTable.label} LIKE ${"JEST-ZONE-AUTH%"}`);
+  }
+
+  beforeAll(async () => {
+    await cleanupAuthZone();
+  }, 15_000);
+
+  afterAll(async () => {
+    await cleanupAuthZone();
+  }, 15_000);
+
+  afterEach(async () => {
+    await cleanupAuthZone();
   });
 
-  it("POST /api/warehouse-zones returns 403 in production", async () => {
-    process.env.NODE_ENV = "production";
+  it("POST /api/warehouse-zones without token → 401", async () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
-      .send({
-        aisleId: "A1",
-        label: "JEST-AUTH-ZONE",
-        svgX: 0,
-        svgY: 0,
-        svgWidth: 100,
-        svgHeight: 50,
-      })
-      .expect(403);
+      .send(ZONE_BODY)
+      .expect(401);
 
     expect(res.body).toHaveProperty("error");
-    expect(res.body.error).toMatch(/disabled in production/i);
   });
 
-  it("PATCH /api/warehouse-zones/:id returns 403 in production", async () => {
-    process.env.NODE_ENV = "production";
+  it("POST /api/warehouse-zones with wrong-secret token → 401", async () => {
+    const wrongToken = signAdminToken(Date.now(), "wrong-secret");
+    const res = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${wrongToken}`)
+      .send(ZONE_BODY)
+      .expect(401);
+
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("POST /api/warehouse-zones with valid token → 201", async () => {
+    const res = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(ZONE_BODY)
+      .expect(201);
+
+    expect(res.body).toHaveProperty("zone");
+  });
+
+  it("PATCH /api/warehouse-zones/:id without token → 401", async () => {
     const res = await supertest(app)
       .patch("/api/warehouse-zones/1")
       .send({ label: "new-label" })
-      .expect(403);
+      .expect(401);
 
     expect(res.body).toHaveProperty("error");
   });
 
-  it("DELETE /api/warehouse-zones/:id returns 403 in production", async () => {
-    process.env.NODE_ENV = "production";
+  it("DELETE /api/warehouse-zones/:id without token → 401", async () => {
     const res = await supertest(app)
       .delete("/api/warehouse-zones/1")
-      .expect(403);
+      .expect(401);
 
     expect(res.body).toHaveProperty("error");
   });
 
-  it("GET /api/warehouse-zones (read) is allowed in production", async () => {
-    process.env.NODE_ENV = "production";
+  it("GET /api/warehouse-zones (read) requires no auth → 200", async () => {
     const res = await supertest(app).get("/api/warehouse-zones").expect(200);
     expect(res.body).toHaveProperty("zones");
   });
