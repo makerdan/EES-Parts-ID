@@ -22,24 +22,19 @@ import type { ScanEntry } from "@/utils/scanHistory";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
-import { BinEditor } from "@/components/BinEditor";
-import { BarcodeEditor } from "@/components/BarcodeEditor";
-import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
 import BarcodeScreen from "@/components/BarcodeScreen";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 import { useTrackScreen } from "@/utils/useTrackScreen";
+import { router } from "expo-router";
 
 export default function PhotoScreen() {
   "use no memo";
   useTrackScreen("Photo ID");
   const colors = useColors();
   const { textFontScale, isAdmin, adminToken } = useApp();
-  const [binEditItem, setBinEditItem] = useState<InventoryItem | null>(null);
-  const [barcodeEditItem, setBarcodeEditItem] = useState<InventoryItem | null>(null);
-  const [detailsEditItem, setDetailsEditItem] = useState<InventoryItem | null>(null);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");
@@ -518,9 +513,7 @@ export default function PhotoScreen() {
               </View>
               <ResultCard
                 result={{ item: barcodeResult, confidence: 1.0, matchReason: "barcode scan", seriesBase: null, seriesLabel: null, variants: [] }}
-                onEditBins={isAdmin ? setBinEditItem : undefined}
-                onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
-                onEditItem={isAdmin ? setDetailsEditItem : undefined}
+                onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
                 rank={0}
                 fontScale={textFontScale}
               />
@@ -557,9 +550,7 @@ export default function PhotoScreen() {
                 <ResultCard
                   key={result.item.id}
                   result={result}
-                  onEditBins={isAdmin ? setBinEditItem : undefined}
-                  onEditBarcodes={isAdmin ? setBarcodeEditItem : undefined}
-                  onEditItem={isAdmin ? setDetailsEditItem : undefined}
+                  onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
                   rank={index}
                   fontScale={textFontScale}
                 />
@@ -620,33 +611,6 @@ export default function PhotoScreen() {
 
       <ReferenceModal />
 
-      <BarcodeEditor
-        item={barcodeEditItem}
-        onClose={() => setBarcodeEditItem(null)}
-        onBarcodesChanged={(id, barcodes) => {
-          setResults(prev => prev.map(r =>
-            r.item.id === id ? { ...r, item: { ...r.item, barcodes } } : r,
-          ));
-        }}
-      />
-
-      <PartDetailsEditor
-        item={detailsEditItem}
-        adminToken={adminToken}
-        onClose={() => setDetailsEditItem(null)}
-      />
-
-      <BinEditor
-        item={binEditItem}
-        onClose={() => setBinEditItem(null)}
-        onBinsChanged={(id, binLocations) => {
-          // Patch the displayed result row in place so the new bin list is
-          // visible immediately, without re-running AI identification.
-          setResults(prev => prev.map(r =>
-            r.item.id === id ? { ...r, item: { ...r.item, binLocations } } : r,
-          ));
-        }}
-      />
     </SafeAreaView>
   );
 }

@@ -31,7 +31,7 @@ import { useColors } from "@/hooks/useColors";
 import { useWebDragScroll } from "@/hooks/useWebDragScroll";
 import { ResultCard } from "@/components/ResultCard";
 import { AddPartModal } from "@/components/AddPartModal";
-import { PartDetailsEditor } from "@/components/PartDetailsEditor";
+import { router } from "expo-router";
 import {
   buildAisleHierarchy,
   filterSections,
@@ -48,8 +48,6 @@ export interface BrowseByAisleProps {
   shelfViewEnabled: boolean;
   fontScale?: number;
   onClose: () => void;
-  onEditKeywords?: (item: InventoryItem) => void;
-  onEditBins?: (item: InventoryItem) => void;
   onPartAdded?: () => void;
   onRefresh?: () => void | Promise<void>;
   initialAisle?: number;
@@ -444,8 +442,6 @@ function SectionShelfView({
   prevLabel,
   nextLabel,
   fontScale,
-  onEditKeywords,
-  onEditBins,
   onEditItem,
   onAddHereShelf,
   colors,
@@ -460,8 +456,6 @@ function SectionShelfView({
   prevLabel: string;
   nextLabel: string;
   fontScale: number;
-  onEditKeywords?: (item: InventoryItem) => void;
-  onEditBins?: (item: InventoryItem) => void;
   onEditItem?: (item: InventoryItem) => void;
   onAddHereShelf?: (shelfHundreds: number) => void;
   colors: ReturnType<typeof useColors>;
@@ -536,8 +530,6 @@ function SectionShelfView({
                 seriesLabel: undefined,
                 variants: [],
               }}
-              onEditKeywords={onEditKeywords}
-              onEditBins={onEditBins}
               onEditItem={onEditItem}
               rank={0}
               fontScale={fontScale}
@@ -564,8 +556,6 @@ function PartsListView({
   prevLabel,
   nextLabel,
   fontScale,
-  onEditKeywords,
-  onEditBins,
   onEditItem,
   colors,
   sectionPanHandlers,
@@ -578,8 +568,6 @@ function PartsListView({
   prevLabel: string;
   nextLabel: string;
   fontScale: number;
-  onEditKeywords?: (item: InventoryItem) => void;
-  onEditBins?: (item: InventoryItem) => void;
   onEditItem?: (item: InventoryItem) => void;
   colors: ReturnType<typeof useColors>;
   sectionPanHandlers: ReturnType<typeof PanResponder.create>["panHandlers"];
@@ -623,8 +611,6 @@ function PartsListView({
                 seriesLabel: undefined,
                 variants: [],
               }}
-              onEditKeywords={onEditKeywords}
-              onEditBins={onEditBins}
               onEditItem={onEditItem}
               rank={0}
               fontScale={fontScale}
@@ -646,8 +632,6 @@ export function BrowseByAisle({
   shelfViewEnabled,
   fontScale = 1.0,
   onClose,
-  onEditKeywords,
-  onEditBins,
   onPartAdded,
   onRefresh,
   initialAisle,
@@ -660,8 +644,11 @@ export function BrowseByAisle({
   const colors = useColors();
   const [addPartVisible, setAddPartVisible] = useState(false);
   const [pendingBin, setPendingBin] = useState("");
-  const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [aisleRefreshing, setAisleRefreshing] = useState(false);
+
+  const handleEditItem = isAdmin
+    ? (item: InventoryItem) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } })
+    : undefined;
 
   const hierarchy: AisleHierarchy = useMemo(
     () => buildAisleHierarchy(inventory),
@@ -932,9 +919,7 @@ export function BrowseByAisle({
               prevLabel={filteredSections[sectionIdx - 1]?.label ?? ""}
               nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
               fontScale={fontScale}
-              onEditKeywords={onEditKeywords}
-              onEditBins={onEditBins}
-              onEditItem={isAdmin ? setDetailsItem : undefined}
+              onEditItem={handleEditItem}
               onAddHereShelf={isAdmin ? handleAddHereShelf : undefined}
               colors={colors}
               cardItemPanHandlers={cardItemSwipe.panHandlers}
@@ -950,9 +935,7 @@ export function BrowseByAisle({
               prevLabel={filteredSections[sectionIdx - 1]?.label ?? ""}
               nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
               fontScale={fontScale}
-              onEditKeywords={onEditKeywords}
-              onEditBins={onEditBins}
-              onEditItem={isAdmin ? setDetailsItem : undefined}
+              onEditItem={handleEditItem}
               colors={colors}
               sectionPanHandlers={sectionSwipe.panHandlers}
             />
@@ -978,13 +961,7 @@ export function BrowseByAisle({
         onSuccess={() => {
           onPartAdded?.();
         }}
-        onAddDetails={isAdmin ? (item) => setDetailsItem(item) : undefined}
-      />
-
-      <PartDetailsEditor
-        item={detailsItem}
-        adminToken={adminToken ?? null}
-        onClose={() => setDetailsItem(null)}
+        onAddDetails={handleEditItem}
       />
     </View>
   );

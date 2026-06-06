@@ -57,8 +57,10 @@ export default function EditItemScreen() {
   const colors = useColors();
   const router = useRouter();
   const { adminToken, isLoading } = useApp();
-  const { item: itemParam } = useLocalSearchParams<{ item: string }>();
+  const { item: itemParam, section: sectionParam } = useLocalSearchParams<{ item: string; section?: string }>();
   const queryClient = useQueryClient();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const sectionYRef = useRef<Record<string, number>>({});
 
   const updateBinsMutation = useUpdateItemBins();
   const updateBarcodesMutation = useUpdateItemBarcodes();
@@ -91,6 +93,16 @@ export default function EditItemScreen() {
   useEffect(() => {
     setLidarAvailable(isLiDARSupported());
   }, []);
+
+  // Scroll to a specific section when navigated here with a section param
+  useEffect(() => {
+    if (!sectionParam) return;
+    const timer = setTimeout(() => {
+      const y = sectionYRef.current[sectionParam];
+      if (y != null) scrollViewRef.current?.scrollTo({ y, animated: true });
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [sectionParam]);
 
   // Dimensions state
   const existingDims = (item as unknown as { dimensions?: PartDimensions | null })?.dimensions;
@@ -389,6 +401,7 @@ export default function EditItemScreen() {
         </View>
 
         <ScrollView
+          ref={scrollViewRef}
           style={{ flex: 1 }}
           contentContainerStyle={s.scroll}
           keyboardShouldPersistTaps="handled"
@@ -446,6 +459,7 @@ export default function EditItemScreen() {
           />
 
           {/* Bins */}
+          <View onLayout={(e) => { sectionYRef.current.bins = e.nativeEvent.layout.y; }}>
           <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
             BIN LOCATIONS ({bins.length})
           </Text>
@@ -487,8 +501,10 @@ export default function EditItemScreen() {
               </Text>
             </Pressable>
           </View>
+          </View>
 
           {/* Barcodes */}
+          <View onLayout={(e) => { sectionYRef.current.barcodes = e.nativeEvent.layout.y; }}>
           <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
             BARCODES ({barcodes.length})
           </Text>
@@ -539,6 +555,7 @@ export default function EditItemScreen() {
                 + Add
               </Text>
             </Pressable>
+          </View>
           </View>
 
           {/* Dimensions */}
@@ -629,6 +646,7 @@ export default function EditItemScreen() {
           ) : null}
 
           {/* Keywords */}
+          <View onLayout={(e) => { sectionYRef.current.keywords = e.nativeEvent.layout.y; }}>
           <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>
             AI KEYWORDS ({keywords.length})
           </Text>
@@ -669,6 +687,7 @@ export default function EditItemScreen() {
                 + Add
               </Text>
             </Pressable>
+          </View>
           </View>
 
           {errorMsg ? (
