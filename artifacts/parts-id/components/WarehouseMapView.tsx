@@ -218,7 +218,6 @@ interface ZoneOverlayItemProps {
   onZoneTap: (zone: ApiWarehouseZone) => void;
   onZoneLongPress?: (zone: ApiWarehouseZone) => void;
   cycleMode: boolean;
-  cycleLocked: boolean;
   isCounted: boolean;
   isPinned?: boolean;
   isVariantPinned?: boolean;
@@ -237,7 +236,6 @@ export function ZoneOverlayItem({
   onZoneTap,
   onZoneLongPress,
   cycleMode,
-  cycleLocked,
   isCounted,
   isPinned,
   isVariantPinned,
@@ -294,7 +292,7 @@ export function ZoneOverlayItem({
     const labelColor = isCounted ? "#fff" : colors.primary + "80";
     return (
       <G
-        {...(Platform.OS !== "web" && (!cycleLocked && isActive) && {
+        {...(Platform.OS !== "web" && isActive && {
           onLongPress: () => onZoneLongPress?.(zone),
           delayLongPress: 400,
         })}
@@ -434,7 +432,6 @@ export interface WarehouseMapViewProps {
   onZoneLongPress?: (zone: ApiWarehouseZone) => void;
   isAdmin?: boolean;
   cycleMode?: boolean;
-  cycleLocked?: boolean;
   countedZoneIds?: ReadonlySet<number>;
   /** Aisle numbers of primary search result pins — highlighted amber on the map. */
   pinnedAisleNums?: ReadonlySet<number>;
@@ -536,7 +533,6 @@ export function WarehouseMapView({
   onZoneLongPress,
   isAdmin,
   cycleMode = false,
-  cycleLocked = false,
   countedZoneIds,
   pinnedAisleNums,
   variantAisleNums,
@@ -1521,7 +1517,6 @@ export function WarehouseMapView({
           onZoneTap={onZoneTap}
           onZoneLongPress={onZoneLongPress}
           cycleMode={cycleMode}
-          cycleLocked={cycleLocked}
           isCounted={countedZoneIds?.has(zone.id) ?? false}
           isPinned={isPinned}
           isVariantPinned={isVariantPinned}
@@ -1532,7 +1527,7 @@ export function WarehouseMapView({
       );
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, cycleLocked, countedZoneIds, pinnedAisleNums, variantAisleNums, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap]);
+  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, countedZoneIds, pinnedAisleNums, variantAisleNums, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap]);
 
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
@@ -1884,9 +1879,7 @@ export function WarehouseMapView({
       >
         <Text style={[styles.hintText, { color: colors.mutedForeground }]}>
           {cycleMode
-            ? cycleLocked
-              ? "Cycle layer — locked"
-              : "Long-press a zone to mark counted"
+            ? "Long-press a zone to mark counted"
             : "Pinch/drag to pan · Double-tap to reset"}
         </Text>
       </View>

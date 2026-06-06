@@ -208,7 +208,6 @@ export default function MapScreen() {
 
   // ── Cycle count layer ──────────────────────────────────────────────────────
   const [cycleMode, setCycleMode] = useState(false);
-  const [cycleLocked, setCycleLocked] = useState(false);
   const [countedZoneIds, setCountedZoneIds] = useState<Set<number>>(new Set());
 
   React.useEffect(() => {
@@ -239,7 +238,6 @@ export default function MapScreen() {
 
   const handleZoneLongPress = useCallback((zone: ApiWarehouseZone) => {
     if (cycleMode) {
-      if (cycleLocked) return;
       setCountedZoneIds((prev) => {
         const next = new Set(prev);
         if (next.has(zone.id)) {
@@ -253,7 +251,7 @@ export default function MapScreen() {
       return;
     }
     setSummaryZone(toAisleZone(zone));
-  }, [cycleMode, cycleLocked]);
+  }, [cycleMode]);
 
   const handleBrowseFromSheet = useCallback((zone: WarehouseZone) => {
     setSummaryZone(null);
@@ -288,22 +286,6 @@ export default function MapScreen() {
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Warehouse Map</Text>
         <View style={styles.headerActions}>
-          {cycleMode && (
-            <Pressable
-              onPress={() => setCycleLocked((v) => !v)}
-              style={[
-                styles.iconBtn,
-                { borderColor: cycleLocked ? colors.primary : colors.border },
-              ]}
-              accessibilityLabel={cycleLocked ? "Unlock cycle layer" : "Lock cycle layer"}
-            >
-              <Feather
-                name={cycleLocked ? "lock" : "unlock"}
-                size={15}
-                color={cycleLocked ? colors.primary : colors.mutedForeground}
-              />
-            </Pressable>
-          )}
           <Pressable
             onPress={() => setCycleMode((v) => !v)}
             style={[
@@ -325,6 +307,7 @@ export default function MapScreen() {
           >
             <Feather name="list" size={15} color={colors.foreground} />
           </Pressable>
+          {/* Zone Editor: only shown to authenticated admins (isAdmin === true). Audit: no other entry point exists — the button below is the sole access path. */}
           {isAdmin && (
             <Pressable
               onPress={() => Linking.openURL(ZONE_EDITOR_URL)}
@@ -409,7 +392,6 @@ export default function MapScreen() {
         onZoneLongPress={handleZoneLongPress}
         isAdmin={isAdmin}
         cycleMode={cycleMode}
-        cycleLocked={cycleLocked}
         countedZoneIds={countedZoneIds}
         pinnedAisleNums={pinnedAisleNums.size > 0 ? pinnedAisleNums : undefined}
         variantAisleNums={variantAisleNums.size > 0 ? variantAisleNums : undefined}
