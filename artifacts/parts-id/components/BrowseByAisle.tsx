@@ -340,11 +340,11 @@ function BinSlot({
         },
       ]}
     >
-      <Text style={[slotStyles.binCode, { color: selected ? colors.primaryForeground : "#0d0d0d" }]}>
+      <Text style={[slotStyles.binCode, { color: selected ? colors.primaryForeground : colors.foreground }]}>
         {part.bin.raw}
       </Text>
       <Text
-        style={[slotStyles.catalog, { color: selected ? colors.primaryForeground : "#0d0d0d" }]}
+        style={[slotStyles.catalog, { color: selected ? colors.primaryForeground : colors.foreground }]}
         numberOfLines={1}
       >
         {part.item.catalog}
