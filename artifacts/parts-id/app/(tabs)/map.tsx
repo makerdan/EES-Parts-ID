@@ -54,7 +54,7 @@ export default function MapScreen() {
   useTrackScreen("Map");
   const colors = useColors();
   const router = useRouter();
-  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts } = useApp();
+  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts } = useApp();
 
   const pinnedAisleNums = useMemo(
     () => new Set(pinnedParts.filter(p => !p.variant).map(p => p.aisleNum)),
@@ -129,6 +129,27 @@ export default function MapScreen() {
       m.set(p.aisleNum, secs);
     }
     return m;
+  }, [pinnedParts]);
+
+  const hasPrimaryPins = pinnedParts.some(p => !p.variant);
+  const hasVariantPins = pinnedParts.some(p => !!p.variant);
+
+  /**
+   * Human-readable chip label — distinct primary labels, first + count,
+   * e.g. "Part 42A" or "Part 42A +2 more".
+   */
+  const pinnedChipLabel = useMemo(() => {
+    const primaryLabels = [...new Set(pinnedParts.filter(p => !p.variant).map(p => p.label))];
+    if (primaryLabels.length > 0) {
+      const first = primaryLabels[0];
+      return primaryLabels.length === 1 ? `📍 ${first}` : `📍 ${first} +${primaryLabels.length - 1} more`;
+    }
+    const variantLabels = [...new Set(pinnedParts.map(p => p.label))];
+    if (variantLabels.length > 0) {
+      const first = variantLabels[0];
+      return variantLabels.length === 1 ? `📍 ${first}` : `📍 ${first} +${variantLabels.length - 1} more`;
+    }
+    return "📍 Pinned";
   }, [pinnedParts]);
 
   // Keep a ref to pinnedParts so useFocusEffect can read the latest value
@@ -325,6 +346,44 @@ export default function MapScreen() {
         </View>
       </View>
 
+      {pinnedParts.length > 0 && (
+        <View style={[styles.pinBanner, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          <Text
+            style={[styles.pinBannerLabel, { color: colors.foreground }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {pinnedChipLabel}
+          </Text>
+          <View style={styles.pinBannerRight}>
+            {(hasPrimaryPins || hasVariantPins) && (
+              <View style={styles.legendRow}>
+                {hasPrimaryPins && (
+                  <>
+                    <View style={[styles.legendDot, { backgroundColor: "#f59e0b" }]} />
+                    <Text style={[styles.legendLabel, { color: colors.mutedForeground }]}>Primary</Text>
+                  </>
+                )}
+                {hasVariantPins && (
+                  <>
+                    <View style={[styles.legendDot, { backgroundColor: "#8b5cf6" }]} />
+                    <Text style={[styles.legendLabel, { color: colors.mutedForeground }]}>Variant</Text>
+                  </>
+                )}
+              </View>
+            )}
+            <Pressable
+              onPress={() => setPinnedParts([])}
+              style={[styles.pinBannerClear, { borderColor: colors.border }]}
+              accessibilityLabel="Clear pinned parts"
+            >
+              <Feather name="x" size={13} color={colors.mutedForeground} />
+              <Text style={[styles.pinBannerClearText, { color: colors.mutedForeground }]}>Clear</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       <WarehouseMapView
         zones={zones}
         zonesLoading={zonesLoading}
@@ -403,5 +462,53 @@ const styles = StyleSheet.create({
   floorPlanBtnText: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
+  },
+  pinBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    gap: 8,
+  },
+  pinBannerLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
+  pinBannerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flexShrink: 0,
+  },
+  legendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  legendLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    marginRight: 4,
+  },
+  pinBannerClear: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  pinBannerClearText: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
   },
 });
