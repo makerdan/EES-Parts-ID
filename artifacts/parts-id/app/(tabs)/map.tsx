@@ -200,7 +200,6 @@ export default function MapScreen() {
 
   const [focusFailedBanner, setFocusFailedBanner] = useState<string | null>(null);
 
-  const [browseOpen, setBrowseOpen] = useState(false);
   const [drilldown, setDrilldown] = useState<WarehouseZone | null>(null);
   const [summaryZone, setSummaryZone] = useState<WarehouseZone | null>(null);
   const inventoryRef = useRef<InventoryItem[]>([]);
@@ -264,11 +263,10 @@ export default function MapScreen() {
   }, []);
 
   const handleBrowseClose = useCallback(() => {
-    setBrowseOpen(false);
     setDrilldown(null);
   }, []);
 
-  if (browseOpen || drilldown !== null) {
+  if (drilldown !== null) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
         <BrowseByAisle
@@ -304,13 +302,6 @@ export default function MapScreen() {
               size={15}
               color={cycleMode ? colors.primary : colors.mutedForeground}
             />
-          </Pressable>
-          <Pressable
-            onPress={() => setBrowseOpen(true)}
-            style={[styles.iconBtn, { borderColor: colors.border }]}
-            accessibilityLabel="List view"
-          >
-            <Feather name="list" size={15} color={colors.foreground} />
           </Pressable>
           {/* Zone Editor: only shown to authenticated admins (isAdmin === true). Audit: no other entry point exists — the button below is the sole access path. */}
           {isAdmin && (
