@@ -28,7 +28,7 @@ import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { BrowseByCategory } from "@/components/BrowseByCategory";
 import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode, type DimensionUnit, type PinnedPart } from "@/contexts/AppContext";
 import { parseBin } from "@/lib/aisleHierarchy";
-import { router, useFocusEffect } from "expo-router";
+import { useFocusEffect, router } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
 import { reportStorageError } from "@/utils/storageErrorReporter";
@@ -667,6 +667,36 @@ export default function SearchScreen() {
     }, SEARCH_TIMEOUT_MS);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchMutation, runOfflineFallback]);
+
+  // When the Search tab regains focus after a Photo-tab Measure session, clear
+  // any stale map pins then dispatch a dimension-keyword search in a setTimeout
+  // so the filter state update has a chance to flush before the mutation fires.
+  useFocusEffect(
+    useCallback(() => {
+      if (!pendingMeasureSearch) return;
+      const terms = pendingMeasureSearch;
+      setPendingMeasureSearch(null);
+      setPinnedParts([]);
+      setTimeout(() => {
+        setMode("search");
+        setOfflineResults(null);
+        setIsOffline(false);
+        setOfflineCacheType(null);
+        searchAbortedRef.current = false;
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+        const next = { ...filtersRef.current, keywords: terms };
+        filtersRef.current = next;
+        setFilters(next);
+        searchMutation.mutate({ data: buildSearchBody(next, null) });
+        searchTimeoutRef.current = setTimeout(() => {
+          searchTimeoutRef.current = null;
+          searchAbortedRef.current = true;
+          searchMutation.reset();
+          runOfflineFallback();
+        }, SEARCH_TIMEOUT_MS);
+      }, 0);
+    }, [pendingMeasureSearch, setPendingMeasureSearch, setPinnedParts, searchMutation, runOfflineFallback]),
+  );
 
   const handleMeasureConfirm = useCallback(async (dims: PartDimensions) => {
     const item = measureItem;
