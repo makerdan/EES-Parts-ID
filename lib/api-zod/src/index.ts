@@ -1,3 +1,2 @@
-export * from "./generated/api.ts";
-export * as Types from "./generated/types/index.ts";
-export * from "./adminProfile.ts";
+export * from "./generated/api";
+export * from "./generated/types";
