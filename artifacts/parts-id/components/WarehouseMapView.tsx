@@ -31,6 +31,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
+  type AppStateStatus,
   LayoutChangeEvent,
   PixelRatio,
   Platform,
@@ -590,6 +592,23 @@ export function WarehouseMapView({
   // whether layout or the storage read wins the race.
   const pendingRestore = useRef<{ s: number; tx: number; ty: number } | null>(null);
 
+  // Snapshot of the viewport state captured at the moment the app moves to
+  // background.  When the OS delivers a layout event after resume (e.g. because
+  // the device was rotated while the app was suspended), the snapshot gives us
+  // the reliable pre-suspension width and translations to compute the correct
+  // centre-preserving ratio.  Using containerWRef.current / savedTX.value
+  // directly is unsafe because a spurious OS layout event may have already
+  // updated those values to a partially-transitioned state.
+  const bgSnapshotRef = useRef<{ w: number; tx: number; ty: number } | null>(null);
+  // Timer that expires the snapshot after a short window on foreground.
+  // Both ordering cases are supported:
+  //   • layout fires BEFORE active  → snapshot consumed by layout; timer never starts
+  //   • active fires BEFORE layout  → timer starts; layout arrives within the window,
+  //     cancels the timer and consumes the snapshot
+  //   • active fires, no layout     → timer fires, snapshot cleared; subsequent
+  //     foreground rotations use live refs and are not contaminated by stale values
+  const bgSnapshotExpireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Parsed content viewBox from the SVG XML — the tightly cropped bounding
   // box of the actual warehouse drawing within the full 3592×2457 coordinate
   // space.  Initialised synchronously from the cache when data is available;
@@ -614,12 +633,16 @@ export function WarehouseMapView({
   const onLayout = useCallback(
     (e: LayoutChangeEvent) => {
       const { width, height } = e.nativeEvent.layout;
-      const rh = width > 0 ? width / SVG_ASPECT : 0;
 
-      // Capture the previous container width BEFORE overwriting the ref so we
-      // can compute the correct translation to keep the same floor-plan point
-      // centred after a device rotation.
-      const prevW = containerWRef.current;
+      // When the app resumes from the background, a spurious OS layout event
+      // may fire during the background-to-foreground transition — possibly with
+      // partially-transitioned dimensions.  If we have a pre-suspension snapshot
+      // we use IT as the source of truth for both prevW and the reference
+      // translations; otherwise we fall back to the live refs as before.
+      const bgSnap = bgSnapshotRef.current;
+
+      // Capture prevW from the snapshot (reliable) or the live ref (normal path).
+      const prevW = bgSnap !== null ? bgSnap.w : containerWRef.current;
 
       setContainerW(width);
       setContainerH(height);
@@ -630,6 +653,13 @@ export function WarehouseMapView({
 
       if (!hasLaidOut.current) {
         hasLaidOut.current = true;
+        // Consume snapshot (and cancel any pending expiry timer) — this is the
+        // first layout ever, so no rotation correction runs; clear regardless.
+        if (bgSnapshotExpireTimerRef.current !== null) {
+          clearTimeout(bgSnapshotExpireTimerRef.current);
+          bgSnapshotExpireTimerRef.current = null;
+        }
+        bgSnapshotRef.current = null;
 
         // If the AsyncStorage restore already ran while we were still at size 0,
         // its tx/ty were saved unclamped in pendingRestore.  Apply them now that
@@ -666,10 +696,24 @@ export function WarehouseMapView({
       // centre after the resize:
       //   tx_new = tx_old × (W_new / W_old)
       // Both axes share the same ratio because H = W / SVG_ASPECT.
+      //
+      // When recovering from background we use the snapshot's tx/ty rather than
+      // savedTX/savedTY because those shared values may have already been
+      // mutated by an earlier spurious layout event that fired mid-transition.
       const currentScale = savedScale.value;
       const sizeRatio = prevW > 0 ? width / prevW : 1;
-      const centredTX = savedTX.value * sizeRatio;
-      const centredTY = savedTY.value * sizeRatio;
+      const refTX = bgSnap !== null ? bgSnap.tx : savedTX.value;
+      const refTY = bgSnap !== null ? bgSnap.ty : savedTY.value;
+      // Snapshot consumed — cancel any pending expiry timer and clear the ref
+      // so subsequent layout events use the normal (live-ref) path.
+      if (bgSnapshotExpireTimerRef.current !== null) {
+        clearTimeout(bgSnapshotExpireTimerRef.current);
+        bgSnapshotExpireTimerRef.current = null;
+      }
+      bgSnapshotRef.current = null;
+
+      const centredTX = refTX * sizeRatio;
+      const centredTY = refTY * sizeRatio;
 
       const { maxX, maxY } = panBounds(width, height, currentScale);
       const newTX = clamp(centredTX, -maxX, maxX);
@@ -829,7 +873,68 @@ export function WarehouseMapView({
           JSON.stringify({ s: savedScale.value, tx: savedTX.value, ty: savedTY.value }),
         ).catch(() => {});
       }
+      // Cancel any pending snapshot expiry timer to avoid a dangling
+      // setTimeout touching an unmounted component's refs.
+      if (bgSnapshotExpireTimerRef.current !== null) {
+        clearTimeout(bgSnapshotExpireTimerRef.current);
+        bgSnapshotExpireTimerRef.current = null;
+      }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── AppState listener — snapshot viewport on background ───────────────────
+  // When the app moves to background the OS may subsequently deliver a layout
+  // event (e.g. because the device is rotated while suspended) before or just
+  // after the app resumes.  If that happens, containerWRef.current and
+  // savedTX/TY may have already been updated by the time onLayout runs for the
+  // "real" resume event, making the ratio calculation produce the wrong result.
+  //
+  // The fix: snapshot {w, tx, ty} at the moment of backgrounding.  The next
+  // onLayout call reads from the snapshot (not the live refs) so the ratio is
+  // always W_resume / W_pre-suspension, not W_resume / W_mid-transition.
+  //
+  // We also flush the debounced persist timer immediately so AsyncStorage is
+  // always up-to-date before the OS suspends the process.
+  useEffect(() => {
+    const handleAppStateChange = (nextState: AppStateStatus) => {
+      if (nextState === "background" || nextState === "inactive") {
+        bgSnapshotRef.current = {
+          w: containerWRef.current,
+          tx: savedTX.value,
+          ty: savedTY.value,
+        };
+        // Flush any pending debounced viewport write so the OS doesn't suspend
+        // the process before the AsyncStorage write completes.
+        if (_persistTimer.current !== null) {
+          clearTimeout(_persistTimer.current);
+          _persistTimer.current = null;
+          AsyncStorage.setItem(
+            VIEWPORT_KEY,
+            JSON.stringify({ s: savedScale.value, tx: savedTX.value, ty: savedTY.value }),
+          ).catch(() => {});
+        }
+      } else if (nextState === "active") {
+        // Schedule snapshot expiry.  The OS can deliver the post-resume layout
+        // event either BEFORE or AFTER the `active` AppState event:
+        //   • layout before active  — onLayout already consumed & cleared the
+        //     snapshot; the timer starts on a null ref and is a no-op.
+        //   • active before layout  — timer starts; onLayout will arrive within
+        //     a frame or two (~16-32 ms), cancel the timer and consume the
+        //     snapshot before it expires.
+        //   • active, no layout at all (same orientation on resume) — timer
+        //     fires after 500 ms, clearing the stale snapshot so that the next
+        //     normal foreground rotation uses live refs instead of pre-
+        //     suspension values.
+        bgSnapshotExpireTimerRef.current = setTimeout(() => {
+          bgSnapshotRef.current = null;
+          bgSnapshotExpireTimerRef.current = null;
+        }, 500);
+      }
+    };
+
+    const sub = AppState.addEventListener("change", handleAppStateChange);
+    return () => sub.remove();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
