@@ -27,7 +27,7 @@ import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AisleSummarySheet } from "@/components/AisleSummarySheet";
 import { ZoneActionMenu } from "@/components/ZoneActionMenu";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
-import { parseBin } from "@/lib/aisleHierarchy";
+import { parseBin, sectionMatchesParity } from "@/lib/aisleHierarchy";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
@@ -57,14 +57,34 @@ export default function MapScreen() {
   const router = useRouter();
   const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts, setPinnedParts, showToast } = useApp();
 
-  const pinnedAisleNums = useMemo(
-    () => new Set(pinnedParts.filter(p => !p.variant).map(p => p.aisleNum)),
-    [pinnedParts],
-  );
-  const variantAisleNums = useMemo(
-    () => new Set(pinnedParts.filter(p => !!p.variant).map(p => p.aisleNum)),
-    [pinnedParts],
-  );
+  /**
+   * Resolves the exact zone IDs for primary pins by matching aisle + section
+   * against each zone's sectionParity.  Computed after zones load so the map
+   * highlights the specific zone (odd or even half, or "all") rather than
+   * every zone that shares the aisle number.
+   */
+  const pinnedZoneIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const zone of zones) {
+      const aisleNum = parseInt(zone.aisleId, 10);
+      const sections = pinnedSections.get(aisleNum);
+      if (!sections) continue;
+      if (sectionMatchesParity(zone.sectionParity, sections)) ids.add(zone.id);
+    }
+    return ids;
+  }, [zones, pinnedSections]);
+
+  /** Same as pinnedZoneIds but for variant/related-size pins. */
+  const variantZoneIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const zone of zones) {
+      const aisleNum = parseInt(zone.aisleId, 10);
+      const sections = variantSections.get(aisleNum);
+      if (!sections) continue;
+      if (sectionMatchesParity(zone.sectionParity, sections)) ids.add(zone.id);
+    }
+    return ids;
+  }, [zones, variantSections]);
   /**
    * For each pinned aisle, build a label containing the actual bin code
    * (which encodes aisle + section + position, e.g. "17-06-204") and, when
@@ -466,8 +486,8 @@ export default function MapScreen() {
           selectMode={selectMode}
           onSelectModeChange={setSelectMode}
           countedZoneIds={countedZoneIds}
-          pinnedAisleNums={pinnedAisleNums.size > 0 ? pinnedAisleNums : undefined}
-          variantAisleNums={variantAisleNums.size > 0 ? variantAisleNums : undefined}
+          pinnedZoneIds={pinnedZoneIds.size > 0 ? pinnedZoneIds : undefined}
+          variantZoneIds={variantZoneIds.size > 0 ? variantZoneIds : undefined}
           pinnedBinLabels={pinnedBinLabels.size > 0 ? pinnedBinLabels : undefined}
           pinnedSectionsMap={pinnedSections.size > 0 ? pinnedSections : undefined}
           variantSectionsMap={variantSections.size > 0 ? variantSections : undefined}
