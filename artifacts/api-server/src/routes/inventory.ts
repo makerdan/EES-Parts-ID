@@ -74,16 +74,19 @@ router.get("/", async (req, res) => {
         // Bin-prefix filter: match any row whose bin_locations array contains at
         // least one entry starting with the given prefix (case-insensitive).
         //
-        // The query uses array_to_string(bin_locations, E'\n') so that the
-        // pg_trgm trigram GIN index (idx_inventory_bin_locs_prefix_trgm) can
-        // accelerate it. Two ILIKE branches cover all positions in the array:
+        // immutable_array_to_string() is an IMMUTABLE wrapper around
+        // array_to_string(arr, sep) — required because PostgreSQL only allows
+        // IMMUTABLE functions in index expressions. The trigram GIN index
+        // idx_inventory_bin_locs_prefix_trgm is defined on this same expression,
+        // so queries must use the wrapper function to get the index scan.
+        // Two ILIKE branches cover all positions in the array:
         //   - First element:  string starts with prefix (no leading wildcard)
         //   - Later elements: string contains '\n' + prefix (leading wildcard, but
         //     pg_trgm can still use trigrams when the prefix is ≥3 chars)
         binPrefix != null
           ? sql`(
-              array_to_string(${inventoryTable.binLocations}, E'\n') ILIKE ${binPrefix + '%'}
-              OR array_to_string(${inventoryTable.binLocations}, E'\n') ILIKE ${'%\n' + binPrefix + '%'}
+              immutable_array_to_string(${inventoryTable.binLocations}, E'\n') ILIKE ${binPrefix + '%'}
+              OR immutable_array_to_string(${inventoryTable.binLocations}, E'\n') ILIKE ${'%\n' + binPrefix + '%'}
             )`
           : undefined,
       ].filter((c): c is NonNullable<typeof c> => c !== undefined),
