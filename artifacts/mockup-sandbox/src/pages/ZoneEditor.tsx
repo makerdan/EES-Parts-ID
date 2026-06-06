@@ -89,6 +89,8 @@ async function rasterizeSvg(
       canvas.height = ch;
       const ctx = canvas.getContext("2d");
       if (!ctx) { URL.revokeObjectURL(url); reject(new Error("No 2D canvas context")); return; }
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
       const imageData = ctx.getImageData(0, 0, cw, ch);
@@ -114,7 +116,7 @@ export function floodFillBounds(
     if (x < 0 || x >= width || y < 0 || y >= height) return false;
     const i = (y * width + x) * 4;
     const a = data[i + 3];
-    if (a < 128) return true; // transparent pixels treated as white background
+    if (a < 128) return false; // transparent pixels treated as walls (background outside floor plan)
     const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
     return lum >= darkThreshold;
   };
@@ -288,6 +290,10 @@ export function ZoneEditor() {
 
   // draftRect: the live rectangle being drawn (while dragging in draw mode)
   const [draftRect, setDraftRect] = useState<{
+    x: number; y: number; w: number; h: number;
+  } | null>(null);
+  // fillFlashRect: 300 ms visual feedback flash shown after a fill click (blue)
+  const [fillFlashRect, setFillFlashRect] = useState<{
     x: number; y: number; w: number; h: number;
   } | null>(null);
   // pendingRect: drawn but not yet saved (shows in sidebar form)
@@ -856,10 +862,10 @@ export function ZoneEditor() {
         h: bounds.h * scaleY,
       };
 
-      // Flash the detected rectangle as a draftRect (~300 ms) for visual feedback.
-      setDraftRect(rect);
+      // Flash the detected rectangle as a fillFlashRect (~300 ms) for visual feedback.
+      setFillFlashRect(rect);
       await new Promise<void>((r) => setTimeout(r, 300));
-      setDraftRect(null);
+      setFillFlashRect(null);
 
       // Commit as pendingRect — opens the sidebar form (same flow as Draw mode).
       setPendingRect(rect);
@@ -1467,7 +1473,7 @@ export function ZoneEditor() {
                 );
               })}
 
-              {/* Live drawing preview */}
+              {/* Live drawing preview (draw mode — amber dashed) */}
               {draftRect && draftRect.w > 0 && draftRect.h > 0 && (
                 <rect
                   x={draftRect.x}
@@ -1482,15 +1488,30 @@ export function ZoneEditor() {
                 />
               )}
 
-              {/* Pending rect (drawn, awaiting form submission) */}
+              {/* Fill flash (300 ms feedback after fill click — blue) */}
+              {fillFlashRect && fillFlashRect.w > 0 && fillFlashRect.h > 0 && (
+                <rect
+                  x={fillFlashRect.x}
+                  y={fillFlashRect.y}
+                  width={fillFlashRect.w}
+                  height={fillFlashRect.h}
+                  fill="rgba(0,112,255,0.15)"
+                  stroke="#0070ff"
+                  strokeWidth={sw}
+                  strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
+                  style={{ pointerEvents: "none" }}
+                />
+              )}
+
+              {/* Pending rect (drawn, awaiting form submission — blue) */}
               {pendingRect && (
                 <rect
                   x={pendingRect.x}
                   y={pendingRect.y}
                   width={pendingRect.w}
                   height={pendingRect.h}
-                  fill="rgba(234,179,8,0.15)"
-                  stroke="#eab308"
+                  fill="rgba(0,112,255,0.15)"
+                  stroke="#0070ff"
                   strokeWidth={sw}
                   strokeDasharray={`${14 / tf.s} ${7 / tf.s}`}
                   style={{ pointerEvents: "none" }}
