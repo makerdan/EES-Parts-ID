@@ -321,7 +321,6 @@ export function ZoneOverlayItem({
     );
   }
 
-  const ZONE_GAP = 5;
   const pinFillColor = isPinned
     ? "rgba(245, 158, 11, 0.28)"
     : isVariantPinned
@@ -348,10 +347,10 @@ export function ZoneOverlayItem({
       )}
     >
       <AnimatedRect
-        x={zone.svgX + ZONE_GAP}
-        y={zone.svgY + ZONE_GAP}
-        width={zone.svgWidth - ZONE_GAP * 2}
-        height={zone.svgHeight - ZONE_GAP * 2}
+        x={zone.svgX}
+        y={zone.svgY}
+        width={zone.svgWidth}
+        height={zone.svgHeight}
         fill={pinFillColor}
         stroke={strokeColor}
         strokeDasharray={(!isPinned && !isVariantPinned && !isActive) ? "20 10" : undefined}
