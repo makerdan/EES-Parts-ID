@@ -362,8 +362,6 @@ export function ZoneEditor() {
   const svgDimsRef = useRef(svgDims);
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
-  // Web Worker for BFS flood-fill — keeps the UI thread free during large fills.
-  const fillWorkerRef = useRef<Worker | null>(null);
 
   useEffect(() => { tfRef.current = tf; }, [tf]);
   useEffect(() => { zonesRef.current = zones; }, [zones]);
@@ -378,17 +376,6 @@ export function ZoneEditor() {
     try { localStorage.setItem("zoneEditorFillSensitivity", fillSensitivity); } catch {}
   }, [fillSensitivity]);
 
-  // Instantiate the fill Web Worker once on mount; terminate it on unmount.
-  // Worker is not available in test environments (jsdom) so guard accordingly.
-  useEffect(() => {
-    if (typeof Worker === "undefined") return;
-    const worker = new Worker(
-      new URL("../workers/fillWorker.ts", import.meta.url),
-      { type: "module" },
-    );
-    fillWorkerRef.current = worker;
-    return () => { worker.terminate(); fillWorkerRef.current = null; };
-  }, []);
 
   // Fetch the latest uploaded floor plan. Tries the local API first; if it
   // returns 404 (nothing uploaded in this env), falls back to the production
@@ -860,7 +847,6 @@ export function ZoneEditor() {
     if (fillLoadingRef.current) return;
     setFillLoading(true);
     try {
-      const worker = fillWorkerRef.current;
       const pt = getSvgPt(clientX, clientY);
       const dims = svgDimsRef.current;
 
@@ -875,34 +861,10 @@ export function ZoneEditor() {
 
       const darkThreshold = FILL_SENSITIVITY_THRESHOLD[fillSensitivityRef.current];
 
-      // Delegate the heavy BFS + rasterisation to the Web Worker so the UI
-      // stays responsive during large floor plan fills.
-      let bounds: { x: number; y: number; w: number; h: number } | null = null;
-      if (worker) {
-        bounds = await new Promise<{ x: number; y: number; w: number; h: number } | null>(
-          (resolve, reject) => {
-            const onMessage = (ev: MessageEvent) => {
-              worker.removeEventListener("message", onMessage);
-              worker.removeEventListener("error", onError);
-              const data = ev.data as { ok: boolean; bounds?: typeof bounds; error?: string };
-              if (data.ok) resolve(data.bounds ?? null);
-              else reject(new Error(data.error ?? "Fill worker error"));
-            };
-            const onError = (ev: ErrorEvent) => {
-              worker.removeEventListener("message", onMessage);
-              worker.removeEventListener("error", onError);
-              reject(new Error(ev.message ?? "Fill worker error"));
-            };
-            worker.addEventListener("message", onMessage);
-            worker.addEventListener("error", onError);
-            worker.postMessage({ svgInner: svgInnerRef.current, dims, px, py, darkThreshold });
-          },
-        );
-      } else {
-        // Fallback to main-thread implementation when the worker isn't ready.
-        const raster = await rasterizeSvg(svgInnerRef.current, dims);
-        bounds = floodFillBounds(raster.imageData, px, py, darkThreshold);
-      }
+      // Run rasterise + BFS on the main thread. The 1024-px raster completes
+      // in well under 100 ms for typical floor plans — no perceptible jank.
+      const raster = await rasterizeSvg(svgInnerRef.current, dims);
+      const bounds = floodFillBounds(raster.imageData, px, py, darkThreshold);
 
       if (!bounds) {
         toast.error("Click inside a light area, not on a wall or line.");
