@@ -140,6 +140,8 @@ export default function SearchScreen() {
   const [filterHeaderHeight, setFilterHeaderHeight] = useState(120);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
   const [measureItem, setMeasureItem] = useState<InventoryItem | null>(null);
+  // Banner shown when a dimension-filtered search returns 0 exact results
+  const [showSimilarSizeBanner, setShowSimilarSizeBanner] = useState(false);
 
   const handleShowOnMap = useCallback((item: InventoryItem) => {
     const bins = item.binLocations ?? [];
@@ -293,6 +295,7 @@ export default function SearchScreen() {
       setOfflineCacheType(null);
       setFuseSyncedAt(null);
       setDimensionCounts(undefined);
+      setShowSimilarSizeBanner(false);
       searchMutationRef.current?.reset();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -502,6 +505,17 @@ export default function SearchScreen() {
         setOfflineCacheType(null);
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
 
+        // Show the "similar size" suggestion banner when the search returned
+        // zero results and at least one dimension filter was active.
+        const f = filtersRef.current;
+        const hasDimFilters =
+          f.minLength.trim() !== "" || f.maxLength.trim() !== "" ||
+          f.minWidth.trim() !== "" || f.maxWidth.trim() !== "" ||
+          f.minHeight.trim() !== "" || f.maxHeight.trim() !== "" ||
+          f.minDiameter.trim() !== "" || f.maxDiameter.trim() !== "";
+        const zeroResults = (data.results?.length ?? 0) === 0 && (data.sizeUnknownResults?.length ?? 0) === 0;
+        setShowSimilarSizeBanner(zeroResults && hasDimFilters);
+
         // Cache all returned items for offline Fuse use
         if (data.results?.length) {
           const newItems = data.results.map(r => r.item);
@@ -538,6 +552,8 @@ export default function SearchScreen() {
 
   const handleChange = (key: keyof FilterValues, value: string | number) => {
     setFilters(f => ({ ...f, [key]: value }));
+    // Any manual filter edit dismisses the "similar size" suggestion banner
+    setShowSimilarSizeBanner(false);
   };
 
   const SEARCH_TIMEOUT_MS = 8000;
@@ -589,7 +605,45 @@ export default function SearchScreen() {
     setIsOffline(false);
     setOfflineCacheType(null);
     setDimensionCounts(undefined);
+    setShowSimilarSizeBanner(false);
     setPinnedParts([]);
+  };
+
+  // Re-run the last search with each dimension bound widened by ±10%
+  const handleSimilarSizeSearch = () => {
+    const f = filtersRef.current;
+    const expand = (val: string, factor: number): string => {
+      const n = parseFloat(val);
+      if (isNaN(n)) return val;
+      return String(Math.round(n * factor * 1000) / 1000);
+    };
+    const expanded: FilterValues = {
+      ...f,
+      minLength:   f.minLength.trim()   !== "" ? expand(f.minLength,   0.9) : f.minLength,
+      maxLength:   f.maxLength.trim()   !== "" ? expand(f.maxLength,   1.1) : f.maxLength,
+      minWidth:    f.minWidth.trim()    !== "" ? expand(f.minWidth,    0.9) : f.minWidth,
+      maxWidth:    f.maxWidth.trim()    !== "" ? expand(f.maxWidth,    1.1) : f.maxWidth,
+      minHeight:   f.minHeight.trim()   !== "" ? expand(f.minHeight,   0.9) : f.minHeight,
+      maxHeight:   f.maxHeight.trim()   !== "" ? expand(f.maxHeight,   1.1) : f.maxHeight,
+      minDiameter: f.minDiameter.trim() !== "" ? expand(f.minDiameter, 0.9) : f.minDiameter,
+      maxDiameter: f.maxDiameter.trim() !== "" ? expand(f.maxDiameter, 1.1) : f.maxDiameter,
+    };
+    setShowSimilarSizeBanner(false);
+    setFilters(expanded);
+    setPinnedParts([]);
+    setOfflineResults(null);
+    setIsOffline(false);
+    setOfflineCacheType(null);
+    searchAbortedRef.current = false;
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    const body = buildSearchBody(expanded, activeCategorySlugRef.current);
+    searchMutation.mutate({ data: body });
+    searchTimeoutRef.current = setTimeout(() => {
+      searchTimeoutRef.current = null;
+      searchAbortedRef.current = true;
+      searchMutation.reset();
+      runOfflineFallback();
+    }, SEARCH_TIMEOUT_MS);
   };
 
   const handleCategorySelect = useCallback((slug: string, label: string) => {
@@ -1199,6 +1253,25 @@ export default function SearchScreen() {
                 <Text style={[styles.emptyHint, { color: colors.mutedForeground }]}>
                   Try broader terms, check spelling, or lower the confidence threshold.
                 </Text>
+                {showSimilarSizeBanner ? (
+                  <Pressable
+                    onPress={handleSimilarSizeSearch}
+                    style={[styles.similarSizeBanner, {
+                      backgroundColor: colors.primary + "14",
+                      borderColor: colors.primary + "55",
+                    }]}
+                  >
+                    <Text style={[styles.similarSizeBannerIcon, { color: colors.primary }]}>📐</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.similarSizeBannerTitle, { color: colors.primary }]}>
+                        No exact match — try nearby sizes?
+                      </Text>
+                      <Text style={[styles.similarSizeBannerHint, { color: colors.primary + "bb" }]}>
+                        Tap to widen each dimension by ±10% and search again
+                      </Text>
+                    </View>
+                  </Pressable>
+                ) : null}
                 {belowThreshold > 0 ? (
                   <Pressable
                     onPress={() => {
@@ -1519,6 +1592,21 @@ const styles = StyleSheet.create({
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 8 },
   emptyHint: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20, marginBottom: 8 },
+  similarSizeBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 12,
+    marginBottom: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    width: "100%",
+  },
+  similarSizeBannerIcon: { fontSize: 22 },
+  similarSizeBannerTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
+  similarSizeBannerHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 16 },
   welcomeContainer: { padding: 24, alignItems: "center" },
   welcomeEmoji: { fontSize: 48, marginBottom: 12 },
   welcomeTitle: { fontSize: 20, fontFamily: "Inter_700Bold", marginBottom: 8 },
