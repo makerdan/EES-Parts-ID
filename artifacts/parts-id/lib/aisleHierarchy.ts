@@ -130,6 +130,24 @@ export function buildAisleHierarchy(inventory: InventoryItem[]): AisleHierarchy 
   return { aisles, unsorted: { parts: unsorted } };
 }
 
+/**
+ * Returns true when at least one section number satisfies the parity constraint.
+ *   "all"  → always passes (zone covers the whole aisle)
+ *   "odd"  → passes when any section number is odd
+ *   "even" → passes when any section number is even
+ * When sections is empty or undefined, returns true as a safe fallback so that
+ * zones without section data are still shown rather than silently hidden.
+ */
+export function sectionMatchesParity(
+  sectionParity: "odd" | "even" | "all",
+  sections: number[] | undefined,
+): boolean {
+  if (sectionParity === "all") return true;
+  if (!sections || sections.length === 0) return true;
+  if (sectionParity === "odd") return sections.some(s => s % 2 !== 0);
+  return sections.some(s => s % 2 === 0);
+}
+
 export function filterSections(
   sections: SectionNode[],
   sectionNumbers?: number[],
