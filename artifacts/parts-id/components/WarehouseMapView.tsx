@@ -436,10 +436,10 @@ export interface WarehouseMapViewProps {
   isAdmin?: boolean;
   cycleMode?: boolean;
   countedZoneIds?: ReadonlySet<number>;
-  /** Aisle numbers of primary search result pins — highlighted amber on the map. */
-  pinnedAisleNums?: ReadonlySet<number>;
-  /** Aisle numbers of variant/related-size pins — highlighted purple on the map. */
-  variantAisleNums?: ReadonlySet<number>;
+  /** Zone IDs of primary search result pins — highlighted amber on the map. */
+  pinnedZoneIds?: ReadonlySet<number>;
+  /** Zone IDs of variant/related-size pins — highlighted purple on the map. */
+  variantZoneIds?: ReadonlySet<number>;
   /** Maps aisleNum → first bin code (e.g. "17-06-204") to render as a label inside the pinned zone. */
   pinnedBinLabels?: ReadonlyMap<number, string>;
   /** Maps aisleNum → list of section numbers for primary pins — drives section-level 3D pin markers. */
@@ -554,8 +554,8 @@ export function WarehouseMapView({
   isAdmin,
   cycleMode = false,
   countedZoneIds,
-  pinnedAisleNums,
-  variantAisleNums,
+  pinnedZoneIds,
+  variantZoneIds,
   pinnedBinLabels,
   pinnedSectionsMap,
   variantSectionsMap,
@@ -1541,11 +1541,11 @@ export function WarehouseMapView({
     if (!zones.length) return null;
     return zones.map((zone) => {
       const aisleNum = parseInt(zone.aisleId, 10);
-      const isPinned = !cycleMode && (pinnedAisleNums?.has(aisleNum) ?? false);
-      // Allow an aisle to be BOTH primary-pinned and variant-pinned simultaneously
-      // so variant locations in the same aisle as the selected part are still shown
-      // with their distinct purple treatment alongside the amber primary marker.
-      const isVariantPinned = !cycleMode && (variantAisleNums?.has(aisleNum) ?? false);
+      const isPinned = !cycleMode && (pinnedZoneIds?.has(zone.id) ?? false);
+      // Allow a zone to be BOTH primary-pinned and variant-pinned simultaneously
+      // so variant locations sharing a zone are shown with their distinct purple
+      // treatment alongside the amber primary marker.
+      const isVariantPinned = !cycleMode && (variantZoneIds?.has(zone.id) ?? false);
       return (
         <ZoneOverlayItem
           key={zone.id}
@@ -1566,7 +1566,7 @@ export function WarehouseMapView({
       );
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, selectMode, countedZoneIds, pinnedAisleNums, variantAisleNums, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap, selectedZoneId]);
+  }, [zones, colors, onZoneTap, onZoneLongPress, cycleMode, selectMode, countedZoneIds, pinnedZoneIds, variantZoneIds, pinnedBinLabels, pinnedSectionsMap, variantSectionsMap, selectedZoneId]);
 
   // ── Early return before layout ─────────────────────────────────────────────
   if (containerW === 0) {
