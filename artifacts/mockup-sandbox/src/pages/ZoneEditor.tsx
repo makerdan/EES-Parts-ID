@@ -297,6 +297,12 @@ const HANDLE_CURSOR: Record<Handle, string> = {
   w:  "ew-resize",
 };
 
+// ── Undo / Redo singletons (module-level so they survive panel navigation) ────
+// These intentionally live outside React: they persist as long as the JS module
+// is loaded (i.e. the whole browser tab session) and are wiped on full reload.
+const undoStackRef: { current: UndoEntry[] } = { current: [] };
+const redoStackRef: { current: UndoEntry[] } = { current: [] };
+
 // ── Main Component ────────────────────────────────────────────────────────────
 export function ZoneEditor() {
   const [zones, setZones] = useState<Zone[]>([]);
@@ -405,9 +411,6 @@ export function ZoneEditor() {
   const fillLoadingRef = useRef(false);
   const fillSensitivityRef = useRef(fillSensitivity);
 
-  // ── Undo / Redo stacks (in-memory, cleared on reload) ────────────────────
-  const undoStackRef = useRef<UndoEntry[]>([]);
-  const redoStackRef = useRef<UndoEntry[]>([]);
   // Mutex: prevents concurrent undo/redo from corrupting the stack when the
   // user holds Cmd+Z or fires repeated keypresses during an async operation.
   const undoRedoBusyRef = useRef(false);
