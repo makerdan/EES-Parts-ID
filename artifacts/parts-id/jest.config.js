@@ -13,6 +13,7 @@ module.exports = {
     "^lidar-measure$": "<rootDir>/__mocks__/lidar-measure.js",
     "^@/(.*)$": "<rootDir>/$1",
     "^@workspace/zone-validation$": "<rootDir>/../../lib/zone-validation/src/index.ts",
+    "^@workspace/api-client-react$": "<rootDir>/../../lib/api-client-react/src/index.ts",
   },
   transform: {
     "^.+\\.tsx?$": [
@@ -27,6 +28,9 @@ module.exports = {
             "lidar-measure": ["./modules/lidar-measure/src/index"],
             "@workspace/zone-validation": [
               "../../lib/zone-validation/src/index.ts",
+            ],
+            "@workspace/api-client-react": [
+              "../../lib/api-client-react/src/index.ts",
             ],
           },
         },

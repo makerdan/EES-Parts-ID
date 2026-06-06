@@ -38,6 +38,8 @@ module.exports = {
   Text: make("rn-text"),
   Pressable: make("rn-pressable"),
   TouchableOpacity: make("rn-touchable"),
+  TouchableHighlight: make("rn-touchable-highlight"),
+  TouchableWithoutFeedback: make("rn-touchable-nofeedback"),
   SafeAreaView: make("rn-safe-area"),
   ScrollView: make("rn-scroll"),
   ActivityIndicator: make("rn-activity"),
@@ -75,6 +77,37 @@ module.exports = {
     }).filter(Boolean);
     return React.createElement("rn-flat-list", null, header, ...items, footer);
   },
+  /**
+   * SectionList — renders all sections and their items so child components
+   * are mounted and their props captured during tests.
+   */
+  SectionList: function SectionList({ sections, renderItem, renderSectionHeader, keyExtractor, ListHeaderComponent, ListFooterComponent }) {
+    const header = ListHeaderComponent
+      ? React.createElement(
+          typeof ListHeaderComponent === "function" ? ListHeaderComponent : () => ListHeaderComponent,
+          null
+        )
+      : null;
+    const footer = ListFooterComponent
+      ? React.createElement(
+          typeof ListFooterComponent === "function" ? ListFooterComponent : () => ListFooterComponent,
+          null
+        )
+      : null;
+    const children = (sections || []).flatMap((section, si) => {
+      const sectionHeader = renderSectionHeader
+        ? renderSectionHeader({ section })
+        : null;
+      const items = (section.data || []).map((item, ii) => {
+        const key = keyExtractor ? keyExtractor(item, ii) : `${si}-${ii}`;
+        const el = renderItem ? renderItem({ item, index: ii, section, separators: {} }) : null;
+        if (!el || !React.isValidElement(el)) return null;
+        return React.cloneElement(el, { key });
+      }).filter(Boolean);
+      return [sectionHeader, ...items].filter(Boolean);
+    });
+    return React.createElement("rn-section-list", null, header, ...children, footer);
+  },
   Alert: {
     alert: jest.fn(),
   },
@@ -98,9 +131,55 @@ module.exports = {
   },
   KeyboardAvoidingView: make("rn-keyboard-avoiding-view"),
   NativeModules: {},
+  UIManager: {
+    setLayoutAnimationEnabledExperimental: noop,
+    getViewManagerConfig: () => null,
+  },
   useColorScheme: () => "light",
+  useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
   PixelRatio: {
     get: () => 2,
     roundToNearestPixel: (v) => Math.round(v),
   },
+  Appearance: {
+    getColorScheme: () => "light",
+    addChangeListener: () => ({ remove: noop }),
+  },
+  Linking: {
+    openURL: jest.fn(() => Promise.resolve()),
+    canOpenURL: jest.fn(() => Promise.resolve(true)),
+    getInitialURL: jest.fn(() => Promise.resolve(null)),
+    addEventListener: () => ({ remove: noop }),
+  },
+  BackHandler: {
+    addEventListener: jest.fn(() => ({ remove: jest.fn() })),
+    removeEventListener: jest.fn(),
+    exitApp: noop,
+  },
+  LayoutAnimation: {
+    configureNext: noop,
+    easeInEaseOut: noop,
+    spring: noop,
+    linear: noop,
+    Presets: {
+      easeInEaseOut: {},
+      linear: {},
+      spring: {},
+    },
+    Properties: { opacity: "opacity", scaleX: "scaleX", scaleY: "scaleY" },
+    Types: { spring: "spring", linear: "linear", easeInEaseOut: "easeInEaseOut", keyboard: "keyboard" },
+  },
+  PanResponder: {
+    create: (config) => ({
+      panHandlers: {},
+      getInteractionHandle: () => null,
+    }),
+  },
+  StatusBar: Object.assign(make("rn-status-bar"), {
+    setBarStyle: noop,
+    setBackgroundColor: noop,
+    setHidden: noop,
+    setTranslucent: noop,
+    currentHeight: 44,
+  }),
 };
