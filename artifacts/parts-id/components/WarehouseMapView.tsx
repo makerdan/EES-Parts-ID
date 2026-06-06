@@ -246,6 +246,7 @@ export function ZoneOverlayItem({
   pinnedSections,
   variantSections,
 }: ZoneOverlayItemProps) {
+  "use no memo";
   const isActive = zone.isInventory;
   const baseFontSize = Math.max(24, Math.min(48, zone.svgHeight / 3));
 
