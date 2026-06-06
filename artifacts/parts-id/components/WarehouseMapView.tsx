@@ -952,8 +952,13 @@ export function WarehouseMapView({
                       <SvgXml xml={tileXml} width={svgRenderW} height={svgRenderH} />
                     </View>
                   ))
+                ) : svgXml ? (
+                  // Single-tile path — SVG text already loaded; render directly
+                  // with SvgXml so no second network round-trip is needed.
+                  <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
                 ) : (
-                  // Single-texture fallback — SvgUri with oversample
+                  // Cold-start fallback — svgXml not yet available; use SvgUri
+                  // which can render from the URI while the XML fetch completes.
                   <View
                     style={{
                       width: hiResW,
