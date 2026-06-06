@@ -164,6 +164,101 @@ describe("DismissKeyboard — tapping a non-input area", () => {
   });
 });
 
+describe("DismissKeyboard — suppressDismissRef opt-out", () => {
+  it("suppresses Keyboard.dismiss when suppressDismissRef.current is true", async () => {
+    const suppressRef = { current: true };
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
+          <React.Fragment />
+        </DismissKeyboard>,
+      );
+    });
+
+    const onPress = getOnPress(tree);
+    // Target has no focus() — would normally trigger Keyboard.dismiss
+    onPress({ target: {} });
+
+    expect(mockKeyboardDismiss).not.toHaveBeenCalled();
+  });
+
+  it("does not call focus() when suppressDismissRef.current is true", async () => {
+    const suppressRef = { current: true };
+    const mockFocus = jest.fn();
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
+          <React.Fragment />
+        </DismissKeyboard>,
+      );
+    });
+
+    const onPress = getOnPress(tree);
+    onPress({ target: { focus: mockFocus } });
+
+    expect(mockFocus).not.toHaveBeenCalled();
+    expect(mockKeyboardDismiss).not.toHaveBeenCalled();
+  });
+
+  it("allows Keyboard.dismiss when suppressDismissRef.current is false", async () => {
+    const suppressRef = { current: false };
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
+          <React.Fragment />
+        </DismissKeyboard>,
+      );
+    });
+
+    const onPress = getOnPress(tree);
+    onPress({ target: {} });
+
+    expect(mockKeyboardDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows focus() when suppressDismissRef.current is false", async () => {
+    const suppressRef = { current: false };
+    const mockFocus = jest.fn();
+
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <DismissKeyboard suppressDismissRef={suppressRef as React.RefObject<boolean>}>
+          <React.Fragment />
+        </DismissKeyboard>,
+      );
+    });
+
+    const onPress = getOnPress(tree);
+    onPress({ target: { focus: mockFocus } });
+
+    expect(mockFocus).toHaveBeenCalledTimes(1);
+    expect(mockKeyboardDismiss).not.toHaveBeenCalled();
+  });
+
+  it("behaves normally when no suppressDismissRef is provided", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <DismissKeyboard>
+          <React.Fragment />
+        </DismissKeyboard>,
+      );
+    });
+
+    const onPress = getOnPress(tree);
+    onPress({ target: {} });
+
+    expect(mockKeyboardDismiss).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("DismissKeyboard — style prop is forwarded to inner View", () => {
   it("applies the style prop to the wrapper View", async () => {
     const customStyle = { backgroundColor: "red" };

@@ -9,20 +9,39 @@ import {
   type ViewStyle,
 } from "react-native";
 
-type Props = { children: React.ReactNode; style?: StyleProp<ViewStyle> };
+type Props = {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  /**
+   * Pass a ref whose `.current` can be set to `true` to suppress keyboard
+   * dismissal for the next tap. Useful for custom pickers, date pickers, or
+   * third-party input wrappers whose native targets do not expose `focus()`.
+   *
+   * Example:
+   *   const noDissmiss = useRef(false);
+   *   <DismissKeyboard suppressDismissRef={noDissmiss}>
+   *     <MyCustomPicker onOpen={() => { noDissmiss.current = true; }} />
+   *   </DismissKeyboard>
+   */
+  suppressDismissRef?: React.RefObject<boolean>;
+};
 
-function handlePress(event: GestureResponderEvent): void {
-  // If the tapped element exposes a focus() method (e.g. a TextInput), call it
-  // so the field receives focus instead of the keyboard being dismissed.
-  const maybeInput = event.target as unknown as { focus?: () => void } | null;
-  if (maybeInput && typeof maybeInput.focus === "function") {
-    maybeInput.focus();
-  } else {
-    Keyboard.dismiss();
-  }
-}
+export function DismissKeyboard({ children, style, suppressDismissRef }: Props) {
+  const handlePress = React.useCallback(
+    (event: GestureResponderEvent): void => {
+      if (suppressDismissRef?.current === true) {
+        return;
+      }
+      const maybeInput = event.target as unknown as { focus?: () => void } | null;
+      if (maybeInput && typeof maybeInput.focus === "function") {
+        maybeInput.focus();
+      } else {
+        Keyboard.dismiss();
+      }
+    },
+    [suppressDismissRef],
+  );
 
-export function DismissKeyboard({ children, style }: Props) {
   if (Platform.OS === "web") {
     return <View style={[{ flex: 1 }, style]}>{children}</View>;
   }
