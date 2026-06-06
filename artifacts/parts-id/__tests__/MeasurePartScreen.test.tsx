@@ -134,6 +134,16 @@ function hasText(root: TestInst, text: string): boolean {
   return instText(root).includes(text);
 }
 
+// ─── Per-test cleanup state ───────────────────────────────────────────────────
+
+/**
+ * Track the active renderer and any pending measureObject reject so afterEach
+ * can tear them down.  Unresolved promises and un-removed AppState listeners
+ * are the two sources of open-handle warnings / hangs in Jest.
+ */
+let activeTree: renderer.ReactTestRenderer | null = null;
+let rejectPendingMeasure: ((e: Error) => void) | null = null;
+
 // ─── Render helper (wraps in act so effects flush before assertions) ──────────
 
 async function render(ui: React.ReactElement) {
@@ -141,6 +151,7 @@ async function render(ui: React.ReactElement) {
   await act(async () => {
     tree = renderer.create(ui);
   });
+  activeTree = tree;
   return tree;
 }
 
@@ -164,7 +175,21 @@ const DEFAULT_PROPS = {
   adminToken: "test-token",
 };
 
-afterEach(() => jest.clearAllMocks());
+afterEach(async () => {
+  // Settle any pending measureObject promise so its microtask chain doesn't
+  // linger after the test ends (open-handle source #1).
+  if (rejectPendingMeasure) {
+    rejectPendingMeasure(new Error("test cleanup"));
+    rejectPendingMeasure = null;
+  }
+  // Unmount the renderer tree so the component's cleanup effects run and the
+  // AppState subscription is removed (open-handle source #2).
+  if (activeTree) {
+    await act(async () => { activeTree!.unmount(); });
+    activeTree = null;
+  }
+  jest.clearAllMocks();
+});
 
 // ─── isLiDARCapableDevice ─────────────────────────────────────────────────────
 
@@ -275,7 +300,7 @@ describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => 
 
     let resolveScanning!: (v: { length: number; width: number; height: number }) => void;
     mockMeasureObject.mockReturnValue(
-      new Promise(res => { resolveScanning = res; })
+      new Promise((res, rej) => { resolveScanning = res; rejectPendingMeasure = rej; })
     );
 
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
@@ -285,6 +310,7 @@ describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => 
     expect(hasText(tree.root, "LiDAR Scanning")).toBe(true);
 
     resolveScanning({ length: 200, width: 100, height: 50 });
+    rejectPendingMeasure = null;
     await flushPromises();
   });
 
@@ -374,8 +400,11 @@ describe("MeasurePartScreen – lidar_scanning → preview (background interrupt
    */
   async function runInterruptTest(nextState: "background" | "inactive") {
     mockIsLiDARSupported.mockReturnValue(true);
-    // Never resolves during the test — we want the scan to still be in-flight
-    mockMeasureObject.mockReturnValue(new Promise(() => {}));
+    // Never resolves during the test — we want the scan to still be in-flight.
+    // Capture the reject so afterEach can settle it and prevent an open handle.
+    mockMeasureObject.mockReturnValue(
+      new Promise((_, rej) => { rejectPendingMeasure = rej; })
+    );
 
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
     await press(tree.root, "Scan with LiDAR");
