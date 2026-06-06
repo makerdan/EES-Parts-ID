@@ -21,6 +21,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
+    if (loading) return;
     if (!password.trim()) {
       setError("Password required");
       return;
@@ -157,7 +158,11 @@ export default function LoginScreen() {
           returnKeyType="go"
         />
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        <Pressable style={styles.button} onPress={handleLogin}>
+        <Pressable
+          style={[styles.button, loading && { opacity: 0.6 }]}
+          onPress={handleLogin}
+          disabled={loading}
+        >
           {loading ? (
             <ActivityIndicator color={colors.primaryForeground} />
           ) : (

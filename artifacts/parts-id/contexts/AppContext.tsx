@@ -8,7 +8,7 @@ import React, {
 } from "react";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Appearance, Platform, StyleSheet, Text, View, useColorScheme } from "react-native";
+import { Appearance, AppState, Platform, StyleSheet, Text, View, useColorScheme } from "react-native";
 import colorTokens from "@/constants/colors";
 import { setAuthTokenGetter, setBaseUrl } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
@@ -201,24 +201,21 @@ async function fetchAdminProfile(token: string): Promise<AdminProfilePayload | n
 }
 
 async function pushAdminProfile(token: string, settings: AppSettings): Promise<void> {
-  try {
-    await fetch(`${API_BASE}/admin/profile`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        dimensionUnit: settings.dimensionUnit,
-        textSize: settings.textSize,
-        themeMode: settings.themeMode,
-        defaultConfidenceThreshold: settings.defaultConfidenceThreshold,
-        scanSound: settings.scanSound,
-      }),
-    });
-  } catch {
-    // Background sync — swallow errors silently
-  }
+  const res = await fetch(`${API_BASE}/admin/profile`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      dimensionUnit: settings.dimensionUnit,
+      textSize: settings.textSize,
+      themeMode: settings.themeMode,
+      defaultConfidenceThreshold: settings.defaultConfidenceThreshold,
+      scanSound: settings.scanSound,
+    }),
+  });
+  if (!res.ok) throw new Error(`Server responded ${res.status}`);
 }
 
 export type { LogoutHandler };
@@ -404,22 +401,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const updateSetting = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-    setSettings(prev => {
-      const next = { ...prev, [key]: value };
-      saveSettings(next);
-      if (key === "themeMode") applyThemeMode(value as ThemeMode);
-      // Background: push all portable settings to the server whenever any of
-      // them change so the admin's preferences follow them across devices.
-      const PORTABLE_KEYS: (keyof AppSettings)[] = [
-        "dimensionUnit", "textSize", "themeMode", "defaultConfidenceThreshold", "scanSound",
-      ];
-      if (PORTABLE_KEYS.includes(key) && adminTokenRef.current) {
-        pushAdminProfile(adminTokenRef.current, next);
+  const currentSettingsRef = useRef(settings);
+  useEffect(() => { currentSettingsRef.current = settings; }, [settings]);
+
+  const pendingSyncRef = useRef(false);
+
+  const syncSettingsToServer = useCallback(async (settingsToSync: AppSettings) => {
+    const token = adminTokenRef.current;
+    if (!token) return;
+    try {
+      await pushAdminProfile(token, settingsToSync);
+      pendingSyncRef.current = false;
+    } catch {
+      pendingSyncRef.current = true;
+      showToast("Couldn't save setting to server — will retry when reconnected.", "error");
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active" && pendingSyncRef.current) {
+        syncSettingsToServer(currentSettingsRef.current);
       }
-      return next;
     });
-  }, []);
+    return () => sub.remove();
+  }, [syncSettingsToServer]);
+
+  const updateSetting = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    const next = { ...currentSettingsRef.current, [key]: value };
+    setSettings(next);
+    saveSettings(next);
+    if (key === "themeMode") applyThemeMode(value as ThemeMode);
+    const PORTABLE_KEYS: (keyof AppSettings)[] = [
+      "dimensionUnit", "textSize", "themeMode", "defaultConfidenceThreshold", "scanSound",
+    ];
+    if (PORTABLE_KEYS.includes(key) && adminTokenRef.current) {
+      syncSettingsToServer(next);
+    }
+  }, [syncSettingsToServer]);
 
   const textFontScale =
     settings.textSize === "small" ? 0.85 : settings.textSize === "large" ? 1.18 : 1.0;
