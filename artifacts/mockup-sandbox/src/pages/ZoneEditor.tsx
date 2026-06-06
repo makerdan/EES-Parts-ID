@@ -22,7 +22,7 @@ import React, {
 import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
 import { deriveParity } from "../utils/deriveParity";
-import { isValidAisleId, findDuplicateConflict } from "@workspace/zone-validation";
+import { isValidAisleId, findDuplicateConflict, normalizeAisleId } from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
 
 // Strip the outer <svg> wrapper so the inner content can be embedded directly
@@ -264,14 +264,28 @@ export function ZoneEditor() {
     return isValidAisleId(form.aisleId) ? null : "Aisle ID must be a number (e.g. 12)";
   }, [form.aisleId]);
 
+  // Tracks the form values as they were when last loaded from the server (used to
+  // suppress false conflict warnings when a zone is selected but not yet changed).
+  const lastSavedFormRef = useRef<FormState | null>(null);
+  const prevSelectedIdRef = useRef<number | null>(null);
+
   // Non-blocking duplicate warning: another zone already claims this aisle+parity.
-  const duplicateConflict = useMemo(
-    () =>
-      form.aisleId.trim() && isValidAisleId(form.aisleId)
-        ? findDuplicateConflict(zones, selectedId, form.aisleId, form.sectionParity)
-        : null,
-    [zones, form.aisleId, form.sectionParity, selectedId],
-  );
+  const duplicateConflict = useMemo(() => {
+    if (!form.aisleId.trim() || !isValidAisleId(form.aisleId)) return null;
+    // Suppress the warning when editing an existing zone whose aisle ID and
+    // parity haven't changed from the last-saved state — the conflict already
+    // existed in the database and saving the untouched form won't create a
+    // new overlap.
+    if (
+      selectedId !== null &&
+      normalizeAisleId(form.aisleId) ===
+        normalizeAisleId(lastSavedFormRef.current?.aisleId ?? "") &&
+      form.sectionParity === lastSavedFormRef.current?.sectionParity
+    ) {
+      return null;
+    }
+    return findDuplicateConflict(zones, selectedId, form.aisleId, form.sectionParity);
+  }, [zones, form.aisleId, form.sectionParity, selectedId]);
 
   // ── API helpers ─────────────────────────────────────────────────────────────
   const headers = useCallback(
@@ -579,8 +593,6 @@ export function ZoneEditor() {
   };
 
   // Sync single-select form when selected zone changes
-  const lastSavedFormRef = useRef<FormState | null>(null);
-  const prevSelectedIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (!selectedId) return;
     const z = zones.find((z) => z.id === selectedId);
