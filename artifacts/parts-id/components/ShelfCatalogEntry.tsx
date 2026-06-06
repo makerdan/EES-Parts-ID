@@ -88,6 +88,61 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
     ? `${shelfPrefix.trim()}-${position.trim()}`
     : "";
 
+  const loadShelfPreferences = useCallback(async () => {
+    if (adminToken) {
+      try {
+        const res = await fetch(`${API_BASE}/admin/shelf-preferences`, {
+          headers: { Authorization: `Bearer ${adminToken}` },
+        });
+        if (res.ok) {
+          const data = await res.json() as { shelfPrefix: string | null; shelfStep: number | null };
+          const hasServerPrefix = data.shelfPrefix !== null && data.shelfPrefix !== undefined;
+          const hasServerStep = data.shelfStep !== null && data.shelfStep !== undefined
+            && (STEP_OPTIONS as readonly number[]).includes(data.shelfStep);
+          if (hasServerPrefix || hasServerStep) {
+            if (hasServerPrefix) {
+              setShelfPrefix(data.shelfPrefix as string);
+              AsyncStorage.setItem(STORAGE_PREFIX_KEY, data.shelfPrefix as string).catch(() => {});
+            }
+            if (hasServerStep) {
+              setStep(data.shelfStep as Step);
+              AsyncStorage.setItem(STORAGE_STEP_KEY, String(data.shelfStep)).catch(() => {});
+            }
+            hydratedRef.current = true;
+            return;
+          }
+          // Server had no saved preferences yet — fall through to AsyncStorage
+        }
+      } catch {
+        // fall through to AsyncStorage
+      }
+    }
+    AsyncStorage.multiGet([STORAGE_PREFIX_KEY, STORAGE_STEP_KEY]).then(pairs => {
+      const savedPrefix = pairs[0][1];
+      const savedStep = pairs[1][1];
+      if (savedPrefix !== null && savedPrefix !== undefined) setShelfPrefix(savedPrefix);
+      if (savedStep !== null && savedStep !== undefined) {
+        const parsed = parseInt(savedStep, 10) as Step;
+        if ((STEP_OPTIONS as readonly number[]).includes(parsed)) setStep(parsed);
+      }
+      hydratedRef.current = true;
+    }).catch(() => {
+      hydratedRef.current = true;
+    });
+  }, [adminToken]);
+
+  const saveShelfPreferences = useCallback((prefix: string, stepVal: Step) => {
+    if (!adminToken) return;
+    fetch(`${API_BASE}/admin/shelf-preferences`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ shelfPrefix: prefix, shelfStep: stepVal }),
+    }).catch(() => {});
+  }, [adminToken]);
+
   useEffect(() => {
     if (!visible) {
       hydratedRef.current = false;
@@ -105,30 +160,21 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       setPrefixScannerOpen(false);
       prefixScanLock.current = false;
     } else {
-      AsyncStorage.multiGet([STORAGE_PREFIX_KEY, STORAGE_STEP_KEY]).then(pairs => {
-        const savedPrefix = pairs[0][1];
-        const savedStep = pairs[1][1];
-        if (savedPrefix) setShelfPrefix(savedPrefix);
-        if (savedStep) {
-          const parsed = parseInt(savedStep, 10) as Step;
-          if ((STEP_OPTIONS as readonly number[]).includes(parsed)) setStep(parsed);
-        }
-        hydratedRef.current = true;
-      }).catch(() => {
-        hydratedRef.current = true;
-      });
+      loadShelfPreferences();
     }
-  }, [visible]);
+  }, [visible, loadShelfPreferences]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
     AsyncStorage.setItem(STORAGE_PREFIX_KEY, shelfPrefix).catch(() => {});
-  }, [shelfPrefix]);
+    saveShelfPreferences(shelfPrefix, step);
+  }, [shelfPrefix]);// eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!hydratedRef.current) return;
     AsyncStorage.setItem(STORAGE_STEP_KEY, String(step)).catch(() => {});
-  }, [step]);
+    saveShelfPreferences(shelfPrefix, step);
+  }, [step]);// eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStartPositionChange = useCallback((val: string) => {
     const digits = val.replace(/\D/g, "").slice(0, 3);

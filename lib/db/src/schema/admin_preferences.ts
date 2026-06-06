@@ -7,5 +7,7 @@ export const adminPreferencesTable = pgTable("admin_preferences", {
   themeMode: text("theme_mode").notNull().default("system"),
   defaultConfidenceThreshold: integer("default_confidence_threshold").notNull().default(50),
   scanSound: boolean("scan_sound").notNull().default(true),
+  shelfPrefix: text("shelf_prefix"),
+  shelfStep: integer("shelf_step"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

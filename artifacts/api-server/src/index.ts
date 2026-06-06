@@ -63,7 +63,9 @@ async function migrateAdminPreferences(): Promise<void> {
         ADD COLUMN IF NOT EXISTS text_size TEXT NOT NULL DEFAULT 'normal',
         ADD COLUMN IF NOT EXISTS theme_mode TEXT NOT NULL DEFAULT 'system',
         ADD COLUMN IF NOT EXISTS default_confidence_threshold INTEGER NOT NULL DEFAULT 50,
-        ADD COLUMN IF NOT EXISTS scan_sound BOOLEAN NOT NULL DEFAULT true
+        ADD COLUMN IF NOT EXISTS scan_sound BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS shelf_prefix TEXT,
+        ADD COLUMN IF NOT EXISTS shelf_step INTEGER
     `);
   } catch (err) {
     logger.error({ err }, "Failed to migrate admin_preferences table");
