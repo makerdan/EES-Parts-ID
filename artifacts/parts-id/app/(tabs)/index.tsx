@@ -551,8 +551,7 @@ export default function SearchScreen() {
   }, [measureItem, adminToken, buildFuseIndex, showToast]);
 
   const results: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
-  const rawSizeUnknownResults: SearchResult[] = isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []);
-  const sizeUnknownResults: SearchResult[] = rawSizeUnknownResults;
+  const sizeUnknownResults: SearchResult[] = isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []);
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
 
