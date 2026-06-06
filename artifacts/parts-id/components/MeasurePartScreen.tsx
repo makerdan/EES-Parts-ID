@@ -29,9 +29,9 @@ import {
   SafeAreaView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
 import { Feather } from "@expo/vector-icons";
@@ -813,7 +813,7 @@ export function MeasurePartScreen({
                             </Pressable>
                           )}
                         </View>
-                        <TextInput
+                        <KeyboardDoneInput
                           value={value}
                           onChangeText={(v) =>
                             set(v.replace(/[^0-9.]/g, ""))

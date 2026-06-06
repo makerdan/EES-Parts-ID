@@ -8,9 +8,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as DocumentPicker from "expo-document-picker";
 import { File as FsFile, Paths as FsPaths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
@@ -308,7 +308,7 @@ function AdminGate({ colors }: { colors: ReturnType<typeof useColors> }) {
           Inventory import is restricted to administrators. Enter the admin password to continue.
         </Text>
 
-        <TextInput
+        <KeyboardDoneInput
           style={[gateStyles.input, { backgroundColor: colors.muted, color: colors.foreground, borderColor: error ? colors.destructive : colors.border }]}
           placeholder="Admin password"
           placeholderTextColor={colors.mutedForeground}
@@ -1162,7 +1162,7 @@ export default function UploadScreen() {
                   Paste rows from a spreadsheet
                 </Text>
                 <View style={styles.pasteInputWrapper}>
-                  <TextInput
+                  <KeyboardDoneInput
                     value={pasteText}
                     onChangeText={handlePasteChange}
                     placeholder={"Vendor,Catalog,Description,BinLocation\nEATON,BR120,1 Pole Breaker,A1"}
@@ -1417,7 +1417,7 @@ export default function UploadScreen() {
                             >
                               {binDiff.willReplaceBins > 20 ? (
                                 <View style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: 4 }}>
-                                  <TextInput
+                                  <KeyboardDoneInput
                                     value={replaceListSearch}
                                     onChangeText={setReplaceListSearch}
                                     placeholder="Search by vendor or catalog…"
@@ -1965,7 +1965,7 @@ export default function UploadScreen() {
                   Run a read-only SELECT against the live database. INSERT, UPDATE, DELETE, and DDL are blocked.
                 </Text>
 
-                <TextInput
+                <KeyboardDoneInput
                   value={queryText}
                   onChangeText={text => {
                     setQueryText(text);

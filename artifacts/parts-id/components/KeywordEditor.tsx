@@ -9,9 +9,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useUpdateItemKeywords } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -309,7 +309,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
             ADD KEYWORD
           </Text>
           <View style={styles.addRow}>
-            <TextInput
+            <KeyboardDoneInput
               value={newKeyword}
               onChangeText={setNewKeyword}
               placeholder="Type keyword and press Add…"

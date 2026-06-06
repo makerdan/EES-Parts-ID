@@ -7,9 +7,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as Clipboard from "expo-clipboard";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -268,7 +268,7 @@ export function AddPartModal({
               <View style={styles.fields}>
                 <View style={styles.fieldGroup}>
                   <Text style={[styles.label, { color: colors.foreground }]}>Catalog Number</Text>
-                  <TextInput
+                  <KeyboardDoneInput
                     style={[
                       styles.input,
                       { backgroundColor: colors.muted, borderColor: fieldErrors.catalog ? colors.destructive : colors.border, color: colors.foreground },
@@ -288,7 +288,7 @@ export function AddPartModal({
 
                 <View style={styles.fieldGroup}>
                   <Text style={[styles.label, { color: colors.foreground }]}>Vendor Code</Text>
-                  <TextInput
+                  <KeyboardDoneInput
                     style={[
                       styles.input,
                       { backgroundColor: colors.muted, borderColor: fieldErrors.vendor ? colors.destructive : colors.border, color: colors.foreground },
@@ -308,7 +308,7 @@ export function AddPartModal({
 
                 <View style={styles.fieldGroup}>
                   <Text style={[styles.label, { color: colors.foreground }]}>Bin Location</Text>
-                  <TextInput
+                  <KeyboardDoneInput
                     style={[
                       styles.input,
                       { backgroundColor: colors.muted, borderColor: fieldErrors.bin ? colors.destructive : colors.border, color: colors.foreground },

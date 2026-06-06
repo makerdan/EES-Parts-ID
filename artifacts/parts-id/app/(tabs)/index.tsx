@@ -10,9 +10,9 @@ import {
   StyleSheet,
   Switch,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Fuse from "fuse.js";
@@ -1072,7 +1072,7 @@ export default function SearchScreen() {
               {/* Custom value text input */}
               <View style={styles.confCustomRow}>
                 <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>Custom</Text>
-                <TextInput
+                <KeyboardDoneInput
                   value={confThresholdInput}
                   onChangeText={setConfThresholdInput}
                   onBlur={() => {
@@ -1163,7 +1163,7 @@ export default function SearchScreen() {
       {/* ── Persistent search bar — always visible ── */}
       <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <View style={styles.searchBarInputWrapper}>
-          <TextInput
+          <KeyboardDoneInput
             value={filters.keywords}
             onChangeText={v => handleChange("keywords", v)}
             placeholder="Search parts — keyword, catalog #, vendor…"

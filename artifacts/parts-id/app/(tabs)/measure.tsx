@@ -27,9 +27,9 @@ import {
   SafeAreaView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Feather } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -401,7 +401,7 @@ export default function MeasureScreen() {
                 ).map(({ label, value, set }) => (
                   <View key={label} style={s.fieldGroup}>
                     <Text style={s.fieldLabel}>{label}</Text>
-                    <TextInput
+                    <KeyboardDoneInput
                       value={value}
                       onChangeText={set}
                       keyboardType="decimal-pad"

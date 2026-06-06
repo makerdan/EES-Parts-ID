@@ -6,9 +6,9 @@ import {
   StyleSheet,
   Switch,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useFocusEffect } from "expo-router";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import * as Haptics from "expo-haptics";
@@ -600,7 +600,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
       {/* Shelf step 1: pick shelf prefix */}
       {shelfMode && shelfStep === "pickshelf" ? (
         <View style={{ paddingHorizontal: 16, gap: 10 }}>
-          <TextInput
+          <KeyboardDoneInput
             style={[apStyles.shelfInput, { borderColor: colors.border, backgroundColor: colors.muted, color: colors.foreground }]}
             placeholder="Prefix: e.g. 16-37-80 or A-01"
             placeholderTextColor={colors.mutedForeground}

@@ -7,13 +7,12 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useColors } from "@/hooks/useColors";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 
 const DEVICE_TOKEN_KEY = "contact_device_token";
 
@@ -129,7 +128,7 @@ export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props
         {/* Form */}
         <View style={styles.form}>
           <Text style={[styles.label, { color: colors.mutedForeground }]}>SUBJECT</Text>
-          <TextInput
+          <KeyboardDoneInput
             value={subject}
             onChangeText={setSubject}
             placeholder="Brief description of your issue or question"

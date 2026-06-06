@@ -9,9 +9,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system";
 import { Feather } from "@expo/vector-icons";
@@ -474,7 +474,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Shelf Prefix</Text>
                   <View style={styles.prefixRow}>
-                    <TextInput
+                    <KeyboardDoneInput
                       value={shelfPrefix}
                       onChangeText={v => setShelfPrefix(formatPrefix(v))}
                       placeholder="e.g. 08-01"
@@ -500,7 +500,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Start Position</Text>
-                  <TextInput
+                  <KeyboardDoneInput
                     value={startPosition}
                     onChangeText={handleStartPositionChange}
                     placeholder="801"
@@ -559,7 +559,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
 
               <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Shelf Position</Text>
               {positionEditing ? (
-                <TextInput
+                <KeyboardDoneInput
                   value={position}
                   onChangeText={setPosition}
                   keyboardType="number-pad"
@@ -591,7 +591,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
               </Text>
 
               <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 14 }]}>Catalog Number</Text>
-              <TextInput
+              <KeyboardDoneInput
                 value={catalog}
                 onChangeText={v => { setCatalog(v); setError(null); setDuplicate(null); }}
                 placeholder="e.g. BR120"
@@ -606,7 +606,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
               />
 
               <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 14 }]}>Vendor Code</Text>
-              <TextInput
+              <KeyboardDoneInput
                 value={vendor}
                 onChangeText={v => { setVendor(v); setError(null); }}
                 placeholder="e.g. EATON"

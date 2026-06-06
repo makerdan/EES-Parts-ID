@@ -9,16 +9,15 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
 import { fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl, type CacheEntry } from "@/utils/chipCache";
 import { ContactSheet } from "@/components/ContactSheet";
 import { useApp } from "@/contexts/AppContext";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
@@ -379,7 +378,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
 
                 {/* Inline text input in empty state */}
                 <View style={[emptyStyles.inputRow, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-                  <TextInput
+                  <KeyboardDoneInput
                     value={question}
                     onChangeText={setQuestion}
                     placeholder="Ask about any electrical term..."

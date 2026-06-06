@@ -9,9 +9,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -499,7 +499,7 @@ export default function EditItemScreen() {
 
           {/* Description */}
           <Text style={[s.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>DESCRIPTION</Text>
-          <TextInput
+          <KeyboardDoneInput
             value={description}
             onChangeText={(v) => { setDescription(v); setSaveStatus("idle"); }}
             placeholder="Brief description of the part…"
@@ -533,7 +533,7 @@ export default function EditItemScreen() {
             <Text style={[s.emptyHint, { color: colors.mutedForeground }]}>No bins assigned.</Text>
           ) : null}
           <View style={[s.addRow, { marginTop: 10 }]}>
-            <TextInput
+            <KeyboardDoneInput
               value={newBin}
               onChangeText={setNewBin}
               placeholder="e.g. A1-04"
@@ -578,7 +578,7 @@ export default function EditItemScreen() {
             <Text style={[s.emptyHint, { color: colors.mutedForeground }]}>No barcodes assigned.</Text>
           ) : null}
           <View style={[s.addRow, { marginTop: 10 }]}>
-            <TextInput
+            <KeyboardDoneInput
               value={newBarcode}
               onChangeText={(v) => { setNewBarcode(v); setSaveStatus("idle"); }}
               placeholder="Type barcode…"
@@ -654,7 +654,7 @@ export default function EditItemScreen() {
           <View style={s.dimGrid}>
             <View style={s.dimField}>
               <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Length</Text>
-              <TextInput
+              <KeyboardDoneInput
                 value={dimLength}
                 onChangeText={v => { setDimLength(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                 placeholder="–"
@@ -665,7 +665,7 @@ export default function EditItemScreen() {
             </View>
             <View style={s.dimField}>
               <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Width</Text>
-              <TextInput
+              <KeyboardDoneInput
                 value={dimWidth}
                 onChangeText={v => { setDimWidth(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                 placeholder="–"
@@ -676,7 +676,7 @@ export default function EditItemScreen() {
             </View>
             <View style={s.dimField}>
               <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Height</Text>
-              <TextInput
+              <KeyboardDoneInput
                 value={dimHeight}
                 onChangeText={v => { setDimHeight(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                 placeholder="–"
@@ -687,7 +687,7 @@ export default function EditItemScreen() {
             </View>
             <View style={s.dimField}>
               <Text style={[s.dimLabel, { color: colors.mutedForeground }]}>Diameter</Text>
-              <TextInput
+              <KeyboardDoneInput
                 value={dimDiameter}
                 onChangeText={v => { setDimDiameter(v.replace(/[^0-9.]/g, "")); setSaveStatus("idle"); }}
                 placeholder="–"
@@ -728,7 +728,7 @@ export default function EditItemScreen() {
             <Text style={[s.emptyHint, { color: colors.mutedForeground }]}>No keywords yet. Add some below.</Text>
           ) : null}
           <View style={[s.addRow, { marginTop: 10 }]}>
-            <TextInput
+            <KeyboardDoneInput
               value={newKeyword}
               onChangeText={setNewKeyword}
               placeholder="Type keyword and press Add…"

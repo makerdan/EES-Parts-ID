@@ -13,9 +13,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
@@ -169,7 +169,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {/* Vendor input */}
       <View style={s.fieldRow}>
         <Text style={[s.label, { color: colors.mutedForeground }]}>Vendor</Text>
-        <TextInput
+        <KeyboardDoneInput
           style={[s.input, { backgroundColor: colors.muted, color: colors.foreground, borderColor: colors.border }]}
           placeholder="e.g. EATON"
           placeholderTextColor={colors.mutedForeground}

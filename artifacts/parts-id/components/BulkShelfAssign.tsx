@@ -9,9 +9,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -747,7 +747,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
                 All items binned to this shelf will be loaded for assignment.
               </Text>
 
-              <TextInput
+              <KeyboardDoneInput
                 style={[
                   bsStyles.input,
                   {

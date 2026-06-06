@@ -5,9 +5,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -199,7 +199,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
       <View style={apfStyles.fields}>
         <View style={apfStyles.fieldGroup}>
           <Text style={[apfStyles.label, { color: colors.foreground }]}>Catalog Number</Text>
-          <TextInput
+          <KeyboardDoneInput
             style={[apfStyles.input, { backgroundColor: colors.muted, borderColor: fieldErrors.catalog ? colors.destructive : colors.border, color: colors.foreground }]}
             placeholder="e.g. BR120"
             placeholderTextColor={colors.mutedForeground}
@@ -217,7 +217,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
 
         <View style={apfStyles.fieldGroup}>
           <Text style={[apfStyles.label, { color: colors.foreground }]}>Vendor Code</Text>
-          <TextInput
+          <KeyboardDoneInput
             style={[apfStyles.input, { backgroundColor: colors.muted, borderColor: fieldErrors.vendor ? colors.destructive : colors.border, color: colors.foreground }]}
             placeholder="e.g. EATON"
             placeholderTextColor={colors.mutedForeground}
@@ -235,7 +235,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
 
         <View style={apfStyles.fieldGroup}>
           <Text style={[apfStyles.label, { color: colors.foreground }]}>Bin Location</Text>
-          <TextInput
+          <KeyboardDoneInput
             style={[apfStyles.input, { backgroundColor: colors.muted, borderColor: fieldErrors.bin ? colors.destructive : colors.border, color: colors.foreground }]}
             placeholder="e.g. 01-05-210"
             placeholderTextColor={colors.mutedForeground}
@@ -269,7 +269,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
           <View style={apfStyles.dimGrid}>
             <View style={apfStyles.dimHalf}>
               <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Length</Text>
-              <TextInput
+              <KeyboardDoneInput
                 style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
@@ -280,7 +280,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
             </View>
             <View style={apfStyles.dimHalf}>
               <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Width</Text>
-              <TextInput
+              <KeyboardDoneInput
                 style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
@@ -291,7 +291,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
             </View>
             <View style={apfStyles.dimHalf}>
               <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Height</Text>
-              <TextInput
+              <KeyboardDoneInput
                 style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
@@ -302,7 +302,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
             </View>
             <View style={apfStyles.dimHalf}>
               <Text style={[apfStyles.dimFieldLabel, { color: colors.mutedForeground }]}>Diameter</Text>
-              <TextInput
+              <KeyboardDoneInput
                 style={[apfStyles.dimInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                 placeholder="–"
                 placeholderTextColor={colors.mutedForeground}
