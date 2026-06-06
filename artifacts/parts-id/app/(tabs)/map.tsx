@@ -403,7 +403,7 @@ export default function MapScreen() {
         focusAisleNum={focusAisleNum}
         onFocusConsumed={() => setFocusAisleNum(null)}
         onFocusFailed={() => {
-          showToast("No map zone found for this aisle — check the warehouse configuration.");
+          showToast(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
           setFocusAisleNum(null);
         }}
       />
