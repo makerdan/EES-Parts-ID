@@ -816,6 +816,105 @@ describe("PATCH /api/inventory/:id/bins", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /api/inventory/search — includeNullDimensions toggle
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/inventory/search — includeNullDimensions toggle", () => {
+  const PREFIX = "JEST-ITG-NULLDIM-";
+  const MEASURED_CATALOG = `${PREFIX}MEASURED`;
+  const UNMEASURED_CATALOG = `${PREFIX}UNMEASURED`;
+
+  beforeAll(async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { sql: sqlOp } = await import("drizzle-orm");
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} LIKE ${`${PREFIX}%`}`);
+    await db.insert(inventoryTable).values([
+      {
+        vendor: "JEST-NULLDIM-VENDOR",
+        catalog: MEASURED_CATALOG,
+        description: "JEST-ITG-NULLDIM part with measured length",
+        binLocations: [],
+        dimensions: { length: 50 },
+      },
+      {
+        vendor: "JEST-NULLDIM-VENDOR",
+        catalog: UNMEASURED_CATALOG,
+        description: "JEST-ITG-NULLDIM part without dimensions",
+        binLocations: [],
+      },
+    ]);
+  }, 15_000);
+
+  afterAll(async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { sql: sqlOp } = await import("drizzle-orm");
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} LIKE ${`${PREFIX}%`}`);
+  }, 15_000);
+
+  it("populates sizeUnknownResults with unmeasured items when includeNullDimensions is true", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-NULLDIM", minLength: 1, includeNullDimensions: true })
+      .expect(200);
+
+    const unknownCatalogs = (res.body.sizeUnknownResults ?? []).map(
+      (r: { item: { catalog: string } }) => r.item.catalog,
+    );
+    expect(unknownCatalogs).toContain(UNMEASURED_CATALOG);
+  });
+
+  it("leaves sizeUnknownResults empty when includeNullDimensions is false", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-NULLDIM", minLength: 1, includeNullDimensions: false })
+      .expect(200);
+
+    expect(res.body.sizeUnknownResults).toEqual([]);
+  });
+
+  it("measured item still appears in results regardless of includeNullDimensions", async () => {
+    for (const flag of [true, false]) {
+      const res = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: "JEST-ITG-NULLDIM", minLength: 1, includeNullDimensions: flag })
+        .expect(200);
+
+      const catalogs = res.body.results.map(
+        (r: { item: { catalog: string } }) => r.item.catalog,
+      );
+      expect(catalogs).toContain(MEASURED_CATALOG);
+    }
+  });
+
+  it("unmeasured item does not appear in main results even when includeNullDimensions is true", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-NULLDIM", minLength: 1, includeNullDimensions: true })
+      .expect(200);
+
+    const catalogs = res.body.results.map(
+      (r: { item: { catalog: string } }) => r.item.catalog,
+    );
+    expect(catalogs).not.toContain(UNMEASURED_CATALOG);
+  });
+
+  it("sizeUnknownCount matches sizeUnknownResults length", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ keywords: "JEST-ITG-NULLDIM", minLength: 1, includeNullDimensions: true })
+      .expect(200);
+
+    expect(res.body.sizeUnknownCount).toBe(
+      (res.body.sizeUnknownResults ?? []).length,
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Contract: POST /api/inventory/search response shape matches OpenAPI spec
 // ─────────────────────────────────────────────────────────────────────────────
 
