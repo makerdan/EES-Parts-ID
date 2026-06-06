@@ -70,7 +70,15 @@ export default function MapScreen() {
       // Defer orientation unlock past the tab-switch animation so it does not
       // block the JS thread during the transition and cause a visible freeze.
       const orientTimer = setTimeout(() => {
-        void ScreenOrientation.unlockAsync().catch(() => {});
+        void ScreenOrientation.unlockAsync().catch((err: unknown) => {
+          if (
+            err instanceof Error &&
+            err.message.includes("not available")
+          ) {
+            return;
+          }
+          throw err;
+        });
       }, 300);
 
       const focus = pendingMapFocusRef.current;
@@ -87,7 +95,15 @@ export default function MapScreen() {
         clearTimeout(orientTimer);
         void ScreenOrientation.lockAsync(
           ScreenOrientation.OrientationLock.PORTRAIT_UP,
-        ).catch(() => {});
+        ).catch((err: unknown) => {
+          if (
+            err instanceof Error &&
+            err.message.includes("not available")
+          ) {
+            return;
+          }
+          throw err;
+        });
       };
     }, [refetchZones, setPendingMapFocus]),
   );
