@@ -205,6 +205,9 @@ export default function MapScreen() {
   const inventoryRef = useRef<InventoryItem[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
+  // ── Select / zone-tap mode ─────────────────────────────────────────────────
+  const [selectMode, setSelectMode] = useState(false);
+
   // ── Cycle count layer ──────────────────────────────────────────────────────
   const [cycleMode, setCycleMode] = useState(false);
   const [showZoneEditorTooltip, setShowZoneEditorTooltip] = useState(false);
@@ -439,10 +442,12 @@ export default function MapScreen() {
         zonesLoading={zonesLoading}
         zonesError={zonesError}
         onZonesRetry={refetchZones}
-        onZoneTap={cycleMode ? () => undefined : handleZoneTap}
+        onZoneTap={handleZoneTap}
         onZoneLongPress={handleZoneLongPress}
         isAdmin={isAdmin}
         cycleMode={cycleMode}
+        selectMode={selectMode}
+        onSelectModeChange={setSelectMode}
         countedZoneIds={countedZoneIds}
         pinnedAisleNums={pinnedAisleNums.size > 0 ? pinnedAisleNums : undefined}
         variantAisleNums={variantAisleNums.size > 0 ? variantAisleNums : undefined}
