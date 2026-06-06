@@ -147,17 +147,12 @@ export default function PhotoScreen() {
 
   const handleMeasureSearchConfirm = React.useCallback((dims: PartDimensions) => {
     setMeasureSearchVisible(false);
-    const toStr = (v: number | null | undefined) => (v != null ? String(v) : "");
-    setPendingMeasureSearch({
-      minLength: toStr(dims.length),
-      maxLength: toStr(dims.length),
-      minWidth: toStr(dims.width),
-      maxWidth: toStr(dims.width),
-      minHeight: toStr(dims.height),
-      maxHeight: toStr(dims.height),
-      minDiameter: toStr(dims.diameter),
-      maxDiameter: toStr(dims.diameter),
-    });
+    const parts: string[] = [];
+    if (dims.length != null) parts.push(`${Math.round(dims.length)}mm`);
+    if (dims.width != null) parts.push(`${Math.round(dims.width)}mm`);
+    if (dims.height != null) parts.push(`${Math.round(dims.height)}mm`);
+    if (dims.diameter != null) parts.push(`${Math.round(dims.diameter)}mm`);
+    if (parts.length > 0) setPendingMeasureSearch(parts.join(" "));
     router.navigate("/");
   }, [setPendingMeasureSearch]);
 

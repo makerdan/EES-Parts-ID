@@ -4,6 +4,10 @@
  * react-test-renderer records them as host nodes and toJSON() returns a
  * navigable tree.  Props are forwarded as-is; unknown ones are simply ignored
  * by the test renderer — they never reach a real DOM.
+ *
+ * FlatList calls renderItem for each data item so that child components (e.g.
+ * ResultCard) are actually instantiated and their props can be captured in
+ * component-level tests.
  */
 const React = require("react");
 
@@ -36,13 +40,40 @@ module.exports = {
   TouchableOpacity: make("rn-touchable"),
   SafeAreaView: make("rn-safe-area"),
   ScrollView: make("rn-scroll"),
-  FlatList: make("rn-flat-list"),
   ActivityIndicator: make("rn-activity"),
   Image: function Image() { return null; },
   TextInput: make("rn-text-input"),
+  Switch: function Switch() { return null; },
+  RefreshControl: function RefreshControl() { return null; },
+  Keyboard: { dismiss: noop, addListener: () => ({ remove: noop }) },
   Modal: function Modal({ children, visible }) {
     if (!visible) return null;
     return React.createElement("rn-modal", {}, children);
+  },
+  /**
+   * FlatList — calls renderItem for every entry in data so that child
+   * components are mounted and their props captured during tests.
+   */
+  FlatList: function FlatList({ data, renderItem, keyExtractor, ListHeaderComponent, ListFooterComponent }) {
+    const header = ListHeaderComponent
+      ? React.createElement(
+          typeof ListHeaderComponent === "function" ? ListHeaderComponent : () => ListHeaderComponent,
+          null
+        )
+      : null;
+    const footer = ListFooterComponent
+      ? React.createElement(
+          typeof ListFooterComponent === "function" ? ListFooterComponent : () => ListFooterComponent,
+          null
+        )
+      : null;
+    const items = (data || []).map((item, index) => {
+      const key = keyExtractor ? keyExtractor(item, index) : String(index);
+      const el = renderItem ? renderItem({ item, index, separators: {} }) : null;
+      if (!el || !React.isValidElement(el)) return null;
+      return React.cloneElement(el, { key });
+    }).filter(Boolean);
+    return React.createElement("rn-flat-list", null, header, ...items, footer);
   },
   Alert: {
     alert: jest.fn(),
