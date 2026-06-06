@@ -11,6 +11,7 @@ import {
   View,
   Modal,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
@@ -113,6 +114,19 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
 
+  const [copiedBin, setCopiedBin] = useState<string | null>(null);
+  const copyBinTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopyBin = useCallback(async (bin: string) => {
+    await Clipboard.setStringAsync(bin);
+    setCopiedBin(bin);
+    if (copyBinTimeoutRef.current) clearTimeout(copyBinTimeoutRef.current);
+    copyBinTimeoutRef.current = setTimeout(() => {
+      copyBinTimeoutRef.current = null;
+      setCopiedBin(null);
+    }, 2000);
+  }, []);
+
   const dimStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -120,6 +134,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     return () => {
       if (dimStatusTimerRef.current) clearTimeout(dimStatusTimerRef.current);
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      if (copyBinTimeoutRef.current) clearTimeout(copyBinTimeoutRef.current);
     };
   }, []);
 
@@ -168,6 +183,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setSaveStatus("idle");
     setErrorMsg(null);
     setFieldSaveErrors({});
+    setCopiedBin(null);
+    if (copyBinTimeoutRef.current) { clearTimeout(copyBinTimeoutRef.current); copyBinTimeoutRef.current = null; }
     setDimLength(fmtDim(dims?.length));
     setDimWidth(fmtDim(dims?.width));
     setDimHeight(fmtDim(dims?.height));
@@ -604,18 +621,32 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
               BIN LOCATIONS ({bins.length})
             </Text>
             <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
-              Tap a bin to remove it.
+              Tap a bin to copy it. Tap ✕ to remove.
             </Text>
             <View style={styles.chipRow}>
               {bins.map((b) => (
-                <Pressable
+                <View
                   key={b}
-                  onPress={() => removeBin(b)}
-                  style={[styles.chip, { backgroundColor: colors.accent, borderColor: colors.primary + "44" }]}
+                  style={[styles.chip, { backgroundColor: colors.accent, borderColor: copiedBin === b ? colors.success : colors.primary + "44" }]}
                 >
-                  <Text style={[styles.chipText, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>{b}</Text>
-                  <Text style={[styles.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
-                </Pressable>
+                  <Pressable
+                    onPress={() => handleCopyBin(b)}
+                    style={styles.chipCopyArea}
+                    accessibilityLabel={`Copy bin ${b}`}
+                  >
+                    <Text style={[styles.chipText, { color: colors.foreground, fontFamily: "Inter_600SemiBold" }]}>{b}</Text>
+                    <Text style={[styles.chipHint, { color: copiedBin === b ? colors.success : colors.mutedForeground }]}>
+                      {copiedBin === b ? "Copied!" : "Tap to copy"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => removeBin(b)}
+                    style={styles.chipRemoveBtn}
+                    accessibilityLabel={`Remove bin ${b}`}
+                  >
+                    <Text style={[styles.chipRemove, { color: colors.mutedForeground }]}>✕</Text>
+                  </Pressable>
+                </View>
               ))}
             </View>
             {fieldSaveErrors.bins ? (
@@ -995,6 +1026,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   chipText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  chipCopyArea: { flexDirection: "column", alignItems: "flex-start" },
+  chipHint: { fontSize: 10, fontFamily: "Inter_400Regular" },
+  chipRemoveBtn: { paddingLeft: 4, paddingVertical: 2 },
   chipRemove: { fontSize: 11 },
   emptyHint: {
     fontSize: 13,
