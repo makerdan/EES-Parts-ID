@@ -1861,7 +1861,7 @@ export function WarehouseMapView({
           ]}
           accessibilityLabel={selectMode ? "Disable select mode" : "Enable select mode"}
         >
-          <Feather name="crosshair" size={15} color={selectMode ? "#fff" : colors.foreground} />
+          <Feather name="mouse-pointer" size={15} color={selectMode ? "#fff" : colors.foreground} />
         </Pressable>
         <Pressable
           onPress={handleZoomIn}
