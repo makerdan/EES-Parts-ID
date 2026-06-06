@@ -102,7 +102,7 @@ async function rasterizeSvg(
 
 // BFS flood fill returning the pixel bounding box of the connected light region.
 // Returns null if the seed pixel is dark (i.e. user clicked on a wall).
-function floodFillBounds(
+export function floodFillBounds(
   imageData: ImageData,
   startX: number,
   startY: number,
