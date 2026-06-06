@@ -935,6 +935,19 @@ export function WarehouseMapView({
     };
   }, [renderZoom, svgRenderW]);
 
+  // Maximum useful oversample for the always-mounted single-tile base layer.
+  // Computed once per container size (texture limit ÷ physical container width),
+  // independent of the current render zoom so it stays constant during a pinch
+  // gesture and does not trigger re-mounts that would reset the rasteriser.
+  // The base layer is pre-painted at this quality so it is already fully sharp
+  // when the tier drops back to 1 on gesture end, eliminating any resolution
+  // degradation at the tier-1 boundary regardless of how fast the zoom-out is.
+  const singleTileOversample = useMemo(() => {
+    if (svgRenderW <= 0) return 1;
+    const pixelRatio = PixelRatio.get();
+    return Math.max(1, Math.floor(IOS_MAX_TEXTURE_PX / (svgRenderW * pixelRatio)));
+  }, [svgRenderW]);
+
   // Single-texture fallback dimensions
   const hiResW = svgRenderW * oversample;
   const hiResH = svgRenderH * oversample;
@@ -1453,12 +1466,59 @@ export function WarehouseMapView({
                   isDark && styles.svgDarkFilter,
                 ]}
               >
+                {/* ── Base single-tile layer ────────────────────────────────
+                    Always mounted when SVG data is available so the SVG
+                    rasteriser keeps this tile painted at all times.
+                    When the tile grid is active (numTiles > 1) this layer
+                    sits silently underneath it; when the tier drops back to
+                    1 the grid fades away and this layer is immediately
+                    visible at full quality — no re-mount, no repaint delay.
+                    Rendered at the maximum oversample the iOS texture limit
+                    allows so the quality matches the tile grid as closely
+                    as possible at tier 1. */}
+                {svgXml ? (
+                  singleTileOversample > 1 ? (
+                    <View
+                      style={{
+                        width: svgRenderW * singleTileOversample,
+                        height: svgRenderH * singleTileOversample,
+                        position: "absolute",
+                        left: (svgRenderW - svgRenderW * singleTileOversample) / 2,
+                        top: (svgRenderH - svgRenderH * singleTileOversample) / 2,
+                        transform: [{ scale: 1 / singleTileOversample }],
+                      }}
+                    >
+                      <SvgXml
+                        xml={svgXml}
+                        width={svgRenderW * singleTileOversample}
+                        height={svgRenderH * singleTileOversample}
+                      />
+                    </View>
+                  ) : (
+                    <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
+                  )
+                ) : svgUri ? (
+                  // Cold-start fallback — svgXml not yet available; use SvgUri
+                  // which can render from the URI while the XML fetch completes.
+                  <View
+                    style={{
+                      width: hiResW,
+                      height: hiResH,
+                      position: "absolute",
+                      left: (svgRenderW - hiResW) / 2,
+                      top: (svgRenderH - hiResH) / 2,
+                      transform: [{ scale: 1 / oversample }],
+                    }}
+                  >
+                    <SvgUri uri={svgUri} width={hiResW} height={hiResH} />
+                  </View>
+                ) : null}
                 {/* ── Crossfade fade-out layer ──────────────────────────────
                     Holds the previous tier's tiles while new tiles render.
                     Fades from 1→0 over 150 ms in sync with the new layer
                     fading in, so there is never a blank frame at the boundary.
-                    Rendered BELOW the main layer so the new tiles always
-                    appear on top as they paint. */}
+                    Rendered above the base layer, below the main tile layer,
+                    so the new tiles always appear on top as they paint. */}
                 {fadeOutLayer && fadeOutLayer.numTiles > 1 && (
                   <Animated.View
                     style={[StyleSheet.absoluteFill, fadeOutAnimatedStyle]}
@@ -1484,7 +1544,10 @@ export function WarehouseMapView({
                 {/* ── Main tile layer — fades in on tier change ─────────── */}
                 <Animated.View style={[StyleSheet.absoluteFill, tileLayerAnimatedStyle]}>
                   {numTiles > 1 && tiles.length > 0 ? (
-                    // Tiled path — render only visible tiles
+                    // Tiled path — render only visible tiles.
+                    // The base single-tile layer underneath stays painted;
+                    // the tile grid layers on top for full sharpness at
+                    // high zoom levels.
                     tiles.map(({ col, row, xml: tileXml }) => (
                       <View
                         key={`${col}-${row}`}
@@ -1502,26 +1565,7 @@ export function WarehouseMapView({
                         <SvgXml xml={tileXml} width={svgRenderW} height={svgRenderH} />
                       </View>
                     ))
-                  ) : svgXml ? (
-                    // Single-tile path — SVG text already loaded; render directly
-                    // with SvgXml so no second network round-trip is needed.
-                    <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
-                  ) : (
-                    // Cold-start fallback — svgXml not yet available; use SvgUri
-                    // which can render from the URI while the XML fetch completes.
-                    <View
-                      style={{
-                        width: hiResW,
-                        height: hiResH,
-                        position: "absolute",
-                        left: (svgRenderW - hiResW) / 2,
-                        top: (svgRenderH - hiResH) / 2,
-                        transform: [{ scale: 1 / oversample }],
-                      }}
-                    >
-                      <SvgUri uri={svgUri} width={hiResW} height={hiResH} />
-                    </View>
-                  )}
+                  ) : null}
                 </Animated.View>
               </View>
             ) : !svgLoading ? (
