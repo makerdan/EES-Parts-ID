@@ -166,7 +166,7 @@ export default function SearchScreen() {
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
   const [isOffline, setIsOffline] = useState(false);
-  const [offlineCacheType, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
+  const [, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
   const [fuseSyncedAt, setFuseSyncedAt] = useState<number | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);

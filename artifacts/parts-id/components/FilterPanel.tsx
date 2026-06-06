@@ -11,7 +11,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   UIManager,
   View,
 } from "react-native";
@@ -72,11 +71,11 @@ interface FilterPanelProps {
 }
 
 // ── 16 required chip dimensions (must mirror CHIP_DIMS_SERVER in inventory.ts) ─
-const CHIP_DIMS: Array<{
+const CHIP_DIMS: {
   key: keyof FilterValues;
   label: string;
   options: string[];
-}> = [
+}[] = [
   {
     key: "category",
     label: "Category",
@@ -373,11 +372,11 @@ export function ConfidenceSlider({
 }
 
 
+const TEXT_FIELD_KEYS = ["catalog", "vendor", "color", "size", "material", "textNumbers"] as const;
+
 export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelProps) {
   "use no memo";
   const colors = useColors();
-
-  const TEXT_FIELD_KEYS = ["catalog", "vendor", "color", "size", "material", "textNumbers"] as const;
 
   const activeTextFieldCount = TEXT_FIELD_KEYS.filter(k => values[k].trim() !== "").length +
     (values.minLength.trim() !== "" || values.maxLength.trim() !== "" ? 1 : 0) +

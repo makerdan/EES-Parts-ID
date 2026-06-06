@@ -64,7 +64,7 @@ interface BarcodeScreenProps {
 export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
   "use no memo";
   const colors = useColors();
-  const { isAdmin, textFontScale, adminToken } = useApp();
+  const { isAdmin, textFontScale } = useApp();
   const queryClient = useQueryClient();
 
   const [permission, requestPermission] = useCameraPermissions();

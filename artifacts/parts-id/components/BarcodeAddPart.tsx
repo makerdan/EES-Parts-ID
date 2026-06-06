@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Dimensions,
   Pressable,
-  ScrollView,
   StyleSheet,
   Switch,
   Text,
