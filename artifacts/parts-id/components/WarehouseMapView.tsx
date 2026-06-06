@@ -71,7 +71,6 @@ import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml, Path, Ellipse } from "re
 
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
-import { sectionMatchesParity } from "@/lib/aisleHierarchy";
 
 // Pure viewport math is in utils/mapViewport — exported for testing.
 import {
@@ -1542,15 +1541,11 @@ export function WarehouseMapView({
     if (!zones.length) return null;
     return zones.map((zone) => {
       const aisleNum = parseInt(zone.aisleId, 10);
-      const isPinned = !cycleMode &&
-        (pinnedAisleNums?.has(aisleNum) ?? false) &&
-        sectionMatchesParity(zone.sectionParity, pinnedSectionsMap?.get(aisleNum));
+      const isPinned = !cycleMode && (pinnedAisleNums?.has(aisleNum) ?? false);
       // Allow an aisle to be BOTH primary-pinned and variant-pinned simultaneously
       // so variant locations in the same aisle as the selected part are still shown
       // with their distinct purple treatment alongside the amber primary marker.
-      const isVariantPinned = !cycleMode &&
-        (variantAisleNums?.has(aisleNum) ?? false) &&
-        sectionMatchesParity(zone.sectionParity, variantSectionsMap?.get(aisleNum));
+      const isVariantPinned = !cycleMode && (variantAisleNums?.has(aisleNum) ?? false);
       return (
         <ZoneOverlayItem
           key={zone.id}
