@@ -329,7 +329,7 @@ export default function MapScreen() {
             {showCycleCountTooltip && (
               <View style={[styles.zoneEditorTooltip, { backgroundColor: colors.foreground }]}>
                 <Text style={[styles.zoneEditorTooltipText, { color: colors.background }]}>
-                  Cycle Count
+                  Show Layers
                 </Text>
               </View>
             )}
