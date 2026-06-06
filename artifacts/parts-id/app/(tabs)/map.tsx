@@ -7,7 +7,7 @@
  *   - useWarehouseZones fetches on mount, on tab focus, and on app foreground.
  *   - Cached data is served immediately; background refresh keeps it fresh.
  */
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Linking,
   Pressable,
@@ -26,6 +26,7 @@ import { useApp } from "@/contexts/AppContext";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AisleSummarySheet } from "@/components/AisleSummarySheet";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
+import { parseBin } from "@/lib/aisleHierarchy";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
@@ -53,7 +54,91 @@ export default function MapScreen() {
   useTrackScreen("Map");
   const colors = useColors();
   const router = useRouter();
-  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus } = useApp();
+  const { settings, isAdmin, textFontScale, pendingMapFocus, setPendingMapFocus, pinnedParts } = useApp();
+
+  const pinnedAisleNums = useMemo(
+    () => new Set(pinnedParts.filter(p => !p.variant).map(p => p.aisleNum)),
+    [pinnedParts],
+  );
+  const variantAisleNums = useMemo(
+    () => new Set(pinnedParts.filter(p => !!p.variant).map(p => p.aisleNum)),
+    [pinnedParts],
+  );
+  /**
+   * For each pinned aisle, build a label containing the actual bin code
+   * (which encodes aisle + section + position, e.g. "17-06-204") and, when
+   * multiple bins share the same aisle, the additional section numbers so the
+   * worker knows exactly where in the aisle to look.
+   */
+  const pinnedBinLabels = useMemo(() => {
+    const m = new Map<number, string>();
+    const aisleSections = new Map<number, Set<number>>();
+    for (const p of pinnedParts) {
+      const parsed = parseBin(p.binCode);
+      if (!parsed) continue;
+      // First bin in this aisle → use its full code as the primary label
+      if (!m.has(p.aisleNum)) m.set(p.aisleNum, p.binCode);
+      // Track all distinct sections so we can append extras
+      const secs = aisleSections.get(p.aisleNum) ?? new Set<number>();
+      secs.add(parsed.section);
+      aisleSections.set(p.aisleNum, secs);
+    }
+    // When more than one section exists in an aisle, append "·§SS" for each extra
+    for (const [aisle, secs] of aisleSections) {
+      if (secs.size <= 1) continue;
+      const firstCode = m.get(aisle)!;
+      const firstSection = parseBin(firstCode)?.section ?? -1;
+      const extras = [...secs]
+        .filter(s => s !== firstSection)
+        .sort((a, b) => a - b)
+        .map(s => `§${String(s).padStart(2, "0")}`);
+      m.set(aisle, `${firstCode} ${extras.join("·")}`);
+    }
+    return m;
+  }, [pinnedParts]);
+
+  /**
+   * Maps aisleNum → list of distinct section numbers (0-99) for PRIMARY pins.
+   * Passed to WarehouseMapView so each aisle zone can render per-section
+   * Circle markers that show the worker exactly where in the aisle to walk.
+   */
+  const pinnedSections = useMemo(() => {
+    const m = new Map<number, number[]>();
+    for (const p of pinnedParts) {
+      if (p.variant) continue;
+      const parsed = parseBin(p.binCode);
+      if (!parsed) continue;
+      const secs = m.get(p.aisleNum) ?? [];
+      if (!secs.includes(parsed.section)) secs.push(parsed.section);
+      m.set(p.aisleNum, secs);
+    }
+    return m;
+  }, [pinnedParts]);
+
+  /**
+   * Maps aisleNum → list of distinct section numbers for VARIANT pins.
+   */
+  const variantSections = useMemo(() => {
+    const m = new Map<number, number[]>();
+    for (const p of pinnedParts) {
+      if (!p.variant) continue;
+      const parsed = parseBin(p.binCode);
+      if (!parsed) continue;
+      const secs = m.get(p.aisleNum) ?? [];
+      if (!secs.includes(parsed.section)) secs.push(parsed.section);
+      m.set(p.aisleNum, secs);
+    }
+    return m;
+  }, [pinnedParts]);
+
+  // Keep a ref to pinnedParts so useFocusEffect can read the latest value
+  // without needing to add it as a dependency (which would re-register the effect).
+  const pinnedPartsRef = useRef(pinnedParts);
+  useEffect(() => { pinnedPartsRef.current = pinnedParts; }, [pinnedParts]);
+
+  // Aisle to auto-center the map on when the user navigates here via "Show on Map".
+  // Set from useFocusEffect when pendingMapFocus is consumed; null otherwise.
+  const [focusAisleNum, setFocusAisleNum] = useState<number | null>(null);
 
   // Zone data — owned at this level so useFocusEffect can trigger refetch
   const { zones, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
@@ -76,12 +161,11 @@ export default function MapScreen() {
 
       const focus = pendingMapFocusRef.current;
       if (focus) {
-        setDrilldown({
-          aisleNum: focus.aisleNum,
-          sectionNumbers: focus.sectionNumbers,
-          label: focus.label ?? `Aisle ${String(focus.aisleNum).padStart(2, "0")}`,
-        });
         setPendingMapFocus(null);
+        // Auto-center the map on the first primary pinned aisle so the worker
+        // does not have to scroll to find it.
+        const firstPrimary = pinnedPartsRef.current.find(p => !p.variant);
+        if (firstPrimary) setFocusAisleNum(firstPrimary.aisleNum);
       }
 
       return () => {
@@ -252,6 +336,13 @@ export default function MapScreen() {
         cycleMode={cycleMode}
         cycleLocked={cycleLocked}
         countedZoneIds={countedZoneIds}
+        pinnedAisleNums={pinnedAisleNums.size > 0 ? pinnedAisleNums : undefined}
+        variantAisleNums={variantAisleNums.size > 0 ? variantAisleNums : undefined}
+        pinnedBinLabels={pinnedBinLabels.size > 0 ? pinnedBinLabels : undefined}
+        pinnedSectionsMap={pinnedSections.size > 0 ? pinnedSections : undefined}
+        variantSectionsMap={variantSections.size > 0 ? variantSections : undefined}
+        focusAisleNum={focusAisleNum}
+        onFocusConsumed={() => setFocusAisleNum(null)}
       />
 
       <AisleSummarySheet

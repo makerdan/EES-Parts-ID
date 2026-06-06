@@ -1888,6 +1888,91 @@ router.patch("/:id/dimensions", requireAdminAuth, async (req, res) => {
   }
 });
 
+// ── POST /inventory/estimate-dimensions/search ────────────────────────────────
+// Open to all users (no admin token required): accepts a photo and uses OpenAI
+// Vision to estimate dimensions for search-mode use only (Measure-to-Search).
+// Results are NOT persisted — the estimates are returned so the client can run
+// a dimension-filter search.  Identical AI prompt to the admin endpoint.
+router.post("/estimate-dimensions/search", async (req, res) => {
+  try {
+    const { imageBase64, mimeType = "image/jpeg" } = req.body as {
+      imageBase64: string;
+      mimeType?: string;
+    };
+
+    if (!imageBase64 || typeof imageBase64 !== "string") {
+      return void res.status(400).json({ error: "imageBase64 is required" });
+    }
+
+    if (imageBase64.length > 5_000_000) {
+      return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
+    }
+
+    const { openai } = await import("@workspace/integrations-openai-ai-server");
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.1",
+      max_completion_tokens: 256,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "low" },
+            },
+            {
+              type: "text",
+              text: `Look at this image of an electrical or mechanical part.
+Estimate the part's physical dimensions in millimetres.
+Reply with ONLY a JSON object — no prose — in exactly this shape:
+{"length":null,"width":null,"height":null,"diameter":null}
+Use null for any value you cannot estimate with reasonable confidence.
+"length" is the longest dimension; "width" and "height" are the other two;
+"diameter" applies only to round/cylindrical parts.
+All values must be positive numbers (mm) or null.`,
+            },
+          ],
+        },
+      ],
+    });
+
+    const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
+
+    let parsed: Record<string, unknown> = {};
+    const start = raw.indexOf("{");
+    if (start !== -1) {
+      let depth = 0;
+      let end = -1;
+      for (let i = start; i < raw.length; i++) {
+        if (raw[i] === "{") depth++;
+        else if (raw[i] === "}") {
+          depth--;
+          if (depth === 0) { end = i; break; }
+        }
+      }
+      if (end !== -1) {
+        try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { /* keep {} */ }
+      }
+    }
+
+    const sanitize = (v: unknown): number | null => {
+      const n = Number(v);
+      return isFinite(n) && n > 0 && n <= 100_000 ? Math.round(n * 10) / 10 : null;
+    };
+
+    res.json({
+      length: sanitize(parsed.length),
+      width: sanitize(parsed.width),
+      height: sanitize(parsed.height),
+      diameter: sanitize(parsed.diameter),
+    });
+  } catch (err) {
+    console.error("[estimate-dimensions/search]", err);
+    res.status(500).json({ error: "Dimension estimation failed" });
+  }
+});
+
 // ── POST /inventory/estimate-dimensions ───────────────────────────────────────
 // Admin-only: accepts a base64-encoded JPEG/PNG photo of a part and uses
 // OpenAI Vision to estimate its physical dimensions (length, width, height,

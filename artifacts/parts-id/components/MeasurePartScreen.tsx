@@ -333,11 +333,18 @@ export function MeasurePartScreen({
         throw new Error("Camera did not return image data");
       }
 
-      const response = await fetch(`${API_BASE}/inventory/estimate-dimensions`, {
+      // Use the open search endpoint when no admin token is present.
+      // For search-mode, dimensions are not persisted — they are only used to
+      // filter inventory. Admins can also use this path when in search mode.
+      const estimateUrl = adminToken
+        ? `${API_BASE}/inventory/estimate-dimensions`
+        : `${API_BASE}/inventory/estimate-dimensions/search`;
+
+      const response = await fetch(estimateUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${adminToken}`,
+          ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
         },
         body: JSON.stringify({
           imageBase64: photo.base64,
@@ -387,11 +394,15 @@ export function MeasurePartScreen({
         throw new Error("Camera did not return image data");
       }
 
-      const response = await fetch(`${API_BASE}/inventory/estimate-dimensions`, {
+      const reEstimateUrl = adminToken
+        ? `${API_BASE}/inventory/estimate-dimensions`
+        : `${API_BASE}/inventory/estimate-dimensions/search`;
+
+      const response = await fetch(reEstimateUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${adminToken}`,
+          ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
         },
         body: JSON.stringify({
           imageBase64: photo.base64,
@@ -549,12 +560,20 @@ export function MeasurePartScreen({
                       LiDAR measurement requires a LiDAR-capable device (iPhone 12 Pro or later, or iPad Pro 2020 or later). Use photo estimation or enter dimensions manually.
                     </Text>
                   </View>
-                  <Text style={ms.instructionText}>
-                    Frame the part so all sides are visible, then tap Capture.
-                  </Text>
-                  <Text style={ms.subText}>
-                    AI will estimate dimensions from the photo.
-                  </Text>
+                  {adminToken ? (
+                    <>
+                      <Text style={ms.instructionText}>
+                        Frame the part so all sides are visible, then tap Capture.
+                      </Text>
+                      <Text style={ms.subText}>
+                        AI will estimate dimensions from the photo.
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={ms.subText}>
+                      Photo estimation is not available on this device — enter dimensions manually below.
+                    </Text>
+                  )}
                 </>
               )}
 

@@ -18,6 +18,8 @@ interface ResultCardProps {
   onShowOnMap?: (item: InventoryItem) => void;
   /** Admin-only: opens the measurement screen for this unmeasured item. */
   onMeasure?: (item: InventoryItem) => void;
+  /** Called when the variants section is toggled open/closed (only fires when variants exist). */
+  onVariantsToggle?: (variants: InventoryItem[], isOpen: boolean) => void;
   rank: number;
   fontScale?: number;
   /** When true, shows a "Size not measured" badge because no dimension data is stored for this item */
@@ -80,7 +82,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, rank, fontScale = 1.0, sizeUnknown = false }: ResultCardProps) {
+export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false }: ResultCardProps) {
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
@@ -90,8 +92,16 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, rank, f
   const hasVariants = variants && variants.length > 0;
   const hasKeywords = item.aiKeywords && item.aiKeywords.length > 0;
 
+  const handleToggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (hasVariants && onVariantsToggle) {
+      onVariantsToggle(variants!, next);
+    }
+  };
+
   return (
-    <Pressable onPress={() => setExpanded(!expanded)}>
+    <Pressable onPress={handleToggle}>
       <View
         style={[
           cardStyles.container,

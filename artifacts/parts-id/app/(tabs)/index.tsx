@@ -26,9 +26,9 @@ import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { BrowseByCategory } from "@/components/BrowseByCategory";
-import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode, type DimensionUnit } from "@/contexts/AppContext";
+import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode, type DimensionUnit, type PinnedPart } from "@/contexts/AppContext";
 import { parseBin } from "@/lib/aisleHierarchy";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
 import { reportStorageError } from "@/utils/storageErrorReporter";
@@ -129,7 +129,7 @@ export default function SearchScreen() {
   "use no memo";
   useTrackScreen("Search");
   const colors = useColors();
-  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast } = useApp();
+  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast, setPinnedParts, pendingMeasureSearch, setPendingMeasureSearch } = useApp();
   type SearchMode = "search" | "aisle" | "category";
   const [mode, setMode] = useState<SearchMode>("search");
   const [activeCategorySlug, setActiveCategorySlug] = useState<string | null>(null);
@@ -147,21 +147,76 @@ export default function SearchScreen() {
       showToast("No bin location assigned — add a bin to this item first.");
       return;
     }
+    const newPins: PinnedPart[] = [];
+    let firstParsed: ReturnType<typeof parseBin> | null = null;
     for (const bin of bins) {
       const parsed = parseBin(bin);
       if (parsed) {
-        setPendingMapFocus({
-          aisleNum: parsed.aisle,
-          sectionNumbers: [parsed.section],
-          label: `Aisle ${String(parsed.aisle).padStart(2, "0")} · Section ${parsed.section}`,
-        });
-        router.navigate("/(tabs)/map");
-        return;
+        if (!firstParsed) firstParsed = parsed;
+        newPins.push({ binCode: bin, label: item.catalog, aisleNum: parsed.aisle });
       }
     }
-    // Bins exist but none matched the expected format (e.g. "A-01-001")
-    showToast(`No map zone found for "${bins[0]}" — bin format not recognised.`);
-  }, [setPendingMapFocus, showToast]);
+    if (!firstParsed) {
+      showToast(`No map zone found for "${bins[0]}" — bin format not recognised.`);
+      return;
+    }
+    setPinnedParts(newPins);
+    setPendingMapFocus({
+      aisleNum: firstParsed.aisle,
+      sectionNumbers: [firstParsed.section],
+      label: `Aisle ${String(firstParsed.aisle).padStart(2, "0")} · Section ${firstParsed.section}`,
+    });
+    router.navigate("/(tabs)/map");
+  }, [setPendingMapFocus, setPinnedParts, showToast]);
+
+  const handleVariantsToggle = useCallback((item: InventoryItem) => (variantItems: InventoryItem[], isOpen: boolean) => {
+    if (!isOpen) {
+      // Only remove variant pins that belong to THIS item via groupId.
+      // Other expanded cards' variant pins remain on the map, allowing
+      // multiple cards to be expanded simultaneously without interfering.
+      setPinnedParts((prev) => prev.filter(p => !(p.variant && p.groupId === item.id)));
+      return;
+    }
+    const variantPins: PinnedPart[] = [];
+    for (const v of variantItems) {
+      for (const bin of (v.binLocations ?? [])) {
+        const parsed = parseBin(bin);
+        if (parsed && v.id !== item.id) {
+          variantPins.push({ binCode: bin, label: v.catalog, aisleNum: parsed.aisle, variant: true, groupId: item.id });
+        }
+      }
+    }
+    // Clear any existing pins for THIS item before adding fresh ones
+    setPinnedParts((prev) => [
+      ...prev.filter(p => !(p.variant && p.groupId === item.id)),
+      ...variantPins,
+    ]);
+  }, [setPinnedParts]);
+
+  useFocusEffect(useCallback(() => {
+    if (!pendingMeasureSearch) return;
+    const params = pendingMeasureSearch;
+    setPendingMeasureSearch(null);
+    setFilters((prev) => ({
+      ...prev,
+      minLength: params.minLength ?? prev.minLength,
+      maxLength: params.maxLength ?? prev.maxLength,
+      minWidth: params.minWidth ?? prev.minWidth,
+      maxWidth: params.maxWidth ?? prev.maxWidth,
+      minHeight: params.minHeight ?? prev.minHeight,
+      maxHeight: params.maxHeight ?? prev.maxHeight,
+      minDiameter: params.minDiameter ?? prev.minDiameter,
+      maxDiameter: params.maxDiameter ?? prev.maxDiameter,
+    }));
+    // Clear any stale pins from a previous search before dispatching the new
+    // dimension-filter search, so the map starts clean for this session.
+    setPinnedParts([]);
+    // Trigger search immediately with the dimension filters applied
+    setTimeout(() => {
+      const body = buildSearchBody({ ...filtersRef.current, ...params }, activeCategorySlugRef.current);
+      searchMutation.mutate({ data: body });
+    }, 50);
+  }, [pendingMeasureSearch, setPendingMeasureSearch, setPinnedParts]));
   const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
@@ -504,6 +559,7 @@ export default function SearchScreen() {
       activeCategorySlugRef.current != null;
     if (!hasAnyInput) return;
 
+    setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
@@ -533,6 +589,7 @@ export default function SearchScreen() {
     setIsOffline(false);
     setOfflineCacheType(null);
     setDimensionCounts(undefined);
+    setPinnedParts([]);
   };
 
   const handleCategorySelect = useCallback((slug: string, label: string) => {
@@ -540,6 +597,7 @@ export default function SearchScreen() {
     setActiveCategorySlug(slug);
     setActiveCategoryLabel(label);
     activeCategorySlugRef.current = slug;
+    setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
@@ -1214,6 +1272,7 @@ export default function SearchScreen() {
                 onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
                 onShowOnMap={handleShowOnMap}
                 onMeasure={isAdmin && listItem.kind === "sizeUnknown" ? setMeasureItem : undefined}
+                onVariantsToggle={handleVariantsToggle(result.item)}
                 rank={index}
                 fontScale={textFontScale}
                 sizeUnknown={listItem.kind === "sizeUnknown"}

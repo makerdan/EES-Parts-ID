@@ -20,12 +20,15 @@ import { lookupByBarcodeOffline } from "@/utils/offlineBarcode";
 import { useScanHistory } from "@/hooks/useScanHistory";
 import type { ScanEntry } from "@/utils/scanHistory";
 import { useColors } from "@/hooks/useColors";
-import { useApp } from "@/contexts/AppContext";
+import { useApp, type PinnedPart } from "@/contexts/AppContext";
 import { ResultCard } from "@/components/ResultCard";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
 import BarcodeScreen from "@/components/BarcodeScreen";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
 import type { InventoryItem } from "@workspace/api-client-react";
+import { parseBin } from "@/lib/aisleHierarchy";
 import { secondaryBtnBase } from "@/styles/shared";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 import { router } from "expo-router";
@@ -34,7 +37,7 @@ export default function PhotoScreen() {
   "use no memo";
   useTrackScreen("Photo ID");
   const colors = useColors();
-  const { textFontScale, isAdmin } = useApp();
+  const { textFontScale, isAdmin, adminToken, setPinnedParts, setPendingMeasureSearch, showToast } = useApp();
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");
@@ -52,6 +55,109 @@ export default function PhotoScreen() {
   // Tracks which phase of the multi-step AI identification flow we are in.
   type ProgressPhase = "uploading" | "analysing" | "searching" | null;
   const [progressPhase, setProgressPhase] = useState<ProgressPhase>(null);
+
+  const [measureSearchVisible, setMeasureSearchVisible] = useState(false);
+  /** The result card the admin dismissed/acted on — controls inline bridge card. */
+  const [adminBridgeItem, setAdminBridgeItem] = useState<InventoryItem | null>(null);
+  /** Set when admin taps "Measure Now" on the bridge card — opens MeasurePartScreen. */
+  const [adminBridgeMeasureItem, setAdminBridgeMeasureItem] = useState<InventoryItem | null>(null);
+  /** Bin codes of the auto-pinned top result — controls inline "Navigate to Map" banner. */
+  const [mapPromptBins, setMapPromptBins] = useState<string[]>([]);
+
+  /**
+   * Called when the worker explicitly taps "Show on Map" on a specific result
+   * card to override the auto-pinned top result and navigate to that part.
+   */
+  const handleShowOnMap = React.useCallback((item: InventoryItem) => {
+    const bins = item.binLocations ?? [];
+    if (bins.length === 0) {
+      showToast("No bin location assigned — add a bin to this item first.");
+      return;
+    }
+    const newPins: PinnedPart[] = [];
+    let firstParsed: ReturnType<typeof parseBin> | null = null;
+    for (const bin of bins) {
+      const parsed = parseBin(bin);
+      if (parsed) {
+        if (!firstParsed) firstParsed = parsed;
+        newPins.push({ binCode: bin, label: item.catalog, aisleNum: parsed.aisle });
+      }
+    }
+    if (!firstParsed) {
+      showToast(`No map zone found for "${bins[0]}" — bin format not recognised.`);
+      return;
+    }
+    setPinnedParts(newPins);
+    router.navigate("/(tabs)/map");
+  }, [setPinnedParts, showToast]);
+
+  /**
+   * Curried: returns the onVariantsToggle handler for a specific ResultCard.
+   * Scopes variant pin removal to this item via groupId (item.id) so multiple
+   * expanded cards can coexist without interfering.
+   */
+  const handleVariantsToggle = React.useCallback((item: InventoryItem) => (variantItems: InventoryItem[], isOpen: boolean) => {
+    if (!isOpen) {
+      setPinnedParts((prev) => prev.filter(p => !(p.variant && p.groupId === item.id)));
+      return;
+    }
+    const variantPins: PinnedPart[] = [];
+    for (const v of variantItems) {
+      for (const bin of (v.binLocations ?? [])) {
+        const parsed = parseBin(bin);
+        if (parsed && v.id !== item.id) {
+          variantPins.push({ binCode: bin, label: v.catalog, aisleNum: parsed.aisle, variant: true, groupId: item.id });
+        }
+      }
+    }
+    setPinnedParts((prev) => [
+      ...prev.filter(p => !(p.variant && p.groupId === item.id)),
+      ...variantPins,
+    ]);
+  }, [setPinnedParts]);
+
+  const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+    : "http://localhost:8080/api";
+
+  const handleAdminBridgeConfirm = React.useCallback(async (dims: PartDimensions) => {
+    const item = adminBridgeMeasureItem;
+    if (!item || !adminToken) return;
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${item.id}/dimensions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify(dims),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? `Server error ${res.status}`);
+      }
+      showToast("Dimensions saved.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Save failed";
+      showToast(`Failed to save dimensions — ${msg}`);
+    } finally {
+      setAdminBridgeMeasureItem(null);
+      router.navigate("/(tabs)/map");
+    }
+  }, [adminBridgeMeasureItem, adminToken, API_BASE, showToast]);
+
+  const handleMeasureSearchConfirm = React.useCallback((dims: PartDimensions) => {
+    setMeasureSearchVisible(false);
+    const toStr = (v: number | null | undefined) => (v != null ? String(v) : "");
+    setPendingMeasureSearch({
+      minLength: toStr(dims.length),
+      maxLength: toStr(dims.length),
+      minWidth: toStr(dims.width),
+      maxWidth: toStr(dims.width),
+      minHeight: toStr(dims.height),
+      maxHeight: toStr(dims.height),
+      minDiameter: toStr(dims.diameter),
+      maxDiameter: toStr(dims.diameter),
+    });
+    router.navigate("/");
+  }, [setPendingMeasureSearch]);
 
   const { history } = useScanHistory();
   const [recentTapLoading, setRecentTapLoading] = useState<string | null>(null);
@@ -161,6 +267,10 @@ export default function PhotoScreen() {
     setResults([]);
     setAiSummary("");
     setAiTerms([]);
+    setMapPromptBins([]);
+    setAdminBridgeItem(null);
+    setAdminBridgeMeasureItem(null);
+    setPinnedParts([]);
 
     // Phase 1 — show "Uploading" immediately; advance to "Analysing" after 2 s,
     // which is roughly when photo data has been sent and the AI is processing.
@@ -217,6 +327,28 @@ export default function PhotoScreen() {
 
         if (requestIdRef.current !== thisRequestId) return;
         setResults(searchResult.results);
+        // Auto-pin the top result so the worker sees inline location context
+        // immediately (post-identification confirmation state). The inline banner
+        // lets them navigate to the map without tapping a separate button.
+        setMapPromptBins([]);
+        setAdminBridgeItem(null);
+        if (searchResult.results.length > 0) {
+          const topItem = searchResult.results[0].item;
+          const pins: PinnedPart[] = [];
+          for (const bin of (topItem.binLocations ?? [])) {
+            const parsed = parseBin(bin);
+            if (parsed) pins.push({ binCode: bin, label: topItem.catalog, aisleNum: parsed.aisle });
+          }
+          if (pins.length > 0) {
+            setPinnedParts(pins);
+            setMapPromptBins(topItem.binLocations ?? []);
+          }
+          // Admin bridge: dismissible inline card when dimensions are missing
+          const topDims = (topItem as unknown as { dimensions?: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null }).dimensions;
+          if (isAdmin && adminToken && (!topDims || (!topDims.length && !topDims.width && !topDims.height && !topDims.diameter))) {
+            setAdminBridgeItem(topItem);
+          }
+        }
       }
     } catch (err) {
       // Check stale-request FIRST — don't touch shared timer/phase if superseded.
@@ -316,11 +448,18 @@ export default function PhotoScreen() {
                   <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Photo Library</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => setBarcodeScanVisible(true)}
+                  onPress={() => { setPinnedParts([]); setBarcodeScanVisible(true); }}
                   style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
                 >
                   <MaterialCommunityIcons name="barcode-scan" size={24} color={colors.foreground} />
                   <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Scan Barcode</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => { setPinnedParts([]); setMeasureSearchVisible(true); }}
+                  style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
+                >
+                  <MaterialCommunityIcons name="ruler" size={24} color={colors.foreground} />
+                  <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Measure</Text>
                 </Pressable>
               </View>
             )}
@@ -514,6 +653,8 @@ export default function PhotoScreen() {
               <ResultCard
                 result={{ item: barcodeResult, confidence: 1.0, matchReason: "barcode scan", seriesBase: null, seriesLabel: null, variants: [] }}
                 onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+                onShowOnMap={handleShowOnMap}
+                onVariantsToggle={handleVariantsToggle(barcodeResult)}
                 rank={0}
                 fontScale={textFontScale}
               />
@@ -546,11 +687,47 @@ export default function PhotoScreen() {
               <Text style={[styles.resultsTitle, { color: colors.foreground }]}>
                 {results.length} Matching Parts
               </Text>
+              {/* Post-identify inline confirmation: banner appears when top result has a mapped bin */}
+              {mapPromptBins.length > 0 ? (
+                <Pressable
+                  onPress={() => router.navigate("/(tabs)/map")}
+                  style={[styles.mapPromptBtn, { backgroundColor: "#f59e0b22", borderColor: "#f59e0b66" }]}
+                >
+                  <Text style={[styles.mapPromptText, { color: "#b45309" }]}>
+                    📍 Part pinned on map — Navigate to Map →
+                  </Text>
+                </Pressable>
+              ) : null}
+              {/* Admin bridge: dismissible inline prompt when dimensions are missing */}
+              {adminBridgeItem ? (
+                <View style={[styles.adminBridgeCard, { backgroundColor: "#fef3c711", borderColor: "#f59e0b55" }]}>
+                  <Text style={[styles.adminBridgeText, { color: "#92400e" }]}>
+                    ⚠️ No dimensions on record — measuring this part improves future searches.
+                  </Text>
+                  <View style={styles.adminBridgeRow}>
+                    <Pressable
+                      onPress={() => {
+                        const item = adminBridgeItem;
+                        setAdminBridgeItem(null);
+                        setAdminBridgeMeasureItem(item);
+                      }}
+                      style={[styles.adminBridgeBtn, { backgroundColor: "#f59e0b", borderColor: "#d97706" }]}
+                    >
+                      <Text style={styles.adminBridgeBtnText}>📐 Measure Now</Text>
+                    </Pressable>
+                    <Pressable onPress={() => setAdminBridgeItem(null)} hitSlop={10}>
+                      <Text style={{ color: "#92400e", fontSize: 12, fontFamily: "Inter_400Regular" }}>Dismiss</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
               {results.map((result, index) => (
                 <ResultCard
                   key={result.item.id}
                   result={result}
                   onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
+                  onShowOnMap={handleShowOnMap}
+                  onVariantsToggle={handleVariantsToggle(result.item)}
                   rank={index}
                   fontScale={textFontScale}
                 />
@@ -610,6 +787,27 @@ export default function PhotoScreen() {
       </Modal>
 
       <ReferenceModal />
+
+      {/* Measure-to-Search modal — accessible to all users */}
+      <MeasurePartScreen
+        visible={measureSearchVisible}
+        onClose={() => setMeasureSearchVisible(false)}
+        onConfirm={handleMeasureSearchConfirm}
+        adminToken={adminToken ?? ""}
+      />
+
+      {/* Admin bridge: MeasurePartScreen in catalog-entry mode.
+          Opens when admin taps "Measure Now" on the inline bridge card.
+          Saving navigates to map; closing skips measurement and stays. */}
+      {isAdmin && adminToken ? (
+        <MeasurePartScreen
+          visible={adminBridgeMeasureItem !== null}
+          onClose={() => setAdminBridgeMeasureItem(null)}
+          onConfirm={handleAdminBridgeConfirm}
+          adminToken={adminToken}
+        />
+      ) : null}
+
 
     </SafeAreaView>
   );
@@ -731,4 +929,28 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     borderRadius: 1,
   },
+  mapPromptBtn: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 10,
+    alignItems: "center",
+  },
+  mapPromptText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  adminBridgeCard: {
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 10,
+  },
+  adminBridgeText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
+  adminBridgeRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 8 },
+  adminBridgeBtn: {
+    borderRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  adminBridgeBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
 });
