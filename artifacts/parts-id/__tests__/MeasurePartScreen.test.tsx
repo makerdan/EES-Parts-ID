@@ -20,6 +20,44 @@ import renderer, { act } from "react-test-renderer";
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
+// Transitive mocks for AppContext (expo-secure-store ships as ESM and cannot be
+// transformed by Jest; the remaining mocks silence its other imports).
+jest.mock("@workspace/api-client-react", () => ({
+  setAuthTokenGetter: jest.fn(),
+}));
+
+jest.mock("../utils/logoutRegistry", () => ({
+  LogoutRegistry: class {
+    register() { return () => {}; }
+    fire() {}
+  },
+}));
+
+jest.mock("../utils/sessionStorage", () => ({
+  SEARCH_CACHE_KEYS: [],
+  SESSION_KEY: "parts_id_session",
+  ADMIN_TOKEN_KEY: "parts_id_admin_token",
+  clearSessionStorage: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock("@/constants/colors", () => ({
+  __esModule: true,
+  default: {
+    light: { background: "#fff", foreground: "#000", card: "#fff", border: "#ccc", primary: "#3b82f6", primaryForeground: "#fff", muted: "#f1f5f9", mutedForeground: "#64748b", destructive: "#ef4444", success: "#22c55e", warning: "#f59e0b" },
+    dark:  { background: "#000", foreground: "#fff", card: "#111", border: "#333", primary: "#3b82f6", primaryForeground: "#fff", muted: "#1e293b", mutedForeground: "#94a3b8", destructive: "#ef4444", success: "#22c55e", warning: "#f59e0b" },
+    radius: 8,
+  },
+}));
+
+// Mock AppContext so MeasurePartScreen can call useApp() without an AppProvider.
+// The component only reads settings.dimensionUnit and calls updateSetting.
+jest.mock("@/contexts/AppContext", () => ({
+  useApp: jest.fn(() => ({
+    settings: { dimensionUnit: "mm" },
+    updateSetting: jest.fn(),
+  })),
+}));
+
 jest.mock("lidar-measure", () => ({
   isLiDARSupported: jest.fn().mockReturnValue(false),
   measureObject: jest.fn().mockRejectedValue(
