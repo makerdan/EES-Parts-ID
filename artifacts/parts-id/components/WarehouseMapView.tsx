@@ -715,8 +715,8 @@ export function WarehouseMapView({
       const { maxX, maxY } = panBounds(width, height, currentScale);
       const newTX = clamp(centredTX, -maxX, maxX);
       const newTY = clamp(centredTY, -maxY, maxY);
-      translateX.value = withSpring(newTX, { damping: 18, stiffness: 200 });
-      translateY.value = withSpring(newTY, { damping: 18, stiffness: 200 });
+      translateX.value = withSpring(newTX, { damping: 26, stiffness: 220 });
+      translateY.value = withSpring(newTY, { damping: 26, stiffness: 220 });
       savedTX.value = newTX;
       savedTY.value = newTY;
     },
@@ -773,9 +773,9 @@ export function WarehouseMapView({
 
     if (panTarget !== null) {
       const { tx, ty } = panTarget;
-      translateX.value = withSpring(tx, { damping: 18, stiffness: 200 });
+      translateX.value = withSpring(tx, { damping: 26, stiffness: 220 });
       savedTX.value = tx;
-      translateY.value = withSpring(ty, { damping: 18, stiffness: 200 });
+      translateY.value = withSpring(ty, { damping: 26, stiffness: 220 });
       savedTY.value = ty;
       persistViewport(scale.value, tx, ty);
     }
@@ -836,9 +836,9 @@ export function WarehouseMapView({
     const w = containerWRef.current;
     const h = containerHRef.current;
     if (!vb || w === 0) {
-      scale.value = withSpring(1, { damping: 18, stiffness: 200 });
-      translateX.value = withSpring(0, { damping: 18, stiffness: 200 });
-      translateY.value = withSpring(0, { damping: 18, stiffness: 200 });
+      scale.value = withSpring(1, { damping: 26, stiffness: 220 });
+      translateX.value = withSpring(0, { damping: 26, stiffness: 220 });
+      translateY.value = withSpring(0, { damping: 26, stiffness: 220 });
       savedScale.value = 1;
       savedTX.value = 0;
       savedTY.value = 0;
@@ -846,9 +846,9 @@ export function WarehouseMapView({
       return;
     }
     const { scale: s, tx, ty } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
-    scale.value = withSpring(s, { damping: 18, stiffness: 200 });
-    translateX.value = withSpring(tx, { damping: 18, stiffness: 200 });
-    translateY.value = withSpring(ty, { damping: 18, stiffness: 200 });
+    scale.value = withSpring(s, { damping: 26, stiffness: 220 });
+    translateX.value = withSpring(tx, { damping: 26, stiffness: 220 });
+    translateY.value = withSpring(ty, { damping: 26, stiffness: 220 });
     savedScale.value = s;
     savedTX.value = tx;
     savedTY.value = ty;
