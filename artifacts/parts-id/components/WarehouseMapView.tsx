@@ -82,6 +82,8 @@ import {
   makeTileViewBox,
   clampScale,
   panBounds,
+  computeFocusPan,
+  runFocusAisleEffect,
   type ContentViewBox,
 } from "@/utils/mapViewport";
 
@@ -226,7 +228,7 @@ interface ZoneOverlayItemProps {
   variantSections?: number[];
 }
 
-function ZoneOverlayItem({
+export function ZoneOverlayItem({
   zone,
   scale,
   colors,
@@ -460,7 +462,7 @@ export interface WarehouseMapViewProps {
  *  `isNew`    — when true, plays a spring pop entrance animation on mount.
  *               Leave false (default) for pins restored from a previous session.
  */
-function MapPin3D({
+export function MapPin3D({
   cx,
   cy,
   size,
@@ -699,47 +701,43 @@ export function WarehouseMapView({
   // ── Auto-focus on pinned zone ───────────────────────────────────────────────
   // When a `focusAisleNum` is provided (set by the Map tab when the worker
   // taps "Show on Map" from Search / Photo), animate the viewport so the
-  // target aisle is centred and at a comfortable zoom level.
+  // target aisle is centred at the current zoom level (no zoom change).
+  // The pan logic is delegated to the exported `runFocusAisleEffect` function
+  // so it can be unit-tested in isolation without mounting the full component.
   useEffect(() => {
     if (focusAisleNum == null) return;
     const w = containerWRef.current;
     const h = containerHRef.current;
     if (w === 0 || h === 0 || !zones.length) return;
-    const zone = zones.find(z => parseInt(z.aisleId, 10) === focusAisleNum);
-    if (!zone) {
+
+    // Check if the zone exists; fire the failure/consumed callbacks if not.
+    const zoneExists = zones.some(z => parseInt(z.aisleId, 10) === focusAisleNum);
+    if (!zoneExists) {
       onFocusFailed?.();
       onFocusConsumed?.();
       return;
     }
 
-    const currentScale = scale.value;    // keep whatever zoom the user is at
-    const currentTX = translateX.value;
-    const currentTY = translateY.value;
-    const svgRW = w;                      // svgRenderW = containerW
-    const svgRH = w / SVG_ASPECT;        // svgRenderH
-    const cx = zone.svgX + zone.svgWidth / 2;
-    const cy = zone.svgY + zone.svgHeight / 2;
+    // Compute pan target using the extracted, testable handler.
+    // scale is read (as currentScale) inside runFocusAisleEffect but is never
+    // written — this is the core no-zoom contract.
+    const panTarget = runFocusAisleEffect({
+      focusAisleNum,
+      zones,
+      containerW: w,
+      containerH: h,
+      currentScale: scale.value,
+      currentTX: translateX.value,
+      currentTY: translateY.value,
+    });
 
-    // Check if the zone is already visible in the current viewport.
-    // SVG viewBox point (px, py) maps to screen as:
-    //   screenX = (px / SVG_VIEWBOX_W) * svgRW * scale + translateX
-    const scaleRW = (1 / SVG_VIEWBOX_W) * svgRW * currentScale;
-    const scaleRH = (1 / SVG_VIEWBOX_H) * svgRH * currentScale;
-    const zoneL = zone.svgX * scaleRW + currentTX;
-    const zoneR = (zone.svgX + zone.svgWidth) * scaleRW + currentTX;
-    const zoneT = zone.svgY * scaleRH + currentTY;
-    const zoneB = (zone.svgY + zone.svgHeight) * scaleRH + currentTY;
-    const isVisible = zoneR > 0 && zoneL < w && zoneB > 0 && zoneT < h;
-
-    if (!isVisible) {
-      // Pan to centre the zone; do not change zoom level.
-      const tx = w / 2 - cx * scaleRW;
-      const ty = h / 2 - cy * scaleRH;
+    if (panTarget !== null) {
+      const { tx, ty } = panTarget;
       translateX.value = withSpring(tx, { damping: 18, stiffness: 200 });
       savedTX.value = tx;
       translateY.value = withSpring(ty, { damping: 18, stiffness: 200 });
       savedTY.value = ty;
-      persistViewport(currentScale, tx, ty);
+      persistViewport(scale.value, tx, ty);
     }
     // Notify parent that this focus has been consumed so it can clear
     // focusAisleNum and prevent repeated re-centering on future tab visits.

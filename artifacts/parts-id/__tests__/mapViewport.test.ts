@@ -22,6 +22,7 @@ import {
   parseContentViewBox,
   fitContentViewport,
   makeTileViewBox,
+  computeFocusPan,
 } from "@/utils/mapViewport";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -244,5 +245,78 @@ describe("makeTileViewBox", () => {
     expect(correctMaxX).toBeCloseTo(SVG_VIEWBOX_W, 2);
     expect(wrongMaxX).toBeLessThan(correctMaxX * 0.6); // at least 40% short
     expect(wrongMaxY).toBeLessThan(correctMaxY * 0.6);
+  });
+});
+
+// ── computeFocusPan — no-zoom contract ────────────────────────────────────────
+//
+// The focusAisleNum effect pans the viewport to centre the target zone while
+// keeping scale.value untouched.  These tests lock down the two invariants:
+//
+//   1. scale is never touched — computeFocusPan returns only { tx, ty }.
+//      A future change that snuck scale=2.5 into the return value would break
+//      this immediately.
+//
+//   2. The translation offsets use the *caller-supplied* currentScale, not any
+//      hard-coded TARGET_SCALE.  Doubling currentScale must produce a
+//      proportionally larger displacement from the container centre.
+
+// Simulate iPhone 14 portrait (same container as the fit tests above).
+const PAN_CW = 390;  // containerW
+const PAN_CH = 761;  // containerH
+
+// A representative zone centre deep inside the warehouse SVG canvas.
+const ZONE_CX = SVG_VIEWBOX_W * 0.6;   // 60% across
+const ZONE_CY = SVG_VIEWBOX_H * 0.35;  // 35% down
+
+describe("computeFocusPan — no-zoom contract", () => {
+  it("returns only { tx, ty } — scale is not part of the result (regression: must not force scale to 2.5)", () => {
+    const result = computeFocusPan(1.4, ZONE_CX, ZONE_CY, PAN_CW, PAN_CH);
+    // The function must NOT return a scale field.
+    // If a future refactor accidentally returns scale:2.5 here, this test fails.
+    expect((result as Record<string, unknown>).scale).toBeUndefined();
+    expect(typeof result.tx).toBe("number");
+    expect(typeof result.ty).toBe("number");
+  });
+
+  it("result at scale=1.4 differs from result at scale=2.5 (regression: must not hard-code TARGET_SCALE=2.5)", () => {
+    const atCurrent = computeFocusPan(1.4, ZONE_CX, ZONE_CY, PAN_CW, PAN_CH);
+    const atTarget  = computeFocusPan(2.5, ZONE_CX, ZONE_CY, PAN_CW, PAN_CH);
+    // If the implementation ignores currentScale and always uses 2.5, tx/ty
+    // would be identical regardless of the argument passed.
+    expect(atCurrent.tx).not.toBeCloseTo(atTarget.tx, 3);
+    expect(atCurrent.ty).not.toBeCloseTo(atTarget.ty, 3);
+  });
+});
+
+describe("computeFocusPan — translation uses pre-existing scale", () => {
+  it("displacement from container centre scales linearly with currentScale", () => {
+    // At scale s, the horizontal displacement is:
+    //   tx - W/2 = -(zoneCx / SVG_VIEWBOX_W) * containerW * s
+    // Doubling s must double the displacement from centre.
+    const panAt1 = computeFocusPan(1.0, ZONE_CX, ZONE_CY, PAN_CW, PAN_CH);
+    const panAt2 = computeFocusPan(2.0, ZONE_CX, ZONE_CY, PAN_CW, PAN_CH);
+
+    const dx1 = panAt1.tx - PAN_CW / 2;
+    const dx2 = panAt2.tx - PAN_CW / 2;
+    expect(dx2).toBeCloseTo(2 * dx1, 5);
+
+    const dy1 = panAt1.ty - PAN_CH / 2;
+    const dy2 = panAt2.ty - PAN_CH / 2;
+    expect(dy2).toBeCloseTo(2 * dy1, 5);
+  });
+
+  it("centres the zone exactly when zoneCx == SVG midpoint (tx == containerW/2 - half svgRenderW * s)", () => {
+    // When the zone centre is the horizontal midpoint of the SVG, the required
+    // tx should place exactly half of the (scaled) SVG render width to the left
+    // of the container centre.
+    const midCx = SVG_VIEWBOX_W / 2;
+    const s = 1.5;
+    const { tx } = computeFocusPan(s, midCx, 0, PAN_CW, PAN_CH);
+    // scaleRW = (1/SVG_VIEWBOX_W) * PAN_CW * s
+    // tx = PAN_CW/2 - (SVG_VIEWBOX_W/2) * scaleRW
+    //    = PAN_CW/2 - PAN_CW/2 * s
+    const expected = PAN_CW / 2 - (PAN_CW / 2) * s;
+    expect(tx).toBeCloseTo(expected, 5);
   });
 });
