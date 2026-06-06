@@ -577,6 +577,8 @@ export default function SearchScreen() {
     const flt = filtersRef.current;
     const hasSizeInput =
       flt.minLength.trim() !== "" || flt.maxLength.trim() !== "" ||
+      flt.minWidth.trim() !== "" || flt.maxWidth.trim() !== "" ||
+      flt.minHeight.trim() !== "" || flt.maxHeight.trim() !== "" ||
       flt.minDiameter.trim() !== "" || flt.maxDiameter.trim() !== "";
     const hasAnyInput =
       flt.keywords.trim() !== "" || flt.catalog.trim() !== "" ||
@@ -732,6 +734,10 @@ export default function SearchScreen() {
   const hasActiveSizeFilter =
     filters.minLength.trim() !== "" ||
     filters.maxLength.trim() !== "" ||
+    filters.minWidth.trim() !== "" ||
+    filters.maxWidth.trim() !== "" ||
+    filters.minHeight.trim() !== "" ||
+    filters.maxHeight.trim() !== "" ||
     filters.minDiameter.trim() !== "" ||
     filters.maxDiameter.trim() !== "";
 
@@ -1194,6 +1200,15 @@ export default function SearchScreen() {
           onSelectCategory={handleCategorySelect}
           onClose={() => setMode("search")}
           fontScale={textFontScale}
+          dimFilters={{
+            minWidth: filters.minWidth,
+            maxWidth: filters.maxWidth,
+            minHeight: filters.minHeight,
+            maxHeight: filters.maxHeight,
+            minDiameter: filters.minDiameter,
+            maxDiameter: filters.maxDiameter,
+          }}
+          onDimFilterChange={(key, value) => handleChange(key, value)}
         />
       ) : (
       <>

@@ -1,14 +1,24 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
+  LayoutAnimation,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
+  UIManager,
   View,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import type { FilterValues } from "@/components/FilterPanel";
+
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -41,13 +51,26 @@ interface CategoriesResponse {
 
 type Level = "categories" | "subcategories" | "itemTypes";
 
+type DimFilters = Pick<
+  FilterValues,
+  "minWidth" | "maxWidth" | "minHeight" | "maxHeight" | "minDiameter" | "maxDiameter"
+>;
+
 interface BrowseByCategoryProps {
   onSelectCategory: (slug: string, label: string) => void;
   onClose: () => void;
   fontScale?: number;
+  dimFilters: DimFilters;
+  onDimFilterChange: (key: keyof DimFilters, value: string) => void;
 }
 
-export function BrowseByCategory({ onSelectCategory, onClose, fontScale = 1.0 }: BrowseByCategoryProps) {
+export function BrowseByCategory({
+  onSelectCategory,
+  onClose,
+  fontScale = 1.0,
+  dimFilters,
+  onDimFilterChange,
+}: BrowseByCategoryProps) {
   "use no memo";
   const colors = useColors();
   const [data, setData] = useState<CategoriesResponse | null>(null);
@@ -57,6 +80,40 @@ export function BrowseByCategory({ onSelectCategory, onClose, fontScale = 1.0 }:
   const [level, setLevel] = useState<Level>("categories");
   const [selectedCategory, setSelectedCategory] = useState<CategoryNode | null>(null);
   const [selectedSubcategory, setSelectedSubcategory] = useState<SubcategoryNode | null>(null);
+
+  // ── Dimension filter collapse state ──────────────────────────────────────
+  const [dimCollapsed, setDimCollapsed] = useState(true);
+  const dimChevronAnim = useRef(new Animated.Value(0)).current;
+
+  const toggleDimensions = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const toCollapsed = !dimCollapsed;
+    setDimCollapsed(toCollapsed);
+    Animated.timing(dimChevronAnim, {
+      toValue: toCollapsed ? 0 : 1,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const dimChevronRotate = dimChevronAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
+
+  const activeDimCount =
+    (dimFilters.minWidth.trim() !== "" || dimFilters.maxWidth.trim() !== "" ? 1 : 0) +
+    (dimFilters.minHeight.trim() !== "" || dimFilters.maxHeight.trim() !== "" ? 1 : 0) +
+    (dimFilters.minDiameter.trim() !== "" || dimFilters.maxDiameter.trim() !== "" ? 1 : 0);
+
+  const clearAllDims = () => {
+    onDimFilterChange("minWidth", "");
+    onDimFilterChange("maxWidth", "");
+    onDimFilterChange("minHeight", "");
+    onDimFilterChange("maxHeight", "");
+    onDimFilterChange("minDiameter", "");
+    onDimFilterChange("maxDiameter", "");
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -113,6 +170,160 @@ export function BrowseByCategory({ onSelectCategory, onClose, fontScale = 1.0 }:
         <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={8}>
           <Feather name="x" size={20} color={colors.mutedForeground} />
         </Pressable>
+      </View>
+
+      {/* ── Dimension filter panel ── */}
+      <View style={[styles.dimPanel, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+        <Pressable
+          style={styles.dimPanelHeader}
+          onPress={toggleDimensions}
+          hitSlop={4}
+        >
+          <Feather name="maximize-2" size={14} color={activeDimCount > 0 ? colors.primary : colors.mutedForeground} />
+          <Text style={[styles.dimPanelTitle, { color: activeDimCount > 0 ? colors.primary : colors.mutedForeground }]}>
+            Filter by Size (mm)
+          </Text>
+          {activeDimCount > 0 && (
+            <View style={[styles.dimBadge, { backgroundColor: colors.primary }]}>
+              <Text style={[styles.dimBadgeText, { color: colors.primaryForeground }]}>
+                {activeDimCount} active
+              </Text>
+            </View>
+          )}
+          <View style={{ flex: 1 }} />
+          {activeDimCount > 0 && (
+            <Pressable onPress={clearAllDims} hitSlop={8} style={{ marginRight: 8 }}>
+              <Text style={[styles.clearBtn, { color: colors.primary }]}>Clear all</Text>
+            </Pressable>
+          )}
+          <Animated.View style={{ transform: [{ rotate: dimChevronRotate }] }}>
+            <Feather name="chevron-down" size={16} color={colors.mutedForeground} />
+          </Animated.View>
+        </Pressable>
+
+        {!dimCollapsed && (
+          <View style={styles.dimInputsContainer}>
+            {/* Width */}
+            <View style={styles.dimRow}>
+              <View style={[styles.dimSectionLabel, { borderLeftColor: colors.primary }]}>
+                <Text style={[styles.dimSectionLabelText, { color: colors.mutedForeground }]}>WIDTH</Text>
+              </View>
+              <View style={styles.dimRangeRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Min</Text>
+                  <KeyboardDoneInput
+                    value={dimFilters.minWidth}
+                    onChangeText={v => onDimFilterChange("minWidth", v.replace(/[^0-9.]/g, ""))}
+                    placeholder="e.g. 20"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="numeric"
+                    style={[styles.dimInput, {
+                      backgroundColor: colors.muted,
+                      borderColor: dimFilters.minWidth ? colors.primary : colors.border,
+                      color: colors.foreground,
+                    }]}
+                  />
+                </View>
+                <Text style={[styles.dimDash, { color: colors.mutedForeground }]}>–</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Max</Text>
+                  <KeyboardDoneInput
+                    value={dimFilters.maxWidth}
+                    onChangeText={v => onDimFilterChange("maxWidth", v.replace(/[^0-9.]/g, ""))}
+                    placeholder="e.g. 50"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="numeric"
+                    style={[styles.dimInput, {
+                      backgroundColor: colors.muted,
+                      borderColor: dimFilters.maxWidth ? colors.primary : colors.border,
+                      color: colors.foreground,
+                    }]}
+                  />
+                </View>
+              </View>
+            </View>
+
+            {/* Height */}
+            <View style={styles.dimRow}>
+              <View style={[styles.dimSectionLabel, { borderLeftColor: colors.primary }]}>
+                <Text style={[styles.dimSectionLabelText, { color: colors.mutedForeground }]}>HEIGHT</Text>
+              </View>
+              <View style={styles.dimRangeRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Min</Text>
+                  <KeyboardDoneInput
+                    value={dimFilters.minHeight}
+                    onChangeText={v => onDimFilterChange("minHeight", v.replace(/[^0-9.]/g, ""))}
+                    placeholder="e.g. 15"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="numeric"
+                    style={[styles.dimInput, {
+                      backgroundColor: colors.muted,
+                      borderColor: dimFilters.minHeight ? colors.primary : colors.border,
+                      color: colors.foreground,
+                    }]}
+                  />
+                </View>
+                <Text style={[styles.dimDash, { color: colors.mutedForeground }]}>–</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Max</Text>
+                  <KeyboardDoneInput
+                    value={dimFilters.maxHeight}
+                    onChangeText={v => onDimFilterChange("maxHeight", v.replace(/[^0-9.]/g, ""))}
+                    placeholder="e.g. 40"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="numeric"
+                    style={[styles.dimInput, {
+                      backgroundColor: colors.muted,
+                      borderColor: dimFilters.maxHeight ? colors.primary : colors.border,
+                      color: colors.foreground,
+                    }]}
+                  />
+                </View>
+              </View>
+            </View>
+
+            {/* Diameter */}
+            <View style={[styles.dimRow, { marginBottom: 0 }]}>
+              <View style={[styles.dimSectionLabel, { borderLeftColor: colors.primary }]}>
+                <Text style={[styles.dimSectionLabelText, { color: colors.mutedForeground }]}>DIAM.</Text>
+              </View>
+              <View style={styles.dimRangeRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Min</Text>
+                  <KeyboardDoneInput
+                    value={dimFilters.minDiameter}
+                    onChangeText={v => onDimFilterChange("minDiameter", v.replace(/[^0-9.]/g, ""))}
+                    placeholder="e.g. 10"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="numeric"
+                    style={[styles.dimInput, {
+                      backgroundColor: colors.muted,
+                      borderColor: dimFilters.minDiameter ? colors.primary : colors.border,
+                      color: colors.foreground,
+                    }]}
+                  />
+                </View>
+                <Text style={[styles.dimDash, { color: colors.mutedForeground }]}>–</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.dimLabel, { color: colors.mutedForeground }]}>Max</Text>
+                  <KeyboardDoneInput
+                    value={dimFilters.maxDiameter}
+                    onChangeText={v => onDimFilterChange("maxDiameter", v.replace(/[^0-9.]/g, ""))}
+                    placeholder="e.g. 25"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="numeric"
+                    style={[styles.dimInput, {
+                      backgroundColor: colors.muted,
+                      borderColor: dimFilters.maxDiameter ? colors.primary : colors.border,
+                      color: colors.foreground,
+                    }]}
+                  />
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
 
       {loading ? (
@@ -401,6 +612,83 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 11, fontFamily: "Inter_400Regular", marginBottom: 1 },
   backBtn: { padding: 4 },
   closeBtn: { padding: 4 },
+  // ── Dimension filter panel ──
+  dimPanel: {
+    borderBottomWidth: 1,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 10,
+  },
+  dimPanelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  dimPanelTitle: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.3,
+  },
+  dimBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  dimBadgeText: {
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+  },
+  clearBtn: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+  },
+  dimInputsContainer: {
+    marginTop: 10,
+    gap: 8,
+  },
+  dimRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 10,
+    marginBottom: 8,
+  },
+  dimSectionLabel: {
+    width: 40,
+    paddingLeft: 6,
+    borderLeftWidth: 2,
+    paddingBottom: 8,
+  },
+  dimSectionLabelText: {
+    fontSize: 9,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.5,
+  },
+  dimRangeRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  dimDash: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    paddingBottom: 8,
+  },
+  dimLabel: {
+    fontSize: 10,
+    fontFamily: "Inter_500Medium",
+    marginBottom: 4,
+    letterSpacing: 0.2,
+  },
+  dimInput: {
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+  },
+  // ── Category list/grid ──
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
   hintText: { fontSize: 14, fontFamily: "Inter_400Regular" },
   errorText: { fontSize: 14, fontFamily: "Inter_500Medium", textAlign: "center" },
