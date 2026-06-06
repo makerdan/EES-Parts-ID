@@ -174,7 +174,7 @@ router.post("/search", async (req, res) => {
       maxHeight,
       minDiameter,
       maxDiameter,
-      includeNullDimensions = false,
+      includeNullDimensions = true,
     } = req.body as {
       keywords?: string;
       catalog?: string;

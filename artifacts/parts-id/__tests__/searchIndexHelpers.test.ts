@@ -76,7 +76,7 @@ const BLANK: FilterValues = {
   maxHeight: "",
   minDiameter: "",
   maxDiameter: "",
-  includeNullDimensions: false,
+  includeNullDimensions: true,
   minWeight: "",
   maxWeight: "",
   category: "",
@@ -384,6 +384,16 @@ describe("buildSearchBody", () => {
   it("always includes includeNullDimensions in the output regardless of other filters", () => {
     const body = buildSearchBody(BLANK);
     expect(Object.prototype.hasOwnProperty.call(body, "includeNullDimensions")).toBe(true);
+  });
+
+  it("BLANK (default) filter emits includeNullDimensions: true — guards against silent default revert", () => {
+    const body = buildSearchBody(BLANK);
+    expect(body.includeNullDimensions).toBe(true);
+  });
+
+  it("explicitly setting includeNullDimensions: false is forwarded as false — confirms the flag is not hardcoded", () => {
+    const body = buildSearchBody({ ...BLANK, includeNullDimensions: false });
+    expect(body.includeNullDimensions).toBe(false);
   });
 
   it("includeNullDimensions is true when combined with dimension range filters", () => {
