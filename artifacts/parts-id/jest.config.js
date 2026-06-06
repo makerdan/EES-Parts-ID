@@ -7,6 +7,8 @@ module.exports = {
     "^expo-image-manipulator$": "<rootDir>/__mocks__/expo-image-manipulator.js",
     "^expo-secure-store$": "<rootDir>/__mocks__/expo-secure-store.js",
     "^expo-file-system/legacy$": "<rootDir>/__mocks__/expo-file-system-legacy.js",
+    "^expo-secure-store$": "<rootDir>/__mocks__/expo-secure-store.js",
+    "^@/contexts/AppContext$": "<rootDir>/__mocks__/contexts/AppContext.js",
     "^lidar-measure$": "<rootDir>/__mocks__/lidar-measure.js",
     "^@/(.*)$": "<rootDir>/$1",
     "^@workspace/zone-validation$": "<rootDir>/../../lib/zone-validation/src/index.ts",
