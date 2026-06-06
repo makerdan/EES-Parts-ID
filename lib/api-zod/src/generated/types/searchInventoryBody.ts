@@ -52,20 +52,22 @@ export interface SearchInventoryBody {
   voltage?: string;
   /** Pole count chip filter (breakers/switches) */
   poleCount?: string;
-  /** Minimum part length in mm (dimensions filter) */
-  minLength?: number | null;
-  /** Maximum part length in mm (dimensions filter) */
-  maxLength?: number | null;
-  /** Minimum part width in mm (dimensions filter) */
-  minWidth?: number | null;
-  /** Maximum part width in mm (dimensions filter) */
-  maxWidth?: number | null;
-  /** Minimum part height in mm (dimensions filter) */
-  minHeight?: number | null;
-  /** Maximum part height in mm (dimensions filter) */
-  maxHeight?: number | null;
-  /** Minimum part diameter in mm (diameter-range filter) */
-  minDiameter?: number | null;
-  /** Maximum part diameter in mm (diameter-range filter) */
-  maxDiameter?: number | null;
+  /** Taxonomy category/subcategory/item-type slug to pre-filter results */
+  categorySlug?: string;
+  /** Minimum part length in mm (size-range filter) */
+  minLength?: number;
+  /** Maximum part length in mm (size-range filter) */
+  maxLength?: number;
+  /** Minimum part width in mm (size-range filter) */
+  minWidth?: number;
+  /** Maximum part width in mm (size-range filter) */
+  maxWidth?: number;
+  /** Minimum part height in mm (size-range filter) */
+  minHeight?: number;
+  /** Maximum part height in mm (size-range filter) */
+  maxHeight?: number;
+  /** Minimum part diameter in mm (size-range filter) */
+  minDiameter?: number;
+  /** Maximum part diameter in mm (size-range filter) */
+  maxDiameter?: number;
 }

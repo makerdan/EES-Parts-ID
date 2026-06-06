@@ -5,17 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-
-export interface InventoryItemDimensions {
-  /** Length in mm */
-  length?: number | null;
-  /** Width in mm */
-  width?: number | null;
-  /** Height in mm */
-  height?: number | null;
-  /** Dominant diameter in mm */
-  diameter?: number | null;
-}
+import type { InventoryItemDimensions } from "./inventoryItemDimensions";
 
 export interface InventoryItem {
   id: number;
@@ -30,8 +20,8 @@ export interface InventoryItem {
   enrichedAt?: Date | null;
   /** URL of the catalog image extracted from a PDF import, served via the API proxy */
   imageUrl?: string | null;
-  /** Physical dimensions measured via LiDAR or entered manually (all values in mm) */
-  dimensions?: InventoryItemDimensions | null;
+  /** Physical dimensions in millimetres (length, width, height, diameter) */
+  dimensions?: InventoryItemDimensions;
   createdAt: Date;
   updatedAt: Date;
 }

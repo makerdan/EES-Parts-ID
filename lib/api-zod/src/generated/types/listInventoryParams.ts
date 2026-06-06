@@ -9,4 +9,8 @@
 export type ListInventoryParams = {
   page?: number;
   limit?: number;
+  /**
+   * Filter items to those stored in bins starting with this prefix
+   */
+  binPrefix?: string;
 };

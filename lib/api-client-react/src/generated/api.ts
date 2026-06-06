@@ -20,10 +20,13 @@ import type {
   AiIdentifyBody,
   AiIdentifyResponse,
   AiReferenceBody,
+  CategoryTreeResponse,
   CreateWarehouseZoneBody,
   DeleteWarehouseZone200,
   DictionaryLookupResponse,
   EnrichInventoryBody,
+  EstimateDimensionsBody,
+  EstimateDimensionsResponse,
   HealthStatus,
   InventoryItem,
   InventoryListResponse,
@@ -34,6 +37,7 @@ import type {
   UpdateBarcodesBody,
   UpdateBinsBody,
   UpdateDescriptionBody,
+  UpdateDimensionsBody,
   UpdateKeywordsBody,
   UpdateWarehouseZoneBody,
   UpsertInventoryBody,
@@ -213,6 +217,82 @@ export function useListInventory<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListInventoryQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get the taxonomy category tree with live item counts
+ */
+export const getListInventoryCategoriesUrl = () => {
+  return `/api/inventory/categories`;
+};
+
+export const listInventoryCategories = async (
+  options?: RequestInit,
+): Promise<CategoryTreeResponse> => {
+  return customFetch<CategoryTreeResponse>(getListInventoryCategoriesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListInventoryCategoriesQueryKey = () => {
+  return [`/api/inventory/categories`] as const;
+};
+
+export const getListInventoryCategoriesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listInventoryCategories>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listInventoryCategories>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListInventoryCategoriesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listInventoryCategories>>
+  > = ({ signal }) => listInventoryCategories({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listInventoryCategories>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListInventoryCategoriesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listInventoryCategories>>
+>;
+export type ListInventoryCategoriesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the taxonomy category tree with live item counts
+ */
+
+export function useListInventoryCategories<
+  TData = Awaited<ReturnType<typeof listInventoryCategories>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listInventoryCategories>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListInventoryCategoriesQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -564,6 +644,179 @@ export const useUpdateItemBins = <
   TContext
 > => {
   return useMutation(getUpdateItemBinsMutationOptions(options));
+};
+
+/**
+ * @summary Estimate part dimensions from a photo using AI Vision (admin)
+ */
+export const getEstimateDimensionsUrl = () => {
+  return `/api/inventory/estimate-dimensions`;
+};
+
+export const estimateDimensions = async (
+  estimateDimensionsBody: EstimateDimensionsBody,
+  options?: RequestInit,
+): Promise<EstimateDimensionsResponse> => {
+  return customFetch<EstimateDimensionsResponse>(getEstimateDimensionsUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(estimateDimensionsBody),
+  });
+};
+
+export const getEstimateDimensionsMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof estimateDimensions>>,
+    TError,
+    { data: BodyType<EstimateDimensionsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof estimateDimensions>>,
+  TError,
+  { data: BodyType<EstimateDimensionsBody> },
+  TContext
+> => {
+  const mutationKey = ["estimateDimensions"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof estimateDimensions>>,
+    { data: BodyType<EstimateDimensionsBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return estimateDimensions(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EstimateDimensionsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof estimateDimensions>>
+>;
+export type EstimateDimensionsMutationBody = BodyType<EstimateDimensionsBody>;
+export type EstimateDimensionsMutationError = ErrorType<void>;
+
+/**
+ * @summary Estimate part dimensions from a photo using AI Vision (admin)
+ */
+export const useEstimateDimensions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof estimateDimensions>>,
+    TError,
+    { data: BodyType<EstimateDimensionsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof estimateDimensions>>,
+  TError,
+  { data: BodyType<EstimateDimensionsBody> },
+  TContext
+> => {
+  return useMutation(getEstimateDimensionsMutationOptions(options));
+};
+
+/**
+ * @summary Save / merge physical dimensions for an inventory item (admin)
+ */
+export const getUpdateItemDimensionsUrl = (id: number) => {
+  return `/api/inventory/${id}/dimensions`;
+};
+
+export const updateItemDimensions = async (
+  id: number,
+  updateDimensionsBody: UpdateDimensionsBody,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getUpdateItemDimensionsUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateDimensionsBody),
+  });
+};
+
+export const getUpdateItemDimensionsMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemDimensions>>,
+    TError,
+    { id: number; data: BodyType<UpdateDimensionsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateItemDimensions>>,
+  TError,
+  { id: number; data: BodyType<UpdateDimensionsBody> },
+  TContext
+> => {
+  const mutationKey = ["updateItemDimensions"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateItemDimensions>>,
+    { id: number; data: BodyType<UpdateDimensionsBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateItemDimensions(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateItemDimensionsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateItemDimensions>>
+>;
+export type UpdateItemDimensionsMutationBody = BodyType<UpdateDimensionsBody>;
+export type UpdateItemDimensionsMutationError = ErrorType<void>;
+
+/**
+ * @summary Save / merge physical dimensions for an inventory item (admin)
+ */
+export const useUpdateItemDimensions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateItemDimensions>>,
+    TError,
+    { id: number; data: BodyType<UpdateDimensionsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateItemDimensions>>,
+  TError,
+  { id: number; data: BodyType<UpdateDimensionsBody> },
+  TContext
+> => {
+  return useMutation(getUpdateItemDimensionsMutationOptions(options));
 };
 
 /**

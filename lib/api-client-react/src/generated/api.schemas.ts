@@ -9,12 +9,44 @@ export interface HealthStatus {
   status: string;
 }
 
-export interface InventoryItemDimensions {
+export interface TaxonomyItemTypeNode {
+  slug: string;
+  label: string;
+  count: number;
+}
+
+export interface TaxonomySubcategoryNode {
+  slug: string;
+  label: string;
+  count: number;
+  itemTypes: TaxonomyItemTypeNode[];
+}
+
+export interface TaxonomyCategoryNode {
+  slug: string;
+  label: string;
+  color: string;
+  count: number;
+  subcategories: TaxonomySubcategoryNode[];
+}
+
+/**
+ * Full taxonomy tree. The last element in `categories` is always the uncategorized catch-all node (slug: "uncategorized") with a single sub-category "needs-review" containing item type "unclassified-items".
+
+ */
+export interface CategoryTreeResponse {
+  categories: TaxonomyCategoryNode[];
+}
+
+/**
+ * Physical dimensions in millimetres (length, width, height, diameter)
+ */
+export type InventoryItemDimensions = {
   length?: number | null;
   width?: number | null;
   height?: number | null;
   diameter?: number | null;
-}
+} | null;
 
 export interface InventoryItem {
   id: number;
@@ -30,7 +62,7 @@ export interface InventoryItem {
   /** URL of the catalog image extracted from a PDF import, served via the API proxy */
   imageUrl?: string | null;
   /** Physical dimensions in millimetres (length, width, height, diameter) */
-  dimensions?: InventoryItemDimensions | null;
+  dimensions?: InventoryItemDimensions;
   createdAt: string;
   updatedAt: string;
 }
@@ -88,6 +120,24 @@ export interface SearchInventoryBody {
   voltage?: string;
   /** Pole count chip filter (breakers/switches) */
   poleCount?: string;
+  /** Taxonomy category/subcategory/item-type slug to pre-filter results */
+  categorySlug?: string;
+  /** Minimum part length in mm (size-range filter) */
+  minLength?: number;
+  /** Maximum part length in mm (size-range filter) */
+  maxLength?: number;
+  /** Minimum part width in mm (size-range filter) */
+  minWidth?: number;
+  /** Maximum part width in mm (size-range filter) */
+  maxWidth?: number;
+  /** Minimum part height in mm (size-range filter) */
+  minHeight?: number;
+  /** Maximum part height in mm (size-range filter) */
+  maxHeight?: number;
+  /** Minimum part diameter in mm (size-range filter) */
+  minDiameter?: number;
+  /** Maximum part diameter in mm (size-range filter) */
+  maxDiameter?: number;
 }
 
 export interface SearchResult {
@@ -108,11 +158,8 @@ export type SearchInventoryResponseDimensionCounts = {
 
 /**
  * Response shape for POST /inventory/search.
- *
- * `results` contains items that matched all filters; `sizeUnknownResults` is a
- * trailing group of items whose relevant dimension field is NULL and are therefore
- * excluded from size-range filtering but still shown under a "Size not measured"
- * section header in the UI.
+`results` contains items that matched all filters; `sizeUnknownResults` is a trailing group of items whose relevant dimension field is NULL and are therefore excluded from size-range filtering but still shown under a "Size not measured" section header in the UI.
+
  */
 export interface SearchInventoryResponse {
   results: SearchResult[];
@@ -124,6 +171,37 @@ export interface SearchInventoryResponse {
   sizeUnknownResults?: SearchResult[];
   /** Count of items excluded from the main results because the relevant dimension field is NULL */
   sizeUnknownCount?: number;
+}
+
+/**
+ * Partial-merge update for physical dimensions; omitted fields are preserved.
+ */
+export interface UpdateDimensionsBody {
+  /** Longest dimension in mm */
+  length?: number | null;
+  /** Width in mm */
+  width?: number | null;
+  /** Height in mm */
+  height?: number | null;
+  /** Diameter in mm (for round/cylindrical parts) */
+  diameter?: number | null;
+}
+
+export interface EstimateDimensionsBody {
+  /** Base64-encoded JPEG or PNG photo of the part */
+  imageBase64: string;
+  /** MIME type of the image (default image/jpeg) */
+  mimeType?: string;
+}
+
+/**
+ * AI-estimated dimensions in millimetres; null for any field the model cannot estimate with confidence
+ */
+export interface EstimateDimensionsResponse {
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  diameter?: number | null;
 }
 
 export type UpsertInventoryBodyItemsItem = {
@@ -278,6 +356,9 @@ export interface AiReferenceBody {
 export type ListInventoryParams = {
   page?: number;
   limit?: number;
+  /**
+   * Filter items to those stored in bins starting with this prefix
+   */
   binPrefix?: string;
 };
 
