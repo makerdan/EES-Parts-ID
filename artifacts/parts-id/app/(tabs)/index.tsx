@@ -807,12 +807,12 @@ export default function SearchScreen() {
               </View>
             </View>
 
-            {/* Dimension unit row */}
+            {/* Measure unit row */}
             <View style={[styles.settingsRow, { borderColor: colors.border }]}>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Dimension unit</Text>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Measure unit</Text>
                 <Text style={[styles.settingsRowHint, { color: colors.mutedForeground }]}>
-                  Unit used for W/H/D labels when measuring parts.
+                  Unit used for dimension display across search cards, detail view, and the measure screen.
                 </Text>
               </View>
               <View style={styles.textSizePicker}>
