@@ -144,6 +144,8 @@ export default function SearchScreen() {
   const [measureItem, setMeasureItem] = useState<InventoryItem | null>(null);
   // Banner shown when a dimension-filtered search returns 0 exact results
   const [showSimilarSizeBanner, setShowSimilarSizeBanner] = useState(false);
+  // Tolerance selected in the similar-size banner (fraction, e.g. 0.10 = ±10%)
+  const [similarSizeTolerance, setSimilarSizeTolerance] = useState(0.10);
 
   const handleShowOnMap = useCallback((item: InventoryItem) => {
     const bins = item.binLocations ?? [];
@@ -278,6 +280,7 @@ export default function SearchScreen() {
       setFuseSyncedAt(null);
       setDimensionCounts(undefined);
       setShowSimilarSizeBanner(false);
+      setSimilarSizeTolerance(0.10);
       searchMutationRef.current?.reset();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -614,6 +617,7 @@ export default function SearchScreen() {
     setOfflineCacheType(null);
     setDimensionCounts(undefined);
     setShowSimilarSizeBanner(false);
+    setSimilarSizeTolerance(0.10);
     setPinnedParts([]);
   };
 
@@ -630,24 +634,26 @@ export default function SearchScreen() {
     });
   }, []);
 
-  // Re-run the last search with each dimension bound widened by ±10%
-  const handleSimilarSizeSearch = () => {
+  // Re-run the last search with each dimension bound widened by the given tolerance fraction
+  const handleSimilarSizeSearch = (tolerance: number = similarSizeTolerance) => {
     const f = filtersRef.current;
     const expand = (val: string, factor: number): string => {
       const n = parseFloat(val);
       if (isNaN(n)) return val;
       return String(Math.round(n * factor * 1000) / 1000);
     };
+    const lo = 1 - tolerance;
+    const hi = 1 + tolerance;
     const expanded: FilterValues = {
       ...f,
-      minLength:   f.minLength.trim()   !== "" ? expand(f.minLength,   0.9) : f.minLength,
-      maxLength:   f.maxLength.trim()   !== "" ? expand(f.maxLength,   1.1) : f.maxLength,
-      minWidth:    f.minWidth.trim()    !== "" ? expand(f.minWidth,    0.9) : f.minWidth,
-      maxWidth:    f.maxWidth.trim()    !== "" ? expand(f.maxWidth,    1.1) : f.maxWidth,
-      minHeight:   f.minHeight.trim()   !== "" ? expand(f.minHeight,   0.9) : f.minHeight,
-      maxHeight:   f.maxHeight.trim()   !== "" ? expand(f.maxHeight,   1.1) : f.maxHeight,
-      minDiameter: f.minDiameter.trim() !== "" ? expand(f.minDiameter, 0.9) : f.minDiameter,
-      maxDiameter: f.maxDiameter.trim() !== "" ? expand(f.maxDiameter, 1.1) : f.maxDiameter,
+      minLength:   f.minLength.trim()   !== "" ? expand(f.minLength,   lo) : f.minLength,
+      maxLength:   f.maxLength.trim()   !== "" ? expand(f.maxLength,   hi) : f.maxLength,
+      minWidth:    f.minWidth.trim()    !== "" ? expand(f.minWidth,    lo) : f.minWidth,
+      maxWidth:    f.maxWidth.trim()    !== "" ? expand(f.maxWidth,    hi) : f.maxWidth,
+      minHeight:   f.minHeight.trim()   !== "" ? expand(f.minHeight,   lo) : f.minHeight,
+      maxHeight:   f.maxHeight.trim()   !== "" ? expand(f.maxHeight,   hi) : f.maxHeight,
+      minDiameter: f.minDiameter.trim() !== "" ? expand(f.minDiameter, lo) : f.minDiameter,
+      maxDiameter: f.maxDiameter.trim() !== "" ? expand(f.maxDiameter, hi) : f.maxDiameter,
     };
     setShowSimilarSizeBanner(false);
     setFilters(expanded);
@@ -1284,23 +1290,51 @@ export default function SearchScreen() {
                   Try broader terms, check spelling, or lower the confidence threshold.
                 </Text>
                 {showSimilarSizeBanner ? (
-                  <Pressable
-                    onPress={handleSimilarSizeSearch}
-                    style={[styles.similarSizeBanner, {
-                      backgroundColor: colors.primary + "14",
-                      borderColor: colors.primary + "55",
-                    }]}
-                  >
-                    <Text style={[styles.similarSizeBannerIcon, { color: colors.primary }]}>📐</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.similarSizeBannerTitle, { color: colors.primary }]}>
+                  <View style={[styles.similarSizeBanner, {
+                    backgroundColor: colors.primary + "14",
+                    borderColor: colors.primary + "55",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    gap: 10,
+                  }]}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                      <Text style={[styles.similarSizeBannerIcon, { color: colors.primary }]}>📐</Text>
+                      <Text style={[styles.similarSizeBannerTitle, { color: colors.primary, flex: 1 }]}>
                         No exact match — try nearby sizes?
                       </Text>
-                      <Text style={[styles.similarSizeBannerHint, { color: colors.primary + "bb" }]}>
-                        Tap to widen each dimension by ±10% and search again
-                      </Text>
                     </View>
-                  </Pressable>
+                    <Text style={[styles.similarSizeBannerHint, { color: colors.primary + "bb" }]}>
+                      Pick a tolerance, then tap to search again
+                    </Text>
+                    <View style={styles.similarSizeToleranceRow}>
+                      {([0.05, 0.10, 0.20] as const).map((tol) => {
+                        const label = `±${Math.round(tol * 100)}%`;
+                        const active = similarSizeTolerance === tol;
+                        return (
+                          <Pressable
+                            key={tol}
+                            onPress={() => {
+                              setSimilarSizeTolerance(tol);
+                              handleSimilarSizeSearch(tol);
+                            }}
+                            style={[
+                              styles.similarSizeToleranceChip,
+                              active
+                                ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                                : { backgroundColor: "transparent", borderColor: colors.primary + "88" },
+                            ]}
+                          >
+                            <Text style={[
+                              styles.similarSizeToleranceChipText,
+                              { color: active ? "#fff" : colors.primary },
+                            ]}>
+                              {label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
                 ) : null}
                 {belowThreshold > 0 ? (
                   <Pressable
@@ -1638,6 +1672,24 @@ const styles = StyleSheet.create({
   similarSizeBannerIcon: { fontSize: 22 },
   similarSizeBannerTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
   similarSizeBannerHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 16 },
+  similarSizeToleranceRow: {
+    flexDirection: "row",
+    gap: 8,
+    width: "100%",
+  },
+  similarSizeToleranceChip: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  similarSizeToleranceChipText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
   welcomeContainer: { padding: 24, alignItems: "center" },
   welcomeEmoji: { fontSize: 48, marginBottom: 12 },
   welcomeTitle: { fontSize: 20, fontFamily: "Inter_700Bold", marginBottom: 8 },
