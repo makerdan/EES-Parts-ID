@@ -27,7 +27,7 @@ import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { AisleSummarySheet } from "@/components/AisleSummarySheet";
 import { ZoneActionMenu } from "@/components/ZoneActionMenu";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
-import { parseBin, sectionMatchesParity } from "@/lib/aisleHierarchy";
+import { parseBin } from "@/lib/aisleHierarchy";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
@@ -158,18 +158,14 @@ export default function MapScreen() {
   const { zones, loading: zonesLoading, error: zonesError, refetch: refetchZones } = useWarehouseZones();
 
   /**
-   * Resolves the exact zone IDs for primary pins by matching aisle + section
-   * against each zone's sectionParity.  Computed after zones load so the map
-   * highlights the specific zone (odd or even half, or "all") rather than
-   * every zone that shares the aisle number.
+   * Zone IDs for primary pins — highlights every zone whose aisle contains
+   * a pinned section, regardless of section parity.
    */
   const pinnedZoneIds = useMemo(() => {
     const ids = new Set<number>();
     for (const zone of zones) {
       const aisleNum = parseInt(zone.aisleId, 10);
-      const sections = pinnedSections.get(aisleNum);
-      if (!sections) continue;
-      if (sectionMatchesParity(zone.sectionParity, sections)) ids.add(zone.id);
+      if (pinnedSections.has(aisleNum)) ids.add(zone.id);
     }
     return ids;
   }, [zones, pinnedSections]);
@@ -179,9 +175,7 @@ export default function MapScreen() {
     const ids = new Set<number>();
     for (const zone of zones) {
       const aisleNum = parseInt(zone.aisleId, 10);
-      const sections = variantSections.get(aisleNum);
-      if (!sections) continue;
-      if (sectionMatchesParity(zone.sectionParity, sections)) ids.add(zone.id);
+      if (variantSections.has(aisleNum)) ids.add(zone.id);
     }
     return ids;
   }, [zones, variantSections]);
