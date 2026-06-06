@@ -404,7 +404,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
     onChange("maxHeight", "");
     onChange("minDiameter", "");
     onChange("maxDiameter", "");
-    onChange("includeNullDimensions", false);
+    onChange("includeNullDimensions", true);
   }, [onChange]);
 
   // ── Advanced Filters collapse state ──────────────────────────────────────
