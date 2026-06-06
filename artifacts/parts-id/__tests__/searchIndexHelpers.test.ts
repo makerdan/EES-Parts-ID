@@ -39,6 +39,8 @@ type FilterValues = {
   minDiameter: string;
   maxDiameter: string;
   includeNullDimensions: boolean;
+  minWeight: string;
+  maxWeight: string;
   category: string;
   amperage: string;
   colorChip: string;
@@ -75,6 +77,8 @@ const BLANK: FilterValues = {
   minDiameter: "",
   maxDiameter: "",
   includeNullDimensions: false,
+  minWeight: "",
+  maxWeight: "",
   category: "",
   amperage: "",
   colorChip: "",
@@ -394,6 +398,35 @@ describe("buildSearchBody", () => {
     expect(body.minLength).toBe(10);
     expect(body.maxLength).toBe(100);
   });
+
+  it("includes minWeight in the body when set", () => {
+    const f: FilterValues = { ...BLANK, minWeight: "0.5" };
+    const body = buildSearchBody(f);
+    expect(body.minWeight).toBe(0.5);
+  });
+
+  it("includes maxWeight in the body when set", () => {
+    const f: FilterValues = { ...BLANK, maxWeight: "2.75" };
+    const body = buildSearchBody(f);
+    expect(body.maxWeight).toBe(2.75);
+  });
+
+  it("includes both minWeight and maxWeight when both are set", () => {
+    const f: FilterValues = { ...BLANK, minWeight: "1", maxWeight: "3" };
+    const body = buildSearchBody(f);
+    expect(body.minWeight).toBe(1);
+    expect(body.maxWeight).toBe(3);
+  });
+
+  it("omits minWeight from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "minWeight")).toBe(false);
+  });
+
+  it("omits maxWeight from the body when blank", () => {
+    const body = buildSearchBody(BLANK);
+    expect(Object.prototype.hasOwnProperty.call(body, "maxWeight")).toBe(false);
+  });
 });
 
 // ── buildQueryKey ─────────────────────────────────────────────────────────────
@@ -524,6 +557,30 @@ describe("buildQueryKey", () => {
   it("produces a different key when includeNullDimensions changes", () => {
     const a = { ...BLANK, includeNullDimensions: false };
     const b = { ...BLANK, includeNullDimensions: true };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when minWeight changes", () => {
+    const a = { ...BLANK, minWeight: "" };
+    const b = { ...BLANK, minWeight: "1.5" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key when maxWeight changes", () => {
+    const a = { ...BLANK, maxWeight: "" };
+    const b = { ...BLANK, maxWeight: "4" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different minWeight values", () => {
+    const a = { ...BLANK, minWeight: "1" };
+    const b = { ...BLANK, minWeight: "2" };
+    expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
+  });
+
+  it("produces a different key for different maxWeight values", () => {
+    const a = { ...BLANK, maxWeight: "3" };
+    const b = { ...BLANK, maxWeight: "5" };
     expect(buildQueryKey(a)).not.toBe(buildQueryKey(b));
   });
 });

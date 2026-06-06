@@ -43,6 +43,8 @@ export interface FilterValues {
   minDiameter: string;
   maxDiameter: string;
   includeNullDimensions: boolean;
+  minWeight: string;
+  maxWeight: string;
   // ── 16 structured chip dimensions (AND-logic on server) ───────────────────
   category: string;       // Part category / type
   amperage: string;       // Current rating
