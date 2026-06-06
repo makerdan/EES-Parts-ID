@@ -279,7 +279,8 @@ jest.mock("react-native-svg", () => ({
   Text: () => null,
   SvgUri: () => null,
   SvgXml: () => null,
-  Circle: () => null,
+  Path: () => null,
+  Ellipse: () => null,
 }));
 
 // ─── expo-asset (needed by WarehouseMapView) ──────────────────────────────────
