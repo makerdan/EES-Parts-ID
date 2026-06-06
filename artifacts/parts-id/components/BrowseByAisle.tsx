@@ -55,6 +55,7 @@ export interface BrowseByAisleProps {
   sectionNumbers?: number[];
   adminToken?: string | null;
   isAdmin?: boolean;
+  onShowOnMap?: (item: InventoryItem) => void;
 }
 
 type CrumbState = {
@@ -443,6 +444,7 @@ function SectionShelfView({
   nextLabel,
   fontScale,
   onEditItem,
+  onShowOnMap,
   onAddHereShelf,
   colors,
   cardItemPanHandlers,
@@ -457,6 +459,7 @@ function SectionShelfView({
   nextLabel: string;
   fontScale: number;
   onEditItem?: (item: InventoryItem) => void;
+  onShowOnMap?: (item: InventoryItem) => void;
   onAddHereShelf?: (shelfHundreds: number) => void;
   colors: ReturnType<typeof useColors>;
   cardItemPanHandlers: ReturnType<typeof PanResponder.create>["panHandlers"];
@@ -529,6 +532,7 @@ function SectionShelfView({
                 variants: [],
               }}
               onEditItem={onEditItem}
+              onShowOnMap={onShowOnMap}
               rank={0}
               fontScale={fontScale}
             />
@@ -555,6 +559,7 @@ function PartsListView({
   nextLabel,
   fontScale,
   onEditItem,
+  onShowOnMap,
   colors,
   sectionPanHandlers,
 }: {
@@ -567,6 +572,7 @@ function PartsListView({
   nextLabel: string;
   fontScale: number;
   onEditItem?: (item: InventoryItem) => void;
+  onShowOnMap?: (item: InventoryItem) => void;
   colors: ReturnType<typeof useColors>;
   sectionPanHandlers: ReturnType<typeof PanResponder.create>["panHandlers"];
 }) {
@@ -610,6 +616,7 @@ function PartsListView({
                 variants: [],
               }}
               onEditItem={onEditItem}
+              onShowOnMap={onShowOnMap}
               rank={0}
               fontScale={fontScale}
             />
@@ -637,6 +644,7 @@ export function BrowseByAisle({
   sectionNumbers,
   adminToken,
   isAdmin = false,
+  onShowOnMap,
 }: BrowseByAisleProps) {
   "use no memo";
   const colors = useColors();
@@ -918,6 +926,7 @@ export function BrowseByAisle({
               nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
               fontScale={fontScale}
               onEditItem={handleEditItem}
+              onShowOnMap={onShowOnMap}
               onAddHereShelf={isAdmin ? handleAddHereShelf : undefined}
               colors={colors}
               cardItemPanHandlers={cardItemSwipe.panHandlers}
@@ -934,6 +943,7 @@ export function BrowseByAisle({
               nextLabel={filteredSections[sectionIdx + 1]?.label ?? ""}
               fontScale={fontScale}
               onEditItem={handleEditItem}
+              onShowOnMap={onShowOnMap}
               colors={colors}
               sectionPanHandlers={sectionSwipe.panHandlers}
             />

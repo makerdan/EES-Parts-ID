@@ -1156,6 +1156,7 @@ export default function SearchScreen() {
           adminToken={adminToken}
           onPartAdded={() => syncAllInventory()}
           onRefresh={syncAllInventory}
+          onShowOnMap={handleShowOnMap}
         />
       ) : mode === "category" ? (
         <BrowseByCategory
