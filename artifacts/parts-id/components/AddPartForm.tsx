@@ -11,6 +11,7 @@ import {
 import { Feather } from "@expo/vector-icons";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
+import { useApp } from "@/contexts/AppContext";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 
@@ -35,6 +36,7 @@ export interface AddPartFormProps {
 
 export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
   const colors = useColors();
+  const { settings: { dimensionUnit } } = useApp();
   const [catalog, setCatalog] = useState("");
   const [vendor, setVendor] = useState("");
   const [binLocation, setBinLocation] = useState("");
@@ -239,7 +241,7 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
         {/* Dimensions (optional) */}
         <View style={apfStyles.fieldGroup}>
           <View style={apfStyles.dimLabelRow}>
-            <Text style={[apfStyles.label, { color: colors.foreground }]}>Dimensions (mm) — optional</Text>
+            <Text style={[apfStyles.label, { color: colors.foreground }]}>{`Dimensions (${dimensionUnit}) — optional`}</Text>
             {Platform.OS === "ios" ? (
               <Pressable
                 onPress={() => setMeasureOpen(true)}
@@ -299,8 +301,8 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
           {(dimLength || dimWidth || dimHeight || dimDiameter) ? (
             <Text style={[apfStyles.dimSummary, { color: colors.primary }]}>
               {[
-                dimLength && dimWidth && dimHeight && `${dimLength} × ${dimWidth} × ${dimHeight} mm`,
-                dimDiameter && `⌀ ${dimDiameter} mm`,
+                dimLength && dimWidth && dimHeight && `${dimLength} × ${dimWidth} × ${dimHeight} ${dimensionUnit}`,
+                dimDiameter && `⌀ ${dimDiameter} ${dimensionUnit}`,
               ].filter(Boolean).join("   ")}
             </Text>
           ) : null}
