@@ -110,7 +110,7 @@ const DEFAULT_FILTERS: FilterValues = {
   maxHeight: "",
   minDiameter: "",
   maxDiameter: "",
-  includeNullDimensions: false,
+  includeNullDimensions: true,
   minWeight: "",
   maxWeight: "",
   // 16 required chip dimensions
