@@ -130,6 +130,7 @@ module.exports = {
     addEventListener: jest.fn(() => ({ remove: jest.fn() })),
   },
   KeyboardAvoidingView: make("rn-keyboard-avoiding-view"),
+  InputAccessoryView: make("rn-input-accessory-view"),
   NativeModules: {},
   UIManager: {
     setLayoutAnimationEnabledExperimental: noop,
