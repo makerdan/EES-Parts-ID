@@ -5,8 +5,23 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type HealthStatusStatus =
+  (typeof HealthStatusStatus)[keyof typeof HealthStatusStatus];
+
+export const HealthStatusStatus = {
+  ok: "ok",
+  degraded: "degraded",
+  error: "error",
+} as const;
+
 export interface HealthStatus {
-  status: string;
+  status: HealthStatusStatus;
+  /** Time in milliseconds taken by the SELECT 1 probe */
+  db_latency_ms?: number;
+  /** Number of idle connections in the pg pool */
+  pool_idle?: number;
+  /** Total connections in the pg pool */
+  pool_total?: number;
 }
 
 export interface TaxonomyItemTypeNode {
