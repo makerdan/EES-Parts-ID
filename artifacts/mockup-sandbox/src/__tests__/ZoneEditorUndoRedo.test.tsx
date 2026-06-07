@@ -70,7 +70,7 @@ function makeFetchMock(zones = [ZONE_1]) {
 // ─── Render helper ────────────────────────────────────────────────────────────
 async function setupEditor(zones = [ZONE_1]) {
   const fetchMock = makeFetchMock(zones);
-  global.fetch = fetchMock as typeof global.fetch;
+  global.fetch = fetchMock as unknown as typeof global.fetch;
 
   let container!: HTMLElement;
 
