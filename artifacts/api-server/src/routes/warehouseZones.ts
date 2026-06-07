@@ -124,7 +124,8 @@ router.post("/", async (req, res) => {
       })
       .returning();
     res.status(201).json({ zone });
-  } catch {
+  } catch (err) {
+    console.error("[warehouseZones] POST failed:", err);
     res.status(500).json({ error: "Failed to create zone" });
   }
 });
@@ -156,7 +157,8 @@ router.patch("/:id", async (req, res) => {
       return;
     }
     res.json({ zone });
-  } catch {
+  } catch (err) {
+    console.error("[warehouseZones] PATCH failed:", err);
     res.status(500).json({ error: "Failed to update zone" });
   }
 });
@@ -178,7 +180,8 @@ router.delete("/:id", async (req, res) => {
       return;
     }
     res.json({ deleted: true });
-  } catch {
+  } catch (err) {
+    console.error("[warehouseZones] DELETE failed:", err);
     res.status(500).json({ error: "Failed to delete zone" });
   }
 });
