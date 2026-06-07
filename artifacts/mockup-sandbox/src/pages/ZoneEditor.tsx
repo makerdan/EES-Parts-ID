@@ -2000,7 +2000,7 @@ export function ZoneEditor() {
                 <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} />
                 {duplicateConflict && (pendingRect || selectedZone) && (
                   <div style={styles.dupWarning}>
-                    ⚠ Zone {duplicateConflict.aisleId} §{duplicateConflict.sectionNum} already exists. Saving
+                    ⚠ Section {duplicateConflict.sectionNum} already exists. Saving
                     anyway will create an overlapping mapping.
                   </div>
                 )}
