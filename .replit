@@ -125,6 +125,26 @@ waitForPort = 8081
 PORT = "8081"
 BASE_PATH = "/__mockup"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "post-merge-health-test"
+
+[[workflows.workflow]]
+name = "post-merge-health-test"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/test-post-merge.sh"
+
+[workflows.workflow.metadata]
+isValidation = true
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
