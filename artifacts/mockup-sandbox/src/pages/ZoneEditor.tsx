@@ -429,9 +429,23 @@ export function ZoneEditor() {
 
   // ── Auto-number panel state ────────────────────────────────────────────────
   const [autoNumOpen, setAutoNumOpen] = useState(false);
-  const [autoNumAisle, setAutoNumAisle] = useState("");
-  const [autoNumStart, setAutoNumStart] = useState(1);
-  const [autoNumIncrement, setAutoNumIncrement] = useState(2);
+  const [autoNumAisle, setAutoNumAisle] = useState<string>(() => {
+    try { return localStorage.getItem("zoneEditorAutoNumAisle") ?? ""; } catch { return ""; }
+  });
+  const [autoNumStart, setAutoNumStart] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem("zoneEditorAutoNumStart");
+      if (stored !== null) { const n = Number(stored); if (Number.isInteger(n) && n >= 1) return n; }
+    } catch {}
+    return 1;
+  });
+  const [autoNumIncrement, setAutoNumIncrement] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem("zoneEditorAutoNumIncrement");
+      if (stored !== null) { const n = Number(stored); if (Number.isInteger(n) && n >= 1) return n; }
+    } catch {}
+    return 2;
+  });
   const [autoNumApplying, setAutoNumApplying] = useState(false);
 
   // Branded confirm dialog (replaces window.confirm)
@@ -488,6 +502,15 @@ export function ZoneEditor() {
     fillSensitivityRef.current = fillSensitivity;
     try { localStorage.setItem("zoneEditorFillSensitivity", String(fillSensitivity)); } catch {}
   }, [fillSensitivity]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorAutoNumAisle", autoNumAisle); } catch {}
+  }, [autoNumAisle]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorAutoNumStart", String(autoNumStart)); } catch {}
+  }, [autoNumStart]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorAutoNumIncrement", String(autoNumIncrement)); } catch {}
+  }, [autoNumIncrement]);
 
 
   // Fetch the latest uploaded floor plan. Tries the local API first; if it
