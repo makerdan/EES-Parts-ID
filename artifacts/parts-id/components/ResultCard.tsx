@@ -8,6 +8,7 @@ import {
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { RetryImage } from "@/components/RetryImage";
+import { PinIcon } from "@/components/PinIcon";
 import { useColors } from "@/hooks/useColors";
 
 interface ResultCardProps {
@@ -165,7 +166,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         {/* Bin location(s) — read-only */}
         {item.binLocations && item.binLocations.length > 0 ? (
           <View style={[cardStyles.binRow, { backgroundColor: colors.accent }]}>
-            <Text style={[cardStyles.binIcon, { color: colors.accentForeground }]}>📍</Text>
+            <PinIcon fill="#f59e0b" stroke="#b45309" size={16} />
             <Text style={[cardStyles.binText, { color: colors.accentForeground, flex: 1 }]}>
               {item.binLocations.length === 1 ? "Bin: " : "Bins: "}
               {item.binLocations.join(", ")}
@@ -182,7 +183,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
           </View>
         ) : (
           <View style={[cardStyles.binRow, { backgroundColor: colors.muted }]}>
-            <Text style={[cardStyles.binIcon, { color: colors.mutedForeground }]}>📍</Text>
+            <PinIcon fill={colors.mutedForeground} stroke={colors.border} size={16} />
             <Text style={[cardStyles.binText, { color: colors.mutedForeground, flex: 1 }]}>
               No bin assigned
             </Text>
@@ -383,7 +384,6 @@ const cardStyles = StyleSheet.create({
     marginBottom: 8,
     gap: 6,
   },
-  binIcon: { fontSize: 14 },
   binText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   binActionBtn: {
     paddingHorizontal: 8,
