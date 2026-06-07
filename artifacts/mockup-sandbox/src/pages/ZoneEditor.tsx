@@ -427,6 +427,13 @@ export function ZoneEditor() {
     uncoveredAisles: string[];
   } | null>(null);
 
+  // ── Auto-number panel state ────────────────────────────────────────────────
+  const [autoNumOpen, setAutoNumOpen] = useState(false);
+  const [autoNumAisle, setAutoNumAisle] = useState("");
+  const [autoNumStart, setAutoNumStart] = useState(1);
+  const [autoNumIncrement, setAutoNumIncrement] = useState(2);
+  const [autoNumApplying, setAutoNumApplying] = useState(false);
+
   // Branded confirm dialog (replaces window.confirm)
   const [confirmState, setConfirmState] = useState<{
     visible: boolean;
@@ -1019,6 +1026,41 @@ export function ZoneEditor() {
     }
   };
 
+  // ── Auto-number handler ────────────────────────────────────────────────────
+  const handleAutoNumber = async () => {
+    if (autoNumPreview.length === 0) return;
+    setAutoNumApplying(true);
+    try {
+      const undoChanges = autoNumPreview.map(({ zone, newSectionNum }) => ({
+        id: zone.id,
+        before: { sectionNum: zone.sectionNum } as MetaSnap,
+        after: { sectionNum: newSectionNum } as MetaSnap,
+      }));
+      await Promise.all(
+        autoNumPreview.map(({ zone, newSectionNum }) =>
+          patchZone(zone.id, { sectionNum: newSectionNum }),
+        ),
+      );
+      pushUndo({ type: "multiEdit", changes: undoChanges });
+      // Keep lastSavedFormRef consistent so the dup-conflict suppression doesn't fire
+      if (selectedId) {
+        const hit = autoNumPreview.find((p) => p.zone.id === selectedId);
+        if (hit && lastSavedFormRef.current) {
+          lastSavedFormRef.current = { ...lastSavedFormRef.current, sectionNum: hit.newSectionNum };
+        }
+      }
+      const n = autoNumPreview.length;
+      toast.success(
+        `Auto-numbered ${n} zone${n !== 1 ? "s" : ""} on aisle ${normalizeAisleId(autoNumAisle)}`,
+      );
+      await fetchZones();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAutoNumApplying(false);
+    }
+  };
+
   const copyCoords = () => {
     const zone = zones.find((z) => z.id === selectedId);
     if (!zone) return;
@@ -1039,6 +1081,19 @@ export function ZoneEditor() {
       lastSavedFormRef.current = synced;
     }
   }, [selectedId, zones]);
+
+  // Pre-fill auto-number aisle from the current selection when the panel opens
+  // or when the selected aisle changes (only if the field is blank).
+  useEffect(() => {
+    if (!autoNumOpen) return;
+    const inferredAisle = selectedZone?.aisleId ?? (
+      isMulti && multiAisleIds.size === 1 ? [...multiAisleIds][0]! : ""
+    );
+    if (inferredAisle && !autoNumAisle.trim()) {
+      setAutoNumAisle(inferredAisle);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoNumOpen, selectedZone, isMulti, multiAisleIds]);
 
   // Sync multi-select form fields when selection or zones change
   useEffect(() => {
@@ -1539,6 +1594,34 @@ export function ZoneEditor() {
     () => new Set(selectedZoneList.map((z) => z.sectionNum)),
     [selectedZoneList],
   );
+
+  // ── Auto-number computed values ────────────────────────────────────────────
+  // Zones on the target aisle ordered by sortOrder then svgY (tiebreaker).
+  const autoNumPreview = useMemo(() => {
+    const trimmed = autoNumAisle.trim();
+    if (!trimmed || !isValidAisleId(trimmed)) return [];
+    const normed = normalizeAisleId(trimmed);
+    const aisleZones = zones.filter((z) => normalizeAisleId(z.aisleId) === normed);
+    const sorted = [...aisleZones].sort((a, b) => {
+      if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+      return a.svgY - b.svgY;
+    });
+    const inc = Math.max(1, autoNumIncrement);
+    return sorted.map((zone, i) => ({
+      zone,
+      newSectionNum: autoNumStart + i * inc,
+    }));
+  }, [zones, autoNumAisle, autoNumStart, autoNumIncrement]);
+
+  // Zones on *other* aisles whose sectionNum matches any of the assigned numbers.
+  const autoNumCollisions = useMemo(() => {
+    if (autoNumPreview.length === 0) return [] as Zone[];
+    const normed = normalizeAisleId(autoNumAisle.trim());
+    const assignedNums = new Set(autoNumPreview.map((p) => p.newSectionNum));
+    return zones.filter(
+      (z) => normalizeAisleId(z.aisleId) !== normed && assignedNums.has(z.sectionNum),
+    );
+  }, [zones, autoNumAisle, autoNumPreview]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -2114,6 +2197,199 @@ export function ZoneEditor() {
               </div>
             )}
           </SideSection>
+
+          {/* ── Auto-number sections panel ─────────────────────────────────── */}
+          {zones.length > 0 && (
+            <SideSection style={{ flex: "none" }}>
+              <button
+                onClick={() => {
+                  const next = !autoNumOpen;
+                  setAutoNumOpen(next);
+                  if (next) {
+                    // Pre-fill aisle on open
+                    const inferred =
+                      selectedZone?.aisleId ??
+                      (isMulti && multiAisleIds.size === 1
+                        ? [...multiAisleIds][0]!
+                        : "");
+                    if (inferred) setAutoNumAisle(inferred);
+                  }
+                }}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 0,
+                  margin: 0,
+                }}
+              >
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.06em",
+                  color: "#7c3aed",
+                  textTransform: "uppercase" as const,
+                }}>
+                  ⚡ Auto-number sections
+                </span>
+                <span style={{ fontSize: 11, color: "#9ca3af" }}>
+                  {autoNumOpen ? "▲" : "▼"}
+                </span>
+              </button>
+
+              {autoNumOpen && (
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {/* Aisle selector */}
+                  <div>
+                    <Label>Target aisle</Label>
+                    <input
+                      value={autoNumAisle}
+                      onChange={(e) => setAutoNumAisle(e.target.value)}
+                      placeholder="e.g. 12"
+                      style={{
+                        ...styles.input,
+                        borderColor: autoNumAisle.trim() && !isValidAisleId(autoNumAisle)
+                          ? "#f87171"
+                          : undefined,
+                      }}
+                    />
+                    {autoNumAisle.trim() && !isValidAisleId(autoNumAisle) && (
+                      <div style={{ fontSize: 11, color: "#f87171", marginTop: 2 }}>
+                        Must be a number (e.g. 12)
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Starting number */}
+                  <div>
+                    <Label>Starting number</Label>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {[1, 2].map((v) => (
+                        <label key={v} style={{
+                          display: "flex", alignItems: "center", gap: 4,
+                          fontSize: 12, color: "#374151", cursor: "pointer",
+                        }}>
+                          <input
+                            type="radio"
+                            name="autoNumStart"
+                            checked={autoNumStart === v}
+                            onChange={() => setAutoNumStart(v)}
+                            style={{ cursor: "pointer" }}
+                          />
+                          {v} ({v === 1 ? "odd side" : "even side"})
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 11, color: "#6b7280" }}>or custom:</span>
+                      <input
+                        type="number"
+                        value={autoNumStart}
+                        min={0}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10);
+                          if (!isNaN(v)) setAutoNumStart(v);
+                        }}
+                        style={{ ...styles.input, width: 70 }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Increment */}
+                  <div>
+                    <Label>Increment (default 2)</Label>
+                    <input
+                      type="number"
+                      value={autoNumIncrement}
+                      min={1}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        if (!isNaN(v) && v >= 1) setAutoNumIncrement(v);
+                      }}
+                      style={{ ...styles.input, width: 70 }}
+                    />
+                  </div>
+
+                  {/* Preview list */}
+                  {autoNumPreview.length > 0 && (
+                    <div>
+                      <Label>Preview — {autoNumPreview.length} zone{autoNumPreview.length !== 1 ? "s" : ""}</Label>
+                      <div style={{
+                        maxHeight: 130,
+                        overflowY: "auto",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 4,
+                        background: "#fff",
+                        fontSize: 11,
+                        fontFamily: "monospace",
+                      }}>
+                        {autoNumPreview.map(({ zone, newSectionNum }) => (
+                          <div
+                            key={zone.id}
+                            style={{
+                              padding: "3px 8px",
+                              borderBottom: "1px solid #f3f4f6",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              color: "#374151",
+                            }}
+                          >
+                            <span style={{ color: "#6b7280" }}>
+                              Zone #{zone.id} ({zone.sectionNum} → )
+                            </span>
+                            <span style={{ fontWeight: 600, color: "#7c3aed" }}>
+                              {newSectionNum}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {autoNumPreview.length === 0 && autoNumAisle.trim() && isValidAisleId(autoNumAisle) && (
+                    <div style={{ fontSize: 11, color: "#9ca3af" }}>
+                      No zones found on aisle {normalizeAisleId(autoNumAisle)}.
+                    </div>
+                  )}
+
+                  {/* Collision warning */}
+                  {autoNumCollisions.length > 0 && (
+                    <div style={{
+                      padding: "6px 8px",
+                      background: "rgba(234,179,8,0.12)",
+                      border: "1px solid rgba(234,179,8,0.4)",
+                      borderRadius: 4,
+                      fontSize: 11,
+                      color: "#92400e",
+                      lineHeight: 1.5,
+                    }}>
+                      ⚠ {autoNumCollisions.length} zone{autoNumCollisions.length !== 1 ? "s" : ""} on other aisles
+                      share these section numbers:{" "}
+                      {[...new Set(autoNumCollisions.map((z) => z.sectionNum))].join(", ")}.
+                      Applying will proceed anyway.
+                    </div>
+                  )}
+
+                  {/* Apply button */}
+                  <Btn
+                    color="#7c3aed"
+                    disabled={autoNumApplying || autoNumPreview.length === 0}
+                    onClick={() => void handleAutoNumber()}
+                  >
+                    {autoNumApplying
+                      ? "Applying…"
+                      : autoNumPreview.length > 0
+                        ? `Apply to ${autoNumPreview.length} zone${autoNumPreview.length !== 1 ? "s" : ""} (undoable)`
+                        : "Apply"}
+                  </Btn>
+                </div>
+              )}
+            </SideSection>
+          )}
 
           {/* Zone list */}
           <div style={styles.zoneList}>
