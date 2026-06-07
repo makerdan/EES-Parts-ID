@@ -113,6 +113,13 @@
       "when": 1749600000000,
       "tag": "0015_zone_section_num",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1749686400000,
+      "tag": "0016_zone_section_num_fix",
+      "breakpoints": true
     }
   ]
 }
