@@ -705,6 +705,11 @@ export function WarehouseMapView({
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   const applyFitIfReadyRef = useRef<() => void>(() => {});
 
+  // Indirection ref so the focusAisleNum effect (declared before applyFit) can
+  // call applyFit without a TypeScript use-before-declare error.
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  const applyFitRef = useRef<() => void>(() => {});
+
   const onLayout = useCallback(
     (e: LayoutChangeEvent) => {
       const { width, height } = e.nativeEvent.layout;
@@ -809,6 +814,14 @@ export function WarehouseMapView({
   const translateY = useSharedValue(0);
   const savedTX = useSharedValue(0);
   const savedTY = useSharedValue(0);
+
+  // ── Pin-focus mode ─────────────────────────────────────────────────────────
+  // Set to 1 when "Map it!" resets the map to fit view.  While active, pinch
+  // zoom pivots around the pin marker centre (keeping it on screen) instead of
+  // the finger focal point.  Cleared on pan, double-tap, or zoom-button press.
+  const pinFocusModeV = useSharedValue(0);
+  const pinFocusCxV   = useSharedValue(0); // pin centre X in SVG coordinates
+  const pinFocusCyV   = useSharedValue(0); // pin centre Y in SVG coordinates
   // True while a button-triggered withSpring is in flight; gates tile rebuilds.
   const springActive = useSharedValue(false);
   // Monotonically-increasing counter. Incremented on every applyZoom call so
@@ -836,28 +849,25 @@ export function WarehouseMapView({
       return;
     }
 
-    // Compute pan target using the extracted, testable handler.
-    // scale is read (as currentScale) inside runFocusAisleEffect but is never
-    // written — this is the core no-zoom contract.
-    const panTarget = runFocusAisleEffect({
-      focusAisleNum,
-      focusSectionNum: focusSectionNum ?? undefined,
-      zones,
-      containerW: w,
-      containerH: h,
-      currentScale: scale.value,
-      currentTX: translateX.value,
-      currentTY: translateY.value,
-    });
+    // Find the target zone so we can store its SVG centre for pin-focused zoom.
+    const aisleZones = zones.filter(z => parseInt(z.aisleId, 10) === focusAisleNum);
+    const zone =
+      focusSectionNum != null
+        ? (aisleZones.find(z => z.sectionNum === focusSectionNum) ?? aisleZones[0])
+        : aisleZones[0];
 
-    if (panTarget !== null) {
-      const { tx, ty } = panTarget;
-      translateX.value = withSpring(tx, { damping: 26, stiffness: 220 });
-      savedTX.value = tx;
-      translateY.value = withSpring(ty, { damping: 26, stiffness: 220 });
-      savedTY.value = ty;
-      persistViewport(scale.value, tx, ty);
+    if (zone) {
+      // Store pin centre in SVG coordinates so the pinch gesture can pivot
+      // around it while pin-focus mode is active.
+      pinFocusCxV.value = zone.svgX + zone.svgWidth  / 2;
+      pinFocusCyV.value = zone.svgY + zone.svgHeight / 2;
+      pinFocusModeV.value = 1;
     }
+
+    // Reset to the full fit view so the worker sees the whole warehouse with
+    // the highlighted pin before choosing whether and how far to zoom in.
+    applyFitRef.current();
+
     // Notify parent that this focus has been consumed so it can clear
     // focusAisleNum and prevent repeated re-centering on future tab visits.
     onFocusConsumed?.();
@@ -906,7 +916,8 @@ export function WarehouseMapView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep the indirection ref current so onLayout always calls the latest version.
+  // Keep the indirection refs current so effects declared before the callbacks
+  // always call the latest version without stale-closure issues.
   applyFitIfReadyRef.current = applyFitIfReady;
 
   /**
@@ -942,6 +953,10 @@ export function WarehouseMapView({
     persistViewport(s, tx, ty);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [persistViewport]);
+
+  // Keep applyFitRef current so the focusAisleNum effect always calls the
+  // latest applyFit closure (which captures persistViewport).
+  applyFitRef.current = applyFit;
 
   // Flush any pending debounced write and cancel the timer on unmount so a
   // stale timeout never fires against an unmounted component.
@@ -1464,17 +1479,34 @@ export function WarehouseMapView({
       const newScale = clamp(savedScale.value * e.scale, MIN_SCALE, MAX_SCALE);
       scale.value = newScale;
 
-      // Focal point in container-center-relative coordinates.
-      // e.focalX/Y are in container-local space (0,0 = top-left of the
-      // GestureDetector view), so subtract half the container size to get
-      // the offset from the view's visual centre (where translateX/Y=0).
-      const focalX = e.focalX - containerWV.value / 2;
-      const focalY = e.focalY - containerHV.value / 2;
-
       // Scale ratio relative to the baseline captured at gesture start.
       const ratio = savedScale.value > 0 ? newScale / savedScale.value : 1;
 
-      // Translate so the map point under the pinch focal point stays fixed:
+      // In pin-focus mode the zoom pivots around the pin marker so it stays
+      // centred on screen as the user zooms in.  The pin's screen position is
+      // computed from savedScale/savedTX (gesture baseline) using the same
+      // coordinate transform as the SVG canvas:
+      //   screenX = (cx/VBW)*svgRW - svgRW/2) * savedScale + savedTX
+      // Otherwise use the normal pinch focal point.
+      //
+      // Focal point in container-centre-relative coordinates:
+      // e.focalX/Y are in container-local space (0,0 = top-left), so subtract
+      // half the container size to get the offset from the visual centre.
+      let focalX: number;
+      let focalY: number;
+      if (pinFocusModeV.value) {
+        const svgRW = containerWV.value;
+        const svgRH = containerWV.value / SVG_ASPECT;
+        const px = (pinFocusCxV.value / SVG_VIEWBOX_W) * svgRW - svgRW / 2;
+        const py = (pinFocusCyV.value / SVG_VIEWBOX_H) * svgRH - svgRH / 2;
+        focalX = px * savedScale.value + savedTX.value;
+        focalY = py * savedScale.value + savedTY.value;
+      } else {
+        focalX = e.focalX - containerWV.value / 2;
+        focalY = e.focalY - containerHV.value / 2;
+      }
+
+      // Translate so the map point under the focal point stays fixed:
       //   newTX = focalX - (focalX - savedTX) * ratio
       //         = focalX * (1 - ratio) + savedTX * ratio
       const newTX = focalX * (1 - ratio) + savedTX.value * ratio;
@@ -1510,6 +1542,9 @@ export function WarehouseMapView({
     .minDistance(6)
     .onBegin(() => {
       'worklet';
+      // A pan gesture ends the pin-focus-zoom phase so subsequent pinches
+      // revert to the normal finger-focal-point behaviour.
+      pinFocusModeV.value = 0;
       runOnJS(_firePanStart)();
     })
     .onUpdate((e) => {
@@ -1530,6 +1565,9 @@ export function WarehouseMapView({
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
+      // Double-tap is a manual map reset — end pin-focus mode so the next
+      // pinch after the reset uses the normal finger-focal-point behaviour.
+      pinFocusModeV.value = 0;
       runOnJS(applyFit)();
     });
 
@@ -1540,6 +1578,8 @@ export function WarehouseMapView({
 
   // ── Programmatic zoom helpers (zoom buttons) ────────────────────────────────
   const applyZoom = useCallback((targetScale: number) => {
+    // Zoom buttons end pin-focus mode; subsequent pinches revert to normal.
+    pinFocusModeV.value = 0;
     const oldScale = savedScale.value;
     const newScale = clampScale(targetScale);
     const { maxX, maxY } = panBounds(containerW, containerH, newScale);
