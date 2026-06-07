@@ -12,7 +12,19 @@ import * as zod from "zod";
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
-  status: zod.string(),
+  status: zod.enum(["ok", "degraded", "error"]),
+  db_latency_ms: zod
+    .number()
+    .optional()
+    .describe("Time in milliseconds taken by the SELECT 1 probe"),
+  pool_idle: zod
+    .number()
+    .optional()
+    .describe("Number of idle connections in the pg pool"),
+  pool_total: zod
+    .number()
+    .optional()
+    .describe("Total connections in the pg pool"),
 });
 
 /**
