@@ -21,7 +21,7 @@ import React, {
 } from "react";
 import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
-import { isValidAisleId, findDuplicateConflict, normalizeAisleId } from "@workspace/zone-validation";
+import { isValidAisleId, findDuplicateConflict, normalizeAisleId, type ZoneLike } from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
 
 // Strip the outer <svg> wrapper so the inner content can be embedded directly
@@ -245,6 +245,59 @@ type IxState =
   | { t: "fillPending"; sx: number; sy: number };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Converts a sectionNum to a display string.
+ * Non-negative numbers display as their numeric string ("0", "6", "14" …).
+ * Negative sentinels used for unassigned duplicates display as capital letters:
+ *   -1 → "A", -2 → "B", … -26 → "Z", -27 → "AA", -28 → "AB" …
+ */
+function sectionNumToDisplay(n: number): string {
+  if (n >= 0) return String(n);
+  let val = -n;
+  let result = "";
+  while (val > 0) {
+    val--;
+    result = String.fromCharCode(65 + (val % 26)) + result;
+    val = Math.floor(val / 26);
+  }
+  return result;
+}
+
+/**
+ * Parses a section number input string.
+ * A letter string (A–Z, AA–ZZ …) maps to the corresponding negative sentinel.
+ * A numeric string is parsed as a plain integer.
+ * Returns null for empty or unparseable input.
+ */
+function parseSectionInput(raw: string): number | null {
+  const s = raw.trim();
+  if (s === "") return null;
+  if (/^[A-Za-z]+$/.test(s)) {
+    const upper = s.toUpperCase();
+    let val = 0;
+    for (let i = 0; i < upper.length; i++) {
+      val = val * 26 + (upper.charCodeAt(i) - 64);
+    }
+    return -val;
+  }
+  const n = parseInt(s, 10);
+  return isNaN(n) ? null : n;
+}
+
+/**
+ * Returns the next available unassigned sentinel (a negative integer) for the
+ * given aisle.  Existing sentinels in that aisle are found and the next one
+ * below the minimum is returned.  The first unassigned zone in any aisle gets
+ * -1 (displayed as "A"), the second -2 ("B"), and so on.
+ */
+function nextSentinelForAisle(zones: ZoneLike[], aisleId: string): number {
+  const normalized = normalizeAisleId(aisleId);
+  const sentinels = zones
+    .filter((z) => normalizeAisleId(z.aisleId) === normalized && z.sectionNum < 0)
+    .map((z) => z.sectionNum);
+  return sentinels.length === 0 ? -1 : Math.min(...sentinels) - 1;
+}
 
 function screenToSvg(
   clientX: number,
@@ -819,10 +872,7 @@ export function ZoneEditor() {
     setSaving(true);
     try {
       const targetAisleId = normalizeAisleId(form.aisleId);
-      const maxSection = zones
-        .filter((z) => z.aisleId === targetAisleId)
-        .reduce((max, z) => Math.max(max, z.sectionNum), 0);
-      const nextSectionNum = maxSection + 1;
+      const nextSectionNum = nextSentinelForAisle(zones, targetAisleId);
       const res = await fetch(`${API_BASE}/warehouse-zones`, {
         method: "POST",
         headers: headers(),
@@ -858,17 +908,16 @@ export function ZoneEditor() {
     if (selectedZoneList.length === 0) return;
     setSaving(true);
     try {
-      const aisleSectionMax = new Map<string, number>();
-      zones.forEach((z) => {
-        const cur = aisleSectionMax.get(z.aisleId) ?? 0;
-        if (z.sectionNum > cur) aisleSectionMax.set(z.aisleId, z.sectionNum);
-      });
+      const aisleNextSentinel = new Map<string, number>();
       const sortedSelection = [...selectedZoneList].sort((a, b) => a.sectionNum - b.sectionNum);
       const results = await Promise.all(
         sortedSelection.map((z) => {
-          const cur = aisleSectionMax.get(z.aisleId) ?? 0;
-          const nextSectionNum = cur + 1;
-          aisleSectionMax.set(z.aisleId, nextSectionNum);
+          const aid = normalizeAisleId(z.aisleId);
+          if (!aisleNextSentinel.has(aid)) {
+            aisleNextSentinel.set(aid, nextSentinelForAisle(zones, aid));
+          }
+          const nextSectionNum = aisleNextSentinel.get(aid)!;
+          aisleNextSentinel.set(aid, nextSectionNum - 1);
           return fetch(`${API_BASE}/warehouse-zones`, {
             method: "POST",
             headers: headers(),
@@ -907,7 +956,7 @@ export function ZoneEditor() {
     const n = selectedIds.size;
     const parts: string[] = [];
     if (updates.aisleId) parts.push(`Aisle ID → ${updates.aisleId}`);
-    if (updates.sectionNum !== undefined) parts.push(`Section # → ${updates.sectionNum}`);
+    if (updates.sectionNum !== undefined) parts.push(`Section # → ${sectionNumToDisplay(updates.sectionNum)}`);
     const what = parts.length ? parts.join(", ") : "selected properties";
     if (!await showConfirm(`Update ${n} zone${n !== 1 ? "s" : ""}`, what)) return;
     const undoChanges = [...selectedIds].map((id) => {
@@ -922,7 +971,7 @@ export function ZoneEditor() {
       await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
-      if (updates.sectionNum !== undefined) lastMultiSectionNumRef.current = String(updates.sectionNum);
+      if (updates.sectionNum !== undefined) lastMultiSectionNumRef.current = sectionNumToDisplay(updates.sectionNum);
       toast.success(`Updated ${n} zones`);
       await fetchZones();
     } catch (e) {
@@ -943,8 +992,8 @@ export function ZoneEditor() {
     }
     const trimmedSectionNum = multiSectionNum.trim();
     if (trimmedSectionNum && trimmedSectionNum !== lastMultiSectionNumRef.current) {
-      const parsed = parseInt(trimmedSectionNum, 10);
-      if (!isNaN(parsed)) updates.sectionNum = parsed;
+      const parsed = parseSectionInput(trimmedSectionNum);
+      if (parsed !== null) updates.sectionNum = parsed;
     }
     if (Object.keys(updates).length === 0) return;
     const undoChanges = [...selectedIds].map((id) => {
@@ -959,7 +1008,7 @@ export function ZoneEditor() {
       await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
-      if (updates.sectionNum !== undefined) lastMultiSectionNumRef.current = String(updates.sectionNum);
+      if (updates.sectionNum !== undefined) lastMultiSectionNumRef.current = sectionNumToDisplay(updates.sectionNum);
       const n = selectedIds.size;
       toast.success(`Saved ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
@@ -999,7 +1048,7 @@ export function ZoneEditor() {
     const aisles = new Set(list.map((z) => z.aisleId));
     const sectionNums = new Set(list.map((z) => z.sectionNum));
     const syncedAisle = aisles.size === 1 ? [...aisles][0]! : "";
-    const syncedSectionNum = sectionNums.size === 1 ? String([...sectionNums][0]!) : "";
+    const syncedSectionNum = sectionNums.size === 1 ? sectionNumToDisplay([...sectionNums][0]!) : "";
     setMultiAisleId(syncedAisle);
     setMultiSectionNum(syncedSectionNum);
     lastMultiAisleIdRef.current = syncedAisle;
@@ -1772,7 +1821,7 @@ export function ZoneEditor() {
                       paintOrder="stroke"
                       style={{ pointerEvents: "none", userSelect: "none" }}
                     >
-                      {zone.sectionNum}
+                      {sectionNumToDisplay(zone.sectionNum)}
                     </text>
 
                     {/* Corner handles (single-selected zone only) */}
@@ -1929,10 +1978,9 @@ export function ZoneEditor() {
                   <div>
                     <Label>Section # — all selected</Label>
                     <input
-                      type="number"
                       value={multiSectionNum}
                       onChange={(e) => setMultiSectionNum(e.target.value)}
-                      placeholder={multiSectionNums.size > 1 ? "— mixed —" : "e.g. 6"}
+                      placeholder={multiSectionNums.size > 1 ? "— mixed —" : "e.g. 6 or A"}
                       style={styles.input}
                     />
                     {multiSectionNums.size > 1 && (
@@ -1958,8 +2006,8 @@ export function ZoneEditor() {
                       const updates: Partial<Zone> = {};
                       if (multiAisleId.trim()) updates.aisleId = normalizeAisleId(multiAisleId.trim());
                       if (multiSectionNum.trim()) {
-                        const parsed = parseInt(multiSectionNum.trim(), 10);
-                        if (!isNaN(parsed)) updates.sectionNum = parsed;
+                        const parsed = parseSectionInput(multiSectionNum.trim());
+                        if (parsed !== null) updates.sectionNum = parsed;
                       }
                       if (Object.keys(updates).length === 0) return;
                       void handleMultiSave(updates);
@@ -2000,7 +2048,7 @@ export function ZoneEditor() {
                 <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} />
                 {duplicateConflict && (pendingRect || selectedZone) && (
                   <div style={styles.dupWarning}>
-                    ⚠ Section {duplicateConflict.sectionNum} already exists. Saving
+                    ⚠ Section {sectionNumToDisplay(duplicateConflict.sectionNum)} already exists. Saving
                     anyway will create an overlapping mapping.
                   </div>
                 )}
@@ -2116,9 +2164,9 @@ export function ZoneEditor() {
                     background: sel ? "rgba(245,158,11,0.08)" : "transparent",
                   }}
                 >
-                  <div style={styles.zoneItemLabel}>{zone.sectionNum}</div>
+                  <div style={styles.zoneItemLabel}>{sectionNumToDisplay(zone.sectionNum)}</div>
                   <div style={styles.zoneItemMeta}>
-                    §{zone.sectionNum}
+                    §{sectionNumToDisplay(zone.sectionNum)}
                     {zone.isInventory ? "" : " · non-inv"}
                   </div>
                 </div>
@@ -2173,10 +2221,12 @@ export function ZoneForm({
       <div>
         <Label>Section #</Label>
         <input
-          type="number"
-          value={form.sectionNum}
-          onChange={(e) => onChange({ ...form, sectionNum: parseInt(e.target.value, 10) || 0 })}
-          placeholder="e.g. 6"
+          value={sectionNumToDisplay(form.sectionNum)}
+          onChange={(e) => {
+            const parsed = parseSectionInput(e.target.value);
+            onChange({ ...form, sectionNum: parsed ?? 0 });
+          }}
+          placeholder="e.g. 6 or A"
           style={styles.input}
         />
       </div>
