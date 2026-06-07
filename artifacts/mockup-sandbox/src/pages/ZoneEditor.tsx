@@ -1105,6 +1105,16 @@ export function ZoneEditor() {
     }
   }, [selectedId, zones]);
 
+  // Mixed-value indicators for multi-select form
+  const multiAisleIds = useMemo(
+    () => new Set(selectedZoneList.map((z) => z.aisleId)),
+    [selectedZoneList],
+  );
+  const multiSectionNums = useMemo(
+    () => new Set(selectedZoneList.map((z) => z.sectionNum)),
+    [selectedZoneList],
+  );
+
   // Pre-fill auto-number aisle from the current selection when the panel opens
   // or when the selected aisle changes (only if the field is blank).
   useEffect(() => {
@@ -1607,16 +1617,6 @@ export function ZoneEditor() {
     }
     return zones;
   }, [zones, dragZone, multiDragDelta, selectedIds]);
-
-  // Mixed-value indicators for multi-select form
-  const multiAisleIds = useMemo(
-    () => new Set(selectedZoneList.map((z) => z.aisleId)),
-    [selectedZoneList],
-  );
-  const multiSectionNums = useMemo(
-    () => new Set(selectedZoneList.map((z) => z.sectionNum)),
-    [selectedZoneList],
-  );
 
   // ── Auto-number computed values ────────────────────────────────────────────
   // Zones on the target aisle ordered by sortOrder then svgY (tiebreaker).
