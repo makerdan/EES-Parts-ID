@@ -1,11 +1,5 @@
 #!/bin/bash
 set -e
-CI=true pnpm install --frozen-lockfile
-pnpm --filter db push --force
-
-# Push latest main branch to GitHub after every successful merge.
-# Uses || true so a network error never causes post-merge to report failure.
-bash "$(dirname "$0")/sync-github.sh" || true
 
 # ---------------------------------------------------------------------------
 # API Server health check — confirm the server is up after every merge and
@@ -39,23 +33,36 @@ check_api_health() {
   return 1
 }
 
-# First health check pass.
-if check_api_health "initial"; then
-  exit 0
+# ---------------------------------------------------------------------------
+# Main — only runs when the script is executed directly, not sourced.
+# This guard allows test scripts to source and unit-test the functions above.
+# ---------------------------------------------------------------------------
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  CI=true pnpm install --frozen-lockfile
+  pnpm --filter db push --force
+
+  # Push latest main branch to GitHub after every successful merge.
+  # Uses || true so a network error never causes post-merge to report failure.
+  bash "$(dirname "$0")/sync-github.sh" || true
+
+  # First health check pass.
+  if check_api_health "initial"; then
+    exit 0
+  fi
+
+  # All retries failed — kill any stale process and restart.
+  echo "[post-merge] API Server did not respond. Killing stale process and restarting..."
+  pkill -f "artifacts/api-server" 2>/dev/null || true
+  sleep 2
+
+  pnpm --filter @workspace/api-server dev &
+  echo "[post-merge] API Server restarted in background (PID $!)."
+
+  # Second health check pass after restart.
+  if check_api_health "post-restart"; then
+    exit 0
+  fi
+
+  echo "[post-merge] ERROR: API Server is still not healthy after restart. Manual investigation required."
+  exit 1
 fi
-
-# All retries failed — kill any stale process and restart.
-echo "[post-merge] API Server did not respond. Killing stale process and restarting..."
-pkill -f "artifacts/api-server" 2>/dev/null || true
-sleep 2
-
-pnpm --filter @workspace/api-server dev &
-echo "[post-merge] API Server restarted in background (PID $!)."
-
-# Second health check pass after restart.
-if check_api_health "post-restart"; then
-  exit 0
-fi
-
-echo "[post-merge] ERROR: API Server is still not healthy after restart. Manual investigation required."
-exit 1
