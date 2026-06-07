@@ -818,12 +818,17 @@ export function ZoneEditor() {
     if (!selectedZone) return;
     setSaving(true);
     try {
+      const targetAisleId = normalizeAisleId(form.aisleId);
+      const maxSection = zones
+        .filter((z) => z.aisleId === targetAisleId)
+        .reduce((max, z) => Math.max(max, z.sectionNum), 0);
+      const nextSectionNum = maxSection + 1;
       const res = await fetch(`${API_BASE}/warehouse-zones`, {
         method: "POST",
         headers: headers(),
         body: JSON.stringify({
-          aisleId: normalizeAisleId(form.aisleId),
-          sectionNum: form.sectionNum,
+          aisleId: targetAisleId,
+          sectionNum: nextSectionNum,
           isInventory: form.isInventory,
           svgX: selectedZone.svgX + selectedZone.svgWidth + 2,
           svgY: selectedZone.svgY,
@@ -853,14 +858,23 @@ export function ZoneEditor() {
     if (selectedZoneList.length === 0) return;
     setSaving(true);
     try {
+      const aisleSectionMax = new Map<string, number>();
+      zones.forEach((z) => {
+        const cur = aisleSectionMax.get(z.aisleId) ?? 0;
+        if (z.sectionNum > cur) aisleSectionMax.set(z.aisleId, z.sectionNum);
+      });
+      const sortedSelection = [...selectedZoneList].sort((a, b) => a.sectionNum - b.sectionNum);
       const results = await Promise.all(
-        selectedZoneList.map((z) =>
-          fetch(`${API_BASE}/warehouse-zones`, {
+        sortedSelection.map((z) => {
+          const cur = aisleSectionMax.get(z.aisleId) ?? 0;
+          const nextSectionNum = cur + 1;
+          aisleSectionMax.set(z.aisleId, nextSectionNum);
+          return fetch(`${API_BASE}/warehouse-zones`, {
             method: "POST",
             headers: headers(),
             body: JSON.stringify({
               aisleId: z.aisleId,
-              sectionNum: z.sectionNum,
+              sectionNum: nextSectionNum,
               isInventory: z.isInventory,
               sortOrder: z.sortOrder,
               svgX: z.svgX,
@@ -874,8 +888,8 @@ export function ZoneEditor() {
               throw new Error(err.error ?? `HTTP ${res.status}`);
             }
             return res.json() as Promise<{ zone: Zone }>;
-          }),
-        ),
+          });
+        }),
       );
       const newIds = new Set(results.map((r) => r.zone.id));
       toast.success(`Duplicated ${newIds.size} zone${newIds.size !== 1 ? "s" : ""} — drag to reposition`);
