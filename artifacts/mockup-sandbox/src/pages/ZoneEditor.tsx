@@ -1758,7 +1758,7 @@ export function ZoneEditor() {
                       paintOrder="stroke"
                       style={{ pointerEvents: "none", userSelect: "none" }}
                     >
-                      {zone.aisleId}
+                      {zone.sectionNum}
                     </text>
 
                     {/* Corner handles (single-selected zone only) */}
@@ -2102,7 +2102,7 @@ export function ZoneEditor() {
                     background: sel ? "rgba(245,158,11,0.08)" : "transparent",
                   }}
                 >
-                  <div style={styles.zoneItemLabel}>{zone.aisleId}</div>
+                  <div style={styles.zoneItemLabel}>{zone.sectionNum}</div>
                   <div style={styles.zoneItemMeta}>
                     §{zone.sectionNum}
                     {zone.isInventory ? "" : " · non-inv"}
