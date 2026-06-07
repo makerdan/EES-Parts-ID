@@ -2,8 +2,8 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startServer, MAX_RETRIES } from "./lib/startServer";
 import { db } from "@workspace/db";
-import { catalogPdfJobTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { catalogPdfJobTable, warehouseZoneTable } from "@workspace/db";
+import { eq, inArray, sql } from "drizzle-orm";
 
 const rawPort = process.env["PORT"];
 
@@ -56,6 +56,49 @@ async function initQuickLookupCache(): Promise<void> {
   }
 }
 
+const ZONE_SECTION_SENTINELS: { id: number; expectedSectionNum: number }[] = [
+  { id: 431, expectedSectionNum: 3 },
+  { id: 555, expectedSectionNum: 1 },
+  { id: 840, expectedSectionNum: 1 },
+];
+
+async function checkZoneSectionNumIntegrity(): Promise<void> {
+  try {
+    const sentinelIds = ZONE_SECTION_SENTINELS.map((s) => s.id);
+    const rows = await db
+      .select({ id: warehouseZoneTable.id, sectionNum: warehouseZoneTable.sectionNum })
+      .from(warehouseZoneTable)
+      .where(inArray(warehouseZoneTable.id, sentinelIds));
+
+    if (rows.length === 0) {
+      logger.debug("Zone section_num integrity check skipped — no sentinel zones found (database may be empty)");
+      return;
+    }
+
+    const mismatches: { id: number; expected: number; actual: number }[] = [];
+    for (const sentinel of ZONE_SECTION_SENTINELS) {
+      const row = rows.find((r) => r.id === sentinel.id);
+      if (row && row.sectionNum !== sentinel.expectedSectionNum) {
+        mismatches.push({ id: sentinel.id, expected: sentinel.expectedSectionNum, actual: row.sectionNum });
+      }
+    }
+
+    if (mismatches.length > 0) {
+      logger.warn(
+        { mismatches },
+        "⚠️  ZONE section_num DATA IS STALE — Map it! will show wrong section numbers for numeric aisles (13-22). " +
+        "Run the fix script immediately:\n" +
+        "  DATABASE_URL=\"$PROD_DATABASE_URL\" pnpm --filter @workspace/api-server exec tsx src/scripts/apply-zone-section-fix.ts\n" +
+        "See docs/production-data-load.md for the full runbook.",
+      );
+    } else {
+      logger.debug({ sentinelIds }, "Zone section_num integrity check passed");
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to run zone section_num integrity check on startup");
+  }
+}
+
 async function migrateAdminPreferences(): Promise<void> {
   try {
     await db.execute(sql`
@@ -72,6 +115,6 @@ async function migrateAdminPreferences(): Promise<void> {
   }
 }
 
-Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences()]).then(() => {
+Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), checkZoneSectionNumIntegrity()]).then(() => {
   startServer(app, port, MAX_RETRIES);
 });
