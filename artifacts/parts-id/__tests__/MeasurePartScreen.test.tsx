@@ -121,6 +121,10 @@ import { isLiDARSupported, measureObject } from "lidar-measure";
 const mockIsLiDARSupported = isLiDARSupported as jest.Mock;
 const mockMeasureObject = measureObject as jest.Mock;
 
+// Typed handle to the expo-device mock object so tests can set modelName to
+// control isLiDARCapableDevice() return value (lidarAvailable in component).
+const expoDevice = require("expo-device") as { modelName: string | null };
+
 import { Alert, AppState } from "react-native";
 const mockAlert = Alert.alert as jest.Mock;
 const mockAppStateAddListener = AppState.addEventListener as jest.Mock;
@@ -228,6 +232,10 @@ afterEach(async () => {
     activeTree = null;
   }
   jest.clearAllMocks();
+  // Reset expo-device modelName so isLiDARCapableDevice() returns true by
+  // default (null → unknown/simulator → assume capable) and mutations from
+  // the isLiDARCapableDevice() describe block don't bleed into later tests.
+  expoDevice.modelName = null;
 });
 
 // ─── isLiDARCapableDevice ─────────────────────────────────────────────────────
@@ -276,7 +284,7 @@ describe("isLiDARCapableDevice()", () => {
 
 describe("MeasurePartScreen – preview phase", () => {
   it("renders null when visible=false", async () => {
-    mockIsLiDARSupported.mockReturnValue(false);
+    expoDevice.modelName = "iPhone 11";
     const tree = await render(
       <MeasurePartScreen {...DEFAULT_PROPS} visible={false} />
     );
@@ -284,37 +292,37 @@ describe("MeasurePartScreen – preview phase", () => {
   });
 
   it('shows "Measure Part" in the header', async () => {
-    mockIsLiDARSupported.mockReturnValue(false);
+    expoDevice.modelName = "iPhone 11";
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
     expect(hasText(tree.root, "Measure Part")).toBe(true);
   });
 
   it("shows LiDAR scan button when lidar is available", async () => {
-    mockIsLiDARSupported.mockReturnValue(true);
+    // expoDevice.modelName is null (reset by afterEach) → isLiDARCapableDevice() = true
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
     expect(findPressable(tree.root, "Scan with LiDAR")).not.toBeNull();
   });
 
   it("does not show LiDAR scan button when lidar is unavailable", async () => {
-    mockIsLiDARSupported.mockReturnValue(false);
+    expoDevice.modelName = "iPhone 11";
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
     expect(findPressable(tree.root, "Scan with LiDAR")).toBeNull();
   });
 
   it('shows "Enter manually instead" link always', async () => {
-    mockIsLiDARSupported.mockReturnValue(false);
+    expoDevice.modelName = "iPhone 11";
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
     expect(hasText(tree.root, "Enter manually instead")).toBe(true);
   });
 
   it("shows LiDAR unsupported message when lidar is unavailable", async () => {
-    mockIsLiDARSupported.mockReturnValue(false);
+    expoDevice.modelName = "iPhone 11";
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
     expect(hasText(tree.root, "LiDAR measurement requires a LiDAR-capable device")).toBe(true);
   });
 
   it("does not show LiDAR unsupported message when lidar is available", async () => {
-    mockIsLiDARSupported.mockReturnValue(true);
+    // expoDevice.modelName is null → isLiDARCapableDevice() = true
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
     expect(hasText(tree.root, "LiDAR measurement requires a LiDAR-capable device")).toBe(false);
   });
@@ -324,7 +332,7 @@ describe("MeasurePartScreen – preview phase", () => {
 
 describe("MeasurePartScreen – manual entry shortcut", () => {
   it('transitions to confirm phase when "Enter manually instead" is pressed', async () => {
-    mockIsLiDARSupported.mockReturnValue(false);
+    expoDevice.modelName = "iPhone 11";
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
     await press(tree.root, "Enter manually instead");
     expect(hasText(tree.root, "Review Dimensions")).toBe(true);
@@ -335,8 +343,7 @@ describe("MeasurePartScreen – manual entry shortcut", () => {
 
 describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => {
   it('shows "LiDAR Scanning…" header immediately after pressing Scan', async () => {
-    mockIsLiDARSupported.mockReturnValue(true);
-
+    // expoDevice.modelName is null → isLiDARCapableDevice() = true
     let resolveScanning!: (v: { length: number; width: number; height: number }) => void;
     mockMeasureObject.mockReturnValue(
       new Promise((res, rej) => { resolveScanning = res; rejectPendingMeasure = rej; })
@@ -354,7 +361,6 @@ describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => 
   });
 
   it('transitions to "Review Dimensions" after measureObject resolves', async () => {
-    mockIsLiDARSupported.mockReturnValue(true);
     mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
 
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
@@ -365,7 +371,6 @@ describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => 
   });
 
   it("populates dimension fields with values from measureObject", async () => {
-    mockIsLiDARSupported.mockReturnValue(true);
     mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
 
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
@@ -376,7 +381,6 @@ describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => 
   });
 
   it("calls measureObject with the 4-second timeout constant", async () => {
-    mockIsLiDARSupported.mockReturnValue(true);
     mockMeasureObject.mockResolvedValue({ length: 100, width: 80, height: 60 });
 
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
@@ -391,7 +395,6 @@ describe("MeasurePartScreen – lidar_scanning → confirm (happy path)", () => 
 
 describe("MeasurePartScreen – lidar_scanning → preview (error path)", () => {
   it("returns to preview phase when measureObject rejects", async () => {
-    mockIsLiDARSupported.mockReturnValue(true);
     mockMeasureObject.mockRejectedValue(new Error("ERR_NO_MESH"));
 
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
@@ -402,7 +405,6 @@ describe("MeasurePartScreen – lidar_scanning → preview (error path)", () => 
   });
 
   it("shows the error message from the native module via Alert", async () => {
-    mockIsLiDARSupported.mockReturnValue(true);
     mockMeasureObject.mockRejectedValue(new Error("ERR_NO_MESH"));
 
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
@@ -416,7 +418,6 @@ describe("MeasurePartScreen – lidar_scanning → preview (error path)", () => 
   });
 
   it("uses a generic fallback message when the rejection is not an Error", async () => {
-    mockIsLiDARSupported.mockReturnValue(true);
     mockMeasureObject.mockRejectedValue("non-error string rejection");
 
     const tree = await render(<MeasurePartScreen {...DEFAULT_PROPS} />);
@@ -438,7 +439,7 @@ describe("MeasurePartScreen – lidar_scanning → preview (background interrupt
    * with the given nextState, then assert the phase resets to preview.
    */
   async function runInterruptTest(nextState: "background" | "inactive") {
-    mockIsLiDARSupported.mockReturnValue(true);
+    // expoDevice.modelName is null → isLiDARCapableDevice() = true
     // Never resolves during the test — we want the scan to still be in-flight.
     // Capture the reject so afterEach can settle it and prevent an open handle.
     mockMeasureObject.mockReturnValue(
@@ -476,7 +477,6 @@ describe("MeasurePartScreen – lidar_scanning → preview (background interrupt
 describe("MeasurePartScreen – onConfirm callback", () => {
   it("fires onConfirm with parsed dimensions after a successful LiDAR scan", async () => {
     const onConfirm = jest.fn();
-    mockIsLiDARSupported.mockReturnValue(true);
     mockMeasureObject.mockResolvedValue({ length: 200, width: 100, height: 50 });
 
     const tree = await render(
@@ -496,7 +496,7 @@ describe("MeasurePartScreen – onConfirm callback", () => {
 
   it("fires onConfirm with null values when fields are empty (manual entry)", async () => {
     const onConfirm = jest.fn();
-    mockIsLiDARSupported.mockReturnValue(false);
+    expoDevice.modelName = "iPhone 11";
 
     const tree = await render(
       <MeasurePartScreen {...DEFAULT_PROPS} onConfirm={onConfirm} />
@@ -533,8 +533,8 @@ describe("MeasurePartScreen – AI photo-estimate endpoint routing", () => {
   let mockFetch: jest.SpyInstance;
 
   beforeEach(() => {
-    // Use the camera path (no LiDAR) so the Capture & Estimate button is shown.
-    mockIsLiDARSupported.mockReturnValue(false);
+    // Use a non-LiDAR device so the Capture & Estimate button is shown instead.
+    expoDevice.modelName = "iPhone 11";
 
     // The camera ref must be non-null for handleCapture to proceed; the
     // forwardRef CameraView mock handles that via useImperativeHandle.
@@ -650,7 +650,8 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
   let mockFetch: jest.SpyInstance;
 
   beforeEach(() => {
-    mockIsLiDARSupported.mockReturnValue(false);
+    // Use a non-LiDAR device so the Capture & Estimate button is shown instead.
+    expoDevice.modelName = "iPhone 11";
 
     expoCamera.__mockTakePictureAsync.mockResolvedValue({
       base64: "fake-base64-data",

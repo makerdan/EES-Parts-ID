@@ -38,7 +38,8 @@ export function isLiDARSupported(): boolean {
  * Dimensions are in millimetres, sorted length ≥ width ≥ height.
  *
  * Rejects with one of:
- *   ERR_LIDAR_NOT_SUPPORTED – hardware or OS version missing
+ *   ERR_LIDAR_NOT_SUPPORTED – hardware or OS version missing, or native module
+ *                             not bundled in this build (e.g. Expo Go)
  *   ERR_NO_FRAME            – AR session produced no frame
  *   ERR_NO_MESH             – no mesh anchors detected in time
  *   ERR_ZERO_DIMS           – geometry was degenerate (too small / too far)
@@ -47,7 +48,17 @@ export function measureObject(timeoutSeconds = 4): Promise<LidarDimensions> {
   if (Platform.OS !== "ios") {
     return Promise.reject(new Error("LiDAR measurement is only available on iOS."));
   }
-  return native().measureObject(timeoutSeconds);
+  // Wrap in try/catch so a missing or stubbed native module (e.g. Expo Go)
+  // produces a clean rejected promise rather than a synchronous throw.
+  try {
+    return native().measureObject(timeoutSeconds);
+  } catch (e) {
+    return Promise.reject(
+      e instanceof Error
+        ? e
+        : new Error("ERR_LIDAR_NOT_SUPPORTED: LiDAR native module is not available."),
+    );
+  }
 }
 
 /**
@@ -58,21 +69,32 @@ export function measureObject(timeoutSeconds = 4): Promise<LidarDimensions> {
  * The view shares the same ARSession as measureObject() via
  * LidarARSessionManager, so only one ARKit session is ever active at a time.
  *
- * iOS only — on other platforms this resolves to null and is not rendered.
+ * iOS only — resolves to null on other platforms, and also null when the native
+ * module is not genuinely present.  The guard prevents requireNativeViewManager
+ * from being called in Expo Go: in that context it does NOT throw — it emits a
+ * spurious "isn't exported by expo-modules-core" WARN and returns a stub
+ * component, bypassing any try/catch.  By probing requireNativeModule first and
+ * checking that isLiDARSupported is a real function (not a stub), we skip the
+ * requireNativeViewManager call entirely when the module is absent.
  */
 const NativeLidarDepthView: React.ComponentType<{
   style?: object;
   unit?: string;
-}> | null =
-  Platform.OS === "ios"
-    ? (() => {
-        try {
-          return requireNativeViewManager("LidarDepthView");
-        } catch {
-          return null;
-        }
-      })()
-    : null;
+}> | null = (() => {
+  if (Platform.OS !== "ios") return null;
+  try {
+    const mod = requireNativeModule<NativeApi>("LidarMeasure");
+    // In Expo Go, requireNativeModule returns a hollow stub object — the real
+    // methods are absent.  Only call requireNativeViewManager when the module
+    // is genuinely present (has isLiDARSupported as a real function).
+    if (typeof (mod as Record<string, unknown>).isLiDARSupported !== "function") {
+      return null;
+    }
+    return requireNativeViewManager("LidarDepthView");
+  } catch {
+    return null;
+  }
+})();
 
 /**
  * Cancels an in-progress measureObject() call, pauses the ARSession, and

@@ -81,12 +81,15 @@ describe("lidar-measure source module – non-iOS guards", () => {
   describe("isLiDARSupported() on non-iOS platforms", () => {
     it("returns false on Android without touching the native module", () => {
       platform.OS = "android";
+      // Clear any calls made during module-level IIFE (NativeLidarDepthView probe).
+      rnNativeModuleMock.mockClear();
       expect(RNModule.isLiDARSupported()).toBe(false);
       expect(rnNativeModuleMock).not.toHaveBeenCalled();
     });
 
     it("returns false on web without touching the native module", () => {
       platform.OS = "web";
+      rnNativeModuleMock.mockClear();
       expect(RNModule.isLiDARSupported()).toBe(false);
       expect(rnNativeModuleMock).not.toHaveBeenCalled();
     });
@@ -114,6 +117,7 @@ describe("lidar-measure source module – non-iOS guards", () => {
   describe("measureObject() on non-iOS platforms", () => {
     it("rejects immediately on Android with an iOS-only message", async () => {
       platform.OS = "android";
+      rnNativeModuleMock.mockClear();
       await expect(RNModule.measureObject()).rejects.toThrow(
         "LiDAR measurement is only available on iOS."
       );
@@ -122,6 +126,7 @@ describe("lidar-measure source module – non-iOS guards", () => {
 
     it("rejects immediately on web with an iOS-only message", async () => {
       platform.OS = "web";
+      rnNativeModuleMock.mockClear();
       await expect(RNModule.measureObject()).rejects.toThrow(
         "LiDAR measurement is only available on iOS."
       );
