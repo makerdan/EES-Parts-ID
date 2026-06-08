@@ -35,6 +35,7 @@ export interface AddPartFormProps {
 }
 
 export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
+  "use no memo";
   const colors = useColors();
   const { settings: { dimensionUnit } } = useApp();
   const [catalog, setCatalog] = useState("");

@@ -37,6 +37,7 @@ export function AddPartModal({
   onSuccess,
   onAddDetails,
 }: AddPartModalProps) {
+  "use no memo";
   const colors = useColors();
   const [catalog, setCatalog] = useState("");
   const [vendor, setVendor] = useState("");

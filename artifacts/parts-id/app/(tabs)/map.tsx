@@ -49,6 +49,7 @@ function toAisleZone(zone: ApiWarehouseZone): WarehouseZone {
 }
 
 export default function MapScreen() {
+  "use no memo";
   useTrackScreen("Map");
   const colors = useColors();
   const router = useRouter();
