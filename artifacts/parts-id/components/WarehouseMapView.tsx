@@ -922,35 +922,49 @@ export function WarehouseMapView({
 
   /**
    * Animate to the fit-to-content viewport.  Falls back to scale=1/tx=0/ty=0
-   * if the SVG viewBox has not been parsed yet.  Used by the Fit button and the
-   * double-tap-to-reset gesture.
+   * if the SVG viewBox has not been parsed yet.  Used by the Fit button, the
+   * double-tap-to-reset gesture, and the pin auto-focus path.
+   *
+   * Sets springActive for the duration of the spring so the tile-tier reaction
+   * does not fire on every integer boundary the scale crosses during zoom-out.
+   * The tier commits exactly once in the scale spring's onEnd callback, matching
+   * the same pattern used by applyZoom for button-driven zooms.
    */
   const applyFit = useCallback(() => {
     const vb = contentVBRef.current;
     const w = containerWRef.current;
     const h = containerHRef.current;
+
+    let targetS: number;
+    let targetTX: number;
+    let targetTY: number;
+
     if (!vb || w === 0) {
-      scale.value = withSpring(1, { damping: 26, stiffness: 220 });
-      translateX.value = withSpring(0, { damping: 26, stiffness: 220 });
-      translateY.value = withSpring(0, { damping: 26, stiffness: 220 });
-      savedScale.value = 1;
-      savedTX.value = 0;
-      savedTY.value = 0;
-      persistViewport(1, 0, 0);
-      return;
+      targetS = 1; targetTX = 0; targetTY = 0;
+    } else {
+      const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
+      targetS = clampScale(rawS * 1.5);
+      const ratio = rawS > 0 ? targetS / rawS : 1;
+      targetTX = rawTX * ratio;
+      targetTY = rawTY * ratio;
     }
-    const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
-    const s = clampScale(rawS * 1.5);
-    const ratio = rawS > 0 ? s / rawS : 1;
-    const tx = rawTX * ratio;
-    const ty = rawTY * ratio;
-    scale.value = withSpring(s, { damping: 26, stiffness: 220 });
-    translateX.value = withSpring(tx, { damping: 26, stiffness: 220 });
-    translateY.value = withSpring(ty, { damping: 26, stiffness: 220 });
-    savedScale.value = s;
-    savedTX.value = tx;
-    savedTY.value = ty;
-    persistViewport(s, tx, ty);
+
+    springActive.value = true;
+    springGeneration.value += 1;
+    const myGen = springGeneration.value;
+
+    scale.value = withSpring(targetS, { damping: 26, stiffness: 220 }, () => {
+      'worklet';
+      if (springGeneration.value !== myGen) return;
+      springActive.value = false;
+      runOnJS(setRenderZoom)(Math.ceil(targetS));
+    });
+    translateX.value = withSpring(targetTX, { damping: 26, stiffness: 220 });
+    translateY.value = withSpring(targetTY, { damping: 26, stiffness: 220 });
+    savedScale.value = targetS;
+    savedTX.value = targetTX;
+    savedTY.value = targetTY;
+    persistViewport(targetS, targetTX, targetTY);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [persistViewport]);
 
