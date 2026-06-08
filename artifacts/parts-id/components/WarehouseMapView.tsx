@@ -1119,11 +1119,6 @@ export function WarehouseMapView({
   // Falls back to single-texture SvgUri (with capped oversample) while svgXml
   // is not yet available (first cold start before the bundle fetch completes).
 
-  // True while a pinch gesture is in flight; gates tier rebuilds during pinch,
-  // matching the springActive gate used for button-driven zooms.  The tier is
-  // committed once on pinch end so there is never a mid-gesture tile swap.
-  const pinchActive = useSharedValue(false);
-
   // Track the integer zoom tier on the JS thread (avoids churn during pinch).
   const [renderZoom, setRenderZoom] = useState(1);
   useAnimatedReaction(
@@ -1484,11 +1479,6 @@ export function WarehouseMapView({
 
   // ── Pinch gesture ──────────────────────────────────────────────────────────
   const pinchGesture = Gesture.Pinch()
-    .onBegin(() => {
-      // Gate tile-tier changes while the finger is on screen.  The tier is
-      // committed once on onEnd so tile rebuilds never happen mid-gesture.
-      pinchActive.value = true;
-    })
     .onUpdate((e) => {
       const newScale = clamp(savedScale.value * e.scale, MIN_SCALE, MAX_SCALE);
       scale.value = newScale;
@@ -1534,9 +1524,6 @@ export function WarehouseMapView({
       translateY.value = clamp(newTY, -maxY, maxY);
     })
     .onEnd(() => {
-      // Release the gate and commit the settled tier — mirrors the button
-      // spring path so the unified useAnimatedReaction gate works for both.
-      pinchActive.value = false;
       savedScale.value = scale.value;
       savedTX.value = translateX.value;
       savedTY.value = translateY.value;
