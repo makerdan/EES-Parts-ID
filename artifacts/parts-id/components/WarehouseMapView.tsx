@@ -34,7 +34,6 @@ import {
   AppState,
   type AppStateStatus,
   LayoutChangeEvent,
-  PixelRatio,
   Platform,
   Pressable,
   StyleSheet,
@@ -90,10 +89,6 @@ import {
 } from "@/utils/mapViewport";
 
 const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
-
-// Conservative iOS Metal GPU texture limit in physical pixels.
-// Exceeding this causes patchwork tiles; keep high-res renders below it.
-const IOS_MAX_TEXTURE_PX = 8192;
 
 // Standalone worklet — no closure over JS values
 function clamp(val: number, min: number, max: number) {
@@ -1135,37 +1130,11 @@ export function WarehouseMapView({
     },
   );
 
-  // numTiles is the tile-grid dimension; oversample is the single-texture
-  // fallback factor (both derived from renderZoom).
-  const { numTiles, oversample } = useMemo(() => {
-    if (svgRenderW <= 0) return { numTiles: 1, oversample: 1 };
-    const pixelRatio = PixelRatio.get();
-    const maxByTexture = Math.max(
-      1,
-      Math.floor(IOS_MAX_TEXTURE_PX / (svgRenderW * pixelRatio)),
-    );
-    return {
-      numTiles: renderZoom,                                  // N×N tiling
-      oversample: Math.max(1, Math.min(renderZoom, maxByTexture)), // fallback cap
-    };
-  }, [renderZoom, svgRenderW]);
-
-  // Maximum useful oversample for the always-mounted single-tile base layer.
-  // Computed once per container size (texture limit ÷ physical container width),
-  // independent of the current render zoom so it stays constant during a pinch
-  // gesture and does not trigger re-mounts that would reset the rasteriser.
-  // The base layer is pre-painted at this quality so it is already fully sharp
-  // when the tier drops back to 1 on gesture end, eliminating any resolution
-  // degradation at the tier-1 boundary regardless of how fast the zoom-out is.
-  const singleTileOversample = useMemo(() => {
-    if (svgRenderW <= 0) return 1;
-    const pixelRatio = PixelRatio.get();
-    return Math.max(1, Math.floor(IOS_MAX_TEXTURE_PX / (svgRenderW * pixelRatio)));
-  }, [svgRenderW]);
-
-  // Single-texture fallback dimensions
-  const hiResW = svgRenderW * oversample;
-  const hiResH = svgRenderH * oversample;
+  // numTiles is the tile-grid dimension (derived from renderZoom).
+  // react-native-svg's SvgXml/SvgUri already multiply dimensions by
+  // PixelRatio.get() internally, so plain logical dimensions are already
+  // full DPR quality — no oversample wrapper needed.
+  const numTiles = renderZoom;
 
   // ── Visible-tile culling ──────────────────────────────────────────────────
   // Shared values that mirror JS state so the UI-thread reaction can read them
@@ -1716,45 +1685,15 @@ export function WarehouseMapView({
                     sits silently underneath it; when the tier drops back to
                     1 the grid fades away and this layer is immediately
                     visible at full quality — no re-mount, no repaint delay.
-                    Rendered at the maximum oversample the iOS texture limit
-                    allows so the quality matches the tile grid as closely
-                    as possible at tier 1. */}
+                    SvgXml multiplies dimensions by PixelRatio internally so
+                    logical dimensions already produce full DPR quality. */}
                 {svgXml ? (
-                  singleTileOversample > 1 ? (
-                    <View
-                      style={{
-                        width: svgRenderW * singleTileOversample,
-                        height: svgRenderH * singleTileOversample,
-                        position: "absolute",
-                        left: (svgRenderW - svgRenderW * singleTileOversample) / 2,
-                        top: (svgRenderH - svgRenderH * singleTileOversample) / 2,
-                        transform: [{ scale: 1 / singleTileOversample }],
-                      }}
-                    >
-                      <SvgXml
-                        xml={svgXml}
-                        width={svgRenderW * singleTileOversample}
-                        height={svgRenderH * singleTileOversample}
-                      />
-                    </View>
-                  ) : (
-                    <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
-                  )
+                  <SvgXml xml={svgXml} width={svgRenderW} height={svgRenderH} />
                 ) : svgUri ? (
                   // Cold-start fallback — svgXml not yet available; use SvgUri
                   // which can render from the URI while the XML fetch completes.
-                  <View
-                    style={{
-                      width: hiResW,
-                      height: hiResH,
-                      position: "absolute",
-                      left: (svgRenderW - hiResW) / 2,
-                      top: (svgRenderH - hiResH) / 2,
-                      transform: [{ scale: 1 / oversample }],
-                    }}
-                  >
-                    <SvgUri uri={svgUri} width={hiResW} height={hiResH} />
-                  </View>
+                  // SvgUri also handles DPR internally — no oversample needed.
+                  <SvgUri uri={svgUri} width={svgRenderW} height={svgRenderH} />
                 ) : null}
                 {/* ── Crossfade fade-out layer ──────────────────────────────
                     Holds the previous tier's tiles while new tiles render.
@@ -1767,47 +1706,52 @@ export function WarehouseMapView({
                     style={[StyleSheet.absoluteFill, fadeOutAnimatedStyle]}
                     pointerEvents="none"
                   >
-                    {fadeOutLayer.tiles.map(({ col, row, xml: tileXml }) => (
-                      <View
-                        key={`fade-${col}-${row}`}
-                        style={{
-                          width: svgRenderW,
-                          height: svgRenderH,
-                          position: "absolute",
-                          left: (col + 0.5) * (svgRenderW / fadeOutLayer.numTiles) - svgRenderW / 2,
-                          top: (row + 0.5) * (svgRenderH / fadeOutLayer.numTiles) - svgRenderH / 2,
-                          transform: [{ scale: 1 / fadeOutLayer.numTiles }],
-                        }}
-                      >
-                        <SvgXml xml={tileXml} width={svgRenderW} height={svgRenderH} />
-                      </View>
-                    ))}
+                    {fadeOutLayer.tiles.map(({ col, row, xml: tileXml }) => {
+                      const tileW = svgRenderW / fadeOutLayer.numTiles;
+                      const tileH = svgRenderH / fadeOutLayer.numTiles;
+                      return (
+                        <View
+                          key={`fade-${col}-${row}`}
+                          style={{
+                            width: tileW,
+                            height: tileH,
+                            position: "absolute",
+                            left: col * tileW,
+                            top: row * tileH,
+                          }}
+                        >
+                          <SvgXml xml={tileXml} width={tileW} height={tileH} />
+                        </View>
+                      );
+                    })}
                   </Animated.View>
                 )}
                 {/* ── Main tile layer — fades in on tier change ─────────── */}
                 <Animated.View style={[StyleSheet.absoluteFill, tileLayerAnimatedStyle]}>
                   {numTiles > 1 && tiles.length > 0 ? (
                     // Tiled path — render only visible tiles.
-                    // The base single-tile layer underneath stays painted;
-                    // the tile grid layers on top for full sharpness at
-                    // high zoom levels.
-                    tiles.map(({ col, row, xml: tileXml }) => (
-                      <View
-                        key={`${col}-${row}`}
-                        style={{
-                          width: svgRenderW,
-                          height: svgRenderH,
-                          position: "absolute",
-                          // Centre the tile's layout box so that scale(1/N)
-                          // pivots exactly around the tile's visual centre.
-                          left: (col + 0.5) * (svgRenderW / numTiles) - svgRenderW / 2,
-                          top: (row + 0.5) * (svgRenderH / numTiles) - svgRenderH / 2,
-                          transform: [{ scale: 1 / numTiles }],
-                        }}
-                      >
-                        <SvgXml xml={tileXml} width={svgRenderW} height={svgRenderH} />
-                      </View>
-                    ))
+                    // Each tile is positioned at its visual slot (col * tileW,
+                    // row * tileH) at the tile's actual size — no scale
+                    // transform needed. SvgXml handles DPR internally so this
+                    // produces full-resolution output at every zoom tier.
+                    tiles.map(({ col, row, xml: tileXml }) => {
+                      const tileW = svgRenderW / numTiles;
+                      const tileH = svgRenderH / numTiles;
+                      return (
+                        <View
+                          key={`${col}-${row}`}
+                          style={{
+                            width: tileW,
+                            height: tileH,
+                            position: "absolute",
+                            left: col * tileW,
+                            top: row * tileH,
+                          }}
+                        >
+                          <SvgXml xml={tileXml} width={tileW} height={tileH} />
+                        </View>
+                      );
+                    })
                   ) : null}
                 </Animated.View>
               </View>

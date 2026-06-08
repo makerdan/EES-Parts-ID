@@ -19,11 +19,29 @@ function native(): NativeApi {
 }
 
 /**
+ * Returns true when the LiDAR native module is genuinely present in this build
+ * (i.e. not an Expo Go stub).  We probe by checking that `isLiDARSupported` is
+ * an actual function on the module object — in Expo Go `requireNativeModule`
+ * succeeds but returns a hollow stub without any of the real methods.
+ *
+ * Cached at module load so the check only runs once per JS context.
+ */
+const _nativeModuleAvailable: boolean = (() => {
+  if (Platform.OS !== "ios") return false;
+  try {
+    const mod = requireNativeModule<NativeApi>("LidarMeasure");
+    return typeof (mod as Record<string, unknown>).isLiDARSupported === "function";
+  } catch {
+    return false;
+  }
+})();
+
+/**
  * Returns true when the current iOS device has a LiDAR scanner AND the native
  * module is available. Always false on Android and Web.
  */
 export function isLiDARSupported(): boolean {
-  if (Platform.OS !== "ios") return false;
+  if (!_nativeModuleAvailable) return false;
   try {
     return native().isLiDARSupported();
   } catch {
@@ -48,16 +66,15 @@ export function measureObject(timeoutSeconds = 4): Promise<LidarDimensions> {
   if (Platform.OS !== "ios") {
     return Promise.reject(new Error("LiDAR measurement is only available on iOS."));
   }
-  // Wrap in try/catch so a missing or stubbed native module (e.g. Expo Go)
-  // produces a clean rejected promise rather than a synchronous throw.
+  if (!_nativeModuleAvailable) {
+    return Promise.reject(
+      new Error("ERR_LIDAR_NOT_SUPPORTED: LiDAR native module is not available in this build."),
+    );
+  }
   try {
     return native().measureObject(timeoutSeconds);
   } catch (e) {
-    return Promise.reject(
-      e instanceof Error
-        ? e
-        : new Error("ERR_LIDAR_NOT_SUPPORTED: LiDAR native module is not available."),
-    );
+    return Promise.reject(e);
   }
 }
 
@@ -80,21 +97,15 @@ export function measureObject(timeoutSeconds = 4): Promise<LidarDimensions> {
 const NativeLidarDepthView: React.ComponentType<{
   style?: object;
   unit?: string;
-}> | null = (() => {
-  if (Platform.OS !== "ios") return null;
-  try {
-    const mod = requireNativeModule<NativeApi>("LidarMeasure");
-    // In Expo Go, requireNativeModule returns a hollow stub object — the real
-    // methods are absent.  Only call requireNativeViewManager when the module
-    // is genuinely present (has isLiDARSupported as a real function).
-    if (typeof (mod as Record<string, unknown>).isLiDARSupported !== "function") {
-      return null;
-    }
-    return requireNativeViewManager("LidarDepthView");
-  } catch {
-    return null;
-  }
-})();
+}> | null = _nativeModuleAvailable
+  ? (() => {
+      try {
+        return requireNativeViewManager("LidarDepthView");
+      } catch {
+        return null;
+      }
+    })()
+  : null;
 
 /**
  * Cancels an in-progress measureObject() call, pauses the ARSession, and
@@ -102,7 +113,7 @@ const NativeLidarDepthView: React.ComponentType<{
  * when no scan is running.
  */
 export function cancelMeasure(): void {
-  if (Platform.OS !== "ios") return;
+  if (!_nativeModuleAvailable) return;
   try {
     native().cancelMeasure();
   } catch {
