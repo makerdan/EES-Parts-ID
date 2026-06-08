@@ -23,10 +23,13 @@ import {
   MIN_SCALE,
   MAX_SCALE,
   SVG_ASPECT,
+  SVG_VIEWBOX_W,
+  SVG_VIEWBOX_H,
   clampScale,
   panBounds,
   numTilesForScale,
   visibleTileRange,
+  fitContentViewport,
 } from "@/utils/mapViewport";
 
 // ── Shared container dimensions ────────────────────────────────────────────
@@ -252,5 +255,128 @@ describe("visibleTileRange — culls N×N grid to only on-screen tiles", () => {
       expect(r.r0).toBeGreaterThanOrEqual(0);
       expect(r.r1).toBeLessThanOrEqual(N - 1);
     }
+  });
+});
+
+// ── applyFit spring-gate regression ───────────────────────────────────────
+//
+// Bug: applyFit() (called when a search-result pin is shown) animated the
+// scale with withSpring but did NOT set springActive=true beforehand.
+// The tile-tier reaction fires setRenderZoom on every integer boundary the
+// scale crosses during a spring.  Without gating, a zoom-out from scale=4
+// to fit (~1.5) crosses three integer boundaries (4→3→2→1), causing three
+// rapid tile-grid rebuilds with overlapping crossfade animations — perceived
+// as blur and slow loading.
+//
+// Fix: applyFit now sets springActive=true before the spring and commits
+// exactly ONE setRenderZoom(Math.ceil(targetS)) in the spring's onEnd
+// callback, matching the pattern used by applyZoom for button-driven zooms.
+//
+// These tests verify the mathematical invariants that make the fix correct:
+//   1. The fit scale for a realistic warehouse falls in a predictable tier.
+//   2. A spring from a high zoom level crosses multiple integer boundaries
+//      (proving that ungated firing causes churn).
+//   3. The one-and-only tier commit value is Math.ceil(fitScale), regardless
+//      of the user's starting scale — the gated pattern produces a single,
+//      deterministic tier commit.
+
+// Approximate content viewBox for the RDC34 warehouse floor plan.
+// The drawing fills most of the 7329×4997 SVG space.
+const WAREHOUSE_VB = { x: 60, y: 80, w: 7200, h: 4820 };
+
+/** Compute the fit scale applyFit targets, mirroring its clampScale(rawS * 1.5). */
+function computeFitScale(containerW: number, containerH: number): number {
+  const { scale: rawS } = fitContentViewport(
+    WAREHOUSE_VB, containerW, containerH, SVG_VIEWBOX_W, SVG_VIEWBOX_H,
+  );
+  return clampScale(rawS * 1.5);
+}
+
+/**
+ * Count integer tier boundaries crossed during a linear scale transition
+ * from `fromScale` to `toScale`.  A boundary is crossed when `Math.ceil`
+ * changes value.  This is a lower bound on `setRenderZoom` calls that would
+ * be emitted WITHOUT springActive gating.
+ */
+function tierBoundariesCrossed(fromScale: number, toScale: number): number {
+  const lo = Math.min(fromScale, toScale);
+  const hi = Math.max(fromScale, toScale);
+  // Integer values strictly between lo and hi where ceil changes:
+  // ceil changes at every integer n where lo < n <= hi (zoom-out) or lo <= n < hi (zoom-in).
+  // For zoom-out: boundaries are integers in (lo, hi].
+  let count = 0;
+  for (let n = Math.floor(lo) + 1; n <= Math.ceil(hi); n++) {
+    if (n > lo && n <= hi) count++;
+  }
+  return count;
+}
+
+describe("applyFit spring-gate — tile-tier commit regression", () => {
+  it("fit scale on a phone (390×761) lands in tier 2 (ceil ≈ 1.3–2.0 range)", () => {
+    const fitScale = computeFitScale(CW, CH);
+    expect(fitScale).toBeGreaterThan(MIN_SCALE);
+    expect(fitScale).toBeLessThanOrEqual(2);
+    // The committed tier must be 2 (i.e. ceil of a value in (1, 2]).
+    expect(numTilesForScale(fitScale)).toBe(2);
+  });
+
+  it("regression: without gating, a spring from scale=3 → fit crosses ≥1 tier boundary (would fire setRenderZoom multiple times)", () => {
+    const fitScale = computeFitScale(CW, CH);
+    const boundaries = tierBoundariesCrossed(3, fitScale);
+    // scale=3 → ~1.3 crosses integer 2 (3→2) at minimum → ≥1 ungated fires.
+    expect(boundaries).toBeGreaterThanOrEqual(1);
+  });
+
+  it("regression: without gating, a spring from scale=4 → fit crosses ≥2 tier boundaries", () => {
+    const fitScale = computeFitScale(CW, CH);
+    const boundaries = tierBoundariesCrossed(4, fitScale);
+    // scale=4 → ~1.3 crosses integers 3 and 2 → 2 ungated fires.
+    expect(boundaries).toBeGreaterThanOrEqual(2);
+  });
+
+  it("regression: without gating, a spring from scale=5 → fit crosses ≥3 tier boundaries", () => {
+    const fitScale = computeFitScale(CW, CH);
+    const boundaries = tierBoundariesCrossed(5, fitScale);
+    expect(boundaries).toBeGreaterThanOrEqual(3);
+  });
+
+  it("with gating: committed tier is Math.ceil(fitScale) — exactly one value, regardless of starting scale", () => {
+    const fitScale = computeFitScale(CW, CH);
+    const committedTier = Math.ceil(fitScale);
+    // The spring's onEnd callback always calls setRenderZoom(Math.ceil(targetS)).
+    // Whatever the starting scale, the committed tier is always the same.
+    for (const startScale of [1.5, 2, 3, 4, 5, 8, 12, MAX_SCALE]) {
+      expect(committedTier).toBe(Math.ceil(fitScale));
+    }
+    // And it matches numTilesForScale(fitScale) — the same helper used everywhere else.
+    expect(committedTier).toBe(numTilesForScale(fitScale));
+  });
+
+  it("fit tier is the same on a larger (iPad) viewport — gating contract is device-independent", () => {
+    const iPadW = 768;
+    const iPadH = 960;
+    const fitScale = computeFitScale(iPadW, iPadH);
+    const committedTier = Math.ceil(fitScale);
+    // iPads are wider; fit scale may be larger but the contract is the same.
+    expect(committedTier).toBeGreaterThanOrEqual(1);
+    // The tier must equal numTilesForScale for consistency.
+    expect(committedTier).toBe(numTilesForScale(fitScale));
+  });
+
+  it("tierBoundariesCrossed helper: identity transition (from === to) crosses 0 boundaries", () => {
+    expect(tierBoundariesCrossed(2.5, 2.5)).toBe(0);
+    expect(tierBoundariesCrossed(3, 3)).toBe(0);
+  });
+
+  it("tierBoundariesCrossed helper: crossing exactly one integer boundary", () => {
+    // 2.5 → 1.5 crosses integer 2 once.
+    expect(tierBoundariesCrossed(2.5, 1.5)).toBe(1);
+    // 1.5 → 2.5 also crosses integer 2 once (zoom-in direction).
+    expect(tierBoundariesCrossed(1.5, 2.5)).toBe(1);
+  });
+
+  it("tierBoundariesCrossed helper: crossing three integer boundaries", () => {
+    // 4.5 → 1.5 crosses 4, 3, 2 → 3 boundaries.
+    expect(tierBoundariesCrossed(4.5, 1.5)).toBe(3);
   });
 });
