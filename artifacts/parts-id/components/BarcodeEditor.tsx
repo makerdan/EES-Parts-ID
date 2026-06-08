@@ -26,6 +26,7 @@ interface BarcodeEditorProps {
 }
 
 export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEditorProps) {
+  "use no memo";
   const colors = useColors();
   const queryClient = useQueryClient();
   const [barcodes, setBarcodes] = useState<string[]>(item?.barcodes ?? []);

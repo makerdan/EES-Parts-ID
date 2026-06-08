@@ -134,6 +134,7 @@ export function MeasurePartScreen({
   initialDims,
   adminToken,
 }: MeasurePartScreenProps) {
+  "use no memo";
   const { settings, updateSetting } = useApp();
   const unit = settings.dimensionUnit;
   const [permission, requestPermission] = useCameraPermissions();
