@@ -53,9 +53,12 @@ describe("lidar-measure mock (test-environment interface)", () => {
 // we exercise the real JS guards (not the mock).
 
 jest.mock("expo-modules-core", () => ({
-  requireNativeModule: jest.fn(() => {
-    throw new Error("Native module not found: LidarMeasure");
-  }),
+  requireNativeModule: jest.fn(() => ({
+    isLiDARSupported: jest.fn().mockReturnValue(false),
+    measureObject: jest.fn().mockRejectedValue(new Error("Native module not found: LidarMeasure")),
+    cancelMeasure: jest.fn(),
+  })),
+  requireNativeViewManager: jest.fn().mockReturnValue({}),
 }));
 
 import { requireNativeModule } from "expo-modules-core";

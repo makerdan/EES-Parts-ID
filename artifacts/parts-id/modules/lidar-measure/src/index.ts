@@ -41,6 +41,7 @@ const _nativeModuleAvailable: boolean = (() => {
  * module is available. Always false on Android and Web.
  */
 export function isLiDARSupported(): boolean {
+  if (Platform.OS !== "ios") return false;
   if (!_nativeModuleAvailable) return false;
   try {
     return native().isLiDARSupported();
