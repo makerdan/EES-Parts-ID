@@ -3,6 +3,7 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { Readable } = require("stream");
 const { pipeline } = require("stream/promises");
+const { findMissingDirectives } = require("./check-react-compiler-directives");
 
 let metroProcess = null;
 
@@ -524,40 +525,23 @@ function updateManifests(manifests, timestamp, baseUrl, assetsByHash) {
  * to silence this check for a specific component.
  */
 function checkReactCompilerDirectives() {
-  const LINE_THRESHOLD = 400;
   const SCAN_DIRS = [
     path.join(projectRoot, "app"),
     path.join(projectRoot, "components"),
   ];
 
-  function* walkTsx(dir) {
-    if (!fs.existsSync(dir)) return;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) yield* walkTsx(full);
-      else if (entry.name.endsWith(".tsx") || entry.name.endsWith(".ts")) yield full;
-    }
-  }
-
-  const missing = [];
-  for (const dir of SCAN_DIRS) {
-    for (const file of walkTsx(dir)) {
-      const src = fs.readFileSync(file, "utf8");
-      const lines = src.split("\n").length;
-      if (lines < LINE_THRESHOLD) continue;
-      if (!src.includes('"use no memo"')) {
-        missing.push(`  ${path.relative(projectRoot, file)} (${lines} lines)`);
-      }
-    }
-  }
+  const missing = findMissingDirectives(SCAN_DIRS);
 
   if (missing.length > 0) {
+    const lines = missing.map(
+      (m) => `  ${path.relative(projectRoot, m.file)} (${m.lines} lines)`
+    );
     console.error(
       "\n[Build Guard] React Compiler crash prevention:\n" +
       "The following large components are missing the \"use no memo\" directive.\n" +
       "Add `\"use no memo\";` as the first statement inside each component function body\n" +
       "to prevent babel-plugin-react-compiler from crashing the Metro Babel worker thread.\n\n" +
-      missing.join("\n") + "\n"
+      lines.join("\n") + "\n"
     );
     process.exit(1);
   }
