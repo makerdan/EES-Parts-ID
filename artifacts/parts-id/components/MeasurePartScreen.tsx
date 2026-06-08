@@ -140,7 +140,12 @@ export function MeasurePartScreen({
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>("preview");
   const [estimateError, setEstimateError] = useState<string | null>(null);
-  const [lidarAvailable] = useState<boolean>(() => isLiDARSupported());
+  // Use the JS model-name check so the LiDAR option surfaces correctly on
+  // LiDAR-capable hardware even when running in Expo Go (where the native
+  // module is not bundled and isLiDARSupported() always returns false).
+  // The actual scan call (measureObject) still rejects gracefully if the
+  // native module is absent at runtime.
+  const [lidarAvailable] = useState<boolean>(() => isLiDARCapableDevice());
   const [scanSecsLeft, setScanSecsLeft] = useState(LIDAR_TIMEOUT_S);
 
   const [lengthStr, setLengthStr] = useState("");
