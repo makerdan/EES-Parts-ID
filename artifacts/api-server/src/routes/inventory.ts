@@ -2085,6 +2085,7 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
               type: "text",
               text: `Look at this image of an electrical or mechanical part.
 Estimate the part's physical dimensions in millimetres.
+If you can see a common scale reference object in the frame, use its known dimensions to anchor your estimate. Reference sizes: US quarter ≈ 24.26 mm diameter; US dollar bill 156 × 66 mm; credit card 85.6 × 54 mm; standard 12-inch ruler 305 mm long.
 Reply with ONLY a JSON object — no prose — in exactly this shape:
 {"length":null,"width":null,"height":null,"diameter":null}
 Use null for any value you cannot estimate with reasonable confidence.
@@ -2170,6 +2171,7 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
               type: "text",
               text: `Look at this image of an electrical or mechanical part.
 Estimate the part's physical dimensions in millimetres.
+If you can see a common scale reference object in the frame, use its known dimensions to anchor your estimate. Reference sizes: US quarter ≈ 24.26 mm diameter; US dollar bill 156 × 66 mm; credit card 85.6 × 54 mm; standard 12-inch ruler 305 mm long.
 Reply with ONLY a JSON object — no prose — in exactly this shape:
 {"length":null,"width":null,"height":null,"diameter":null}
 Use null for any value you cannot estimate with reasonable confidence.

@@ -613,6 +613,9 @@ export function MeasurePartScreen({
                       <Text style={ms.subText}>
                         AI will estimate dimensions from the photo.
                       </Text>
+                      <Text style={ms.subText}>
+                        For better accuracy, place a coin, ruler, or dollar bill next to the part as a scale reference.
+                      </Text>
                     </>
                   ) : (
                     <Text style={ms.subText}>
