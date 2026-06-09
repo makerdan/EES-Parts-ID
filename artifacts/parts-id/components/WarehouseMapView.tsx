@@ -1036,7 +1036,7 @@ export function WarehouseMapView({
     if (!vb || w === 0) return;
     pendingFit.current = false;
     const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
-    const s = clampScale(rawS * 1.5);
+    const s = ZOOM_STOPS[0].scale;
     const ratio = rawS > 0 ? s / rawS : 1;
     const tx = rawTX * ratio;
     const ty = rawTY * ratio;
@@ -1077,7 +1077,7 @@ export function WarehouseMapView({
       targetS = 1; targetTX = 0; targetTY = 0;
     } else {
       const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
-      targetS = clampScale(rawS * 1.5);
+      targetS = ZOOM_STOPS[0].scale;
       const ratio = rawS > 0 ? targetS / rawS : 1;
       targetTX = rawTX * ratio;
       targetTY = rawTY * ratio;
