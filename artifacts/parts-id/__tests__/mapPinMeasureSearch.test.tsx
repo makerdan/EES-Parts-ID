@@ -295,6 +295,7 @@ jest.mock("expo-asset", () => ({
 
 jest.mock("@/utils/floorPlanCache", () => ({
   getCachedData:     jest.fn().mockReturnValue(null),
+  getCachedHash:     jest.fn().mockReturnValue(null),
   getIfValid:        jest.fn().mockReturnValue(null),
   hasCachedData:     jest.fn().mockReturnValue(false),
   initPersistRead:   jest.fn().mockReturnValue(Promise.resolve()),
@@ -311,9 +312,12 @@ jest.mock("@/utils/mapViewport", () => ({
   SVG_ASPECT:          3592.55 / 2457.41,
   MIN_SCALE:           0.5,
   MAX_SCALE:           5,
+  ZOOM_STOPS:          [{ scale: 1.5 }, { scale: 4 }, { scale: 10 }, { scale: 22 }, { scale: 45 }],
   parseContentViewBox: jest.fn().mockReturnValue(null),
   fitContentViewport:  jest.fn(),
   makeTileViewBox:     jest.fn(),
+  tileGridSize:        jest.fn().mockReturnValue(1),
+  zoomStopForScale:    jest.fn().mockReturnValue(0),
 }));
 
 // ─── PhotoScreen-specific mocks ───────────────────────────────────────────────

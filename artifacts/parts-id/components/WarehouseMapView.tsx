@@ -33,6 +33,7 @@ import {
   ActivityIndicator,
   AppState,
   type AppStateStatus,
+  Image,
   LayoutChangeEvent,
   Platform,
   Pressable,
@@ -46,6 +47,7 @@ import { Feather } from "@expo/vector-icons";
 import { Asset } from "expo-asset";
 import {
   getCachedData,
+  getCachedHash,
   getIfValid,
   hasCachedData,
   initPersistRead,
@@ -54,6 +56,11 @@ import {
   setFallbackEmpty,
   type SvgData,
 } from "@/utils/floorPlanCache";
+import {
+  cleanStaleCacheDirs,
+  fetchTile,
+  prefetchZoomLevel,
+} from "@/utils/tilePyramidCache";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
@@ -78,13 +85,15 @@ import {
   SVG_ASPECT,
   MIN_SCALE,
   MAX_SCALE,
+  ZOOM_STOPS,
   parseContentViewBox,
   fitContentViewport,
-  makeTileViewBox,
   clampScale,
   panBounds,
   computeFocusPan,
   runFocusAisleEffect,
+  tileGridSize,
+  zoomStopForScale,
   type ContentViewBox,
 } from "@/utils/mapViewport";
 
@@ -465,6 +474,54 @@ export function ZoneOverlayItem({
         {zone.aisleId}
       </AnimatedSvgText>
     </G>
+  );
+}
+
+// ── PNG tile component ────────────────────────────────────────────────────────
+// Downloads the pre-rasterised PNG tile from the API (cached on-device via
+// tilePyramidCache) and renders it as a React Native Image.  The base
+// SvgXml/SvgUri layer underneath acts as a placeholder while the tile loads —
+// when the Image resolves it paints on top.  Unmounting cancels the in-flight
+// download via the `cancelled` flag.
+function PngTile({
+  z,
+  col,
+  row,
+  svgHash,
+  tileW,
+  tileH,
+}: {
+  z: number;
+  col: number;
+  row: number;
+  svgHash: string;
+  tileW: number;
+  tileH: number;
+}) {
+  const [uri, setUri] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!svgHash) return;
+    let cancelled = false;
+    fetchTile(z, col, row, svgHash)
+      .then((u) => { if (!cancelled) setUri(u); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [z, col, row, svgHash]);
+
+  if (!uri) return null;
+  return (
+    <Image
+      source={{ uri }}
+      style={{
+        width: tileW,
+        height: tileH,
+        position: "absolute",
+        left: col * tileW,
+        top: row * tileH,
+      }}
+      fadeDuration={0}
+    />
   );
 }
 
@@ -908,6 +965,7 @@ export function WarehouseMapView({
     translateY.value = ty;
     savedTX.value = tx;
     savedTY.value = ty;
+    setRenderZoom(zoomStopForScale(s));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -952,7 +1010,7 @@ export function WarehouseMapView({
       'worklet';
       if (springGeneration.value !== myGen) return;
       springActive.value = false;
-      runOnJS(setRenderZoom)(Math.ceil(targetS));
+      runOnJS(setRenderZoom)(zoomStopForScale(targetS));
     });
     translateX.value = withSpring(targetTX, { damping: 26, stiffness: 220 });
     translateY.value = withSpring(targetTY, { damping: 26, stiffness: 220 });
@@ -1067,6 +1125,7 @@ export function WarehouseMapView({
             const clampedS = clampScale(s);
             scale.value = clampedS;
             savedScale.value = clampedS;
+            setRenderZoom(zoomStopForScale(clampedS));
 
             // Always clamp tx/ty to the bounds that match the current container
             // dimensions so a portrait-saved viewport doesn't bleed off-screen
@@ -1114,27 +1173,15 @@ export function WarehouseMapView({
   // Falls back to single-texture SvgUri (with capped oversample) while svgXml
   // is not yet available (first cold start before the bundle fetch completes).
 
-  // Track the integer zoom tier on the JS thread (avoids churn during pinch).
-  const [renderZoom, setRenderZoom] = useState(1);
-  useAnimatedReaction(
-    () => Math.ceil(scale.value),
-    (tier, prevTier) => {
-      // Allow mid-pinch tier advances: removing the pinchActive gate lets the
-      // tile grid ratchet up as soon as the pinch scale crosses an integer
-      // boundary during the gesture.  The crossfade system handles the visual
-      // transition seamlessly so there is no blank frame at the swap.
-      // springActive is still gated so button-driven springs commit once on end.
-      if (tier !== prevTier && !springActive.value) {
-        runOnJS(setRenderZoom)(tier);
-      }
-    },
-  );
+  // renderZoom is the committed zoom-stop index (0–4).  It only changes when
+  // a spring animation settles on a discrete ZOOM_STOPS entry, preventing
+  // tile-grid churn during continuous pinch gestures.
+  // Initial value 0 = z0 (overview stop, scale≈1.5×).
+  const [renderZoom, setRenderZoom] = useState(0);
 
-  // numTiles is the tile-grid dimension (derived from renderZoom).
-  // react-native-svg's SvgXml/SvgUri already multiply dimensions by
-  // PixelRatio.get() internally, so plain logical dimensions are already
-  // full DPR quality — no oversample wrapper needed.
-  const numTiles = renderZoom;
+  // numTiles is the tile-grid dimension for the current zoom stop: 2^renderZoom.
+  // z0 → 1×1, z1 → 2×2, z2 → 4×4, z3 → 8×8, z4 → 16×16.
+  const numTiles = tileGridSize(renderZoom);
 
   // ── Visible-tile culling ──────────────────────────────────────────────────
   // Shared values that mirror JS state so the UI-thread reaction can read them
@@ -1209,6 +1256,13 @@ export function WarehouseMapView({
   const [svgXml, setSvgXml] = useState(() => getCachedData()?.xml ?? "");
   const [svgLoading, setSvgLoading] = useState(() => !hasCachedData());
 
+  // svgHash is the content-hash of the currently loaded floor plan SVG.
+  // It is used as a cache-directory key for PNG tiles so stale tiles are never
+  // served after an admin uploads a new floor plan.
+  const [svgHash, setSvgHash] = useState(() => getCachedHash() ?? "");
+  const svgHashRef = useRef(svgHash);
+  useEffect(() => { svgHashRef.current = svgHash; }, [svgHash]);
+
   // ── Server floor-plan ETag wiring ────────────────────────────────────────
   // Poll /floor-plan/meta every 60 s while mounted.  When the server returns a
   // different hash than the one first seen after mount (i.e. an admin uploaded a
@@ -1275,6 +1329,7 @@ export function WarehouseMapView({
         setSvgUri(afterPersist.uri);
         setInnerXml(afterPersist.innerXml);
         setSvgXml(afterPersist.xml);
+        setSvgHash(getCachedHash() ?? "");
         setSvgLoading(false);
       }
 
@@ -1288,6 +1343,7 @@ export function WarehouseMapView({
         setSvgUri(afterLoad.uri);
         setInnerXml(afterLoad.innerXml);
         setSvgXml(afterLoad.xml);
+        setSvgHash(getCachedHash() ?? "");
       }
       setSvgLoading(false);
     })();
@@ -1320,20 +1376,35 @@ export function WarehouseMapView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [svgXml]);
 
+  // ── Tile pyramid warmup + stale-cache cleanup ────────────────────────────
+  // When the SVG hash is known, pre-warm z0–z2 in the background so the first
+  // zoom-in lands on cached tiles with no visible fetch latency.  On unmount
+  // (or when the hash changes), remove any tile-cache directories whose hash
+  // no longer matches the current floor plan to prevent unbounded disk usage.
+  useEffect(() => {
+    if (!svgHash || Platform.OS === "web") return;
+    // Kick off warmup via the API; failure is non-fatal.
+    if (SVG_API_BASE) {
+      fetch(`${SVG_API_BASE}/floor-plan/tiles/warmup`, { method: "POST" }).catch(() => {});
+    }
+    // Also clean stale on-device cache dirs from previous floor-plan versions.
+    cleanStaleCacheDirs(svgHash).catch(() => {});
+  }, [svgHash]);
+
   // ── Crossfade between tile tiers ─────────────────────────────────────────
-  // When the integer zoom tier advances (numTiles changes), the old tile grid
-  // is kept mounted in a fade-out layer while the new grid fades in over 150 ms
+  // When the zoom stop commits (numTiles changes), the old tile grid is kept
+  // mounted in a fade-out layer while the new PNG tiles fade in over 150 ms
   // so there is never a blank frame at the boundary.
   //
   // The snapshot of the previous tier's tiles is captured during render via
   // two refs that are updated at the end of every render cycle:
-  //   prevRenderZoomRef  — renderZoom from the last render
+  //   prevRenderZoomRef  — renderZoom from the last render (zoom stop index)
   //   prevTilesRef       — tiles[] from the last render
   // On the render where renderZoom changes, these still hold the OLD values
   // (they were written at the end of the previous render), giving us the
   // exact tile set to fade out.
-  interface TileSpec { col: number; row: number; xml: string; }
-  interface FadeLayer { tiles: TileSpec[]; numTiles: number; }
+  interface TileSpec { col: number; row: number; }
+  interface FadeLayer { tiles: TileSpec[]; z: number; numTiles: number; }
 
   const prevRenderZoomRef = useRef(renderZoom);
   const prevTilesRef = useRef<TileSpec[]>([]);
@@ -1348,38 +1419,31 @@ export function WarehouseMapView({
   if (isTierChange && prevTilesRef.current.length > 0) {
     pendingFadeRef.current = {
       tiles: prevTilesRef.current,
-      numTiles: prevRenderZoomRef.current,
+      z: prevRenderZoomRef.current,
+      numTiles: tileGridSize(prevRenderZoomRef.current),
     };
   }
 
-  // ── Tile XML memoisation ──────────────────────────────────────────────────
-  // Produces SvgXml strings for each visible tile by replacing the viewBox
-  // attribute in the cached SVG text.  Recomputes only when the visible range
-  // or numTiles changes — not on every animation frame.
+  // ── Tile position memoisation ─────────────────────────────────────────────
+  // Produces (col, row) pairs for each visible tile.  Recomputes only when
+  // the visible range or numTiles changes — not on every animation frame.
+  // PNG tile URIs are fetched asynchronously inside PngTile components so
+  // this memo stays pure and fast.
   const tiles = useMemo<TileSpec[]>(() => {
-    // Web: the floor plan is embedded directly inside the shared SVG viewport
-    // via dangerouslySetInnerHTML — no separate tiling layer, no Metal texture-
-    // size concern, and no gap artefacts between adjacent tiles.
-    // Native only: adaptive N×N tiling keeps each tile within the GPU texture
-    // limit while matching the compositor resolution at every zoom level.
-    if (numTiles <= 1 || !svgXml || Platform.OS === "web") return [];
+    // Web: floor plan is embedded inside the shared SVG viewport — no tiling.
+    // Native only: PNG tile grid.
+    if (numTiles <= 1 || !svgHash || Platform.OS === "web") return [];
     const N = numTiles;
     const { c0, c1, r0, r1, N: rangeN } = visibleRange;
-    // Wait until the reaction has caught up to the current N.
     if (rangeN !== N) return [];
     const result: TileSpec[] = [];
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) {
-        // Replace the viewBox attribute so this tile renders only its slice.
-        const tileXml = svgXml.replace(
-          /viewBox="[^"]+"/,
-          `viewBox="${makeTileViewBox(c, r, N, SVG_VIEWBOX_W, SVG_VIEWBOX_H)}"`,
-        );
-        result.push({ col: c, row: r, xml: tileXml });
+        result.push({ col: c, row: r });
       }
     }
     return result;
-  }, [numTiles, svgXml, visibleRange]);
+  }, [numTiles, svgHash, visibleRange]);
 
   // Update the snapshot refs at the END of every render so next render sees
   // the values from this render (ref mutations during render are safe in React).
@@ -1448,6 +1512,10 @@ export function WarehouseMapView({
 
   // ── Pinch gesture ──────────────────────────────────────────────────────────
   const pinchGesture = Gesture.Pinch()
+    .onBegin(() => {
+      'worklet';
+      runOnJS(_cancelPrefetch)();
+    })
     .onUpdate((e) => {
       const newScale = clamp(savedScale.value * e.scale, MIN_SCALE, MAX_SCALE);
       scale.value = newScale;
@@ -1493,12 +1561,105 @@ export function WarehouseMapView({
       translateY.value = clamp(newTY, -maxY, maxY);
     })
     .onEnd(() => {
-      savedScale.value = scale.value;
-      savedTX.value = translateX.value;
-      savedTY.value = translateY.value;
-      runOnJS(setRenderZoom)(Math.ceil(scale.value));
-      runOnJS(persistViewport)(scale.value, translateX.value, translateY.value);
+      'worklet';
+      // Snap the scale to the nearest discrete zoom stop and commit the stop
+      // index to renderZoom via a short spring.  savedScale/TX/TY are written
+      // inside snapToNearestZoomStop so persistViewport is called with the
+      // snapped values, not the raw finger-release position.
+      runOnJS(snapToNearestZoomStop)();
     });
+
+  // ── Prefetch helpers ──────────────────────────────────────────────────────
+  // Debounce tile prefetch so rapid zoom taps don't fan out dozens of fetches.
+  // An AbortController cancels tiles still being downloaded when the user
+  // starts a new gesture before the previous prefetch finishes.
+  const prefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prefetchAbortRef = useRef<AbortController | null>(null);
+  const visibleRangeRef = useRef(visibleRange);
+  useEffect(() => { visibleRangeRef.current = visibleRange; }, [visibleRange]);
+
+  const _cancelPrefetch = useCallback(() => {
+    if (prefetchTimerRef.current !== null) {
+      clearTimeout(prefetchTimerRef.current);
+      prefetchTimerRef.current = null;
+    }
+    if (prefetchAbortRef.current !== null) {
+      prefetchAbortRef.current.abort();
+      prefetchAbortRef.current = null;
+    }
+  }, []);
+
+  const _triggerPrefetch = useCallback((stopIdx: number) => {
+    _cancelPrefetch();
+    const nextStop = Math.min(ZOOM_STOPS.length - 1, stopIdx + 1);
+    if (nextStop === stopIdx || Platform.OS === "web") return;
+    prefetchTimerRef.current = setTimeout(() => {
+      const hash = svgHashRef.current;
+      if (!hash) return;
+
+      // Compute the visible range in NEXT-level grid coordinates.
+      // visibleRangeRef holds indices for the current (stopIdx) grid;
+      // the next level doubles the grid in each dimension.  Re-derive from
+      // the raw viewport transform so the result is always in nextStop-space.
+      const nextN = tileGridSize(nextStop);
+      const W = svgRenderWV.value;
+      if (W <= 0) return;
+      const H = W / SVG_ASPECT;
+      const Z = scale.value;
+      const tx = translateX.value;
+      const ty = translateY.value;
+      const cW = containerWRef.current;
+      const cH = containerHRef.current;
+      if (cW <= 0 || cH <= 0) return;
+      const tileW = W / nextN;
+      const tileH = H / nextN;
+      const visCX = W / 2 - tx / Z;
+      const visCY = H / 2 - ty / Z;
+      const visW = cW / Z;
+      const visH = cH / Z;
+      const nextRange = {
+        c0: Math.max(0, Math.floor((visCX - visW / 2) / tileW) - 1),
+        c1: Math.min(nextN - 1, Math.ceil((visCX + visW / 2) / tileW)),
+        r0: Math.max(0, Math.floor((visCY - visH / 2) / tileH) - 1),
+        r1: Math.min(nextN - 1, Math.ceil((visCY + visH / 2) / tileH)),
+      };
+
+      const ctrl = new AbortController();
+      prefetchAbortRef.current = ctrl;
+      prefetchZoomLevel(nextStop, nextRange, hash, ctrl.signal).catch(() => {});
+    }, 300);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_cancelPrefetch]);
+
+  // ── Snap to nearest ZOOM_STOP after pinch ends ────────────────────────────
+  // Called via runOnJS from the pinch gesture onEnd worklet.  Springs the
+  // scale to the nearest discrete stop, then commits the stop index to
+  // renderZoom and kicks off a debounced prefetch of the next stop's tiles.
+  const snapToNearestZoomStop = useCallback(() => {
+    const stopIdx = zoomStopForScale(scale.value);
+    const targetScale = ZOOM_STOPS[stopIdx].scale;
+    pinFocusModeV.value = 0;
+    const { maxX, maxY } = panBounds(containerWRef.current, containerHRef.current, targetScale);
+    const newTX = Math.max(-maxX, Math.min(maxX, translateX.value));
+    const newTY = Math.max(-maxY, Math.min(maxY, translateY.value));
+    springActive.value = true;
+    springGeneration.value += 1;
+    const myGen = springGeneration.value;
+    scale.value = withSpring(targetScale, { damping: 26, stiffness: 220 }, () => {
+      'worklet';
+      if (springGeneration.value !== myGen) return;
+      springActive.value = false;
+      runOnJS(setRenderZoom)(stopIdx);
+      runOnJS(_triggerPrefetch)(stopIdx);
+    });
+    translateX.value = withSpring(newTX, { damping: 26, stiffness: 220 });
+    translateY.value = withSpring(newTY, { damping: 26, stiffness: 220 });
+    savedScale.value = targetScale;
+    savedTX.value = newTX;
+    savedTY.value = newTY;
+    persistViewport(targetScale, newTX, newTY);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persistViewport, _triggerPrefetch]);
 
   // Stable ref for onPanStart so the worklet always calls the latest version
   // without needing to re-create the gesture on every render.
@@ -1515,6 +1676,7 @@ export function WarehouseMapView({
       // A pan gesture ends the pin-focus-zoom phase so subsequent pinches
       // revert to the normal finger-focal-point behaviour.
       pinFocusModeV.value = 0;
+      runOnJS(_cancelPrefetch)();
       runOnJS(_firePanStart)();
     })
     .onUpdate((e) => {
@@ -1570,7 +1732,9 @@ export function WarehouseMapView({
       // and this callback belongs to a superseded spring — skip it entirely.
       if (springGeneration.value !== myGen) return;
       springActive.value = false;
-      runOnJS(setRenderZoom)(Math.ceil(newScale));
+      const stopIdx = zoomStopForScale(newScale);
+      runOnJS(setRenderZoom)(stopIdx);
+      runOnJS(_triggerPrefetch)(stopIdx);
     });
     translateX.value = withSpring(newTX, { damping: 26, stiffness: 220 });
     translateY.value = withSpring(newTY, { damping: 26, stiffness: 220 });
@@ -1579,15 +1743,21 @@ export function WarehouseMapView({
     savedTY.value = newTY;
     persistViewport(newScale, newTX, newTY);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [svgRenderW, svgRenderH, containerW, containerH, persistViewport]);
+  }, [svgRenderW, svgRenderH, containerW, containerH, persistViewport, _triggerPrefetch]);
 
+  // Zoom buttons step through discrete ZOOM_STOPS rather than multiplying by
+  // a fixed ratio, so each tap lands exactly on a preset stop.
   const handleZoomIn = useCallback(() => {
-    applyZoom(scale.value * 1.5);
+    const currentStop = zoomStopForScale(scale.value);
+    const nextStop = Math.min(ZOOM_STOPS.length - 1, currentStop + 1);
+    applyZoom(ZOOM_STOPS[nextStop].scale);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyZoom]);
 
   const handleZoomOut = useCallback(() => {
-    applyZoom(scale.value / 1.5);
+    const currentStop = zoomStopForScale(scale.value);
+    const prevStop = Math.max(0, currentStop - 1);
+    applyZoom(ZOOM_STOPS[prevStop].scale);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyZoom]);
 
@@ -1706,53 +1876,34 @@ export function WarehouseMapView({
                     style={[StyleSheet.absoluteFill, fadeOutAnimatedStyle]}
                     pointerEvents="none"
                   >
-                    {fadeOutLayer.tiles.map(({ col, row, xml: tileXml }) => {
-                      const tileW = svgRenderW / fadeOutLayer.numTiles;
-                      const tileH = svgRenderH / fadeOutLayer.numTiles;
-                      return (
-                        <View
-                          key={`fade-${col}-${row}`}
-                          style={{
-                            width: tileW,
-                            height: tileH,
-                            position: "absolute",
-                            left: col * tileW,
-                            top: row * tileH,
-                          }}
-                        >
-                          <SvgXml xml={tileXml} width={tileW} height={tileH} />
-                        </View>
-                      );
-                    })}
+                    {fadeOutLayer.tiles.map(({ col, row }) => (
+                      <PngTile
+                        key={`fade-${col}-${row}`}
+                        z={fadeOutLayer.z}
+                        col={col}
+                        row={row}
+                        svgHash={svgHash}
+                        tileW={svgRenderW / fadeOutLayer.numTiles}
+                        tileH={svgRenderH / fadeOutLayer.numTiles}
+                      />
+                    ))}
                   </Animated.View>
                 )}
-                {/* ── Main tile layer — fades in on tier change ─────────── */}
+                {/* ── Main tile layer — fades in on zoom-stop commit ─────── */}
                 <Animated.View style={[StyleSheet.absoluteFill, tileLayerAnimatedStyle]}>
-                  {numTiles > 1 && tiles.length > 0 ? (
-                    // Tiled path — render only visible tiles.
-                    // Each tile is positioned at its visual slot (col * tileW,
-                    // row * tileH) at the tile's actual size — no scale
-                    // transform needed. SvgXml handles DPR internally so this
-                    // produces full-resolution output at every zoom tier.
-                    tiles.map(({ col, row, xml: tileXml }) => {
-                      const tileW = svgRenderW / numTiles;
-                      const tileH = svgRenderH / numTiles;
-                      return (
-                        <View
+                  {numTiles > 1 && tiles.length > 0
+                    ? tiles.map(({ col, row }) => (
+                        <PngTile
                           key={`${col}-${row}`}
-                          style={{
-                            width: tileW,
-                            height: tileH,
-                            position: "absolute",
-                            left: col * tileW,
-                            top: row * tileH,
-                          }}
-                        >
-                          <SvgXml xml={tileXml} width={tileW} height={tileH} />
-                        </View>
-                      );
-                    })
-                  ) : null}
+                          z={renderZoom}
+                          col={col}
+                          row={row}
+                          svgHash={svgHash}
+                          tileW={svgRenderW / numTiles}
+                          tileH={svgRenderH / numTiles}
+                        />
+                      ))
+                    : null}
                 </Animated.View>
               </View>
             ) : !svgLoading ? (

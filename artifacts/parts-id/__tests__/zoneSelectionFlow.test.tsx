@@ -233,6 +233,7 @@ jest.mock("expo-asset", () => ({
 
 jest.mock("@/utils/floorPlanCache", () => ({
   getCachedData:        jest.fn().mockReturnValue(null),
+  getCachedHash:        jest.fn().mockReturnValue(null),
   getIfValid:           jest.fn().mockReturnValue(null),
   hasCachedData:        jest.fn().mockReturnValue(false),
   initPersistRead:      jest.fn().mockReturnValue(Promise.resolve()),
@@ -250,10 +251,13 @@ jest.mock("@/utils/mapViewport", () => ({
   MIN_SCALE:           0.5,
   MAX_SCALE:           5,
   FIT_PADDING:         16,
+  ZOOM_STOPS:          [{ scale: 1.5 }, { scale: 4 }, { scale: 10 }, { scale: 22 }, { scale: 45 }],
   parseContentViewBox: jest.fn().mockReturnValue(null),
   fitContentViewport:  jest.fn().mockReturnValue({ scale: 1, tx: 0, ty: 0 }),
   makeTileViewBox:     jest.fn().mockReturnValue("0 0 100 100"),
   computeFocusPan:     jest.fn().mockReturnValue({ tx: 0, ty: 0 }),
+  tileGridSize:        jest.fn().mockReturnValue(1),
+  zoomStopForScale:    jest.fn().mockReturnValue(0),
 }));
 
 // ─── AppContext ───────────────────────────────────────────────────────────────

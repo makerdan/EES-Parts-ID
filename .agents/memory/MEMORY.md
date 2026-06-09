@@ -4,3 +4,5 @@
 - [Stable mock refs for useEffect deps in RN tests](stable-mock-refs.md) — useCameraPermissions and similar hooks must return stable object/function refs in mocks, or useEffect fires after every state update and resets phase.
 - [react-test-renderer@19 toJSON vs root API](rtr19-root-api.md) — toJSON() can silently drop conditional children in React 19; use renderer.root.findAll() (instance tree) instead, wrapped in act().
 - [tsx + Node.js v24 ESM extension resolution](tsx-node24-esm-extensions.md) — tsx@4.21.0 on Node.js v24 requires explicit .ts extensions in ESM packages; bare ./foo no longer auto-resolves to ./foo.ts.
+- [expo-file-system v19 legacy subpath](expo-fs-legacy.md) — expo-file-system@19 moved cacheDirectory/downloadAsync/getInfoAsync/makeDirectoryAsync/deleteAsync/readDirectoryAsync to expo-file-system/legacy; bare import only has new streaming API.
+- [RN tile prefetch coordinate space](tile-prefetch-coords.md) — when prefetching the next zoom level, always re-derive tile range from raw viewport transform using nextN grid size; never scale current-level indices up (grid coordinate spaces are incompatible).
