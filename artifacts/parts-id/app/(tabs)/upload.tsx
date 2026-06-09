@@ -2038,7 +2038,7 @@ export default function UploadScreen() {
               <BarcodeAddPart scrollY={addpartScrollY} />
               <AddPartForm
                 adminToken={adminToken}
-                onSuccess={() => { inventoryQuery.refetch(); }}
+                onSuccess={() => { inventoryQuery.refetch(); setMeasuredDims(null); }}
                 initialDimensions={measuredDims}
               />
             </ScrollView>
