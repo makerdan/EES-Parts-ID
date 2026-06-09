@@ -7,3 +7,4 @@
 - [expo-file-system v19 legacy subpath](expo-fs-legacy.md) — expo-file-system@19 moved cacheDirectory/downloadAsync/getInfoAsync/makeDirectoryAsync/deleteAsync/readDirectoryAsync to expo-file-system/legacy; bare import only has new streaming API.
 - [RN tile prefetch coordinate space](tile-prefetch-coords.md) — when prefetching the next zoom level, always re-derive tile range from raw viewport transform using nextN grid size; never scale current-level indices up (grid coordinate spaces are incompatible).
 - [Reanimated 4 worklets Babel plugin required for web](reanimated4-worklets-babel-plugin.md) — missing react-native-worklets/plugin causes web-only "Invalid hook call" crash; babel-preset-expo does NOT include it automatically.
+- [reanimated mock __esModule + RN render-path strategy](reanimated-mock-esmodule.md) — three traps when mounting WarehouseMapView (or similar) past the containerW=0 early return in tests.
