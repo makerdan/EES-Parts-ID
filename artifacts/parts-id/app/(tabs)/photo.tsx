@@ -27,7 +27,6 @@ import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
 import BarcodeScreen from "@/components/BarcodeScreen";
-import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { parseBin } from "@/lib/aisleHierarchy";
@@ -40,7 +39,6 @@ export default function PhotoScreen() {
   useTrackScreen("Photo ID");
   const colors = useColors();
   const { textFontScale, isAdmin, adminToken, setPinnedParts, setPendingMapFocus, setPendingMeasureSearch, showToast } = useApp();
-  const [measureVisible, setMeasureVisible] = useState(false);
   const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");
@@ -465,15 +463,6 @@ export default function PhotoScreen() {
                   <MaterialCommunityIcons name="barcode-scan" size={24} color={colors.foreground} />
                   <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Scan Barcode</Text>
                 </Pressable>
-                {isAdmin && adminToken && Platform.OS === "ios" ? (
-                  <Pressable
-                    onPress={() => { setPinnedParts([]); setMeasureVisible(true); }}
-                    style={[styles.addImageBtn, { backgroundColor: colors.card, borderColor: colors.foreground }]}
-                  >
-                    <Feather name="maximize" size={24} color={colors.foreground} />
-                    <Text style={[styles.addImageLabel, { color: colors.foreground }]}>Measure</Text>
-                  </Pressable>
-                ) : null}
               </View>
             )}
 
@@ -808,30 +797,6 @@ export default function PhotoScreen() {
 
       <ReferenceModal />
 
-      {isAdmin && adminToken ? (
-        <MeasurePartScreen
-          visible={measureVisible}
-          onClose={() => setMeasureVisible(false)}
-          onConfirm={(dims: PartDimensions) => {
-            const toStr = (v: number | null | undefined) => (v != null ? String(Math.round(v)) : "");
-            const params = {
-              minLength: toStr(dims.length),
-              maxLength: toStr(dims.length),
-              minWidth: toStr(dims.width),
-              maxWidth: toStr(dims.width),
-              minHeight: toStr(dims.height),
-              maxHeight: toStr(dims.height),
-              minDiameter: toStr(dims.diameter),
-              maxDiameter: toStr(dims.diameter),
-            };
-            const hasAny = Object.values(params).some(Boolean);
-            if (hasAny) setPendingMeasureSearch(params);
-            setMeasureVisible(false);
-            router.navigate("/");
-          }}
-          adminToken={adminToken}
-        />
-      ) : null}
     </SafeAreaView>
   );
 }

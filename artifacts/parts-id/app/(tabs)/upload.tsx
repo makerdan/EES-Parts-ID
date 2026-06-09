@@ -30,6 +30,8 @@ import { ReferenceModal } from "@/components/ReferenceModal";
 import { BinEditor } from "@/components/BinEditor";
 import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
 import { useApp } from "@/contexts/AppContext";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
@@ -417,6 +419,7 @@ export default function UploadScreen() {
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
   const [tab, setTab] = useState<"import" | "enrichment" | "addpart" | "query">("import");
   const [addpartScrollY, setAddpartScrollY] = useState(0);
+  const [measureVisible, setMeasureVisible] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -2017,6 +2020,20 @@ export default function UploadScreen() {
                 </View>
                 <Feather name="chevron-right" size={20} color={colors.success} />
               </Pressable>
+              {isAdmin && adminToken && Platform.OS === "ios" ? (
+                <Pressable
+                  onPress={() => setMeasureVisible(true)}
+                  style={[styles.shelfEntryBanner, { backgroundColor: colors.foreground + "0D", borderColor: colors.foreground + "33", marginTop: 10 }]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.shelfEntryTitle, { color: colors.foreground }]}>📐 Measure Part</Text>
+                    <Text style={[styles.shelfEntryHint, { color: colors.mutedForeground }]}>
+                      Use LiDAR or AI photo estimation to capture part dimensions.
+                    </Text>
+                  </View>
+                  <Feather name="maximize" size={20} color={colors.foreground} />
+                </Pressable>
+              ) : null}
               <BarcodeAddPart scrollY={addpartScrollY} />
               <AddPartForm
                 adminToken={adminToken}
@@ -2252,6 +2269,17 @@ export default function UploadScreen() {
         visible={bulkShelfOpen}
         onClose={() => setBulkShelfOpen(false)}
       />
+
+      {isAdmin && adminToken ? (
+        <MeasurePartScreen
+          visible={measureVisible}
+          onClose={() => setMeasureVisible(false)}
+          onConfirm={(_dims: PartDimensions) => {
+            setMeasureVisible(false);
+          }}
+          adminToken={adminToken}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
