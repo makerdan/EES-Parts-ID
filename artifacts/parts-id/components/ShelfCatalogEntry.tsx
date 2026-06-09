@@ -16,6 +16,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as ImagePicker from "expo-image-picker";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -71,10 +72,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
   const [duplicate, setDuplicate] = useState<DuplicateState | null>(null);
   const [duplicateLoading, setDuplicateLoading] = useState(false);
 
-  const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const cameraRef = useRef<CameraView>(null);
-  const [takingPhoto, setTakingPhoto] = useState(false);
 
   const [prefixScannerOpen, setPrefixScannerOpen] = useState(false);
   const prefixScanLock = useRef(false);
@@ -156,7 +154,6 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       setSuccessCount(0);
       setPhotoCount(0);
       setDuplicate(null);
-      setCameraOpen(false);
       setPrefixScannerOpen(false);
       prefixScanLock.current = false;
     } else {
@@ -378,33 +375,15 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
   }, [duplicate, adminToken, uploadPhoto, invalidateInventory, resetItemFields, advanceCounter, onClose]);
 
   const openCamera = useCallback(async () => {
-    if (!cameraPermission?.granted) {
-      const result = await requestCameraPermission();
-      if (!result.granted) return;
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: "images",
+      quality: 0.6,
+      allowsEditing: false,
+    });
+    if (!result.canceled && result.assets.length > 0) {
+      setPhoto({ uri: result.assets[0].uri });
     }
-    setTakingPhoto(false);
-    setCameraOpen(true);
-  }, [cameraPermission, requestCameraPermission]);
-
-  const handleTakePhoto = useCallback(async () => {
-    if (takingPhoto || !cameraRef.current) return;
-    setTakingPhoto(true);
-    try {
-      const result = await cameraRef.current.takePictureAsync({
-        quality: 0.6,
-        base64: false,
-        exif: false,
-      });
-      if (result?.uri) {
-        setPhoto({ uri: result.uri });
-      }
-      setCameraOpen(false);
-    } catch (err) {
-      console.warn("Failed to take photo:", err);
-    } finally {
-      setTakingPhoto(false);
-    }
-  }, [takingPhoto]);
+  }, []);
 
   const formatPrefix = useCallback((val: string) => {
     const alnum = val.replace(/[^0-9A-Za-z]/g, "").toUpperCase().slice(0, 4);
@@ -740,50 +719,6 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Camera modal */}
-      {Platform.OS !== "web" ? (
-        <Modal
-          visible={cameraOpen}
-          animationType="slide"
-          onRequestClose={() => setCameraOpen(false)}
-        >
-          <View style={styles.cameraModal}>
-            <CameraView
-              ref={cameraRef}
-              style={StyleSheet.absoluteFill}
-              mode="picture"
-              facing="back"
-            />
-            <View style={styles.cameraOverlay}>
-              <View style={[styles.cameraHeader, { backgroundColor: "rgba(0,0,0,0.45)" }]}>
-                <Pressable onPress={() => setCameraOpen(false)} style={styles.cameraCloseBtn}>
-                  <Feather name="x" size={20} color="#fff" />
-                </Pressable>
-                <Text style={styles.cameraTitle}>Capture Item Photo</Text>
-                <View style={{ width: 40 }} />
-              </View>
-              <View style={{ flex: 1 }} />
-              <View style={styles.cameraShutterRow}>
-                <Pressable
-                  onPress={handleTakePhoto}
-                  disabled={takingPhoto}
-                  style={[
-                    styles.shutterBtn,
-                    { opacity: takingPhoto ? 0.6 : 1 },
-                  ]}
-                >
-                  {takingPhoto ? (
-                    <ActivityIndicator size="large" color="#fff" />
-                  ) : (
-                    <View style={styles.shutterInner} />
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      ) : null}
-
       {/* Prefix scanner modal */}
       {Platform.OS !== "web" ? (
         <Modal
@@ -1024,24 +959,4 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   cameraTitle: { color: "#fff", fontSize: 17, fontFamily: "Inter_600SemiBold" },
-  cameraShutterRow: {
-    alignItems: "center",
-    paddingBottom: 16,
-  },
-  shutterBtn: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "rgba(255,255,255,0.25)",
-    borderWidth: 3,
-    borderColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  shutterInner: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#fff",
-  },
 });
