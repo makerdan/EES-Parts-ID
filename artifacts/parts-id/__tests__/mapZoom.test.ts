@@ -389,12 +389,9 @@ describe("visibleTileRange — culls N×N grid to only on-screen tiles", () => {
 // The drawing fills most of the 7329×4997 SVG space.
 const WAREHOUSE_VB = { x: 60, y: 80, w: 7200, h: 4820 };
 
-/** Compute the fit scale applyFit targets, mirroring its clampScale(rawS * 1.5). */
-function computeFitScale(containerW: number, containerH: number): number {
-  const { scale: rawS } = fitContentViewport(
-    WAREHOUSE_VB, containerW, containerH, SVG_VIEWBOX_W, SVG_VIEWBOX_H,
-  );
-  return clampScale(rawS * 1.5);
+/** Compute the fit scale applyFit targets — always snaps to ZOOM_STOPS[0].scale (z0). */
+function computeFitScale(_containerW: number, _containerH: number): number {
+  return ZOOM_STOPS[0].scale;
 }
 
 /**
