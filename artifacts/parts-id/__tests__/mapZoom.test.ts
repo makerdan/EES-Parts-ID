@@ -33,6 +33,7 @@ import {
   numTilesForScale,
   visibleTileRange,
   fitContentViewport,
+  computeFitTarget,
   zoomStopForScale,
   tileGridSize,
 } from "@/utils/mapViewport";
@@ -473,5 +474,90 @@ describe("applyFit spring-gate — zoom-stop commit regression", () => {
   it("tierBoundariesCrossed helper: crossing three integer boundaries", () => {
     // 4.5 → 1.5 crosses 4, 3, 2 → 3 boundaries.
     expect(tierBoundariesCrossed(4.5, 1.5)).toBe(3);
+  });
+});
+
+// ── applyFit / applyFitIfReady callback paths — z0 snap ───────────────────
+//
+// Both applyFit (animated, fit button) and applyFitIfReady (immediate, called
+// from onLayout and the SVG-parse effect) delegate their scale/tx/ty
+// calculation to computeFitTarget(), which always snaps scale to
+// ZOOM_STOPS[0].scale (z0 overview).
+//
+// These tests call computeFitTarget() directly — the same production function
+// the callbacks use after the refactor.  If applyFit/applyFitIfReady are ever
+// edited to use a different scale or a raw fit value, the change will flow
+// through computeFitTarget and these tests will catch it immediately.
+//
+// Phone (390×761) and iPad (768×960) viewports are both exercised so regressions
+// on unusual aspect ratios are caught too.
+
+describe("applyFit / applyFitIfReady — computeFitTarget always snaps to z0", () => {
+  const phoneW = 390;  // iPhone 14 portrait
+  const phoneH = 761;
+  const iPadW  = 768;  // iPad mini / Air portrait
+  const iPadH  = 960;
+
+  // ── scale snap ────────────────────────────────────────────────────────────
+
+  it("phone: computeFitTarget returns scale === ZOOM_STOPS[0].scale", () => {
+    const { scale } = computeFitTarget(WAREHOUSE_VB, phoneW, phoneH);
+    expect(scale).toBe(ZOOM_STOPS[0].scale);
+  });
+
+  it("iPad: computeFitTarget returns scale === ZOOM_STOPS[0].scale", () => {
+    const { scale } = computeFitTarget(WAREHOUSE_VB, iPadW, iPadH);
+    expect(scale).toBe(ZOOM_STOPS[0].scale);
+  });
+
+  it("phone: renderZoom === 0 (z0 tile grid, 1×1 overview)", () => {
+    const { scale } = computeFitTarget(WAREHOUSE_VB, phoneW, phoneH);
+    expect(zoomStopForScale(scale)).toBe(0);
+    expect(tileGridSize(zoomStopForScale(scale))).toBe(1);
+  });
+
+  it("iPad: renderZoom === 0 (z0 tile grid, 1×1 overview)", () => {
+    const { scale } = computeFitTarget(WAREHOUSE_VB, iPadW, iPadH);
+    expect(zoomStopForScale(scale)).toBe(0);
+    expect(tileGridSize(zoomStopForScale(scale))).toBe(1);
+  });
+
+  // ── snap is device-independent ────────────────────────────────────────────
+
+  it("phone and iPad produce identical committed scale and renderZoom (snap is device-independent)", () => {
+    const phone = computeFitTarget(WAREHOUSE_VB, phoneW, phoneH);
+    const iPad  = computeFitTarget(WAREHOUSE_VB, iPadW,  iPadH);
+    expect(phone.scale).toBe(iPad.scale);
+    expect(zoomStopForScale(phone.scale)).toBe(zoomStopForScale(iPad.scale));
+    expect(zoomStopForScale(phone.scale)).toBe(0);
+  });
+
+  it("raw fit scale varies between phone and iPad but computeFitTarget always overrides to z0", () => {
+    const phoneRaw = fitContentViewport(WAREHOUSE_VB, phoneW, phoneH, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
+    const iPadRaw  = fitContentViewport(WAREHOUSE_VB, iPadW,  iPadH,  SVG_VIEWBOX_W, SVG_VIEWBOX_H);
+    expect(phoneRaw.scale).not.toBe(iPadRaw.scale); // raw values differ by device
+    expect(computeFitTarget(WAREHOUSE_VB, phoneW, phoneH).scale).toBe(ZOOM_STOPS[0].scale);
+    expect(computeFitTarget(WAREHOUSE_VB, iPadW,  iPadH ).scale).toBe(ZOOM_STOPS[0].scale);
+  });
+
+  // ── tx/ty sanity ──────────────────────────────────────────────────────────
+
+  it("phone: tx and ty are finite (no NaN or Infinity from ratio calculation)", () => {
+    const { tx, ty } = computeFitTarget(WAREHOUSE_VB, phoneW, phoneH);
+    expect(isFinite(tx)).toBe(true);
+    expect(isFinite(ty)).toBe(true);
+  });
+
+  it("iPad: tx and ty are finite (no NaN or Infinity from ratio calculation)", () => {
+    const { tx, ty } = computeFitTarget(WAREHOUSE_VB, iPadW, iPadH);
+    expect(isFinite(tx)).toBe(true);
+    expect(isFinite(ty)).toBe(true);
+  });
+
+  // ── ZOOM_STOPS[0] guard ───────────────────────────────────────────────────
+
+  it("regression: ZOOM_STOPS[0].scale must be within [MIN_SCALE, ZOOM_STOPS[1].scale] — if this fails the z0 snap is misconfigured", () => {
+    expect(ZOOM_STOPS[0].scale).toBeGreaterThanOrEqual(MIN_SCALE);
+    expect(ZOOM_STOPS[0].scale).toBeLessThanOrEqual(ZOOM_STOPS[1].scale);
   });
 });

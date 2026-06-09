@@ -299,6 +299,31 @@ export function zoomStopForScale(scale: number): number {
 }
 
 /**
+ * Compute the snapped fit-to-content viewport target shared by `applyFit`
+ * (animated) and `applyFitIfReady` (immediate) in WarehouseMapView.
+ *
+ * Both callbacks call `fitContentViewport` to derive the raw geometry, then
+ * override the scale to `ZOOM_STOPS[0].scale` (z0 overview) so the fit button
+ * always snaps to the same discrete zoom level regardless of container size.
+ * The tx/ty are re-proportioned to match the snapped scale.
+ *
+ * Extracting this as a pure function lets tests exercise the real path without
+ * mounting WarehouseMapView or mocking Reanimated.
+ */
+export function computeFitTarget(
+  vb: ContentViewBox,
+  containerW: number,
+  containerH: number,
+): { scale: number; tx: number; ty: number } {
+  const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(
+    vb, containerW, containerH, SVG_VIEWBOX_W, SVG_VIEWBOX_H,
+  );
+  const s = ZOOM_STOPS[0].scale;
+  const ratio = rawS > 0 ? s / rawS : 1;
+  return { scale: s, tx: rawTX * ratio, ty: rawTY * ratio };
+}
+
+/**
  * Compute the column and row range of tiles that are visible (or nearly
  * visible) in the current viewport.  Includes a 1-tile buffer on every edge
  * to prevent pop-in on slow scrolls, and is clamped to [0, N−1].

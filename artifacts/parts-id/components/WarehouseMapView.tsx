@@ -89,6 +89,7 @@ import {
   ZOOM_STOPS,
   parseContentViewBox,
   fitContentViewport,
+  computeFitTarget,
   clampScale,
   panBounds,
   computeFocusPan,
@@ -1037,11 +1038,7 @@ export function WarehouseMapView({
     const h = containerHRef.current;
     if (!vb || w === 0) return;
     pendingFit.current = false;
-    const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
-    const s = ZOOM_STOPS[0].scale;
-    const ratio = rawS > 0 ? s / rawS : 1;
-    const tx = rawTX * ratio;
-    const ty = rawTY * ratio;
+    const { scale: s, tx, ty } = computeFitTarget(vb, w, h);
     scale.value = s;
     savedScale.value = s;
     translateX.value = tx;
@@ -1078,11 +1075,7 @@ export function WarehouseMapView({
     if (!vb || w === 0) {
       targetS = 1; targetTX = 0; targetTY = 0;
     } else {
-      const { scale: rawS, tx: rawTX, ty: rawTY } = fitContentViewport(vb, w, h, SVG_VIEWBOX_W, SVG_VIEWBOX_H);
-      targetS = ZOOM_STOPS[0].scale;
-      const ratio = rawS > 0 ? targetS / rawS : 1;
-      targetTX = rawTX * ratio;
-      targetTY = rawTY * ratio;
+      ({ scale: targetS, tx: targetTX, ty: targetTY } = computeFitTarget(vb, w, h));
     }
 
     springActive.value = true;
