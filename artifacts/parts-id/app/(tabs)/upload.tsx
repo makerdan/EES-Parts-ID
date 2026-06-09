@@ -20,6 +20,7 @@ import { useListInventory } from "@workspace/api-client-react";
 
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { isLiDARSupported } from "lidar-measure";
 import { useColors } from "@/hooks/useColors";
 import { AddPartForm } from "@/components/AddPartForm";
 import { BarcodeAddPart } from "@/components/BarcodeAddPart";
@@ -360,6 +361,7 @@ export default function UploadScreen() {
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
+  const lidarSupported = isLiDARSupported();
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -1792,6 +1794,22 @@ export default function UploadScreen() {
                         )}
                       </Pressable>
                     </View>
+
+                    {/* Measure Tool — LiDAR + admin only */}
+                    {lidarSupported && isAdmin ? (
+                      <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                        <Text style={[styles.cardTitle, { color: colors.foreground }]}>📐 Measure Tool</Text>
+                        <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                          Use LiDAR to scan a part's bounding-box dimensions, then search by size or pre-fill an item's dimension fields.
+                        </Text>
+                        <Pressable
+                          onPress={() => router.push("/measure")}
+                          style={[styles.enrichBtn, { backgroundColor: colors.primary }]}
+                        >
+                          <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>📐 Open Measure Tool</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
 
                     {/* AI Log & Inbox */}
                     <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
