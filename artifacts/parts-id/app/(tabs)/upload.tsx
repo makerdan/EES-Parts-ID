@@ -420,6 +420,7 @@ export default function UploadScreen() {
   const [tab, setTab] = useState<"import" | "enrichment" | "addpart" | "query">("import");
   const [addpartScrollY, setAddpartScrollY] = useState(0);
   const [measureVisible, setMeasureVisible] = useState(false);
+  const [measuredDims, setMeasuredDims] = useState<PartDimensions | null>(null);
   const [pasteText, setPasteText] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState<{ inserted: number; updated: number; total: number } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -2038,6 +2039,7 @@ export default function UploadScreen() {
               <AddPartForm
                 adminToken={adminToken}
                 onSuccess={() => { inventoryQuery.refetch(); }}
+                initialDimensions={measuredDims}
               />
             </ScrollView>
           ) : (
@@ -2274,8 +2276,9 @@ export default function UploadScreen() {
         <MeasurePartScreen
           visible={measureVisible}
           onClose={() => setMeasureVisible(false)}
-          onConfirm={(_dims: PartDimensions) => {
+          onConfirm={(dims: PartDimensions) => {
             setMeasureVisible(false);
+            setMeasuredDims(dims);
           }}
           adminToken={adminToken}
         />

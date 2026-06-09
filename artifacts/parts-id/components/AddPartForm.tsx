@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -32,9 +32,10 @@ function parseDimField(s: string): number | null {
 export interface AddPartFormProps {
   adminToken: string | null;
   onSuccess: (item: InventoryItem) => void;
+  initialDimensions?: PartDimensions | null;
 }
 
-export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
+export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPartFormProps) {
   "use no memo";
   const colors = useColors();
   const { settings: { dimensionUnit } } = useApp();
@@ -52,6 +53,14 @@ export function AddPartForm({ adminToken, onSuccess }: AddPartFormProps) {
   const [dimHeight, setDimHeight] = useState("");
   const [dimDiameter, setDimDiameter] = useState("");
   const [measureOpen, setMeasureOpen] = useState(false);
+
+  useEffect(() => {
+    if (!initialDimensions) return;
+    setDimLength(fmtDim(initialDimensions.length));
+    setDimWidth(fmtDim(initialDimensions.width));
+    setDimHeight(fmtDim(initialDimensions.height));
+    setDimDiameter(fmtDim(initialDimensions.diameter));
+  }, [initialDimensions]);
 
   const reset = () => {
     setCatalog("");
