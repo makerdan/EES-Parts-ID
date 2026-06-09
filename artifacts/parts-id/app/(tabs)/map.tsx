@@ -10,12 +10,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Linking,
+  Platform,
   Pressable,
   SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useRouter } from "expo-router";
 import * as ScreenOrientation from "expo-screen-orientation";
@@ -380,7 +382,12 @@ export default function MapScreen() {
                     showToast("Please log in as admin to access the Zone Editor.", "info");
                     return;
                   }
-                  Linking.openURL(ZONE_EDITOR_URL);
+                  if (Platform.OS === "web") {
+                    Linking.openURL(ZONE_EDITOR_URL);
+                  } else {
+                    Clipboard.setStringAsync(ZONE_EDITOR_URL);
+                    showToast("Zone Editor URL copied — open in your browser", "info");
+                  }
                 }}
                 onLongPress={() => {
                   zoneEditorLongPressed.current = true;
