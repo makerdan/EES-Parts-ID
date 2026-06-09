@@ -714,6 +714,14 @@ export function WarehouseMapView({
   const containerWRef = useRef(0);
   const containerHRef = useRef(0);
 
+  // Mirror zones in a ref so the focusAisleNum effect can read the latest
+  // zones without listing `zones` as a dependency (which would re-trigger
+  // the auto-zoom every time zone data refreshes from the server).
+  const zonesRef = useRef<ApiWarehouseZone[]>([]);
+  // Set to true by the focus effect when zones have not loaded yet so the
+  // zones-change effect below can retry once they arrive.
+  const pendingFocusRef = useRef(false);
+
   // Viewport restore values that arrived from AsyncStorage before the first
   // layout pass completed.  onLayout drains this on its first call so the
   // tx/ty are always clamped to the real container bounds, regardless of
@@ -882,20 +890,39 @@ export function WarehouseMapView({
   // stale and must not clear the gate or commit a render tier.
   const springGeneration = useSharedValue(0);
 
+  // Keep zonesRef in sync so the focus effects below can always read the
+  // latest zones without listing `zones` as a dependency.
+  useEffect(() => { zonesRef.current = zones; }, [zones]);
+
   // ── Auto-focus on pinned zone ───────────────────────────────────────────────
   // When a `focusAisleNum` is provided (set by the Map tab when the worker
   // taps "Show on Map" from Search / Photo), animate the viewport so the
   // target aisle is centred at the current zoom level (no zoom change).
   // The pan logic is delegated to the exported `runFocusAisleEffect` function
   // so it can be unit-tested in isolation without mounting the full component.
+  //
+  // `zones` and `containerW` are intentionally omitted from the dependency
+  // array.  The effect reads both through refs (zonesRef / containerWRef) so
+  // that zone refreshes from the server and container layout changes (keyboard,
+  // SafeAreaView insets, orientation) do not re-trigger the zoom animation
+  // while focusAisleNum is still set.
   useEffect(() => {
-    if (focusAisleNum == null) return;
+    if (focusAisleNum == null) {
+      pendingFocusRef.current = false;
+      return;
+    }
     const w = containerWRef.current;
     const h = containerHRef.current;
-    if (w === 0 || h === 0 || !zones.length) return;
+    if (w === 0 || h === 0 || !zonesRef.current.length) {
+      // Zones not yet loaded (or container not yet laid out); defer until
+      // they arrive so we don't silently drop the focus request.
+      pendingFocusRef.current = true;
+      return;
+    }
+    pendingFocusRef.current = false;
 
     // Check if the zone exists; fire the failure/consumed callbacks if not.
-    const zoneExists = zones.some(z => parseInt(z.aisleId, 10) === focusAisleNum);
+    const zoneExists = zonesRef.current.some(z => parseInt(z.aisleId, 10) === focusAisleNum);
     if (!zoneExists) {
       onFocusFailed?.();
       onFocusConsumed?.();
@@ -903,7 +930,7 @@ export function WarehouseMapView({
     }
 
     // Find the target zone so we can store its SVG centre for pin-focused zoom.
-    const aisleZones = zones.filter(z => parseInt(z.aisleId, 10) === focusAisleNum);
+    const aisleZones = zonesRef.current.filter(z => parseInt(z.aisleId, 10) === focusAisleNum);
     const zone =
       focusSectionNum != null
         ? (aisleZones.find(z => z.sectionNum === focusSectionNum) ?? aisleZones[0])
@@ -925,7 +952,60 @@ export function WarehouseMapView({
     // focusAisleNum and prevent repeated re-centering on future tab visits.
     onFocusConsumed?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusAisleNum, zones, containerW]);
+  }, [focusAisleNum]);
+
+  // Shared helper: run the focus logic using current ref values.
+  // Called by the two deferred-retry effects below so the logic stays in one place.
+  // All reads go through refs/closure values that are stable by the time either
+  // retry fires.  Returns true if focus was consumed (either successfully or via
+  // failure callbacks), false if preconditions were not met.
+  const _runPendingFocus = useCallback((): boolean => {
+    if (!pendingFocusRef.current) return false;
+    if (!zonesRef.current.length) return false;
+    const w = containerWRef.current;
+    const h = containerHRef.current;
+    if (w === 0 || h === 0 || focusAisleNum == null) return false;
+    pendingFocusRef.current = false;
+
+    const zoneExists = zonesRef.current.some(z => parseInt(z.aisleId, 10) === focusAisleNum);
+    if (!zoneExists) {
+      onFocusFailed?.();
+      onFocusConsumed?.();
+      return true;
+    }
+
+    const aisleZones = zonesRef.current.filter(z => parseInt(z.aisleId, 10) === focusAisleNum);
+    const zone =
+      focusSectionNum != null
+        ? (aisleZones.find(z => z.sectionNum === focusSectionNum) ?? aisleZones[0])
+        : aisleZones[0];
+
+    if (zone) {
+      pinFocusCxV.value = zone.svgX + zone.svgWidth  / 2;
+      pinFocusCyV.value = zone.svgY + zone.svgHeight / 2;
+      pinFocusModeV.value = 1;
+    }
+
+    applyFitRef.current();
+    onFocusConsumed?.();
+    return true;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusAisleNum, focusSectionNum, onFocusFailed, onFocusConsumed]);
+
+  // Retry focus once zones arrive (covers: focus requested before first zone load).
+  // Only `zones` is a dependency so zone refreshes that arrive after focus is
+  // already consumed do not re-trigger.
+  useEffect(() => {
+    _runPendingFocus();
+  }, [zones, _runPendingFocus]);
+
+  // Retry focus when the container lays out (covers: focus requested before
+  // first layout while zones were already loaded).
+  // pendingFocusRef.current is the gate that prevents orientation changes
+  // after focus is consumed from re-triggering the zoom.
+  useEffect(() => {
+    _runPendingFocus();
+  }, [containerW, containerH, _runPendingFocus]);
 
   // ── Viewport persistence (AsyncStorage) ────────────────────────────────────
   // Restore the saved viewport once on mount, before the first layout clamp
@@ -1635,8 +1715,34 @@ export function WarehouseMapView({
   // Called via runOnJS from the pinch gesture onEnd worklet.  Springs the
   // scale to the nearest discrete stop, then commits the stop index to
   // renderZoom and kicks off a debounced prefetch of the next stop's tiles.
+  //
+  // Direction clamping: the nearest stop by log-distance can sometimes be on
+  // the opposite side of the gesture (e.g. a slight zoom-in from 4× to 2.8×
+  // finds 4× as nearest but the user was zooming out).  To prevent the map
+  // from appearing to jump against the gesture direction, we clamp the chosen
+  // stop so it never crosses the current scale in the opposite direction.
   const snapToNearestZoomStop = useCallback(() => {
-    const stopIdx = zoomStopForScale(scale.value);
+    const currentScale = scale.value;
+    const gestureStartScale = savedScale.value;
+    const zoomingIn = currentScale >= gestureStartScale;
+
+    let stopIdx = zoomStopForScale(currentScale);
+
+    // If the nearest stop is in the wrong direction, walk to the closest
+    // stop that respects the gesture direction.
+    if (zoomingIn && ZOOM_STOPS[stopIdx].scale < currentScale) {
+      // Zooming in: find the lowest stop at or above current scale.
+      const idx = ZOOM_STOPS.findIndex(s => s.scale >= currentScale);
+      stopIdx = idx === -1 ? ZOOM_STOPS.length - 1 : idx;
+    } else if (!zoomingIn && ZOOM_STOPS[stopIdx].scale > currentScale) {
+      // Zooming out: find the highest stop at or below current scale.
+      let idx = -1;
+      for (let i = ZOOM_STOPS.length - 1; i >= 0; i--) {
+        if (ZOOM_STOPS[i].scale <= currentScale) { idx = i; break; }
+      }
+      stopIdx = idx === -1 ? 0 : idx;
+    }
+
     const targetScale = ZOOM_STOPS[stopIdx].scale;
     pinFocusModeV.value = 0;
     const { maxX, maxY } = panBounds(containerWRef.current, containerHRef.current, targetScale);
