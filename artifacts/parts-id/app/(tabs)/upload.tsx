@@ -50,6 +50,54 @@ const API_BASE =
     ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
     : "";
 
+const SQL_EXAMPLES: { label: string; group: string; sql: string }[] = [
+  {
+    group: "Browse",
+    label: "All parts (paginated)",
+    sql: "SELECT id, vendor, catalog, description\nFROM inventory\nORDER BY vendor, catalog\nLIMIT 50",
+  },
+  {
+    group: "Browse",
+    label: "Part count by vendor",
+    sql: "SELECT vendor, COUNT(*) AS parts\nFROM inventory\nGROUP BY vendor\nORDER BY parts DESC",
+  },
+  {
+    group: "Search & Filter",
+    label: "Search description",
+    sql: "SELECT id, vendor, catalog, description\nFROM inventory\nWHERE description ILIKE '%contactor%'\nLIMIT 50",
+  },
+  {
+    group: "Search & Filter",
+    label: "Parts in a bin",
+    sql: "SELECT id, vendor, catalog, description, bin_locations\nFROM inventory\nWHERE bin_locations && ARRAY['A01']\nLIMIT 50",
+  },
+  {
+    group: "Search & Filter",
+    label: "Parts missing a bin",
+    sql: "SELECT id, vendor, catalog, description\nFROM inventory\nWHERE array_length(bin_locations, 1) = 0\n   OR bin_locations IS NULL\nLIMIT 50",
+  },
+  {
+    group: "Enrichment",
+    label: "Enrichment summary",
+    sql: "SELECT\n  COUNT(*) AS total,\n  COUNT(enriched_at) AS enriched,\n  COUNT(*) FILTER (WHERE enriched_at IS NULL) AS pending\nFROM inventory",
+  },
+  {
+    group: "Enrichment",
+    label: "Parts not yet enriched",
+    sql: "SELECT id, vendor, catalog, description\nFROM inventory\nWHERE enriched_at IS NULL\nLIMIT 50",
+  },
+  {
+    group: "Dimensions",
+    label: "Parts with measured dimensions",
+    sql: "SELECT vendor, catalog,\n  (dimensions->>'length')::numeric AS length_mm,\n  (dimensions->>'width')::numeric AS width_mm,\n  (dimensions->>'height')::numeric AS height_mm,\n  (dimensions->>'diameter')::numeric AS diameter_mm\nFROM inventory\nWHERE dimensions IS NOT NULL\nLIMIT 50",
+  },
+  {
+    group: "Warehouse",
+    label: "All map zones",
+    sql: "SELECT aisle_id, section_num, is_inventory\nFROM warehouse_zone\nORDER BY aisle_id, section_num",
+  },
+];
+
 type BinDiffSummary = {
   willReplaceBins: number;
   willAddBins: number;
@@ -396,6 +444,7 @@ export default function UploadScreen() {
   const [queryResult, setQueryResult] = useState<{ columns: string[]; rows: Record<string, unknown>[]; rowCount: number } | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryExportPending, setQueryExportPending] = useState<"csv" | "xlsx" | null>(null);
+  const [queryHelpOpen, setQueryHelpOpen] = useState(false);
 
   // Bin diff / replace-warning state
   const [exportPending, setExportPending] = useState(false);
@@ -1980,8 +2029,64 @@ export default function UploadScreen() {
               <View style={[styles.queryCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.cardTitle, { color: colors.foreground }]}>🔍 SQL Query</Text>
                 <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
-                  Run a read-only SELECT against the live database. INSERT, UPDATE, DELETE, and DDL are blocked.
+                  Run a read-only SELECT against the live database. INSERT, UPDATE, DELETE, and DDL are blocked. Results capped at 500 rows.
                 </Text>
+
+                {/* Help / examples toggle */}
+                <Pressable
+                  onPress={() => setQueryHelpOpen(v => !v)}
+                  style={[styles.queryHelpToggle, { borderColor: colors.border }]}
+                >
+                  <Text style={[styles.queryHelpToggleText, { color: colors.primary }]}>
+                    {queryHelpOpen ? "▲ Hide examples" : "▼ Examples & table reference"}
+                  </Text>
+                </Pressable>
+
+                {queryHelpOpen && (
+                  <View style={[styles.queryHelpPanel, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                    {/* Table reference */}
+                    <Text style={[styles.queryHelpHeading, { color: colors.foreground }]}>Key tables</Text>
+                    {[
+                      ["inventory", "vendor, catalog, description, bin_locations[], barcodes[], ai_keywords[], enriched_at, dimensions (jsonb), created_at"],
+                      ["warehouse_zone", "aisle_id, section_num, is_inventory, svg_x, svg_y, svg_width, svg_height"],
+                      ["catalog_pdf_job", "vendor, filename, status, matched_parts, total_pages, processed_pages, started_at, finished_at"],
+                    ].map(([table, cols]) => (
+                      <View key={table} style={styles.queryHelpTableRow}>
+                        <Text style={[styles.queryHelpTableName, { color: colors.foreground }]}>{table}</Text>
+                        <Text style={[styles.queryHelpTableCols, { color: colors.mutedForeground }]}>{cols}</Text>
+                      </View>
+                    ))}
+
+                    {/* Example queries grouped */}
+                    <Text style={[styles.queryHelpHeading, { color: colors.foreground, marginTop: 12 }]}>Tap an example to load it</Text>
+                    {(() => {
+                      const groups = Array.from(new Set(SQL_EXAMPLES.map(e => e.group)));
+                      return groups.map(group => (
+                        <View key={group}>
+                          <Text style={[styles.queryHelpGroupLabel, { color: colors.mutedForeground }]}>{group}</Text>
+                          {SQL_EXAMPLES.filter(e => e.group === group).map(ex => (
+                            <Pressable
+                              key={ex.label}
+                              onPress={() => {
+                                setQueryText(ex.sql);
+                                setQueryError(null);
+                                setQueryResult(null);
+                                setQueryHelpOpen(false);
+                              }}
+                              style={({ pressed }) => [
+                                styles.queryHelpExample,
+                                { backgroundColor: pressed ? colors.primary + "18" : colors.card, borderColor: colors.border },
+                              ]}
+                            >
+                              <Text style={[styles.queryHelpExampleLabel, { color: colors.foreground }]}>{ex.label}</Text>
+                              <Text style={[styles.queryHelpExampleSql, { color: colors.mutedForeground }]} numberOfLines={2}>{ex.sql}</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      ));
+                    })()}
+                  </View>
+                )}
 
                 <KeyboardDoneInput
                   value={queryText}
@@ -2248,6 +2353,17 @@ const styles = StyleSheet.create({
   inlineBannerText: { fontSize: 13, fontFamily: "Inter_500Medium", flex: 1, lineHeight: 18 },
   bannerClose: { paddingLeft: 10 },
   queryCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12 },
+  queryHelpToggle: { borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, alignItems: "center" },
+  queryHelpToggleText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  queryHelpPanel: { borderWidth: 1, borderRadius: 8, padding: 12, gap: 6 },
+  queryHelpHeading: { fontSize: 12, fontFamily: "Inter_700Bold", letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 2 },
+  queryHelpTableRow: { gap: 1, marginBottom: 6 },
+  queryHelpTableName: { fontSize: 12, fontFamily: "SpaceMono_400Regular" },
+  queryHelpTableCols: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 16 },
+  queryHelpGroupLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.3, textTransform: "uppercase", marginTop: 6, marginBottom: 3 },
+  queryHelpExample: { borderWidth: 1, borderRadius: 6, padding: 10, marginBottom: 4 },
+  queryHelpExampleLabel: { fontSize: 13, fontFamily: "Inter_500Medium", marginBottom: 3 },
+  queryHelpExampleSql: { fontSize: 11, fontFamily: "SpaceMono_400Regular", lineHeight: 16 },
   queryInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: "SpaceMono_400Regular", height: 160, lineHeight: 20 },
   queryRunBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   queryRunBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
