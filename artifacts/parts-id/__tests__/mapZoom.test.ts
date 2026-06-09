@@ -1,22 +1,24 @@
 /**
  * Regression tests for map zoom-in / zoom-out behaviour.
  *
- * These tests cover three pure-math functions extracted from WarehouseMapView:
+ * These tests cover pure-math functions extracted from WarehouseMapView:
  *
- *  clampScale      — keeps gesture and button scales within [MIN_SCALE, MAX_SCALE].
- *  panBounds       — derives max translation limits from container size + scale;
- *                    must always be ≥ 0 and grow as the user zooms in.
- *  numTilesForScale — tile-grid dimension = ceil(scale); advancing by integer
- *                    steps means every scale level gets at least one full tile
- *                    of resolution headroom.
- *  visibleTileRange — culls the N×N grid to only the tiles that are currently
- *                    on-screen (plus a 1-tile buffer), keeping memory constant.
+ *  clampScale        — keeps gesture and button scales within [MIN_SCALE, MAX_SCALE].
+ *  panBounds         — derives max translation limits from container size + scale;
+ *                      must always be ≥ 0 and grow as the user zooms in.
+ *  numTilesForScale  — legacy helper (Math.ceil); kept for backward-compat testing.
+ *  visibleTileRange  — culls the N×N grid to only the tiles that are currently
+ *                      on-screen (plus a 1-tile buffer), keeping memory constant.
+ *  zoomStopForScale  — maps a continuous scale to the nearest discrete ZOOM_STOPS
+ *                      index (0–4) using log-space distance.
+ *  tileGridSize      — returns 2^stopIndex (1, 2, 4, 8, 16).
  *
  * Bug classes these tests guard against:
  *  • Scale not clamped → blank map below MIN_SCALE, OOM above MAX_SCALE.
  *  • Negative maxX/maxY → map slides off-screen when zoomed out.
  *  • floor() instead of ceil() for numTiles → map stays blurry one tier too long.
  *  • Tile range not clamped to [0, N-1] → index-out-of-bounds renders.
+ *  • Wrong zoom-stop index → tiles fetched from wrong API path.
  */
 
 import {
@@ -25,11 +27,14 @@ import {
   SVG_ASPECT,
   SVG_VIEWBOX_W,
   SVG_VIEWBOX_H,
+  ZOOM_STOPS,
   clampScale,
   panBounds,
   numTilesForScale,
   visibleTileRange,
   fitContentViewport,
+  zoomStopForScale,
+  tileGridSize,
 } from "@/utils/mapViewport";
 
 // ── Shared container dimensions ────────────────────────────────────────────
@@ -138,6 +143,7 @@ describe("panBounds — translation limits change with scale", () => {
 });
 
 // ── numTilesForScale ───────────────────────────────────────────────────────
+// Legacy helper kept for backward compatibility — tests document its contract.
 
 describe("numTilesForScale — tile-grid dimension advances by integer steps", () => {
   it("is 1 at MIN_SCALE=0.8 (single texture, no splitting needed)", () => {
@@ -178,6 +184,106 @@ describe("numTilesForScale — tile-grid dimension advances by integer steps", (
     // At scale=2.1, ceil→3 (correct), floor→2 (blurry at this zoom tier).
     expect(numTilesForScale(2.1)).toBe(3);
     expect(numTilesForScale(2.1)).not.toBe(Math.floor(2.1));
+  });
+});
+
+// ── zoomStopForScale ──────────────────────────────────────────────────────
+
+describe("zoomStopForScale — maps continuous scale to nearest discrete stop index", () => {
+  it("ZOOM_STOPS has 5 entries (z0–z4)", () => {
+    expect(ZOOM_STOPS).toHaveLength(5);
+  });
+
+  it("returns the exact stop index when scale matches a ZOOM_STOP scale exactly", () => {
+    ZOOM_STOPS.forEach((stop, idx) => {
+      expect(zoomStopForScale(stop.scale)).toBe(idx);
+    });
+  });
+
+  it("returns 0 (z0 overview) for scales at or near MIN_SCALE", () => {
+    expect(zoomStopForScale(MIN_SCALE)).toBe(0);
+    expect(zoomStopForScale(1.0)).toBe(0);
+    expect(zoomStopForScale(ZOOM_STOPS[0].scale)).toBe(0);
+  });
+
+  it("returns 4 (z4 bin) for scales at or near MAX_SCALE", () => {
+    expect(zoomStopForScale(MAX_SCALE)).toBe(ZOOM_STOPS.length - 1);
+    expect(zoomStopForScale(ZOOM_STOPS[4].scale)).toBe(4);
+  });
+
+  it("uses log-space distance: midpoint between adjacent stops rounds to the nearer one", () => {
+    // Between z0 (1.5) and z1 (4): geometric midpoint is sqrt(1.5*4) ≈ 2.45.
+    // Scales below the midpoint → z0; above → z1.
+    const mid = Math.sqrt(ZOOM_STOPS[0].scale * ZOOM_STOPS[1].scale);
+    expect(zoomStopForScale(mid * 0.99)).toBe(0);
+    expect(zoomStopForScale(mid * 1.01)).toBe(1);
+  });
+
+  it("scales between z1 and z2 resolve to the nearer stop", () => {
+    const mid = Math.sqrt(ZOOM_STOPS[1].scale * ZOOM_STOPS[2].scale);
+    expect(zoomStopForScale(mid * 0.99)).toBe(1);
+    expect(zoomStopForScale(mid * 1.01)).toBe(2);
+  });
+
+  it("always returns a valid index in [0, ZOOM_STOPS.length - 1]", () => {
+    const testScales = [MIN_SCALE, 0.5, 1, 1.5, 4, 10, 22, 45, MAX_SCALE, 0.001, 9999];
+    for (const s of testScales) {
+      const idx = zoomStopForScale(s);
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(idx).toBeLessThan(ZOOM_STOPS.length);
+    }
+  });
+
+  it("is monotonically non-decreasing: higher scales map to same or higher stop", () => {
+    const asc = [...ZOOM_STOPS.map(s => s.scale), MIN_SCALE, 2, 6, 15, 30].sort((a, b) => a - b);
+    let prev = zoomStopForScale(asc[0]);
+    for (const s of asc.slice(1)) {
+      const cur = zoomStopForScale(s);
+      expect(cur).toBeGreaterThanOrEqual(prev);
+      prev = cur;
+    }
+  });
+
+  it("regression: wrong stop index would fetch tiles from the wrong API path (/tiles/z/…)", () => {
+    // z2 stop (scale≈10) must map to index 2, not 1 or 3.
+    expect(zoomStopForScale(ZOOM_STOPS[2].scale)).toBe(2);
+  });
+});
+
+// ── tileGridSize ──────────────────────────────────────────────────────────
+
+describe("tileGridSize — returns 2^stopIndex tile-grid dimension", () => {
+  it("z0 → 1 tile (1×1 grid, overview)", () => {
+    expect(tileGridSize(0)).toBe(1);
+  });
+
+  it("z1 → 2 tiles (2×2 grid)", () => {
+    expect(tileGridSize(1)).toBe(2);
+  });
+
+  it("z2 → 4 tiles (4×4 grid)", () => {
+    expect(tileGridSize(2)).toBe(4);
+  });
+
+  it("z3 → 8 tiles (8×8 grid)", () => {
+    expect(tileGridSize(3)).toBe(8);
+  });
+
+  it("z4 → 16 tiles (16×16 grid, bin-level detail)", () => {
+    expect(tileGridSize(4)).toBe(16);
+  });
+
+  it("tileGridSize(stopIdx) === 2^stopIdx for all valid indices", () => {
+    for (let i = 0; i < ZOOM_STOPS.length; i++) {
+      expect(tileGridSize(i)).toBe(Math.pow(2, i));
+    }
+  });
+
+  it("composed with zoomStopForScale: exact stop scales always produce the correct grid size", () => {
+    const expected = [1, 2, 4, 8, 16];
+    ZOOM_STOPS.forEach((stop, idx) => {
+      expect(tileGridSize(zoomStopForScale(stop.scale))).toBe(expected[idx]);
+    });
   });
 });
 
@@ -260,25 +366,24 @@ describe("visibleTileRange — culls N×N grid to only on-screen tiles", () => {
 
 // ── applyFit spring-gate regression ───────────────────────────────────────
 //
-// Bug: applyFit() (called when a search-result pin is shown) animated the
-// scale with withSpring but did NOT set springActive=true beforehand.
-// The tile-tier reaction fires setRenderZoom on every integer boundary the
-// scale crosses during a spring.  Without gating, a zoom-out from scale=4
-// to fit (~1.5) crosses three integer boundaries (4→3→2→1), causing three
-// rapid tile-grid rebuilds with overlapping crossfade animations — perceived
-// as blur and slow loading.
+// Bug: applyFit() animated the scale with withSpring but did NOT set
+// springActive=true beforehand.  The tile-tier reaction fired setRenderZoom
+// on every integer boundary the scale crossed during a spring.  Without
+// gating, a zoom-out from scale=4 to fit (~1.5) caused multiple tile-grid
+// rebuilds with overlapping crossfade animations.
 //
 // Fix: applyFit now sets springActive=true before the spring and commits
-// exactly ONE setRenderZoom(Math.ceil(targetS)) in the spring's onEnd
-// callback, matching the pattern used by applyZoom for button-driven zooms.
+// exactly ONE setRenderZoom(zoomStopForScale(targetS)) in the spring's onEnd
+// callback.  The discrete zoom-stop model (5 presets) also means the tile
+// grid never rebuilds mid-spring — only on stop commitment.
 //
 // These tests verify the mathematical invariants that make the fix correct:
-//   1. The fit scale for a realistic warehouse falls in a predictable tier.
+//   1. The fit scale for a realistic warehouse maps to zoom stop 0 (overview).
 //   2. A spring from a high zoom level crosses multiple integer boundaries
-//      (proving that ungated firing causes churn).
-//   3. The one-and-only tier commit value is Math.ceil(fitScale), regardless
+//      (proving that ungated firing would cause churn under the old model).
+//   3. The one-and-only stop commit is zoomStopForScale(fitScale), regardless
 //      of the user's starting scale — the gated pattern produces a single,
-//      deterministic tier commit.
+//      deterministic stop commit.
 
 // Approximate content viewBox for the RDC34 warehouse floor plan.
 // The drawing fills most of the 7329×4997 SVG space.
@@ -296,14 +401,11 @@ function computeFitScale(containerW: number, containerH: number): number {
  * Count integer tier boundaries crossed during a linear scale transition
  * from `fromScale` to `toScale`.  A boundary is crossed when `Math.ceil`
  * changes value.  This is a lower bound on `setRenderZoom` calls that would
- * be emitted WITHOUT springActive gating.
+ * have been emitted WITHOUT springActive gating under the old continuous model.
  */
 function tierBoundariesCrossed(fromScale: number, toScale: number): number {
   const lo = Math.min(fromScale, toScale);
   const hi = Math.max(fromScale, toScale);
-  // Integer values strictly between lo and hi where ceil changes:
-  // ceil changes at every integer n where lo < n <= hi (zoom-out) or lo <= n < hi (zoom-in).
-  // For zoom-out: boundaries are integers in (lo, hi].
   let count = 0;
   for (let n = Math.floor(lo) + 1; n <= Math.ceil(hi); n++) {
     if (n > lo && n <= hi) count++;
@@ -311,56 +413,52 @@ function tierBoundariesCrossed(fromScale: number, toScale: number): number {
   return count;
 }
 
-describe("applyFit spring-gate — tile-tier commit regression", () => {
-  it("fit scale on a phone (390×761) lands in tier 2 (ceil ≈ 1.3–2.0 range)", () => {
+describe("applyFit spring-gate — zoom-stop commit regression", () => {
+  it("fit scale on a phone (390×761) maps to zoom stop 0 (overview, scale≈1.5)", () => {
     const fitScale = computeFitScale(CW, CH);
-    expect(fitScale).toBeGreaterThan(MIN_SCALE);
-    expect(fitScale).toBeLessThanOrEqual(2);
-    // The committed tier must be 2 (i.e. ceil of a value in (1, 2]).
-    expect(numTilesForScale(fitScale)).toBe(2);
+    const committedStop = zoomStopForScale(fitScale);
+    expect(committedStop).toBe(0);
+    expect(tileGridSize(committedStop)).toBe(1); // z0 = 1×1 grid
   });
 
-  it("regression: without gating, a spring from scale=3 → fit crosses ≥1 tier boundary (would fire setRenderZoom multiple times)", () => {
+  it("regression: without springActive gating, spring from scale=3 → fit would cross ≥1 integer boundary (old model would fire setRenderZoom multiple times)", () => {
     const fitScale = computeFitScale(CW, CH);
     const boundaries = tierBoundariesCrossed(3, fitScale);
-    // scale=3 → ~1.3 crosses integer 2 (3→2) at minimum → ≥1 ungated fires.
     expect(boundaries).toBeGreaterThanOrEqual(1);
   });
 
-  it("regression: without gating, a spring from scale=4 → fit crosses ≥2 tier boundaries", () => {
+  it("regression: spring from scale=4 → fit crosses ≥2 integer boundaries under the old model", () => {
     const fitScale = computeFitScale(CW, CH);
     const boundaries = tierBoundariesCrossed(4, fitScale);
-    // scale=4 → ~1.3 crosses integers 3 and 2 → 2 ungated fires.
     expect(boundaries).toBeGreaterThanOrEqual(2);
   });
 
-  it("regression: without gating, a spring from scale=5 → fit crosses ≥3 tier boundaries", () => {
+  it("regression: spring from scale=5 → fit crosses ≥3 integer boundaries under the old model", () => {
     const fitScale = computeFitScale(CW, CH);
     const boundaries = tierBoundariesCrossed(5, fitScale);
     expect(boundaries).toBeGreaterThanOrEqual(3);
   });
 
-  it("with gating: committed tier is Math.ceil(fitScale) — exactly one value, regardless of starting scale", () => {
+  it("with gating: committed stop is zoomStopForScale(fitScale) — exactly one value, regardless of starting scale", () => {
     const fitScale = computeFitScale(CW, CH);
-    const committedTier = Math.ceil(fitScale);
-    // The spring's onEnd callback always calls setRenderZoom(Math.ceil(targetS)).
-    // Whatever the starting scale, the committed tier is always the same.
-    for (const startScale of [1.5, 2, 3, 4, 5, 8, 12, MAX_SCALE]) {
-      expect(committedTier).toBe(Math.ceil(fitScale));
+    const committedStop = zoomStopForScale(fitScale);
+    for (const _startScale of [1.5, 2, 3, 4, 5, 8, 12, MAX_SCALE]) {
+      // The spring onEnd always calls setRenderZoom(zoomStopForScale(targetS)).
+      // Whatever the starting scale, the committed stop is always the same.
+      expect(zoomStopForScale(fitScale)).toBe(committedStop);
     }
-    // And it matches numTilesForScale(fitScale) — the same helper used everywhere else.
-    expect(committedTier).toBe(numTilesForScale(fitScale));
+    // numTiles for the committed stop must be a power of 2.
+    expect(tileGridSize(committedStop)).toBe(Math.pow(2, committedStop));
   });
 
-  it("fit tier is the same on a larger (iPad) viewport — gating contract is device-independent", () => {
+  it("fit stop is the same on a larger (iPad) viewport — gating contract is device-independent", () => {
     const iPadW = 768;
     const iPadH = 960;
     const fitScale = computeFitScale(iPadW, iPadH);
-    const committedTier = Math.ceil(fitScale);
-    // iPads are wider; fit scale may be larger but the contract is the same.
-    expect(committedTier).toBeGreaterThanOrEqual(1);
-    // The tier must equal numTilesForScale for consistency.
-    expect(committedTier).toBe(numTilesForScale(fitScale));
+    const committedStop = zoomStopForScale(fitScale);
+    expect(committedStop).toBeGreaterThanOrEqual(0);
+    expect(committedStop).toBeLessThan(ZOOM_STOPS.length);
+    expect(tileGridSize(committedStop)).toBe(Math.pow(2, committedStop));
   });
 
   it("tierBoundariesCrossed helper: identity transition (from === to) crosses 0 boundaries", () => {

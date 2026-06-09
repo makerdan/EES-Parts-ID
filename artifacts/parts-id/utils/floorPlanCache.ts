@@ -118,6 +118,15 @@ export function getCachedData(): SvgData | null {
 }
 
 /**
+ * Return the hash of the most-recently-stored entry, or null when nothing
+ * is cached.  Useful for constructing tile-cache directory paths that are
+ * keyed by the SVG content hash.
+ */
+export function getCachedHash(): string | null {
+  return _cachedHash;
+}
+
+/**
  * Return the cached data only when its stored hash matches `currentHash`.
  * Returns null when there is no cache, or when the hash indicates the cached
  * entry is stale (e.g. a new app build with a different floor-plan SVG).

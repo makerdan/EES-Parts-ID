@@ -240,9 +240,62 @@ export function panBounds(
  * NOTE: The actual number of tiles rendered is further capped by the device's
  * maximum texture size (IOS_MAX_TEXTURE_PX) inside WarehouseMapView.  That cap
  * is device-specific.  This function returns the pure formula result.
+ *
+ * @deprecated Use zoomStopForScale + tileGridSize for the discrete-stop system.
  */
 export function numTilesForScale(scale: number): number {
   return Math.ceil(scale);
+}
+
+// ── Discrete zoom-stop pyramid ────────────────────────────────────────────────
+// Five preset zoom levels map to z-levels 0–4.  At each level the tile grid
+// is 2^z × 2^z (1×1 at z0 through 16×16 at z4).  The client springs to the
+// nearest stop when a pinch gesture ends; buttons step one stop at a time.
+
+export interface ZoomStop {
+  /** Zoom level index 0–4 (z0 = overview, z4 = bin). */
+  z: number;
+  /** Target scale value for this stop. */
+  scale: number;
+  /** Human-readable label for the zoom level. */
+  label: string;
+}
+
+/**
+ * Five preset zoom stops covering overview → aisle → section → shelf → bin.
+ * Scale values are chosen so each stop feels meaningfully different and the
+ * overview stop (z0) is close to the default fit-to-content scale (~1.5×).
+ */
+export const ZOOM_STOPS: ReadonlyArray<ZoomStop> = [
+  { z: 0, scale: 1.5,  label: "overview" },
+  { z: 1, scale: 4,    label: "aisle"    },
+  { z: 2, scale: 10,   label: "section"  },
+  { z: 3, scale: 22,   label: "shelf"    },
+  { z: 4, scale: 45,   label: "bin"      },
+];
+
+/**
+ * Tile grid dimension for zoom level z: 2^z.
+ * z0 → 1×1, z1 → 2×2, z2 → 4×4, z3 → 8×8, z4 → 16×16.
+ */
+export function tileGridSize(z: number): number {
+  return Math.pow(2, z);
+}
+
+/**
+ * Return the index into ZOOM_STOPS nearest to `scale` using log-distance so
+ * that stops feel equally spaced when zooming in/out perceptually.
+ * Always returns a value in [0, ZOOM_STOPS.length − 1].
+ */
+export function zoomStopForScale(scale: number): number {
+  const logS = Math.log(Math.max(0.001, scale));
+  let best = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < ZOOM_STOPS.length; i++) {
+    const d = Math.abs(logS - Math.log(ZOOM_STOPS[i].scale));
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return best;
 }
 
 /**
