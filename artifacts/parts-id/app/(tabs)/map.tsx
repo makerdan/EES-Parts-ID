@@ -368,13 +368,16 @@ export default function MapScreen() {
               </View>
             )}
           </View>
-          {/* Zone Editor: only shown to authenticated admins (isAdmin === true). Audit: no other entry point exists — the button below is the sole access path. */}
-          {isAdmin && (
-            <View style={styles.zoneEditorWrapper}>
+          {/* Zone Editor: always visible; non-admins see a toast instead of opening the editor. */}
+          <View style={styles.zoneEditorWrapper}>
               <Pressable
                 onPress={() => {
                   if (zoneEditorLongPressed.current) {
                     zoneEditorLongPressed.current = false;
+                    return;
+                  }
+                  if (!isAdmin) {
+                    showToast("Please log in as admin to access the Zone Editor.", "info");
                     return;
                   }
                   Linking.openURL(ZONE_EDITOR_URL);
@@ -402,7 +405,6 @@ export default function MapScreen() {
                 </View>
               )}
             </View>
-          )}
         </View>
       </View>
 
