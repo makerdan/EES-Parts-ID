@@ -1175,7 +1175,7 @@ export default function SearchScreen() {
               color: colors.foreground,
               paddingRight: filters.keywords ? 36 : 12,
             }]}
-            autoCapitalize="none"
+            autoCapitalize="characters"
             autoCorrect={false}
             returnKeyType="search"
             onSubmitEditing={handleSearch}
