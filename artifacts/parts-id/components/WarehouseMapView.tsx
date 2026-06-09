@@ -499,6 +499,7 @@ function PngTile({
   tileW: number;
   tileH: number;
 }) {
+  "use no memo";
   const [uri, setUri] = useState<string | null>(null);
 
   useEffect(() => {
@@ -601,6 +602,7 @@ export function MapPin3D({
   stroke: string;
   isNew?: boolean;
 }) {
+  "use no memo";
   const r = size;
   const bcy = cy - r * 1.85;
   const path =
