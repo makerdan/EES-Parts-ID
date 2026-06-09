@@ -5,16 +5,12 @@ import React from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { useColors, useIsDark } from "@/hooks/useColors";
 import { searchResetEvent } from "@/utils/searchResetEvent";
-import { isLiDARSupported } from "lidar-measure";
-import { useApp } from "@/contexts/AppContext";
 
 export default function TabLayout() {
   const colors = useColors();
   const isDark = useIsDark();
   const isIOS = Platform.OS === "ios";
   const isWeb = Platform.OS === "web";
-  const { isAdmin } = useApp();
-  const lidarSupported = isLiDARSupported();
 
   return (
     <Tabs
@@ -86,9 +82,7 @@ export default function TabLayout() {
         options={{
           title: "Measure",
           tabBarIcon: ({ color }) => <Feather name="maximize" size={22} color={color} />,
-          // Hide this tab on devices without LiDAR — isLiDARSupported() returns
-          // false on Android, Web, and non-LiDAR iOS devices.
-          href: lidarSupported && isAdmin ? undefined : null,
+          href: null,
         }}
       />
     </Tabs>
