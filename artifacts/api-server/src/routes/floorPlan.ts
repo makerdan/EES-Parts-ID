@@ -166,11 +166,22 @@ router.get("/floor-plan/svg", async (_req, res) => {
 // Serves a single PNG tile.  Tiles are cached to disk after first generation.
 // z3 and z4 tiles are generated on first request (not pre-warmed) to avoid the
 // large raster cost at startup.
+//
+// Rasterisation strategy:
+//   The full SVG is rendered at (TILE_PX * gridSize) × (TILE_PX * gridSize / SVG_ASPECT)
+//   pixels using sharp, then the (x, y) sub-rectangle is extracted.  Each tile
+//   is therefore exactly TILE_PX wide × round(TILE_PX / SVG_ASPECT) tall.
+//   gridSize = tileGridSize(z) = 2^z, matching the client's tileGridSize(z).
+//
+// ETag / conditional GET:
+//   The ETag is derived from the SVG content hash and tile coordinates so
+//   CDNs and mobile clients can skip re-downloading unchanged tiles with a
+//   304 Not Modified response.
 router.get("/floor-plan/tiles/:z/:x/:y", async (req, res) => {
   try {
     const z = parseInt(req.params.z, 10);
     const x = parseInt(req.params.x, 10);
-    // Strip .png extension from y if present (route param captures it)
+    // Strip .png extension from y if present (route param captures the full segment)
     const yStr = req.params.y.replace(/\.png$/, "");
     const y = parseInt(yStr, 10);
 
@@ -191,11 +202,22 @@ router.get("/floor-plan/tiles/:z/:x/:y", async (req, res) => {
       return;
     }
 
+    // ETag is stable for the lifetime of a given (svgHash, z, x, y) tuple.
+    // Changing the floor plan produces a new hash and therefore a new ETag,
+    // which forces CDN/proxy to fetch the updated tile.
+    const etag = `"${meta.hash}-${z}-${x}-${y}"`;
+    res.set("ETag", etag);
+    res.set("Cache-Control", "public, max-age=86400");
+
+    if (req.headers["if-none-match"] === etag) {
+      res.status(304).end();
+      return;
+    }
+
     const svgBuffer = await readFloorPlanSvg(meta.objectPath);
     const pngBuffer = await generateTile(svgBuffer, meta.hash, z, x, y);
 
     res.set("Content-Type", "image/png");
-    res.set("Cache-Control", "public, max-age=86400");
     res.send(pngBuffer);
   } catch (err) {
     console.error("[floor-plan/tiles] error:", err);

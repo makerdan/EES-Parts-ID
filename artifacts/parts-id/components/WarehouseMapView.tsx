@@ -61,6 +61,7 @@ import {
   fetchTile,
   prefetchZoomLevel,
 } from "@/utils/tilePyramidCache";
+import { warmupTiles } from "@/utils/floorPlan";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
@@ -1383,10 +1384,9 @@ export function WarehouseMapView({
   // no longer matches the current floor plan to prevent unbounded disk usage.
   useEffect(() => {
     if (!svgHash || Platform.OS === "web") return;
-    // Kick off warmup via the API; failure is non-fatal.
-    if (SVG_API_BASE) {
-      fetch(`${SVG_API_BASE}/floor-plan/tiles/warmup`, { method: "POST" }).catch(() => {});
-    }
+    // Kick off warmup via the API so z0–z2 tiles are cached before the user
+    // zooms in.  warmupTiles() is fire-and-forget and non-fatal.
+    warmupTiles(svgHash).catch(() => {});
     // Also clean stale on-device cache dirs from previous floor-plan versions.
     cleanStaleCacheDirs(svgHash).catch(() => {});
   }, [svgHash]);
