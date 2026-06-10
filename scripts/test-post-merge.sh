@@ -150,6 +150,28 @@ OUTPUT=$(check_api_health "test-extra-fields" 2>&1)
 assert_exit "extra JSON fields accepted — exit 0" 0 $?
 
 # ---------------------------------------------------------------------------
+# Test 6: post-merge.sh contains the codegen step
+# Ensures the codegen command is present in the script and appears before
+# the first health check so generated files are always fresh after a merge.
+# ---------------------------------------------------------------------------
+SCRIPT_CONTENT=$(cat "$SCRIPT_DIR/post-merge.sh")
+
+if echo "$SCRIPT_CONTENT" | grep -q 'pnpm --filter @workspace/api-spec run codegen'; then
+  pass "codegen — command present in post-merge.sh"
+else
+  fail "codegen — command missing from post-merge.sh"
+fi
+
+# Verify codegen line appears before the first health check invocation.
+CODEGEN_LINE=$(grep -n 'api-spec run codegen' "$SCRIPT_DIR/post-merge.sh" | head -1 | cut -d: -f1)
+HEALTHCHECK_LINE=$(grep -n 'check_api_health' "$SCRIPT_DIR/post-merge.sh" | grep -v '^[0-9]*:.*()' | head -1 | cut -d: -f1)
+if [[ -n "$CODEGEN_LINE" && -n "$HEALTHCHECK_LINE" && "$CODEGEN_LINE" -lt "$HEALTHCHECK_LINE" ]]; then
+  pass "codegen — runs before health check"
+else
+  fail "codegen — must appear before first check_api_health call (codegen=$CODEGEN_LINE, healthcheck=$HEALTHCHECK_LINE)"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
