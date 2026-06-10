@@ -539,7 +539,7 @@ export default function PhotoScreen() {
             {[
               { label: "Visible Text / Numbers", value: textNumbers, key: "textNumbers", ph: "e.g. BR120, 20A, 125V...", autoCapitalize: "characters" as const },
               { label: "Keywords", value: keywords, key: "keywords", ph: "e.g. breaker, outlet...", autoCapitalize: "none" as const },
-              { label: "Vendor", value: vendor, key: "vendor", ph: "e.g. Eaton, Square D...", autoCapitalize: "none" as const },
+              { label: "Vendor", value: vendor, key: "vendor", ph: "e.g. Eaton, Square D...", autoCapitalize: "words" as const },
               { label: "Color", value: color, key: "color", ph: "e.g. white, gray...", autoCapitalize: "none" as const },
               { label: "Size", value: size, key: "size", ph: "e.g. 20A, 3/4 inch...", autoCapitalize: "none" as const },
             ].map(({ label, value, key, ph, autoCapitalize }) => (
