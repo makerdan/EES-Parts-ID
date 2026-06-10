@@ -11,6 +11,7 @@ import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { RetryImage } from "@/components/RetryImage";
 import { PinIcon } from "@/components/PinIcon";
 import { useColors } from "@/hooks/useColors";
+import { PhotoLightbox } from "@/components/PhotoLightbox";
 
 interface ResultCardProps {
   result: SearchResult;
@@ -93,6 +94,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
+  const [lightboxUri, setLightboxUri] = useState<string | null>(null);
   const { item, confidence, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
 
@@ -108,6 +110,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
   };
 
   return (
+    <>
     <Pressable onPress={handlePress}>
       <View
         style={[
@@ -138,11 +141,18 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
           </View>
           <View style={cardStyles.headerRight}>
             {(item.thumbnailUrl ?? item.imageUrl) ? (
-              <RetryImage
-                uri={(item.thumbnailUrl ?? item.imageUrl) as string}
-                style={cardStyles.thumbnail}
-                resizeMode="cover"
-              />
+              <Pressable
+                onPress={(e) => { e.stopPropagation?.(); setLightboxUri(item.imageUrl ?? item.thumbnailUrl ?? null); }}
+                hitSlop={4}
+                accessibilityLabel={`View full photo for ${item.catalog}`}
+                accessibilityRole="button"
+              >
+                <RetryImage
+                  uri={(item.thumbnailUrl ?? item.imageUrl) as string}
+                  style={cardStyles.thumbnail}
+                  resizeMode="cover"
+                />
+              </Pressable>
             ) : (
               <View style={[cardStyles.thumbnail, cardStyles.thumbnailPlaceholder, { backgroundColor: colors.muted, borderColor: colors.border }]}>
                 <Feather name="image" size={22} color={colors.mutedForeground} />
@@ -331,6 +341,8 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         </Text>
       </View>
     </Pressable>
+    <PhotoLightbox uri={lightboxUri} onClose={() => setLightboxUri(null)} />
+    </>
   );
 }
 
