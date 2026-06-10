@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,7 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import * as ImagePicker from "expo-image-picker";
+import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -374,17 +373,6 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
     }
   }, [duplicate, adminToken, uploadPhoto, invalidateInventory, resetItemFields, advanceCounter, onClose]);
 
-  const openCamera = useCallback(async () => {
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: "images",
-      quality: 0.6,
-      allowsEditing: false,
-    });
-    if (!result.canceled && result.assets.length > 0) {
-      setPhoto({ uri: result.assets[0].uri });
-    }
-  }, []);
-
   const formatPrefix = useCallback((val: string) => {
     const alnum = val.replace(/[^0-9A-Za-z]/g, "").toUpperCase().slice(0, 4);
     if (alnum.length <= 2) return alnum;
@@ -601,37 +589,10 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
 
               {/* Photo capture */}
               <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 14 }]}>Photo (optional)</Text>
-              <View style={styles.photoRow}>
-                {photo ? (
-                  <View style={styles.thumbnailWrapper}>
-                    <Image source={{ uri: photo.uri }} style={styles.thumbnail} />
-                    <Pressable
-                      onPress={() => setPhoto(null)}
-                      style={[styles.photoRemove, { backgroundColor: colors.destructive }]}
-                    >
-                      <Text style={{ color: "#fff", fontSize: 11 }}>✕</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-                {Platform.OS !== "web" ? (
-                  <Pressable
-                    onPress={openCamera}
-                    style={[
-                      styles.cameraBtn,
-                      { borderColor: colors.border, backgroundColor: colors.muted },
-                    ]}
-                  >
-                    <Feather name="camera" size={20} color={colors.foreground} />
-                    <Text style={[styles.cameraBtnText, { color: colors.foreground }]}>
-                      {photo ? "Retake" : "Take Photo"}
-                    </Text>
-                  </Pressable>
-                ) : (
-                  <Text style={[styles.miniHint, { color: colors.mutedForeground }]}>
-                    Photo capture is only available on device.
-                  </Text>
-                )}
-              </View>
+              <PartPhotoPicker
+                value={photo?.uri ?? null}
+                onChange={(uri) => setPhoto(uri ? { uri } : null)}
+              />
 
               {/* Duplicate detection prompt */}
               {duplicate ? (
@@ -849,29 +810,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   positionText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  photoRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 2 },
-  thumbnailWrapper: { position: "relative" },
-  thumbnail: { width: 64, height: 64, borderRadius: 8 },
-  photoRemove: {
-    position: "absolute",
-    top: -6,
-    right: -6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cameraBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  cameraBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
   duplicateBanner: {
     borderRadius: 8,
     borderWidth: 1,

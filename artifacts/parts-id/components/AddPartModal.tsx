@@ -1,19 +1,23 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
+  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as Clipboard from "expo-clipboard";
+import * as FileSystem from "expo-file-system/legacy";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -47,6 +51,7 @@ export function AddPartModal({
   const [fieldErrors, setFieldErrors] = useState<{ catalog?: string; vendor?: string; bin?: string }>({});
   const [createdItem, setCreatedItem] = useState<InventoryItem | null>(null);
   const [copied, setCopied] = useState(false);
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleCopyBin = async () => {
@@ -71,6 +76,7 @@ export function AddPartModal({
       setError(null);
       setFieldErrors({});
       setCreatedItem(null);
+      setPhotoUri(null);
     }
   }, [visible, defaultBin]);
 
@@ -81,6 +87,22 @@ export function AddPartModal({
     if (!binLocation.trim()) errs.bin = "Bin location is required";
     setFieldErrors(errs);
     return Object.keys(errs).length === 0;
+  };
+
+  const uploadPhoto = async (itemId: number, uri: string) => {
+    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
+    const res = await fetch(`${API_BASE}/inventory/${itemId}/photo`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg" }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(data.error ?? `HTTP ${res.status}`);
+    }
   };
 
   const handleSubmit = async () => {
@@ -122,9 +144,23 @@ export function AddPartModal({
       }
 
       const data = await res.json() as { item: InventoryItem };
+      const newItem = data.item;
+
+      if (photoUri) {
+        try {
+          await uploadPhoto(newItem.id, photoUri);
+        } catch {
+          Alert.alert(
+            "Photo upload failed",
+            "The part was saved but the photo could not be uploaded. Check your connection and try again.",
+            [{ text: "OK" }]
+          );
+        }
+      }
+
       onSuccess();
       if (onAddDetails) {
-        setCreatedItem(data.item);
+        setCreatedItem(newItem);
       } else {
         onClose();
       }
@@ -158,6 +194,7 @@ export function AddPartModal({
     setError(null);
     setFieldErrors({});
     setCreatedItem(null);
+    setPhotoUri(null);
   };
 
   return (
@@ -260,102 +297,110 @@ export function AddPartModal({
             </>
           ) : (
             /* ── Entry form ── */
-            <>
-              <Text style={[styles.title, { color: colors.foreground }]}>Add Part</Text>
-              <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-                Register a new part in the inventory
-              </Text>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <View style={styles.formInner}>
+                <Text style={[styles.title, { color: colors.foreground }]}>Add Part</Text>
+                <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
+                  Register a new part in the inventory
+                </Text>
 
-              <View style={styles.fields}>
-                <View style={styles.fieldGroup}>
-                  <Text style={[styles.label, { color: colors.foreground }]}>Catalog Number</Text>
-                  <KeyboardDoneInput
-                    style={[
-                      styles.input,
-                      { backgroundColor: colors.muted, borderColor: fieldErrors.catalog ? colors.destructive : colors.border, color: colors.foreground },
-                    ]}
-                    placeholder="e.g. BR120"
-                    placeholderTextColor={colors.mutedForeground}
-                    value={catalog}
-                    onChangeText={v => { setCatalog(v); if (fieldErrors.catalog) setFieldErrors(p => ({ ...p, catalog: undefined })); }}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    returnKeyType="next"
-                  />
-                  {fieldErrors.catalog ? (
-                    <Text style={[styles.fieldError, { color: colors.destructive }]}>{fieldErrors.catalog}</Text>
-                  ) : null}
+                <View style={styles.fields}>
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { color: colors.foreground }]}>Catalog Number</Text>
+                    <KeyboardDoneInput
+                      style={[
+                        styles.input,
+                        { backgroundColor: colors.muted, borderColor: fieldErrors.catalog ? colors.destructive : colors.border, color: colors.foreground },
+                      ]}
+                      placeholder="e.g. BR120"
+                      placeholderTextColor={colors.mutedForeground}
+                      value={catalog}
+                      onChangeText={v => { setCatalog(v); if (fieldErrors.catalog) setFieldErrors(p => ({ ...p, catalog: undefined })); }}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      returnKeyType="next"
+                    />
+                    {fieldErrors.catalog ? (
+                      <Text style={[styles.fieldError, { color: colors.destructive }]}>{fieldErrors.catalog}</Text>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { color: colors.foreground }]}>Vendor Code</Text>
+                    <KeyboardDoneInput
+                      style={[
+                        styles.input,
+                        { backgroundColor: colors.muted, borderColor: fieldErrors.vendor ? colors.destructive : colors.border, color: colors.foreground },
+                      ]}
+                      placeholder="e.g. EATON"
+                      placeholderTextColor={colors.mutedForeground}
+                      value={vendor}
+                      onChangeText={v => { setVendor(v); if (fieldErrors.vendor) setFieldErrors(p => ({ ...p, vendor: undefined })); }}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      returnKeyType="next"
+                    />
+                    {fieldErrors.vendor ? (
+                      <Text style={[styles.fieldError, { color: colors.destructive }]}>{fieldErrors.vendor}</Text>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { color: colors.foreground }]}>Bin Location</Text>
+                    <KeyboardDoneInput
+                      style={[
+                        styles.input,
+                        { backgroundColor: colors.muted, borderColor: fieldErrors.bin ? colors.destructive : colors.border, color: colors.foreground },
+                      ]}
+                      placeholder="e.g. 01-05-210"
+                      placeholderTextColor={colors.mutedForeground}
+                      value={binLocation}
+                      onChangeText={v => { setBinLocation(v); if (fieldErrors.bin) setFieldErrors(p => ({ ...p, bin: undefined })); }}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      returnKeyType="done"
+                      onSubmitEditing={handleSubmit}
+                    />
+                    {fieldErrors.bin ? (
+                      <Text style={[styles.fieldError, { color: colors.destructive }]}>{fieldErrors.bin}</Text>
+                    ) : null}
+                  </View>
+
+                  {/* Photo (optional) */}
+                  <View style={styles.fieldGroup}>
+                    <Text style={[styles.label, { color: colors.foreground }]}>Photo — optional</Text>
+                    <PartPhotoPicker value={photoUri} onChange={setPhotoUri} />
+                  </View>
                 </View>
 
-                <View style={styles.fieldGroup}>
-                  <Text style={[styles.label, { color: colors.foreground }]}>Vendor Code</Text>
-                  <KeyboardDoneInput
-                    style={[
-                      styles.input,
-                      { backgroundColor: colors.muted, borderColor: fieldErrors.vendor ? colors.destructive : colors.border, color: colors.foreground },
-                    ]}
-                    placeholder="e.g. EATON"
-                    placeholderTextColor={colors.mutedForeground}
-                    value={vendor}
-                    onChangeText={v => { setVendor(v); if (fieldErrors.vendor) setFieldErrors(p => ({ ...p, vendor: undefined })); }}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    returnKeyType="next"
-                  />
-                  {fieldErrors.vendor ? (
-                    <Text style={[styles.fieldError, { color: colors.destructive }]}>{fieldErrors.vendor}</Text>
-                  ) : null}
-                </View>
+                {error ? (
+                  <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "55" }]}>
+                    <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
+                  </View>
+                ) : null}
 
-                <View style={styles.fieldGroup}>
-                  <Text style={[styles.label, { color: colors.foreground }]}>Bin Location</Text>
-                  <KeyboardDoneInput
-                    style={[
-                      styles.input,
-                      { backgroundColor: colors.muted, borderColor: fieldErrors.bin ? colors.destructive : colors.border, color: colors.foreground },
-                    ]}
-                    placeholder="e.g. 01-05-210"
-                    placeholderTextColor={colors.mutedForeground}
-                    value={binLocation}
-                    onChangeText={v => { setBinLocation(v); if (fieldErrors.bin) setFieldErrors(p => ({ ...p, bin: undefined })); }}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="done"
-                    onSubmitEditing={handleSubmit}
-                  />
-                  {fieldErrors.bin ? (
-                    <Text style={[styles.fieldError, { color: colors.destructive }]}>{fieldErrors.bin}</Text>
-                  ) : null}
+                <View style={styles.actions}>
+                  <Pressable
+                    onPress={onClose}
+                    disabled={loading}
+                    style={[styles.cancelBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+                  >
+                    <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleSubmit}
+                    disabled={loading}
+                    style={[styles.submitBtn, { backgroundColor: loading ? colors.muted : colors.primary, borderColor: loading ? colors.border : colors.primary }]}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color={colors.primaryForeground} size="small" />
+                    ) : (
+                      <Text style={[styles.submitBtnText, { color: colors.primaryForeground }]}>Add Part</Text>
+                    )}
+                  </Pressable>
                 </View>
               </View>
-
-              {error ? (
-                <View style={[styles.errorBanner, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive + "55" }]}>
-                  <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
-                </View>
-              ) : null}
-
-              <View style={styles.actions}>
-                <Pressable
-                  onPress={onClose}
-                  disabled={loading}
-                  style={[styles.cancelBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
-                >
-                  <Text style={[styles.cancelBtnText, { color: colors.foreground }]}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  onPress={handleSubmit}
-                  disabled={loading}
-                  style={[styles.submitBtn, { backgroundColor: loading ? colors.muted : colors.primary, borderColor: loading ? colors.border : colors.primary }]}
-                >
-                  {loading ? (
-                    <ActivityIndicator color={colors.primaryForeground} size="small" />
-                  ) : (
-                    <Text style={[styles.submitBtnText, { color: colors.primaryForeground }]}>Add Part</Text>
-                  )}
-                </Pressable>
-              </View>
-            </>
+            </ScrollView>
           )}
         </View>
         </DismissKeyboard>
@@ -376,6 +421,10 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     padding: 24,
+    gap: 16,
+    maxHeight: "90%",
+  },
+  formInner: {
     gap: 16,
   },
   successHeader: {
