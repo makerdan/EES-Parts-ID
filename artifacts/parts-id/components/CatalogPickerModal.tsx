@@ -10,7 +10,9 @@ import {
   Text,
   View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { RetryImage } from "@/components/RetryImage";
 import { useColors } from "@/hooks/useColors";
 import {
   useSearchInventory,
@@ -287,26 +289,41 @@ export function CatalogPickerModal({
                 onPress={() => onAssign(r.item)}
                 style={[pickerStyles.resultRow, { borderBottomColor: colors.border }]}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Text style={[pickerStyles.resultCatalog, { color: colors.foreground, flex: 1 }]}>
-                    {r.item.catalog}
-                  </Text>
-                  {prefix && r.item.binLocations.some(b => b.toLowerCase().startsWith(prefix)) ? (
-                    <View style={[pickerStyles.shelfBadge, { backgroundColor: colors.primary + "22" }]}>
-                      <Text style={[pickerStyles.shelfBadgeText, { color: colors.primary }]}>
-                        {r.item.binLocations.find(b => b.toLowerCase().startsWith(prefix))}
-                      </Text>
+                <View style={pickerStyles.resultRowInner}>
+                  {(r.item.thumbnailUrl ?? r.item.imageUrl) ? (
+                    <RetryImage
+                      uri={(r.item.thumbnailUrl ?? r.item.imageUrl) as string}
+                      style={pickerStyles.resultThumb}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={[pickerStyles.resultThumb, pickerStyles.resultThumbPlaceholder, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                      <Feather name="image" size={18} color={colors.mutedForeground} />
                     </View>
-                  ) : null}
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Text style={[pickerStyles.resultCatalog, { color: colors.foreground, flex: 1 }]}>
+                        {r.item.catalog}
+                      </Text>
+                      {prefix && r.item.binLocations.some(b => b.toLowerCase().startsWith(prefix)) ? (
+                        <View style={[pickerStyles.shelfBadge, { backgroundColor: colors.primary + "22" }]}>
+                          <Text style={[pickerStyles.shelfBadgeText, { color: colors.primary }]}>
+                            {r.item.binLocations.find(b => b.toLowerCase().startsWith(prefix))}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={[pickerStyles.resultVendor, { color: colors.mutedForeground }]}>
+                      {r.item.vendor}
+                    </Text>
+                    {r.item.description ? (
+                      <Text style={[pickerStyles.resultDesc, { color: colors.mutedForeground }]} numberOfLines={1}>
+                        {r.item.description}
+                      </Text>
+                    ) : null}
+                  </View>
                 </View>
-                <Text style={[pickerStyles.resultVendor, { color: colors.mutedForeground }]}>
-                  {r.item.vendor}
-                </Text>
-                {r.item.description ? (
-                  <Text style={[pickerStyles.resultDesc, { color: colors.mutedForeground }]} numberOfLines={1}>
-                    {r.item.description}
-                  </Text>
-                ) : null}
               </Pressable>
             )}
             ListEmptyComponent={
@@ -351,8 +368,24 @@ export const pickerStyles = StyleSheet.create({
   },
   resultRow: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
+  },
+  resultRowInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  resultThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 6,
+    flexShrink: 0,
+  },
+  resultThumbPlaceholder: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
   },
   resultCatalog: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   resultVendor: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
