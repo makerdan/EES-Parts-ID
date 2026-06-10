@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
+  Alert,
   ActivityIndicator,
   Dimensions,
   Pressable,
@@ -8,6 +9,7 @@ import {
   Text,
   View,
 } from "react-native";
+import * as FileSystem from "expo-file-system/legacy";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useFocusEffect } from "expo-router";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
@@ -27,6 +29,11 @@ import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { resolveShelfAssign } from "@/utils/barcodeResolver";
 import { useQueryClient } from "@tanstack/react-query";
 import { CatalogPickerModal } from "@/components/CatalogPickerModal";
+import { PartPhotoPicker } from "@/components/PartPhotoPicker";
+
+const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
+  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
+  : "http://localhost:8080/api";
 
 interface AssignmentEntry {
   barcode: string;
@@ -157,6 +164,11 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   const [conflictItem, setConflictItem] = useState<InventoryItem | null>(null);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
 
+  // Optional photo capture after assignment
+  const [pendingPhotoItem, setPendingPhotoItem] = useState<InventoryItem | null>(null);
+  const [pendingPhotoUri, setPendingPhotoUri] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
+
   // Pending barcode — set when camera detects a barcode, cleared on commit or reset
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const pendingCodeRef = useRef<string | null>(null);
@@ -238,6 +250,48 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     pendingCodeRef.current = null;
     setPendingCode(null);
   }, []);
+
+  const uploadPartPhoto = useCallback(async (itemId: number, uri: string) => {
+    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
+    const res = await fetch(`${API_BASE}/inventory/${itemId}/photo`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${adminToken}`,
+      },
+      body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg" }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(data.error ?? `HTTP ${res.status}`);
+    }
+  }, [adminToken]);
+
+  const handlePhotoSkip = useCallback(() => {
+    setPendingPhotoItem(null);
+    setPendingPhotoUri(null);
+  }, []);
+
+  const handlePhotoUpload = useCallback(async () => {
+    if (!pendingPhotoItem) return;
+    if (pendingPhotoUri) {
+      setPhotoUploading(true);
+      try {
+        await uploadPartPhoto(pendingPhotoItem.id, pendingPhotoUri);
+      } catch (err) {
+        setPhotoUploading(false);
+        Alert.alert(
+          "Photo upload failed",
+          "The part was saved but the photo could not be uploaded. Check your connection and try again.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+      setPhotoUploading(false);
+    }
+    setPendingPhotoItem(null);
+    setPendingPhotoUri(null);
+  }, [pendingPhotoItem, pendingPhotoUri, uploadPartPhoto]);
 
   const triggerScanFeedback = useCallback(async (soundEnabled: boolean) => {
     try {
@@ -337,6 +391,8 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         await triggerScanFeedback(settings.scanSound);
         setLastAssigned({ barcode: code, item });
         setScannedCode(null);
+        setPendingPhotoItem(item);
+        setPendingPhotoUri(null);
       } catch (err) {
         const status = err instanceof Error && "status" in err
           ? (err as { status: number }).status
@@ -393,6 +449,8 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           setAssignments((prev) => [{ barcode: code, item: result.updatedItem }, ...prev]);
         }
         setShelfScannedCode(null);
+        setPendingPhotoItem(result.wasNew ? result.updatedItem : item);
+        setPendingPhotoUri(null);
         // Mark as assigned in bulk queue (keeps it visible with its status)
         setBulkQueue(prev =>
           prev.map(e => e.barcode === code ? { ...e, status: "assigned" as BulkQueueStatus } : e)
@@ -495,7 +553,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     clearShelfSession();
   };
 
-  const isCameraActive = !assignPicker && !shelfAssignPicker;
+  const isCameraActive = !assignPicker && !shelfAssignPicker && !pendingPhotoItem;
   const canCapture = !!pendingCode && isCameraActive && cameraStarted;
 
   if (!permission) {
@@ -858,6 +916,47 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           <Pressable onPress={() => { setScanError(null); setConflictItem(null); }} hitSlop={8}>
             <Text style={{ color: colors.destructive, fontSize: 14 }}>✕</Text>
           </Pressable>
+        </View>
+      ) : null}
+
+      {/* Optional photo step — shown after any assignment */}
+      {pendingPhotoItem ? (
+        <View style={[apStyles.photoStepCard, { backgroundColor: colors.card, borderColor: colors.primary + "44" }]}>
+          <View style={apStyles.photoStepHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={[apStyles.photoStepTitle, { color: colors.foreground }]}>
+                Photo for {pendingPhotoItem.catalog}
+              </Text>
+              <Text style={[apStyles.photoStepSub, { color: colors.mutedForeground }]}>
+                Optional — snap a reference image or skip
+              </Text>
+            </View>
+            <Pressable onPress={handlePhotoSkip} hitSlop={8}>
+              <Text style={{ color: colors.mutedForeground, fontSize: 16 }}>✕</Text>
+            </Pressable>
+          </View>
+          <PartPhotoPicker value={pendingPhotoUri} onChange={setPendingPhotoUri} />
+          <View style={apStyles.photoStepActions}>
+            <Pressable
+              onPress={handlePhotoSkip}
+              style={[apStyles.photoSkipBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+            >
+              <Text style={[apStyles.photoSkipBtnText, { color: colors.foreground }]}>Skip</Text>
+            </Pressable>
+            <Pressable
+              onPress={handlePhotoUpload}
+              disabled={!pendingPhotoUri || photoUploading}
+              style={[apStyles.photoUploadBtn, { backgroundColor: pendingPhotoUri && !photoUploading ? colors.primary : colors.muted, borderColor: pendingPhotoUri && !photoUploading ? colors.primary : colors.border }]}
+            >
+              {photoUploading ? (
+                <ActivityIndicator size="small" color={colors.primaryForeground} />
+              ) : (
+                <Text style={[apStyles.photoUploadBtnText, { color: pendingPhotoUri ? colors.primaryForeground : colors.mutedForeground }]}>
+                  Upload Photo
+                </Text>
+              )}
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
@@ -1253,4 +1352,40 @@ const apStyles = StyleSheet.create({
     borderWidth: 1,
   },
   clearSkippedBtnText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  photoStepCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+  },
+  photoStepHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  photoStepTitle: { fontSize: 13, fontFamily: "Inter_700Bold" },
+  photoStepSub: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
+  photoStepActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  photoSkipBtn: {
+    flex: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  photoSkipBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  photoUploadBtn: {
+    flex: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  photoUploadBtnText: { fontSize: 13, fontFamily: "Inter_700Bold" },
 });

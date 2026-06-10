@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
+  Alert,
   ActivityIndicator,
   Platform,
   Pressable,
@@ -9,11 +10,13 @@ import {
 } from "react-native";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { Feather } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system/legacy";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
+import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -46,6 +49,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ catalog?: string; vendor?: string; bin?: string }>({});
   const [createdItem, setCreatedItem] = useState<InventoryItem | null>(null);
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
 
   // Dimensions
   const [dimLength, setDimLength] = useState("");
@@ -73,6 +77,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
     setDimWidth("");
     setDimHeight("");
     setDimDiameter("");
+    setPhotoUri(null);
   };
 
   const validate = () => {
@@ -90,6 +95,27 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
     setDimWidth(fmtDim(dims.width));
     setDimHeight(fmtDim(dims.height));
     setDimDiameter(fmtDim(dims.diameter));
+  };
+
+  const uploadPhoto = async (itemId: number, uri: string) => {
+    try {
+      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
+      const res = await fetch(`${API_BASE}/inventory/${itemId}/photo`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.warn("Photo upload failed:", err);
+      throw err;
+    }
   };
 
   const handleSubmit = async () => {
@@ -165,6 +191,18 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
           }
           setError(dimErr.error ?? "Could not save dimensions. The part was not created. Please try again.");
           return;
+        }
+      }
+
+      if (photoUri) {
+        try {
+          await uploadPhoto(newItem.id, photoUri);
+        } catch {
+          Alert.alert(
+            "Photo upload failed",
+            "The part was saved but the photo could not be uploaded. Check your connection and try again.",
+            [{ text: "OK" }]
+          );
         }
       }
 
@@ -262,6 +300,12 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
           ) : null}
         </View>
 
+        {/* Photo (optional) */}
+        <View style={apfStyles.fieldGroup}>
+          <Text style={[apfStyles.label, { color: colors.foreground }]}>Photo — optional</Text>
+          <PartPhotoPicker value={photoUri} onChange={setPhotoUri} />
+        </View>
+
         {/* Dimensions (optional) */}
         <View style={apfStyles.fieldGroup}>
           <View style={apfStyles.dimLabelRow}>
@@ -331,6 +375,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
             </Text>
           ) : null}
         </View>
+
       </View>
 
       {error ? (
