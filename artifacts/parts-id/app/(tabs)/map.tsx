@@ -487,6 +487,13 @@ export default function MapScreen() {
           <WarehouseMapWeb
             inventory={inventory}
             onAislePress={handleAislePress}
+            focusAisleNum={focusAisleNum}
+            onFocusConsumed={() => { setFocusAisleNum(null); setFocusSectionNum(null); }}
+            onFocusFailed={() => {
+              setFocusFailedBanner(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
+              setFocusAisleNum(null);
+              setFocusSectionNum(null);
+            }}
           />
         ) : (
           <WarehouseMapView

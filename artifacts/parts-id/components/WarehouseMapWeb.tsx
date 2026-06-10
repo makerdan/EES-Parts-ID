@@ -15,7 +15,7 @@
  * Uses only React Native primitives — no extra packages required.
  * Only rendered when Platform.OS === "web" (see app/(tabs)/map.tsx).
  */
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -31,6 +31,9 @@ import { useColors } from "@/hooks/useColors";
 type Props = {
   inventory: InventoryItem[];
   onAislePress: (aisleNum: number) => void;
+  focusAisleNum?: number | null;
+  onFocusConsumed?: () => void;
+  onFocusFailed?: () => void;
 };
 
 const COLS = 2;
@@ -38,10 +41,33 @@ const CELL_MIN = 80;
 const CELL_MAX = 200;
 const CELL_BASE = 120;
 
-export function WarehouseMapWeb({ inventory, onAislePress }: Props) {
+// Approximate y-offset of a grid row inside the ScrollView canvas.
+// Layout breakdown (see styles):
+//   canvas paddingTop = 20
+//   entrance walkway height = 28, followed by grid gap = 6
+//   each subsequent row occupies (cellSize + 6) px (gap between rows = 6)
+function rowScrollY(rowIndex: number, cellSize: number): number {
+  const CANVAS_PADDING_TOP = 20;
+  const WALKWAY_HEIGHT = 28;
+  const GAP = 6;
+  return CANVAS_PADDING_TOP + WALKWAY_HEIGHT + GAP + rowIndex * (cellSize + GAP);
+}
+
+const HIGHLIGHT_DURATION_MS = 1800;
+
+export function WarehouseMapWeb({
+  inventory,
+  onAislePress,
+  focusAisleNum,
+  onFocusConsumed,
+  onFocusFailed,
+}: Props) {
   const colors = useColors();
   const { height: windowHeight } = useWindowDimensions();
   const [cellSize, setCellSize] = useState(CELL_BASE);
+  const scrollRef = useRef<ScrollView>(null);
+  const [highlightedAisle, setHighlightedAisle] = useState<number | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { aisles } = useMemo(() => buildAisleHierarchy(inventory), [inventory]);
 
@@ -51,6 +77,43 @@ export function WarehouseMapWeb({ inventory, onAislePress }: Props) {
   for (let i = 0; i < aisles.length; i += COLS) {
     rows.push(aisles.slice(i, i + COLS));
   }
+
+  // Focus effect: scroll to the target aisle and briefly highlight it.
+  //
+  // The highlight timer is stored in highlightTimerRef so its lifetime is
+  // independent of this effect's re-run cycle. Calling onFocusConsumed sets
+  // focusAisleNum → null in the parent, which re-triggers this effect with a
+  // null value (early return). If we cleared the timer in the effect cleanup,
+  // that parent state update would cancel the timer before it fires and the
+  // highlight would never disappear. Managing the timer via a ref decouples
+  // the two lifecycles correctly.
+  useEffect(() => {
+    if (focusAisleNum == null) return;
+    const aisleIndex = aisles.findIndex(a => a.aisleNum === focusAisleNum);
+    if (aisleIndex === -1) {
+      onFocusFailed?.();
+      return;
+    }
+    const rowIndex = Math.floor(aisleIndex / COLS);
+    const y = rowScrollY(rowIndex, cellSize);
+    scrollRef.current?.scrollTo({ y, animated: true });
+    setHighlightedAisle(focusAisleNum);
+    onFocusConsumed?.();
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightedAisle(null);
+      highlightTimerRef.current = null;
+    }, HIGHLIGHT_DURATION_MS);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusAisleNum]);
+
+  // Clear the highlight timer on unmount to avoid a state update on an
+  // unmounted component.
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
 
   const zoomIn = () => setCellSize(s => Math.min(s + 24, CELL_MAX));
   const zoomOut = () => setCellSize(s => Math.max(s - 24, CELL_MIN));
@@ -90,6 +153,7 @@ export function WarehouseMapWeb({ inventory, onAislePress }: Props) {
 
       {/* Map canvas */}
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={[styles.canvas, { paddingBottom: windowHeight / 2 }]}
         showsVerticalScrollIndicator
         showsHorizontalScrollIndicator
@@ -134,7 +198,8 @@ export function WarehouseMapWeb({ inventory, onAislePress }: Props) {
                             width: cellSize,
                             height: cellSize,
                             backgroundColor: aisleColor(aisle.partCount),
-                            borderColor: "#d97706",
+                            borderColor: highlightedAisle === aisle.aisleNum ? "#2563eb" : "#d97706",
+                            borderWidth: highlightedAisle === aisle.aisleNum ? 3 : 2,
                             opacity: pressed ? 0.7 : 1,
                           },
                         ]}
