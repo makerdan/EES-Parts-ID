@@ -14,8 +14,8 @@ import {
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as Clipboard from "expo-clipboard";
 import { Feather } from "@expo/vector-icons";
-import { CameraView, useCameraPermissions } from "expo-camera";
 import * as FileSystem from "expo-file-system";
+import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
 import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
@@ -26,7 +26,6 @@ import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { isLiDARSupported } from "lidar-measure";
-import { RetryImage } from "@/components/RetryImage";
 import { QUERY_CACHE_KEY, evictItemFromQueryCache } from "@/utils/searchHelpers";
 import type { QueryCache } from "@/utils/searchHelpers";
 
@@ -110,10 +109,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
   // Photo state
   const [newPhotoData, setNewPhotoData] = useState<CapturedPhoto | null>(null);
   const [removeCurrentPhoto, setRemoveCurrentPhoto] = useState(false);
-  const [photoCameraOpen, setPhotoCameraOpen] = useState(false);
-  const [takingPhoto, setTakingPhoto] = useState(false);
-  const photoCameraRef = useRef<CameraView>(null);
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
@@ -142,36 +137,16 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     };
   }, []);
 
-  const openPhotoCamera = useCallback(async () => {
-    if (!cameraPermission?.granted) {
-      const result = await requestCameraPermission();
-      if (!result.granted) return;
+  const handlePhotoChange = useCallback((uri: string | null) => {
+    if (uri) {
+      setNewPhotoData({ uri });
+      setRemoveCurrentPhoto(false);
+    } else {
+      setNewPhotoData(null);
+      setRemoveCurrentPhoto(true);
     }
-    setTakingPhoto(false);
-    setPhotoCameraOpen(true);
-  }, [cameraPermission, requestCameraPermission]);
-
-  const handleTakePhoto = useCallback(async () => {
-    if (takingPhoto || !photoCameraRef.current) return;
-    setTakingPhoto(true);
-    try {
-      const result = await photoCameraRef.current.takePictureAsync({
-        quality: 0.6,
-        base64: false,
-        exif: false,
-      });
-      if (result?.uri) {
-        setNewPhotoData({ uri: result.uri });
-        setRemoveCurrentPhoto(false);
-        setSaveStatus("idle");
-      }
-      setPhotoCameraOpen(false);
-    } catch (err) {
-      console.warn("Failed to take photo:", err);
-    } finally {
-      setTakingPhoto(false);
-    }
-  }, [takingPhoto]);
+    setSaveStatus("idle");
+  }, []);
 
   useEffect(() => {
     const current = itemRef.current;
@@ -599,41 +574,10 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
             <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>PHOTO</Text>
             <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
               {Platform.OS !== "web"
-                ? "Take or replace the item photo. Tap ✕ to remove."
-                : "Photo capture is only available on device."}
+                ? "Retake or remove the item photo."
+                : "Remove or replace the item photo (capture requires a device)."}
             </Text>
-            <View style={styles.photoRow}>
-              {currentPhotoUri ? (
-                <View style={styles.photoThumbWrap}>
-                  <RetryImage uri={currentPhotoUri} style={styles.photoThumb} resizeMode="cover" />
-                  <Pressable
-                    onPress={() => { setRemoveCurrentPhoto(true); setNewPhotoData(null); setSaveStatus("idle"); }}
-                    style={[styles.photoRemoveBtn, { backgroundColor: colors.destructive }]}
-                    accessibilityLabel="Remove photo"
-                    accessibilityRole="button"
-                  >
-                    <Text style={{ color: "#fff", fontSize: 11, fontFamily: "Inter_700Bold" }}>✕</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <View style={[styles.photoPlaceholder, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-                  <Feather name="image" size={26} color={colors.mutedForeground} />
-                  <Text style={[styles.photoPlaceholderText, { color: colors.mutedForeground }]}>No photo</Text>
-                </View>
-              )}
-              {Platform.OS !== "web" ? (
-                <Pressable
-                  onPress={openPhotoCamera}
-                  style={[styles.photoCameraBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
-                  accessibilityLabel="Take or replace item photo"
-                >
-                  <Feather name="camera" size={20} color={colors.foreground} />
-                  <Text style={[styles.photoCameraBtnText, { color: colors.foreground }]}>
-                    {currentPhotoUri ? "Replace" : "Take Photo"}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
+            <PartPhotoPicker value={currentPhotoUri} onChange={handlePhotoChange} />
             {fieldSaveErrors.photo ? (
               <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
             ) : null}
@@ -955,46 +899,6 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
         />
       ) : null}
 
-      {/* Photo camera modal — rendered outside the main Modal for the same reason */}
-      {Platform.OS !== "web" ? (
-        <Modal
-          visible={photoCameraOpen}
-          animationType="slide"
-          onRequestClose={() => setPhotoCameraOpen(false)}
-        >
-          <View style={styles.cameraModal}>
-            <CameraView
-              ref={photoCameraRef}
-              style={StyleSheet.absoluteFill}
-              mode="picture"
-              facing="back"
-            />
-            <View style={styles.cameraOverlay}>
-              <View style={styles.cameraHeader}>
-                <Pressable onPress={() => setPhotoCameraOpen(false)} style={styles.cameraCloseBtn} accessibilityLabel="Close camera" accessibilityRole="button">
-                  <Feather name="x" size={20} color="#fff" />
-                </Pressable>
-                <Text style={styles.cameraTitle}>Capture Item Photo</Text>
-                <View style={{ width: 40 }} />
-              </View>
-              <View style={{ flex: 1 }} />
-              <View style={styles.shutterRow}>
-                <Pressable
-                  onPress={handleTakePhoto}
-                  disabled={takingPhoto}
-                  style={[styles.shutterBtn, { opacity: takingPhoto ? 0.6 : 1 }]}
-                >
-                  {takingPhoto ? (
-                    <ActivityIndicator size="large" color="#fff" />
-                  ) : (
-                    <View style={styles.shutterInner} />
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      ) : null}
     </>
   );
 }
@@ -1102,77 +1006,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  // Photo styles
-  photoRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },
-  photoThumbWrap: { position: "relative", width: 80, height: 80 },
-  photoThumb: { width: 80, height: 80, borderRadius: 8 },
-  photoRemoveBtn: {
-    position: "absolute",
-    top: -6,
-    right: -6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  photoPlaceholder: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-  },
-  photoPlaceholderText: { fontSize: 10, fontFamily: "Inter_400Regular" },
-  photoCameraBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  photoCameraBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  cameraModal: { flex: 1, backgroundColor: "#000" },
-  cameraOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "space-between",
-    paddingBottom: 48,
-  },
-  cameraHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: 56,
-    paddingBottom: 16,
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
-  cameraCloseBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cameraTitle: { color: "#fff", fontSize: 17, fontFamily: "Inter_600SemiBold" },
-  shutterRow: { alignItems: "center", paddingBottom: 56 },
-  shutterBtn: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "rgba(255,255,255,0.25)",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 3,
-    borderColor: "#fff",
-  },
-  shutterInner: { width: 56, height: 56, borderRadius: 28, backgroundColor: "#fff" },
   // Dimension styles
   dimHeader: {
     flexDirection: "row",

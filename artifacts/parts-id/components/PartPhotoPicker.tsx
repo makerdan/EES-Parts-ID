@@ -42,9 +42,25 @@ export function PartPhotoPicker({ value, onChange }: PartPhotoPickerProps) {
 
   if (Platform.OS === "web") {
     return (
-      <Text style={[ppStyles.webHint, { color: colors.mutedForeground }]}>
-        Photo capture is only available on device.
-      </Text>
+      <View style={ppStyles.row}>
+        {value ? (
+          <View style={ppStyles.thumbnailWrapper}>
+            <Image source={{ uri: value }} style={ppStyles.thumbnail} />
+            <Pressable
+              onPress={() => onChange(null)}
+              style={[ppStyles.removeBtn, { backgroundColor: colors.destructive }]}
+              accessibilityLabel="Remove photo"
+            >
+              <Text style={{ color: "#fff", fontSize: 11 }}>✕</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        <Text style={[ppStyles.webHint, { color: colors.mutedForeground }]}>
+          {value
+            ? "Tap ✕ to remove. Photo capture is only available on device."
+            : "Photo capture is only available on device."}
+        </Text>
+      </View>
     );
   }
 
