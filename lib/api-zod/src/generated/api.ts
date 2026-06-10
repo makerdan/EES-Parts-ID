@@ -63,7 +63,13 @@ export const ListInventoryResponse = zod.object({
         .string()
         .nullish()
         .describe(
-          "URL of the catalog image extracted from a PDF import, served via the API proxy",
+          "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+        ),
+      thumbnailUrl: zod
+        .string()
+        .nullish()
+        .describe(
+          "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
         ),
       dimensions: zod
         .object({
@@ -244,7 +250,13 @@ export const SearchInventoryResponse = zod
             .string()
             .nullish()
             .describe(
-              "URL of the catalog image extracted from a PDF import, served via the API proxy",
+              "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+            ),
+          thumbnailUrl: zod
+            .string()
+            .nullish()
+            .describe(
+              "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
             ),
           dimensions: zod
             .object({
@@ -284,7 +296,13 @@ export const SearchInventoryResponse = zod
               .string()
               .nullish()
               .describe(
-                "URL of the catalog image extracted from a PDF import, served via the API proxy",
+                "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+              ),
+            thumbnailUrl: zod
+              .string()
+              .nullish()
+              .describe(
+                "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
               ),
             dimensions: zod
               .object({
@@ -333,7 +351,13 @@ export const SearchInventoryResponse = zod
               .string()
               .nullish()
               .describe(
-                "URL of the catalog image extracted from a PDF import, served via the API proxy",
+                "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+              ),
+            thumbnailUrl: zod
+              .string()
+              .nullish()
+              .describe(
+                "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
               ),
             dimensions: zod
               .object({
@@ -373,7 +397,13 @@ export const SearchInventoryResponse = zod
                 .string()
                 .nullish()
                 .describe(
-                  "URL of the catalog image extracted from a PDF import, served via the API proxy",
+                  "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+                ),
+              thumbnailUrl: zod
+                .string()
+                .nullish()
+                .describe(
+                  "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
                 ),
               dimensions: zod
                 .object({
@@ -445,6 +475,43 @@ export const EnrichInventoryBody = zod.object({
 });
 
 /**
+ * @summary Upload or remove a part photo (admin)
+ */
+export const UploadItemPhotoParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UploadItemPhotoBody = zod.object({
+  imageBase64: zod
+    .string()
+    .optional()
+    .describe(
+      "Base64-encoded JPEG or PNG image; required when remove is false or omitted",
+    ),
+  mimeType: zod
+    .string()
+    .optional()
+    .describe("MIME type of the image (default image\/jpeg)"),
+  remove: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Set to true to remove the current photo and clear both imageUrl and thumbnailUrl",
+    ),
+});
+
+export const UploadItemPhotoResponse = zod.object({
+  imageUrl: zod
+    .string()
+    .nullable()
+    .describe("URL of the full-size image after upload, or null after removal"),
+  thumbnailUrl: zod
+    .string()
+    .nullable()
+    .describe("URL of the thumbnail image after upload, or null after removal"),
+});
+
+/**
  * @summary Replace the bin-locations array on a single inventory item (admin)
  */
 export const UpdateItemBinsParams = zod.object({
@@ -476,7 +543,13 @@ export const UpdateItemBinsResponse = zod.object({
     .string()
     .nullish()
     .describe(
-      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+      "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+    ),
+  thumbnailUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
     ),
   dimensions: zod
     .object({
@@ -557,7 +630,13 @@ export const UpdateItemDimensionsResponse = zod.object({
     .string()
     .nullish()
     .describe(
-      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+      "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+    ),
+  thumbnailUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
     ),
   dimensions: zod
     .object({
@@ -600,7 +679,13 @@ export const LookupByBarcodeResponse = zod.object({
     .string()
     .nullish()
     .describe(
-      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+      "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+    ),
+  thumbnailUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
     ),
   dimensions: zod
     .object({
@@ -649,7 +734,13 @@ export const UpdateItemBarcodesResponse = zod.object({
     .string()
     .nullish()
     .describe(
-      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+      "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+    ),
+  thumbnailUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
     ),
   dimensions: zod
     .object({
@@ -696,7 +787,13 @@ export const UpdateItemDescriptionResponse = zod.object({
     .string()
     .nullish()
     .describe(
-      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+      "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+    ),
+  thumbnailUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
     ),
   dimensions: zod
     .object({
@@ -743,7 +840,13 @@ export const UpdateItemKeywordsResponse = zod.object({
     .string()
     .nullish()
     .describe(
-      "URL of the catalog image extracted from a PDF import, served via the API proxy",
+      "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+    ),
+  thumbnailUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
     ),
   dimensions: zod
     .object({
@@ -820,7 +923,13 @@ export const AiIdentifyPartResponse = zod.object({
           .string()
           .nullish()
           .describe(
-            "URL of the catalog image extracted from a PDF import, served via the API proxy",
+            "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+          ),
+        thumbnailUrl: zod
+          .string()
+          .nullish()
+          .describe(
+            "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
           ),
         dimensions: zod
           .object({
@@ -860,7 +969,13 @@ export const AiIdentifyPartResponse = zod.object({
             .string()
             .nullish()
             .describe(
-              "URL of the catalog image extracted from a PDF import, served via the API proxy",
+              "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+            ),
+          thumbnailUrl: zod
+            .string()
+            .nullish()
+            .describe(
+              "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
             ),
           dimensions: zod
             .object({

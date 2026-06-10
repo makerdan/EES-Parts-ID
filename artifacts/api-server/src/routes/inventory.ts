@@ -29,6 +29,7 @@ import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } fro
 import { generateKeywords } from "../utils/generateKeywords";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { uploadCatalogImage } from "../lib/objectStorage";
+import { resizeImages } from "../utils/imageResize";
 import {
   blendPgScore,
   catalogScore,
@@ -578,7 +579,7 @@ router.post("/search", async (req, res) => {
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
       bin_locations: string[]; ai_keywords: string[]; barcodes: string[];
-      enriched_at: Date | null; image_url: string | null;
+      enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null;
       dimensions: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null;
       created_at: Date; updated_at: Date;
       fts_rank: number; trgm_sim: number;
@@ -683,7 +684,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.dimensions, i.created_at, i.updated_at,
+              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.dimensions, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 to_tsvector('english',
                   coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
@@ -775,8 +776,9 @@ router.post("/search", async (req, res) => {
         aiKeywords: Array.isArray(row.ai_keywords) ? row.ai_keywords as string[] : [],
         barcodes: Array.isArray(row.barcodes) ? row.barcodes as string[] : [],
         enrichedAt: row.enriched_at instanceof Date ? row.enriched_at : null,
-        // PDF catalog enrichment columns — image_url is now included in the SELECT
+        // PDF catalog enrichment columns — image_url and thumbnail_url are included in the SELECT
         imageUrl: typeof row.image_url === "string" ? row.image_url : null,
+        thumbnailUrl: typeof row.thumbnail_url === "string" ? row.thumbnail_url : null,
         imageSource: null,
         imageConfidence: null,
         previousDescription: null,
@@ -1829,32 +1831,35 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     if (remove === true) {
       const [updated] = await db
         .update(inventoryTable)
-        .set({ imageUrl: null, updatedAt: new Date() })
+        .set({ imageUrl: null, thumbnailUrl: null, updatedAt: new Date() })
         .where(eq(inventoryTable.id, id))
         .returning();
       if (!updated) return void res.status(404).json({ error: "Item not found" });
       invalidateReferenceAnswerCache().catch(() => {});
-      return void res.json({ imageUrl: null });
+      return void res.json({ imageUrl: null, thumbnailUrl: null });
     }
 
     if (!imageBase64?.trim()) {
       return void res.status(400).json({ error: "imageBase64 is required" });
     }
 
-    const buffer = Buffer.from(imageBase64, "base64");
-    const contentType = mimeType?.startsWith("image/") ? mimeType : "image/jpeg";
+    const rawBuffer = Buffer.from(imageBase64, "base64");
+    const { fullBuffer, thumbnailBuffer } = await resizeImages(rawBuffer);
 
-    const imageUrl = await uploadCatalogImage(buffer, contentType);
+    const [imageUrl, thumbnailUrl] = await Promise.all([
+      uploadCatalogImage(fullBuffer, "image/jpeg"),
+      uploadCatalogImage(thumbnailBuffer, "image/jpeg"),
+    ]);
 
     const [updated] = await db
       .update(inventoryTable)
-      .set({ imageUrl, updatedAt: new Date() })
+      .set({ imageUrl, thumbnailUrl, updatedAt: new Date() })
       .where(eq(inventoryTable.id, id))
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     invalidateReferenceAnswerCache().catch(() => {});
-    res.json({ imageUrl: updated.imageUrl });
+    res.json({ imageUrl: updated.imageUrl, thumbnailUrl: updated.thumbnailUrl });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to upload photo" });
