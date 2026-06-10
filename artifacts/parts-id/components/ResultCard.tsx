@@ -5,6 +5,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { RetryImage } from "@/components/RetryImage";
@@ -136,13 +137,17 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             </View>
           </View>
           <View style={cardStyles.headerRight}>
-            {item.imageUrl ? (
+            {(item.thumbnailUrl ?? item.imageUrl) ? (
               <RetryImage
-                uri={item.imageUrl}
+                uri={(item.thumbnailUrl ?? item.imageUrl) as string}
                 style={cardStyles.thumbnail}
-                resizeMode="contain"
+                resizeMode="cover"
               />
-            ) : null}
+            ) : (
+              <View style={[cardStyles.thumbnail, cardStyles.thumbnailPlaceholder, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                <Feather name="image" size={22} color={colors.mutedForeground} />
+              </View>
+            )}
             <ConfidenceBadge confidence={confidence} />
             {onEditItem ? (
               <Pressable
@@ -424,6 +429,11 @@ const cardStyles = StyleSheet.create({
     height: 52,
     borderRadius: 6,
     marginBottom: 6,
+  },
+  thumbnailPlaceholder: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
   },
   catalogImage: {
     width: "100%",
