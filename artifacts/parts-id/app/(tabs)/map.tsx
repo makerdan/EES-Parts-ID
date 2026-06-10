@@ -31,6 +31,7 @@ import { ZoneActionMenu } from "@/components/ZoneActionMenu";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { parseBin } from "@/lib/aisleHierarchy";
 import { WarehouseMapView } from "@/components/WarehouseMapView";
+import { WarehouseMapWeb } from "@/components/WarehouseMapWeb";
 import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
 import { swallowOrientationNotAvailable } from "@/utils/orientationLock";
@@ -309,6 +310,10 @@ export default function MapScreen() {
     setDrilldown(null);
   }, []);
 
+  const handleAislePress = useCallback((aisleNum: number) => {
+    setDrilldown({ aisleNum, sectionNumbers: [] });
+  }, []);
+
   if (drilldown !== null) {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -478,34 +483,41 @@ export default function MapScreen() {
       ) : null}
 
       <View style={styles.mapWrapper}>
-        <WarehouseMapView
-          zones={zones}
-          zonesLoading={zonesLoading}
-          zonesError={zonesError}
-          onZonesRetry={refetchZones}
-          onZoneTap={handleZoneTap}
-          onZoneLongPress={handleZoneLongPress}
-          isAdmin={isAdmin}
-          cycleMode={cycleMode}
-          selectMode={selectMode}
-          onSelectModeChange={setSelectMode}
-          countedZoneIds={countedZoneIds}
-          pinnedZoneIds={pinnedZoneIds.size > 0 ? pinnedZoneIds : undefined}
-          variantZoneIds={variantZoneIds.size > 0 ? variantZoneIds : undefined}
-          pinnedBinLabels={pinnedBinLabels.size > 0 ? pinnedBinLabels : undefined}
-          pinnedSectionsMap={pinnedSections.size > 0 ? pinnedSections : undefined}
-          variantSectionsMap={variantSections.size > 0 ? variantSections : undefined}
-          focusAisleNum={focusAisleNum}
-          focusSectionNum={focusSectionNum}
-          onFocusConsumed={() => { setFocusAisleNum(null); setFocusSectionNum(null); }}
-          onFocusFailed={() => {
-            setFocusFailedBanner(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
-            setFocusAisleNum(null);
-            setFocusSectionNum(null);
-          }}
-          selectedZoneId={selectedZone?.id}
-          onPanStart={handleMapPanStart}
-        />
+        {Platform.OS === "web" ? (
+          <WarehouseMapWeb
+            inventory={inventory}
+            onAislePress={handleAislePress}
+          />
+        ) : (
+          <WarehouseMapView
+            zones={zones}
+            zonesLoading={zonesLoading}
+            zonesError={zonesError}
+            onZonesRetry={refetchZones}
+            onZoneTap={handleZoneTap}
+            onZoneLongPress={handleZoneLongPress}
+            isAdmin={isAdmin}
+            cycleMode={cycleMode}
+            selectMode={selectMode}
+            onSelectModeChange={setSelectMode}
+            countedZoneIds={countedZoneIds}
+            pinnedZoneIds={pinnedZoneIds.size > 0 ? pinnedZoneIds : undefined}
+            variantZoneIds={variantZoneIds.size > 0 ? variantZoneIds : undefined}
+            pinnedBinLabels={pinnedBinLabels.size > 0 ? pinnedBinLabels : undefined}
+            pinnedSectionsMap={pinnedSections.size > 0 ? pinnedSections : undefined}
+            variantSectionsMap={variantSections.size > 0 ? variantSections : undefined}
+            focusAisleNum={focusAisleNum}
+            focusSectionNum={focusSectionNum}
+            onFocusConsumed={() => { setFocusAisleNum(null); setFocusSectionNum(null); }}
+            onFocusFailed={() => {
+              setFocusFailedBanner(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
+              setFocusAisleNum(null);
+              setFocusSectionNum(null);
+            }}
+            selectedZoneId={selectedZone?.id}
+            onPanStart={handleMapPanStart}
+          />
+        )}
 
         {selectedZone !== null && (
           <>
