@@ -38,7 +38,16 @@ check_api_health() {
 # This guard allows test scripts to source and unit-test the functions above.
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  CI=true pnpm install --frozen-lockfile
+  echo "[post-merge] Installing dependencies..."
+  timeout 120 sh -c 'CI=true pnpm install --frozen-lockfile' || {
+    INSTALL_EXIT=$?
+    if [[ "$INSTALL_EXIT" -eq 124 ]]; then
+      echo "[post-merge] ERROR: pnpm install timed out after 120s. Aborting."
+    else
+      echo "[post-merge] ERROR: pnpm install failed (exit ${INSTALL_EXIT}). Aborting."
+    fi
+    exit 1
+  }
   pnpm --filter db push --force
 
   # Regenerate API client files so the Expo bundle never serves stale or missing
@@ -46,15 +55,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   # A 120-second timeout ensures a hung TypeScript compiler or filesystem lock
   # fails fast with a clear error instead of blocking the merge indefinitely.
   echo "[post-merge] Regenerating API client..."
-  timeout 120 pnpm --filter @workspace/api-spec run codegen; CODEGEN_EXIT=$?
-  if [[ "$CODEGEN_EXIT" -ne 0 ]]; then
+  timeout 120 pnpm --filter @workspace/api-spec run codegen || {
+    CODEGEN_EXIT=$?
     if [[ "$CODEGEN_EXIT" -eq 124 ]]; then
       echo "[post-merge] ERROR: codegen timed out after 120s. Aborting."
     else
       echo "[post-merge] ERROR: codegen failed (exit ${CODEGEN_EXIT}). Aborting."
     fi
     exit 1
-  fi
+  }
   echo "[post-merge] API client regenerated."
 
   # Push latest main branch to GitHub after every successful merge.

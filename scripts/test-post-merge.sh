@@ -231,6 +231,55 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 9: pnpm install is wrapped with a timeout guard
+# Ensures the install step cannot hang indefinitely and block future merges.
+# ---------------------------------------------------------------------------
+SCRIPT_CONTENT=$(cat "$SCRIPT_DIR/post-merge.sh")
+
+if echo "$SCRIPT_CONTENT" | grep -qP 'timeout\s+[0-9]+\s+.*pnpm install'; then
+  pass "pnpm install — wrapped with timeout guard"
+else
+  fail "pnpm install — must be wrapped with 'timeout <N> ... pnpm install'"
+fi
+
+INSTALL_TIMEOUT_LINE=$(grep -n 'timeout.*pnpm install' "$SCRIPT_DIR/post-merge.sh" | head -1)
+INSTALL_TIMEOUT_VALUE=$(echo "$INSTALL_TIMEOUT_LINE" | grep -oP 'timeout \K[0-9]+' || true)
+if [[ -n "$INSTALL_TIMEOUT_VALUE" && "$INSTALL_TIMEOUT_VALUE" -le 120 ]]; then
+  pass "pnpm install — timeout value is ≤120s (got ${INSTALL_TIMEOUT_VALUE}s)"
+else
+  fail "pnpm install — timeout value must be ≤120s (got '${INSTALL_TIMEOUT_VALUE:-not found}')"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 10: pnpm install timeout triggers a clear error message and non-zero exit
+# Runs post-merge.sh as a subprocess with a mock `timeout` that exits 124 to
+# simulate a real registry hang, and verifies the script exits 1 with the
+# expected error message.
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR=$(mktemp -d)
+# Mock `timeout` that always exits 124 (the standard timeout expiry code).
+cat > "$MOCK_BIN_DIR/timeout" << 'MOCKEOF'
+#!/bin/bash
+exit 124
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR/timeout"
+# Mock `sh` so the inner `sh -c 'CI=true pnpm install...'` inside our fake
+# timeout never reaches a real shell (timeout exits before exec-ing it anyway,
+# but guard here in case the implementation changes).
+cat > "$MOCK_BIN_DIR/sh" << 'MOCKEOF'
+#!/bin/bash
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR/sh"
+
+INSTALL_TIMEOUT_OUTPUT=$(PATH="$MOCK_BIN_DIR:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+INSTALL_TIMEOUT_EXIT=$?
+rm -rf "$MOCK_BIN_DIR"
+
+assert_exit     "install timeout — exits non-zero"         1 "$INSTALL_TIMEOUT_EXIT"
+assert_contains "install timeout — prints timeout message" "timed out after 120s" "$INSTALL_TIMEOUT_OUTPUT"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
