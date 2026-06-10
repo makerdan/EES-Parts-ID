@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --runInBand",
     "seed": "tsx src/seed/run.ts",
-    "seed:reference": "tsx src/seed/runQuickLookupChips.ts"
+    "seed:reference": "tsx src/seed/runQuickLookupChips.ts",
+    "seed:barcodes": "tsx src/seed/import-barcodes.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",
