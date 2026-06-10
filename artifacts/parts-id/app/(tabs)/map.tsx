@@ -145,6 +145,11 @@ export default function MapScreen() {
     return "📍 Pinned";
   }, [pinnedParts]);
 
+  const primaryBinText = useMemo(() => {
+    const first = pinnedParts.find(p => !p.variant);
+    return first?.binCode ?? null;
+  }, [pinnedParts]);
+
   // Keep a ref to pinnedParts so useFocusEffect can read the latest value
   // without needing to add it as a dependency (which would re-register the effect).
   const pinnedPartsRef = useRef(pinnedParts);
@@ -417,13 +422,24 @@ export default function MapScreen() {
 
       {pinnedParts.length > 0 && (
         <View style={[styles.pinBanner, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <Text
-            style={[styles.pinBannerLabel, { color: colors.foreground }]}
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {pinnedChipLabel}
-          </Text>
+          <View style={styles.pinBannerLeft}>
+            <Text
+              style={[styles.pinBannerLabel, { color: colors.foreground }]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {pinnedChipLabel}
+            </Text>
+            {primaryBinText !== null && (
+              <Text
+                style={[styles.pinBannerBin, { color: colors.mutedForeground }]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {primaryBinText}
+              </Text>
+            )}
+          </View>
           <View style={styles.pinBannerRight}>
             {(hasPrimaryPins || hasVariantPins) && (
               <View style={styles.legendRow}>
@@ -589,17 +605,25 @@ const styles = StyleSheet.create({
   },
   pinBanner: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderBottomWidth: 1,
     gap: 8,
   },
-  pinBannerLabel: {
+  pinBannerLeft: {
     flex: 1,
+    flexDirection: "column",
+    gap: 1,
+  },
+  pinBannerLabel: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",
+  },
+  pinBannerBin: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
   },
   pinBannerRight: {
     flexDirection: "row",
