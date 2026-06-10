@@ -25,3 +25,4 @@ run = [ "pnpm", "--filter", "@workspace/parts-id", "run", "serve" ]
 [services.env]
 PORT = "22660"
 BASE_PATH = "/"
+EXPO_NO_INTERACTIVE = "1"
