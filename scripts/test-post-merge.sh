@@ -191,6 +191,46 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 8: Metro port-conflict guards are present in parts-id
+#
+# Verifies that the two runtime guards preventing Metro from hanging on a
+# port conflict have not been accidentally removed:
+#   (a) the dev script in package.json must contain --port $PORT and
+#       --non-interactive
+#   (b) artifact.toml [services.env] must declare EXPO_NO_INTERACTIVE = "1"
+# ---------------------------------------------------------------------------
+PARTS_PKG="$SCRIPT_DIR/../artifacts/parts-id/package.json"
+PARTS_TOML="$SCRIPT_DIR/../artifacts/parts-id/.replit-artifact/artifact.toml"
+
+if [[ -f "$PARTS_PKG" ]]; then
+  DEV_SCRIPT=$(grep -E '"dev"\s*:' "$PARTS_PKG" || true)
+
+  if echo "$DEV_SCRIPT" | grep -q -- '--port \$PORT'; then
+    pass "metro-port-guard — --port \$PORT present in parts-id dev script"
+  else
+    fail "metro-port-guard — --port \$PORT MISSING from parts-id dev script"
+  fi
+
+  if echo "$DEV_SCRIPT" | grep -q -- '--non-interactive'; then
+    pass "metro-port-guard — --non-interactive present in parts-id dev script"
+  else
+    fail "metro-port-guard — --non-interactive MISSING from parts-id dev script"
+  fi
+else
+  fail "metro-port-guard — artifacts/parts-id/package.json not found"
+fi
+
+if [[ -f "$PARTS_TOML" ]]; then
+  if grep -q 'EXPO_NO_INTERACTIVE\s*=\s*"1"' "$PARTS_TOML"; then
+    pass "metro-port-guard — EXPO_NO_INTERACTIVE = \"1\" present in artifact.toml"
+  else
+    fail "metro-port-guard — EXPO_NO_INTERACTIVE = \"1\" MISSING from artifact.toml [services.env]"
+  fi
+else
+  fail "metro-port-guard — artifacts/parts-id/.replit-artifact/artifact.toml not found"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
