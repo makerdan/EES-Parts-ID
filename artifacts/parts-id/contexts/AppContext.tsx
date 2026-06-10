@@ -338,7 +338,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       // Configure the base URL once on mount so all generated hooks point at
       // the correct API origin without requiring each call site to repeat it.
-      if (API_BASE) setBaseUrl(API_BASE);
+      // Use the bare origin (no /api suffix) because the generated client paths
+      // already start with /api/…; including it here would double the prefix.
+      const origin = process.env.EXPO_PUBLIC_DOMAIN
+        ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
+        : "";
+      if (origin) setBaseUrl(origin);
       setAuthTokenGetter(() => adminTokenRef.current);
     } catch {
       // API client module threw during initialisation — still show the error UI.

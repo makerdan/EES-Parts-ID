@@ -13,8 +13,6 @@ import { Platform } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { setBaseUrl } from "@workspace/api-client-react";
-
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
@@ -22,12 +20,6 @@ import { FEATHER_FONT_B64 } from "@/assets/fonts/featherBase64";
 import { prefetchSvgAsset } from "@/components/WarehouseMapView";
 
 SplashScreen.preventAutoHideAsync();
-
-// Configure API base URL from env
-const domain = process.env.EXPO_PUBLIC_DOMAIN;
-if (domain) {
-  setBaseUrl(`https://${domain}`);
-}
 
 // On web: inject the Feather @font-face rule directly into expo-font's own
 // style element (id="expo-generated-fonts") before React boots.
