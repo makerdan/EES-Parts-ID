@@ -79,6 +79,20 @@ export function WarehouseMapWeb({
 
   const maxCount = Math.max(1, ...aisles.map(a => a.partCount));
 
+  useEffect(() => {
+    if (focusAisleNum !== undefined && aisles.length > 0) {
+      const idx = aisles.findIndex(a => a.aisleNum === focusAisleNum);
+      if (idx !== -1) {
+        const rowIdx = Math.floor(idx / COLS);
+        const y = rowIdx * (cellSize + 6) + 60; // Approximate offset
+        scrollRef.current?.scrollTo({ y, animated: true });
+        onFocusConsumed?.();
+      } else {
+        onFocusFailed?.();
+      }
+    }
+  }, [focusAisleNum, aisles, cellSize, onFocusConsumed, onFocusFailed]);
+
   const rows: (typeof aisles)[] = [];
   for (let i = 0; i < aisles.length; i += COLS) {
     rows.push(aisles.slice(i, i + COLS));
@@ -194,6 +208,8 @@ export function WarehouseMapWeb({
                   {row.map(aisle => {
                     const showPins = cellSize >= 100;
                     const maxSec = Math.max(1, ...aisle.sections.map(s => s.partCount));
+                    const isPinned = pinnedAisleNums?.has(aisle.aisleNum) ?? false;
+                    const isFocused = focusAisleNum === aisle.aisleNum;
                     return (
                       <Pressable
                         key={aisle.aisleNum}
