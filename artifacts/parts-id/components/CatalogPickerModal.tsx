@@ -13,6 +13,7 @@ import {
 import { Feather } from "@expo/vector-icons";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { RetryImage } from "@/components/RetryImage";
+import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { useColors } from "@/hooks/useColors";
 import {
   useSearchInventory,
@@ -45,6 +46,7 @@ export function CatalogPickerModal({
   const [debouncedQuery, setDebouncedQuery] = useState(initialQuery ?? "");
   const [createError, setCreateError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(initialShowCreateForm ?? false);
+  const [lightboxUri, setLightboxUri] = useState<string | null>(null);
   const [newVendor, setNewVendor] = useState("");
   const [newBinLocation, setNewBinLocation] = useState("");
   const [vendorError, setVendorError] = useState<string | null>(null);
@@ -66,6 +68,7 @@ export function CatalogPickerModal({
     if (!visible) {
       setQuery(""); setDebouncedQuery(""); setCreateError(null);
       setShowCreateForm(false); setNewVendor(""); setNewBinLocation(""); setVendorError(null);
+      setLightboxUri(null);
       return;
     }
     if (initialQuery) {
@@ -291,11 +294,18 @@ export function CatalogPickerModal({
               >
                 <View style={pickerStyles.resultRowInner}>
                   {(r.item.thumbnailUrl ?? r.item.imageUrl) ? (
-                    <RetryImage
-                      uri={(r.item.thumbnailUrl ?? r.item.imageUrl) as string}
-                      style={pickerStyles.resultThumb}
-                      resizeMode="cover"
-                    />
+                    <Pressable
+                      onPress={(e) => { e.stopPropagation?.(); setLightboxUri(r.item.imageUrl ?? r.item.thumbnailUrl ?? null); }}
+                      hitSlop={4}
+                      accessibilityLabel={`View full photo for ${r.item.catalog}`}
+                      accessibilityRole="button"
+                    >
+                      <RetryImage
+                        uri={(r.item.thumbnailUrl ?? r.item.imageUrl) as string}
+                        style={pickerStyles.resultThumb}
+                        resizeMode="cover"
+                      />
+                    </Pressable>
                   ) : (
                     <View style={[pickerStyles.resultThumb, pickerStyles.resultThumbPlaceholder, { backgroundColor: colors.muted, borderColor: colors.border }]}>
                       <Feather name="image" size={18} color={colors.mutedForeground} />
@@ -340,6 +350,7 @@ export function CatalogPickerModal({
           />
         ) : null}
       </KeyboardAvoidingView>
+      <PhotoLightbox uri={lightboxUri} onClose={() => setLightboxUri(null)} />
     </Modal>
   );
 }
