@@ -41,6 +41,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   CI=true pnpm install --frozen-lockfile
   pnpm --filter db push --force
 
+  # Regenerate API client files so the Expo bundle never serves stale or missing
+  # generated modules after a merge (orval cleans the output folder on every run).
+  echo "[post-merge] Regenerating API client..."
+  pnpm --filter @workspace/api-spec run codegen
+  echo "[post-merge] API client regenerated."
+
   # Push latest main branch to GitHub after every successful merge.
   # Uses || true so a network error never causes post-merge to report failure.
   bash "$(dirname "$0")/sync-github.sh" || true
