@@ -21,14 +21,10 @@ import renderer, { act } from "react-test-renderer";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type { InventoryItem } from "@workspace/api-client-react";
 
-// ─── expo-camera ──────────────────────────────────────────────────────────────
+// ─── @/components/PartPhotoPicker ────────────────────────────────────────────
 
-const mockCameraPermission = { granted: false };
-const mockRequestCameraPermission = jest.fn().mockResolvedValue({ granted: false });
-
-jest.mock("expo-camera", () => ({
-  CameraView: () => null,
-  useCameraPermissions: jest.fn(() => [mockCameraPermission, mockRequestCameraPermission]),
+jest.mock("@/components/PartPhotoPicker", () => ({
+  PartPhotoPicker: () => null,
 }));
 
 // ─── @workspace/api-client-react ─────────────────────────────────────────────
@@ -70,12 +66,6 @@ jest.mock("@/components/DismissKeyboard", () => ({
 
 jest.mock("@/components/MeasurePartScreen", () => ({
   MeasurePartScreen: () => null,
-}));
-
-// ─── @/components/RetryImage ─────────────────────────────────────────────────
-
-jest.mock("@/components/RetryImage", () => ({
-  RetryImage: () => null,
 }));
 
 // ─── @expo/vector-icons ──────────────────────────────────────────────────────
