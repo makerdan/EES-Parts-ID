@@ -1657,66 +1657,10 @@ export function WarehouseMapView({
     opacity: shimmerPulse.value,
   }));
 
-  // ── Pinch gesture ──────────────────────────────────────────────────────────
-  const pinchGesture = Gesture.Pinch()
-    .onBegin(() => {
-      'worklet';
-      runOnJS(_cancelPrefetch)();
-    })
-    .onUpdate((e) => {
-      const newScale = clamp(savedScale.value * e.scale, MIN_SCALE, MAX_SCALE);
-      scale.value = newScale;
-
-      // Scale ratio relative to the baseline captured at gesture start.
-      const ratio = savedScale.value > 0 ? newScale / savedScale.value : 1;
-
-      // In pin-focus mode the zoom pivots around the pin marker so it stays
-      // centred on screen as the user zooms in.  The pin's screen position is
-      // computed from savedScale/savedTX (gesture baseline) using the same
-      // coordinate transform as the SVG canvas:
-      //   screenX = (cx/VBW)*svgRW - svgRW/2) * savedScale + savedTX
-      // Otherwise use the normal pinch focal point.
-      //
-      // Focal point in container-centre-relative coordinates:
-      // e.focalX/Y are in container-local space (0,0 = top-left), so subtract
-      // half the container size to get the offset from the visual centre.
-      let focalX: number;
-      let focalY: number;
-      if (pinFocusModeV.value) {
-        const svgRW = containerWV.value;
-        const svgRH = containerWV.value / SVG_ASPECT;
-        const px = (pinFocusCxV.value / SVG_VIEWBOX_W) * svgRW - svgRW / 2;
-        const py = (pinFocusCyV.value / SVG_VIEWBOX_H) * svgRH - svgRH / 2;
-        focalX = px * savedScale.value + savedTX.value;
-        focalY = py * savedScale.value + savedTY.value;
-      } else {
-        focalX = e.focalX - containerWV.value / 2;
-        focalY = e.focalY - containerHV.value / 2;
-      }
-
-      // Translate so the map point under the focal point stays fixed:
-      //   newTX = focalX - (focalX - savedTX) * ratio
-      //         = focalX * (1 - ratio) + savedTX * ratio
-      const newTX = focalX * (1 - ratio) + savedTX.value * ratio;
-      const newTY = focalY * (1 - ratio) + savedTY.value * ratio;
-
-      const scaledW = containerWV.value * newScale;
-      const scaledH = (containerWV.value / SVG_ASPECT) * newScale;
-      const maxX = Math.max(0, (scaledW - containerWV.value) / 2);
-      const maxY = Math.max(0, (scaledH - containerHV.value) / 2);
-      translateX.value = clamp(newTX, -maxX, maxX);
-      translateY.value = clamp(newTY, -maxY, maxY);
-    })
-    .onEnd(() => {
-      'worklet';
-      // Snap the scale to the nearest discrete zoom stop and commit the stop
-      // index to renderZoom via a short spring.  savedScale/TX/TY are written
-      // inside snapToNearestZoomStop so persistViewport is called with the
-      // snapped values, not the raw finger-release position.
-      runOnJS(snapToNearestZoomStop)();
-    });
-
   // ── Prefetch helpers ──────────────────────────────────────────────────────
+  // Declared before pinchGesture to avoid a TDZ forward-reference: the React
+  // Compiler reads callback bindings during render to memoize them, so any
+  // local const passed to runOnJS() must be initialised first.
   // Debounce tile prefetch so rapid zoom taps don't fan out dozens of fetches.
   // An AbortController cancels tiles still being downloaded when the user
   // starts a new gesture before the previous prefetch finishes.
@@ -1833,6 +1777,65 @@ export function WarehouseMapView({
     persistViewport(targetScale, newTX, newTY);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [persistViewport, _triggerPrefetch]);
+
+  // ── Pinch gesture ──────────────────────────────────────────────────────────
+  const pinchGesture = Gesture.Pinch()
+    .onBegin(() => {
+      'worklet';
+      runOnJS(_cancelPrefetch)();
+    })
+    .onUpdate((e) => {
+      const newScale = clamp(savedScale.value * e.scale, MIN_SCALE, MAX_SCALE);
+      scale.value = newScale;
+
+      // Scale ratio relative to the baseline captured at gesture start.
+      const ratio = savedScale.value > 0 ? newScale / savedScale.value : 1;
+
+      // In pin-focus mode the zoom pivots around the pin marker so it stays
+      // centred on screen as the user zooms in.  The pin's screen position is
+      // computed from savedScale/savedTX (gesture baseline) using the same
+      // coordinate transform as the SVG canvas:
+      //   screenX = (cx/VBW)*svgRW - svgRW/2) * savedScale + savedTX
+      // Otherwise use the normal pinch focal point.
+      //
+      // Focal point in container-centre-relative coordinates:
+      // e.focalX/Y are in container-local space (0,0 = top-left), so subtract
+      // half the container size to get the offset from the visual centre.
+      let focalX: number;
+      let focalY: number;
+      if (pinFocusModeV.value) {
+        const svgRW = containerWV.value;
+        const svgRH = containerWV.value / SVG_ASPECT;
+        const px = (pinFocusCxV.value / SVG_VIEWBOX_W) * svgRW - svgRW / 2;
+        const py = (pinFocusCyV.value / SVG_VIEWBOX_H) * svgRH - svgRH / 2;
+        focalX = px * savedScale.value + savedTX.value;
+        focalY = py * savedScale.value + savedTY.value;
+      } else {
+        focalX = e.focalX - containerWV.value / 2;
+        focalY = e.focalY - containerHV.value / 2;
+      }
+
+      // Translate so the map point under the focal point stays fixed:
+      //   newTX = focalX - (focalX - savedTX) * ratio
+      //         = focalX * (1 - ratio) + savedTX * ratio
+      const newTX = focalX * (1 - ratio) + savedTX.value * ratio;
+      const newTY = focalY * (1 - ratio) + savedTY.value * ratio;
+
+      const scaledW = containerWV.value * newScale;
+      const scaledH = (containerWV.value / SVG_ASPECT) * newScale;
+      const maxX = Math.max(0, (scaledW - containerWV.value) / 2);
+      const maxY = Math.max(0, (scaledH - containerHV.value) / 2);
+      translateX.value = clamp(newTX, -maxX, maxX);
+      translateY.value = clamp(newTY, -maxY, maxY);
+    })
+    .onEnd(() => {
+      'worklet';
+      // Snap the scale to the nearest discrete zoom stop and commit the stop
+      // index to renderZoom via a short spring.  savedScale/TX/TY are written
+      // inside snapToNearestZoomStop so persistViewport is called with the
+      // snapped values, not the raw finger-release position.
+      runOnJS(snapToNearestZoomStop)();
+    });
 
   // Stable ref for onPanStart so the worklet always calls the latest version
   // without needing to re-create the gesture on every render.
