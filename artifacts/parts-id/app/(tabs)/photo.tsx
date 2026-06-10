@@ -27,6 +27,7 @@ import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
 import BarcodeScreen from "@/components/BarcodeScreen";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { parseBin } from "@/lib/aisleHierarchy";
@@ -794,6 +795,15 @@ export default function PhotoScreen() {
         onClose={() => setDetailsItem(null)}
         onShowOnMap={handleShowOnMap}
       />
+
+      {isAdmin && adminToken ? (
+        <MeasurePartScreen
+          visible={measureSearchVisible}
+          onClose={() => setMeasureSearchVisible(false)}
+          onConfirm={handleMeasureSearchConfirm}
+          adminToken={adminToken}
+        />
+      ) : null}
 
       <ReferenceModal />
 
