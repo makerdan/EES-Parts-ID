@@ -34,6 +34,10 @@ type Props = {
   focusAisleNum?: number | null;
   onFocusConsumed?: () => void;
   onFocusFailed?: () => void;
+  /** Aisle numbers with primary pinned parts — shown with amber highlight. */
+  pinnedAisleNums?: Set<number>;
+  /** Aisle numbers with variant/related-size pinned parts — shown with purple highlight. */
+  variantAisleNums?: Set<number>;
 };
 
 const COLS = 2;
@@ -61,6 +65,8 @@ export function WarehouseMapWeb({
   focusAisleNum,
   onFocusConsumed,
   onFocusFailed,
+  pinnedAisleNums,
+  variantAisleNums,
 }: Props) {
   const colors = useColors();
   const { height: windowHeight } = useWindowDimensions();
@@ -192,17 +198,35 @@ export function WarehouseMapWeb({
                       <Pressable
                         key={aisle.aisleNum}
                         onPress={() => onAislePress(aisle.aisleNum)}
-                        style={({ pressed }) => [
-                          styles.cell,
-                          {
-                            width: cellSize,
-                            height: cellSize,
-                            backgroundColor: aisleColor(aisle.partCount),
-                            borderColor: highlightedAisle === aisle.aisleNum ? "#2563eb" : "#d97706",
-                            borderWidth: highlightedAisle === aisle.aisleNum ? 3 : 2,
-                            opacity: pressed ? 0.7 : 1,
-                          },
-                        ]}
+                        style={({ pressed }) => {
+                          const isPinned = pinnedAisleNums?.has(aisle.aisleNum);
+                          const isVariant = variantAisleNums?.has(aisle.aisleNum);
+                          const isFocused = highlightedAisle === aisle.aisleNum;
+                          const borderColor = isFocused
+                            ? "#2563eb"
+                            : isPinned
+                            ? "#f59e0b"
+                            : isVariant
+                            ? "#8b5cf6"
+                            : "#d97706";
+                          const borderWidth = isFocused || isPinned || isVariant ? 3 : 2;
+                          const backgroundColor = isPinned
+                            ? "rgba(245, 158, 11, 0.28)"
+                            : isVariant
+                            ? "rgba(139, 92, 246, 0.28)"
+                            : aisleColor(aisle.partCount);
+                          return [
+                            styles.cell,
+                            {
+                              width: cellSize,
+                              height: cellSize,
+                              backgroundColor,
+                              borderColor,
+                              borderWidth,
+                              opacity: pressed ? 0.7 : 1,
+                            },
+                          ];
+                        }}
                       >
                         <Text style={styles.cellAisle}>
                           A{String(aisle.aisleNum).padStart(2, "0")}

@@ -494,6 +494,8 @@ export default function MapScreen() {
               setFocusAisleNum(null);
               setFocusSectionNum(null);
             }}
+            pinnedAisleNums={pinnedSections.size > 0 ? new Set(pinnedSections.keys()) : undefined}
+            variantAisleNums={variantSections.size > 0 ? new Set(variantSections.keys()) : undefined}
           />
         ) : (
           <WarehouseMapView
