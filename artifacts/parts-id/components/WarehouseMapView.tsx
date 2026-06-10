@@ -413,7 +413,6 @@ export function ZoneOverlayItem({
         // Section numbers for this zone's pins (0–99, proportional within aisle height).
         const sectionNums = isPinned ? pinnedSections : variantSections;
         const pinFill = isPinned ? "#f59e0b" : "#8b5cf6";
-        const pinStroke = isPinned ? "#b45309" : "#6d28d9";
         const markerR = Math.max(10, Math.min(30, zone.svgWidth / 6));
         const cx = zone.svgX + zone.svgWidth / 2;
 
@@ -423,24 +422,22 @@ export function ZoneOverlayItem({
           // per section number.
           const cy = zone.svgY + zone.svgHeight / 2;
           return (
-            <MapPin3D
+            <MapPinEmoji
               cx={cx}
               cy={cy}
               size={markerR}
               fill={pinFill}
-              stroke={pinStroke}
               isNew={isNewPin}
             />
           );
         }
-        // Fallback: no section data — show 3D pin at zone top
+        // Fallback: no section data — show emoji pin at zone top
         return (
-          <MapPin3D
+          <MapPinEmoji
             cx={cx}
             cy={zone.svgY + 40}
             size={markerR}
             fill={pinFill}
-            stroke={pinStroke}
             isNew={isNewPin}
           />
         );
@@ -649,6 +646,81 @@ export function MapPin3D({
         ry={r * 0.13}
         fill="rgba(255,255,255,0.55)"
       />
+    </AnimatedG>
+  );
+}
+
+/**
+ * MapPinEmoji — renders the 📍 emoji as the zone marker so it matches the
+ * pinned-part banner in the header bar.  A tinted ellipse behind the emoji
+ * carries the amber (primary) vs purple (variant) colour distinction.
+ * Entrance animation mirrors MapPin3D's spring-scale effect.
+ */
+export function MapPinEmoji({
+  cx,
+  cy,
+  size,
+  fill,
+  isNew = false,
+}: {
+  cx: number;
+  cy: number;
+  size: number;
+  fill: string;
+  isNew?: boolean;
+}) {
+  "use no memo";
+  const fontSize = size * 2.4;
+  // Vertical centre of the emoji's round head, above the baseline (tip) at cy.
+  const headCy = cy - fontSize * 0.62;
+
+  const pinScale = useSharedValue(isNew ? 0 : 1);
+
+  useEffect(() => {
+    if (isNew) {
+      pinScale.value = 0;
+      pinScale.value = withSpring(1, { damping: 8, stiffness: 180, mass: 0.7 });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew]);
+
+  const pinAnimatedProps = useAnimatedProps(() => {
+    "worklet";
+    const s = pinScale.value;
+    return {
+      transform: `translate(${cx} ${cy}) scale(${s}) translate(${-cx} ${-cy})`,
+    };
+  });
+
+  return (
+    <AnimatedG animatedProps={pinAnimatedProps}>
+      {/* Drop-shadow ellipse at the pin tip */}
+      <Ellipse
+        cx={cx}
+        cy={cy + size * 0.18}
+        rx={size * 0.42}
+        ry={size * 0.16}
+        fill="rgba(0,0,0,0.18)"
+      />
+      {/* Colour badge behind the emoji — carries amber vs purple distinction */}
+      <Ellipse
+        cx={cx}
+        cy={headCy}
+        rx={fontSize * 0.38}
+        ry={fontSize * 0.38}
+        fill={fill}
+        opacity={0.28}
+      />
+      {/* 📍 emoji centred on the badge */}
+      <SvgText
+        x={cx}
+        y={cy}
+        fontSize={fontSize}
+        textAnchor="middle"
+        alignmentBaseline="middle"
+      >
+        {"📍"}
+      </SvgText>
     </AnimatedG>
   );
 }
