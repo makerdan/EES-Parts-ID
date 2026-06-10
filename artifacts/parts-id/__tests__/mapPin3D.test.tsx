@@ -1,12 +1,13 @@
 /**
  * @jest-environment node
  *
- * Regression test: the pinned-zone marker must render a 3D teardrop pin
- * (MapPin3D → SVG <Path>) rather than a flat circle (SVG <Circle>).
+ * Regression tests for the warehouse map pin markers.
  *
- * This test guards against a revert to the old Circle-based marker.
- * MapPin3D is an exported pure SVG component; tested in isolation so
- * the setup stays lean and avoids full WarehouseMapView mount complexity.
+ * MapPin3D (the legacy 3D teardrop SVG) is tested in isolation to guard
+ * against regression to its structure.  The active zone marker — MapPinEmoji
+ * — renders the 📍 emoji as an SVG <Text> element with a tinted colour badge
+ * (Ellipse) for amber/purple distinction; those tests cover ZoneOverlayItem
+ * to verify the full integration point.
  */
 
 // Required for act() to work correctly in the node test environment.
@@ -196,7 +197,7 @@ afterAll(() => { (console.error as jest.Mock).mockRestore?.(); });
 
 // ─── Subject under test ───────────────────────────────────────────────────────
 
-import { MapPin3D, ZoneOverlayItem } from "@/components/WarehouseMapView";
+import { MapPin3D, MapPinEmoji, ZoneOverlayItem } from "@/components/WarehouseMapView";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 
 // ─── Fixture helpers ──────────────────────────────────────────────────────────
@@ -337,16 +338,117 @@ describe("MapPin3D — colour-coding contract", () => {
 });
 
 // =============================================================================
-// ZoneOverlayItem — pinned zone uses MapPin3D (Path), not Circle
+// MapPinEmoji — SVG element regression
 //
-// These tests verify the actual integration point: when a zone is pinned,
-// ZoneOverlayItem renders MapPin3D which produces an svg-path host element.
-// A revert to a Circle-based marker would produce svg-circle instead and
-// break both tests below, catching the regression at the zone-overlay level.
+// MapPinEmoji is the active zone marker: it renders a 📍 emoji as an
+// svg-text element plus a tinted ellipse badge for colour coding.
 // =============================================================================
 
-describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () => {
-  it("a pinned zone with no section data renders at least one svg-path (MapPin3D fallback)", async () => {
+describe("MapPinEmoji — renders svg-text emoji, not svg-path or svg-circle", () => {
+  it("produces at least one svg-text host element (the 📍 emoji)", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
+      );
+    });
+
+    const texts = tree.root.findAll(
+      (n) => (n.type as string) === "svg-text",
+      { deep: true },
+    );
+    expect(texts.length).toBeGreaterThan(0);
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("does not render any svg-circle host element", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
+      );
+    });
+
+    const circles = tree.root.findAll(
+      (n) => (n.type as string) === "svg-circle",
+      { deep: true },
+    );
+    expect(circles).toHaveLength(0);
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("renders a drop-shadow ellipse and a colour-badge ellipse (two ellipses total)", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" />,
+      );
+    });
+
+    const ellipses = tree.root.findAll(
+      (n) => (n.type as string) === "svg-ellipse",
+      { deep: true },
+    );
+    expect(ellipses.length).toBe(2);
+
+    await act(async () => { tree.unmount(); });
+  });
+});
+
+// =============================================================================
+// MapPinEmoji — colour-coding contract
+// =============================================================================
+
+describe("MapPinEmoji — colour-coding contract", () => {
+  it("amber primary: the colour-badge ellipse carries fill='#f59e0b'", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <MapPinEmoji cx={100} cy={200} size={20} fill="#f59e0b" />,
+      );
+    });
+
+    const ellipses = tree.root.findAll(
+      (n) => (n.type as string) === "svg-ellipse",
+      { deep: true },
+    );
+    const amberBadge = ellipses.find((n) => n.props.fill === "#f59e0b");
+    expect(amberBadge).toBeDefined();
+
+    await act(async () => { tree.unmount(); });
+  });
+
+  it("purple variant: the colour-badge ellipse carries fill='#8b5cf6'", async () => {
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <MapPinEmoji cx={50} cy={80} size={15} fill="#8b5cf6" />,
+      );
+    });
+
+    const ellipses = tree.root.findAll(
+      (n) => (n.type as string) === "svg-ellipse",
+      { deep: true },
+    );
+    const purpleBadge = ellipses.find((n) => n.props.fill === "#8b5cf6");
+    expect(purpleBadge).toBeDefined();
+
+    await act(async () => { tree.unmount(); });
+  });
+});
+
+// =============================================================================
+// ZoneOverlayItem — pinned zone uses MapPinEmoji (emoji Text), not Circle
+//
+// These tests verify the active integration point: when a zone is pinned,
+// ZoneOverlayItem renders MapPinEmoji which produces an svg-text host element
+// (the 📍 emoji) rather than a path or circle.
+// =============================================================================
+
+describe("ZoneOverlayItem — pinned zone renders svg-text emoji marker", () => {
+  it("a pinned zone with no section data renders at least one svg-text (emoji fallback)", async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
@@ -362,16 +464,16 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
       );
     });
 
-    const paths = tree.root.findAll(
-      (n) => (n.type as string) === "svg-path",
+    const texts = tree.root.findAll(
+      (n) => (n.type as string) === "svg-text",
       { deep: true },
     );
-    expect(paths.length).toBeGreaterThan(0);
+    expect(texts.length).toBeGreaterThan(0);
 
     await act(async () => { tree.unmount(); });
   });
 
-  it("a pinned zone does not render any svg-circle (regression: was Circle before MapPin3D)", async () => {
+  it("a pinned zone does not render any svg-circle", async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
@@ -381,7 +483,6 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
           colors={fakeColors}
           onZoneTap={jest.fn()}
           cycleMode={false}
-
           isCounted={false}
           isPinned={true}
         />,
@@ -397,7 +498,7 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
     await act(async () => { tree.unmount(); });
   });
 
-  it("a pinned zone with section data renders one centered svg-path marker", async () => {
+  it("a pinned zone with section data renders one centered svg-text emoji marker", async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
@@ -407,7 +508,6 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
           colors={fakeColors}
           onZoneTap={jest.fn()}
           cycleMode={false}
-
           isCounted={false}
           isPinned={true}
           pinnedSections={[20]}
@@ -415,13 +515,12 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
       );
     });
 
-    // With sectionNum matching, the zone IS already the exact section —
-    // one centered MapPin3D is rendered (not one per section number).
-    const paths = tree.root.findAll(
-      (n) => (n.type as string) === "svg-path",
+    // With section data, one centered MapPinEmoji is rendered.
+    const texts = tree.root.findAll(
+      (n) => (n.type as string) === "svg-text",
       { deep: true },
     );
-    expect(paths.length).toBeGreaterThanOrEqual(1);
+    expect(texts.length).toBeGreaterThanOrEqual(1);
 
     const circles = tree.root.findAll(
       (n) => (n.type as string) === "svg-circle",
@@ -432,7 +531,7 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
     await act(async () => { tree.unmount(); });
   });
 
-  it("a pinned zone passes the amber palette (#f59e0b fill) to its MapPin3D", async () => {
+  it("a pinned zone passes the amber palette (#f59e0b) to its colour-badge ellipse", async () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(
@@ -442,19 +541,18 @@ describe("ZoneOverlayItem — pinned zone renders svg-path not svg-circle", () =
           colors={fakeColors}
           onZoneTap={jest.fn()}
           cycleMode={false}
-
           isCounted={false}
           isPinned={true}
         />,
       );
     });
 
-    const paths = tree.root.findAll(
-      (n) => (n.type as string) === "svg-path",
+    const ellipses = tree.root.findAll(
+      (n) => (n.type as string) === "svg-ellipse",
       { deep: true },
     );
-    const amberPath = paths.find((n) => n.props.fill === "#f59e0b");
-    expect(amberPath).toBeDefined();
+    const amberBadge = ellipses.find((n) => n.props.fill === "#f59e0b");
+    expect(amberBadge).toBeDefined();
 
     await act(async () => { tree.unmount(); });
   });
