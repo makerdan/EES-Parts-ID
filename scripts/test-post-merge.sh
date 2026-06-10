@@ -172,6 +172,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 7: codegen command is wrapped with a timeout guard
+# Ensures the codegen step cannot hang indefinitely and block future merges.
+# ---------------------------------------------------------------------------
+CODEGEN_TIMEOUT_LINE=$(grep -n 'timeout.*api-spec run codegen' "$SCRIPT_DIR/post-merge.sh" | head -1)
+if [[ -n "$CODEGEN_TIMEOUT_LINE" ]]; then
+  pass "codegen — wrapped with timeout guard"
+else
+  fail "codegen — must be wrapped with 'timeout <N> pnpm --filter @workspace/api-spec run codegen'"
+fi
+
+# Verify the timeout value does not exceed 120 seconds.
+TIMEOUT_VALUE=$(echo "$CODEGEN_TIMEOUT_LINE" | grep -oP 'timeout \K[0-9]+' || true)
+if [[ -n "$TIMEOUT_VALUE" && "$TIMEOUT_VALUE" -le 120 ]]; then
+  pass "codegen — timeout value is ≤120s (got ${TIMEOUT_VALUE}s)"
+else
+  fail "codegen — timeout value must be ≤120s (got '${TIMEOUT_VALUE:-not found}')"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
