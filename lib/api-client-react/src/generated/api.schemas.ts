@@ -74,8 +74,10 @@ export interface InventoryItem {
   /** Barcode values associated with this part */
   barcodes: string[];
   enrichedAt?: string | null;
-  /** URL of the catalog image extracted from a PDF import, served via the API proxy */
+  /** URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy */
   imageUrl?: string | null;
+  /** URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy */
+  thumbnailUrl?: string | null;
   /** Physical dimensions in millimetres (length, width, height, diameter) */
   dimensions?: InventoryItemDimensions;
   createdAt: string;
@@ -200,6 +202,22 @@ export interface UpdateDimensionsBody {
   height?: number | null;
   /** Diameter in mm (for round/cylindrical parts) */
   diameter?: number | null;
+}
+
+export interface UploadPhotoBody {
+  /** Base64-encoded JPEG or PNG image; required when remove is false or omitted */
+  imageBase64?: string;
+  /** MIME type of the image (default image/jpeg) */
+  mimeType?: string;
+  /** Set to true to remove the current photo and clear both imageUrl and thumbnailUrl */
+  remove?: boolean;
+}
+
+export interface UploadPhotoResponse {
+  /** URL of the full-size image after upload, or null after removal */
+  imageUrl: string | null;
+  /** URL of the thumbnail image after upload, or null after removal */
+  thumbnailUrl: string | null;
 }
 
 export interface EstimateDimensionsBody {

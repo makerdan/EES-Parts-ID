@@ -40,6 +40,8 @@ import type {
   UpdateDimensionsBody,
   UpdateKeywordsBody,
   UpdateWarehouseZoneBody,
+  UploadPhotoBody,
+  UploadPhotoResponse,
   UpsertInventoryBody,
   UpsertInventoryResponse,
   WarehouseZoneListResponse,
@@ -557,6 +559,93 @@ export const useEnrichInventory = <
   TContext
 > => {
   return useMutation(getEnrichInventoryMutationOptions(options));
+};
+
+/**
+ * @summary Upload or remove a part photo (admin)
+ */
+export const getUploadItemPhotoUrl = (id: number) => {
+  return `/api/inventory/${id}/photo`;
+};
+
+export const uploadItemPhoto = async (
+  id: number,
+  uploadPhotoBody: UploadPhotoBody,
+  options?: RequestInit,
+): Promise<UploadPhotoResponse> => {
+  return customFetch<UploadPhotoResponse>(getUploadItemPhotoUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(uploadPhotoBody),
+  });
+};
+
+export const getUploadItemPhotoMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof uploadItemPhoto>>,
+    TError,
+    { id: number; data: BodyType<UploadPhotoBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof uploadItemPhoto>>,
+  TError,
+  { id: number; data: BodyType<UploadPhotoBody> },
+  TContext
+> => {
+  const mutationKey = ["uploadItemPhoto"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof uploadItemPhoto>>,
+    { id: number; data: BodyType<UploadPhotoBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return uploadItemPhoto(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UploadItemPhotoMutationResult = NonNullable<
+  Awaited<ReturnType<typeof uploadItemPhoto>>
+>;
+export type UploadItemPhotoMutationBody = BodyType<UploadPhotoBody>;
+export type UploadItemPhotoMutationError = ErrorType<void>;
+
+/**
+ * @summary Upload or remove a part photo (admin)
+ */
+export const useUploadItemPhoto = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof uploadItemPhoto>>,
+    TError,
+    { id: number; data: BodyType<UploadPhotoBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof uploadItemPhoto>>,
+  TError,
+  { id: number; data: BodyType<UploadPhotoBody> },
+  TContext
+> => {
+  return useMutation(getUploadItemPhotoMutationOptions(options));
 };
 
 /**

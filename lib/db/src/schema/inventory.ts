@@ -40,6 +40,7 @@ export const inventoryTable = pgTable(
     enrichedAt: timestamp("enriched_at"),
     // ── PDF catalog enrichment ────────────────────────────────────────────────
     imageUrl: text("image_url"),
+    thumbnailUrl: text("thumbnail_url"),
     imageSource: text("image_source"),
     imageConfidence: real("image_confidence"),
     previousDescription: text("previous_description"),

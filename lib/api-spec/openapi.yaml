@@ -128,6 +128,37 @@ paths:
           content:
             text/event-stream: {}
 
+  /inventory/{id}/photo:
+    patch:
+      operationId: uploadItemPhoto
+      tags: [inventory]
+      summary: Upload or remove a part photo (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadPhotoBody"
+      responses:
+        "200":
+          description: Updated image URLs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadPhotoResponse"
+        "400":
+          description: Invalid request
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+
   /inventory/{id}/bins:
     patch:
       operationId: updateItemBins
@@ -573,7 +604,11 @@ components:
         imageUrl:
           type: string
           nullable: true
-          description: URL of the catalog image extracted from a PDF import, served via the API proxy
+          description: URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy
+        thumbnailUrl:
+          type: string
+          nullable: true
+          description: URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy
         dimensions:
           type: object
           nullable: true
@@ -810,6 +845,34 @@ components:
           type: number
           nullable: true
           description: Diameter in mm (for round/cylindrical parts)
+
+    UploadPhotoBody:
+      type: object
+      properties:
+        imageBase64:
+          type: string
+          description: Base64-encoded JPEG or PNG image; required when remove is false or omitted
+        mimeType:
+          type: string
+          description: MIME type of the image (default image/jpeg)
+        remove:
+          type: boolean
+          description: Set to true to remove the current photo and clear both imageUrl and thumbnailUrl
+
+    UploadPhotoResponse:
+      type: object
+      properties:
+        imageUrl:
+          type: string
+          nullable: true
+          description: URL of the full-size image after upload, or null after removal
+        thumbnailUrl:
+          type: string
+          nullable: true
+          description: URL of the thumbnail image after upload, or null after removal
+      required:
+        - imageUrl
+        - thumbnailUrl
 
     EstimateDimensionsBody:
       type: object
