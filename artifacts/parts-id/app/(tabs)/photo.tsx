@@ -536,12 +536,12 @@ export default function PhotoScreen() {
               Optional Context
             </Text>
             {[
-              { label: "Visible Text / Numbers", value: textNumbers, key: "textNumbers", ph: "e.g. BR120, 20A, 125V..." },
-              { label: "Keywords", value: keywords, key: "keywords", ph: "e.g. breaker, outlet..." },
-              { label: "Vendor", value: vendor, key: "vendor", ph: "e.g. Eaton, Square D..." },
-              { label: "Color", value: color, key: "color", ph: "e.g. white, gray..." },
-              { label: "Size", value: size, key: "size", ph: "e.g. 20A, 3/4 inch..." },
-            ].map(({ label, value, key, ph }) => (
+              { label: "Visible Text / Numbers", value: textNumbers, key: "textNumbers", ph: "e.g. BR120, 20A, 125V...", autoCapitalize: "characters" as const },
+              { label: "Keywords", value: keywords, key: "keywords", ph: "e.g. breaker, outlet...", autoCapitalize: "none" as const },
+              { label: "Vendor", value: vendor, key: "vendor", ph: "e.g. Eaton, Square D...", autoCapitalize: "none" as const },
+              { label: "Color", value: color, key: "color", ph: "e.g. white, gray...", autoCapitalize: "none" as const },
+              { label: "Size", value: size, key: "size", ph: "e.g. 20A, 3/4 inch...", autoCapitalize: "none" as const },
+            ].map(({ label, value, key, ph, autoCapitalize }) => (
               <View key={key} style={{ marginBottom: 10 }}>
                 <Text style={[styles.fieldLabel, { color: colors.foreground }]}>{label}:</Text>
                 <KeyboardDoneInput
@@ -557,7 +557,7 @@ export default function PhotoScreen() {
                   placeholderTextColor={colors.mutedForeground}
                   style={[styles.fieldInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                   autoCorrect={false}
-                  autoCapitalize="none"
+                  autoCapitalize={autoCapitalize}
                 />
               </View>
             ))}
