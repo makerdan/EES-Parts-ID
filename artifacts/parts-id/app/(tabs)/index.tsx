@@ -1166,7 +1166,7 @@ export default function SearchScreen() {
         <View style={styles.searchBarInputWrapper}>
           <KeyboardDoneInput
             value={filters.keywords}
-            onChangeText={v => handleChange("keywords", v)}
+            onChangeText={v => handleChange("keywords", v.toUpperCase())}
             placeholder="Search parts — keyword, catalog #, vendor…"
             placeholderTextColor={colors.mutedForeground}
             style={[styles.searchBarInput, {
