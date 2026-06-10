@@ -221,7 +221,7 @@ export function WarehouseMapWeb({
                           const borderColor = isFocused
                             ? "#2563eb"
                             : isPinned
-                            ? "#f59e0b"
+                            ? "#92400e"
                             : isVariant
                             ? "#8b5cf6"
                             : "#d97706";
