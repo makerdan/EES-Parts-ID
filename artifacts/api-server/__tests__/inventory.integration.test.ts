@@ -1090,6 +1090,86 @@ describe("GET /api/inventory — binPrefix filter", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Photo ID ranking: catalog field wins over FTS description overlap
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/inventory/search — Photo ID catalog ranking", () => {
+  // Catalog numbers used only by this suite; cleaned up in afterAll via the
+  // JEST-ITG- prefix registered in cleanupFixtures().
+  const TARGET_CATALOG = "JEST-ITG-CHB5";
+  const DECOY_PREFIX = "JEST-ITG-CHB5-DECOY-";
+
+  beforeAll(async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { sql: sqlOp } = await import("drizzle-orm");
+
+    // Remove any leftover rows from a previous run.
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} = ${TARGET_CATALOG}`);
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} LIKE ${DECOY_PREFIX + "%"}`);
+
+    // The target: the part whose catalog matches the Photo ID input exactly.
+    await db.insert(inventoryTable).values({
+      vendor: "JEST-CHB5-VENDOR",
+      catalog: TARGET_CATALOG,
+      description: "Circuit breaker 5A single pole",
+      binLocations: [],
+      aiKeywords: [],
+    });
+
+    // Decoys: parts with richer description text that would outscore the target
+    // on pure FTS/trigram overlap, but whose catalog numbers do NOT match.
+    const decoys = Array.from({ length: 5 }, (_, i) => ({
+      vendor: "JEST-CHB5-VENDOR",
+      catalog: `${DECOY_PREFIX}${i}`,
+      // Repeat key description words so FTS gives them a higher rank.
+      description:
+        "Circuit breaker single pole 5A 120V panel breaker circuit protection " +
+        "breaker breaker circuit circuit",
+      binLocations: [] as string[],
+      aiKeywords: [] as string[],
+    }));
+    await db.insert(inventoryTable).values(decoys);
+  }, 30_000);
+
+  afterAll(async () => {
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { sql: sqlOp } = await import("drizzle-orm");
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} = ${TARGET_CATALOG}`);
+    await db
+      .delete(inventoryTable)
+      .where(sqlOp`${inventoryTable.catalog} LIKE ${DECOY_PREFIX + "%"}`);
+  }, 30_000);
+
+  it("exact catalog match ranks first with confidence >= 1.0 even when decoys have more FTS overlap", async () => {
+    // Simulate a Photo ID search: the AI vision pipeline extracted catalog
+    // number "JEST-ITG-CHB5" and passes it in the `catalog` body field.
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ catalog: TARGET_CATALOG })
+      .expect(200);
+
+    expect(res.body).toHaveProperty("results");
+    expect(Array.isArray(res.body.results)).toBe(true);
+    expect(res.body.results.length).toBeGreaterThan(0);
+
+    const topResult = res.body.results[0] as {
+      item: { catalog: string };
+      confidence: number;
+      matchReason: string;
+    };
+
+    expect(topResult.item.catalog).toBe(TARGET_CATALOG);
+    expect(topResult.confidence).toBeGreaterThanOrEqual(1.0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Contract: POST /api/inventory/search response shape matches OpenAPI spec
 // ─────────────────────────────────────────────────────────────────────────────
 
