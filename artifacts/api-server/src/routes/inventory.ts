@@ -580,6 +580,7 @@ router.post("/search", async (req, res) => {
       id: number; vendor: string; catalog: string; description: string;
       bin_locations: string[]; ai_keywords: string[]; barcodes: string[];
       enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null; image_url_2: string | null; thumbnail_url_2: string | null;
+      expanded_description: string | null;
       dimensions: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null;
       created_at: Date; updated_at: Date;
       fts_rank: number; trgm_sim: number;
@@ -606,6 +607,7 @@ router.post("/search", async (req, res) => {
         const chipText = sql`lower(
           coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
           coalesce(i.description,'') || ' ' ||
+          coalesce(i.expanded_description,'') || ' ' ||
           coalesce(array_to_string(i.ai_keywords, ' '), '')
         )`;
         const chipClauses = chipRegexes.length
@@ -684,11 +686,12 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.dimensions, i.created_at, i.updated_at,
+              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.expanded_description, i.dimensions, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 to_tsvector('english',
                   coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
                   coalesce(i.description,'') || ' ' ||
+                  coalesce(i.expanded_description,'') || ' ' ||
                   coalesce(array_to_string(i.ai_keywords, ' '), '')
                 ),
                 websearch_to_tsquery('english', ${tsQuery})
@@ -702,6 +705,7 @@ router.post("/search", async (req, res) => {
               ${tsQuery.trim() ? sql`to_tsvector('english',
                 coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
                 coalesce(i.description,'') || ' ' ||
+                coalesce(i.expanded_description,'') || ' ' ||
                 coalesce(array_to_string(i.ai_keywords, ' '), '')
               ) @@ websearch_to_tsquery('english', ${tsQuery})
               OR` : sql``}
@@ -781,6 +785,7 @@ router.post("/search", async (req, res) => {
         thumbnailUrl: typeof row.thumbnail_url === "string" ? row.thumbnail_url : null,
         imageUrl2: typeof row.image_url_2 === "string" ? row.image_url_2 : null,
         thumbnailUrl2: typeof row.thumbnail_url_2 === "string" ? row.thumbnail_url_2 : null,
+        expandedDescription: typeof row.expanded_description === "string" ? row.expanded_description : null,
         imageSource: null,
         imageConfidence: null,
         previousDescription: null,
@@ -1493,6 +1498,131 @@ router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
     res.json({ total, enriched, unenriched: total - enriched });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch enrichment summary" });
+  }
+});
+
+// ── POST /inventory/expand-descriptions ──────────────────────────────────────
+// SSE stream: calls OpenAI once per part and streams results.
+// Does NOT write to the DB — the client saves each result individually via
+// PATCH /:id/expanded-description once the admin approves the expansion.
+router.post("/expand-descriptions", requireAdminAuth, async (_req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  const send = (obj: Record<string, unknown>) => {
+    res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  };
+
+  try {
+    const BATCH_SIZE = 50;
+
+    const itemsToExpand = await db
+      .select({
+        id: inventoryTable.id,
+        vendor: inventoryTable.vendor,
+        catalog: inventoryTable.catalog,
+        description: inventoryTable.description,
+      })
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.expandedDescription} IS NULL`)
+      .limit(BATCH_SIZE);
+
+    if (!itemsToExpand.length) {
+      send({ done: true, processed: 0, total: 0, remaining: 0 });
+      res.end();
+      return;
+    }
+
+    const total = itemsToExpand.length;
+    let processed = 0;
+
+    const { openai } = await import("@workspace/integrations-openai-ai-server");
+
+    for (const item of itemsToExpand) {
+      try {
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          max_completion_tokens: 200,
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are an expert in electrical supply and electrical contractor parts (conduit, boxes, fittings, wire, breakers, connectors, panels, switches, etc.). " +
+                "Expand the abbreviated part description into clear, plain-English text a tradesperson would understand. " +
+                "Decode industrial and trade abbreviations. Keep measurements in standard notation (e.g. 1/2\" EMT not 0.5 inch EMT). " +
+                "Return ONLY the expanded description as a short phrase or sentence — no extra commentary, no JSON, no bullet points, no prefixes. 60 words maximum.",
+            },
+            {
+              role: "user",
+              content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
+            },
+          ],
+        });
+        const expandedDescription =
+          response.choices[0]?.message?.content?.trim() ?? item.description;
+        processed++;
+        send({
+          id: item.id,
+          partNumber: item.catalog,
+          originalDescription: item.description,
+          expandedDescription,
+          progress: processed,
+          total,
+        });
+      } catch (aiErr) {
+        processed++;
+        send({
+          id: item.id,
+          partNumber: item.catalog,
+          originalDescription: item.description,
+          expandedDescription: null,
+          error: String(aiErr),
+          progress: processed,
+          total,
+        });
+      }
+    }
+
+    const [{ remaining }] = await db
+      .select({ remaining: sql<number>`count(*)::int` })
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.expandedDescription} IS NULL`);
+
+    send({ done: true, processed, total, remaining });
+    res.end();
+  } catch (err) {
+    console.error("[expand-descriptions]", err);
+    send({ error: String(err) });
+    res.end();
+  }
+});
+
+// ── PATCH /inventory/:id/expanded-description ─────────────────────────────────
+router.patch("/:id/expanded-description", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"), 10);
+    if (!id || isNaN(id)) {
+      return void res.status(400).json({ error: "Invalid item id" });
+    }
+
+    const { expandedDescription } = req.body as { expandedDescription: string | null };
+
+    const [updated] = await db
+      .update(inventoryTable)
+      .set({ expandedDescription: expandedDescription ?? null, updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning({ id: inventoryTable.id });
+
+    if (!updated) {
+      return void res.status(404).json({ error: "Item not found" });
+    }
+
+    invalidateReferenceAnswerCache().catch(() => {});
+    res.json({ success: true });
+  } catch (err) {
+    console.error("[expanded-description PATCH]", err);
+    res.status(500).json({ error: "Failed to update expanded description" });
   }
 });
 

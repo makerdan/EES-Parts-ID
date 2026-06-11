@@ -83,6 +83,12 @@ export const ListInventoryResponse = zod.object({
         .describe(
           "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
         ),
+      expandedDescription: zod
+        .string()
+        .nullish()
+        .describe(
+          "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+        ),
       dimensions: zod
         .object({
           length: zod.number().nullish(),
@@ -282,6 +288,12 @@ export const SearchInventoryResponse = zod
             .describe(
               "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
             ),
+          expandedDescription: zod
+            .string()
+            .nullish()
+            .describe(
+              "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+            ),
           dimensions: zod
             .object({
               length: zod.number().nullish(),
@@ -339,6 +351,12 @@ export const SearchInventoryResponse = zod
               .nullish()
               .describe(
                 "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+              ),
+            expandedDescription: zod
+              .string()
+              .nullish()
+              .describe(
+                "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
               ),
             dimensions: zod
               .object({
@@ -407,6 +425,12 @@ export const SearchInventoryResponse = zod
               .describe(
                 "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
               ),
+            expandedDescription: zod
+              .string()
+              .nullish()
+              .describe(
+                "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+              ),
             dimensions: zod
               .object({
                 length: zod.number().nullish(),
@@ -464,6 +488,12 @@ export const SearchInventoryResponse = zod
                 .nullish()
                 .describe(
                   "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+                ),
+              expandedDescription: zod
+                .string()
+                .nullish()
+                .describe(
+                  "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
                 ),
               dimensions: zod
                 .object({
@@ -645,6 +675,12 @@ export const UpdateItemBinsResponse = zod.object({
     .describe(
       "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
     ),
+  expandedDescription: zod
+    .string()
+    .nullish()
+    .describe(
+      "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -744,6 +780,12 @@ export const UpdateItemDimensionsResponse = zod.object({
     .describe(
       "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
     ),
+  expandedDescription: zod
+    .string()
+    .nullish()
+    .describe(
+      "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -804,6 +846,12 @@ export const LookupByBarcodeResponse = zod.object({
     .nullish()
     .describe(
       "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  expandedDescription: zod
+    .string()
+    .nullish()
+    .describe(
+      "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
     ),
   dimensions: zod
     .object({
@@ -872,6 +920,12 @@ export const UpdateItemBarcodesResponse = zod.object({
     .describe(
       "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
     ),
+  expandedDescription: zod
+    .string()
+    .nullish()
+    .describe(
+      "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -937,6 +991,12 @@ export const UpdateItemDescriptionResponse = zod.object({
     .describe(
       "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
     ),
+  expandedDescription: zod
+    .string()
+    .nullish()
+    .describe(
+      "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -1001,6 +1061,12 @@ export const UpdateItemKeywordsResponse = zod.object({
     .nullish()
     .describe(
       "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  expandedDescription: zod
+    .string()
+    .nullish()
+    .describe(
+      "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
     ),
   dimensions: zod
     .object({
@@ -1097,6 +1163,12 @@ export const AiIdentifyPartResponse = zod.object({
           .describe(
             "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
           ),
+        expandedDescription: zod
+          .string()
+          .nullish()
+          .describe(
+            "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+          ),
         dimensions: zod
           .object({
             length: zod.number().nullish(),
@@ -1154,6 +1226,12 @@ export const AiIdentifyPartResponse = zod.object({
             .nullish()
             .describe(
               "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+            ),
+          expandedDescription: zod
+            .string()
+            .nullish()
+            .describe(
+              "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
             ),
           dimensions: zod
             .object({

@@ -82,6 +82,8 @@ export interface InventoryItem {
   imageUrl2?: string | null;
   /** URL of the second thumbnail photo (Detail / Wire Frame slot), served via the API proxy */
   thumbnailUrl2?: string | null;
+  /** AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original) */
+  expandedDescription?: string | null;
   /** Physical dimensions in millimetres (length, width, height, diameter) */
   dimensions?: InventoryItemDimensions;
   createdAt: string;
