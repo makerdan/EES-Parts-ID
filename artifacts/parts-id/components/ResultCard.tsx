@@ -94,7 +94,8 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
-  const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+  const [lightboxUris, setLightboxUris] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
   const { item, confidence, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
 
@@ -140,20 +141,47 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             </View>
           </View>
           <View style={cardStyles.headerRight}>
-            {(item.thumbnailUrl ?? item.imageUrl) ? (
-              <Pressable
-                onPress={(e) => { e.stopPropagation?.(); setLightboxUri(item.imageUrl ?? item.thumbnailUrl ?? null); }}
-                hitSlop={4}
-                accessibilityLabel={`View full photo for ${item.catalog}`}
-                accessibilityRole="button"
-              >
-                <RetryImage
-                  uri={(item.thumbnailUrl ?? item.imageUrl) as string}
-                  style={cardStyles.thumbnail}
-                  resizeMode="cover"
-                />
-              </Pressable>
-            ) : (
+            {(item.thumbnailUrl ?? item.imageUrl ?? item.thumbnailUrl2 ?? item.imageUrl2) ? (() => {
+              const slot1 = item.thumbnailUrl ?? item.imageUrl ?? null;
+              const slot2 = item.thumbnailUrl2 ?? item.imageUrl2 ?? null;
+              const allUris = [
+                ...(item.imageUrl ?? item.thumbnailUrl ? [(item.imageUrl ?? item.thumbnailUrl) as string] : []),
+                ...(item.imageUrl2 ?? item.thumbnailUrl2 ? [(item.imageUrl2 ?? item.thumbnailUrl2) as string] : []),
+              ];
+              const isSmall = slot1 !== null && slot2 !== null;
+              return (
+                <View style={cardStyles.thumbnailRow}>
+                  {slot1 ? (
+                    <Pressable
+                      onPress={(e) => { e.stopPropagation?.(); setLightboxUris(allUris); setLightboxIndex(0); }}
+                      hitSlop={4}
+                      accessibilityLabel={`View photo 1 for ${item.catalog}`}
+                      accessibilityRole="button"
+                    >
+                      <RetryImage
+                        uri={slot1}
+                        style={isSmall ? cardStyles.thumbnailSmall : cardStyles.thumbnail}
+                        resizeMode="cover"
+                      />
+                    </Pressable>
+                  ) : null}
+                  {slot2 ? (
+                    <Pressable
+                      onPress={(e) => { e.stopPropagation?.(); setLightboxUris(allUris); setLightboxIndex(slot1 ? 1 : 0); }}
+                      hitSlop={4}
+                      accessibilityLabel={`View photo 2 for ${item.catalog}`}
+                      accessibilityRole="button"
+                    >
+                      <RetryImage
+                        uri={slot2}
+                        style={cardStyles.thumbnailSmall}
+                        resizeMode="cover"
+                      />
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            })() : (
               <View style={[cardStyles.thumbnail, cardStyles.thumbnailPlaceholder, { backgroundColor: colors.muted, borderColor: colors.border }]}>
                 <Feather name="image" size={22} color={colors.mutedForeground} />
               </View>
@@ -258,17 +286,52 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         {/* Expanded content */}
         {expanded ? (
           <>
-            {/* Catalog image */}
-            {item.imageUrl ? (
+            {/* Catalog images */}
+            {(item.imageUrl || item.imageUrl2) ? (
               <View style={cardStyles.section}>
                 <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
-                  CATALOG IMAGE
+                  {item.imageUrl && item.imageUrl2 ? "CATALOG IMAGES" : "CATALOG IMAGE"}
                 </Text>
-                <RetryImage
-                  uri={item.imageUrl}
-                  style={[cardStyles.catalogImage, { backgroundColor: colors.muted }]}
-                  resizeMode="contain"
-                />
+                <View style={cardStyles.catalogImageRow}>
+                  {item.imageUrl ? (
+                    <Pressable
+                      style={[cardStyles.catalogImageWrap, { backgroundColor: colors.muted }, item.imageUrl2 ? cardStyles.catalogImageWrapHalf : null]}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        const uris = [item.imageUrl!, ...(item.imageUrl2 ? [item.imageUrl2] : [])];
+                        setLightboxUris(uris);
+                        setLightboxIndex(0);
+                      }}
+                    >
+                      <RetryImage
+                        uri={item.imageUrl}
+                        style={cardStyles.catalogImage}
+                        resizeMode="contain"
+                      />
+                      {item.imageUrl2 ? (
+                        <Text style={[cardStyles.catalogImageLabel, { color: colors.mutedForeground }]}>Box / Label</Text>
+                      ) : null}
+                    </Pressable>
+                  ) : null}
+                  {item.imageUrl2 ? (
+                    <Pressable
+                      style={[cardStyles.catalogImageWrap, { backgroundColor: colors.muted }, cardStyles.catalogImageWrapHalf]}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        const uris = [...(item.imageUrl ? [item.imageUrl] : []), item.imageUrl2!];
+                        setLightboxUris(uris);
+                        setLightboxIndex(item.imageUrl ? 1 : 0);
+                      }}
+                    >
+                      <RetryImage
+                        uri={item.imageUrl2}
+                        style={cardStyles.catalogImage}
+                        resizeMode="contain"
+                      />
+                      <Text style={[cardStyles.catalogImageLabel, { color: colors.mutedForeground }]}>Detail / Wire Frame</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
             ) : null}
 
@@ -354,7 +417,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         </Text>
       </View>
     </Pressable>
-    <PhotoLightbox uri={lightboxUri} onClose={() => setLightboxUri(null)} />
+    <PhotoLightbox uris={lightboxUris} initialIndex={lightboxIndex} onClose={() => setLightboxUris([])} />
     </>
   );
 }
@@ -451,20 +514,49 @@ const cardStyles = StyleSheet.create({
   },
   dimIcon: { fontSize: 12 },
   dimText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  thumbnailRow: {
+    flexDirection: "row",
+    gap: 4,
+    marginBottom: 6,
+  },
   thumbnail: {
     width: 52,
     height: 52,
     borderRadius: 6,
-    marginBottom: 6,
+  },
+  thumbnailSmall: {
+    width: 44,
+    height: 44,
+    borderRadius: 6,
   },
   thumbnailPlaceholder: {
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
+    marginBottom: 6,
+  },
+  catalogImageRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  catalogImageWrap: {
+    flex: 1,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  catalogImageWrapHalf: {
+    flex: 1,
   },
   catalogImage: {
     width: "100%",
-    height: 200,
+    height: 160,
     borderRadius: 8,
+  },
+  catalogImageLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    textAlign: "center",
+    marginTop: 4,
+    marginBottom: 4,
   },
 });
