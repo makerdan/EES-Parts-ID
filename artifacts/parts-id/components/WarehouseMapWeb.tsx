@@ -314,6 +314,12 @@ export function WarehouseMapWeb({
           <Text style={[styles.dotLabel, { color: colors.mutedForeground }]}>Med</Text>
           <View style={[styles.dot, { backgroundColor: "#f59e0b" }]} />
           <Text style={[styles.dotLabel, { color: colors.mutedForeground }]}>High</Text>
+          {variantAisleNums && variantAisleNums.size > 0 && (
+            <>
+              <View style={[styles.dot, { backgroundColor: "#a855f7" }]} />
+              <Text style={[styles.dotLabel, { color: colors.mutedForeground }]}>Alt bin</Text>
+            </>
+          )}
         </View>
       </View>
     </View>
