@@ -50,6 +50,16 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   }
   pnpm --filter db push --force
 
+  # Verify the FTS index exists and covers all required columns after every push.
+  # A missing or drifted inventory_fts_idx would silently break keyword search,
+  # so we check here while DATABASE_URL is available and fail the merge visibly.
+  echo "[post-merge] Verifying FTS index..."
+  pnpm --filter @workspace/db run verify-fts || {
+    echo "[post-merge] ERROR: FTS index check failed. Run 'pnpm --filter @workspace/db run push-force' to rebuild the index."
+    exit 1
+  }
+  echo "[post-merge] FTS index OK."
+
   # Regenerate API client files so the Expo bundle never serves stale or missing
   # generated modules after a merge (orval cleans the output folder on every run).
   # A 120-second timeout ensures a hung TypeScript compiler or filesystem lock
