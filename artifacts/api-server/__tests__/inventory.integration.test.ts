@@ -299,6 +299,54 @@ describe("POST /api/inventory/search", () => {
     expect(res.body).toHaveProperty("results");
     expect(Array.isArray(res.body.results)).toBe(true);
   });
+
+  it("returns a part whose search term appears only in expanded_description (FTS covers the field)", async () => {
+    // Regression guard: the tsvector expression in the FTS WHERE clause and
+    // ts_rank_cd call must include coalesce(i.expanded_description,'').
+    // If that column is removed from the expression this test will fail
+    // because the term exists nowhere else (vendor/catalog/description/
+    // ai_keywords are all distinct from the search term).
+    //
+    // confidenceThreshold is set to 0 so the threshold filter does not hide
+    // the hit: an FTS-only match against expanded_description has near-zero
+    // trigram similarity to the catalog/description, which yields a blended
+    // score of roughly 0.40 — just below the default 50% threshold. The test
+    // is about FTS coverage, not confidence ranking, so bypassing the threshold
+    // is the correct approach here.
+    const { db, inventoryTable } = await import("@workspace/db");
+    const { eq } = await import("drizzle-orm");
+
+    const NEEDLE_CATALOG = "JEST-ITG-EXPDESC-FTS-001";
+    // A multi-syllable nonsense word that will not appear in any other row and
+    // will survive the English stemmer (treated as an unknown lexeme).
+    const UNIQUE_TERM = "xylomachinated";
+
+    await db.delete(inventoryTable).where(eq(inventoryTable.catalog, NEEDLE_CATALOG));
+    await db.insert(inventoryTable).values({
+      vendor: "JEST-EXPDESC-VENDOR",
+      catalog: NEEDLE_CATALOG,
+      // description and ai_keywords intentionally contain NO occurrence of UNIQUE_TERM
+      description: "Generic relay assembly unit",
+      binLocations: [] as string[],
+      aiKeywords: [] as string[],
+      expandedDescription: `Detailed notes: ${UNIQUE_TERM} thermal coating applied during final assembly.`,
+    });
+
+    try {
+      const res = await supertest(app)
+        .post("/api/inventory/search")
+        .send({ keywords: UNIQUE_TERM, confidenceThreshold: 0 })
+        .expect(200);
+
+      expect(Array.isArray(res.body.results)).toBe(true);
+      const match = res.body.results.find(
+        (r: { item: { catalog: string } }) => r.item.catalog === NEEDLE_CATALOG,
+      );
+      expect(match).toBeDefined();
+    } finally {
+      await db.delete(inventoryTable).where(eq(inventoryTable.catalog, NEEDLE_CATALOG));
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
