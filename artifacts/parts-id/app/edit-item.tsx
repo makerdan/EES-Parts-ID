@@ -17,7 +17,7 @@ import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
-import { invalidateSearchAndEvictItem } from "@/utils/editItemCache";
+import { invalidateAllCachesAfterSave } from "@/utils/editItemCache";
 import {
   useUpdateItemBins,
   useUpdateItemBarcodes,
@@ -368,10 +368,7 @@ export default function EditItemScreen() {
           );
         }
 
-        await queryClient.invalidateQueries({
-          predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-        });
-        await invalidateSearchAndEvictItem({
+        await invalidateAllCachesAfterSave({
           queryClient,
           asyncStorage: AsyncStorage,
           itemId: current.id,

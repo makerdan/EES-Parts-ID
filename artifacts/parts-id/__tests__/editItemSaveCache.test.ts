@@ -25,7 +25,7 @@
  *   6. invalidateQueries is always called regardless of the AsyncStorage state.
  */
 
-import { invalidateSearchAndEvictItem } from "../utils/editItemCache";
+import { invalidateSearchAndEvictItem, invalidateAllCachesAfterSave } from "../utils/editItemCache";
 import { QUERY_CACHE_KEY } from "../utils/searchHelpers";
 import type { QueryCache } from "../utils/searchHelpers";
 
@@ -155,5 +155,91 @@ describe("invalidateSearchAndEvictItem — post-save cache invalidation contract
     });
 
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
+  });
+});
+
+// =============================================================================
+// invalidateAllCachesAfterSave — combined list + search invalidation contract
+// =============================================================================
+
+describe("invalidateAllCachesAfterSave — combined list + search invalidation contract", () => {
+  /**
+   * invalidateAllCachesAfterSave is the production function called by handleSave
+   * after a successful save.  It must make exactly two invalidateQueries calls:
+   *   1. A predicate-based call that clears all paginated list cache entries
+   *      (keys starting with getListInventoryQueryKey()[0])
+   *   2. A key-based call for { queryKey: ["searchInventory"] } (via
+   *      invalidateSearchAndEvictItem)
+   *
+   * These tests exercise the real production utility so that dropping either
+   * call from the implementation will break the test suite.
+   */
+
+  it("calls invalidateQueries twice — first with a list predicate, then with the search key", async () => {
+    mockGetItem.mockResolvedValue(null);
+
+    await invalidateAllCachesAfterSave({
+      queryClient: { invalidateQueries },
+      asyncStorage: { getItem: mockGetItem, setItem: mockSetItem },
+      itemId: 42,
+    });
+
+    expect(invalidateQueries).toHaveBeenCalledTimes(2);
+
+    const calls = invalidateQueries.mock.calls as [
+      { predicate?: unknown; queryKey?: unknown[] },
+    ][];
+
+    // First call: predicate-based list query invalidation
+    expect(typeof calls[0][0].predicate).toBe("function");
+    expect(calls[0][0].queryKey).toBeUndefined();
+
+    // Second call: exact search key invalidation
+    expect(calls[1][0].queryKey).toEqual(["searchInventory"]);
+    expect(calls[1][0].predicate).toBeUndefined();
+  });
+
+  it("list predicate captured from the real call matches list queries and not search queries", async () => {
+    mockGetItem.mockResolvedValue(null);
+
+    await invalidateAllCachesAfterSave({
+      queryClient: { invalidateQueries },
+      asyncStorage: { getItem: mockGetItem, setItem: mockSetItem },
+      itemId: 42,
+    });
+
+    // Retrieve the actual predicate that production code passed to invalidateQueries
+    const calls = invalidateQueries.mock.calls as [
+      { predicate?: (q: { queryKey: unknown }) => boolean; queryKey?: unknown[] },
+    ][];
+    const listPredicate = calls[0][0].predicate!;
+    expect(typeof listPredicate).toBe("function");
+
+    // Must match list queries (with or without params)
+    expect(listPredicate({ queryKey: ["/api/inventory"] })).toBe(true);
+    expect(listPredicate({ queryKey: ["/api/inventory", { page: 1, limit: 50 }] })).toBe(true);
+
+    // Must NOT match search queries or unrelated keys
+    expect(listPredicate({ queryKey: ["searchInventory"] })).toBe(false);
+    expect(listPredicate({ queryKey: ["searchInventory", { keywords: "relay" }] })).toBe(false);
+    expect(listPredicate({ queryKey: [] })).toBe(false);
+    expect(listPredicate({ queryKey: ["unrelated"] })).toBe(false);
+  });
+
+  it("still calls both invalidateQueries even when AsyncStorage throws", async () => {
+    mockGetItem.mockRejectedValue(new Error("storage failure"));
+
+    await invalidateAllCachesAfterSave({
+      queryClient: { invalidateQueries },
+      asyncStorage: { getItem: mockGetItem, setItem: mockSetItem },
+      itemId: 42,
+    });
+
+    expect(invalidateQueries).toHaveBeenCalledTimes(2);
+    const calls = invalidateQueries.mock.calls as [
+      { predicate?: unknown; queryKey?: unknown[] },
+    ][];
+    expect(typeof calls[0][0].predicate).toBe("function");
+    expect(calls[1][0].queryKey).toEqual(["searchInventory"]);
   });
 });
