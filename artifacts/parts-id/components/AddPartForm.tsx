@@ -50,6 +50,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
   const [fieldErrors, setFieldErrors] = useState<{ catalog?: string; vendor?: string; bin?: string }>({});
   const [createdItem, setCreatedItem] = useState<InventoryItem | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoUri2, setPhotoUri2] = useState<string | null>(null);
 
   // Dimensions
   const [dimLength, setDimLength] = useState("");
@@ -78,6 +79,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
     setDimHeight("");
     setDimDiameter("");
     setPhotoUri(null);
+    setPhotoUri2(null);
   };
 
   const validate = () => {
@@ -97,7 +99,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
     setDimDiameter(fmtDim(dims.diameter));
   };
 
-  const uploadPhoto = async (itemId: number, uri: string) => {
+  const uploadPhoto = async (itemId: number, uri: string, slot: 1 | 2) => {
     try {
       const base64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
       const res = await fetch(`${API_BASE}/inventory/${itemId}/photo`, {
@@ -106,14 +108,14 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
           "Content-Type": "application/json",
           Authorization: `Bearer ${adminToken}`,
         },
-        body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg" }),
+        body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
     } catch (err) {
-      console.warn("Photo upload failed:", err);
+      console.warn(`Photo upload failed (slot ${slot}):`, err);
       throw err;
     }
   };
@@ -194,13 +196,22 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
         }
       }
 
+      // Upload photos for each slot that has a URI. Failures are non-fatal.
+      const photoUploads: Array<() => Promise<void>> = [];
       if (photoUri) {
-        try {
-          await uploadPhoto(newItem.id, photoUri);
-        } catch {
+        photoUploads.push(() => uploadPhoto(newItem.id, photoUri, 1));
+      }
+      if (photoUri2) {
+        photoUploads.push(() => uploadPhoto(newItem.id, photoUri2, 2));
+      }
+
+      if (photoUploads.length > 0) {
+        const results = await Promise.allSettled(photoUploads.map(fn => fn()));
+        const anyFailed = results.some(r => r.status === "rejected");
+        if (anyFailed) {
           Alert.alert(
             "Photo upload failed",
-            "The part was saved but the photo could not be uploaded. Check your connection and try again.",
+            "The part was saved but one or more photos could not be uploaded. Check your connection and try again.",
             [{ text: "OK" }]
           );
         }
@@ -300,10 +311,13 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
           ) : null}
         </View>
 
-        {/* Photo (optional) */}
+        {/* Photos (optional) */}
         <View style={apfStyles.fieldGroup}>
-          <Text style={[apfStyles.label, { color: colors.foreground }]}>Photo — optional</Text>
-          <PartPhotoPicker value={photoUri} onChange={setPhotoUri} />
+          <Text style={[apfStyles.label, { color: colors.foreground }]}>Photos — optional</Text>
+          <View style={apfStyles.photoSlots}>
+            <PartPhotoPicker slot={1} label="Box / Label" value={photoUri} onChange={setPhotoUri} />
+            <PartPhotoPicker slot={2} label="Detail / Wire Frame" value={photoUri2} onChange={setPhotoUri2} />
+          </View>
         </View>
 
         {/* Dimensions (optional) */}
@@ -432,6 +446,7 @@ const apfStyles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
   },
   fieldError: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  photoSlots: { gap: 12, marginTop: 4 },
   // Dimensions
   dimLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   measureBtn: {

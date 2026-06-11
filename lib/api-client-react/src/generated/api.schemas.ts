@@ -78,6 +78,10 @@ export interface InventoryItem {
   imageUrl?: string | null;
   /** URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy */
   thumbnailUrl?: string | null;
+  /** URL of the second full-size photo (Detail / Wire Frame slot), served via the API proxy */
+  imageUrl2?: string | null;
+  /** URL of the second thumbnail photo (Detail / Wire Frame slot), served via the API proxy */
+  thumbnailUrl2?: string | null;
   /** Physical dimensions in millimetres (length, width, height, diameter) */
   dimensions?: InventoryItemDimensions;
   createdAt: string;
@@ -204,20 +208,37 @@ export interface UpdateDimensionsBody {
   diameter?: number | null;
 }
 
+/**
+ * Which photo slot to target (1 = Box / Label, 2 = Detail / Wire Frame). Defaults to 1.
+ */
+export type UploadPhotoBodySlot =
+  (typeof UploadPhotoBodySlot)[keyof typeof UploadPhotoBodySlot];
+
+export const UploadPhotoBodySlot = {
+  NUMBER_1: 1,
+  NUMBER_2: 2,
+} as const;
+
 export interface UploadPhotoBody {
   /** Base64-encoded JPEG or PNG image; required when remove is false or omitted */
   imageBase64?: string;
   /** MIME type of the image (default image/jpeg) */
   mimeType?: string;
-  /** Set to true to remove the current photo and clear both imageUrl and thumbnailUrl */
+  /** Set to true to remove the current photo and clear both imageUrl and thumbnailUrl for the given slot */
   remove?: boolean;
+  /** Which photo slot to target (1 = Box / Label, 2 = Detail / Wire Frame). Defaults to 1. */
+  slot?: UploadPhotoBodySlot;
 }
 
 export interface UploadPhotoResponse {
-  /** URL of the full-size image after upload, or null after removal */
+  /** URL of the slot-1 full-size image after upload, or null after removal */
   imageUrl: string | null;
-  /** URL of the thumbnail image after upload, or null after removal */
+  /** URL of the slot-1 thumbnail image after upload, or null after removal */
   thumbnailUrl: string | null;
+  /** URL of the slot-2 full-size image after upload, or null after removal */
+  imageUrl2: string | null;
+  /** URL of the slot-2 thumbnail image after upload, or null after removal */
+  thumbnailUrl2: string | null;
 }
 
 export interface EstimateDimensionsBody {

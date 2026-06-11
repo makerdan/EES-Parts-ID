@@ -71,6 +71,18 @@ export const ListInventoryResponse = zod.object({
         .describe(
           "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
         ),
+      imageUrl2: zod
+        .string()
+        .nullish()
+        .describe(
+          "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+        ),
+      thumbnailUrl2: zod
+        .string()
+        .nullish()
+        .describe(
+          "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+        ),
       dimensions: zod
         .object({
           length: zod.number().nullish(),
@@ -258,6 +270,18 @@ export const SearchInventoryResponse = zod
             .describe(
               "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
             ),
+          imageUrl2: zod
+            .string()
+            .nullish()
+            .describe(
+              "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+            ),
+          thumbnailUrl2: zod
+            .string()
+            .nullish()
+            .describe(
+              "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+            ),
           dimensions: zod
             .object({
               length: zod.number().nullish(),
@@ -303,6 +327,18 @@ export const SearchInventoryResponse = zod
               .nullish()
               .describe(
                 "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
+              ),
+            imageUrl2: zod
+              .string()
+              .nullish()
+              .describe(
+                "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+              ),
+            thumbnailUrl2: zod
+              .string()
+              .nullish()
+              .describe(
+                "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
               ),
             dimensions: zod
               .object({
@@ -359,6 +395,18 @@ export const SearchInventoryResponse = zod
               .describe(
                 "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
               ),
+            imageUrl2: zod
+              .string()
+              .nullish()
+              .describe(
+                "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+              ),
+            thumbnailUrl2: zod
+              .string()
+              .nullish()
+              .describe(
+                "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+              ),
             dimensions: zod
               .object({
                 length: zod.number().nullish(),
@@ -404,6 +452,18 @@ export const SearchInventoryResponse = zod
                 .nullish()
                 .describe(
                   "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
+                ),
+              imageUrl2: zod
+                .string()
+                .nullish()
+                .describe(
+                  "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+                ),
+              thumbnailUrl2: zod
+                .string()
+                .nullish()
+                .describe(
+                  "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
                 ),
               dimensions: zod
                 .object({
@@ -496,7 +556,13 @@ export const UploadItemPhotoBody = zod.object({
     .boolean()
     .optional()
     .describe(
-      "Set to true to remove the current photo and clear both imageUrl and thumbnailUrl",
+      "Set to true to remove the current photo and clear both imageUrl and thumbnailUrl for the given slot",
+    ),
+  slot: zod
+    .union([zod.literal(1), zod.literal(2)])
+    .optional()
+    .describe(
+      "Which photo slot to target (1 = Box \/ Label, 2 = Detail \/ Wire Frame). Defaults to 1.",
     ),
 });
 
@@ -504,11 +570,27 @@ export const UploadItemPhotoResponse = zod.object({
   imageUrl: zod
     .string()
     .nullable()
-    .describe("URL of the full-size image after upload, or null after removal"),
+    .describe(
+      "URL of the slot-1 full-size image after upload, or null after removal",
+    ),
   thumbnailUrl: zod
     .string()
     .nullable()
-    .describe("URL of the thumbnail image after upload, or null after removal"),
+    .describe(
+      "URL of the slot-1 thumbnail image after upload, or null after removal",
+    ),
+  imageUrl2: zod
+    .string()
+    .nullable()
+    .describe(
+      "URL of the slot-2 full-size image after upload, or null after removal",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullable()
+    .describe(
+      "URL of the slot-2 thumbnail image after upload, or null after removal",
+    ),
 });
 
 /**
@@ -550,6 +632,18 @@ export const UpdateItemBinsResponse = zod.object({
     .nullish()
     .describe(
       "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
+    ),
+  imageUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
     ),
   dimensions: zod
     .object({
@@ -638,6 +732,18 @@ export const UpdateItemDimensionsResponse = zod.object({
     .describe(
       "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
     ),
+  imageUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -686,6 +792,18 @@ export const LookupByBarcodeResponse = zod.object({
     .nullish()
     .describe(
       "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
+    ),
+  imageUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
     ),
   dimensions: zod
     .object({
@@ -742,6 +860,18 @@ export const UpdateItemBarcodesResponse = zod.object({
     .describe(
       "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
     ),
+  imageUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -795,6 +925,18 @@ export const UpdateItemDescriptionResponse = zod.object({
     .describe(
       "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
     ),
+  imageUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
   dimensions: zod
     .object({
       length: zod.number().nullish(),
@@ -847,6 +989,18 @@ export const UpdateItemKeywordsResponse = zod.object({
     .nullish()
     .describe(
       "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
+    ),
+  imageUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
     ),
   dimensions: zod
     .object({
@@ -931,6 +1085,18 @@ export const AiIdentifyPartResponse = zod.object({
           .describe(
             "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
           ),
+        imageUrl2: zod
+          .string()
+          .nullish()
+          .describe(
+            "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+          ),
+        thumbnailUrl2: zod
+          .string()
+          .nullish()
+          .describe(
+            "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+          ),
         dimensions: zod
           .object({
             length: zod.number().nullish(),
@@ -976,6 +1142,18 @@ export const AiIdentifyPartResponse = zod.object({
             .nullish()
             .describe(
               "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
+            ),
+          imageUrl2: zod
+            .string()
+            .nullish()
+            .describe(
+              "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+            ),
+          thumbnailUrl2: zod
+            .string()
+            .nullish()
+            .describe(
+              "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
             ),
           dimensions: zod
             .object({

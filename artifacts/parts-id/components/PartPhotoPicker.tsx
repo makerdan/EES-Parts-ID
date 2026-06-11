@@ -15,9 +15,11 @@ import { useColors } from "@/hooks/useColors";
 export interface PartPhotoPickerProps {
   value: string | null;
   onChange: (uri: string | null) => void;
+  slot?: 1 | 2;
+  label?: string;
 }
 
-export function PartPhotoPicker({ value, onChange }: PartPhotoPickerProps) {
+export function PartPhotoPicker({ value, onChange, label }: PartPhotoPickerProps) {
   const colors = useColors();
 
   const openCamera = useCallback(async () => {
@@ -75,50 +77,62 @@ export function PartPhotoPicker({ value, onChange }: PartPhotoPickerProps) {
     </View>
   ) : null;
 
-  if (Platform.OS === "web") {
-    return (
-      <View style={ppStyles.row}>
-        {thumbnail}
-        <Pressable
-          onPress={openLibrary}
-          style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
-          accessibilityLabel={value ? "Replace photo" : "Upload photo"}
-        >
-          <Feather name="upload" size={16} color={colors.foreground} />
-          <Text style={[ppStyles.actionBtnText, { color: colors.foreground }]}>
-            {value ? "Replace" : "Upload Photo"}
-          </Text>
-        </Pressable>
-      </View>
-    );
-  }
-
   return (
-    <View style={ppStyles.row}>
-      {thumbnail}
-      <Pressable
-        onPress={openCamera}
-        style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
-        accessibilityLabel={value ? "Retake photo" : "Take photo"}
-      >
-        <Feather name="camera" size={16} color={colors.foreground} />
-        <Text style={[ppStyles.actionBtnText, { color: colors.foreground }]}>
-          {value ? "Retake" : "Take Photo"}
-        </Text>
-      </Pressable>
-      <Pressable
-        onPress={openLibrary}
-        style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
-        accessibilityLabel="Upload from library"
-      >
-        <Feather name="upload" size={16} color={colors.foreground} />
-        <Text style={[ppStyles.actionBtnText, { color: colors.foreground }]}>Upload</Text>
-      </Pressable>
+    <View style={ppStyles.container}>
+      {label ? (
+        <Text style={[ppStyles.slotLabel, { color: colors.mutedForeground }]}>{label}</Text>
+      ) : null}
+      {Platform.OS === "web" ? (
+        <View style={ppStyles.row}>
+          {thumbnail}
+          <Pressable
+            onPress={openLibrary}
+            style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+            accessibilityLabel={value ? "Replace photo" : "Upload photo"}
+          >
+            <Feather name="upload" size={16} color={colors.foreground} />
+            <Text style={[ppStyles.actionBtnText, { color: colors.foreground }]}>
+              {value ? "Replace" : "Upload Photo"}
+            </Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={ppStyles.row}>
+          {thumbnail}
+          <Pressable
+            onPress={openCamera}
+            style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+            accessibilityLabel={value ? "Retake photo" : "Take photo"}
+          >
+            <Feather name="camera" size={16} color={colors.foreground} />
+            <Text style={[ppStyles.actionBtnText, { color: colors.foreground }]}>
+              {value ? "Retake" : "Take Photo"}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={openLibrary}
+            style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+            accessibilityLabel="Upload from library"
+          >
+            <Feather name="upload" size={16} color={colors.foreground} />
+            <Text style={[ppStyles.actionBtnText, { color: colors.foreground }]}>Upload</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
 
 const ppStyles = StyleSheet.create({
+  container: {
+    gap: 6,
+  },
+  slotLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
   row: {
     flexDirection: "row",
     alignItems: "center",

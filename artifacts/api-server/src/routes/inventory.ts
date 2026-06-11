@@ -579,7 +579,7 @@ router.post("/search", async (req, res) => {
     type RawRow = {
       id: number; vendor: string; catalog: string; description: string;
       bin_locations: string[]; ai_keywords: string[]; barcodes: string[];
-      enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null;
+      enriched_at: Date | null; image_url: string | null; thumbnail_url: string | null; image_url_2: string | null; thumbnail_url_2: string | null;
       dimensions: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null;
       created_at: Date; updated_at: Date;
       fts_rank: number; trgm_sim: number;
@@ -684,7 +684,7 @@ router.post("/search", async (req, res) => {
           SELECT * FROM (
             SELECT
               i.id, i.vendor, i.catalog, i.description,
-              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.dimensions, i.created_at, i.updated_at,
+              i.bin_locations, i.ai_keywords, i.barcodes, i.enriched_at, i.image_url, i.thumbnail_url, i.image_url_2, i.thumbnail_url_2, i.dimensions, i.created_at, i.updated_at,
               ${tsQuery.trim() ? sql`ts_rank_cd(
                 to_tsvector('english',
                   coalesce(i.vendor,'') || ' ' || coalesce(i.catalog,'') || ' ' ||
@@ -779,6 +779,8 @@ router.post("/search", async (req, res) => {
         // PDF catalog enrichment columns — image_url and thumbnail_url are included in the SELECT
         imageUrl: typeof row.image_url === "string" ? row.image_url : null,
         thumbnailUrl: typeof row.thumbnail_url === "string" ? row.thumbnail_url : null,
+        imageUrl2: typeof row.image_url_2 === "string" ? row.image_url_2 : null,
+        thumbnailUrl2: typeof row.thumbnail_url_2 === "string" ? row.thumbnail_url_2 : null,
         imageSource: null,
         imageConfidence: null,
         previousDescription: null,
@@ -1822,21 +1824,32 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     const id = parseInt(String(req.params["id"] ?? "0"));
     if (!id) return void res.status(400).json({ error: "Invalid item id" });
 
-    const { imageBase64, mimeType, remove } = req.body as {
+    const { imageBase64, mimeType, remove, slot = 1 } = req.body as {
       imageBase64?: string;
       mimeType?: string;
       remove?: boolean;
+      slot?: 1 | 2;
     };
 
+    const isSlot2 = slot === 2;
+
     if (remove === true) {
+      const patch = isSlot2
+        ? { imageUrl2: null, thumbnailUrl2: null, updatedAt: new Date() }
+        : { imageUrl: null, thumbnailUrl: null, updatedAt: new Date() };
       const [updated] = await db
         .update(inventoryTable)
-        .set({ imageUrl: null, thumbnailUrl: null, updatedAt: new Date() })
+        .set(patch)
         .where(eq(inventoryTable.id, id))
         .returning();
       if (!updated) return void res.status(404).json({ error: "Item not found" });
       invalidateReferenceAnswerCache().catch(() => {});
-      return void res.json({ imageUrl: null, thumbnailUrl: null });
+      return void res.json({
+        imageUrl: updated.imageUrl ?? null,
+        thumbnailUrl: updated.thumbnailUrl ?? null,
+        imageUrl2: updated.imageUrl2 ?? null,
+        thumbnailUrl2: updated.thumbnailUrl2 ?? null,
+      });
     }
 
     if (!imageBase64?.trim()) {
@@ -1846,20 +1859,29 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
     const rawBuffer = Buffer.from(imageBase64, "base64");
     const { fullBuffer, thumbnailBuffer } = await resizeImages(rawBuffer);
 
-    const [imageUrl, thumbnailUrl] = await Promise.all([
+    const [uploadedUrl, uploadedThumbUrl] = await Promise.all([
       uploadCatalogImage(fullBuffer, "image/jpeg"),
       uploadCatalogImage(thumbnailBuffer, "image/jpeg"),
     ]);
 
+    const patch = isSlot2
+      ? { imageUrl2: uploadedUrl, thumbnailUrl2: uploadedThumbUrl, updatedAt: new Date() }
+      : { imageUrl: uploadedUrl, thumbnailUrl: uploadedThumbUrl, updatedAt: new Date() };
+
     const [updated] = await db
       .update(inventoryTable)
-      .set({ imageUrl, thumbnailUrl, updatedAt: new Date() })
+      .set(patch)
       .where(eq(inventoryTable.id, id))
       .returning();
 
     if (!updated) return void res.status(404).json({ error: "Item not found" });
     invalidateReferenceAnswerCache().catch(() => {});
-    res.json({ imageUrl: updated.imageUrl, thumbnailUrl: updated.thumbnailUrl });
+    res.json({
+      imageUrl: updated.imageUrl ?? null,
+      thumbnailUrl: updated.thumbnailUrl ?? null,
+      imageUrl2: updated.imageUrl2 ?? null,
+      thumbnailUrl2: updated.thumbnailUrl2 ?? null,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to upload photo" });
