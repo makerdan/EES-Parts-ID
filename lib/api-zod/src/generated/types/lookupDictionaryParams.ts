@@ -7,5 +7,5 @@
  */
 
 export type LookupDictionaryParams = {
-term: string;
+  term: string;
 };
