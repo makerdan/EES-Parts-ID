@@ -37,6 +37,11 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
 import { useTrackScreen } from "@/utils/useTrackScreen";
+import {
+  applyDiscardAll,
+  runSaveAll,
+  type ExpandDescResult,
+} from "@/utils/expandDescHandlers";
 
 import {
   type ParsedRow,
@@ -444,15 +449,6 @@ export default function UploadScreen() {
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
 
   // Expand-descriptions enrichment state
-  type ExpandDescResult = {
-    id: number;
-    partNumber: string;
-    originalDescription: string;
-    expandedDescription: string | null;
-    editedText: string;
-    savedStatus: "pending" | "saving" | "saved" | "discarded";
-    error?: string;
-  };
   const [expandDescResults, setExpandDescResults] = useState<ExpandDescResult[]>([]);
   const [expandDescProgress, setExpandDescProgress] = useState<{ done: number; total: number } | null>(null);
   const [expandDescStreamDone, setExpandDescStreamDone] = useState(false);
@@ -929,35 +925,20 @@ export default function UploadScreen() {
   };
 
   const handleSaveAll = async () => {
-    const pending = expandDescResults.filter(
-      r => r.savedStatus === "pending" && !r.error && r.editedText.trim(),
+    await runSaveAll(
+      expandDescResults,
+      expandDescRunning,
+      (id, status) =>
+        setExpandDescResults(prev =>
+          prev.map(r => r.id === id ? { ...r, savedStatus: status } : r),
+        ),
+      API_BASE,
+      adminHeaders,
     );
-    for (const result of pending) {
-      setExpandDescResults(prev =>
-        prev.map(r => r.id === result.id ? { ...r, savedStatus: "saving" } : r),
-      );
-      try {
-        const res = await fetch(`${API_BASE}/inventory/${result.id}/expanded-description`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", ...adminHeaders },
-          body: JSON.stringify({ expandedDescription: result.editedText.trim() || null }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setExpandDescResults(prev =>
-          prev.map(r => r.id === result.id ? { ...r, savedStatus: "saved" } : r),
-        );
-      } catch {
-        setExpandDescResults(prev =>
-          prev.map(r => r.id === result.id ? { ...r, savedStatus: "pending" } : r),
-        );
-      }
-    }
   };
 
   const handleDiscardAll = () => {
-    setExpandDescResults(prev =>
-      prev.map(r => r.savedStatus === "pending" ? { ...r, savedStatus: "discarded" } : r),
-    );
+    setExpandDescResults(prev => applyDiscardAll(prev, expandDescRunning));
   };
 
   const handlePickFile = async () => {
