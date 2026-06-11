@@ -116,6 +116,36 @@ describe("catalogScore", () => {
     expect(score).toBeCloseTo(BASE_PG);
     expect(reason).toBe("fts match");
   });
+
+  it("returns exact catalog score when part number is buried in catalogInput multi-word string", () => {
+    // Photo ID pipeline may place "CHB5 circuit breaker 20A" in the catalog
+    // body field rather than keywords. The full string won't match catalog
+    // "CHB5", but the first token will — the catalogInput token-split branch
+    // must kick in and return the exact-match score.
+    const { score, reason } = catalogScore(BASE_PG, "CHB5", "CHB5 circuit breaker 20A", "", 1);
+    expect(score).toBe(1.0);
+    expect(reason).toBe("exact catalog");
+  });
+
+  it("catalogInput token-splitting: prefix token earns prefix boost", () => {
+    const { score, reason } = catalogScore(BASE_PG, "CHB5A", "CHB5 circuit breaker 20A", "", 1);
+    expect(score).toBeGreaterThanOrEqual(0.93);
+    expect(reason).toBe("catalog prefix");
+  });
+
+  it("catalogInput token-splitting is case-insensitive", () => {
+    const { score, reason } = catalogScore(BASE_PG, "CHB5", "chb5 circuit breaker 20a", "", 1);
+    expect(score).toBe(1.0);
+    expect(reason).toBe("exact catalog");
+  });
+
+  it("does NOT token-split a single-word catalogInput (only fires for multi-word values)", () => {
+    // A bare single-word catalogInput like "CHB5" is already handled by the
+    // exact/prefix/substring checks above; the token-split branch must not
+    // double-fire on it (guarded by tokens.length > 1).
+    const { score } = catalogScore(BASE_PG, "OTHER", "CHB5", "", 0);
+    expect(score).toBeCloseTo(BASE_PG);
+  });
 });
 
 // ── applyVendorBoost ──────────────────────────────────────────────────────────

@@ -55,6 +55,21 @@ export function catalogScore(
     }
   }
 
+  // Same token-splitting for the catalogInput field: the Photo ID pipeline may
+  // pass a multi-word string like "CHB5 circuit breaker 20A" in the catalog body
+  // field rather than keywords. Split and test each token individually so the
+  // matching part still earns its exact/prefix/substring boost.
+  if (catalogInput) {
+    const tokens = ci.split(/\s+/).filter(Boolean);
+    if (tokens.length > 1) {
+      for (const token of tokens) {
+        if (c === token) return { score: 1.0, reason: "exact catalog" };
+        if (c.startsWith(token)) return { score: Math.max(pgScore, 0.93), reason: "catalog prefix" };
+        if (c.includes(token)) return { score: Math.max(pgScore, 0.85), reason: "catalog substring" };
+      }
+    }
+  }
+
   return { score: pgScore, reason: ftsRank > 0 ? "fts match" : "trigram match" };
 }
 
