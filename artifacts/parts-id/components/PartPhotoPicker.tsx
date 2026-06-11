@@ -17,9 +17,10 @@ export interface PartPhotoPickerProps {
   onChange: (uri: string | null) => void;
   slot?: 1 | 2;
   label?: string;
+  isAiSourced?: boolean;
 }
 
-export function PartPhotoPicker({ value, onChange, label }: PartPhotoPickerProps) {
+export function PartPhotoPicker({ value, onChange, label, isAiSourced }: PartPhotoPickerProps) {
   const colors = useColors();
 
   const openCamera = useCallback(async () => {
@@ -65,15 +66,22 @@ export function PartPhotoPicker({ value, onChange, label }: PartPhotoPickerProps
   }, [onChange]);
 
   const thumbnail = value ? (
-    <View style={ppStyles.thumbnailWrapper}>
-      <Image source={{ uri: value }} style={ppStyles.thumbnail} />
-      <Pressable
-        onPress={() => onChange(null)}
-        style={[ppStyles.removeBtn, { backgroundColor: colors.destructive }]}
-        accessibilityLabel="Remove photo"
-      >
-        <Text style={{ color: "#fff", fontSize: 11 }}>✕</Text>
-      </Pressable>
+    <View style={ppStyles.thumbnailOuter}>
+      <View style={ppStyles.thumbnailWrapper}>
+        <Image source={{ uri: value }} style={ppStyles.thumbnail} />
+        <Pressable
+          onPress={() => onChange(null)}
+          style={[ppStyles.removeBtn, { backgroundColor: colors.destructive }]}
+          accessibilityLabel="Remove photo"
+        >
+          <Text style={{ color: "#fff", fontSize: 11 }}>✕</Text>
+        </Pressable>
+      </View>
+      {isAiSourced ? (
+        <View style={[ppStyles.aiBadge, { backgroundColor: colors.primary + "1A", borderColor: colors.primary + "55" }]}>
+          <Text style={[ppStyles.aiBadgeText, { color: colors.primary }]}>AI sourced</Text>
+        </View>
+      ) : null}
     </View>
   ) : null;
 
@@ -140,8 +148,24 @@ const ppStyles = StyleSheet.create({
     gap: 10,
     marginTop: 2,
   },
+  thumbnailOuter: {
+    alignItems: "center",
+    gap: 4,
+  },
   thumbnailWrapper: { position: "relative" },
   thumbnail: { width: 64, height: 64, borderRadius: 8 },
+  aiBadge: {
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  aiBadgeText: {
+    fontSize: 9,
+    fontFamily: "Inter_600SemiBold",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
   removeBtn: {
     position: "absolute",
     top: -6,
