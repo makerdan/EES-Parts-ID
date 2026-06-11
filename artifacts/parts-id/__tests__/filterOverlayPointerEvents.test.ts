@@ -94,7 +94,7 @@ describe("filterOverlayWrapper — scroll-blocking overlay guard", () => {
     src = readSource();
   });
 
-  // ── 1. The known offender ───────────────────────────────────────────────────
+  // ── 1. The outer wrapper ────────────────────────────────────────────────────
 
   it("filterOverlayWrapper View carries pointerEvents=\"box-none\" or \"none\"", () => {
     // Find the JSX tag that uses styles.filterOverlayWrapper
@@ -133,7 +133,47 @@ describe("filterOverlayWrapper — scroll-blocking overlay guard", () => {
     }
   });
 
-  // ── 2. The style is actually an absolute-positioned overlay ─────────────────
+  // ── 2. The inner child that was the actual blocker ──────────────────────────
+
+  it("filterOverlay child View carries pointerEvents=\"box-none\" or \"none\"", () => {
+    // The filterOverlay <View> is the direct child of filterOverlayWrapper that
+    // spans the full overlay width.  Without pointerEvents="box-none" it swallows
+    // scroll gestures even though its parent wrapper already opts out.
+    const tagStartRe = /<View\b/g;
+    let match: RegExpExecArray | null;
+    let found = false;
+
+    while ((match = tagStartRe.exec(src)) !== null) {
+      const tag = extractOpeningTag(src, match.index);
+      if (!tag.includes("filterOverlay") || tag.includes("filterOverlayWrapper")) continue;
+
+      found = true;
+
+      const hasPointerEvents =
+        /pointerEvents\s*=\s*["'](box-none|none)["']/.test(tag);
+
+      if (!hasPointerEvents) {
+        throw new Error(
+          `The filterOverlay child <View> is missing pointerEvents="box-none".\n` +
+          `It spans the full overlay width and swallows scroll gestures on the FlatList beneath.\n` +
+          `Add  pointerEvents="box-none"  to the <View style={[styles.filterOverlay, …]}> tag\n` +
+          `in app/(tabs)/index.tsx.`,
+        );
+      }
+
+      expect(hasPointerEvents).toBe(true);
+    }
+
+    if (!found) {
+      throw new Error(
+        `Could not find a <View> that references styles.filterOverlay ` +
+        `(without "Wrapper") in app/(tabs)/index.tsx.  ` +
+        `The overlay may have been renamed — update this test to match.`,
+      );
+    }
+  });
+
+  // ── 3. The style is actually an absolute-positioned overlay ─────────────────
 
   it("filterOverlayWrapper StyleSheet entry has position:absolute and non-zero zIndex", () => {
     const position = getStyleProp(src, "filterOverlayWrapper", "position");
