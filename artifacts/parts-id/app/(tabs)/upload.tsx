@@ -928,6 +928,38 @@ export default function UploadScreen() {
     );
   };
 
+  const handleSaveAll = async () => {
+    const pending = expandDescResults.filter(
+      r => r.savedStatus === "pending" && !r.error && r.editedText.trim(),
+    );
+    for (const result of pending) {
+      setExpandDescResults(prev =>
+        prev.map(r => r.id === result.id ? { ...r, savedStatus: "saving" } : r),
+      );
+      try {
+        const res = await fetch(`${API_BASE}/inventory/${result.id}/expanded-description`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...adminHeaders },
+          body: JSON.stringify({ expandedDescription: result.editedText.trim() || null }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setExpandDescResults(prev =>
+          prev.map(r => r.id === result.id ? { ...r, savedStatus: "saved" } : r),
+        );
+      } catch {
+        setExpandDescResults(prev =>
+          prev.map(r => r.id === result.id ? { ...r, savedStatus: "pending" } : r),
+        );
+      }
+    }
+  };
+
+  const handleDiscardAll = () => {
+    setExpandDescResults(prev =>
+      prev.map(r => r.savedStatus === "pending" ? { ...r, savedStatus: "discarded" } : r),
+    );
+  };
+
   const handlePickFile = async () => {
     setPasteText("");
     if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
@@ -2097,6 +2129,57 @@ export default function UploadScreen() {
                           </View>
                         );
                       })() : null}
+
+                      {/* Bulk actions */}
+                      {expandDescResults.some(r => r.savedStatus === "pending" && !r.error) ? (
+                        <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                          <Pressable
+                            onPress={handleSaveAll}
+                            disabled={expandDescRunning || expandDescResults.some(r => r.savedStatus === "saving")}
+                            style={[
+                              styles.enrichBtn,
+                              {
+                                flex: 1,
+                                paddingVertical: 10,
+                                backgroundColor:
+                                  expandDescRunning || expandDescResults.some(r => r.savedStatus === "saving")
+                                    ? colors.muted
+                                    : colors.primary,
+                              },
+                            ]}
+                          >
+                            <Text style={[styles.enrichBtnText, {
+                              color: expandDescRunning || expandDescResults.some(r => r.savedStatus === "saving")
+                                ? colors.mutedForeground
+                                : colors.primaryForeground,
+                              fontSize: 14,
+                            }]}>
+                              Save All
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={handleDiscardAll}
+                            disabled={expandDescRunning}
+                            style={[
+                              styles.enrichBtn,
+                              {
+                                flex: 1,
+                                paddingVertical: 10,
+                                backgroundColor: expandDescRunning ? colors.muted : colors.muted,
+                                borderWidth: 1,
+                                borderColor: colors.border,
+                              },
+                            ]}
+                          >
+                            <Text style={[styles.enrichBtnText, {
+                              color: expandDescRunning ? colors.mutedForeground : colors.foreground,
+                              fontSize: 14,
+                            }]}>
+                              Discard All
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
 
                       {/* Per-result cards */}
                       {expandDescResults.map((result) => (
