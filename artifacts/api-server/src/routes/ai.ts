@@ -51,7 +51,7 @@ router.post("/identify", async (req, res) => {
         {
           role: "system",
           content:
-            "You are an expert electrical supply warehouse specialist. Analyze the provided image(s) and identify the electrical part. Return ONLY valid JSON with these fields: searchTerms (string[]), synonyms (string[]), relatedTerms (string[]), manufacturerVerified (boolean), detectedVendor (string|null), summary (string). Include all possible catalog terms, part numbers visible in images, manufacturer codes, and alternative names.",
+            "You are an expert electrical supply warehouse specialist. Analyze the provided image(s) and identify the electrical part. Return ONLY valid JSON with these fields: partNumbers (string[]), searchTerms (string[]), synonyms (string[]), relatedTerms (string[]), manufacturerVerified (boolean), detectedVendor (string|null), summary (string). partNumbers must contain ONLY the exact catalog/part numbers you can read directly from the image or label (e.g. [\"CHB5\", \"QO115\"]); leave it empty if no part number is clearly visible. searchTerms should include all descriptive terms, part numbers, manufacturer codes, and alternative names.",
         },
         {
           role: "user",
@@ -72,6 +72,7 @@ router.post("/identify", async (req, res) => {
     const analysis = normalizeAnalysis(extractJsonFromText(text), text);
 
     res.json({
+      partNumbers: analysis.partNumbers ?? [],
       searchTerms: analysis.searchTerms ?? [],
       synonyms: analysis.synonyms ?? [],
       relatedTerms: analysis.relatedTerms ?? [],

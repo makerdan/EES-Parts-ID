@@ -1116,6 +1116,11 @@ export const AiIdentifyPartBody = zod.object({
 });
 
 export const AiIdentifyPartResponse = zod.object({
+  partNumbers: zod
+    .array(zod.string())
+    .describe(
+      "Exact catalog\/part numbers read directly from the image or label",
+    ),
   searchTerms: zod.array(zod.string()),
   synonyms: zod.array(zod.string()),
   relatedTerms: zod.array(zod.string()),

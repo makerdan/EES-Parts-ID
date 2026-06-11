@@ -4,6 +4,7 @@
  */
 
 export interface AiAnalysis {
+  partNumbers: string[];
   searchTerms: string[];
   synonyms: string[];
   relatedTerms: string[];
@@ -55,6 +56,7 @@ export function normalizeAnalysis(
 ): AiAnalysis {
   if (!parsed) {
     return {
+      partNumbers: [],
       searchTerms: rawText.split(/\s+/).slice(0, 10),
       synonyms: [],
       relatedTerms: [],
@@ -64,6 +66,7 @@ export function normalizeAnalysis(
     };
   }
   return {
+    partNumbers: Array.isArray(parsed.partNumbers) ? (parsed.partNumbers as string[]) : [],
     searchTerms: Array.isArray(parsed.searchTerms) ? (parsed.searchTerms as string[]) : [],
     synonyms: Array.isArray(parsed.synonyms) ? (parsed.synonyms as string[]) : [],
     relatedTerms: Array.isArray(parsed.relatedTerms) ? (parsed.relatedTerms as string[]) : [],

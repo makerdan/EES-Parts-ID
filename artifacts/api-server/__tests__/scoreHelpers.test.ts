@@ -90,6 +90,32 @@ describe("catalogScore", () => {
     const { score } = catalogScore(BASE_PG, "BR120", "", "", 0.3);
     expect(score).toBeCloseTo(BASE_PG);
   });
+
+  it("returns exact catalog score when part number is buried in rawKeywords string", () => {
+    // Regression: AI joins all terms as "CHB5 circuit breaker 20A"; the full
+    // string doesn't match catalog "CHB5", but the first token does.
+    const { score, reason } = catalogScore(BASE_PG, "CHB5", "", "CHB5 circuit breaker 20A", 1);
+    expect(score).toBe(1.0);
+    expect(reason).toBe("exact catalog");
+  });
+
+  it("token match is case-insensitive", () => {
+    const { score, reason } = catalogScore(BASE_PG, "CHB5", "", "chb5 circuit breaker", 1);
+    expect(score).toBe(1.0);
+    expect(reason).toBe("exact catalog");
+  });
+
+  it("prefix token in rawKeywords earns prefix boost", () => {
+    const { score, reason } = catalogScore(BASE_PG, "CHB5A", "", "CHB5 circuit breaker", 1);
+    expect(score).toBeGreaterThanOrEqual(0.93);
+    expect(reason).toBe("catalog prefix");
+  });
+
+  it("does not boost when no token matches catalog", () => {
+    const { score, reason } = catalogScore(BASE_PG, "CHB5", "", "circuit breaker 20A", 1);
+    expect(score).toBeCloseTo(BASE_PG);
+    expect(reason).toBe("fts match");
+  });
 });
 
 // ── applyVendorBoost ──────────────────────────────────────────────────────────

@@ -8,6 +8,8 @@
 import type { SearchResult } from "./searchResult";
 
 export interface AiIdentifyResponse {
+  /** Exact catalog/part numbers read directly from the image or label */
+  partNumbers: string[];
   searchTerms: string[];
   synonyms: string[];
   relatedTerms: string[];

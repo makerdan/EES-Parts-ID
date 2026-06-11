@@ -327,6 +327,7 @@ export default function PhotoScreen() {
         const searchResult = await searchMutation.mutateAsync({
           data: {
             keywords: allTerms,
+            catalog: identifyResult.partNumbers?.[0] || undefined,
             vendor: (identifyResult.detectedVendor ?? vendor.trim()) || undefined,
             color: color.trim() || undefined,
             size: size.trim() || undefined,

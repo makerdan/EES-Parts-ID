@@ -1073,6 +1073,11 @@ components:
     AiIdentifyResponse:
       type: object
       properties:
+        partNumbers:
+          type: array
+          description: Exact catalog/part numbers read directly from the image or label
+          items:
+            type: string
         searchTerms:
           type: array
           items:
@@ -1097,6 +1102,7 @@ components:
           items:
             $ref: "#/components/schemas/SearchResult"
       required:
+        - partNumbers
         - searchTerms
         - synonyms
         - relatedTerms
