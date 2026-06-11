@@ -53,6 +53,23 @@ export async function invalidateSearchAndEvictItem(opts: {
 }
 
 /**
+ * Invalidate all paginated list cache entries for the inventory list screen.
+ *
+ * Uses a predicate on getListInventoryQueryKey()[0] so that every page of the
+ * list (e.g. { page: 1, limit: 50 }, { page: 2, limit: 50 }, …) is cleared in
+ * a single call.  Shared by BinEditor, BarcodeEditor, BulkShelfAssign, and
+ * ShelfCatalogEntry so the predicate is defined and tested in one place.
+ */
+export async function invalidateListCache(opts: {
+  queryClient: QueryClientLike;
+}): Promise<void> {
+  const listKeyPrefix = getListInventoryQueryKey()[0];
+  await opts.queryClient.invalidateQueries({
+    predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+  });
+}
+
+/**
  * Invalidate ALL React Query caches that may show stale data after an edit:
  *   1. The paginated list cache (predicate on getListInventoryQueryKey()[0])
  *   2. The full-text search cache + the AsyncStorage offline copy (via
@@ -67,9 +84,6 @@ export async function invalidateAllCachesAfterSave(opts: {
   asyncStorage: AsyncStorageLike;
   itemId: number;
 }): Promise<void> {
-  const listKeyPrefix = getListInventoryQueryKey()[0];
-  await opts.queryClient.invalidateQueries({
-    predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-  });
+  await invalidateListCache(opts);
   await invalidateSearchAndEvictItem(opts);
 }

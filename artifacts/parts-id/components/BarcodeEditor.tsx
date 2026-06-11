@@ -15,8 +15,8 @@ import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useUpdateItemBarcodes } from "@workspace/api-client-react";
-import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { saveBarcodesAndInvalidate } from "@/utils/listEditorHandlers";
 import { useColors } from "@/hooks/useColors";
 
 interface BarcodeEditorProps {
@@ -106,15 +106,13 @@ export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEdito
     }
 
     try {
-      const updated = await updateMutation.mutateAsync({
-        id: current.id,
-        data: { barcodes: finalBarcodes },
+      const updated = await saveBarcodesAndInvalidate({
+        queryClient,
+        mutateAsync: updateMutation.mutateAsync,
+        itemId: current.id,
+        barcodes: finalBarcodes,
       });
       onBarcodesChanged?.(current.id, updated.barcodes);
-      const listKeyPrefix = getListInventoryQueryKey()[0];
-      await queryClient.invalidateQueries({
-        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-      });
       setSaveStatus("saved");
       setTimeout(() => onClose(), 400);
     } catch (err) {
