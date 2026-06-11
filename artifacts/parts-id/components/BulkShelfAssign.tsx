@@ -21,8 +21,8 @@ import {
   listInventory,
   useListInventory,
   useUpdateItemBarcodes,
-  getListInventoryQueryKey,
 } from "@workspace/api-client-react";
+import { invalidateListIfNew, undoBarcodeAndInvalidate } from "@/utils/listEditorHandlers";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { resolveShelfAssign } from "@/utils/barcodeResolver";
@@ -349,12 +349,7 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
         (id, barcodes) => updateBarcodesMutation.mutateAsync({ id, data: { barcodes } }),
         upsertItemInBarcodeCache,
       );
-      if (result.wasNew) {
-        const listKeyPrefix = getListInventoryQueryKey()[0];
-        await queryClient.invalidateQueries({
-          predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-        });
-      }
+      await invalidateListIfNew({ queryClient, wasNew: result.wasNew });
       setItemRowStates(prev => ({
         ...prev,
         [item.id]: {
@@ -404,14 +399,12 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
     try {
       const liveItem = allItemsRef.current.find(i => i.id === item.id);
       const currentBarcodes = (liveItem ?? item).barcodes ?? [];
-      const newBarcodes = currentBarcodes.filter(b => b !== barcode);
-      const updated = await updateBarcodesMutation.mutateAsync({
-        id: item.id,
-        data: { barcodes: newBarcodes },
-      });
-      const listKeyPrefix = getListInventoryQueryKey()[0];
-      await queryClient.invalidateQueries({
-        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+      const updated = await undoBarcodeAndInvalidate({
+        queryClient,
+        mutateAsync: updateBarcodesMutation.mutateAsync,
+        itemId: item.id,
+        currentBarcodes,
+        revokedBarcode: barcode,
       });
       await upsertItemInBarcodeCache(updated);
       setItemRowStates(prev => {

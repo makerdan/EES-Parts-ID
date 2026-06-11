@@ -13,8 +13,8 @@ import {
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useUpdateItemBins } from "@workspace/api-client-react";
-import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { saveBinsAndInvalidate } from "@/utils/listEditorHandlers";
 import { useColors } from "@/hooks/useColors";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
 
@@ -76,17 +76,13 @@ export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
     setSaveStatus("saving");
     setErrorMsg(null);
     try {
-      const updated = await updateMutation.mutateAsync({
-        id: current.id,
-        data: { binLocations: bins },
+      const updated = await saveBinsAndInvalidate({
+        queryClient,
+        mutateAsync: updateMutation.mutateAsync,
+        itemId: current.id,
+        bins,
       });
       onBinsChanged?.(current.id, updated.binLocations);
-      // Invalidate every cached useListInventory page (the generated query key
-      // is `['/api/inventory', params]`, so we match by the URL prefix).
-      const listKeyPrefix = getListInventoryQueryKey()[0];
-      await queryClient.invalidateQueries({
-        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-      });
       setSaveStatus("saved");
       setTimeout(() => onClose(), 400);
     } catch (err) {

@@ -17,8 +17,8 @@ import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 import type { InventoryItem } from "@workspace/api-client-react";
-import { getListInventoryQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { invalidateInventoryList } from "@/utils/listEditorHandlers";
 import { useColors } from "@/hooks/useColors";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -239,10 +239,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
   }, [adminToken]);
 
   const invalidateInventory = useCallback(async () => {
-    const listKeyPrefix = getListInventoryQueryKey()[0];
-    await queryClient.invalidateQueries({
-      predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-    });
+    await invalidateInventoryList({ queryClient });
   }, [queryClient]);
 
   const handleSubmit = useCallback(async (mode: "next" | "done") => {
