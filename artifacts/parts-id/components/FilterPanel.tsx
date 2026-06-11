@@ -487,7 +487,7 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
                 <Field
                   label="Catalog #:"
                   value={values.catalog}
-                  onChange={v => onChange("catalog", v)}
+                  onChange={v => onChange("catalog", v.toUpperCase())}
                   placeholder="e.g. BR120..."
                   colors={colors}
                   autoCapitalize="characters"
