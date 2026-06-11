@@ -8,6 +8,7 @@
 import { QUERY_CACHE_KEY, evictItemFromQueryCache } from "@/utils/searchHelpers";
 import type { QueryCache } from "@/utils/searchHelpers";
 import type { SearchResult } from "@workspace/api-client-react";
+import { getListInventoryQueryKey } from "@workspace/api-client-react";
 
 export type AsyncStorageLike = {
   getItem(key: string): Promise<string | null>;
@@ -15,7 +16,11 @@ export type AsyncStorageLike = {
 };
 
 export type QueryClientLike = {
-  invalidateQueries(arg: { queryKey: string[] }): Promise<void>;
+  invalidateQueries(
+    arg:
+      | { queryKey: string[] }
+      | { predicate: (q: { queryKey: unknown }) => boolean },
+  ): Promise<void>;
 };
 
 /**
@@ -45,4 +50,26 @@ export async function invalidateSearchAndEvictItem(opts: {
   } catch {
     // Non-fatal — worst case the search cache TTL will expire naturally
   }
+}
+
+/**
+ * Invalidate ALL React Query caches that may show stale data after an edit:
+ *   1. The paginated list cache (predicate on getListInventoryQueryKey()[0])
+ *   2. The full-text search cache + the AsyncStorage offline copy (via
+ *      invalidateSearchAndEvictItem)
+ *
+ * Called by handleSave in edit-item.tsx after all PATCH requests succeed.
+ * Keeping both invalidations in one place makes it straightforward to test
+ * that neither path is accidentally dropped by a future refactor.
+ */
+export async function invalidateAllCachesAfterSave(opts: {
+  queryClient: QueryClientLike;
+  asyncStorage: AsyncStorageLike;
+  itemId: number;
+}): Promise<void> {
+  const listKeyPrefix = getListInventoryQueryKey()[0];
+  await opts.queryClient.invalidateQueries({
+    predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
+  });
+  await invalidateSearchAndEvictItem(opts);
 }
