@@ -1,3 +1,11 @@
+-- HISTORICAL BOOTSTRAP — not the source of truth for schema.
+-- This file was applied manually to databases that pre-dated the Drizzle migration
+-- history. It is kept for reference only. The canonical FTS index definition is
+-- now tracked in lib/db/src/schema/inventory.ts (inventory_fts_idx). The
+-- immutable_array_to_string() function defined below is still required by the
+-- index and must be present in the database before drizzle-kit push runs.
+-- DO NOT re-apply this file to bring the index in sync — use drizzle-kit push.
+--
 -- Migration: FTS ai_keywords inclusion + full-text AND trigram indexes on dict tables
 -- Apply once to existing databases: psql $DATABASE_URL -f 0001_fts_ai_keywords.sql
 

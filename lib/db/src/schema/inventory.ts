@@ -93,6 +93,17 @@ export const inventoryTable = pgTable(
       "gin",
       sql`immutable_array_to_string(bin_locations, E'\n') gin_trgm_ops`,
     ),
+    // ── Full-text search GIN index ────────────────────────────────────────────
+    // Declared here (not just in raw SQL) so Drizzle's schema diff catches any
+    // drift. The expression must stay in sync with the search query in the API
+    // routes (inventory route uses plainto_tsquery against the same tsvector).
+    // Last rebuilt in migration 0019 to include expanded_description.
+    // immutable_array_to_string is defined in _untracked_0001_fts_ai_keywords.sql
+    // and must exist in the database before this index can be created.
+    index("inventory_fts_idx").using(
+      "gin",
+      sql`to_tsvector('english', coalesce(vendor, '') || ' ' || coalesce(catalog, '') || ' ' || coalesce(description, '') || ' ' || coalesce(expanded_description, '') || ' ' || immutable_array_to_string(ai_keywords, ' '))`,
+    ),
   ],
 );
 
