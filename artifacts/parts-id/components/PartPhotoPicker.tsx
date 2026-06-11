@@ -40,53 +40,79 @@ export function PartPhotoPicker({ value, onChange }: PartPhotoPickerProps) {
     }
   }, [onChange]);
 
+  const openLibrary = useCallback(async () => {
+    if (Platform.OS !== "web") {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Photo library access needed",
+          "Please allow photo library access in your device settings to upload a photo.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: "images",
+      quality: 0.6,
+      allowsEditing: false,
+    });
+    if (!result.canceled && result.assets.length > 0) {
+      onChange(result.assets[0].uri);
+    }
+  }, [onChange]);
+
+  const thumbnail = value ? (
+    <View style={ppStyles.thumbnailWrapper}>
+      <Image source={{ uri: value }} style={ppStyles.thumbnail} />
+      <Pressable
+        onPress={() => onChange(null)}
+        style={[ppStyles.removeBtn, { backgroundColor: colors.destructive }]}
+        accessibilityLabel="Remove photo"
+      >
+        <Text style={{ color: "#fff", fontSize: 11 }}>✕</Text>
+      </Pressable>
+    </View>
+  ) : null;
+
   if (Platform.OS === "web") {
     return (
       <View style={ppStyles.row}>
-        {value ? (
-          <View style={ppStyles.thumbnailWrapper}>
-            <Image source={{ uri: value }} style={ppStyles.thumbnail} />
-            <Pressable
-              onPress={() => onChange(null)}
-              style={[ppStyles.removeBtn, { backgroundColor: colors.destructive }]}
-              accessibilityLabel="Remove photo"
-            >
-              <Text style={{ color: "#fff", fontSize: 11 }}>✕</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        <Text style={[ppStyles.webHint, { color: colors.mutedForeground }]}>
-          {value
-            ? "Tap ✕ to remove. Photo capture is only available on device."
-            : "Photo capture is only available on device."}
-        </Text>
+        {thumbnail}
+        <Pressable
+          onPress={openLibrary}
+          style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+          accessibilityLabel={value ? "Replace photo" : "Upload photo"}
+        >
+          <Feather name="upload" size={16} color={colors.foreground} />
+          <Text style={[ppStyles.actionBtnText, { color: colors.foreground }]}>
+            {value ? "Replace" : "Upload Photo"}
+          </Text>
+        </Pressable>
       </View>
     );
   }
 
   return (
     <View style={ppStyles.row}>
-      {value ? (
-        <View style={ppStyles.thumbnailWrapper}>
-          <Image source={{ uri: value }} style={ppStyles.thumbnail} />
-          <Pressable
-            onPress={() => onChange(null)}
-            style={[ppStyles.removeBtn, { backgroundColor: colors.destructive }]}
-            accessibilityLabel="Remove photo"
-          >
-            <Text style={{ color: "#fff", fontSize: 11 }}>✕</Text>
-          </Pressable>
-        </View>
-      ) : null}
+      {thumbnail}
       <Pressable
         onPress={openCamera}
-        style={[ppStyles.cameraBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+        style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
         accessibilityLabel={value ? "Retake photo" : "Take photo"}
       >
-        <Feather name="camera" size={18} color={colors.foreground} />
-        <Text style={[ppStyles.cameraBtnText, { color: colors.foreground }]}>
+        <Feather name="camera" size={16} color={colors.foreground} />
+        <Text style={[ppStyles.actionBtnText, { color: colors.foreground }]}>
           {value ? "Retake" : "Take Photo"}
         </Text>
+      </Pressable>
+      <Pressable
+        onPress={openLibrary}
+        style={[ppStyles.actionBtn, { borderColor: colors.border, backgroundColor: colors.muted }]}
+        accessibilityLabel="Upload from library"
+      >
+        <Feather name="upload" size={16} color={colors.foreground} />
+        <Text style={[ppStyles.actionBtnText, { color: colors.foreground }]}>Upload</Text>
       </Pressable>
     </View>
   );
@@ -96,7 +122,8 @@ const ppStyles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    flexWrap: "wrap",
+    gap: 10,
     marginTop: 2,
   },
   thumbnailWrapper: { position: "relative" },
@@ -111,20 +138,14 @@ const ppStyles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  cameraBtn: {
+  actionBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 7,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  cameraBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  webHint: {
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    fontStyle: "italic",
-    marginTop: 4,
-  },
+  actionBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
 });
