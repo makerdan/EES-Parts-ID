@@ -1215,6 +1215,38 @@ describe("POST /api/inventory/search — Photo ID catalog ranking", () => {
     expect(topResult.item.catalog).toBe(TARGET_CATALOG);
     expect(topResult.confidence).toBeGreaterThanOrEqual(1.0);
   });
+
+  it("token-splitting path: multi-word Photo ID catalog input still ranks the matching part first with confidence >= 1.0", async () => {
+    // Simulate the case where the AI vision pipeline returns a multi-word
+    // string (e.g. "JEST-ITG-CHB5 circuit breaker 20A") in the `catalog`
+    // body field rather than a bare catalog number. The full string won't
+    // match the stored catalog "JEST-ITG-CHB5" via simple exact/prefix/
+    // substring checks, so the catalogScore catalogInput token-split branch
+    // must kick in: it splits on whitespace and tests each token individually.
+    // The first token "JEST-ITG-CHB5" matches exactly → score 1.0.
+    //
+    // The decoys seeded in beforeAll have descriptions that repeat "circuit
+    // breaker" many times, so pure FTS/trigram overlap would outrank the
+    // target without the token-splitting boost — proving the branch is doing
+    // real work.
+    const res = await supertest(app)
+      .post("/api/inventory/search")
+      .send({ catalog: `${TARGET_CATALOG} circuit breaker 20A` })
+      .expect(200);
+
+    expect(res.body).toHaveProperty("results");
+    expect(Array.isArray(res.body.results)).toBe(true);
+    expect(res.body.results.length).toBeGreaterThan(0);
+
+    const topResult = res.body.results[0] as {
+      item: { catalog: string };
+      confidence: number;
+      matchReason: string;
+    };
+
+    expect(topResult.item.catalog).toBe(TARGET_CATALOG);
+    expect(topResult.confidence).toBeGreaterThanOrEqual(1.0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
