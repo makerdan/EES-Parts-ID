@@ -617,6 +617,10 @@ components:
           type: string
           nullable: true
           description: URL of the second thumbnail photo (Detail / Wire Frame slot), served via the API proxy
+        expandedDescription:
+          type: string
+          nullable: true
+          description: AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)
         dimensions:
           type: object
           nullable: true

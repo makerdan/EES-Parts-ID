@@ -94,6 +94,11 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     photo2?: string;
   }>({});
 
+  // Expanded description state (admin-only field, saved independently)
+  const [expandedDescText, setExpandedDescText] = useState(item?.expandedDescription ?? "");
+  const [expandedDescSaving, setExpandedDescSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [expandedDescError, setExpandedDescError] = useState<string | null>(null);
+
   // Dimensions state
   const existingDims = (item as unknown as { dimensions?: PartDimensions | null })?.dimensions;
   const [dimLength, setDimLength] = useState(fmtDim(existingDims?.length));
@@ -188,6 +193,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setDimSaveStatus("idle");
     setDimSaveError(null);
     dimAutoSavedRef.current = null;
+    setExpandedDescText(current.expandedDescription ?? "");
+    setExpandedDescSaving("idle");
+    setExpandedDescError(null);
   }, [item?.id]);
 
   const addBin = () => {
@@ -284,6 +292,59 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
       setDimSaveStatus("error");
     }
   }, [adminToken, queryClient]);
+
+  const handleSaveExpandedDesc = async () => {
+    const current = itemRef.current;
+    if (!current || !adminToken) return;
+    setExpandedDescSaving("saving");
+    setExpandedDescError(null);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${current.id}/expanded-description`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ expandedDescription: expandedDescText.trim() || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      setExpandedDescSaving("saved");
+    } catch (err) {
+      setExpandedDescError(err instanceof Error ? err.message : "Save failed");
+      setExpandedDescSaving("error");
+    }
+  };
+
+  const handleClearExpandedDesc = async () => {
+    const current = itemRef.current;
+    if (!current || !adminToken) return;
+    setExpandedDescText("");
+    setExpandedDescSaving("saving");
+    setExpandedDescError(null);
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${current.id}/expanded-description`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({ expandedDescription: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      setExpandedDescSaving("saved");
+    } catch (err) {
+      setExpandedDescError(err instanceof Error ? err.message : "Clear failed");
+      setExpandedDescSaving("error");
+    }
+  };
 
   const handleSave = async () => {
     const current = itemRef.current;
@@ -686,6 +747,85 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
             {fieldSaveErrors.description ? (
               <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.description}</Text>
             ) : null}
+
+            {/* Expanded Description (admin enrichment — saved independently) */}
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>EXPANDED DESCRIPTION</Text>
+            <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
+              AI-expanded plain-English version. Edit, then tap Save. Tap the trash icon to clear.
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 4 }}>
+              <KeyboardDoneInput
+                value={expandedDescText}
+                onChangeText={(v) => { setExpandedDescText(v); if (expandedDescSaving !== "idle") setExpandedDescSaving("idle"); }}
+                placeholder="No expanded description yet…"
+                placeholderTextColor={colors.mutedForeground}
+                multiline
+                numberOfLines={3}
+                maxLength={1000}
+                style={[
+                  styles.descInput,
+                  { flex: 1, backgroundColor: colors.muted, borderColor: expandedDescSaving === "error" ? colors.destructive : colors.border, color: colors.foreground },
+                ]}
+                autoCorrect
+                autoCapitalize="sentences"
+                returnKeyType="default"
+              />
+              <Pressable
+                onPress={handleClearExpandedDesc}
+                disabled={expandedDescSaving === "saving" || (!expandedDescText && !(item as unknown as { expandedDescription?: string | null })?.expandedDescription)}
+                style={{
+                  padding: 10,
+                  borderRadius: 6,
+                  backgroundColor: colors.muted,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  marginTop: 2,
+                  opacity: (expandedDescSaving === "saving" || (!expandedDescText && !(item as unknown as { expandedDescription?: string | null })?.expandedDescription)) ? 0.4 : 1,
+                }}
+                accessibilityLabel="Clear expanded description"
+              >
+                <Feather name="trash-2" size={16} color={colors.destructive} />
+              </Pressable>
+            </View>
+            {expandedDescSaving === "error" && expandedDescError ? (
+              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{expandedDescError}</Text>
+            ) : null}
+            {expandedDescSaving === "saved" ? (
+              <Text style={{ color: colors.success, fontSize: 12, fontFamily: "Inter_500Medium", marginTop: 4 }}>✓ Saved</Text>
+            ) : expandedDescSaving === "saving" ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+                <ActivityIndicator size="small" color={colors.mutedForeground} />
+                <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: "Inter_500Medium" }}>Saving…</Text>
+              </View>
+            ) : null}
+            <Pressable
+              onPress={handleSaveExpandedDesc}
+              disabled={expandedDescSaving === "saving" || expandedDescText.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? "")}
+              style={[
+                styles.saveBtn,
+                {
+                  marginTop: 8, marginBottom: 4,
+                  backgroundColor:
+                    (expandedDescSaving === "saving" || expandedDescText.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? ""))
+                      ? colors.muted
+                      : colors.primary,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.saveBtnText,
+                  {
+                    color:
+                      (expandedDescSaving === "saving" || expandedDescText.trim() === ((item as unknown as { expandedDescription?: string | null })?.expandedDescription ?? ""))
+                        ? colors.mutedForeground
+                        : colors.primaryForeground,
+                  },
+                ]}
+              >
+                Save Expanded Description
+              </Text>
+            </Pressable>
 
             {/* Bin Locations */}
             <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>

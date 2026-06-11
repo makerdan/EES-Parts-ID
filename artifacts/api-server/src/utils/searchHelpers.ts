@@ -184,8 +184,9 @@ export function itemFullText(item: {
   catalog: string;
   description: string;
   aiKeywords: string[] | null;
+  expandedDescription?: string | null;
 }): string {
-  return `${item.vendor} ${item.catalog} ${item.description} ${(item.aiKeywords ?? []).join(" ")}`.toLowerCase();
+  return `${item.vendor} ${item.catalog} ${item.description} ${item.expandedDescription ?? ""} ${(item.aiKeywords ?? []).join(" ")}`.toLowerCase();
 }
 
 /** Token-aware match: every word in the filter value must appear as a whole word in `text`. */

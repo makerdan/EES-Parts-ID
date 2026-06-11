@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
@@ -442,6 +443,23 @@ export default function UploadScreen() {
   const [measureEnrichError, setMeasureEnrichError] = useState<string | null>(null);
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
 
+  // Expand-descriptions enrichment state
+  type ExpandDescResult = {
+    id: number;
+    partNumber: string;
+    originalDescription: string;
+    expandedDescription: string | null;
+    editedText: string;
+    savedStatus: "pending" | "saving" | "saved" | "discarded";
+    error?: string;
+  };
+  const [expandDescResults, setExpandDescResults] = useState<ExpandDescResult[]>([]);
+  const [expandDescProgress, setExpandDescProgress] = useState<{ done: number; total: number } | null>(null);
+  const [expandDescStreamDone, setExpandDescStreamDone] = useState(false);
+  const [expandDescRunning, setExpandDescRunning] = useState(false);
+  const [expandDescError, setExpandDescError] = useState<string | null>(null);
+  const [expandDescRemaining, setExpandDescRemaining] = useState<number | null>(null);
+
   // SQL query tab state
   const [queryText, setQueryText] = useState("SELECT * FROM inventory LIMIT 20");
   const [queryRunning, setQueryRunning] = useState(false);
@@ -797,6 +815,117 @@ export default function UploadScreen() {
     } finally {
       setMeasureEnrichPending(false);
     }
+  };
+
+  const handleStartExpandDescriptions = async () => {
+    setExpandDescRunning(true);
+    setExpandDescError(null);
+    setExpandDescResults([]);
+    setExpandDescProgress(null);
+    setExpandDescStreamDone(false);
+    setExpandDescRemaining(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/inventory/expand-descriptions`, {
+        method: "POST",
+        headers: adminHeaders,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          logoutAdmin();
+          setUploadError("Admin session expired. Please unlock again.");
+          return;
+        }
+        const err = await response.json().catch(() => ({})) as { error?: string };
+        setExpandDescError(err.error ?? "Failed to start expansion");
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (reader) {
+        let sseBuffer = "";
+
+        const processLine = (line: string) => {
+          if (!line.startsWith("data: ")) return;
+          try {
+            const data = JSON.parse(line.slice(6)) as {
+              done?: boolean;
+              processed?: number;
+              total?: number;
+              remaining?: number;
+              id?: number;
+              partNumber?: string;
+              originalDescription?: string;
+              expandedDescription?: string | null;
+              error?: string;
+              progress?: number;
+            };
+            if (data.done) {
+              setExpandDescStreamDone(true);
+              setExpandDescRemaining(data.remaining ?? null);
+              setExpandDescProgress({ done: data.processed ?? 0, total: data.total ?? 0 });
+            } else if (data.id != null) {
+              setExpandDescResults(prev => [...prev, {
+                id: data.id!,
+                partNumber: data.partNumber ?? "",
+                originalDescription: data.originalDescription ?? "",
+                expandedDescription: data.expandedDescription ?? null,
+                editedText: data.expandedDescription ?? "",
+                savedStatus: data.error ? "discarded" : "pending",
+                error: data.error,
+              }]);
+              if (data.progress != null && data.total != null) {
+                setExpandDescProgress({ done: data.progress, total: data.total });
+              }
+            }
+          } catch { /* ignore parse errors */ }
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split("\n");
+          sseBuffer = lines.pop() ?? "";
+          for (const line of lines) processLine(line.trim());
+        }
+        if (sseBuffer.trim()) processLine(sseBuffer.trim());
+      }
+    } catch {
+      setExpandDescError("Failed to expand descriptions. Check your connection and try again.");
+    } finally {
+      setExpandDescRunning(false);
+    }
+  };
+
+  const handleSaveExpandResult = async (id: number, text: string) => {
+    setExpandDescResults(prev =>
+      prev.map(r => r.id === id ? { ...r, savedStatus: "saving" } : r),
+    );
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${id}/expanded-description`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({ expandedDescription: text.trim() || null }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setExpandDescResults(prev =>
+        prev.map(r => r.id === id ? { ...r, savedStatus: "saved", editedText: text } : r),
+      );
+    } catch {
+      setExpandDescResults(prev =>
+        prev.map(r => r.id === id ? { ...r, savedStatus: "pending" } : r),
+      );
+    }
+  };
+
+  const handleDiscardExpandResult = (id: number) => {
+    setExpandDescResults(prev =>
+      prev.map(r => r.id === id ? { ...r, savedStatus: "discarded" } : r),
+    );
   };
 
   const handlePickFile = async () => {
@@ -1919,6 +2048,176 @@ export default function UploadScreen() {
                         <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
                           {enrichProgress && !enrichProgress.done ? "Enriching…" : "🤖 Quick Enrich Pending"}
                         </Text>
+                      </Pressable>
+                    </View>
+
+                    {/* Expand Descriptions */}
+                    <View style={[styles.enrichCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                      <Text style={[styles.cardTitle, { color: colors.foreground }]}>🔤 Expand Descriptions</Text>
+                      <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                        AI expands up to 50 abbreviated part descriptions at a time into plain English. Review and save each result individually.
+                      </Text>
+
+                      {/* Progress bar while streaming */}
+                      {expandDescRunning && expandDescProgress ? (
+                        <View style={styles.progressContainer}>
+                          <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
+                            <View
+                              style={[styles.progressFill, {
+                                backgroundColor: colors.primary,
+                                width: expandDescProgress.total > 0 ? `${Math.round((expandDescProgress.done / expandDescProgress.total) * 100)}%` : "0%",
+                              }]}
+                            />
+                          </View>
+                          <Text style={[styles.progressText, { color: colors.foreground }]}>
+                            {expandDescProgress.done} / {expandDescProgress.total} expanded
+                          </Text>
+                        </View>
+                      ) : null}
+
+                      {/* Error state */}
+                      {expandDescError ? (
+                        <View style={[styles.doneCard, { backgroundColor: colors.destructive + "18" }]}>
+                          <Text style={[styles.doneText, { color: colors.destructive }]}>{expandDescError}</Text>
+                        </View>
+                      ) : null}
+
+                      {/* Done summary */}
+                      {expandDescStreamDone && !expandDescRunning ? (() => {
+                        const savedCount = expandDescResults.filter(r => r.savedStatus === "saved").length;
+                        const discardedCount = expandDescResults.filter(r => r.savedStatus === "discarded").length;
+                        const pendingCount = expandDescResults.filter(r => r.savedStatus === "pending").length;
+                        return (
+                          <View style={[styles.doneCard, { backgroundColor: colors.success + "11" }]}>
+                            <Text style={[styles.doneText, { color: colors.success }]}>
+                              ✓ Batch complete — {savedCount} saved, {discardedCount} discarded
+                              {pendingCount > 0 ? `, ${pendingCount} pending review` : ""}
+                              {expandDescRemaining != null ? `. ${expandDescRemaining} parts still need expansion.` : "."}
+                            </Text>
+                          </View>
+                        );
+                      })() : null}
+
+                      {/* Per-result cards */}
+                      {expandDescResults.map((result) => (
+                        <View
+                          key={result.id}
+                          style={[
+                            styles.enrichCard,
+                            {
+                              backgroundColor:
+                                result.savedStatus === "saved"
+                                  ? colors.success + "11"
+                                  : result.savedStatus === "discarded"
+                                    ? colors.muted
+                                    : colors.background,
+                              borderColor:
+                                result.savedStatus === "saved"
+                                  ? colors.success + "44"
+                                  : result.savedStatus === "discarded"
+                                    ? colors.border
+                                    : colors.primary + "33",
+                              marginTop: 10,
+                            },
+                          ]}
+                        >
+                          <Text style={[{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground, marginBottom: 2 }]}>
+                            {result.partNumber}
+                          </Text>
+                          <Text style={[{ fontSize: 12, color: colors.mutedForeground, fontFamily: "Inter_400Regular", marginBottom: 6 }]}>
+                            Original: {result.originalDescription}
+                          </Text>
+                          {result.error ? (
+                            <Text style={[{ fontSize: 12, color: colors.destructive, fontFamily: "Inter_400Regular", marginBottom: 4 }]}>
+                              ⚠ AI error — skipped
+                            </Text>
+                          ) : (
+                            <TextInput
+                              value={result.editedText}
+                              onChangeText={(v: string) =>
+                                setExpandDescResults(prev =>
+                                  prev.map(r => r.id === result.id ? { ...r, editedText: v } : r),
+                                )
+                              }
+                              multiline
+                              numberOfLines={2}
+                              maxLength={1000}
+                              editable={result.savedStatus !== "saved" && result.savedStatus !== "discarded"}
+                              style={[
+                                {
+                                  borderWidth: 1,
+                                  borderRadius: 6,
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 8,
+                                  fontSize: 13,
+                                  fontFamily: "Inter_400Regular",
+                                  minHeight: 60,
+                                  textAlignVertical: "top",
+                                  marginBottom: 8,
+                                  backgroundColor: result.savedStatus === "saved" || result.savedStatus === "discarded" ? colors.muted : colors.background,
+                                  borderColor: colors.border,
+                                  color: result.savedStatus === "discarded" ? colors.mutedForeground : colors.foreground,
+                                },
+                              ]}
+                            />
+                          )}
+                          {result.savedStatus !== "saved" && result.savedStatus !== "discarded" ? (
+                            <View style={{ flexDirection: "row", gap: 8 }}>
+                              <Pressable
+                                onPress={() => handleSaveExpandResult(result.id, result.editedText)}
+                                disabled={result.savedStatus === "saving" || !result.editedText.trim()}
+                                style={[
+                                  styles.enrichBtn,
+                                  {
+                                    flex: 1,
+                                    backgroundColor: (result.savedStatus === "saving" || !result.editedText.trim()) ? colors.muted : colors.primary,
+                                    paddingVertical: 8,
+                                  },
+                                ]}
+                              >
+                                {result.savedStatus === "saving" ? (
+                                  <ActivityIndicator size="small" color={colors.primaryForeground} />
+                                ) : (
+                                  <Text style={[styles.enrichBtnText, { color: colors.primaryForeground, fontSize: 13 }]}>Save</Text>
+                                )}
+                              </Pressable>
+                              <Pressable
+                                onPress={() => handleDiscardExpandResult(result.id)}
+                                style={[
+                                  styles.enrichBtn,
+                                  { flex: 1, backgroundColor: colors.muted, paddingVertical: 8 },
+                                ]}
+                              >
+                                <Text style={[styles.enrichBtnText, { color: colors.mutedForeground, fontSize: 13 }]}>Discard</Text>
+                              </Pressable>
+                            </View>
+                          ) : (
+                            <Text style={[{
+                              fontSize: 12,
+                              fontFamily: "Inter_600SemiBold",
+                              color: result.savedStatus === "saved" ? colors.success : colors.mutedForeground,
+                            }]}>
+                              {result.savedStatus === "saved" ? "✓ Saved" : "— Discarded"}
+                            </Text>
+                          )}
+                        </View>
+                      ))}
+
+                      <Pressable
+                        onPress={handleStartExpandDescriptions}
+                        disabled={expandDescRunning}
+                        style={[styles.enrichBtn, { backgroundColor: expandDescRunning ? colors.muted : colors.primary, marginTop: 10 }]}
+                      >
+                        {expandDescRunning ? (
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <ActivityIndicator size="small" color={colors.primaryForeground} />
+                            <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>Expanding…</Text>
+                          </View>
+                        ) : (
+                          <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                            {expandDescStreamDone ? "🔤 Run Again (next 50)" : "🔤 Expand Descriptions"}
+                          </Text>
+                        )}
                       </Pressable>
                     </View>
 
