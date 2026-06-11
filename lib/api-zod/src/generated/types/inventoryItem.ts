@@ -22,6 +22,10 @@ export interface InventoryItem {
   imageUrl?: string | null;
   /** URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy */
   thumbnailUrl?: string | null;
+  /** URL of the second full-size photo (Detail / Wire Frame slot), served via the API proxy */
+  imageUrl2?: string | null;
+  /** URL of the second thumbnail photo (Detail / Wire Frame slot), served via the API proxy */
+  thumbnailUrl2?: string | null;
   /** Physical dimensions in millimetres (length, width, height, diameter) */
   dimensions?: InventoryItemDimensions;
   createdAt: Date;

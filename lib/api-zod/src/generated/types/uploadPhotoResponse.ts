@@ -7,8 +7,12 @@
  */
 
 export interface UploadPhotoResponse {
-  /** URL of the full-size image after upload, or null after removal */
+  /** URL of the slot-1 full-size image after upload, or null after removal */
   imageUrl: string | null;
-  /** URL of the thumbnail image after upload, or null after removal */
+  /** URL of the slot-1 thumbnail image after upload, or null after removal */
   thumbnailUrl: string | null;
+  /** URL of the slot-2 full-size image after upload, or null after removal */
+  imageUrl2: string | null;
+  /** URL of the slot-2 thumbnail image after upload, or null after removal */
+  thumbnailUrl2: string | null;
 }

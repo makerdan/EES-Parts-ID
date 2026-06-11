@@ -52,6 +52,7 @@ export function AddPartModal({
   const [createdItem, setCreatedItem] = useState<InventoryItem | null>(null);
   const [copied, setCopied] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoUri2, setPhotoUri2] = useState<string | null>(null);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleCopyBin = async () => {
@@ -77,6 +78,7 @@ export function AddPartModal({
       setFieldErrors({});
       setCreatedItem(null);
       setPhotoUri(null);
+      setPhotoUri2(null);
     }
   }, [visible, defaultBin]);
 
@@ -89,7 +91,7 @@ export function AddPartModal({
     return Object.keys(errs).length === 0;
   };
 
-  const uploadPhoto = async (itemId: number, uri: string) => {
+  const uploadPhoto = async (itemId: number, uri: string, slot: 1 | 2 = 1) => {
     const base64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
     const res = await fetch(`${API_BASE}/inventory/${itemId}/photo`, {
       method: "PATCH",
@@ -97,7 +99,7 @@ export function AddPartModal({
         "Content-Type": "application/json",
         Authorization: `Bearer ${adminToken}`,
       },
-      body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg" }),
+      body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot }),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({})) as { error?: string };
@@ -146,13 +148,15 @@ export function AddPartModal({
       const data = await res.json() as { item: InventoryItem };
       const newItem = data.item;
 
-      if (photoUri) {
-        try {
-          await uploadPhoto(newItem.id, photoUri);
-        } catch {
+      if (photoUri || photoUri2) {
+        const uploads: Promise<void>[] = [];
+        if (photoUri) uploads.push(uploadPhoto(newItem.id, photoUri, 1));
+        if (photoUri2) uploads.push(uploadPhoto(newItem.id, photoUri2, 2));
+        const results = await Promise.allSettled(uploads);
+        if (results.some(r => r.status === "rejected")) {
           Alert.alert(
             "Photo upload failed",
-            "The part was saved but the photo could not be uploaded. Check your connection and try again.",
+            "The part was saved but one or more photos could not be uploaded. Check your connection and try again.",
             [{ text: "OK" }]
           );
         }
@@ -195,6 +199,7 @@ export function AddPartModal({
     setFieldErrors({});
     setCreatedItem(null);
     setPhotoUri(null);
+    setPhotoUri2(null);
   };
 
   return (
@@ -366,10 +371,11 @@ export function AddPartModal({
                     ) : null}
                   </View>
 
-                  {/* Photo (optional) */}
+                  {/* Photos (optional) */}
                   <View style={styles.fieldGroup}>
-                    <Text style={[styles.label, { color: colors.foreground }]}>Photo — optional</Text>
-                    <PartPhotoPicker value={photoUri} onChange={setPhotoUri} />
+                    <Text style={[styles.label, { color: colors.foreground }]}>Photos — optional</Text>
+                    <PartPhotoPicker value={photoUri} onChange={setPhotoUri} slot={1} label="Box / Label" />
+                    <PartPhotoPicker value={photoUri2} onChange={setPhotoUri2} slot={2} label="Detail / Wire Frame" />
                   </View>
                 </View>
 

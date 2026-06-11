@@ -41,6 +41,8 @@ export const inventoryTable = pgTable(
     // ── PDF catalog enrichment ────────────────────────────────────────────────
     imageUrl: text("image_url"),
     thumbnailUrl: text("thumbnail_url"),
+    imageUrl2: text("image_url_2"),
+    thumbnailUrl2: text("thumbnail_url_2"),
     imageSource: text("image_source"),
     imageConfidence: real("image_confidence"),
     previousDescription: text("previous_description"),

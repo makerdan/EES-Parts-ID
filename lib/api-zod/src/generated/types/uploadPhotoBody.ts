@@ -5,12 +5,15 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { UploadPhotoBodySlot } from "./uploadPhotoBodySlot";
 
 export interface UploadPhotoBody {
   /** Base64-encoded JPEG or PNG image; required when remove is false or omitted */
   imageBase64?: string;
   /** MIME type of the image (default image/jpeg) */
   mimeType?: string;
-  /** Set to true to remove the current photo and clear both imageUrl and thumbnailUrl */
+  /** Set to true to remove the current photo and clear both imageUrl and thumbnailUrl for the given slot */
   remove?: boolean;
+  /** Which photo slot to target (1 = Box / Label, 2 = Detail / Wire Frame). Defaults to 1. */
+  slot?: UploadPhotoBodySlot;
 }

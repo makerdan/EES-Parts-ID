@@ -609,6 +609,14 @@ components:
           type: string
           nullable: true
           description: URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy
+        imageUrl2:
+          type: string
+          nullable: true
+          description: URL of the second full-size photo (Detail / Wire Frame slot), served via the API proxy
+        thumbnailUrl2:
+          type: string
+          nullable: true
+          description: URL of the second thumbnail photo (Detail / Wire Frame slot), served via the API proxy
         dimensions:
           type: object
           nullable: true
@@ -857,7 +865,11 @@ components:
           description: MIME type of the image (default image/jpeg)
         remove:
           type: boolean
-          description: Set to true to remove the current photo and clear both imageUrl and thumbnailUrl
+          description: Set to true to remove the current photo and clear both imageUrl and thumbnailUrl for the given slot
+        slot:
+          type: integer
+          enum: [1, 2]
+          description: Which photo slot to target (1 = Box / Label, 2 = Detail / Wire Frame). Defaults to 1.
 
     UploadPhotoResponse:
       type: object
@@ -865,14 +877,24 @@ components:
         imageUrl:
           type: string
           nullable: true
-          description: URL of the full-size image after upload, or null after removal
+          description: URL of the slot-1 full-size image after upload, or null after removal
         thumbnailUrl:
           type: string
           nullable: true
-          description: URL of the thumbnail image after upload, or null after removal
+          description: URL of the slot-1 thumbnail image after upload, or null after removal
+        imageUrl2:
+          type: string
+          nullable: true
+          description: URL of the slot-2 full-size image after upload, or null after removal
+        thumbnailUrl2:
+          type: string
+          nullable: true
+          description: URL of the slot-2 thumbnail image after upload, or null after removal
       required:
         - imageUrl
         - thumbnailUrl
+        - imageUrl2
+        - thumbnailUrl2
 
     EstimateDimensionsBody:
       type: object

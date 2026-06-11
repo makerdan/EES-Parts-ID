@@ -167,6 +167,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   // Optional photo capture after assignment
   const [pendingPhotoItem, setPendingPhotoItem] = useState<InventoryItem | null>(null);
   const [pendingPhotoUri, setPendingPhotoUri] = useState<string | null>(null);
+  const [pendingPhotoUri2, setPendingPhotoUri2] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
 
   // Pending barcode — set when camera detects a barcode, cleared on commit or reset
@@ -251,7 +252,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     setPendingCode(null);
   }, []);
 
-  const uploadPartPhoto = useCallback(async (itemId: number, uri: string) => {
+  const uploadPartPhoto = useCallback(async (itemId: number, uri: string, slot: 1 | 2 = 1) => {
     const base64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
     const res = await fetch(`${API_BASE}/inventory/${itemId}/photo`, {
       method: "PATCH",
@@ -259,7 +260,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${adminToken}`,
       },
-      body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg" }),
+      body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot }),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({})) as { error?: string };
@@ -270,28 +271,31 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   const handlePhotoSkip = useCallback(() => {
     setPendingPhotoItem(null);
     setPendingPhotoUri(null);
+    setPendingPhotoUri2(null);
   }, []);
 
   const handlePhotoUpload = useCallback(async () => {
     if (!pendingPhotoItem) return;
-    if (pendingPhotoUri) {
+    if (pendingPhotoUri || pendingPhotoUri2) {
       setPhotoUploading(true);
-      try {
-        await uploadPartPhoto(pendingPhotoItem.id, pendingPhotoUri);
-      } catch (err) {
-        setPhotoUploading(false);
+      const uploads: Promise<void>[] = [];
+      if (pendingPhotoUri) uploads.push(uploadPartPhoto(pendingPhotoItem.id, pendingPhotoUri, 1));
+      if (pendingPhotoUri2) uploads.push(uploadPartPhoto(pendingPhotoItem.id, pendingPhotoUri2, 2));
+      const results = await Promise.allSettled(uploads);
+      setPhotoUploading(false);
+      if (results.some(r => r.status === "rejected")) {
         Alert.alert(
           "Photo upload failed",
-          "The part was saved but the photo could not be uploaded. Check your connection and try again.",
+          "The part was saved but one or more photos could not be uploaded. Check your connection and try again.",
           [{ text: "OK" }]
         );
         return;
       }
-      setPhotoUploading(false);
     }
     setPendingPhotoItem(null);
     setPendingPhotoUri(null);
-  }, [pendingPhotoItem, pendingPhotoUri, uploadPartPhoto]);
+    setPendingPhotoUri2(null);
+  }, [pendingPhotoItem, pendingPhotoUri, pendingPhotoUri2, uploadPartPhoto]);
 
   const triggerScanFeedback = useCallback(async (soundEnabled: boolean) => {
     try {
@@ -935,7 +939,8 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
               <Text style={{ color: colors.mutedForeground, fontSize: 16 }}>✕</Text>
             </Pressable>
           </View>
-          <PartPhotoPicker value={pendingPhotoUri} onChange={setPendingPhotoUri} />
+          <PartPhotoPicker value={pendingPhotoUri} onChange={setPendingPhotoUri} slot={1} label="Box / Label" />
+          <PartPhotoPicker value={pendingPhotoUri2} onChange={setPendingPhotoUri2} slot={2} label="Detail / Wire Frame" />
           <View style={apStyles.photoStepActions}>
             <Pressable
               onPress={handlePhotoSkip}
@@ -945,13 +950,13 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
             </Pressable>
             <Pressable
               onPress={handlePhotoUpload}
-              disabled={!pendingPhotoUri || photoUploading}
-              style={[apStyles.photoUploadBtn, { backgroundColor: pendingPhotoUri && !photoUploading ? colors.primary : colors.muted, borderColor: pendingPhotoUri && !photoUploading ? colors.primary : colors.border }]}
+              disabled={(!pendingPhotoUri && !pendingPhotoUri2) || photoUploading}
+              style={[apStyles.photoUploadBtn, { backgroundColor: (pendingPhotoUri || pendingPhotoUri2) && !photoUploading ? colors.primary : colors.muted, borderColor: (pendingPhotoUri || pendingPhotoUri2) && !photoUploading ? colors.primary : colors.border }]}
             >
               {photoUploading ? (
                 <ActivityIndicator size="small" color={colors.primaryForeground} />
               ) : (
-                <Text style={[apStyles.photoUploadBtnText, { color: pendingPhotoUri ? colors.primaryForeground : colors.mutedForeground }]}>
+                <Text style={[apStyles.photoUploadBtnText, { color: (pendingPhotoUri || pendingPhotoUri2) ? colors.primaryForeground : colors.mutedForeground }]}>
                   Upload Photo
                 </Text>
               )}

@@ -45,6 +45,7 @@ interface DuplicateState {
   item: InventoryItem;
   pendingBin: string;
   pendingPhoto: CapturedPhoto | null;
+  pendingPhoto2: CapturedPhoto | null;
   pendingMode: "next" | "done";
 }
 
@@ -62,6 +63,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
   const [catalog, setCatalog] = useState("");
   const [vendor, setVendor] = useState("");
   const [photo, setPhoto] = useState<CapturedPhoto | null>(null);
+  const [photo2, setPhoto2] = useState<CapturedPhoto | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -149,6 +151,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       setCatalog("");
       setVendor("");
       setPhoto(null);
+      setPhoto2(null);
       setError(null);
       setSuccessCount(0);
       setPhotoCount(0);
@@ -188,6 +191,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
     setCatalog("");
     setVendor("");
     setPhoto(null);
+    setPhoto2(null);
     setError(null);
     setDuplicate(null);
   }, []);
@@ -214,7 +218,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
     return !isNaN(num) && num + step > 999;
   })();
 
-  const uploadPhoto = useCallback(async (itemId: number, capturedPhoto: CapturedPhoto) => {
+  const uploadPhoto = useCallback(async (itemId: number, capturedPhoto: CapturedPhoto, slot: 1 | 2 = 1) => {
     try {
       const res = await fetch(`${API_BASE}/inventory/${itemId}/photo`, {
         method: "PATCH",
@@ -222,7 +226,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
           "Content-Type": "application/json",
           Authorization: `Bearer ${adminToken}`,
         },
-        body: JSON.stringify({ imageBase64: await FileSystem.readAsStringAsync(capturedPhoto.uri, { encoding: "base64" }), mimeType: "image/jpeg" }),
+        body: JSON.stringify({ imageBase64: await FileSystem.readAsStringAsync(capturedPhoto.uri, { encoding: "base64" }), mimeType: "image/jpeg", slot }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
@@ -275,7 +279,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
         const data = await res.json() as { error?: string; existingItem?: InventoryItem };
         const existingItem = data.existingItem ?? null;
         if (existingItem) {
-          setDuplicate({ item: existingItem, pendingBin: binTrimmed, pendingPhoto: photo, pendingMode: mode });
+          setDuplicate({ item: existingItem, pendingBin: binTrimmed, pendingPhoto: photo, pendingPhoto2: photo2, pendingMode: mode });
         } else {
           setError(data.error ?? "Item already exists.");
         }
@@ -296,17 +300,19 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       const data = await res.json() as { item: InventoryItem };
       const createdItem = data.item;
 
-      if (photo) {
-        try {
-          await uploadPhoto(createdItem.id, photo);
-        } catch {
-          setError("Item added but photo upload failed — check connection.");
+      if (photo || photo2) {
+        const uploads: Promise<void>[] = [];
+        if (photo) uploads.push(uploadPhoto(createdItem.id, photo, 1));
+        if (photo2) uploads.push(uploadPhoto(createdItem.id, photo2, 2));
+        const results = await Promise.allSettled(uploads);
+        if (results.some(r => r.status === "rejected")) {
+          setError("Item added but one or more photo uploads failed — check connection.");
         }
       }
 
       await invalidateInventory();
       setSuccessCount(c => c + 1);
-      if (photo) setPhotoCount(c => c + 1);
+      if (photo || photo2) setPhotoCount(c => c + 1);
       resetItemFields();
 
       if (mode === "next") {
@@ -319,7 +325,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
     } finally {
       setSubmitting(false);
     }
-  }, [submitting, catalog, vendor, currentBin, adminToken, photo, position, shelfPrefix, uploadPhoto, invalidateInventory, resetItemFields, advanceCounter, onClose]);
+  }, [submitting, catalog, vendor, currentBin, adminToken, photo, photo2, position, shelfPrefix, uploadPhoto, invalidateInventory, resetItemFields, advanceCounter, onClose]);
 
   const handleConfirmDuplicate = useCallback(async () => {
     if (!duplicate || !adminToken) return;
@@ -346,17 +352,19 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
         return;
       }
 
-      if (duplicate.pendingPhoto) {
-        try {
-          await uploadPhoto(duplicate.item.id, duplicate.pendingPhoto);
-        } catch {
-          setError("Bin updated but photo upload failed — check connection.");
+      if (duplicate.pendingPhoto || duplicate.pendingPhoto2) {
+        const uploads: Promise<void>[] = [];
+        if (duplicate.pendingPhoto) uploads.push(uploadPhoto(duplicate.item.id, duplicate.pendingPhoto, 1));
+        if (duplicate.pendingPhoto2) uploads.push(uploadPhoto(duplicate.item.id, duplicate.pendingPhoto2, 2));
+        const results = await Promise.allSettled(uploads);
+        if (results.some(r => r.status === "rejected")) {
+          setError("Bin updated but one or more photo uploads failed — check connection.");
         }
       }
 
       await invalidateInventory();
       setSuccessCount(c => c + 1);
-      if (duplicate.pendingPhoto) setPhotoCount(c => c + 1);
+      if (duplicate.pendingPhoto || duplicate.pendingPhoto2) setPhotoCount(c => c + 1);
       const resolvedMode = duplicate.pendingMode;
       setDuplicate(null);
       resetItemFields();
@@ -587,11 +595,19 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
                 ]}
               />
 
-              {/* Photo capture */}
-              <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 14 }]}>Photo (optional)</Text>
+              {/* Photos (optional) */}
+              <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 14 }]}>Photos (optional)</Text>
               <PartPhotoPicker
                 value={photo?.uri ?? null}
                 onChange={(uri) => setPhoto(uri ? { uri } : null)}
+                slot={1}
+                label="Box / Label"
+              />
+              <PartPhotoPicker
+                value={photo2?.uri ?? null}
+                onChange={(uri) => setPhoto2(uri ? { uri } : null)}
+                slot={2}
+                label="Detail / Wire Frame"
               />
 
               {/* Duplicate detection prompt */}

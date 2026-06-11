@@ -91,6 +91,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     keywords?: string;
     dimensions?: string;
     photo?: string;
+    photo2?: string;
   }>({});
 
   // Dimensions state
@@ -106,9 +107,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setLidarAvailable(isLiDARSupported());
   }, []);
 
-  // Photo state
+  // Photo state — slot 1 (Box / Label)
   const [newPhotoData, setNewPhotoData] = useState<CapturedPhoto | null>(null);
   const [removeCurrentPhoto, setRemoveCurrentPhoto] = useState(false);
+  // Photo state — slot 2 (Detail / Wire Frame)
+  const [newPhotoData2, setNewPhotoData2] = useState<CapturedPhoto | null>(null);
+  const [removeCurrentPhoto2, setRemoveCurrentPhoto2] = useState(false);
 
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
@@ -148,6 +152,17 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setSaveStatus("idle");
   }, []);
 
+  const handlePhotoChange2 = useCallback((uri: string | null) => {
+    if (uri) {
+      setNewPhotoData2({ uri });
+      setRemoveCurrentPhoto2(false);
+    } else {
+      setNewPhotoData2(null);
+      setRemoveCurrentPhoto2(true);
+    }
+    setSaveStatus("idle");
+  }, []);
+
   useEffect(() => {
     const current = itemRef.current;
     if (!current) return;
@@ -159,6 +174,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setNewKeyword("");
     setNewPhotoData(null);
     setRemoveCurrentPhoto(false);
+    setNewPhotoData2(null);
+    setRemoveCurrentPhoto2(false);
     setSaveStatus("idle");
     setErrorMsg(null);
     setFieldSaveErrors({});
@@ -276,7 +293,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     setFieldSaveErrors({});
 
     type SaveOp = {
-      field: "description" | "bins" | "keywords" | "dimensions" | "photo";
+      field: "description" | "bins" | "keywords" | "dimensions" | "photo" | "photo2";
       promise: Promise<unknown>;
       restoreFn: () => void;
     };
@@ -368,6 +385,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     }
 
     let capturedImageUrl: string | null | undefined = undefined;
+    let capturedImageUrl2: string | null | undefined = undefined;
 
     if (newPhotoData) {
       const photoUri = newPhotoData.uri;
@@ -381,7 +399,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
           const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-            body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg" }),
+            body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot: 1 }),
           });
           if (!res.ok) {
             const data = await res.json().catch(() => ({})) as { error?: string };
@@ -398,13 +416,53 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
         promise: fetch(`${API_BASE}/inventory/${current.id}/photo`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-          body: JSON.stringify({ remove: true }),
+          body: JSON.stringify({ remove: true, slot: 1 }),
         }).then(async (res) => {
           if (!res.ok) {
             const data = await res.json().catch(() => ({})) as { error?: string };
             throw new Error(data.error ?? `HTTP ${res.status}`);
           }
           capturedImageUrl = null;
+        }),
+      });
+    }
+
+    if (newPhotoData2) {
+      const photoUri2 = newPhotoData2.uri;
+      ops.push({
+        field: "photo2",
+        restoreFn: () => {},
+        promise: (async () => {
+          const base64 = await FileSystem.readAsStringAsync(photoUri2, {
+            encoding: "base64",
+          });
+          const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+            body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot: 2 }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(data.error ?? `HTTP ${res.status}`);
+          }
+          const data = await res.json() as { imageUrl2?: string | null };
+          capturedImageUrl2 = data.imageUrl2 ?? null;
+        })(),
+      });
+    } else if (removeCurrentPhoto2 && current.imageUrl2) {
+      ops.push({
+        field: "photo2",
+        restoreFn: () => setRemoveCurrentPhoto2(false),
+        promise: fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+          body: JSON.stringify({ remove: true, slot: 2 }),
+        }).then(async (res) => {
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(data.error ?? `HTTP ${res.status}`);
+          }
+          capturedImageUrl2 = null;
         }),
       });
     }
@@ -436,17 +494,23 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     } else {
       const listKeyPrefix = getListInventoryQueryKey()[0];
 
-      if (capturedImageUrl !== undefined) {
+      if (capturedImageUrl !== undefined || capturedImageUrl2 !== undefined) {
         const patchedImageUrl = capturedImageUrl;
+        const patchedImageUrl2 = capturedImageUrl2;
         queryClient.setQueriesData<InventoryListResponse>(
           { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
           (old) => {
             if (!old) return old;
             return {
               ...old,
-              items: old.items.map((i) =>
-                i.id === current.id ? { ...i, imageUrl: patchedImageUrl } : i,
-              ),
+              items: old.items.map((i) => {
+                if (i.id !== current.id) return i;
+                return {
+                  ...i,
+                  ...(patchedImageUrl !== undefined ? { imageUrl: patchedImageUrl } : {}),
+                  ...(patchedImageUrl2 !== undefined ? { imageUrl2: patchedImageUrl2 } : {}),
+                };
+              }),
             };
           },
         );
@@ -454,10 +518,17 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
           { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
           (old) => {
             if (!old) return old;
-            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-              r.item.id === current.id
-                ? { ...r, item: { ...r.item, imageUrl: patchedImageUrl } }
-                : r;
+            const patchResult = (r: SearchInventoryResponse["results"][number]) => {
+              if (r.item.id !== current.id) return r;
+              return {
+                ...r,
+                item: {
+                  ...r.item,
+                  ...(patchedImageUrl !== undefined ? { imageUrl: patchedImageUrl } : {}),
+                  ...(patchedImageUrl2 !== undefined ? { imageUrl2: patchedImageUrl2 } : {}),
+                },
+              };
+            };
             return {
               ...old,
               results: old.results.map(patchResult),
@@ -503,11 +574,17 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
     parseDimField(dimDiameter) !== (existingDims?.diameter ?? null) ||
     newPhotoData !== null ||
-    (removeCurrentPhoto && !!item.imageUrl);
+    (removeCurrentPhoto && !!item.imageUrl) ||
+    newPhotoData2 !== null ||
+    (removeCurrentPhoto2 && !!item.imageUrl2);
 
   const currentPhotoUri = removeCurrentPhoto
     ? null
     : (newPhotoData?.uri ?? item.imageUrl ?? null);
+
+  const currentPhotoUri2 = removeCurrentPhoto2
+    ? null
+    : (newPhotoData2?.uri ?? item.imageUrl2 ?? null);
 
   const statusColor =
     isSaving ? colors.warning
@@ -570,17 +647,23 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
               Edit this part's photo, description, bin locations, keywords, and dimensions.
             </Text>
 
-            {/* Photo */}
-            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>PHOTO</Text>
+            {/* Photos */}
+            <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>PHOTOS</Text>
             <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
               {Platform.OS !== "web"
-                ? "Retake or remove the item photo."
-                : "Remove or replace the item photo (capture requires a device)."}
+                ? "Retake or remove item photos."
+                : "Remove or replace item photos (capture requires a device)."}
             </Text>
-            <PartPhotoPicker value={currentPhotoUri} onChange={handlePhotoChange} />
-            {fieldSaveErrors.photo ? (
-              <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
-            ) : null}
+            <View style={styles.photoSlots}>
+              <PartPhotoPicker slot={1} label="Box / Label" value={currentPhotoUri} onChange={handlePhotoChange} />
+              {fieldSaveErrors.photo ? (
+                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
+              ) : null}
+              <PartPhotoPicker slot={2} label="Detail / Wire Frame" value={currentPhotoUri2} onChange={handlePhotoChange2} />
+              {fieldSaveErrors.photo2 ? (
+                <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo2}</Text>
+              ) : null}
+            </View>
 
             {/* Description */}
             <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 20 }]}>DESCRIPTION</Text>
@@ -933,6 +1016,7 @@ const styles = StyleSheet.create({
   },
   statusText: { fontSize: 12, fontFamily: "Inter_500Medium" },
   scrollContent: { padding: 16, gap: 0, paddingBottom: 32 },
+  photoSlots: { gap: 12 },
   hint: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
