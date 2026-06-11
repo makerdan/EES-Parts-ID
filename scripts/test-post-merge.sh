@@ -280,6 +280,28 @@ assert_exit     "install timeout — exits non-zero"         1 "$INSTALL_TIMEOUT
 assert_contains "install timeout — prints timeout message" "timed out after 120s" "$INSTALL_TIMEOUT_OUTPUT"
 
 # ---------------------------------------------------------------------------
+# Test 11: verify-fts step is present in post-merge.sh
+# Ensures the FTS index check is wired into the deploy flow and cannot
+# be accidentally removed without the test suite catching it.
+# ---------------------------------------------------------------------------
+SCRIPT_CONTENT=$(cat "$SCRIPT_DIR/post-merge.sh")
+
+if echo "$SCRIPT_CONTENT" | grep -q 'verify-fts'; then
+  pass "verify-fts — command present in post-merge.sh"
+else
+  fail "verify-fts — command missing from post-merge.sh"
+fi
+
+# Verify it runs after the DB push so the index is fresh before we check it.
+PUSH_LINE=$(grep -n 'pnpm --filter db push' "$SCRIPT_DIR/post-merge.sh" | head -1 | cut -d: -f1)
+VERIFY_LINE=$(grep -n 'verify-fts' "$SCRIPT_DIR/post-merge.sh" | head -1 | cut -d: -f1)
+if [[ -n "$PUSH_LINE" && -n "$VERIFY_LINE" && "$VERIFY_LINE" -gt "$PUSH_LINE" ]]; then
+  pass "verify-fts — runs after db push"
+else
+  fail "verify-fts — must appear after 'pnpm --filter db push' (push=$PUSH_LINE, verify=$VERIFY_LINE)"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
