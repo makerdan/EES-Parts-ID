@@ -18,9 +18,10 @@ export interface PartPhotoPickerProps {
   slot?: 1 | 2;
   label?: string;
   isAiSourced?: boolean;
+  onPressPhoto?: () => void;
 }
 
-export function PartPhotoPicker({ value, onChange, label, isAiSourced }: PartPhotoPickerProps) {
+export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPhoto }: PartPhotoPickerProps) {
   const colors = useColors();
 
   const openCamera = useCallback(async () => {
@@ -68,7 +69,14 @@ export function PartPhotoPicker({ value, onChange, label, isAiSourced }: PartPho
   const thumbnail = value ? (
     <View style={ppStyles.thumbnailOuter}>
       <View style={ppStyles.thumbnailWrapper}>
-        <Image source={{ uri: value }} style={ppStyles.thumbnail} />
+        <Pressable
+          onPress={onPressPhoto}
+          disabled={!onPressPhoto}
+          accessibilityLabel="View full photo"
+          accessibilityRole={onPressPhoto ? "button" : undefined}
+        >
+          <Image source={{ uri: value }} style={ppStyles.thumbnail} />
+        </Pressable>
         <Pressable
           onPress={() => onChange(null)}
           style={[ppStyles.removeBtn, { backgroundColor: colors.destructive }]}

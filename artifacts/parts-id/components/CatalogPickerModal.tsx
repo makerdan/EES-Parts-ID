@@ -47,6 +47,7 @@ export function CatalogPickerModal({
   const [createError, setCreateError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(initialShowCreateForm ?? false);
   const [lightboxUris, setLightboxUris] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
   const [newVendor, setNewVendor] = useState("");
   const [newBinLocation, setNewBinLocation] = useState("");
   const [vendorError, setVendorError] = useState<string | null>(null);
@@ -69,6 +70,7 @@ export function CatalogPickerModal({
       setQuery(""); setDebouncedQuery(""); setCreateError(null);
       setShowCreateForm(false); setNewVendor(""); setNewBinLocation(""); setVendorError(null);
       setLightboxUris([]);
+      setLightboxIndex(0);
       return;
     }
     if (initialQuery) {
@@ -295,7 +297,13 @@ export function CatalogPickerModal({
                 <View style={pickerStyles.resultRowInner}>
                   {(r.item.thumbnailUrl ?? r.item.imageUrl) ? (
                     <Pressable
-                      onPress={(e) => { e.stopPropagation?.(); const u = r.item.imageUrl ?? r.item.thumbnailUrl; if (u) setLightboxUris([u]); }}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        const slot1 = r.item.imageUrl ?? r.item.thumbnailUrl;
+                        const slot2 = (r.item as unknown as { imageUrl2?: string | null; thumbnailUrl2?: string | null }).imageUrl2
+                          ?? (r.item as unknown as { imageUrl2?: string | null; thumbnailUrl2?: string | null }).thumbnailUrl2;
+                        if (slot1) { setLightboxUris(slot2 ? [slot1, slot2] : [slot1]); setLightboxIndex(0); }
+                      }}
                       hitSlop={4}
                       accessibilityLabel={`View full photo for ${r.item.catalog}`}
                       accessibilityRole="button"
@@ -311,6 +319,30 @@ export function CatalogPickerModal({
                       <Feather name="image" size={18} color={colors.mutedForeground} />
                     </View>
                   )}
+                  {(() => {
+                    const slot2Url = (r.item as unknown as { imageUrl2?: string | null; thumbnailUrl2?: string | null }).thumbnailUrl2
+                      ?? (r.item as unknown as { imageUrl2?: string | null; thumbnailUrl2?: string | null }).imageUrl2;
+                    if (!slot2Url) return null;
+                    const slot1 = r.item.imageUrl ?? r.item.thumbnailUrl;
+                    return (
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation?.();
+                          setLightboxUris(slot1 ? [slot1, slot2Url] : [slot2Url]);
+                          setLightboxIndex(slot1 ? 1 : 0);
+                        }}
+                        hitSlop={4}
+                        accessibilityLabel={`View detail photo for ${r.item.catalog}`}
+                        accessibilityRole="button"
+                      >
+                        <RetryImage
+                          uri={slot2Url}
+                          style={[pickerStyles.resultThumb, pickerStyles.resultThumb2]}
+                          resizeMode="cover"
+                        />
+                      </Pressable>
+                    );
+                  })()}
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                       <Text style={[pickerStyles.resultCatalog, { color: colors.foreground, flex: 1 }]}>
@@ -350,7 +382,7 @@ export function CatalogPickerModal({
           />
         ) : null}
       </KeyboardAvoidingView>
-      <PhotoLightbox uris={lightboxUris} onClose={() => setLightboxUris([])} />
+      <PhotoLightbox uris={lightboxUris} initialIndex={lightboxIndex} onClose={() => { setLightboxUris([]); setLightboxIndex(0); }} />
     </Modal>
   );
 }
@@ -392,6 +424,12 @@ export const pickerStyles = StyleSheet.create({
     height: 44,
     borderRadius: 6,
     flexShrink: 0,
+  },
+  resultThumb2: {
+    marginLeft: -8,
+    borderWidth: 2,
+    borderColor: "transparent",
+    opacity: 0.9,
   },
   resultThumbPlaceholder: {
     alignItems: "center",
