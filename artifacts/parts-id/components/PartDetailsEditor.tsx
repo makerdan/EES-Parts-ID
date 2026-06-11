@@ -647,6 +647,8 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
     ? null
     : (newPhotoData2?.uri ?? item.imageUrl2 ?? null);
 
+  const isSlot1AiSourced = !!(item as unknown as { imageSource?: string | null }).imageSource;
+
   const statusColor =
     isSaving ? colors.warning
     : isSaved ? colors.success
@@ -716,7 +718,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 : "Remove or replace item photos (capture requires a device)."}
             </Text>
             <View style={styles.photoSlots}>
-              <PartPhotoPicker slot={1} label="Box / Label" value={currentPhotoUri} onChange={handlePhotoChange} />
+              <PartPhotoPicker slot={1} label="Box / Label" value={currentPhotoUri} onChange={handlePhotoChange} isAiSourced={isSlot1AiSourced} />
               {fieldSaveErrors.photo ? (
                 <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
               ) : null}
