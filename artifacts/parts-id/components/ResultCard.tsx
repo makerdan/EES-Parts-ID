@@ -174,9 +174,22 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
         </View>
 
         {/* Description */}
-        <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
-          {item.description || "No description"}
-        </Text>
+        {item.expandedDescription ? (
+          <View style={cardStyles.descriptionBlock}>
+            <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
+              {item.expandedDescription}
+            </Text>
+            {item.description ? (
+              <Text style={[cardStyles.descriptionAbbrev, { color: colors.mutedForeground, fontSize: fs(11) }]} numberOfLines={expanded ? undefined : 1}>
+                {item.description}
+              </Text>
+            ) : null}
+          </View>
+        ) : (
+          <Text style={[cardStyles.description, { color: colors.foreground, fontSize: fs(13) }]} numberOfLines={expanded ? undefined : 2}>
+            {item.description || "No description"}
+          </Text>
+        )}
 
         {/* Bin location(s) — read-only */}
         {item.binLocations && item.binLocations.length > 0 ? (
@@ -391,7 +404,9 @@ const cardStyles = StyleSheet.create({
   },
   badgeDot: { width: 6, height: 6, borderRadius: 3 },
   badgeText: { fontSize: 12, fontFamily: "Inter_700Bold" },
-  description: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19, marginBottom: 8 },
+  descriptionBlock: { marginBottom: 8 },
+  description: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19, marginBottom: 2 },
+  descriptionAbbrev: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 16, marginBottom: 6 },
   binRow: {
     flexDirection: "row",
     alignItems: "center",
