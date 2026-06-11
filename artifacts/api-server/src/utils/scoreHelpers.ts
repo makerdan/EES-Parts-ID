@@ -42,6 +42,19 @@ export function catalogScore(
   if ((catalogInput && c.includes(ci)) || (rawKeywords && c.includes(rk))) {
     return { score: Math.max(pgScore, 0.85), reason: "catalog substring" };
   }
+
+  // Belt-and-suspenders: also check each whitespace-separated token in rawKeywords.
+  // This catches the case where the AI (or user) sends "CHB5 circuit breaker 20A" —
+  // the full string won't match "CHB5", but the first token will.
+  if (rawKeywords) {
+    const tokens = rk.split(/\s+/).filter(Boolean);
+    for (const token of tokens) {
+      if (c === token) return { score: 1.0, reason: "exact catalog" };
+      if (c.startsWith(token)) return { score: Math.max(pgScore, 0.93), reason: "catalog prefix" };
+      if (c.includes(token)) return { score: Math.max(pgScore, 0.85), reason: "catalog substring" };
+    }
+  }
+
   return { score: pgScore, reason: ftsRank > 0 ? "fts match" : "trigram match" };
 }
 
