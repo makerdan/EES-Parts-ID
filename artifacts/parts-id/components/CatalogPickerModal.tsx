@@ -46,7 +46,7 @@ export function CatalogPickerModal({
   const [debouncedQuery, setDebouncedQuery] = useState(initialQuery ?? "");
   const [createError, setCreateError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(initialShowCreateForm ?? false);
-  const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+  const [lightboxUris, setLightboxUris] = useState<string[]>([]);
   const [newVendor, setNewVendor] = useState("");
   const [newBinLocation, setNewBinLocation] = useState("");
   const [vendorError, setVendorError] = useState<string | null>(null);
@@ -68,7 +68,7 @@ export function CatalogPickerModal({
     if (!visible) {
       setQuery(""); setDebouncedQuery(""); setCreateError(null);
       setShowCreateForm(false); setNewVendor(""); setNewBinLocation(""); setVendorError(null);
-      setLightboxUri(null);
+      setLightboxUris([]);
       return;
     }
     if (initialQuery) {
@@ -295,7 +295,7 @@ export function CatalogPickerModal({
                 <View style={pickerStyles.resultRowInner}>
                   {(r.item.thumbnailUrl ?? r.item.imageUrl) ? (
                     <Pressable
-                      onPress={(e) => { e.stopPropagation?.(); setLightboxUri(r.item.imageUrl ?? r.item.thumbnailUrl ?? null); }}
+                      onPress={(e) => { e.stopPropagation?.(); const u = r.item.imageUrl ?? r.item.thumbnailUrl; if (u) setLightboxUris([u]); }}
                       hitSlop={4}
                       accessibilityLabel={`View full photo for ${r.item.catalog}`}
                       accessibilityRole="button"
@@ -350,7 +350,7 @@ export function CatalogPickerModal({
           />
         ) : null}
       </KeyboardAvoidingView>
-      <PhotoLightbox uri={lightboxUri} onClose={() => setLightboxUri(null)} />
+      <PhotoLightbox uris={lightboxUris} onClose={() => setLightboxUris([])} />
     </Modal>
   );
 }
