@@ -1491,6 +1491,7 @@ export default function SearchScreen() {
         {/* Floating filter overlay — stacked above results */}
         <View
           style={styles.filterOverlayWrapper}
+          pointerEvents="box-none"
           onLayout={(e) => setFilterHeaderHeight(e.nativeEvent.layout.height)}
         >
           {!hasResults ? (
