@@ -16,6 +16,7 @@ import * as Clipboard from "expo-clipboard";
 import { Feather } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
+import { PhotoLightbox } from "@/components/PhotoLightbox";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
 import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
@@ -118,6 +119,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
   // Photo state — slot 2 (Detail / Wire Frame)
   const [newPhotoData2, setNewPhotoData2] = useState<CapturedPhoto | null>(null);
   const [removeCurrentPhoto2, setRemoveCurrentPhoto2] = useState(false);
+  // Lightbox state for previewing photos full-screen
+  const [lightboxUris, setLightboxUris] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
 
   const itemRef = useRef(item);
   useEffect(() => { itemRef.current = item; }, [item]);
@@ -718,11 +722,32 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 : "Remove or replace item photos (capture requires a device)."}
             </Text>
             <View style={styles.photoSlots}>
-              <PartPhotoPicker slot={1} label="Box / Label" value={currentPhotoUri} onChange={handlePhotoChange} isAiSourced={isSlot1AiSourced} />
+              <PartPhotoPicker
+                slot={1}
+                label="Box / Label"
+                value={currentPhotoUri}
+                onChange={handlePhotoChange}
+                isAiSourced={isSlot1AiSourced}
+                onPressPhoto={currentPhotoUri ? () => {
+                  const uris = [currentPhotoUri, ...(currentPhotoUri2 ? [currentPhotoUri2] : [])];
+                  setLightboxUris(uris);
+                  setLightboxIndex(0);
+                } : undefined}
+              />
               {fieldSaveErrors.photo ? (
                 <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo}</Text>
               ) : null}
-              <PartPhotoPicker slot={2} label="Detail / Wire Frame" value={currentPhotoUri2} onChange={handlePhotoChange2} />
+              <PartPhotoPicker
+                slot={2}
+                label="Detail / Wire Frame"
+                value={currentPhotoUri2}
+                onChange={handlePhotoChange2}
+                onPressPhoto={currentPhotoUri2 ? () => {
+                  const uris = [...(currentPhotoUri ? [currentPhotoUri] : []), currentPhotoUri2];
+                  setLightboxUris(uris);
+                  setLightboxIndex(currentPhotoUri ? 1 : 0);
+                } : undefined}
+              />
               {fieldSaveErrors.photo2 ? (
                 <Text style={[styles.fieldErrorText, { color: colors.destructive }]}>{fieldSaveErrors.photo2}</Text>
               ) : null}
@@ -1123,6 +1148,12 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
           adminToken={adminToken}
         />
       ) : null}
+
+      <PhotoLightbox
+        uris={lightboxUris}
+        initialIndex={lightboxIndex}
+        onClose={() => { setLightboxUris([]); setLightboxIndex(0); }}
+      />
 
     </>
   );
