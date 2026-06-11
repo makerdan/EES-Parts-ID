@@ -15,7 +15,10 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
+import { QUERY_CACHE_KEY, evictItemFromQueryCache } from "@/utils/searchHelpers";
+import type { QueryCache } from "@/utils/searchHelpers";
 import {
   useUpdateItemBins,
   useUpdateItemBarcodes,
@@ -369,6 +372,19 @@ export default function EditItemScreen() {
         await queryClient.invalidateQueries({
           predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
         });
+        await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
+        // Evict stale search result cache entries for this item from AsyncStorage
+        // so the next query returns fresh data rather than serving old field values.
+        try {
+          const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
+          if (raw) {
+            const cache = JSON.parse(raw) as QueryCache<SearchResult>;
+            const { pruned, changed } = evictItemFromQueryCache(cache, current.id);
+            if (changed) await AsyncStorage.setItem(QUERY_CACHE_KEY, JSON.stringify(pruned));
+          }
+        } catch {
+          // Non-fatal — worst case the search cache TTL will expire naturally
+        }
       }
 
       setSaveStatus("saved");
