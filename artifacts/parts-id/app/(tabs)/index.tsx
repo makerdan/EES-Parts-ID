@@ -1532,7 +1532,7 @@ export default function SearchScreen() {
               <Feather name="x" size={12} color={colors.primary} />
             </Pressable>
           ) : null}
-          <View style={[styles.filterOverlay, { backgroundColor: colors.card }]}>
+          <View style={[styles.filterOverlay, { backgroundColor: colors.card }]} pointerEvents="box-none">
             <FilterPanel
               values={filters}
               onChange={handleChange}

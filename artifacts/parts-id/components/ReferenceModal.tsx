@@ -247,7 +247,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   return (
     <>
       {!controlled && (
-        <Animated.View style={[fabStyles.fab, { transform: [{ scale: pulse }] }]}>
+        <Animated.View style={[fabStyles.fab, { transform: [{ scale: pulse }] }]} pointerEvents="box-none">
           <Pressable
             onPress={() => setVisible(true)}
             style={[fabStyles.fabBtn, { backgroundColor: colors.primary }]}
