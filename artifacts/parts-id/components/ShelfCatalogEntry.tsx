@@ -568,7 +568,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
               <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 14 }]}>Catalog Number</Text>
               <KeyboardDoneInput
                 value={catalog}
-                onChangeText={v => { setCatalog(v); setError(null); setDuplicate(null); }}
+                onChangeText={v => { setCatalog(v.toUpperCase()); setError(null); setDuplicate(null); }}
                 placeholder="e.g. BR120"
                 placeholderTextColor={colors.mutedForeground}
                 autoCorrect={false}
@@ -583,7 +583,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
               <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 14 }]}>Vendor Code</Text>
               <KeyboardDoneInput
                 value={vendor}
-                onChangeText={v => { setVendor(v); setError(null); }}
+                onChangeText={v => { setVendor(v.toUpperCase()); setError(null); }}
                 placeholder="e.g. EATON"
                 placeholderTextColor={colors.mutedForeground}
                 autoCorrect={false}

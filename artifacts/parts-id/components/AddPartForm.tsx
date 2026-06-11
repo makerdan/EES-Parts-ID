@@ -263,7 +263,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
             placeholder="e.g. BR120"
             placeholderTextColor={colors.mutedForeground}
             value={catalog}
-            onChangeText={v => { setCatalog(v); if (fieldErrors.catalog) setFieldErrors(p => ({ ...p, catalog: undefined })); }}
+            onChangeText={v => { setCatalog(v.toUpperCase()); if (fieldErrors.catalog) setFieldErrors(p => ({ ...p, catalog: undefined })); }}
             autoCapitalize="characters"
             autoCorrect={false}
             returnKeyType="next"
@@ -281,7 +281,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
             placeholder="e.g. EATON"
             placeholderTextColor={colors.mutedForeground}
             value={vendor}
-            onChangeText={v => { setVendor(v); if (fieldErrors.vendor) setFieldErrors(p => ({ ...p, vendor: undefined })); }}
+            onChangeText={v => { setVendor(v.toUpperCase()); if (fieldErrors.vendor) setFieldErrors(p => ({ ...p, vendor: undefined })); }}
             autoCapitalize="characters"
             autoCorrect={false}
             returnKeyType="next"

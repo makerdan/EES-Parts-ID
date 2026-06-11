@@ -549,7 +549,7 @@ export default function PhotoScreen() {
                 <KeyboardDoneInput
                   value={value}
                   onChangeText={(v) => {
-                    if (key === "textNumbers") setTextNumbers(v);
+                    if (key === "textNumbers") setTextNumbers(v.toUpperCase());
                     else if (key === "keywords") setKeywords(v);
                     else if (key === "vendor") setVendor(v.toUpperCase());
                     else if (key === "color") setColor(v);
