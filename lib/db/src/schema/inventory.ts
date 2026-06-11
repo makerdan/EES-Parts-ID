@@ -15,6 +15,25 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { sql } from "drizzle-orm";
 
+/**
+ * Canonical tsvector expression for full-text search over the inventory table.
+ *
+ * Pass an optional SQL table alias (e.g. `'i'`) when using this inside a
+ * query; omit it (or pass `''`) for bare column references used in index
+ * definitions.
+ *
+ * **Both** the GIN index below and every FTS WHERE clause / ts_rank_cd call in
+ * the API routes must use this function.  Keeping the expression in one place
+ * means PostgreSQL can always use the index — any divergence between the index
+ * expression and the query expression causes a silent sequential scan.
+ */
+export function inventoryFtsVector(tableAlias?: string): ReturnType<typeof sql.raw> {
+  const p = tableAlias ? `${tableAlias}.` : "";
+  return sql.raw(
+    `to_tsvector('english', coalesce(${p}vendor,'') || ' ' || coalesce(${p}catalog,'') || ' ' || coalesce(${p}description,'') || ' ' || coalesce(${p}expanded_description,'') || ' ' || immutable_array_to_string(${p}ai_keywords,' '))`,
+  );
+}
+
 export const inventoryTable = pgTable(
   "inventory",
   {
@@ -100,10 +119,7 @@ export const inventoryTable = pgTable(
     // Last rebuilt in migration 0019 to include expanded_description.
     // immutable_array_to_string is defined in _untracked_0001_fts_ai_keywords.sql
     // and must exist in the database before this index can be created.
-    index("inventory_fts_idx").using(
-      "gin",
-      sql`to_tsvector('english', coalesce(vendor, '') || ' ' || coalesce(catalog, '') || ' ' || coalesce(description, '') || ' ' || coalesce(expanded_description, '') || ' ' || immutable_array_to_string(ai_keywords, ' '))`,
-    ),
+    index("inventory_fts_idx").using("gin", inventoryFtsVector()),
   ],
 );
 
