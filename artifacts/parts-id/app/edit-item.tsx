@@ -15,6 +15,7 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as FileSystem from "expo-file-system";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem, InventoryListResponse, SearchInventoryResponse } from "@workspace/api-client-react";
 import { invalidateAllCachesAfterSave } from "@/utils/editItemCache";
@@ -32,12 +33,7 @@ import { useTrackScreen } from "@/utils/useTrackScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { isLiDARSupported } from "lidar-measure";
-import { RetryImage } from "@/components/RetryImage";
-
-interface CapturedPhoto {
-  uri: string;
-  base64: string;
-}
+import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -129,46 +125,12 @@ export default function EditItemScreen() {
   const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
 
-  const [newPhotoData, setNewPhotoData] = useState<CapturedPhoto | null>(null);
-  const [removeCurrentPhoto, setRemoveCurrentPhoto] = useState(false);
-  const [photoCameraOpen, setPhotoCameraOpen] = useState(false);
-  const [takingEditPhoto, setTakingEditPhoto] = useState(false);
-  const photoCameraRef = useRef<CameraView>(null);
+  const [photoUri1, setPhotoUri1] = useState<string | null>(item?.imageUrl ?? null);
+  const [photoUri2, setPhotoUri2] = useState<string | null>((item as unknown as { imageUrl2?: string | null })?.imageUrl2 ?? null);
 
   const [permission, requestPermission] = useCameraPermissions();
   const scannerLockRef = useRef(false);
   const itemRef = useRef(item);
-
-  const openPhotoCamera = useCallback(async () => {
-    if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) return;
-    }
-    setTakingEditPhoto(false);
-    setPhotoCameraOpen(true);
-  }, [permission, requestPermission]);
-
-  const handleTakeEditPhoto = useCallback(async () => {
-    if (takingEditPhoto || !photoCameraRef.current) return;
-    setTakingEditPhoto(true);
-    try {
-      const result = await photoCameraRef.current.takePictureAsync({
-        quality: 0.6,
-        base64: true,
-        exif: false,
-      });
-      if (result && result.base64) {
-        setNewPhotoData({ uri: result.uri, base64: result.base64 });
-        setRemoveCurrentPhoto(false);
-        setSaveStatus("idle");
-      }
-      setPhotoCameraOpen(false);
-    } catch (err) {
-      console.warn("Failed to take photo:", err);
-    } finally {
-      setTakingEditPhoto(false);
-    }
-  }, [takingEditPhoto]);
 
   const openScanner = useCallback(async () => {
     if (!permission?.granted) {
@@ -300,37 +262,82 @@ export default function EditItemScreen() {
         );
       }
 
-        let capturedImageUrl: string | null | undefined = undefined;
+      let capturedImageUrl: string | null | undefined = undefined;
+      let capturedImageUrl2: string | null | undefined = undefined;
 
-      if (newPhotoData) {
-        saves.push(
-          fetch(`${API_BASE}/inventory/${current.id}/photo`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-            body: JSON.stringify({ imageBase64: newPhotoData.base64, mimeType: "image/jpeg" }),
-          }).then(async (res) => {
-            if (!res.ok) {
-              const d = await res.json().catch(() => ({})) as { error?: string };
-              throw new Error(d.error ?? `HTTP ${res.status}`);
-            }
-            const d = await res.json() as { imageUrl?: string | null };
-            capturedImageUrl = d.imageUrl ?? null;
-          }),
-        );
-      } else if (removeCurrentPhoto && current.imageUrl) {
-        saves.push(
-          fetch(`${API_BASE}/inventory/${current.id}/photo`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-            body: JSON.stringify({ remove: true }),
-          }).then(async (res) => {
-            if (!res.ok) {
-              const d = await res.json().catch(() => ({})) as { error?: string };
-              throw new Error(d.error ?? `HTTP ${res.status}`);
-            }
-            capturedImageUrl = null;
-          }),
-        );
+      const originalImageUrl = current.imageUrl ?? null;
+      const originalImageUrl2 = (current as unknown as { imageUrl2?: string | null }).imageUrl2 ?? null;
+
+      if (photoUri1 !== originalImageUrl) {
+        if (photoUri1) {
+          const slot1Uri = photoUri1;
+          saves.push(
+            (async () => {
+              const base64 = await FileSystem.readAsStringAsync(slot1Uri, { encoding: "base64" });
+              const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+                body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot: 1 }),
+              });
+              if (!res.ok) {
+                const d = await res.json().catch(() => ({})) as { error?: string };
+                throw new Error(d.error ?? `HTTP ${res.status}`);
+              }
+              const d = await res.json() as { imageUrl?: string | null };
+              capturedImageUrl = d.imageUrl ?? null;
+            })(),
+          );
+        } else {
+          saves.push(
+            fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+              body: JSON.stringify({ remove: true, slot: 1 }),
+            }).then(async (res) => {
+              if (!res.ok) {
+                const d = await res.json().catch(() => ({})) as { error?: string };
+                throw new Error(d.error ?? `HTTP ${res.status}`);
+              }
+              capturedImageUrl = null;
+            }),
+          );
+        }
+      }
+
+      if (photoUri2 !== originalImageUrl2) {
+        if (photoUri2) {
+          const slot2Uri = photoUri2;
+          saves.push(
+            (async () => {
+              const base64 = await FileSystem.readAsStringAsync(slot2Uri, { encoding: "base64" });
+              const res = await fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+                body: JSON.stringify({ imageBase64: base64, mimeType: "image/jpeg", slot: 2 }),
+              });
+              if (!res.ok) {
+                const d = await res.json().catch(() => ({})) as { error?: string };
+                throw new Error(d.error ?? `HTTP ${res.status}`);
+              }
+              const d = await res.json() as { imageUrl2?: string | null };
+              capturedImageUrl2 = d.imageUrl2 ?? null;
+            })(),
+          );
+        } else {
+          saves.push(
+            fetch(`${API_BASE}/inventory/${current.id}/photo`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+              body: JSON.stringify({ remove: true, slot: 2 }),
+            }).then(async (res) => {
+              if (!res.ok) {
+                const d = await res.json().catch(() => ({})) as { error?: string };
+                throw new Error(d.error ?? `HTTP ${res.status}`);
+              }
+              capturedImageUrl2 = null;
+            }),
+          );
+        }
       }
 
       if (saves.length > 0) {
@@ -347,6 +354,7 @@ export default function EditItemScreen() {
             barcodes: finalBarcodes,
             dimensions: newDims,
             ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
+            ...(capturedImageUrl2 !== undefined ? { imageUrl2: capturedImageUrl2 } : {}),
           };
         };
         queryClient.setQueriesData<InventoryListResponse>(
@@ -416,12 +424,8 @@ export default function EditItemScreen() {
     parseDimField(dimWidth) !== (existingDims?.width ?? null) ||
     parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
     parseDimField(dimDiameter) !== (existingDims?.diameter ?? null) ||
-    newPhotoData !== null ||
-    (removeCurrentPhoto && !!item.imageUrl);
-
-  const currentPhotoUri = removeCurrentPhoto
-    ? null
-    : (newPhotoData?.uri ?? item.imageUrl ?? null);
+    photoUri1 !== (item.imageUrl ?? null) ||
+    photoUri2 !== ((item as unknown as { imageUrl2?: string | null })?.imageUrl2 ?? null);
 
   const statusColor =
     isSaving ? colors.warning
@@ -465,42 +469,21 @@ export default function EditItemScreen() {
           contentContainerStyle={s.scroll}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Photo */}
-          <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>PHOTO</Text>
-          <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
-            {Platform.OS !== "web"
-              ? "Take or replace the item photo. Tap ✕ to remove."
-              : "Photo capture is only available on device."}
-          </Text>
-          <View style={s.photoRow}>
-            {currentPhotoUri ? (
-              <View style={s.photoThumbWrap}>
-                <RetryImage uri={currentPhotoUri} style={s.photoThumb} resizeMode="cover" />
-                <Pressable
-                  onPress={() => { setRemoveCurrentPhoto(true); setNewPhotoData(null); setSaveStatus("idle"); }}
-                  style={[s.photoRemoveBtn, { backgroundColor: colors.destructive }]}
-                >
-                  <Text style={{ color: "#fff", fontSize: 11, fontFamily: "Inter_700Bold" }}>✕</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <View style={[s.photoPlaceholder, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-                <Feather name="image" size={26} color={colors.mutedForeground} />
-                <Text style={[s.photoPlaceholderText, { color: colors.mutedForeground }]}>No photo</Text>
-              </View>
-            )}
-            {Platform.OS !== "web" ? (
-              <Pressable
-                onPress={openPhotoCamera}
-                style={[s.photoCameraBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
-                accessibilityLabel="Take or replace item photo"
-              >
-                <Feather name="camera" size={20} color={colors.foreground} />
-                <Text style={[s.photoCameraBtnText, { color: colors.foreground }]}>
-                  {currentPhotoUri ? "Replace" : "Take Photo"}
-                </Text>
-              </Pressable>
-            ) : null}
+          {/* Photos */}
+          <Text style={[s.sectionLabel, { color: colors.mutedForeground }]}>PHOTOS</Text>
+          <View style={s.photoSlots}>
+            <PartPhotoPicker
+              slot={1}
+              label="Box / Label"
+              value={photoUri1}
+              onChange={(uri) => { setPhotoUri1(uri); setSaveStatus("idle"); }}
+            />
+            <PartPhotoPicker
+              slot={2}
+              label="Detail / Wire Frame"
+              value={photoUri2}
+              onChange={(uri) => { setPhotoUri2(uri); setSaveStatus("idle"); }}
+            />
           </View>
 
           {/* Description */}
@@ -845,46 +828,6 @@ export default function EditItemScreen() {
         />
       ) : null}
 
-      {/* Photo camera modal — native only */}
-      {Platform.OS !== "web" ? (
-        <Modal
-          visible={photoCameraOpen}
-          animationType="slide"
-          onRequestClose={() => setPhotoCameraOpen(false)}
-        >
-          <View style={s.scanModal}>
-            <CameraView
-              ref={photoCameraRef}
-              style={StyleSheet.absoluteFill}
-              mode="picture"
-              facing="back"
-            />
-            <View style={s.scanOverlay}>
-              <View style={s.scanHeader}>
-                <Pressable onPress={() => setPhotoCameraOpen(false)} style={s.scanCloseBtn}>
-                  <Feather name="x" size={20} color="#fff" />
-                </Pressable>
-                <Text style={s.scanTitle}>Capture Item Photo</Text>
-                <View style={{ width: 40 }} />
-              </View>
-              <View style={{ flex: 1 }} />
-              <View style={s.photoShutterRow}>
-                <Pressable
-                  onPress={handleTakeEditPhoto}
-                  disabled={takingEditPhoto}
-                  style={[s.photoShutterBtn, { opacity: takingEditPhoto ? 0.6 : 1 }]}
-                >
-                  {takingEditPhoto ? (
-                    <ActivityIndicator size="large" color="#fff" />
-                  ) : (
-                    <View style={s.photoShutterInner} />
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      ) : null}
     </SafeAreaView>
   );
 }
@@ -1057,58 +1000,5 @@ const s = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: 32,
   },
-  photoRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },
-  photoThumbWrap: { position: "relative", width: 80, height: 80 },
-  photoThumb: { width: 80, height: 80, borderRadius: 8 },
-  photoRemoveBtn: {
-    position: "absolute",
-    top: -6,
-    right: -6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  photoPlaceholder: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-  },
-  photoPlaceholderText: { fontSize: 10, fontFamily: "Inter_400Regular" },
-  photoCameraBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  photoCameraBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  photoShutterRow: {
-    alignItems: "center",
-    paddingBottom: 56,
-  },
-  photoShutterBtn: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "rgba(255,255,255,0.25)",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 3,
-    borderColor: "#fff",
-  },
-  photoShutterInner: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#fff",
-  },
+  photoSlots: { gap: 16, marginBottom: 8 },
 });
