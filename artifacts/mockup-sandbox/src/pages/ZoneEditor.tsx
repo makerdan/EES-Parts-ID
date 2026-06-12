@@ -248,12 +248,12 @@ type IxState =
 
 /**
  * Converts a sectionNum to a display string.
- * Non-negative numbers display as their numeric string ("0", "6", "14" …).
+ * Non-negative numbers display as zero-padded two-digit strings ("00", "06", "14" …).
  * Negative sentinels used for unassigned duplicates display as capital letters:
  *   -1 → "A", -2 → "B", … -26 → "Z", -27 → "AA", -28 → "AB" …
  */
 function sectionNumToDisplay(n: number): string {
-  if (n >= 0) return String(n);
+  if (n >= 0) return String(n).padStart(2, "0");
   let val = -n;
   let result = "";
   while (val > 0) {
@@ -262,6 +262,19 @@ function sectionNumToDisplay(n: number): string {
     val = Math.floor(val / 26);
   }
   return result;
+}
+
+/**
+ * Formats a raw aisle-ID or section string for two-digit display.
+ * Pure single-digit numbers are zero-padded ("1" → "01", "9" → "09").
+ * Multi-digit numbers and letter codes are returned uppercased as-is.
+ * Empty/whitespace strings are returned unchanged.
+ */
+function formatTwoDigit(raw: string): string {
+  const t = raw.trim().toUpperCase();
+  if (!t) return t;
+  if (/^\d$/.test(t)) return "0" + t;
+  return t;
 }
 
 /**
@@ -563,7 +576,7 @@ export function ZoneEditor() {
   // empty string is handled at save-time as "required").
   const aisleIdError: string | null = useMemo(() => {
     if (!form.aisleId.trim()) return null;
-    return isValidAisleId(form.aisleId) ? null : "Aisle ID must be a number (e.g. 12)";
+    return isValidAisleId(form.aisleId) ? null : "Aisle ID must be a number (e.g. 09)";
   }, [form.aisleId]);
 
   // Tracks the form values as they were when last loaded from the server (used to
@@ -816,7 +829,7 @@ export function ZoneEditor() {
   const handleCreate = async () => {
     if (!pendingRect) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
-    if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 12)"); return; }
+    if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 09)"); return; }
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE}/warehouse-zones`, {
@@ -854,7 +867,7 @@ export function ZoneEditor() {
   const handleSaveEdit = async () => {
     if (!selectedId) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
-    if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 12)"); return; }
+    if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 09)"); return; }
     const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
     setSaving(true);
     try {
@@ -2071,8 +2084,9 @@ export function ZoneEditor() {
                     <Label>Aisle ID — all selected</Label>
                     <input
                       value={multiAisleId}
-                      onChange={(e) => setMultiAisleId(e.target.value)}
-                      placeholder={multiAisleIds.size > 1 ? "— mixed —" : ""}
+                      onChange={(e) => setMultiAisleId(e.target.value.toUpperCase())}
+                      onBlur={(e) => setMultiAisleId(formatTwoDigit(e.target.value))}
+                      placeholder={multiAisleIds.size > 1 ? "— mixed —" : "e.g. 09"}
                       style={styles.input}
                     />
                     {multiAisleIds.size > 1 && (
@@ -2085,8 +2099,8 @@ export function ZoneEditor() {
                     <Label>Section # — all selected</Label>
                     <input
                       value={multiSectionNum}
-                      onChange={(e) => setMultiSectionNum(e.target.value)}
-                      placeholder={multiSectionNums.size > 1 ? "— mixed —" : "e.g. 6 or A"}
+                      onChange={(e) => setMultiSectionNum(e.target.value.toUpperCase())}
+                      placeholder={multiSectionNums.size > 1 ? "— mixed —" : "e.g. 06 or A"}
                       style={styles.input}
                     />
                     {multiSectionNums.size > 1 && (
@@ -2106,7 +2120,7 @@ export function ZoneEditor() {
                     }
                     onClick={() => {
                       if (multiAisleId.trim() && !isValidAisleId(multiAisleId)) {
-                        toast.error("Aisle ID must be numeric (e.g. 12)");
+                        toast.error("Aisle ID must be numeric (e.g. 09)");
                         return;
                       }
                       const updates: Partial<Zone> = {};
@@ -2271,8 +2285,9 @@ export function ZoneEditor() {
                     <Label>Target aisle</Label>
                     <input
                       value={autoNumAisle}
-                      onChange={(e) => setAutoNumAisle(e.target.value)}
-                      placeholder="e.g. 12"
+                      onChange={(e) => setAutoNumAisle(e.target.value.toUpperCase())}
+                      onBlur={(e) => setAutoNumAisle(formatTwoDigit(e.target.value))}
+                      placeholder="e.g. 09"
                       style={{
                         ...styles.input,
                         borderColor: autoNumAisle.trim() && !isValidAisleId(autoNumAisle)
@@ -2282,7 +2297,7 @@ export function ZoneEditor() {
                     />
                     {autoNumAisle.trim() && !isValidAisleId(autoNumAisle) && (
                       <div style={{ fontSize: 11, color: "#f87171", marginTop: 2 }}>
-                        Must be a number (e.g. 12)
+                        Must be a number (e.g. 09)
                       </div>
                     )}
                   </div>
@@ -2502,10 +2517,16 @@ export function ZoneForm({
           onChange={(e) =>
             onChange({
               ...form,
-              aisleId: e.target.value,
+              aisleId: e.target.value.toUpperCase(),
             })
           }
-          placeholder="e.g. 12"
+          onBlur={(e) =>
+            onChange({
+              ...form,
+              aisleId: formatTwoDigit(e.target.value),
+            })
+          }
+          placeholder="e.g. 09 or 22"
           style={{
             ...styles.input,
             borderColor: aisleIdError ? "#f87171" : undefined,
@@ -2522,10 +2543,10 @@ export function ZoneForm({
         <input
           value={sectionNumToDisplay(form.sectionNum)}
           onChange={(e) => {
-            const parsed = parseSectionInput(e.target.value);
+            const parsed = parseSectionInput(e.target.value.toUpperCase());
             onChange({ ...form, sectionNum: parsed ?? 0 });
           }}
-          placeholder="e.g. 6 or A"
+          placeholder="e.g. 06 or A"
           style={styles.input}
         />
       </div>
