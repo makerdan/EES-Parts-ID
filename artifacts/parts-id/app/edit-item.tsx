@@ -337,36 +337,38 @@ export default function EditItemScreen() {
         await Promise.all(saves);
         const listKeyPrefix = getListInventoryQueryKey()[0];
 
-        if (capturedImageUrl !== undefined) {
-          const patchedImageUrl = capturedImageUrl;
-          queryClient.setQueriesData<InventoryListResponse>(
-            { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
-            (old) => {
-              if (!old) return old;
-              return {
-                ...old,
-                items: old.items.map((i) =>
-                  i.id === current.id ? { ...i, imageUrl: patchedImageUrl } : i,
-                ),
-              };
-            },
-          );
-          queryClient.setQueriesData<SearchInventoryResponse>(
-            { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
-            (old) => {
-              if (!old) return old;
-              const patchResult = (r: SearchInventoryResponse["results"][number]) =>
-                r.item.id === current.id
-                  ? { ...r, item: { ...r.item, imageUrl: patchedImageUrl } }
-                  : r;
-              return {
-                ...old,
-                results: old.results.map(patchResult),
-                sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
-              };
-            },
-          );
-        }
+        const patchItem = (i: InventoryItem): InventoryItem => {
+          if (i.id !== current.id) return i;
+          return {
+            ...i,
+            description: description.trim(),
+            aiKeywords: keywords,
+            binLocations: bins,
+            barcodes: finalBarcodes,
+            dimensions: newDims,
+            ...(capturedImageUrl !== undefined ? { imageUrl: capturedImageUrl } : {}),
+          };
+        };
+        queryClient.setQueriesData<InventoryListResponse>(
+          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix },
+          (old) => {
+            if (!old) return old;
+            return { ...old, items: old.items.map(patchItem) };
+          },
+        );
+        queryClient.setQueriesData<SearchInventoryResponse>(
+          { predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "searchInventory" },
+          (old) => {
+            if (!old) return old;
+            const patchResult = (r: SearchInventoryResponse["results"][number]) =>
+              r.item.id === current.id ? { ...r, item: patchItem(r.item) } : r;
+            return {
+              ...old,
+              results: old.results.map(patchResult),
+              sizeUnknownResults: old.sizeUnknownResults?.map(patchResult),
+            };
+          },
+        );
 
         await invalidateAllCachesAfterSave({
           queryClient,
