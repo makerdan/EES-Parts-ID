@@ -91,7 +91,12 @@ export function PartPhotoPicker({ value, onChange, label, isAiSourced, onPressPh
         </View>
       ) : null}
     </View>
-  ) : null;
+  ) : (
+    <View style={[ppStyles.placeholder, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+      <Feather name="image" size={22} color={colors.mutedForeground} />
+      <Text style={[ppStyles.placeholderText, { color: colors.mutedForeground }]}>No photo</Text>
+    </View>
+  );
 
   return (
     <View style={ppStyles.container}>
@@ -194,4 +199,15 @@ const ppStyles = StyleSheet.create({
     paddingVertical: 10,
   },
   actionBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  placeholder: {
+    width: 64,
+    height: 64,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+  },
+  placeholderText: { fontSize: 9, fontFamily: "Inter_400Regular" },
 });
