@@ -868,6 +868,7 @@ export function ZoneEditor() {
     if (!selectedId) return;
     if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
     if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 09)"); return; }
+    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
     const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
     setSaving(true);
     try {
@@ -879,6 +880,7 @@ export function ZoneEditor() {
       };
       await patchZone(selectedId, afterMeta);
       pushUndo({ type: "edit", id: selectedId, before: beforeMeta, after: afterMeta });
+      lastSavedFormRef.current = { ...form };
       toast.success("Zone updated");
       await fetchZones();
     } catch (e) {
