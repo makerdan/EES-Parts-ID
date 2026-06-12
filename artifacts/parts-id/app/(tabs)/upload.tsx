@@ -410,6 +410,109 @@ const gateStyles = StyleSheet.create({
   btnText: { fontSize: 16, fontFamily: "Inter_700Bold" },
 });
 
+// ── ExpandDescResultCard ───────────────────────────────────────────────────
+// Defined outside UploadScreen (which has "use no memo") so React.memo works.
+// Typing in the text box only re-renders this card; the parent screen is
+// not re-rendered on each keystroke, preventing ScrollView scroll-to-top
+// and TextInput focus loss.  The parent's editedText is synced on blur so
+// that "Save All" sees the latest text.
+const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
+  result,
+  onSave,
+  onDiscard,
+  onTextBlur,
+}: {
+  result: ExpandDescResult;
+  onSave: (id: number, text: string) => void;
+  onDiscard: (id: number) => void;
+  onTextBlur: (id: number, text: string) => void;
+}) {
+  const colors = useColors();
+  const [localText, setLocalText] = useState(result.editedText);
+  const isFinalised = result.savedStatus === "saved" || result.savedStatus === "discarded";
+  const cardBg =
+    result.savedStatus === "saved"
+      ? colors.success + "11"
+      : result.savedStatus === "discarded"
+        ? colors.muted
+        : colors.background;
+  const cardBorder =
+    result.savedStatus === "saved"
+      ? colors.success + "44"
+      : result.savedStatus === "discarded"
+        ? colors.border
+        : colors.primary + "33";
+  return (
+    <View style={{ borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 0, marginTop: 10, backgroundColor: cardBg, borderColor: cardBorder }}>
+      <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground }}>
+        {result.partNumber}
+      </Text>
+      <Text style={{ fontSize: 12, color: colors.mutedForeground, fontFamily: "Inter_400Regular" }}>
+        Original: {result.originalDescription}
+      </Text>
+      {result.error ? (
+        <Text style={{ fontSize: 12, color: colors.destructive, fontFamily: "Inter_400Regular" }}>
+          ⚠ AI error — skipped
+        </Text>
+      ) : (
+        <TextInput
+          value={localText}
+          onChangeText={setLocalText}
+          onBlur={() => onTextBlur(result.id, localText)}
+          multiline
+          numberOfLines={2}
+          maxLength={1000}
+          editable={!isFinalised}
+          style={{
+            borderWidth: 1,
+            borderRadius: 6,
+            paddingHorizontal: 10,
+            paddingVertical: 8,
+            fontSize: 13,
+            fontFamily: "Inter_400Regular",
+            minHeight: 60,
+            textAlignVertical: "top",
+            backgroundColor: isFinalised ? colors.muted : colors.background,
+            borderColor: colors.border,
+            color: result.savedStatus === "discarded" ? colors.mutedForeground : colors.foreground,
+          }}
+        />
+      )}
+      {!isFinalised ? (
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Pressable
+            onPress={() => onSave(result.id, localText)}
+            disabled={result.savedStatus === "saving" || !localText.trim()}
+            style={{
+              flex: 1,
+              borderRadius: 8,
+              paddingVertical: 8,
+              alignItems: "center",
+              backgroundColor: (result.savedStatus === "saving" || !localText.trim()) ? colors.muted : colors.primary,
+            }}
+          >
+            {result.savedStatus === "saving" ? (
+              <ActivityIndicator size="small" color={colors.primaryForeground} />
+            ) : (
+              <Text style={{ color: colors.primaryForeground, fontSize: 13, fontFamily: "Inter_700Bold" }}>Save</Text>
+            )}
+          </Pressable>
+          <Pressable
+            onPress={() => onDiscard(result.id)}
+            style={{ flex: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center", backgroundColor: colors.muted }}
+          >
+            <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_700Bold" }}>Discard</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: result.savedStatus === "saved" ? colors.success : colors.mutedForeground }}>
+          {result.savedStatus === "saved" ? "✓ Saved" : "— Discarded"}
+        </Text>
+      )}
+    </View>
+  );
+});
+
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
   "use no memo";
@@ -897,7 +1000,7 @@ export default function UploadScreen() {
     }
   };
 
-  const handleSaveExpandResult = async (id: number, text: string) => {
+  const handleSaveExpandResult = useCallback(async (id: number, text: string) => {
     setExpandDescResults(prev =>
       prev.map(r => r.id === id ? { ...r, savedStatus: "saving" } : r),
     );
@@ -916,13 +1019,20 @@ export default function UploadScreen() {
         prev.map(r => r.id === id ? { ...r, savedStatus: "pending" } : r),
       );
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [API_BASE, adminHeaders]);
 
-  const handleDiscardExpandResult = (id: number) => {
+  const handleDiscardExpandResult = useCallback((id: number) => {
     setExpandDescResults(prev =>
       prev.map(r => r.id === id ? { ...r, savedStatus: "discarded" } : r),
     );
-  };
+  }, []);
+
+  const handleTextBlur = useCallback((id: number, text: string) => {
+    setExpandDescResults(prev =>
+      prev.map(r => r.id === id ? { ...r, editedText: text } : r),
+    );
+  }, []);
 
   const handleSaveAll = async () => {
     await runSaveAll(
@@ -2164,107 +2274,13 @@ export default function UploadScreen() {
 
                       {/* Per-result cards */}
                       {expandDescResults.map((result) => (
-                        <View
+                        <ExpandDescResultCard
                           key={result.id}
-                          style={[
-                            styles.enrichCard,
-                            {
-                              backgroundColor:
-                                result.savedStatus === "saved"
-                                  ? colors.success + "11"
-                                  : result.savedStatus === "discarded"
-                                    ? colors.muted
-                                    : colors.background,
-                              borderColor:
-                                result.savedStatus === "saved"
-                                  ? colors.success + "44"
-                                  : result.savedStatus === "discarded"
-                                    ? colors.border
-                                    : colors.primary + "33",
-                              marginTop: 10,
-                            },
-                          ]}
-                        >
-                          <Text style={[{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground, marginBottom: 2 }]}>
-                            {result.partNumber}
-                          </Text>
-                          <Text style={[{ fontSize: 12, color: colors.mutedForeground, fontFamily: "Inter_400Regular", marginBottom: 6 }]}>
-                            Original: {result.originalDescription}
-                          </Text>
-                          {result.error ? (
-                            <Text style={[{ fontSize: 12, color: colors.destructive, fontFamily: "Inter_400Regular", marginBottom: 4 }]}>
-                              ⚠ AI error — skipped
-                            </Text>
-                          ) : (
-                            <TextInput
-                              value={result.editedText}
-                              onChangeText={(v: string) =>
-                                setExpandDescResults(prev =>
-                                  prev.map(r => r.id === result.id ? { ...r, editedText: v } : r),
-                                )
-                              }
-                              multiline
-                              numberOfLines={2}
-                              maxLength={1000}
-                              editable={result.savedStatus !== "saved" && result.savedStatus !== "discarded"}
-                              style={[
-                                {
-                                  borderWidth: 1,
-                                  borderRadius: 6,
-                                  paddingHorizontal: 10,
-                                  paddingVertical: 8,
-                                  fontSize: 13,
-                                  fontFamily: "Inter_400Regular",
-                                  minHeight: 60,
-                                  textAlignVertical: "top",
-                                  marginBottom: 8,
-                                  backgroundColor: result.savedStatus === "saved" || result.savedStatus === "discarded" ? colors.muted : colors.background,
-                                  borderColor: colors.border,
-                                  color: result.savedStatus === "discarded" ? colors.mutedForeground : colors.foreground,
-                                },
-                              ]}
-                            />
-                          )}
-                          {result.savedStatus !== "saved" && result.savedStatus !== "discarded" ? (
-                            <View style={{ flexDirection: "row", gap: 8 }}>
-                              <Pressable
-                                onPress={() => handleSaveExpandResult(result.id, result.editedText)}
-                                disabled={result.savedStatus === "saving" || !result.editedText.trim()}
-                                style={[
-                                  styles.enrichBtn,
-                                  {
-                                    flex: 1,
-                                    backgroundColor: (result.savedStatus === "saving" || !result.editedText.trim()) ? colors.muted : colors.primary,
-                                    paddingVertical: 8,
-                                  },
-                                ]}
-                              >
-                                {result.savedStatus === "saving" ? (
-                                  <ActivityIndicator size="small" color={colors.primaryForeground} />
-                                ) : (
-                                  <Text style={[styles.enrichBtnText, { color: colors.primaryForeground, fontSize: 13 }]}>Save</Text>
-                                )}
-                              </Pressable>
-                              <Pressable
-                                onPress={() => handleDiscardExpandResult(result.id)}
-                                style={[
-                                  styles.enrichBtn,
-                                  { flex: 1, backgroundColor: colors.muted, paddingVertical: 8 },
-                                ]}
-                              >
-                                <Text style={[styles.enrichBtnText, { color: colors.mutedForeground, fontSize: 13 }]}>Discard</Text>
-                              </Pressable>
-                            </View>
-                          ) : (
-                            <Text style={[{
-                              fontSize: 12,
-                              fontFamily: "Inter_600SemiBold",
-                              color: result.savedStatus === "saved" ? colors.success : colors.mutedForeground,
-                            }]}>
-                              {result.savedStatus === "saved" ? "✓ Saved" : "— Discarded"}
-                            </Text>
-                          )}
-                        </View>
+                          result={result}
+                          onSave={handleSaveExpandResult}
+                          onDiscard={handleDiscardExpandResult}
+                          onTextBlur={handleTextBlur}
+                        />
                       ))}
 
                       <Pressable
