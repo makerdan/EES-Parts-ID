@@ -4,6 +4,7 @@ import { startServer, MAX_RETRIES } from "./lib/startServer";
 import { db } from "@workspace/db";
 import { catalogPdfJobTable, warehouseZoneTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
+import { initProvider } from "./lib/aiProvider";
 
 const rawPort = process.env["PORT"];
 
@@ -108,13 +109,16 @@ async function migrateAdminPreferences(): Promise<void> {
         ADD COLUMN IF NOT EXISTS default_confidence_threshold INTEGER NOT NULL DEFAULT 50,
         ADD COLUMN IF NOT EXISTS scan_sound BOOLEAN NOT NULL DEFAULT true,
         ADD COLUMN IF NOT EXISTS shelf_prefix TEXT,
-        ADD COLUMN IF NOT EXISTS shelf_step INTEGER
+        ADD COLUMN IF NOT EXISTS shelf_step INTEGER,
+        ADD COLUMN IF NOT EXISTS ai_provider TEXT
     `);
   } catch (err) {
     logger.error({ err }, "Failed to migrate admin_preferences table");
   }
 }
 
-Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), checkZoneSectionNumIntegrity()]).then(() => {
-  startServer(app, port, MAX_RETRIES);
-});
+Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), checkZoneSectionNumIntegrity()])
+  .then(() => initProvider())
+  .then(() => {
+    startServer(app, port, MAX_RETRIES);
+  });

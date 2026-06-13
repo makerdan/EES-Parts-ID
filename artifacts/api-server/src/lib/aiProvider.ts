@@ -6,9 +6,15 @@
  *
  * The active provider can be switched at runtime via setProvider() without
  * restarting the server — useful for hot-failover when one provider is down.
+ *
+ * Call initProvider() once during server startup to restore any persisted
+ * provider choice from the database (takes priority over AI_PROVIDER env var).
  */
 
 import OpenAI from "openai";
+import { db, adminPreferencesTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { logger } from "./logger";
 
 export type AIProvider = "poe" | "openai";
 
@@ -66,6 +72,28 @@ export function setProvider(provider: AIProvider): void {
   const next = buildClient(provider); // validate env vars first — may throw
   _provider = provider;
   _client = next;
+}
+
+/**
+ * Read the persisted provider from the database and apply it.
+ * Falls back to the AI_PROVIDER env var if no DB value exists.
+ * Call once during server startup — errors are logged but do not crash the server.
+ */
+export async function initProvider(): Promise<void> {
+  try {
+    const rows = await db
+      .select({ aiProvider: adminPreferencesTable.aiProvider })
+      .from(adminPreferencesTable)
+      .where(eq(adminPreferencesTable.id, 1))
+      .limit(1);
+
+    const persisted = rows[0]?.aiProvider;
+    if (persisted === "poe" || persisted === "openai") {
+      setProvider(persisted);
+    }
+  } catch (err) {
+    logger.warn({ err }, "initProvider: failed to read persisted AI provider from DB — falling back to env var default");
+  }
 }
 
 /**
