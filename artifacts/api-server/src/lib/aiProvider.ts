@@ -128,6 +128,17 @@ export const aiClient: OpenAI = new Proxy({} as OpenAI, {
  */
 export const AI_PROVIDER: AIProvider = _provider;
 
+// ── Poe bot name constants ─────────────────────────────────────────────────────
+
+/** Poe bot used for keyword enrichment and reference Q&A (fast, cheap). */
+export const POE_ENRICH_BOT = "gpt-5-mini";
+
+/** Poe bot used for part identification and catalog PDF extraction (vision capable). */
+export const POE_IDENTIFY_BOT = "gpt-4o";
+
+/** Poe bot used for physical dimension estimation from photos (vision capable). */
+export const POE_DIMENSIONS_BOT = "gpt-5.1";
+
 // ── Model defaults (re-derived at call time via helpers below) ────────────────
 
 /**
@@ -135,7 +146,7 @@ export const AI_PROVIDER: AIProvider = _provider;
  * Reflects the currently active provider.
  */
 export function getEnrichModel(): string {
-  return _provider === "openai" ? "gpt-4o-mini" : "gpt-5-mini";
+  return _provider === "openai" ? "gpt-4o-mini" : POE_ENRICH_BOT;
 }
 
 /**
@@ -143,7 +154,7 @@ export function getEnrichModel(): string {
  * Reflects the currently active provider.
  */
 export function getIdentifyModel(): string {
-  return _provider === "openai" ? "gpt-4o" : "gpt-4o";
+  return _provider === "openai" ? "gpt-4o" : POE_IDENTIFY_BOT;
 }
 
 /**
@@ -167,7 +178,7 @@ export function getCatalogModel(): string {
  * Reflects the currently active provider.
  */
 export function getDimensionsModel(): string {
-  return _provider === "openai" ? "gpt-5.1" : "gpt-5.1";
+  return _provider === "openai" ? "gpt-5.1" : POE_DIMENSIONS_BOT;
 }
 
 /**
@@ -176,9 +187,9 @@ export function getDimensionsModel(): string {
  */
 export function getAllPoeModelNames(): string[] {
   return [
-    "gpt-5-mini",  // enrich / reference
-    "gpt-4o",      // identify / catalog
-    "gpt-5.1",     // dimensions
+    POE_ENRICH_BOT,    // enrich / reference
+    POE_IDENTIFY_BOT,  // identify / catalog
+    POE_DIMENSIONS_BOT, // dimensions
   ];
 }
 
@@ -233,12 +244,12 @@ export async function probePoeBotsOnStartup(): Promise<void> {
 /**
  * @deprecated Use getEnrichModel() so the value updates after setProvider().
  */
-export const ENRICH_MODEL: string = _provider === "openai" ? "gpt-4o-mini" : "gpt-5-mini";
+export const ENRICH_MODEL: string = _provider === "openai" ? "gpt-4o-mini" : POE_ENRICH_BOT;
 
 /**
  * @deprecated Use getIdentifyModel() so the value updates after setProvider().
  */
-export const IDENTIFY_MODEL: string = _provider === "openai" ? "gpt-4o" : "gpt-4o";
+export const IDENTIFY_MODEL: string = _provider === "openai" ? "gpt-4o" : POE_IDENTIFY_BOT;
 
 /**
  * @deprecated Use getReferenceModel() so the value updates after setProvider().
@@ -253,4 +264,4 @@ export const CATALOG_MODEL: string = IDENTIFY_MODEL;
 /**
  * @deprecated Use getDimensionsModel() so the value updates after setProvider().
  */
-export const DIMENSIONS_MODEL: string = _provider === "openai" ? "gpt-5.1" : "gpt-5.1";
+export const DIMENSIONS_MODEL: string = _provider === "openai" ? "gpt-5.1" : POE_DIMENSIONS_BOT;
