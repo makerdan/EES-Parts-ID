@@ -6,8 +6,12 @@
  *  - src/seed/bulk-enrich.ts standalone script
  */
 
-import { getAiClient, getEnrichModel } from "../lib/aiProvider";
-import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
+import { getEnrichModel } from "../lib/aiProvider";
+import {
+  callPoeBot,
+  isPoeCallAuthError,
+  isPoeCallTransientError,
+} from "../lib/poeBot";
 
 export interface EnrichItem {
   vendor: string;
@@ -64,47 +68,32 @@ export async function generateKeywords(
   item: EnrichItem,
   model: string = getEnrichModel(),
 ): Promise<string[]> {
-  let response;
-  try {
-    response = await getAiClient().chat.completions.create({
-      model,
-      max_completion_tokens: 256,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an electrical supplies identifier and warehouse cataloger specializing in keyword extraction for searchable inventory systems. " +
-            "Given a catalog item from an electrical supply distributor, return ONLY a JSON array of 6-10 short keyword strings that maximize searchability. " +
-            "Rules:\n" +
-            "- Expand all abbreviations and jargon into plain-language equivalents and include BOTH the short form and the expanded form as separate keywords (e.g., 'EMT' and 'electrical metallic tubing'; 'XFMR' and 'transformer'; '3PH' and 'three-phase'; 'AWG' and 'American Wire Gauge'; 'NEMA' with the specific type number if present).\n" +
-            "- Include the product category (e.g., 'circuit breaker', 'conduit', 'wire connector', 'luminaire', 'panelboard').\n" +
-            "- Include all electrical ratings present or inferable: voltage (e.g., '120V', '480V'), amperage (e.g., '20A', '100A'), phase ('single-phase', 'three-phase'), frequency ('60Hz'), and wattage/kVA where applicable.\n" +
-            "- Include material and finish where relevant (e.g., 'galvanized steel', 'PVC', 'aluminum', 'copper').\n" +
-            "- Include mounting type, enclosure type, or form factor if present (e.g., 'surface mount', 'weatherproof', 'NEMA 4X', 'flush mount', 'panel mount').\n" +
-            "- Include common trade synonyms and slang used by electricians (e.g., 'Romex' for NM-B cable, 'Greenfield' for flexible metal conduit, 'pigtail', 'mud ring').\n" +
-            "- Include the manufacturer brand name if identifiable from the vendor code or description.\n" +
-            "- Do NOT include junk values, generic filler words, or repeat the same concept twice unless both forms (abbreviated and expanded) are genuinely distinct search terms.\n" +
-            "- Output ONLY a raw JSON array of strings. No explanation, no markdown, no wrapping object.",
-        },
-        {
-          role: "user",
-          content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nDescription: ${item.description ?? ""}\n\nReturn JSON array of keywords only.`,
-        },
-      ],
-    });
-  } catch (err) {
-    const msg = poeErrorMessage(err);
-    if (msg) {
-      const enriched = new Error(msg) as PoeEnrichedError;
-      enriched.isPoeAuth = isPoeAuthError(err);
-      enriched.isPoeTransient = isPoeTransientError(err);
-      enriched.cause = err;
-      throw enriched;
-    }
-    throw err;
-  }
+  const systemInstruction =
+    "You are an electrical supplies identifier and warehouse cataloger specializing in keyword extraction for searchable inventory systems. " +
+    "Given a catalog item from an electrical supply distributor, return ONLY a JSON array of 6-10 short keyword strings that maximize searchability. " +
+    "Rules:\n" +
+    "- Expand all abbreviations and jargon into plain-language equivalents and include BOTH the short form and the expanded form as separate keywords (e.g., 'EMT' and 'electrical metallic tubing'; 'XFMR' and 'transformer'; '3PH' and 'three-phase'; 'AWG' and 'American Wire Gauge'; 'NEMA' with the specific type number if present).\n" +
+    "- Include the product category (e.g., 'circuit breaker', 'conduit', 'wire connector', 'luminaire', 'panelboard').\n" +
+    "- Include all electrical ratings present or inferable: voltage (e.g., '120V', '480V'), amperage (e.g., '20A', '100A'), phase ('single-phase', 'three-phase'), frequency ('60Hz'), and wattage/kVA where applicable.\n" +
+    "- Include material and finish where relevant (e.g., 'galvanized steel', 'PVC', 'aluminum', 'copper').\n" +
+    "- Include mounting type, enclosure type, or form factor if present (e.g., 'surface mount', 'weatherproof', 'NEMA 4X', 'flush mount', 'panel mount').\n" +
+    "- Include common trade synonyms and slang used by electricians (e.g., 'Romex' for NM-B cable, 'Greenfield' for flexible metal conduit, 'pigtail', 'mud ring').\n" +
+    "- Include the manufacturer brand name if identifiable from the vendor code or description.\n" +
+    "- Do NOT include junk values, generic filler words, or repeat the same concept twice unless both forms (abbreviated and expanded) are genuinely distinct search terms.\n" +
+    "- Output ONLY a raw JSON array of strings. No explanation, no markdown, no wrapping object.";
 
-  const text = response.choices[0]?.message?.content ?? "[]";
+  const userMessage = `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nDescription: ${item.description ?? ""}\n\nReturn JSON array of keywords only.`;
+
+  let text: string;
+  try {
+    text = await callPoeBot(model, systemInstruction, userMessage);
+  } catch (err) {
+    const enriched = new Error(String(err)) as PoeEnrichedError;
+    enriched.isPoeAuth = isPoeCallAuthError(err);
+    enriched.isPoeTransient = isPoeCallTransientError(err);
+    enriched.cause = err;
+    throw enriched;
+  }
   let keywords: string[] = [];
   try {
     const parsed = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
