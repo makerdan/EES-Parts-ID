@@ -888,6 +888,36 @@ export default function SearchScreen() {
               keyboardShouldPersistTaps="handled"
             >
 
+            {/* Admin links */}
+            {isAdmin ? (
+              <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 8 }]}>
+                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Admin-Only Tools:</Text>
+                <View style={{ flexDirection: "column" }}>
+                  <Pressable
+                    onPress={() => { setShowLogoutModal(false); router.push("/admin"); }}
+                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}
+                  >
+                    <Text style={{ color: colors.foreground, fontSize: 15, marginRight: 8 }}>•</Text>
+                    <Text style={{ color: colors.primary, fontSize: 14, fontFamily: "Inter_600SemiBold" }}>Dashboard</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => { setShowLogoutModal(false); router.push("/ai-log"); }}
+                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}
+                  >
+                    <Text style={{ color: colors.foreground, fontSize: 15, marginRight: 8 }}>•</Text>
+                    <Text style={{ color: colors.foreground, fontSize: 14, fontFamily: "Inter_500Medium" }}>AI Log</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => { setShowLogoutModal(false); router.push("/admin-inbox"); }}
+                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}
+                  >
+                    <Text style={{ color: colors.foreground, fontSize: 15, marginRight: 8 }}>•</Text>
+                    <Text style={{ color: colors.foreground, fontSize: 14, fontFamily: "Inter_500Medium" }}>Inbox</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+
             {/* Clear cache row */}
             <View style={[styles.settingsRow, { borderColor: colors.border }]}>
               <View style={{ flex: 1 }}>
@@ -1099,33 +1129,6 @@ export default function SearchScreen() {
                 <Text style={[styles.confCustomLabel, { color: colors.mutedForeground }]}>%</Text>
               </View>
             </View>
-
-            {/* Admin links */}
-            {isAdmin ? (
-              <View style={[styles.settingsRow, { borderColor: colors.border, flexDirection: "column", gap: 8 }]}>
-                <Text style={[styles.settingsRowLabel, { color: colors.foreground }]}>Admin</Text>
-                <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                  <Pressable
-                    onPress={() => { setShowLogoutModal(false); router.push("/admin"); }}
-                    style={[styles.secondaryBtn, { borderColor: colors.primary + "88", backgroundColor: colors.primary + "11", paddingHorizontal: 14, paddingVertical: 8 }]}
-                  >
-                    <Text style={{ color: colors.primary, fontSize: 13, fontFamily: "Inter_600SemiBold" }}>Dashboard</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => { setShowLogoutModal(false); router.push("/ai-log"); }}
-                    style={[styles.secondaryBtn, { borderColor: colors.border, paddingHorizontal: 14, paddingVertical: 8 }]}
-                  >
-                    <Text style={{ color: colors.foreground, fontSize: 13, fontFamily: "Inter_500Medium" }}>AI Log</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => { setShowLogoutModal(false); router.push("/admin-inbox"); }}
-                    style={[styles.secondaryBtn, { borderColor: colors.border, paddingHorizontal: 14, paddingVertical: 8 }]}
-                  >
-                    <Text style={{ color: colors.foreground, fontSize: 13, fontFamily: "Inter_500Medium" }}>Inbox</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
 
             {/* Footer */}
             <Text style={[styles.logoutModalHint, { color: colors.mutedForeground, marginTop: 16 }]}>
