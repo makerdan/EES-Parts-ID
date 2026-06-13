@@ -554,6 +554,7 @@ export default function UploadScreen() {
   // Expand-descriptions enrichment state
   const [expandDescResults, setExpandDescResults] = useState<ExpandDescResult[]>([]);
   const [expandDescProgress, setExpandDescProgress] = useState<{ done: number; total: number } | null>(null);
+  const [expandDescModel, setExpandDescModel] = useState<string | null>(null);
   const [expandDescStreamDone, setExpandDescStreamDone] = useState(false);
   const [expandDescRunning, setExpandDescRunning] = useState(false);
   const [expandDescError, setExpandDescError] = useState<string | null>(null);
@@ -921,6 +922,7 @@ export default function UploadScreen() {
     setExpandDescError(null);
     setExpandDescResults([]);
     setExpandDescProgress(null);
+    setExpandDescModel(null);
     setExpandDescStreamDone(false);
     setExpandDescRemaining(null);
 
@@ -961,8 +963,14 @@ export default function UploadScreen() {
               expandedDescription?: string | null;
               error?: string;
               progress?: number;
+              model?: string;
             };
-            if (data.done) {
+            if (data.model != null && data.id == null && !data.done) {
+              setExpandDescModel(data.model);
+              if (data.total != null) {
+                setExpandDescProgress({ done: 0, total: data.total });
+              }
+            } else if (data.done) {
               setExpandDescStreamDone(true);
               setExpandDescRemaining(data.remaining ?? null);
               setExpandDescProgress({ done: data.processed ?? 0, total: data.total ?? 0 });
@@ -2195,6 +2203,11 @@ export default function UploadScreen() {
                           <Text style={[styles.progressText, { color: colors.foreground }]}>
                             {expandDescProgress.done} / {expandDescProgress.total} expanded
                           </Text>
+                          {expandDescModel ? (
+                            <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
+                              Model: {expandDescModel}
+                            </Text>
+                          ) : null}
                         </View>
                       ) : null}
 
