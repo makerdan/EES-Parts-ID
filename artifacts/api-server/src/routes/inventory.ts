@@ -1530,13 +1530,15 @@ router.post("/expand-descriptions", requireAdminAuth, async (_req, res) => {
       .limit(BATCH_SIZE);
 
     if (!itemsToExpand.length) {
-      send({ done: true, processed: 0, total: 0, remaining: 0 });
+      send({ model: ENRICH_MODEL, done: true, processed: 0, total: 0, remaining: 0 });
       res.end();
       return;
     }
 
     const total = itemsToExpand.length;
     let processed = 0;
+
+    send({ model: ENRICH_MODEL, total });
 
     for (const item of itemsToExpand) {
       try {
