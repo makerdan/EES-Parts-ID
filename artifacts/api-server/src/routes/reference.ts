@@ -1,6 +1,4 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getAiClient, getReferenceModel } from "../lib/aiProvider";
-import { isPoeAuthError, poeErrorMessage } from "@workspace/integrations-poe-server";
 import { logger } from "../lib/logger";
 import { db } from "@workspace/db";
 import { quickLookupCacheTable, inventoryTable, referenceLogTable, aiRequestLogTable } from "@workspace/db";
@@ -12,6 +10,7 @@ import {
   getCachedAnswer,
   setCachedAnswer,
 } from "../lib/answerCache";
+import { callGemini, WEB_REFERENCE_MODEL } from "../lib/webSearch";
 
 const router = Router();
 
@@ -30,8 +29,39 @@ function requireAdminAuth(req: Request, res: Response, next: NextFunction): void
 const GENERIC_ERROR_MESSAGE =
   "Sorry, the reference assistant ran into a problem. Please try again.";
 
-const BASE_SYSTEM_PROMPT =
-  "You are a concise electrical supply reference assistant for warehouse workers. Answer questions about electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology. Use **bold** for key terms and - bullets for lists. Keep answers under 200 words. Be precise and practical.";
+/**
+ * Concise description of the Parts ID app injected into the system prompt so
+ * the AI can answer "how does this app work?" questions without a web search.
+ */
+const APP_KNOWLEDGE = `
+## About the Parts ID App
+
+Parts ID is a mobile warehouse app for managing and identifying electrical supply inventory.
+
+**Key features:**
+- **Search tab:** Full-text search across all inventory items (vendor, catalog number, description, AI keywords). Supports partial and keyword matching. Tapping a result shows full part details including expanded descriptions, dimensions, and barcode.
+- **Photo ID tab:** Workers point the camera at a part and the AI identifies it by comparing the photo against inventory descriptions and visual cues. Returns the best matching part.
+- **Barcode scan:** Scan a part's barcode to instantly look it up in inventory. Accessible from the Search tab and part detail screens.
+- **CSV import (admin):** Admins upload a CSV file of inventory items (vendor, catalog, description columns required). The server parses, deduplicates, and stores them.
+- **Admin upload / photo upload:** Admins can attach product images to inventory items directly from the app.
+- **Offline cache:** Recently viewed parts and quick-lookup chip answers are cached locally so workers can browse without a network connection.
+- **AI enrichment:** Admins can trigger bulk AI keyword generation for inventory items. The AI adds searchable keywords and an expanded description to every item, making search far more effective.
+- **Reference modal (this assistant):** A floating button on the main screen opens this AI chat. Workers can ask any question — electrical codes, part terminology, how the app works, or general warehouse questions.
+- **Settings:** Workers can set the server URL (API base), toggle dark mode, and view app version info.
+- **Cycle counting:** Visual overlay on the map screen for counting parts in bin locations.
+- **Warehouse map / floor plan:** Interactive floor plan showing bin locations, zone assignments, and aisle labels.
+`;
+
+const BASE_SYSTEM_PROMPT = `You are a concise warehouse parts and general reference assistant for warehouse workers using the Parts ID app. You help with:
+- Electrical parts, NEC codes, NEMA ratings, wire gauges, breaker types, conduit sizing, and terminology
+- Any general question a warehouse worker might have
+- Questions about how the Parts ID app works (features, how-tos, capabilities)
+
+Always check the inventory context below first. If relevant inventory items are listed, reference them.
+Use **bold** for key terms and - bullets for lists. Keep answers under 250 words. Be precise and practical.
+
+When you use your web search capability to answer a question, prefix your final answer with "*(web)*" on its own line so the worker knows the answer came from a live web search.
+${APP_KNOWLEDGE}`;
 
 /**
  * Search the inventory for items relevant to the question.
@@ -105,27 +135,30 @@ function writeReferenceLog(question: string, answer: string, matchedItemCount: n
   });
 }
 
-/** Collect the full streamed OpenAI response and return the text + matched count. */
-async function collectStreamedAnswer(question: string): Promise<{ answer: string; matchedItemCount: number }> {
+/**
+ * Call Gemini-2.5-Flash via Replit AI Integrations for a reference answer.
+ * Returns the answer text and whether the answer appears to be web-sourced.
+ */
+async function callGeminiReference(
+  systemContent: string,
+  question: string,
+): Promise<{ answer: string; usedWebSearch: boolean }> {
+  const answer = await callGemini(systemContent, question);
+  const usedWebSearch = answer.trimStart().startsWith("*(web)*");
+  return { answer, usedWebSearch };
+}
+
+/**
+ * Collect the full answer via Gemini-2.5-Flash.
+ * Returns the text, matched inventory count, and whether web search was used.
+ */
+async function collectAnswer(
+  question: string,
+): Promise<{ answer: string; matchedItemCount: number; usedWebSearch: boolean }> {
   const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question);
   const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
-
-  const stream = await getAiClient().chat.completions.create({
-    model: getReferenceModel(),
-    max_completion_tokens: 512,
-    stream: true,
-    messages: [
-      { role: "system", content: systemContent },
-      { role: "user", content: question },
-    ],
-  });
-
-  let fullText = "";
-  for await (const chunk of stream) {
-    const content = chunk.choices[0]?.delta?.content;
-    if (content) fullText += content;
-  }
-  return { answer: fullText, matchedItemCount };
+  const { answer, usedWebSearch } = await callGeminiReference(systemContent, question);
+  return { answer, matchedItemCount, usedWebSearch };
 }
 
 // POST /reference/ask — SSE streaming or JSON reference Q&A
@@ -151,14 +184,14 @@ router.post("/ask", async (req, res) => {
         return void res.json({ answer: cached });
       }
 
-      const { answer, matchedItemCount } = await collectStreamedAnswer(question.trim());
+      const { answer, matchedItemCount, usedWebSearch } = await collectAnswer(question.trim());
       writeReferenceLog(question.trim(), answer, matchedItemCount);
-      setCachedAnswer(questionHash, normalized, answer).catch(() => {});
+      setCachedAnswer(questionHash, normalized, answer, usedWebSearch).catch(() => {});
       writeAiRequestLog("reference");
       return void res.json({ answer });
     }
 
-    // SSE path: check cache first, stream from OpenAI on miss and cache after.
+    // SSE path: check cache first, then call Gemini-2.5-Flash on miss.
     const cached = await getCachedAnswer(questionHash);
 
     res.setHeader("Content-Type", "text/event-stream");
@@ -175,26 +208,14 @@ router.post("/ask", async (req, res) => {
       return;
     }
 
-    const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question.trim());
-    const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
+    // Gemini-2.5-Flash call (non-streaming internally; pseudo-stream to client).
+    const { answer: fullAnswer, matchedItemCount, usedWebSearch } = await collectAnswer(question.trim());
 
-    const stream = await getAiClient().chat.completions.create({
-      model: getReferenceModel(),
-      max_completion_tokens: 512,
-      stream: true,
-      messages: [
-        { role: "system", content: systemContent },
-        { role: "user", content: question },
-      ],
-    });
-
-    let fullAnswer = "";
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) {
-        fullAnswer += content;
-        res.write(`data: ${JSON.stringify({ content })}\n\n`);
-      }
+    // Emit the answer word-by-word for a live-typing effect.
+    const words = fullAnswer.split(" ");
+    for (let i = 0; i < words.length; i++) {
+      const chunk = (i === 0 ? "" : " ") + words[i];
+      res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
     }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
@@ -203,25 +224,10 @@ router.post("/ask", async (req, res) => {
     writeReferenceLog(question.trim(), fullAnswer, matchedItemCount);
     writeAiRequestLog("reference");
     if (fullAnswer) {
-      setCachedAnswer(questionHash, normalized, fullAnswer).catch(() => {});
+      setCachedAnswer(questionHash, normalized, fullAnswer, usedWebSearch).catch(() => {});
     }
   } catch (err) {
     logger.error({ err }, "reference.ask failed");
-    const poeMsg = poeErrorMessage(err);
-    if (poeMsg !== null) {
-      const status = isPoeAuthError(err) ? 401 : 502;
-      if (res.headersSent) {
-        try {
-          res.write(`event: error\ndata: ${JSON.stringify({ error: poeMsg })}\n\n`);
-        } catch {
-          // Connection may already be torn down.
-        }
-        res.end();
-      } else {
-        res.status(status).json({ error: poeMsg });
-      }
-      return;
-    }
     if (res.headersSent) {
       try {
         res.write(
@@ -299,9 +305,8 @@ router.post("/quick-lookups/:label", async (req, res) => {
       return void res.status(400).json({ error: "question is required" });
     }
 
-    const { answer } = await collectStreamedAnswer(question.trim());
+    const { answer } = await collectAnswer(question.trim());
 
-    // Upsert into DB cache
     await db
       .insert(quickLookupCacheTable)
       .values({ label, answer, updatedAt: new Date() })
@@ -313,11 +318,6 @@ router.post("/quick-lookups/:label", async (req, res) => {
     res.json({ answer });
   } catch (err) {
     logger.error({ err }, "reference.quick-lookups post failed");
-    const poeMsg = poeErrorMessage(err);
-    if (poeMsg !== null) {
-      res.status(isPoeAuthError(err) ? 401 : 502).json({ error: poeMsg });
-      return;
-    }
     res.status(500).json({ error: GENERIC_ERROR_MESSAGE });
   }
 });
