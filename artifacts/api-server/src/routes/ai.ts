@@ -248,6 +248,120 @@ router.post("/translate-query", async (req, res) => {
   }
 });
 
+// In-memory cache for part-card lookups keyed by "catalog|vendor"
+const partCardCache = new Map<string, { data: object; cachedAt: number }>();
+const PART_CARD_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// POST /ai/part-card
+// Returns web-sourced part info: display name, key specs, cross-refs, compatibility note.
+// Results are cached in memory keyed by catalog+vendor to avoid re-querying the AI.
+router.post("/part-card", async (req, res) => {
+  try {
+    const {
+      catalog = "",
+      vendor = "",
+      description = "",
+    } = req.body as {
+      catalog?: string;
+      vendor?: string;
+      description?: string;
+    };
+
+    if (!catalog.trim()) {
+      return void res.status(400).json({ error: "catalog is required" });
+    }
+
+    const cacheKey = `${catalog.trim().toLowerCase()}|${vendor.trim().toLowerCase()}`;
+
+    // Serve from cache if fresh
+    const cached = partCardCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < PART_CARD_CACHE_TTL_MS) {
+      return void res.json(cached.data);
+    }
+
+    const contextParts: string[] = [];
+    if (vendor.trim()) contextParts.push(`Manufacturer/Vendor: ${vendor.trim()}`);
+    if (description.trim()) contextParts.push(`Description: ${description.trim()}`);
+
+    const systemContent = [
+      "You are an expert electrical supply parts specialist with deep knowledge of industrial components.",
+      "Given a part catalog number and optional context, return structured web-sourced information about the part.",
+      "Return ONLY valid JSON with these fields:",
+      "- displayName: string — the common product name (e.g. 'Square D 15A Single-Pole Circuit Breaker')",
+      "- specs: Array<{label: string; value: string}> — key specs (voltage, amperage, NEMA rating, frame, poles, interrupting rating, trip type, UL listed, etc.). Include 3–8 specs.",
+      "- crossRefs: string[] — up to 4 equivalent part numbers from other manufacturers (empty array if unknown)",
+      "- compatibilityNote: string — brief note about compatible panels/systems (empty string if unknown)",
+      "If you have no reliable information about this specific part, return: {displayName: \"\", specs: [], crossRefs: [], compatibilityNote: \"\"}",
+    ].join("\n");
+
+    const userContent = [
+      `Part catalog number: ${catalog.trim()}`,
+      ...contextParts,
+      "Return JSON only.",
+    ].join("\n");
+
+    const response = await aiClient.chat.completions.create({
+      model: ENRICH_MODEL,
+      max_completion_tokens: 512,
+      messages: [
+        { role: "system", content: systemContent },
+        { role: "user", content: userContent },
+      ],
+    });
+
+    const text = response.choices[0]?.message?.content ?? "{}";
+    const parsed = extractJsonFromText(text) ?? {};
+
+    const displayName = typeof parsed.displayName === "string" ? parsed.displayName : "";
+    const specs = Array.isArray(parsed.specs)
+      ? (parsed.specs as unknown[]).filter(
+          (s): s is { label: string; value: string } =>
+            typeof s === "object" && s !== null &&
+            typeof (s as { label?: unknown }).label === "string" &&
+            typeof (s as { value?: unknown }).value === "string",
+        ).slice(0, 10)
+      : [];
+    const crossRefs = Array.isArray(parsed.crossRefs)
+      ? (parsed.crossRefs as unknown[]).filter((s): s is string => typeof s === "string").slice(0, 6)
+      : [];
+    const compatibilityNote = typeof parsed.compatibilityNote === "string" ? parsed.compatibilityNote : "";
+
+    const data = { displayName, specs, crossRefs, compatibilityNote };
+
+    // Only cache if we got something useful
+    if (displayName || specs.length > 0 || crossRefs.length > 0 || compatibilityNote) {
+      partCardCache.set(cacheKey, { data, cachedAt: Date.now() });
+      // Evict oldest entries if cache grows large
+      if (partCardCache.size > 500) {
+        const oldest = [...partCardCache.entries()].sort((a, b) => a[1].cachedAt - b[1].cachedAt)[0];
+        if (oldest) partCardCache.delete(oldest[0]);
+      }
+    }
+
+    return void res.json(data);
+  } catch (err) {
+    if (isPoeAuthError(err)) {
+      logger.error({ err }, "AI auth error in POST /ai/part-card");
+      return void res.status(401).json({ error: poeErrorMessage(err) });
+    }
+    if (err instanceof OpenAI.RateLimitError) {
+      logger.error({ err }, "AI rate-limit error in POST /ai/part-card");
+      return void res.status(429).json({ error: poeErrorMessage(err) });
+    }
+    if (isPoeTransientError(err)) {
+      logger.error({ err }, "AI transient error in POST /ai/part-card");
+      return void res.status(503).json({ error: poeErrorMessage(err) });
+    }
+    const aiMsg = poeErrorMessage(err);
+    if (aiMsg) {
+      logger.error({ err }, "AI API error in POST /ai/part-card");
+      return void res.status(502).json({ error: aiMsg });
+    }
+    logger.error({ err }, "Unexpected error in POST /ai/part-card");
+    res.status(500).json({ error: "Part card lookup failed" });
+  }
+});
+
 // POST /ai/reference — deprecated alias, forwards to /reference/ask behavior
 // Kept for backwards compat; primary route is /reference/ask
 router.post("/reference", async (req, res) => {

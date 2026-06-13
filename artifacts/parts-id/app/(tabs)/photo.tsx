@@ -734,6 +734,7 @@ export default function PhotoScreen() {
                   onVariantsToggle={handleVariantsToggle(result.item)}
                   rank={index}
                   fontScale={textFontScale}
+                  autoExpandPartCard={index === 0}
                 />
               ))}
             </View>
