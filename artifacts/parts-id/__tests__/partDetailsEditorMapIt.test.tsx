@@ -1,15 +1,23 @@
 /**
  * @jest-environment node
  *
- * Tests for the "Map it!" button rendered inside PartDetailsEditor.
+ * Tests for PartDetailsEditor covering two independent save paths:
  *
- * Covered:
- *  1. Item with bin locations – pressing "Map it!" calls onClose() and
- *     onShowOnMap(item) each exactly once.
- *  2. Item with no bin locations – the button is still visible (bin count does
- *     not gate rendering); pressing it delegates the empty-bin toast logic to
- *     the caller's onShowOnMap handler.
- *  3. No onShowOnMap prop – the button is absent from the tree entirely.
+ *  A. "Map it!" button
+ *     1. Item with bin locations – pressing "Map it!" calls onClose() and
+ *        onShowOnMap(item) each exactly once.
+ *     2. Item with no bin locations – the button is still visible (bin count does
+ *        not gate rendering); pressing it delegates the empty-bin toast logic to
+ *        the caller's onShowOnMap handler.
+ *     3. No onShowOnMap prop – the button is absent from the tree entirely.
+ *
+ *  B. Expanded-description save path (handleSaveExpandedDesc /
+ *     handleClearExpandedDesc)
+ *     4. Save – PATCHes the correct endpoint with trimmed text and calls
+ *        queryClient.invalidateQueries on success.
+ *     5. Clear – PATCHes the correct endpoint with null and calls
+ *        queryClient.invalidateQueries on success.
+ *     6. Save error – shows the server error message when fetch responds !ok.
  */
 
 // Required for act() to work correctly in the node test environment.
@@ -20,6 +28,10 @@ import React from "react";
 import renderer, { act } from "react-test-renderer";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import type { InventoryItem } from "@workspace/api-client-react";
+
+// Stable spy exposed to tests — prefixed "mock" so babel-jest hoists it
+// alongside the jest.mock() call that references it.
+const mockInvalidateQueries = jest.fn().mockResolvedValue(undefined);
 
 // ─── @/components/PartPhotoPicker ────────────────────────────────────────────
 
@@ -39,7 +51,7 @@ jest.mock("@workspace/api-client-react", () => ({
 
 jest.mock("@tanstack/react-query", () => ({
   useQueryClient: jest.fn(() => ({
-    invalidateQueries: jest.fn().mockResolvedValue(undefined),
+    invalidateQueries: mockInvalidateQueries,
   })),
 }));
 
@@ -106,6 +118,14 @@ function findPressable(root: Inst, label: string): Inst | null {
     root
       .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
       .find(n => instText(n).includes(label)) ?? null
+  );
+}
+
+function findPressableByA11yLabel(root: Inst, label: string): Inst | null {
+  return (
+    root
+      .findAll(n => (n.type as string) === "rn-pressable", { deep: true })
+      .find(n => n.props.accessibilityLabel === label) ?? null
   );
 }
 
@@ -216,5 +236,163 @@ describe('PartDetailsEditor – "Map it!" button', () => {
 
     const btn = findPressable(tree.root, "Map it!");
     expect(btn).toBeNull();
+  });
+});
+
+// =============================================================================
+// PartDetailsEditor – expanded-description save path
+// =============================================================================
+
+describe("PartDetailsEditor – expanded-description save path", () => {
+  it("PATCHes the correct endpoint with the current text and invalidates queries on success", async () => {
+    const mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({}),
+    } as unknown as Response);
+
+    const item = makeItem({
+      binLocations: [],
+      // expandedDescription is set so the field pre-fills with text
+      expandedDescription: "Original AI-generated notes about this part",
+    } as unknown as Partial<InventoryItem>);
+
+    const tree = await renderEditor(
+      <PartDetailsEditor
+        item={item}
+        adminToken="test-token"
+        onClose={jest.fn()}
+      />
+    );
+    activeTree = tree;
+
+    const saveBtn = findPressable(tree.root, "Save Expanded Description");
+    expect(saveBtn).not.toBeNull();
+
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/inventory\/1\/expanded-description$/);
+    expect(init.method).toBe("PATCH");
+    expect(init.headers).toMatchObject({
+      "Content-Type": "application/json",
+      Authorization: "Bearer test-token",
+    });
+    expect(JSON.parse(init.body as string)).toEqual({
+      expandedDescription: "Original AI-generated notes about this part",
+    });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["inventory"] });
+
+    mockFetch.mockRestore();
+  });
+
+  it("trims leading and trailing whitespace from the description before saving", async () => {
+    const mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({}),
+    } as unknown as Response);
+
+    const item = makeItem({
+      binLocations: [],
+      expandedDescription: "  padded text with spaces  ",
+    } as unknown as Partial<InventoryItem>);
+
+    const tree = await renderEditor(
+      <PartDetailsEditor
+        item={item}
+        adminToken="test-token"
+        onClose={jest.fn()}
+      />
+    );
+    activeTree = tree;
+
+    const saveBtn = findPressable(tree.root, "Save Expanded Description");
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      expandedDescription: "padded text with spaces",
+    });
+
+    mockFetch.mockRestore();
+  });
+
+  it("PATCHes the correct endpoint with null and invalidates queries when clearing", async () => {
+    const mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({}),
+    } as unknown as Response);
+
+    const item = makeItem({
+      binLocations: [],
+      expandedDescription: "Some existing description to clear",
+    } as unknown as Partial<InventoryItem>);
+
+    const tree = await renderEditor(
+      <PartDetailsEditor
+        item={item}
+        adminToken="test-token"
+        onClose={jest.fn()}
+      />
+    );
+    activeTree = tree;
+
+    const clearBtn = findPressableByA11yLabel(tree.root, "Clear expanded description");
+    expect(clearBtn).not.toBeNull();
+
+    await act(async () => { clearBtn!.props.onPress(); });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/inventory\/1\/expanded-description$/);
+    expect(init.method).toBe("PATCH");
+    expect(init.headers).toMatchObject({
+      "Content-Type": "application/json",
+      Authorization: "Bearer test-token",
+    });
+    expect(JSON.parse(init.body as string)).toEqual({ expandedDescription: null });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["inventory"] });
+
+    mockFetch.mockRestore();
+  });
+
+  it("shows the server error message and does not invalidate queries when fetch responds !ok", async () => {
+    const mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      json: jest.fn().mockResolvedValue({ error: "Unauthorized" }),
+    } as unknown as Response);
+
+    const item = makeItem({
+      binLocations: [],
+      expandedDescription: "Some text",
+    } as unknown as Partial<InventoryItem>);
+
+    const tree = await renderEditor(
+      <PartDetailsEditor
+        item={item}
+        adminToken="test-token"
+        onClose={jest.fn()}
+      />
+    );
+    activeTree = tree;
+
+    const saveBtn = findPressable(tree.root, "Save Expanded Description");
+    expect(saveBtn).not.toBeNull();
+
+    await act(async () => { saveBtn!.props.onPress(); });
+
+    expect(mockInvalidateQueries).not.toHaveBeenCalled();
+
+    const errorNodes = tree.root.findAll(
+      n => typeof n.children?.[0] === "string" && (n.children[0] as string).includes("Unauthorized"),
+      { deep: true },
+    );
+    expect(errorNodes.length).toBeGreaterThan(0);
+
+    mockFetch.mockRestore();
   });
 });
