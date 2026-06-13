@@ -12,6 +12,7 @@ import { RetryImage } from "@/components/RetryImage";
 import { PinIcon } from "@/components/PinIcon";
 import { useColors } from "@/hooks/useColors";
 import { PhotoLightbox } from "@/components/PhotoLightbox";
+import { PartCard } from "@/components/PartCard";
 
 interface ResultCardProps {
   result: SearchResult;
@@ -32,6 +33,8 @@ interface ResultCardProps {
   fontScale?: number;
   /** When true, shows a "Size not measured" badge because no dimension data is stored for this item */
   sizeUnknown?: boolean;
+  /** When true, the Part Details section auto-expands on mount (used for top Photo ID result). */
+  autoExpandPartCard?: boolean;
 }
 
 const CONFIDENCE_COLORS = {
@@ -90,7 +93,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false }: ResultCardProps) {
+export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false, autoExpandPartCard = false }: ResultCardProps) {
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
@@ -410,6 +413,14 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             )}
           </>
         ) : null}
+
+        {/* Part Details (web-sourced specs) */}
+        <PartCard
+          catalog={item.catalog}
+          vendor={item.vendor ?? ""}
+          description={item.expandedDescription ?? item.description ?? ""}
+          autoExpand={autoExpandPartCard}
+        />
 
         {/* Expand chevron */}
         <Text style={[cardStyles.chevron, { color: colors.mutedForeground }]}>
