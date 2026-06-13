@@ -107,6 +107,7 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
   };
 
   const chevronName = open ? "chevron-up" : "chevron-down";
+  const showHint = !open && fetchState.status === "idle";
 
   return (
     <View style={[pcStyles.wrapper, { borderTopColor: colors.border }]}>
@@ -120,6 +121,11 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
         <View style={pcStyles.headerLeft}>
           <Feather name="globe" size={12} color={colors.mutedForeground} />
           <Text style={[pcStyles.headerLabel, { color: colors.mutedForeground }]}>Part Details</Text>
+          {showHint ? (
+            <View style={[pcStyles.hintBadge, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "44" }]}>
+              <Text style={[pcStyles.hintText, { color: colors.primary }]}>specs & cross-refs</Text>
+            </View>
+          ) : null}
         </View>
         <Feather name={chevronName} size={14} color={colors.mutedForeground} />
       </Pressable>
@@ -324,5 +330,17 @@ const pcStyles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     fontStyle: "italic",
     paddingBottom: 4,
+  },
+  hintBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    marginLeft: 4,
+  },
+  hintText: {
+    fontSize: 10,
+    fontFamily: "Inter_500Medium",
+    letterSpacing: 0.2,
   },
 });

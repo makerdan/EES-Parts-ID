@@ -184,6 +184,7 @@ export function AIZeroResultsCard({
                     onShowOnMap={onShowOnMap}
                     rank={i}
                     fontScale={fontScale}
+                    autoExpandPartCard
                   />
                 </View>
               ))}
