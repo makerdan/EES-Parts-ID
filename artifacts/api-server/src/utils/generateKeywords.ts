@@ -6,15 +6,13 @@
  *  - src/seed/bulk-enrich.ts standalone script
  */
 
-import { poe } from "@workspace/integrations-poe-server";
+import { aiClient, ENRICH_MODEL } from "../lib/aiProvider";
 
 export interface EnrichItem {
   vendor: string;
   catalog: string;
   description: string | null;
 }
-
-const DEFAULT_MODEL = "GPT-4o-mini";
 
 /**
  * Junk values that the AI occasionally returns instead of real keywords.
@@ -44,9 +42,9 @@ export function isJunkKeyword(kw: string): boolean {
  */
 export async function generateKeywords(
   item: EnrichItem,
-  model: string = DEFAULT_MODEL,
+  model: string = ENRICH_MODEL,
 ): Promise<string[]> {
-  const response = await poe.chat.completions.create({
+  const response = await aiClient.chat.completions.create({
     model,
     max_completion_tokens: 256,
     messages: [

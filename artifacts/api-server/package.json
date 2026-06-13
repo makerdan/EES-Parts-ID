@@ -28,7 +28,8 @@
     "pino": "^9",
     "pino-http": "^10",
     "sharp": "^0.34.5",
-    "exceljs": "^4.4.0"
+    "exceljs": "^4.4.0",
+    "openai": "^6.27.0"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

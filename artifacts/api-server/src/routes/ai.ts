@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { poe } from "@workspace/integrations-poe-server";
+import { aiClient, IDENTIFY_MODEL } from "../lib/aiProvider";
 import { buildImageContent, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
 import { db } from "@workspace/db";
 import { aiRequestLogTable } from "@workspace/db";
@@ -44,8 +44,8 @@ router.post("/identify", async (req, res) => {
 
     const imageContent = buildImageContent(images);
 
-    const response = await poe.chat.completions.create({
-      model: "GPT-4o",
+    const response = await aiClient.chat.completions.create({
+      model: IDENTIFY_MODEL,
       max_completion_tokens: 1024,
       messages: [
         {
