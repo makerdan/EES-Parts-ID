@@ -62,15 +62,16 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
   # Regenerate API client files so the Expo bundle never serves stale or missing
   # generated modules after a merge (orval cleans the output folder on every run).
-  # A 120-second timeout ensures a hung TypeScript compiler or filesystem lock
-  # fails fast with a clear error instead of blocking the merge indefinitely.
+  # We run orval directly (skipping the tsc --build that the full codegen script
+  # appends) because the typecheck already passed before the merge and tsc --build
+  # can take >20 s, which overruns the post-merge timeout budget.
   echo "[post-merge] Regenerating API client..."
-  timeout 120 pnpm --filter @workspace/api-spec run codegen || {
+  timeout 60 pnpm --filter @workspace/api-spec exec orval --config ./orval.config.ts || {
     CODEGEN_EXIT=$?
     if [[ "$CODEGEN_EXIT" -eq 124 ]]; then
-      echo "[post-merge] ERROR: codegen timed out after 120s. Aborting."
+      echo "[post-merge] ERROR: orval timed out after 60s. Aborting."
     else
-      echo "[post-merge] ERROR: codegen failed (exit ${CODEGEN_EXIT}). Aborting."
+      echo "[post-merge] ERROR: orval failed (exit ${CODEGEN_EXIT}). Aborting."
     fi
     exit 1
   }
