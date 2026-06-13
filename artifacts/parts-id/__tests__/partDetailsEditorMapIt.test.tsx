@@ -33,6 +33,13 @@ import type { InventoryItem } from "@workspace/api-client-react";
 // alongside the jest.mock() call that references it.
 const mockInvalidateQueries = jest.fn().mockResolvedValue(undefined);
 
+// Captures the onConfirm callback that PartDetailsEditor passes to
+// MeasurePartScreen so tests can invoke handleMeasureConfirm directly.
+let mockMeasureOnConfirm: ((dims: { length: number | null; width: number | null; height: number | null; diameter: number | null }) => void) | null = null;
+
+// Spy for the shared invalidateListCache utility.
+const mockInvalidateListCache = jest.fn().mockResolvedValue(undefined);
+
 // ─── @/components/PartPhotoPicker ────────────────────────────────────────────
 
 jest.mock("@/components/PartPhotoPicker", () => ({
@@ -75,9 +82,19 @@ jest.mock("@/components/DismissKeyboard", () => ({
 }));
 
 // ─── @/components/MeasurePartScreen ──────────────────────────────────────────
+// Captures onConfirm so tests can invoke handleMeasureConfirm directly.
 
 jest.mock("@/components/MeasurePartScreen", () => ({
-  MeasurePartScreen: () => null,
+  MeasurePartScreen: (props: { onConfirm?: (dims: { length: number | null; width: number | null; height: number | null; diameter: number | null }) => void; visible?: boolean }) => {
+    mockMeasureOnConfirm = props.onConfirm ?? null;
+    return null;
+  },
+}));
+
+// ─── @/utils/editItemCache ────────────────────────────────────────────────────
+
+jest.mock("@/utils/editItemCache", () => ({
+  invalidateListCache: (...args: unknown[]) => mockInvalidateListCache(...args),
 }));
 
 // ─── @expo/vector-icons ──────────────────────────────────────────────────────
@@ -161,6 +178,7 @@ afterEach(async () => {
     await act(async () => { activeTree!.unmount(); });
     activeTree = null;
   }
+  mockMeasureOnConfirm = null;
   jest.clearAllMocks();
 });
 
@@ -389,6 +407,86 @@ describe("PartDetailsEditor – expanded-description save path", () => {
 
     const errorNodes = tree.root.findAll(
       n => typeof n.children?.[0] === "string" && (n.children[0] as string).includes("Unauthorized"),
+      { deep: true },
+    );
+    expect(errorNodes.length).toBeGreaterThan(0);
+
+    mockFetch.mockRestore();
+  });
+});
+
+// =============================================================================
+// PartDetailsEditor – dimensions save path (handleMeasureConfirm)
+// =============================================================================
+
+describe("PartDetailsEditor – dimensions save path", () => {
+  const TEST_DIMS = { length: 120, width: 80, height: 45, diameter: null };
+
+  it("PATCHes the correct endpoint with all dimension fields and calls invalidateListCache + invalidateQueries on success", async () => {
+    const mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({}),
+    } as unknown as Response);
+
+    const item = makeItem({ binLocations: [] });
+
+    const tree = await renderEditor(
+      <PartDetailsEditor
+        item={item}
+        adminToken="test-token"
+        onClose={jest.fn()}
+      />
+    );
+    activeTree = tree;
+
+    expect(mockMeasureOnConfirm).not.toBeNull();
+
+    await act(async () => { mockMeasureOnConfirm!(TEST_DIMS); });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/inventory\/1\/dimensions$/);
+    expect(init.method).toBe("PATCH");
+    expect(init.headers).toMatchObject({
+      "Content-Type": "application/json",
+      Authorization: "Bearer test-token",
+    });
+    expect(JSON.parse(init.body as string)).toEqual(TEST_DIMS);
+
+    expect(mockInvalidateListCache).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["searchInventory"] });
+
+    mockFetch.mockRestore();
+  });
+
+  it("shows a user-visible error and does not call invalidateListCache when fetch responds !ok", async () => {
+    const mockFetch = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      json: jest.fn().mockResolvedValue({ error: "Write failed" }),
+    } as unknown as Response);
+
+    const item = makeItem({ binLocations: [] });
+
+    const tree = await renderEditor(
+      <PartDetailsEditor
+        item={item}
+        adminToken="test-token"
+        onClose={jest.fn()}
+      />
+    );
+    activeTree = tree;
+
+    expect(mockMeasureOnConfirm).not.toBeNull();
+
+    await act(async () => { mockMeasureOnConfirm!(TEST_DIMS); });
+
+    expect(mockInvalidateListCache).not.toHaveBeenCalled();
+    expect(mockInvalidateQueries).not.toHaveBeenCalled();
+
+    const errorNodes = tree.root.findAll(
+      n => typeof n.children?.[0] === "string" &&
+        (n.children[0] as string).includes("Could not save dimensions"),
       { deep: true },
     );
     expect(errorNodes.length).toBeGreaterThan(0);
