@@ -345,7 +345,7 @@ SKIP_DB_EXIT=$?
 rm -rf "$MOCK_BIN_DIR2"
 
 assert_exit     "db push skip — exits 0 when schema unchanged" 0 "$SKIP_DB_EXIT"
-assert_contains "db push skip — prints skip message" "Schema unchanged — skipping db push" "$SKIP_DB_OUTPUT"
+assert_contains "db push skip — prints skip message" "Schema unchanged — skipping db push and FTS check" "$SKIP_DB_OUTPUT"
 
 # ---------------------------------------------------------------------------
 # Test 13: db push runs when schema files changed

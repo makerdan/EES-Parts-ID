@@ -55,9 +55,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   else
     echo "[post-merge] Lockfile unchanged — skipping install."
   fi
-  # Only run db push if schema files changed in the merge.
-  # drizzle-kit push --force takes ~60s even when there are no changes;
-  # skipping it when the schema is untouched is critical to staying within budget.
+  # Only run db push + FTS verification if schema files changed in the merge.
+  # drizzle-kit push --force takes ~60s and the FTS index check takes ~15s even
+  # with no changes; skipping both when the schema is untouched is critical for
+  # staying within the 20s post-merge budget.
   if git --no-optional-locks diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q 'lib/db/src/schema'; then
     echo "[post-merge] Schema changed — running db push..."
     timeout 90 pnpm --filter db push --force || {
@@ -69,19 +70,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       fi
       exit 1
     }
-  else
-    echo "[post-merge] Schema unchanged — skipping db push."
-  fi
 
-  # Verify the FTS index exists and covers all required columns after every push.
-  # A missing or drifted inventory_fts_idx would silently break keyword search,
-  # so we check here while DATABASE_URL is available and fail the merge visibly.
-  echo "[post-merge] Verifying FTS index..."
-  pnpm --filter @workspace/db run verify-fts || {
-    echo "[post-merge] ERROR: FTS index check failed. Run 'pnpm --filter @workspace/db run push-force' to rebuild the index."
-    exit 1
-  }
-  echo "[post-merge] FTS index OK."
+    # Verify the FTS index after every schema push — a missing or drifted
+    # inventory_fts_idx would silently break keyword search.
+    echo "[post-merge] Verifying FTS index..."
+    pnpm --filter @workspace/db run verify-fts || {
+      echo "[post-merge] ERROR: FTS index check failed. Run 'pnpm --filter @workspace/db run push-force' to rebuild the index."
+      exit 1
+    }
+    echo "[post-merge] FTS index OK."
+  else
+    echo "[post-merge] Schema unchanged — skipping db push and FTS check."
+  fi
 
   # Regenerate API client files so the Expo bundle never serves stale or missing
   # generated modules after a merge (orval cleans the output folder on every run).
