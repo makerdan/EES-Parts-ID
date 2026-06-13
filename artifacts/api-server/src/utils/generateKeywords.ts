@@ -6,7 +6,7 @@
  *  - src/seed/bulk-enrich.ts standalone script
  */
 
-import { aiClient, ENRICH_MODEL } from "../lib/aiProvider";
+import { getAiClient, getEnrichModel } from "../lib/aiProvider";
 import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
 
 export interface EnrichItem {
@@ -62,11 +62,11 @@ export interface PoeEnrichedError extends Error {
  */
 export async function generateKeywords(
   item: EnrichItem,
-  model: string = ENRICH_MODEL,
+  model: string = getEnrichModel(),
 ): Promise<string[]> {
   let response;
   try {
-    response = await aiClient.chat.completions.create({
+    response = await getAiClient().chat.completions.create({
       model,
       max_completion_tokens: 256,
       messages: [

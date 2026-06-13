@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { db, adminPreferencesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { AdminProfilePayloadSchema, ShelfPreferencesPayloadSchema } from "@workspace/api-zod";
+import { getProvider, setProvider, type AIProvider } from "../lib/aiProvider";
 
 const router = Router();
 
@@ -245,6 +246,33 @@ router.patch("/shelf-preferences", requireAdminAuth, async (req, res) => {
     return res.json({ shelfPrefix: row?.shelfPrefix ?? null, shelfStep: row?.shelfStep ?? null });
   } catch {
     return res.status(500).json({ error: "Failed to update shelf preferences" });
+  }
+});
+
+// ── GET /admin/ai-provider ────────────────────────────────────────────────────
+// Returns the currently active AI provider.
+router.get("/ai-provider", requireAdminAuth, (_req, res) => {
+  return res.json({ provider: getProvider() });
+});
+
+// ── POST /admin/ai-provider ───────────────────────────────────────────────────
+// Switches the active AI provider at runtime without restarting the server.
+// Body: { provider: "poe" | "openai" }
+router.post("/ai-provider", requireAdminAuth, (req, res) => {
+  const { provider } = req.body as { provider?: unknown };
+
+  if (provider !== "poe" && provider !== "openai") {
+    return res
+      .status(400)
+      .json({ error: 'provider must be "poe" or "openai"' });
+  }
+
+  try {
+    setProvider(provider as AIProvider);
+    return res.json({ provider: getProvider() });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(503).json({ error: message });
   }
 });
 

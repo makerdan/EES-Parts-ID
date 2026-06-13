@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { aiClient, REFERENCE_MODEL } from "../lib/aiProvider";
+import { getAiClient, getReferenceModel } from "../lib/aiProvider";
 import { isPoeAuthError, poeErrorMessage } from "@workspace/integrations-poe-server";
 import { logger } from "../lib/logger";
 import { db } from "@workspace/db";
@@ -110,8 +110,8 @@ async function collectStreamedAnswer(question: string): Promise<{ answer: string
   const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question);
   const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
 
-  const stream = await aiClient.chat.completions.create({
-    model: REFERENCE_MODEL,
+  const stream = await getAiClient().chat.completions.create({
+    model: getReferenceModel(),
     max_completion_tokens: 512,
     stream: true,
     messages: [
@@ -178,8 +178,8 @@ router.post("/ask", async (req, res) => {
     const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question.trim());
     const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
 
-    const stream = await aiClient.chat.completions.create({
-      model: REFERENCE_MODEL,
+    const stream = await getAiClient().chat.completions.create({
+      model: getReferenceModel(),
       max_completion_tokens: 512,
       stream: true,
       messages: [

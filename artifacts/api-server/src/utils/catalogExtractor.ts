@@ -8,7 +8,7 @@
  * It is null when the extraction is text-only (no page rendering available).
  */
 
-import { aiClient, CATALOG_MODEL } from "../lib/aiProvider";
+import { getAiClient, getCatalogModel } from "../lib/aiProvider";
 
 export interface ImageRegion {
   x: number;
@@ -66,8 +66,8 @@ export async function extractCatalogPage(
   if (userContent.length === 0) return [];
 
   try {
-    const response = await aiClient.chat.completions.create({
-      model: CATALOG_MODEL,
+    const response = await getAiClient().chat.completions.create({
+      model: getCatalogModel(),
       max_completion_tokens: 2048,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },

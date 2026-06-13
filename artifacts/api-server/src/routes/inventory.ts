@@ -28,7 +28,7 @@ import {
 } from "../utils/searchHelpers";
 import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
 import { generateKeywords } from "../utils/generateKeywords";
-import { aiClient, ENRICH_MODEL, DIMENSIONS_MODEL } from "../lib/aiProvider";
+import { getAiClient, getEnrichModel, getDimensionsModel } from "../lib/aiProvider";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { resizeImages } from "../utils/imageResize";
@@ -1530,7 +1530,7 @@ router.post("/expand-descriptions", requireAdminAuth, async (_req, res) => {
       .limit(BATCH_SIZE);
 
     if (!itemsToExpand.length) {
-      send({ model: ENRICH_MODEL, done: true, processed: 0, total: 0, remaining: 0 });
+      send({ model: getEnrichModel(), done: true, processed: 0, total: 0, remaining: 0 });
       res.end();
       return;
     }
@@ -1538,12 +1538,12 @@ router.post("/expand-descriptions", requireAdminAuth, async (_req, res) => {
     const total = itemsToExpand.length;
     let processed = 0;
 
-    send({ model: ENRICH_MODEL, total });
+    send({ model: getEnrichModel(), total });
 
     for (const item of itemsToExpand) {
       try {
-        const response = await aiClient.chat.completions.create({
-          model: ENRICH_MODEL,
+        const response = await getAiClient().chat.completions.create({
+          model: getEnrichModel(),
           max_completion_tokens: 300,
           messages: [
             {
@@ -2240,8 +2240,8 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
       return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
     }
 
-    const response = await aiClient.chat.completions.create({
-      model: DIMENSIONS_MODEL,
+    const response = await getAiClient().chat.completions.create({
+      model: getDimensionsModel(),
       max_completion_tokens: 256,
       messages: [
         {
@@ -2324,8 +2324,8 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
       return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
     }
 
-    const response = await aiClient.chat.completions.create({
-      model: DIMENSIONS_MODEL,
+    const response = await getAiClient().chat.completions.create({
+      model: getDimensionsModel(),
       max_completion_tokens: 256,
       messages: [
         {
