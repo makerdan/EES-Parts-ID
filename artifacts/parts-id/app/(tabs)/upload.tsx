@@ -138,6 +138,7 @@ type EnrichProgress = {
 type BulkJobStatus = {
   running: boolean;
   stopRequested: boolean;
+  force: boolean;
   startedAt: string | null;
   processed: number;
   errors: number;
@@ -842,13 +843,14 @@ export default function UploadScreen() {
     if (pasteDebounceRef.current) clearTimeout(pasteDebounceRef.current);
   }, [stopBulkPoll, stopMeasurePoll]);
 
-  const handleStartBulkEnrich = async () => {
+  const handleStartBulkEnrich = async (force = false) => {
     setBulkEnrichError(null);
     setBulkEnrichPending(true);
     try {
       const res = await fetch(`${API_BASE}/inventory/bulk-enrich`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({ force }),
       });
       if (res.status === 409) {
         const data = await res.json() as { job: BulkJobStatus };
@@ -2043,15 +2045,28 @@ export default function UploadScreen() {
                         </View>
                       ) : null}
                       <Pressable
-                        onPress={handleStartBulkEnrich}
+                        onPress={() => handleStartBulkEnrich(false)}
                         disabled={bulkJobStatus?.running || bulkEnrichPending}
                         style={[styles.enrichBtn, { backgroundColor: (bulkJobStatus?.running || bulkEnrichPending) ? colors.muted : colors.primary }]}
                       >
-                        {bulkEnrichPending ? (
+                        {bulkEnrichPending && !bulkJobStatus?.force ? (
                           <ActivityIndicator color={colors.primaryForeground} />
                         ) : (
                           <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
-                            {bulkJobStatus?.running ? "⏳ Enrichment Running…" : "🚀 Start Bulk Enrichment"}
+                            {bulkJobStatus?.running && !bulkJobStatus.force ? "⏳ Enrichment Running…" : "🚀 Start Bulk Enrichment"}
+                          </Text>
+                        )}
+                      </Pressable>
+                      <Pressable
+                        onPress={() => handleStartBulkEnrich(true)}
+                        disabled={bulkJobStatus?.running || bulkEnrichPending}
+                        style={[styles.enrichBtn, { marginTop: 8, backgroundColor: (bulkJobStatus?.running || bulkEnrichPending) ? colors.muted : colors.warning }]}
+                      >
+                        {bulkEnrichPending && bulkJobStatus?.force ? (
+                          <ActivityIndicator color={colors.primaryForeground} />
+                        ) : (
+                          <Text style={[styles.enrichBtnText, { color: colors.primaryForeground }]}>
+                            {bulkJobStatus?.running && bulkJobStatus.force ? "⏳ Re-enriching All…" : "🔄 Re-enrich All (force)"}
                           </Text>
                         )}
                       </Pressable>
