@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { aiClient, REFERENCE_MODEL } from "../lib/aiProvider";
 import { isPoeAuthError, poeErrorMessage } from "@workspace/integrations-poe-server";
 import { logger } from "../lib/logger";
 import { db } from "@workspace/db";
@@ -110,8 +110,8 @@ async function collectStreamedAnswer(question: string): Promise<{ answer: string
   const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question);
   const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
 
-  const stream = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+  const stream = await aiClient.chat.completions.create({
+    model: REFERENCE_MODEL,
     max_completion_tokens: 512,
     stream: true,
     messages: [
@@ -178,8 +178,8 @@ router.post("/ask", async (req, res) => {
     const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question.trim());
     const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
 
-    const stream = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const stream = await aiClient.chat.completions.create({
+      model: REFERENCE_MODEL,
       max_completion_tokens: 512,
       stream: true,
       messages: [

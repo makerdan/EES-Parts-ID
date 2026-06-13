@@ -28,7 +28,7 @@ import {
 } from "../utils/searchHelpers";
 import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
 import { generateKeywords } from "../utils/generateKeywords";
-import { aiClient, ENRICH_MODEL } from "../lib/aiProvider";
+import { aiClient, ENRICH_MODEL, DIMENSIONS_MODEL } from "../lib/aiProvider";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { resizeImages } from "../utils/imageResize";
@@ -2238,10 +2238,8 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
       return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
     }
 
-    const { openai } = await import("@workspace/integrations-openai-ai-server");
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-5.1",
+    const response = await aiClient.chat.completions.create({
+      model: DIMENSIONS_MODEL,
       max_completion_tokens: 256,
       messages: [
         {
@@ -2324,10 +2322,8 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
       return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
     }
 
-    const { openai } = await import("@workspace/integrations-openai-ai-server");
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-5.1",
+    const response = await aiClient.chat.completions.create({
+      model: DIMENSIONS_MODEL,
       max_completion_tokens: 256,
       messages: [
         {

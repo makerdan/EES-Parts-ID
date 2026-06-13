@@ -8,7 +8,7 @@
  * It is null when the extraction is text-only (no page rendering available).
  */
 
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { aiClient, CATALOG_MODEL } from "../lib/aiProvider";
 
 export interface ImageRegion {
   x: number;
@@ -66,8 +66,8 @@ export async function extractCatalogPage(
   if (userContent.length === 0) return [];
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+    const response = await aiClient.chat.completions.create({
+      model: CATALOG_MODEL,
       max_completion_tokens: 2048,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },

@@ -1,6 +1,6 @@
 import { db } from "@workspace/db";
 import { quickLookupCacheTable } from "@workspace/db";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { aiClient, ENRICH_MODEL } from "../lib/aiProvider";
 import { normalizeQuestion, hashQuestion, setCachedAnswer } from "../lib/answerCache";
 
 const SYSTEM_PROMPT =
@@ -22,8 +22,8 @@ export const QUICK_LOOKUP_CHIPS: Array<{ label: string; question: string }> = [
 ];
 
 async function generateAnswer(question: string): Promise<string> {
-  const stream = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+  const stream = await aiClient.chat.completions.create({
+    model: ENRICH_MODEL,
     max_completion_tokens: 512,
     stream: true,
     messages: [
