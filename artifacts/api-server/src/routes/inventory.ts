@@ -1376,6 +1376,7 @@ router.post("/enrich", requireAdminAuth, async (req, res) => {
 interface BulkEnrichJob {
   running: boolean;
   stopRequested: boolean;
+  force: boolean;
   startedAt: Date | null;
   processed: number;
   errors: number;
@@ -1388,6 +1389,7 @@ interface BulkEnrichJob {
 const bulkEnrichJob: BulkEnrichJob = {
   running: false,
   stopRequested: false,
+  force: false,
   startedAt: null,
   processed: 0,
   errors: 0,
@@ -1425,14 +1427,18 @@ async function enrichItemWithRetry(item: {
   throw lastErr;
 }
 
-async function runBulkEnrich() {
-  const [{ total }] = await db
-    .select({ total: sql<number>`count(*)::int` })
-    .from(inventoryTable)
-    .where(sql`${inventoryTable.enrichedAt} IS NULL`);
+async function runBulkEnrich(force = false) {
+  const modeLabel = force ? "all items (force re-enrich)" : "unenriched items";
 
-  bulkEnrichJob.total = total;
-  console.log(`[bulk-enrich] Starting – ${total} unenriched items (model: ${BULK_ENRICH_MODEL})`);
+  const [countRow] = force
+    ? await db.select({ total: sql<number>`count(*)::int` }).from(inventoryTable)
+    : await db.select({ total: sql<number>`count(*)::int` }).from(inventoryTable)
+        .where(sql`${inventoryTable.enrichedAt} IS NULL`);
+
+  bulkEnrichJob.total = countRow!.total;
+  console.log(`[bulk-enrich] Starting – ${countRow!.total} ${modeLabel} (model: ${BULK_ENRICH_MODEL})`);
+
+  let cursorId = 0;
 
   while (true) {
     if (bulkEnrichJob.stopRequested) {
@@ -1440,16 +1446,32 @@ async function runBulkEnrich() {
       break;
     }
 
-    const batch = await db
-      .select({
-        id: inventoryTable.id,
-        vendor: inventoryTable.vendor,
-        catalog: inventoryTable.catalog,
-        description: inventoryTable.description,
-      })
-      .from(inventoryTable)
-      .where(sql`${inventoryTable.enrichedAt} IS NULL`)
-      .limit(BULK_ENRICH_BATCH);
+    let batch: { id: number; vendor: string; catalog: string; description: string | null }[];
+
+    if (force) {
+      batch = await db
+        .select({
+          id: inventoryTable.id,
+          vendor: inventoryTable.vendor,
+          catalog: inventoryTable.catalog,
+          description: inventoryTable.description,
+        })
+        .from(inventoryTable)
+        .where(sql`${inventoryTable.id} > ${cursorId}`)
+        .orderBy(inventoryTable.id)
+        .limit(BULK_ENRICH_BATCH);
+    } else {
+      batch = await db
+        .select({
+          id: inventoryTable.id,
+          vendor: inventoryTable.vendor,
+          catalog: inventoryTable.catalog,
+          description: inventoryTable.description,
+        })
+        .from(inventoryTable)
+        .where(sql`${inventoryTable.enrichedAt} IS NULL`)
+        .limit(BULK_ENRICH_BATCH);
+    }
 
     if (batch.length === 0) break;
 
@@ -1473,6 +1495,10 @@ async function runBulkEnrich() {
           console.error(`[bulk-enrich] Error id=${item.id} (${item.vendor}/${item.catalog}):`, r.reason);
         }
       }
+    }
+
+    if (force) {
+      cursorId = batch[batch.length - 1]!.id;
     }
 
     await new Promise((r) => setTimeout(r, BULK_ENRICH_DELAY_MS));
@@ -1644,13 +1670,16 @@ router.patch("/:id/expanded-description", requireAdminAuth, async (req, res) => 
 });
 
 // ── POST /inventory/bulk-enrich ───────────────────────────────────────────────
-router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
+router.post("/bulk-enrich", requireAdminAuth, (req, res) => {
   if (bulkEnrichJob.running) {
     return void res.status(409).json({ error: "Bulk enrichment already running", job: bulkEnrichJob });
   }
 
+  const force = req.body?.force === true;
+
   bulkEnrichJob.running = true;
   bulkEnrichJob.stopRequested = false;
+  bulkEnrichJob.force = force;
   bulkEnrichJob.startedAt = new Date();
   bulkEnrichJob.processed = 0;
   bulkEnrichJob.errors = 0;
@@ -1659,14 +1688,15 @@ router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
   bulkEnrichJob.lastError = null;
   bulkEnrichJob.model = BULK_ENRICH_MODEL;
 
-  runBulkEnrich().catch((err) => {
+  runBulkEnrich(force).catch((err) => {
     bulkEnrichJob.running = false;
     bulkEnrichJob.finishedAt = new Date();
     bulkEnrichJob.lastError = String(err);
     console.error("[bulk-enrich] Fatal error:", err);
   });
 
-  res.status(202).json({ message: "Bulk enrichment started", job: bulkEnrichJob });
+  const message = force ? "Force re-enrichment started (all items)" : "Bulk enrichment started";
+  res.status(202).json({ message, job: bulkEnrichJob });
 });
 
 // ── GET /inventory/bulk-enrich/status ─────────────────────────────────────────
