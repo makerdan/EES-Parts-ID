@@ -23,3 +23,30 @@ export async function callGemini(
   });
   return response.text ?? "";
 }
+
+/**
+ * Call Gemini-2.5-Flash with a multi-turn conversation history.
+ *
+ * Prior turns are interleaved as alternating user/model roles. The current
+ * user message is appended at the end. Returns the model's full text response.
+ */
+export async function callGeminiWithHistory(
+  systemInstruction: string,
+  history: { q: string; a: string }[],
+  userMessage: string,
+): Promise<string> {
+  const priorTurns = history.flatMap((turn) => [
+    { role: "user" as const, parts: [{ text: turn.q }] },
+    { role: "model" as const, parts: [{ text: turn.a }] },
+  ]);
+
+  const response = await ai.models.generateContent({
+    model: WEB_REFERENCE_MODEL,
+    contents: [...priorTurns, { role: "user", parts: [{ text: userMessage }] }],
+    config: {
+      systemInstruction,
+      maxOutputTokens: 8192,
+    },
+  });
+  return response.text ?? "";
+}

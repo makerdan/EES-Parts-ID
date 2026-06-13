@@ -10,7 +10,7 @@ import {
   getCachedAnswer,
   setCachedAnswer,
 } from "../lib/answerCache";
-import { callGemini, WEB_REFERENCE_MODEL } from "../lib/webSearch";
+import { callGemini, callGeminiWithHistory, WEB_REFERENCE_MODEL } from "../lib/webSearch";
 
 const router = Router();
 
@@ -149,7 +149,7 @@ async function callGeminiReference(
 }
 
 /**
- * Collect the full answer via Gemini-2.5-Flash.
+ * Collect the full answer via Gemini-2.5-Flash (single-turn, cacheable).
  * Returns the text, matched inventory count, and whether web search was used.
  */
 async function collectAnswer(
@@ -161,14 +161,33 @@ async function collectAnswer(
   return { answer, matchedItemCount, usedWebSearch };
 }
 
+/**
+ * Collect a multi-turn answer via Gemini-2.5-Flash (history-aware, not cached).
+ * Returns the text, matched inventory count, and whether web search was used.
+ */
+async function collectAnswerWithHistory(
+  question: string,
+  history: { q: string; a: string }[],
+): Promise<{ answer: string; matchedItemCount: number; usedWebSearch: boolean }> {
+  const { context: inventoryContext, count: matchedItemCount } = await buildInventoryContext(question);
+  const systemContent = BASE_SYSTEM_PROMPT + inventoryContext;
+  const answer = await callGeminiWithHistory(systemContent, history, question);
+  const usedWebSearch = answer.trimStart().startsWith("*(web)*");
+  return { answer, matchedItemCount, usedWebSearch };
+}
+
 // POST /reference/ask — SSE streaming or JSON reference Q&A
 router.post("/ask", async (req, res) => {
   try {
-    const { question } = req.body as { question: string };
+    const { question, history } = req.body as {
+      question: string;
+      history?: { q: string; a: string }[];
+    };
     if (!question?.trim()) {
       return void res.status(400).json({ error: "question is required" });
     }
 
+    const hasHistory = Array.isArray(history) && history.length > 0;
     const normalized = normalizeQuestion(question);
     const questionHash = hashQuestion(normalized);
 
@@ -177,16 +196,22 @@ router.post("/ask", async (req, res) => {
       (req.headers["accept"] ?? "").includes("application/json");
 
     if (wantsJson) {
-      const cached = await getCachedAnswer(questionHash);
-      if (cached !== null) {
-        logger.debug({ questionHash }, "reference.ask cache hit (json)");
-        writeAiRequestLog("reference");
-        return void res.json({ answer: cached });
+      if (!hasHistory) {
+        const cached = await getCachedAnswer(questionHash);
+        if (cached !== null) {
+          logger.debug({ questionHash }, "reference.ask cache hit (json)");
+          writeAiRequestLog("reference");
+          return void res.json({ answer: cached });
+        }
       }
 
-      const { answer, matchedItemCount, usedWebSearch } = await collectAnswer(question.trim());
+      const { answer, matchedItemCount, usedWebSearch } = hasHistory
+        ? await collectAnswerWithHistory(question.trim(), history!)
+        : await collectAnswer(question.trim());
       writeReferenceLog(question.trim(), answer, matchedItemCount);
-      setCachedAnswer(questionHash, normalized, answer, usedWebSearch).catch(() => {});
+      if (!hasHistory) {
+        setCachedAnswer(questionHash, normalized, answer, usedWebSearch).catch(() => {});
+      }
       writeAiRequestLog("reference");
       return void res.json({ answer });
     }
