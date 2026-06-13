@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { isPoeAuthError, poeErrorMessage } from "@workspace/integrations-poe-server";
 import { logger } from "../lib/logger";
 import { db } from "@workspace/db";
 import { quickLookupCacheTable, inventoryTable, referenceLogTable, aiRequestLogTable } from "@workspace/db";
@@ -206,6 +207,21 @@ router.post("/ask", async (req, res) => {
     }
   } catch (err) {
     logger.error({ err }, "reference.ask failed");
+    const poeMsg = poeErrorMessage(err);
+    if (poeMsg !== null) {
+      const status = isPoeAuthError(err) ? 401 : 502;
+      if (res.headersSent) {
+        try {
+          res.write(`event: error\ndata: ${JSON.stringify({ error: poeMsg })}\n\n`);
+        } catch {
+          // Connection may already be torn down.
+        }
+        res.end();
+      } else {
+        res.status(status).json({ error: poeMsg });
+      }
+      return;
+    }
     if (res.headersSent) {
       try {
         res.write(
@@ -297,6 +313,11 @@ router.post("/quick-lookups/:label", async (req, res) => {
     res.json({ answer });
   } catch (err) {
     logger.error({ err }, "reference.quick-lookups post failed");
+    const poeMsg = poeErrorMessage(err);
+    if (poeMsg !== null) {
+      res.status(isPoeAuthError(err) ? 401 : 502).json({ error: poeMsg });
+      return;
+    }
     res.status(500).json({ error: GENERIC_ERROR_MESSAGE });
   }
 });
