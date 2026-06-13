@@ -131,7 +131,7 @@ export const AI_PROVIDER: AIProvider = _provider;
 // ── Poe bot name constants ─────────────────────────────────────────────────────
 
 /** Poe bot used for keyword enrichment and reference Q&A (fast, cheap). */
-export const POE_ENRICH_BOT = "Claude-Haiku-4.5";
+export const POE_ENRICH_BOT = "GPT-5-Mini";
 
 /** Poe bot used for part identification and catalog PDF extraction (vision capable). */
 export const POE_IDENTIFY_BOT = "Claude-Sonnet-4.5";
