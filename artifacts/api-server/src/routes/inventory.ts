@@ -1271,6 +1271,15 @@ router.post("/upsert-batch", requireAdminAuth, async (req, res) => {
     }
 
     invalidateReferenceAnswerCache().catch(() => {});
+
+    // Refresh planner statistics after a bulk upsert so inventory_fts_idx
+    // remains the chosen scan plan even when reltuples was stale before import.
+    // Fire-and-forget: ANALYZE can take a few seconds on large tables and must
+    // not block the HTTP response.
+    db.execute(sql`ANALYZE inventory`).catch((err) => {
+      logger.warn({ err }, "ANALYZE inventory failed after upsert-batch");
+    });
+
     res.json({ inserted, updated, total: items.length });
   } catch (err) {
     console.error(err);

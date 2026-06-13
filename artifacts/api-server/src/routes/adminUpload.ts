@@ -432,6 +432,15 @@ router.post("/upload", requireAdminAuth, async (req, res) => {
     }
 
     invalidateReferenceAnswerCache().catch(() => {});
+
+    // Refresh planner statistics after a bulk import so inventory_fts_idx
+    // remains the chosen scan plan even when reltuples was stale before import.
+    // Fire-and-forget: ANALYZE can take a few seconds on large tables and must
+    // not block the HTTP response.
+    db.execute(sql`ANALYZE inventory`).catch((err) => {
+      console.warn("[adminUpload] ANALYZE inventory failed:", err);
+    });
+
     res.json({ inserted, updated, total: rows.length });
   } catch (err) {
     console.error(err);

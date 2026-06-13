@@ -151,6 +151,52 @@ async function importSpreadsheet() {
   console.log(`Errors:   ${errors}`);
   console.log(`Total:    ${inserted + updated + errors}`);
 
+  // Refresh PostgreSQL planner statistics so inventory_fts_idx continues to be
+  // chosen over a sequential scan after this bulk load.
+  console.log("\nRunning ANALYZE inventory to refresh query-planner statistics...");
+  await db.execute(sql`ANALYZE inventory`);
+  console.log("ANALYZE complete.");
+
+  // Phase 2 planner smoke-test: confirm inventory_fts_idx is used by the planner.
+  // Mirrors lib/db/scripts/verify-fts-index.ts Phase 2 logic.
+  console.log("Running FTS planner smoke-test...");
+  {
+    const FTS_VECTOR_EXPR =
+      `to_tsvector('english', ` +
+      `coalesce(i.vendor,'') || ' ' || ` +
+      `coalesce(i.catalog,'') || ' ' || ` +
+      `coalesce(i.description,'') || ' ' || ` +
+      `coalesce(i.expanded_description,'') || ' ' || ` +
+      `immutable_array_to_string(i.ai_keywords,' '))`;
+
+    const countRes = await pool.query<{ n: string }>(
+      `SELECT COUNT(*)::int AS n FROM inventory`,
+    );
+    const rowCount = parseInt(countRes.rows[0]?.n ?? "0", 10);
+
+    if (rowCount === 0) {
+      console.warn("WARN: inventory table is empty — planner check skipped.");
+    } else {
+      const explainRes = await pool.query<{ "QUERY PLAN": string }>(
+        `EXPLAIN (ANALYZE, FORMAT TEXT, BUFFERS OFF)
+         SELECT i.id FROM inventory i
+         WHERE ${FTS_VECTOR_EXPR} @@ websearch_to_tsquery('english', 'xverifyftszz')
+         LIMIT 1`,
+      );
+      const planText = explainRes.rows.map((r) => r["QUERY PLAN"]).join("\n");
+      const INDEX_SCAN_RE =
+        /(?:Index Scan using|Bitmap Index Scan on)\s+inventory_fts_idx\b/;
+      if (INDEX_SCAN_RE.test(planText)) {
+        console.log("OK: query planner is using inventory_fts_idx.");
+      } else {
+        console.warn(
+          "WARN: inventory_fts_idx was NOT chosen by the planner after ANALYZE.\n" +
+          "      Check enable_seqscan GUC or whether the index was dropped.",
+        );
+      }
+    }
+  }
+
   await pool.end();
 }
 
