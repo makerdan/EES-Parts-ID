@@ -29,7 +29,19 @@ description: How Poe's server bot API actually works, and why the existing OpenA
 ## What `allow_retry: true` means
 HTTP 200 + `event: error` + `allow_retry: true` = transient server error OR account-level permission issue. If ALL bots (including free "Assistant") return this, the POE_API_KEY doesn't have bot-calling permissions or is tied to a disabled account.
 
+## Bot naming rule
+Poe bot names are **all lowercase, no spaces, and case-sensitive**. Mixed-case names (e.g. `"GPT-4o"`, `"GPT-5-mini"`) cause HTTP 404 from the Poe API even when the protocol and key are correct.
+
+Correct examples:
+- `"gpt-4o-mini"` (not `"GPT-4o-mini"`)
+- `"gpt-4o"` (not `"GPT-4o"`)
+- `"gpt-5-mini"` (not `"GPT-5-mini"`)
+- `"gpt-5.1"` (not `"GPT-5.1"`)
+
+**Why:** Poe's routing is exact-match on the bot name slug; uppercase letters produce a 404.
+
 ## How to apply
 - If rewiring Poe: implement raw `fetch` SSE parsing, do NOT use OpenAI SDK for Poe bot calls.
+- Always use lowercase bot names in `aiProvider.ts` Poe branches and any `ENRICH_MODEL`-style fallbacks.
 - The implemented `callPoeBot()` in `artifacts/api-server/src/lib/webSearch.ts` has the correct raw fetch implementation.
 - The project pivoted to Replit's Gemini integration (`@workspace/integrations-gemini-ai` / `gemini-2.5-flash`) when Poe key was non-functional.

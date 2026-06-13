@@ -135,7 +135,7 @@ export const AI_PROVIDER: AIProvider = _provider;
  * Reflects the currently active provider.
  */
 export function getEnrichModel(): string {
-  return _provider === "openai" ? "gpt-4o-mini" : "GPT-5-mini";
+  return _provider === "openai" ? "gpt-4o-mini" : "gpt-5-mini";
 }
 
 /**
@@ -143,7 +143,7 @@ export function getEnrichModel(): string {
  * Reflects the currently active provider.
  */
 export function getIdentifyModel(): string {
-  return _provider === "openai" ? "gpt-4o" : "GPT-4o";
+  return _provider === "openai" ? "gpt-4o" : "gpt-4o";
 }
 
 /**
@@ -167,18 +167,18 @@ export function getCatalogModel(): string {
  * Reflects the currently active provider.
  */
 export function getDimensionsModel(): string {
-  return _provider === "openai" ? "gpt-5.1" : "GPT-5.1";
+  return _provider === "openai" ? "gpt-5.1" : "gpt-5.1";
 }
 
 /**
  * @deprecated Use getEnrichModel() so the value updates after setProvider().
  */
-export const ENRICH_MODEL: string = _provider === "openai" ? "gpt-4o-mini" : "GPT-5-mini";
+export const ENRICH_MODEL: string = _provider === "openai" ? "gpt-4o-mini" : "gpt-5-mini";
 
 /**
  * @deprecated Use getIdentifyModel() so the value updates after setProvider().
  */
-export const IDENTIFY_MODEL: string = _provider === "openai" ? "gpt-4o" : "GPT-4o";
+export const IDENTIFY_MODEL: string = _provider === "openai" ? "gpt-4o" : "gpt-4o";
 
 /**
  * @deprecated Use getReferenceModel() so the value updates after setProvider().
@@ -193,4 +193,4 @@ export const CATALOG_MODEL: string = IDENTIFY_MODEL;
 /**
  * @deprecated Use getDimensionsModel() so the value updates after setProvider().
  */
-export const DIMENSIONS_MODEL: string = _provider === "openai" ? "gpt-5.1" : "GPT-5.1";
+export const DIMENSIONS_MODEL: string = _provider === "openai" ? "gpt-5.1" : "gpt-5.1";
