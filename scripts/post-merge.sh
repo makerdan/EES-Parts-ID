@@ -55,15 +55,23 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   else
     echo "[post-merge] Lockfile unchanged — skipping install."
   fi
-  timeout 30 pnpm --filter db push --force || {
-    DB_EXIT=$?
-    if [[ "$DB_EXIT" -eq 124 ]]; then
-      echo "[post-merge] ERROR: db push timed out after 30s. Aborting."
-    else
-      echo "[post-merge] ERROR: db push failed (exit ${DB_EXIT}). Aborting."
-    fi
-    exit 1
-  }
+  # Only run db push if schema files changed in the merge.
+  # drizzle-kit push --force takes ~60s even when there are no changes;
+  # skipping it when the schema is untouched is critical to staying within budget.
+  if git --no-optional-locks diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q 'lib/db/src/schema'; then
+    echo "[post-merge] Schema changed — running db push..."
+    timeout 90 pnpm --filter db push --force || {
+      DB_EXIT=$?
+      if [[ "$DB_EXIT" -eq 124 ]]; then
+        echo "[post-merge] ERROR: db push timed out after 90s. Aborting."
+      else
+        echo "[post-merge] ERROR: db push failed (exit ${DB_EXIT}). Aborting."
+      fi
+      exit 1
+    }
+  else
+    echo "[post-merge] Schema unchanged — skipping db push."
+  fi
 
   # Verify the FTS index exists and covers all required columns after every push.
   # A missing or drifted inventory_fts_idx would silently break keyword search,
