@@ -25,7 +25,7 @@ Poe model names are **PascalCase display names** with version dots, e.g.:
 Models NOT on this account (return empty): `gpt-5-mini`, `GPT-5-Mini`, `Claude-Haiku-4.5` (use `Claude-Haiku-4.5` spelling above).
 
 ## Current bot constants (aiProvider.ts)
-- `POE_ENRICH_BOT = "Claude-Haiku-4.5"` — keyword enrichment & description expansion
+- `POE_ENRICH_BOT = "GPT-5-Mini"` — keyword enrichment & description expansion (fast, confirmed working)
 - `POE_IDENTIFY_BOT = "Claude-Sonnet-4.5"` — part identification, catalog PDF extraction
 - `POE_DIMENSIONS_BOT = "Claude-Sonnet-4.5"` — dimension estimation from photos
 
