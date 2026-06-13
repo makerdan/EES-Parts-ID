@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { aiClient, IDENTIFY_MODEL, ENRICH_MODEL } from "../lib/aiProvider";
+import { getAiClient, getIdentifyModel, getEnrichModel } from "../lib/aiProvider";
 import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
 import { buildImageContent, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
 import { db } from "@workspace/db";
@@ -46,8 +46,8 @@ router.post("/identify", async (req, res) => {
 
     const imageContent = buildImageContent(images);
 
-    const response = await aiClient.chat.completions.create({
-      model: IDENTIFY_MODEL,
+    const response = await getAiClient().chat.completions.create({
+      model: getIdentifyModel(),
       max_completion_tokens: 1024,
       messages: [
         {
@@ -154,8 +154,8 @@ router.post("/translate-query", async (req, res) => {
       ? `The user searched for "${query.trim()}" and found ZERO results in inventory. Identify the part and translate the query. Return JSON only.`
       : `Translate this warehouse parts query into catalog vocabulary: "${query.trim()}". Return JSON only.`;
 
-    const response = await aiClient.chat.completions.create({
-      model: ENRICH_MODEL,
+    const response = await getAiClient().chat.completions.create({
+      model: getEnrichModel(),
       max_completion_tokens: 512,
       messages: [
         { role: "system", content: systemContent },
@@ -300,8 +300,8 @@ router.post("/part-card", async (req, res) => {
       "Return JSON only.",
     ].join("\n");
 
-    const response = await aiClient.chat.completions.create({
-      model: ENRICH_MODEL,
+    const response = await getAiClient().chat.completions.create({
+      model: getEnrichModel(),
       max_completion_tokens: 512,
       messages: [
         { role: "system", content: systemContent },

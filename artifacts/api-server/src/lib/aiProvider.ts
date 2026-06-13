@@ -4,11 +4,13 @@
  * Reads AI_PROVIDER ("poe" | "openai", default "poe") at startup and exports
  * a single OpenAI-compatible client plus per-provider model defaults.
  *
- * Switching providers requires only an env-var change — no code change or
- * redeploy of application code is needed.
+ * The active provider can be switched at runtime via setProvider() without
+ * restarting the server — useful for hot-failover when one provider is down.
  */
 
 import OpenAI from "openai";
+
+export type AIProvider = "poe" | "openai";
 
 const rawProvider = (process.env.AI_PROVIDER ?? "poe").toLowerCase();
 
@@ -17,8 +19,6 @@ if (rawProvider !== "poe" && rawProvider !== "openai") {
     `AI_PROVIDER must be "poe" or "openai", got "${rawProvider}"`,
   );
 }
-
-export const AI_PROVIDER = rawProvider as "poe" | "openai";
 
 function buildPoeClient(): OpenAI {
   if (!process.env.POE_API_KEY) {
@@ -49,37 +49,120 @@ function buildOpenAIClient(): OpenAI {
   });
 }
 
+function buildClient(provider: AIProvider): OpenAI {
+  return provider === "openai" ? buildOpenAIClient() : buildPoeClient();
+}
+
+// ── Mutable runtime state ─────────────────────────────────────────────────────
+
+let _provider: AIProvider = rawProvider as AIProvider;
+let _client: OpenAI = buildClient(_provider);
+
+/**
+ * Switch the active AI provider at runtime without restarting the server.
+ * Throws if the required environment variables for the target provider are missing.
+ */
+export function setProvider(provider: AIProvider): void {
+  const next = buildClient(provider); // validate env vars first — may throw
+  _provider = provider;
+  _client = next;
+}
+
+/**
+ * The currently active provider name.
+ */
+export function getProvider(): AIProvider {
+  return _provider;
+}
+
 /**
  * OpenAI-compatible client pointed at the active provider.
  * Both Poe and OpenAI expose the same chat.completions API.
+ *
+ * Always read this getter at call-time — do NOT destructure once at module
+ * load, because setProvider() replaces the underlying instance.
  */
-export const aiClient: OpenAI =
-  AI_PROVIDER === "openai" ? buildOpenAIClient() : buildPoeClient();
+export function getAiClient(): OpenAI {
+  return _client;
+}
 
 /**
- * Default model for keyword enrichment (ENRICH_MODEL).
- * Override per-call by passing a model argument to generateKeywords().
+ * @deprecated Use getAiClient() so the reference stays live after setProvider().
  */
-export const ENRICH_MODEL =
-  AI_PROVIDER === "openai" ? "gpt-4o-mini" : "GPT-5-mini";
+export const aiClient: OpenAI = new Proxy({} as OpenAI, {
+  get(_target, prop) {
+    return (_client as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});
+
+/**
+ * @deprecated Use getProvider() for a live value.
+ */
+export const AI_PROVIDER: AIProvider = _provider;
+
+// ── Model defaults (re-derived at call time via helpers below) ────────────────
+
+/**
+ * Default model for keyword enrichment.
+ * Reflects the currently active provider.
+ */
+export function getEnrichModel(): string {
+  return _provider === "openai" ? "gpt-4o-mini" : "GPT-5-mini";
+}
 
 /**
  * Default model for part identification (vision capable).
+ * Reflects the currently active provider.
  */
-export const IDENTIFY_MODEL = AI_PROVIDER === "openai" ? "gpt-4o" : "GPT-4o";
+export function getIdentifyModel(): string {
+  return _provider === "openai" ? "gpt-4o" : "GPT-4o";
+}
 
 /**
  * Default model for reference Q&A (same tier as enrichment — fast, cheap).
+ * Reflects the currently active provider.
  */
-export const REFERENCE_MODEL = ENRICH_MODEL;
+export function getReferenceModel(): string {
+  return getEnrichModel();
+}
 
 /**
  * Default model for catalog PDF extraction (vision capable — same tier as identify).
+ * Reflects the currently active provider.
  */
-export const CATALOG_MODEL = IDENTIFY_MODEL;
+export function getCatalogModel(): string {
+  return getIdentifyModel();
+}
 
 /**
  * Default model for physical dimension estimation from photos (vision capable).
+ * Reflects the currently active provider.
  */
-export const DIMENSIONS_MODEL =
-  AI_PROVIDER === "openai" ? "gpt-5.1" : "GPT-5.1";
+export function getDimensionsModel(): string {
+  return _provider === "openai" ? "gpt-5.1" : "GPT-5.1";
+}
+
+/**
+ * @deprecated Use getEnrichModel() so the value updates after setProvider().
+ */
+export const ENRICH_MODEL: string = _provider === "openai" ? "gpt-4o-mini" : "GPT-5-mini";
+
+/**
+ * @deprecated Use getIdentifyModel() so the value updates after setProvider().
+ */
+export const IDENTIFY_MODEL: string = _provider === "openai" ? "gpt-4o" : "GPT-4o";
+
+/**
+ * @deprecated Use getReferenceModel() so the value updates after setProvider().
+ */
+export const REFERENCE_MODEL: string = ENRICH_MODEL;
+
+/**
+ * @deprecated Use getCatalogModel() so the value updates after setProvider().
+ */
+export const CATALOG_MODEL: string = IDENTIFY_MODEL;
+
+/**
+ * @deprecated Use getDimensionsModel() so the value updates after setProvider().
+ */
+export const DIMENSIONS_MODEL: string = _provider === "openai" ? "gpt-5.1" : "GPT-5.1";
