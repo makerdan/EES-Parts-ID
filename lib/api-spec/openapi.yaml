@@ -323,6 +323,31 @@ paths:
         "404":
           description: Item not found
 
+  /inventory/{id}/enrich:
+    patch:
+      operationId: reenrichItem
+      tags: [inventory]
+      summary: Force re-enrich a single inventory item with fresh AI keywords (admin)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated inventory item with new AI keywords
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+        "401":
+          description: Admin token required
+        "404":
+          description: Item not found
+        "500":
+          description: AI enrichment failed
+
   /inventory/{id}/keywords:
     patch:
       operationId: updateItemKeywords

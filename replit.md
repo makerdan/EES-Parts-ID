@@ -35,6 +35,7 @@ Routes:
 - `GET /api/inventory` — list all inventory
 - `POST /api/inventory/batch` — upsert batch (no wipe)
 - `POST /api/inventory/enrich` — AI batch keyword enrichment (SSE)
+- `PATCH /api/inventory/:id/enrich` — force re-enrich a single part with fresh AI keywords (admin)
 - `PATCH /api/inventory/:id/keywords` — per-item keyword edit
 - `POST /api/ai/identify` — OpenAI photo identification
 - `GET /api/ai/reference` — SSE reference stream

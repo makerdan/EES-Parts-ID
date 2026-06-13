@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -35,6 +36,12 @@ interface ResultCardProps {
   sizeUnknown?: boolean;
   /** When true, the Part Details section auto-expands on mount (used for top Photo ID result). */
   autoExpandPartCard?: boolean;
+  /**
+   * Admin-only: called when the admin taps "Re-enrich keywords".
+   * The callback receives the item and returns a promise that resolves to the
+   * updated InventoryItem (or throws on failure).
+   */
+  onReenrichKeywords?: (item: InventoryItem) => Promise<InventoryItem>;
 }
 
 const CONFIDENCE_COLORS = {
@@ -93,17 +100,35 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false, autoExpandPartCard = false }: ResultCardProps) {
+export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false, autoExpandPartCard = false, onReenrichKeywords }: ResultCardProps) {
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
   const [lightboxUris, setLightboxUris] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [reenrichState, setReenrichState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [localKeywords, setLocalKeywords] = useState<string[] | null>(null);
+  const [localEnrichedAt, setLocalEnrichedAt] = useState<Date | string | null | undefined>(undefined);
   const { item, confidence, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
 
   const hasVariants = variants && variants.length > 0;
-  const hasKeywords = item.aiKeywords && item.aiKeywords.length > 0;
+  const displayKeywords = localKeywords ?? item.aiKeywords;
+  const hasKeywords = displayKeywords && displayKeywords.length > 0;
+  const displayEnrichedAt = localEnrichedAt !== undefined ? localEnrichedAt : item.enrichedAt;
+
+  const handleReenrich = async () => {
+    if (!onReenrichKeywords || reenrichState === "loading") return;
+    setReenrichState("loading");
+    try {
+      const updated = await onReenrichKeywords(item);
+      setLocalKeywords(updated.aiKeywords ?? null);
+      setLocalEnrichedAt(updated.enrichedAt ?? null);
+      setReenrichState("done");
+    } catch {
+      setReenrichState("error");
+    }
+  };
 
   const handlePress = () => {
     const next = !expanded;
@@ -362,12 +387,32 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
 
             {/* Keywords section */}
             <View style={cardStyles.section}>
-              <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
-                AI KEYWORDS
-              </Text>
+              <View style={cardStyles.keywordSectionHeader}>
+                <Text style={[cardStyles.sectionTitle, { color: colors.mutedForeground }]}>
+                  AI KEYWORDS
+                </Text>
+                {onReenrichKeywords ? (
+                  <Pressable
+                    onPress={(e) => { e.stopPropagation?.(); handleReenrich(); }}
+                    hitSlop={8}
+                    disabled={reenrichState === "loading"}
+                    style={[cardStyles.reenrichBtn, { backgroundColor: colors.muted, borderColor: colors.border, opacity: reenrichState === "loading" ? 0.6 : 1 }]}
+                    accessibilityLabel={`Re-enrich keywords for ${item.catalog}`}
+                    accessibilityRole="button"
+                  >
+                    {reenrichState === "loading" ? (
+                      <ActivityIndicator size="small" color={colors.primary} style={{ width: 14, height: 14 }} />
+                    ) : (
+                      <Text style={[cardStyles.reenrichBtnText, { color: reenrichState === "error" ? "#ef4444" : colors.primary }]}>
+                        {reenrichState === "done" ? "✓ Re-enriched" : reenrichState === "error" ? "⚠ Failed" : "⟳ Re-enrich"}
+                      </Text>
+                    )}
+                  </Pressable>
+                ) : null}
+              </View>
               {hasKeywords ? (
                 <View style={cardStyles.keywordRow}>
-                  {(item.aiKeywords ?? []).map((kw, i) => (
+                  {(displayKeywords ?? []).map((kw, i) => (
                     <View key={i} style={[cardStyles.keyword, { backgroundColor: colors.muted }]}>
                       <Text style={[cardStyles.keywordText, { color: colors.foreground }]}>
                         {kw}
@@ -402,9 +447,9 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             ) : null}
 
             {/* Last enriched */}
-            {item.enrichedAt ? (
+            {displayEnrichedAt ? (
               <Text style={[cardStyles.enrichedAt, { color: colors.mutedForeground }]}>
-                AI enriched: {new Date(item.enrichedAt).toLocaleDateString()}
+                AI enriched: {new Date(displayEnrichedAt).toLocaleDateString()}
               </Text>
             ) : (
               <Text style={[cardStyles.enrichedAt, { color: colors.mutedForeground }]}>
@@ -499,12 +544,31 @@ const cardStyles = StyleSheet.create({
   },
   binActionText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   section: { marginTop: 12 },
+  keywordSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
   sectionTitle: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",
     letterSpacing: 1,
     textTransform: "uppercase",
-    marginBottom: 8,
+    marginBottom: 0,
+  },
+  reenrichBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  reenrichBtnText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
   },
   keywordRow: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
   keyword: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },

@@ -1013,6 +1013,73 @@ export const UpdateItemDescriptionResponse = zod.object({
 });
 
 /**
+ * @summary Force re-enrich a single inventory item with fresh AI keywords (admin)
+ */
+export const ReenrichItemParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ReenrichItemResponse = zod.object({
+  id: zod.number(),
+  vendor: zod.string(),
+  catalog: zod.string(),
+  description: zod.string(),
+  binLocations: zod
+    .array(zod.string())
+    .describe(
+      "Bin locations where this part is stored (a part may live in multiple bins)",
+    ),
+  aiKeywords: zod.array(zod.string()),
+  barcodes: zod
+    .array(zod.string())
+    .describe("Barcode values associated with this part"),
+  enrichedAt: zod.coerce.date().nullish(),
+  imageUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the full-size catalog image (longest edge ≤ 800 px), served via the API proxy",
+    ),
+  thumbnailUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the thumbnail image (longest edge ≤ 200 px), served via the API proxy",
+    ),
+  imageUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second full-size photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  thumbnailUrl2: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the second thumbnail photo (Detail \/ Wire Frame slot), served via the API proxy",
+    ),
+  expandedDescription: zod
+    .string()
+    .nullish()
+    .describe(
+      "AI-expanded plain-English version of the abbreviated description (admin enrichment, never replaces the original)",
+    ),
+  dimensions: zod
+    .object({
+      length: zod.number().nullish(),
+      width: zod.number().nullish(),
+      height: zod.number().nullish(),
+      diameter: zod.number().nullish(),
+    })
+    .nullish()
+    .describe(
+      "Physical dimensions in millimetres (length, width, height, diameter)",
+    ),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
  * @summary Manually update keywords for an inventory item
  */
 export const UpdateItemKeywordsParams = zod.object({

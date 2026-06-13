@@ -1601,6 +1601,14 @@ export default function SearchScreen() {
                 rank={index}
                 fontScale={textFontScale}
                 sizeUnknown={listItem.kind === "sizeUnknown"}
+                onReenrichKeywords={isAdmin && adminToken ? async (item) => {
+                  const res = await fetch(`${API_BASE}/inventory/${item.id}/enrich`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+                  });
+                  if (!res.ok) throw new Error(`Re-enrich failed: ${res.status}`);
+                  return res.json();
+                } : undefined}
               />
             </View>
           );

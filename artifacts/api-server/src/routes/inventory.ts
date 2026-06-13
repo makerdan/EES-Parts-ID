@@ -1968,6 +1968,45 @@ router.patch("/:id/description", requireAdminAuth, async (req, res) => {
   }
 });
 
+// ── PATCH /inventory/:id/enrich ───────────────────────────────────────────────
+// Admin-only: force re-enrich a single part with fresh AI keywords.
+// Overwrites ai_keywords and enriched_at regardless of existing values so
+// admins can refresh one item after editing its description without running a
+// full catalog pass.
+router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
+  try {
+    const id = parseInt(String(req.params["id"] ?? "0"));
+    if (!id) return void res.status(400).json({ error: "Invalid item id" });
+
+    const [item] = await db
+      .select()
+      .from(inventoryTable)
+      .where(eq(inventoryTable.id, id))
+      .limit(1);
+
+    if (!item) return void res.status(404).json({ error: "Item not found" });
+
+    const keywords = await generateKeywords({
+      vendor: item.vendor ?? "",
+      catalog: item.catalog ?? "",
+      description: item.description ?? null,
+    });
+
+    const [updated] = await db
+      .update(inventoryTable)
+      .set({ aiKeywords: keywords, enrichedAt: new Date(), updatedAt: new Date() })
+      .where(eq(inventoryTable.id, id))
+      .returning();
+
+    if (!updated) return void res.status(404).json({ error: "Item not found" });
+    invalidateReferenceAnswerCache().catch(() => {});
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to enrich item" });
+  }
+});
+
 // ── PATCH /inventory/:id/keywords ─────────────────────────────────────────────
 router.patch("/:id/keywords", async (req, res) => {
   try {
