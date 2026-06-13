@@ -22,8 +22,8 @@ import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import {
   useUpdateItemBarcodes,
   useListInventory,
-  getListInventoryQueryKey,
 } from "@workspace/api-client-react";
+import { invalidateListCache } from "@/utils/editItemCache";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { resolveShelfAssign } from "@/utils/barcodeResolver";
@@ -386,10 +386,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
             id: item.id,
             data: { barcodes: [...existing, code] },
           });
-          const listKeyPrefix = getListInventoryQueryKey()[0];
-          await queryClient.invalidateQueries({
-            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-          });
+          await invalidateListCache({ queryClient });
           await upsertItemInBarcodeCache(updated);
         }
         await triggerScanFeedback(settings.scanSound);
@@ -441,10 +438,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           upsertItemInBarcodeCache,
         );
         if (result.wasNew) {
-          const listKeyPrefix = getListInventoryQueryKey()[0];
-          await queryClient.invalidateQueries({
-            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-          });
+          await invalidateListCache({ queryClient });
         }
         await triggerScanFeedback(settings.scanSound);
         // Only log undoable entries for genuinely new assignments to avoid
@@ -479,10 +473,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
           id: entry.item.id,
           data: { barcodes: newBarcodes },
         });
-        const listKeyPrefix = getListInventoryQueryKey()[0];
-        await queryClient.invalidateQueries({
-          predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-        });
+        await invalidateListCache({ queryClient });
         await upsertItemInBarcodeCache(updated);
         setAssignments(prev => prev.filter((_, i) => i !== index));
         showToast("Barcode assignment undone", "info");
