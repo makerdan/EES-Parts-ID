@@ -27,14 +27,14 @@ if (rawProvider !== "poe" && rawProvider !== "openai") {
 }
 
 function buildPoeClient(): OpenAI {
-  if (!process.env.POE_API_KEY) {
+  if (!process.env.POE_API_KEY2) {
     throw new Error(
-      "POE_API_KEY must be set when AI_PROVIDER=poe. Did you forget to add the Poe API key secret?",
+      "POE_API_KEY2 must be set when AI_PROVIDER=poe. Did you forget to add the Poe API key secret?",
     );
   }
   return new OpenAI({
-    apiKey: process.env.POE_API_KEY,
-    baseURL: "https://api.poe.com/bot/",
+    apiKey: process.env.POE_API_KEY2,
+    baseURL: "https://api.poe.com/v1",
   });
 }
 
@@ -131,13 +131,13 @@ export const AI_PROVIDER: AIProvider = _provider;
 // ── Poe bot name constants ─────────────────────────────────────────────────────
 
 /** Poe bot used for keyword enrichment and reference Q&A (fast, cheap). */
-export const POE_ENRICH_BOT = "gpt-5-mini";
+export const POE_ENRICH_BOT = "Claude-Haiku-4.5";
 
 /** Poe bot used for part identification and catalog PDF extraction (vision capable). */
-export const POE_IDENTIFY_BOT = "gpt-4o";
+export const POE_IDENTIFY_BOT = "Claude-Sonnet-4.5";
 
 /** Poe bot used for physical dimension estimation from photos (vision capable). */
-export const POE_DIMENSIONS_BOT = "gpt-5.1";
+export const POE_DIMENSIONS_BOT = "Claude-Sonnet-4.5";
 
 // ── Model defaults (re-derived at call time via helpers below) ────────────────
 
@@ -213,7 +213,7 @@ export async function probePoeBotsOnStartup(): Promise<void> {
         await _client.chat.completions.create({
           model: botName,
           messages: [{ role: "user", content: "hi" }],
-          max_tokens: 1,
+          max_tokens: 16,
         });
         logger.info({ botName }, `Poe bot '${botName}' — OK`);
       } catch (err: unknown) {

@@ -1,48 +1,39 @@
 ---
 name: Poe Bot API Protocol
-description: How Poe's server bot API actually works, and why the existing OpenAI-SDK approach never worked.
+description: Correct Poe API endpoint, key, model naming, and client setup for calling Poe bots from the server.
 ---
 
 # Poe Bot API Protocol
 
 ## The rule
-`https://api.poe.com/bot/{bot_name}` uses Poe's **own SSE protocol**, NOT OpenAI's chat completions API. The OpenAI SDK with `baseURL: "https://api.poe.com/bot/"` always appends `/chat/completions` → 404.
+Poe has an **OpenAI-compatible** endpoint at `https://api.poe.com/v1`. Use the OpenAI SDK with `baseURL: "https://api.poe.com/v1"` and `apiKey: process.env.POE_API_KEY2`.
 
-**Why:** The existing `aiProvider.ts` / `integrations-poe-server` used OpenAI SDK with that base URL. Every AI call via Poe was silently returning 404. The server started fine (key presence check only), but all Poe bot calls failed.
+**Why:** The legacy `https://api.poe.com/bot/` path uses Poe's own SSE protocol (for bot *servers*, not callers). The `/bot/` URL appended to the OpenAI SDK's `/chat/completions` always 404'd. The correct Creator-tier caller endpoint is `/v1/chat/completions`.
 
-## Correct raw protocol
-- URL: `POST https://api.poe.com/bot/{bot_name}` (no `/chat/completions` suffix)
-- Auth: `Authorization: Bearer {api_key}`
-- Body (Poe query format):
-  ```json
-  {
-    "version": "1.0",
-    "type": "query",
-    "query": [{ "role": "user", "content": "...", "content_type": "text/markdown", "timestamp": <microseconds>, "message_id": "<uuid>", "attachments": [] }],
-    "user_id": "...",
-    "conversation_id": "...",
-    "message_id": "<same as query[0].message_id>"
-  }
-  ```
-- Response: SSE stream with `event: text / data: {"text": "..."}` and `event: done / data: {}`.
+## Key: POE_API_KEY2 (not POE_API_KEY)
+`POE_API_KEY` is an old key tied to an account without bot-calling permissions. `POE_API_KEY2` is the Creator-tier key that works. Both `poeBot.ts` and `aiProvider.ts` must use `POE_API_KEY2`.
 
-## What `allow_retry: true` means
-HTTP 200 + `event: error` + `allow_retry: true` = transient server error OR account-level permission issue. If ALL bots (including free "Assistant") return this, the POE_API_KEY doesn't have bot-calling permissions or is tied to a disabled account.
+## Model naming
+Poe model names are **PascalCase display names** with version dots, e.g.:
+- `"Claude-Haiku-4.5"` — fast/cheap, confirmed working
+- `"Claude-Sonnet-4.5"` — capable, confirmed working
+- `"GPT-4o-Mini"` — confirmed working
+- `"GPT-4o"` — confirmed working
 
-## Bot naming rule
-Poe bot names are **all lowercase, no spaces, and case-sensitive**. Mixed-case names (e.g. `"GPT-4o"`, `"GPT-5-mini"`) cause HTTP 404 from the Poe API even when the protocol and key are correct.
+**Not** lowercase slugs like `"gpt-4o-mini"` or `"gpt-5-mini"` (those return empty/error).
 
-Correct examples:
-- `"gpt-4o-mini"` (not `"GPT-4o-mini"`)
-- `"gpt-4o"` (not `"GPT-4o"`)
-- `"gpt-5-mini"` (not `"GPT-5-mini"`)
-- `"gpt-5.1"` (not `"GPT-5.1"`)
+Models NOT on this account (return empty): `gpt-5-mini`, `GPT-5-Mini`, `Claude-Haiku-4.5` (use `Claude-Haiku-4.5` spelling above).
 
-**Why:** Poe's routing is exact-match on the bot name slug; uppercase letters produce a 404.
+## Current bot constants (aiProvider.ts)
+- `POE_ENRICH_BOT = "Claude-Haiku-4.5"` — keyword enrichment & description expansion
+- `POE_IDENTIFY_BOT = "Claude-Sonnet-4.5"` — part identification, catalog PDF extraction
+- `POE_DIMENSIONS_BOT = "Claude-Sonnet-4.5"` — dimension estimation from photos
+
+## callPoeBot() in poeBot.ts
+Uses OpenAI SDK lazy-init client at `/v1`. Signature: `callPoeBot(botName, systemInstruction, userMessage): Promise<string>`. Exports `isPoeCallAuthError`, `isPoeCallTransientError` using OpenAI SDK error types.
 
 ## How to apply
-- Always use raw `fetch` SSE parsing for Poe bot calls. Do NOT use OpenAI SDK for Poe.
-- Always use lowercase bot names. `POE_ENRICH_BOT`, `POE_IDENTIFY_BOT`, `POE_DIMENSIONS_BOT` constants are in `aiProvider.ts`.
-- The canonical `callPoeBot(botName, systemInstruction, userMessage)` is in `artifacts/api-server/src/lib/poeBot.ts`. It also exports `PoeHttpError`, `PoeBotError`, `isPoeCallAuthError`, `isPoeCallTransientError`.
-- Expand Descriptions (`/expand-descriptions` route) and Bulk Enrichment (`generateKeywords.ts`) both call `callPoeBot` directly with `POE_ENRICH_BOT`.
-- The startup probe in `aiProvider.ts` still uses the OpenAI SDK (its 404s are expected — probe code needs updating separately to use the native protocol if you want accurate probe results).
+- Always use `callPoeBot()` from `poeBot.ts` for direct Poe calls — NOT `getAiClient()` from `aiProvider.ts` (the shared client is for the provider-agnostic path).
+- Expand Descriptions (`/expand-descriptions` route in `inventory.ts`) and Bulk Enrichment (`generateKeywords.ts`) both call `callPoeBot` directly with `POE_ENRICH_BOT`.
+- Startup probe in `aiProvider.ts` uses `_client` (now correctly pointed at `/v1` with `POE_API_KEY2`) and probes all three bot names on startup — all three should log `OK`.
+- Models endpoint: `GET https://api.poe.com/v1/models` — no auth required; returns full catalog.
