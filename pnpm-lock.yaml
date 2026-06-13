@@ -103,6 +103,9 @@ importers:
       '@workspace/integrations-openai-ai-server':
         specifier: workspace:*
         version: link:../../lib/integrations-openai-ai-server
+      '@workspace/integrations-poe-server':
+        specifier: workspace:*
+        version: link:../../lib/integrations-poe-server
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
@@ -667,6 +670,12 @@ importers:
       p-retry:
         specifier: ^7.1.1
         version: 7.1.1
+
+  lib/integrations-poe-server:
+    dependencies:
+      openai:
+        specifier: ^6.27.0
+        version: 6.35.0(ws@8.20.0)(zod@4.3.6)
 
   lib/zone-validation: {}
 

@@ -3,15 +3,15 @@
  * inventory items (enrichedAt IS NULL).
  *
  * Usage (from workspace root):
- *   DATABASE_URL="$DATABASE_URL" OPENAI_API_KEY="$OPENAI_API_KEY" \
+ *   DATABASE_URL="$DATABASE_URL" POE_API_KEY="$POE_API_KEY" \
  *   pnpm --filter @workspace/api-server exec tsx src/seed/bulk-enrich.ts
  *
  * Options (env vars):
  *   ENRICH_BATCH_SIZE   – items fetched from DB per wave  (default: 10)
- *   ENRICH_CONCURRENCY  – parallel OpenAI calls per wave  (default: 5)
+ *   ENRICH_CONCURRENCY  – parallel Poe calls per wave     (default: 5)
  *   ENRICH_DELAY_MS     – ms to sleep between waves       (default: 200)
  *   ENRICH_RETRIES      – per-item retry attempts         (default: 3)
- *   ENRICH_MODEL        – OpenAI model to use             (default: gpt-4o-mini)
+ *   ENRICH_MODEL        – Poe bot to use                  (default: GPT-4o-mini)
  */
 
 import { db, pool } from "@workspace/db";
@@ -23,7 +23,7 @@ const BATCH_SIZE   = parseInt(process.env["ENRICH_BATCH_SIZE"]   ?? "10",  10);
 const CONCURRENCY  = parseInt(process.env["ENRICH_CONCURRENCY"]  ?? "5",   10);
 const DELAY_MS     = parseInt(process.env["ENRICH_DELAY_MS"]     ?? "200", 10);
 const MAX_RETRIES  = parseInt(process.env["ENRICH_RETRIES"]      ?? "3",   10);
-const MODEL        = process.env["ENRICH_MODEL"] ?? "gpt-4o-mini";
+const MODEL        = process.env["ENRICH_MODEL"] ?? "GPT-4o-mini";
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
