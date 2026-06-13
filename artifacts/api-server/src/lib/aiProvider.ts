@@ -67,3 +67,19 @@ export const ENRICH_MODEL =
  * Default model for part identification (vision capable).
  */
 export const IDENTIFY_MODEL = AI_PROVIDER === "openai" ? "gpt-4o" : "GPT-4o";
+
+/**
+ * Default model for reference Q&A (same tier as enrichment — fast, cheap).
+ */
+export const REFERENCE_MODEL = ENRICH_MODEL;
+
+/**
+ * Default model for catalog PDF extraction (vision capable — same tier as identify).
+ */
+export const CATALOG_MODEL = IDENTIFY_MODEL;
+
+/**
+ * Default model for physical dimension estimation from photos (vision capable).
+ */
+export const DIMENSIONS_MODEL =
+  AI_PROVIDER === "openai" ? "gpt-5.1" : "GPT-5.1";
