@@ -61,7 +61,7 @@ export const aiClient: OpenAI =
  * Override per-call by passing a model argument to generateKeywords().
  */
 export const ENRICH_MODEL =
-  AI_PROVIDER === "openai" ? "gpt-4o-mini" : "GPT-4o-mini";
+  AI_PROVIDER === "openai" ? "gpt-4o-mini" : "GPT-5-mini";
 
 /**
  * Default model for part identification (vision capable).
