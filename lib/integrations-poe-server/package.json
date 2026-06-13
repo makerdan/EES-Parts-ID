@@ -1,0 +1,12 @@
+{
+  "name": "@workspace/integrations-poe-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "openai": "^6.27.0"
+  }
+}
