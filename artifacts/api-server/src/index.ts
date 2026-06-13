@@ -4,7 +4,7 @@ import { startServer, MAX_RETRIES } from "./lib/startServer";
 import { db } from "@workspace/db";
 import { catalogPdfJobTable, warehouseZoneTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
-import { initProvider } from "./lib/aiProvider";
+import { initProvider, probePoeBotsOnStartup } from "./lib/aiProvider";
 
 const rawPort = process.env["PORT"];
 
@@ -119,6 +119,7 @@ async function migrateAdminPreferences(): Promise<void> {
 
 Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), checkZoneSectionNumIntegrity()])
   .then(() => initProvider())
+  .then(() => probePoeBotsOnStartup())
   .then(() => {
     startServer(app, port, MAX_RETRIES);
   });
