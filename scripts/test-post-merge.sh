@@ -271,6 +271,13 @@ cat > "$MOCK_BIN_DIR/sh" << 'MOCKEOF'
 exit 0
 MOCKEOF
 chmod +x "$MOCK_BIN_DIR/sh"
+# Mock `git` to report that pnpm-lock.yaml changed so the conditional install
+# branch is always taken, regardless of the actual repo state during tests.
+cat > "$MOCK_BIN_DIR/git" << 'MOCKEOF'
+#!/bin/bash
+echo "pnpm-lock.yaml"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR/git"
 
 INSTALL_TIMEOUT_OUTPUT=$(PATH="$MOCK_BIN_DIR:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
 INSTALL_TIMEOUT_EXIT=$?

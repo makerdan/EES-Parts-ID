@@ -38,17 +38,32 @@ check_api_health() {
 # This guard allows test scripts to source and unit-test the functions above.
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  echo "[post-merge] Installing dependencies..."
-  timeout 120 sh -c 'CI=true pnpm install --frozen-lockfile' || {
-    INSTALL_EXIT=$?
-    if [[ "$INSTALL_EXIT" -eq 124 ]]; then
-      echo "[post-merge] ERROR: pnpm install timed out after 120s. Aborting."
+  # Only run pnpm install if the lockfile changed in the merge.
+  # On merges that only touch source files the lockfile is already satisfied,
+  # and skipping install saves ~10s — critical for staying within the 20s budget.
+  if git --no-optional-locks diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q 'pnpm-lock.yaml'; then
+    echo "[post-merge] Lockfile changed — installing dependencies..."
+    timeout 120 sh -c 'CI=true pnpm install --frozen-lockfile' || {
+      INSTALL_EXIT=$?
+      if [[ "$INSTALL_EXIT" -eq 124 ]]; then
+        echo "[post-merge] ERROR: pnpm install timed out after 120s. Aborting."
+      else
+        echo "[post-merge] ERROR: pnpm install failed (exit ${INSTALL_EXIT}). Aborting."
+      fi
+      exit 1
+    }
+  else
+    echo "[post-merge] Lockfile unchanged — skipping install."
+  fi
+  timeout 30 pnpm --filter db push --force || {
+    DB_EXIT=$?
+    if [[ "$DB_EXIT" -eq 124 ]]; then
+      echo "[post-merge] ERROR: db push timed out after 30s. Aborting."
     else
-      echo "[post-merge] ERROR: pnpm install failed (exit ${INSTALL_EXIT}). Aborting."
+      echo "[post-merge] ERROR: db push failed (exit ${DB_EXIT}). Aborting."
     fi
     exit 1
   }
-  pnpm --filter db push --force
 
   # Verify the FTS index exists and covers all required columns after every push.
   # A missing or drifted inventory_fts_idx would silently break keyword search,
