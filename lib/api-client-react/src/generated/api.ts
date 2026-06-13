@@ -1170,6 +1170,90 @@ export const useUpdateItemDescription = <
 };
 
 /**
+ * @summary Force re-enrich a single inventory item with fresh AI keywords (admin)
+ */
+export const getReenrichItemUrl = (id: number) => {
+  return `/api/inventory/${id}/enrich`;
+};
+
+export const reenrichItem = async (
+  id: number,
+  options?: RequestInit,
+): Promise<InventoryItem> => {
+  return customFetch<InventoryItem>(getReenrichItemUrl(id), {
+    ...options,
+    method: "PATCH",
+  });
+};
+
+export const getReenrichItemMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reenrichItem>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reenrichItem>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["reenrichItem"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reenrichItem>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return reenrichItem(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReenrichItemMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reenrichItem>>
+>;
+
+export type ReenrichItemMutationError = ErrorType<void>;
+
+/**
+ * @summary Force re-enrich a single inventory item with fresh AI keywords (admin)
+ */
+export const useReenrichItem = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reenrichItem>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reenrichItem>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getReenrichItemMutationOptions(options));
+};
+
+/**
  * @summary Manually update keywords for an inventory item
  */
 export const getUpdateItemKeywordsUrl = (id: number) => {
