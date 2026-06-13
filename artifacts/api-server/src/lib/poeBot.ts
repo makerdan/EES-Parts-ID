@@ -50,8 +50,8 @@ export async function callPoeBot(
   systemInstruction: string,
   userMessage: string,
 ): Promise<string> {
-  const apiKey = process.env["POE_API_KEY"];
-  if (!apiKey) throw new Error("POE_API_KEY is not set");
+  const apiKey = process.env["POE_API_KEY2"];
+  if (!apiKey) throw new Error("POE_API_KEY2 is not set");
 
   const nowMicros = Date.now() * 1000;
   const messageId = randomUUID();
