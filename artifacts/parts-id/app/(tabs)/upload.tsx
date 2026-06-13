@@ -144,6 +144,7 @@ type BulkJobStatus = {
   total: number | null;
   finishedAt: string | null;
   lastError: string | null;
+  model: string | null;
 };
 
 type MeasureJobStatus = {
@@ -2018,6 +2019,11 @@ export default function UploadScreen() {
                                 {bulkJobStatus.errors > 0 ? ` · ${bulkJobStatus.errors} errors` : ""}
                               </Text>
                             </>
+                          ) : null}
+                          {bulkJobStatus.model ? (
+                            <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
+                              Model: {bulkJobStatus.model}
+                            </Text>
                           ) : null}
                         </View>
                       ) : null}
