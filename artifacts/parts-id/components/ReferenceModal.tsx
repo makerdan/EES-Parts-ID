@@ -171,7 +171,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
       const res = await fetch(`${API_BASE}/reference/ask?stream=false`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({ question: q, history }),
       });
 
       if (!res.ok) {
