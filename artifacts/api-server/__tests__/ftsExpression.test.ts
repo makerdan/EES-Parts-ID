@@ -79,3 +79,78 @@ describe("inventoryFtsVector — canonical FTS expression guard", () => {
     expect(aliased.replace(/\bi\./g, "")).toBe(bare);
   });
 });
+
+// =============================================================================
+// FTS expression drift guard — static source analysis
+// =============================================================================
+//
+// Every FTS WHERE clause and ts_rank_cd call in the inventory route must go
+// through inventoryFtsVector() from @workspace/db rather than inlining a bare
+// to_tsvector() expression.  A bare call would silently bypass the GIN index
+// (PostgreSQL only uses functional indexes when the query expression matches the
+// index expression exactly), causing invisible sequential scans in production.
+//
+// This test reads every .ts file under src/ at test time and fails if any
+// contains a bare to_tsvector( literal.  Running as a Jest test makes it an
+// always-on CI check rather than a manual script.
+
+import * as fs from "fs";
+import * as path from "path";
+
+describe("FTS expression drift guard — no bare to_tsvector() in src/", () => {
+  const SRC_DIR = path.join(__dirname, "..", "src");
+
+  function collectTsFiles(dir: string): string[] {
+    const files: string[] = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...collectTsFiles(fullPath));
+      } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
+        files.push(fullPath);
+      }
+    }
+    return files;
+  }
+
+  it("no .ts file under src/ contains a bare to_tsvector( call", () => {
+    const tsFiles = collectTsFiles(SRC_DIR);
+    expect(tsFiles.length).toBeGreaterThan(0);
+
+    const violations = tsFiles.filter((file) => {
+      const content = fs.readFileSync(file, "utf-8");
+      return content.includes("to_tsvector(");
+    });
+
+    if (violations.length > 0) {
+      const relative = violations.map((f) => path.relative(SRC_DIR, f));
+      throw new Error(
+        `Bare to_tsvector() found in ${violations.length} file(s). ` +
+        `Use inventoryFtsVector() from @workspace/db instead:\n  ${relative.join("\n  ")}`,
+      );
+    }
+
+    expect(violations).toHaveLength(0);
+  });
+
+  it("src/ files that perform FTS searches use inventoryFtsVector", () => {
+    const tsFiles = collectTsFiles(SRC_DIR);
+
+    // Files that reference websearch_to_tsquery or ts_rank_cd must also import
+    // inventoryFtsVector — they are performing FTS and must use the helper.
+    const ftsFiles = tsFiles.filter((file) => {
+      const content = fs.readFileSync(file, "utf-8");
+      return content.includes("websearch_to_tsquery") || content.includes("ts_rank_cd");
+    });
+
+    for (const file of ftsFiles) {
+      const content = fs.readFileSync(file, "utf-8");
+      const relative = path.relative(SRC_DIR, file);
+      expect(content).toMatch(
+        /inventoryFtsVector/,
+        `${relative} uses FTS operators but does not call inventoryFtsVector() — ` +
+        `add the import or delegate to the shared helper to keep expression in sync with the GIN index`,
+      );
+    }
+  });
+});

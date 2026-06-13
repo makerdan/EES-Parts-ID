@@ -10,7 +10,8 @@ import {
 } from "react-native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { useColors } from "@/hooks/useColors";
-import { lookupByBarcode, useUpdateItemBarcodes, getListInventoryQueryKey } from "@workspace/api-client-react";
+import { lookupByBarcode, useUpdateItemBarcodes } from "@workspace/api-client-react";
+import { invalidateListCache } from "@/utils/editItemCache";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { lookupByBarcodeOffline, upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import { useScanHistory } from "@/hooks/useScanHistory";
@@ -88,10 +89,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
             id: item.id,
             data: { barcodes: [...existing, notFoundCode] },
           });
-          const listKeyPrefix = getListInventoryQueryKey()[0];
-          await queryClient.invalidateQueries({
-            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-          });
+          await invalidateListCache({ queryClient });
           await upsertItemInBarcodeCache(updated);
         }
         addEntry({

@@ -18,8 +18,8 @@ import { useColors } from "@/hooks/useColors";
 import {
   useSearchInventory,
   useUpsertInventoryBatch,
-  getListInventoryQueryKey,
 } from "@workspace/api-client-react";
+import { invalidateListCache } from "@/utils/editItemCache";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -113,7 +113,7 @@ export function CatalogPickerModal({
       await createMutation.mutateAsync({
         data: { items: [{ catalog: catalogCode, vendor: vendorCode, binLocations: bins }] },
       });
-      queryClient.invalidateQueries({ queryKey: getListInventoryQueryKey() });
+      await invalidateListCache({ queryClient });
       const result = await lookupMutation.mutateAsync({
         data: { keywords: catalogCode, catalog: catalogCode, confidenceThreshold: 0 },
       });

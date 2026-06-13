@@ -17,8 +17,8 @@ import { parseBin } from "@/lib/aisleHierarchy";
 import {
   lookupByBarcode,
   useUpdateItemBarcodes,
-  getListInventoryQueryKey,
 } from "@workspace/api-client-react";
+import { invalidateListCache } from "@/utils/editItemCache";
 import { CatalogPickerModal } from "@/components/CatalogPickerModal";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { lookupByBarcodeOffline, upsertItemInBarcodeCache, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
@@ -265,10 +265,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
             id: item.id,
             data: { barcodes: [...existing, scannedCode] },
           });
-          const listKeyPrefix = getListInventoryQueryKey()[0];
-          await queryClient.invalidateQueries({
-            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-          });
+          await invalidateListCache({ queryClient });
           await upsertItemInBarcodeCache(updated);
           setMatchedItem(updated);
         }

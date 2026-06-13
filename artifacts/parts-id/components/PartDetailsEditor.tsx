@@ -22,6 +22,7 @@ import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, Sea
 import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
+import { invalidateListCache } from "@/utils/editItemCache";
 import { useColors } from "@/hooks/useColors";
 import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
@@ -270,10 +271,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
         const data = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      const listKeyPrefix = getListInventoryQueryKey()[0];
-      await queryClient.invalidateQueries({
-        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-      });
+      await invalidateListCache({ queryClient });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       // Store as parsed values so dimsAlreadySaved can compare apples-to-apples
       // with what parseDimField(fmtDim(x)) would produce from the display string.
@@ -603,9 +601,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
         );
       }
 
-      await queryClient.invalidateQueries({
-        predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === listKeyPrefix,
-      });
+      await invalidateListCache({ queryClient });
       await queryClient.invalidateQueries({ queryKey: ["searchInventory"] });
       // Evict stale search result cache entries for this item from AsyncStorage
       // so the next query returns fresh data rather than serving old field values.

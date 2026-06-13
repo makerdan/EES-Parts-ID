@@ -146,6 +146,49 @@ describe("catalogScore", () => {
     const { score } = catalogScore(BASE_PG, "OTHER", "CHB5", "", 0);
     expect(score).toBeCloseTo(BASE_PG);
   });
+
+  it("multi-word catalogInput and equivalent multi-word rawKeywords produce the same score and reason", () => {
+    // Regression guard: before the catalogInput token-split branch was added,
+    // passing a multi-word string in the catalog field (e.g. Photo ID pipeline
+    // output "CHB5 circuit breaker 20A") silently fell back to the lower
+    // pgScore/fts path because the full string did not match the catalog number.
+    // The fix adds token-splitting for catalogInput, mirroring the existing
+    // rawKeywords path.  This test asserts both paths produce the same outcome
+    // so neither can regress independently.
+    const ftsRank = 1;
+    const multiWord = "CHB5 circuit breaker 20A";
+    const catalog = "CHB5";
+
+    const viaKeywords = catalogScore(BASE_PG, catalog, "", multiWord, ftsRank);
+    const viaCatalog  = catalogScore(BASE_PG, catalog, multiWord, "", ftsRank);
+
+    expect(viaCatalog.score).toBe(viaKeywords.score);
+    expect(viaCatalog.reason).toBe(viaKeywords.reason);
+  });
+
+  it("multi-word catalogInput prefix token and equivalent rawKeywords prefix produce the same result", () => {
+    const ftsRank = 1;
+    const multiWord = "CHB5A circuit breaker 20A";
+    const catalog = "CHB5A-20";
+
+    const viaKeywords = catalogScore(BASE_PG, catalog, "", multiWord, ftsRank);
+    const viaCatalog  = catalogScore(BASE_PG, catalog, multiWord, "", ftsRank);
+
+    expect(viaCatalog.score).toBe(viaKeywords.score);
+    expect(viaCatalog.reason).toBe(viaKeywords.reason);
+  });
+
+  it("multi-word catalogInput substring token and equivalent rawKeywords substring produce the same result", () => {
+    const ftsRank = 1;
+    const multiWord = "120 circuit breaker";
+    const catalog = "BR120";
+
+    const viaKeywords = catalogScore(BASE_PG, catalog, "", multiWord, ftsRank);
+    const viaCatalog  = catalogScore(BASE_PG, catalog, multiWord, "", ftsRank);
+
+    expect(viaCatalog.score).toBe(viaKeywords.score);
+    expect(viaCatalog.reason).toBe(viaKeywords.reason);
+  });
 });
 
 // ── applyVendorBoost ──────────────────────────────────────────────────────────
