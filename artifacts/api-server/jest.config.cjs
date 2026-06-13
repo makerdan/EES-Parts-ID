@@ -28,6 +28,10 @@ module.exports = {
       "<rootDir>/../../lib/integrations-openai-ai-server/src/batch/index.ts",
     "^@workspace/integrations-openai-ai-server$":
       "<rootDir>/../../lib/integrations-openai-ai-server/src/index.ts",
+    "^@workspace/integrations-gemini-ai$":
+      "<rootDir>/../../lib/integrations-gemini-ai/src/index.ts",
+    "^@workspace/integrations-poe-server$":
+      "<rootDir>/../../lib/integrations-poe-server/src/index.ts",
   },
   // Allow ts-jest to transform the workspace library source files even though
   // they live inside (or are symlinked from) node_modules.
