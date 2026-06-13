@@ -226,9 +226,22 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
     failedChipRef.current = null;
   };
 
+  /**
+   * Strip the leading "*(web)*" marker and return { body, usedWeb }.
+   * The marker may appear as the very first characters or on its own line.
+   */
+  const parseWebMarker = (text: string): { body: string; usedWeb: boolean } => {
+    const trimmed = text.trimStart();
+    if (trimmed.startsWith("*(web)*")) {
+      return { body: trimmed.slice("*(web)*".length).replace(/^\n+/, ""), usedWeb: true };
+    }
+    return { body: text, usedWeb: false };
+  };
+
   const renderAnswer = (text: string) => {
-    const parts = text.split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((part, i) => {
+    const { body, usedWeb } = parseWebMarker(text);
+    const parts = body.split(/(\*\*[^*]+\*\*)/g);
+    const renderedParts = parts.map((part, i) => {
       if (part.startsWith("**") && part.endsWith("**")) {
         return (
           <Text key={i} style={{ fontFamily: "Inter_700Bold", color: colors.foreground }}>
@@ -242,6 +255,20 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
         </Text>
       );
     });
+
+    if (!usedWeb) return <>{renderedParts}</>;
+
+    return (
+      <>
+        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6, gap: 4 }}>
+          <Text style={{ fontSize: 13 }}>🌐</Text>
+          <Text style={{ fontSize: 11, fontFamily: "Inter_500Medium", color: colors.mutedForeground }}>
+            via web search
+          </Text>
+        </View>
+        {renderedParts}
+      </>
+    );
   };
 
   return (
@@ -277,7 +304,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                 🤖 Ask the AI
               </Text>
               <Text style={[modalStyles.subtitle, { color: colors.mutedForeground }]}>
-                Ask about electrical terms & codes
+                Ask anything — parts, codes, or how the app works
               </Text>
             </View>
             <View style={{ flexDirection: "row", gap: 8 }}>
@@ -373,7 +400,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                 <Text style={emptyStyles.emoji}>🤖</Text>
                 <Text style={[emptyStyles.title, { color: colors.foreground }]}>Ask the AI</Text>
                 <Text style={[emptyStyles.hint, { color: colors.mutedForeground }]}>
-                  Ask about NEMA codes, wire gauges, breaker ratings, conduit types, or any electrical term.
+                  Ask about parts, electrical codes, how the app works, or any general question. The AI searches the web when it needs to.
                 </Text>
 
                 {/* Inline text input in empty state */}
@@ -381,7 +408,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
                   <KeyboardDoneInput
                     value={question}
                     onChangeText={setQuestion}
-                    placeholder="Ask about any electrical term..."
+                    placeholder="Ask about parts, codes, or the app..."
                     placeholderTextColor={colors.mutedForeground}
                     style={[emptyStyles.inlineInput, { color: colors.foreground }]}
                     returnKeyType="send"
@@ -466,7 +493,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
               <KeyboardDoneInput
                 value={question}
                 onChangeText={t => { setQuestion(t); if (inputCollapsed) setInputCollapsed(false); }}
-                placeholder="Ask about any electrical term..."
+                placeholder="Ask about parts, codes, or the app..."
                 placeholderTextColor={colors.mutedForeground}
                 style={[
                   inputStyles.input,

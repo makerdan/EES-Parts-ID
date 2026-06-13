@@ -20,6 +20,9 @@
     },
     {
       "path": "./lib/zone-validation"
+    },
+    {
+      "path": "./lib/integrations-gemini-ai"
     }
   ]
 }
