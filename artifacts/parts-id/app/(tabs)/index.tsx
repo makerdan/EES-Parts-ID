@@ -49,6 +49,7 @@ import {
 import type { QueryCache } from "@/utils/searchHelpers";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 import { searchResetEvent } from "@/utils/searchResetEvent";
+import { SearchedAsRow, AIZeroResultsCard } from "@/components/AISearchFallback";
 
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -275,6 +276,22 @@ export default function SearchScreen() {
   const settingsRef = useRef(settings);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
+  // AI natural-language translation state
+  const [aiTranslation, setAITranslation] = useState<{ terms: string[]; interpretation: string } | null>(null);
+  const [aiTranslationDismissed, setAITranslationDismissed] = useState(false);
+  type AIZeroResultsState = {
+    loading: boolean;
+    partName: string;
+    partSpecs: string[];
+    catalogNumbers: string[];
+    substitutes: SearchResult[];
+    error: string | null;
+  };
+  const [aiZeroResults, setAIZeroResults] = useState<AIZeroResultsState | null>(null);
+  // Monotonically-increasing generation counter — incremented on each new
+  // search so stale translate-query responses are silently discarded.
+  const aiSearchGenRef = useRef(0);
+
   // Reset the Settings-modal confidence text input to the current persisted value
   // when the modal opens.  Syncing on every settings change would reset the field
   // mid-keystroke (e.g. while the user types a custom value), causing a flicker.
@@ -318,6 +335,10 @@ export default function SearchScreen() {
       setDimensionCounts(undefined);
       setShowSimilarSizeBanner(false);
       setSimilarSizeTolerance(0.10);
+      setAITranslation(null);
+      setAITranslationDismissed(false);
+      setAIZeroResults(null);
+      aiSearchGenRef.current += 1;
       searchMutationRef.current?.reset();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -517,6 +538,51 @@ export default function SearchScreen() {
     });
   }, [runFuseSearch]);
 
+  // Fire a non-blocking translate-query request and update AI state when it
+  // resolves. Uses the generation counter to discard stale (superseded) responses.
+  const translateQuery = useCallback(async (query: string, zeroResults: boolean, gen: number) => {
+    try {
+      const res = await fetch(`${API_BASE}/ai/translate-query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, zeroResults }),
+      });
+      if (aiSearchGenRef.current !== gen) return;
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json() as {
+        translatedTerms?: string[];
+        interpretation?: string;
+        appliedTranslation?: boolean;
+        partName?: string;
+        partSpecs?: string[];
+        catalogNumbers?: string[];
+        substitutes?: SearchResult[];
+        error?: string;
+      };
+      if (aiSearchGenRef.current !== gen) return;
+      if (zeroResults) {
+        setAIZeroResults({
+          loading: false,
+          partName: data.partName ?? "",
+          partSpecs: data.partSpecs ?? [],
+          catalogNumbers: data.catalogNumbers ?? [],
+          substitutes: data.substitutes ?? [],
+          error: null,
+        });
+      } else if (data.appliedTranslation && (data.translatedTerms?.length ?? 0) > 0) {
+        setAITranslation({ terms: data.translatedTerms!, interpretation: data.interpretation ?? "" });
+        setAITranslationDismissed(false);
+      }
+    } catch {
+      if (aiSearchGenRef.current !== gen) return;
+      if (zeroResults) {
+        setAIZeroResults({ loading: false, partName: "", partSpecs: [], catalogNumbers: [], substitutes: [], error: "AI unavailable" });
+      }
+    }
+  // translateQuery depends only on stable API_BASE constant — safe to omit deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const searchMutation = useSearchInventory({
     mutation: {
       onSuccess: (data) => {
@@ -537,6 +603,17 @@ export default function SearchScreen() {
           f.minDiameter.trim() !== "" || f.maxDiameter.trim() !== "";
         const zeroResults = (data.results?.length ?? 0) === 0 && (data.sizeUnknownResults?.length ?? 0) === 0;
         setShowSimilarSizeBanner(zeroResults && hasDimFilters);
+
+        // When search returns zero results and a keyword query exists, fire the
+        // zero-results AI enrichment. Dimension-only searches are excluded because
+        // the AI can't meaningfully identify a part from bounds alone.
+        if (zeroResults && !hasDimFilters) {
+          const kw = filtersRef.current.keywords.trim() || filtersRef.current.catalog.trim();
+          if (kw) {
+            setAIZeroResults({ loading: true, partName: "", partSpecs: [], catalogNumbers: [], substitutes: [], error: null });
+            translateQuery(kw, true, aiSearchGenRef.current);
+          }
+        }
 
         // Cache all returned items for offline Fuse use
         if (data.results?.length) {
@@ -629,8 +706,16 @@ export default function SearchScreen() {
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
+    setAITranslation(null);
+    setAITranslationDismissed(false);
+    setAIZeroResults(null);
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    // Fire NL translation non-blocking in parallel with the primary search.
+    // Only when a keyword/catalog query is present (not dimension-only searches).
+    const _aiGen = ++aiSearchGenRef.current;
+    const _aiQuery = filters.keywords.trim() || filters.catalog.trim();
+    if (_aiQuery) translateQuery(_aiQuery, false, _aiGen);
     const body = buildSearchBody(filters, activeCategorySlugRef.current);
     searchMutation.mutate({ data: body });
     // Fall back to offline if API hasn't responded within the timeout
@@ -658,6 +743,10 @@ export default function SearchScreen() {
     setShowSimilarSizeBanner(false);
     setSimilarSizeTolerance(0.10);
     setPinnedParts([]);
+    setAITranslation(null);
+    setAITranslationDismissed(false);
+    setAIZeroResults(null);
+    aiSearchGenRef.current += 1;
   };
 
   // Keep handleClearRef pointing at the latest closure so the tab-press
@@ -700,6 +789,8 @@ export default function SearchScreen() {
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
+    setAIZeroResults(null);
+    aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     const body = buildSearchBody(expanded, activeCategorySlugRef.current);
@@ -721,6 +812,10 @@ export default function SearchScreen() {
     setOfflineResults(null);
     setIsOffline(false);
     setOfflineCacheType(null);
+    setAITranslation(null);
+    setAITranslationDismissed(false);
+    setAIZeroResults(null);
+    aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     const body = buildSearchBody(filtersRef.current, slug);
@@ -1220,6 +1315,15 @@ export default function SearchScreen() {
 
       </View>
 
+      {/* "Searched as:" chip row — shown when AI translated a plain-language query */}
+      {aiTranslation && !aiTranslationDismissed ? (
+        <SearchedAsRow
+          terms={aiTranslation.terms}
+          interpretation={aiTranslation.interpretation}
+          onDismiss={() => setAITranslationDismissed(true)}
+        />
+      ) : null}
+
       {/* ── Results list + floating filter overlay ── */}
       <View style={{ flex: 1 }}>
       {mode === "aisle" ? (
@@ -1422,6 +1526,22 @@ export default function SearchScreen() {
                     </Text>
                   </Pressable>
                 ) : null}
+              </View>
+            ) : null}
+
+            {/* AI Zero-Results Card — fires after primary search returns empty */}
+            {hasResults && results.length === 0 && !isOffline && aiZeroResults ? (
+              <View style={styles.aiCardWrapper}>
+                <AIZeroResultsCard
+                  loading={aiZeroResults.loading}
+                  partName={aiZeroResults.partName}
+                  partSpecs={aiZeroResults.partSpecs}
+                  catalogNumbers={aiZeroResults.catalogNumbers}
+                  substitutes={aiZeroResults.substitutes}
+                  error={aiZeroResults.error}
+                  onShowOnMap={handleShowOnMap}
+                  fontScale={textFontScale}
+                />
               </View>
             ) : null}
 
@@ -1781,6 +1901,7 @@ const styles = StyleSheet.create({
   sizeUnknownHeaderIcon: { fontSize: 18, marginTop: 1 },
   sizeUnknownHeaderTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
   sizeUnknownHeaderHint: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 16 },
+  aiCardWrapper: { paddingHorizontal: 12, paddingBottom: 8 },
   listContent: { paddingBottom: 0 },
   settingsRow: {
     flexDirection: "row",
