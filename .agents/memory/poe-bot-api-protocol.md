@@ -41,7 +41,8 @@ Correct examples:
 **Why:** Poe's routing is exact-match on the bot name slug; uppercase letters produce a 404.
 
 ## How to apply
-- If rewiring Poe: implement raw `fetch` SSE parsing, do NOT use OpenAI SDK for Poe bot calls.
-- Always use lowercase bot names in `aiProvider.ts` Poe branches and any `ENRICH_MODEL`-style fallbacks.
-- The implemented `callPoeBot()` in `artifacts/api-server/src/lib/webSearch.ts` has the correct raw fetch implementation.
-- The project pivoted to Replit's Gemini integration (`@workspace/integrations-gemini-ai` / `gemini-2.5-flash`) when Poe key was non-functional.
+- Always use raw `fetch` SSE parsing for Poe bot calls. Do NOT use OpenAI SDK for Poe.
+- Always use lowercase bot names. `POE_ENRICH_BOT`, `POE_IDENTIFY_BOT`, `POE_DIMENSIONS_BOT` constants are in `aiProvider.ts`.
+- The canonical `callPoeBot(botName, systemInstruction, userMessage)` is in `artifacts/api-server/src/lib/poeBot.ts`. It also exports `PoeHttpError`, `PoeBotError`, `isPoeCallAuthError`, `isPoeCallTransientError`.
+- Expand Descriptions (`/expand-descriptions` route) and Bulk Enrichment (`generateKeywords.ts`) both call `callPoeBot` directly with `POE_ENRICH_BOT`.
+- The startup probe in `aiProvider.ts` still uses the OpenAI SDK (its 404s are expected — probe code needs updating separately to use the native protocol if you want accurate probe results).

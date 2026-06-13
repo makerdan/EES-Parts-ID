@@ -28,7 +28,8 @@ import {
 } from "../utils/searchHelpers";
 import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
 import { generateKeywords } from "../utils/generateKeywords";
-import { getAiClient, getEnrichModel, getDimensionsModel } from "../lib/aiProvider";
+import { getAiClient, getEnrichModel, getDimensionsModel, POE_ENRICH_BOT } from "../lib/aiProvider";
+import { callPoeBot } from "../lib/poeBot";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { resizeImages } from "../utils/imageResize";
@@ -1570,40 +1571,28 @@ router.post("/expand-descriptions", requireAdminAuth, async (_req, res) => {
 
     for (const item of itemsToExpand) {
       try {
-        const response = await getAiClient().chat.completions.create({
-          model: getEnrichModel(),
-          max_completion_tokens: 300,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory\u2011friendly sentence. Requirements:\n\n" +
-                "Use imperial units where applicable (in., ft, lb, \u00b0F). Use the abbreviated unit forms shown (in., ft, lb, \u00b0F) and include numeric conversions only when specifically required (e.g., temperature rise show both \u00b0C and \u00b0F).\n" +
-                "Fix spacing errors (ensure spaces after commas and between numbers and unit abbreviations where specified below).\n" +
-                "Expand all abbreviations and jargon into plain language (examples: kVA \u2192 kilovolt\u2011ampere; XFMR \u2192 transformer; 3PH \u2192 three\u2011phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge; PHIL \u2192 Phillips; SLOT \u2192 slotted).\n" +
-                "Preserve and mirror compact original shorthand variations where helpful: when an original uses compact shorthand like \u201827K\u2019, include that exact token followed immediately by the full numeric form without a space (e.g., \u201827K (2700K)\u2019). For color temperatures use both forms: short token (27K, 30K, 35K, 40K, 50K, etc.) and full form with no space (2700K, 3000K, 3500K, 4000K, 5000K).\n" +
-                "Use these unit formats in the sentence: number + space + unit for general units (e.g., \u201812 W\u2019, \u20184 in.\u2019), but use compact no\u2011space format for color temperature numeric form (e.g., \u20182700K\u2019). When showing both short token and full form, write like: \u201827K (2700K)\u2019.\n" +
-                "Include essential keywords present in the input where applicable: capacity/rating, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F when temperature rise is provided), enclosure/venting, head type, thread size, length, material, mounting type, sensor or control features, and amperage/voltage ratings.\n" +
-                "Do not invent unsupported technical specifications. If a required spec is missing and you must infer it to make the sentence meaningful, place the inference explicitly in parentheses and label it as an assumption (e.g., \u2018(assumed 150 \u00b0C temperature rise)\u2019).\n" +
-                "Do not include meta commentary or phrases like \u2018inventory item\u2019 in the output.\n" +
-                "Output exactly one concise sentence per single input line. Keep the sentence inventory\u2011friendly (short, keyword dense, and unambiguous).\n" +
-                "If the input contains multiple items on one line, expand only the first item and request the user to separate lines for multiple expansions.\n\n" +
-                "Examples\n\n" +
-                "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150\n" +
-                "Output: 225 kVA ventilated three\u2011phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.\n" +
-                "Input: 4\" 12W LED DISK LIGHT 27K/3K/35K/4K/5K W/MOT SENSR\n" +
-                "Output: 4 in. diameter, 12 W LED disk light with selectable color temperatures 27K (2700K), 30K (3000K), 35K (3500K), 40K (4000K), or 50K (5000K) and a built\u2011in motion sensor.\n" +
-                "Input: #8-32 X 1\" PHIL/SLOT RH MACHINE SCREW\n" +
-                "Output: #8-32 \u00d7 1 in. combination Phillips/slotted head machine screw, right\u2011hand threads, 32 threads per inch (UNC coarse).",
-            },
-            {
-              role: "user",
-              content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
-            },
-          ],
-        });
-        const expandedDescription =
-          response.choices[0]?.message?.content?.trim() ?? item.description;
+        const expandedDescription = await callPoeBot(
+          POE_ENRICH_BOT,
+          "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory\u2011friendly sentence. Requirements:\n\n" +
+            "Use imperial units where applicable (in., ft, lb, \u00b0F). Use the abbreviated unit forms shown (in., ft, lb, \u00b0F) and include numeric conversions only when specifically required (e.g., temperature rise show both \u00b0C and \u00b0F).\n" +
+            "Fix spacing errors (ensure spaces after commas and between numbers and unit abbreviations where specified below).\n" +
+            "Expand all abbreviations and jargon into plain language (examples: kVA \u2192 kilovolt\u2011ampere; XFMR \u2192 transformer; 3PH \u2192 three\u2011phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge; PHIL \u2192 Phillips; SLOT \u2192 slotted).\n" +
+            "Preserve and mirror compact original shorthand variations where helpful: when an original uses compact shorthand like \u201827K\u2019, include that exact token followed immediately by the full numeric form without a space (e.g., \u201827K (2700K)\u2019). For color temperatures use both forms: short token (27K, 30K, 35K, 40K, 50K, etc.) and full form with no space (2700K, 3000K, 3500K, 4000K, 5000K).\n" +
+            "Use these unit formats in the sentence: number + space + unit for general units (e.g., \u201812 W\u2019, \u20184 in.\u2019), but use compact no\u2011space format for color temperature numeric form (e.g., \u20182700K\u2019). When showing both short token and full form, write like: \u201827K (2700K)\u2019.\n" +
+            "Include essential keywords present in the input where applicable: capacity/rating, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F when temperature rise is provided), enclosure/venting, head type, thread size, length, material, mounting type, sensor or control features, and amperage/voltage ratings.\n" +
+            "Do not invent unsupported technical specifications. If a required spec is missing and you must infer it to make the sentence meaningful, place the inference explicitly in parentheses and label it as an assumption (e.g., \u2018(assumed 150 \u00b0C temperature rise)\u2019).\n" +
+            "Do not include meta commentary or phrases like \u2018inventory item\u2019 in the output.\n" +
+            "Output exactly one concise sentence per single input line. Keep the sentence inventory\u2011friendly (short, keyword dense, and unambiguous).\n" +
+            "If the input contains multiple items on one line, expand only the first item and request the user to separate lines for multiple expansions.\n\n" +
+            "Examples\n\n" +
+            "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150\n" +
+            "Output: 225 kVA ventilated three\u2011phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.\n" +
+            "Input: 4\" 12W LED DISK LIGHT 27K/3K/35K/4K/5K W/MOT SENSR\n" +
+            "Output: 4 in. diameter, 12 W LED disk light with selectable color temperatures 27K (2700K), 30K (3000K), 35K (3500K), 40K (4000K), or 50K (5000K) and a built\u2011in motion sensor.\n" +
+            "Input: #8-32 X 1\" PHIL/SLOT RH MACHINE SCREW\n" +
+            "Output: #8-32 \u00d7 1 in. combination Phillips/slotted head machine screw, right\u2011hand threads, 32 threads per inch (UNC coarse).",
+          `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
+        ) || item.description;
         processed++;
         send({
           id: item.id,
