@@ -1990,12 +1990,20 @@ export default function UploadScreen() {
                       ) : (
                         <ActivityIndicator size="small" color={colors.primary} />
                       )}
+                      {bulkEnrichPending && !bulkJobStatus?.running ? (
+                        <View style={[styles.aiWorkingBanner, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "40" }]}>
+                          <ActivityIndicator size="small" color={colors.primary} />
+                          <Text style={[styles.aiWorkingText, { color: colors.primary }]}>
+                            Starting AI enrichment…
+                          </Text>
+                        </View>
+                      ) : null}
                       {bulkJobStatus?.running ? (
-                        <View style={styles.progressContainer}>
+                        <View style={[styles.aiWorkingBanner, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "40", flexDirection: "column", alignItems: "stretch" }]}>
                           <View style={[styles.bulkStatusRow]}>
                             <ActivityIndicator size="small" color={colors.primary} />
-                            <Text style={[styles.progressText, { color: colors.foreground, marginLeft: 8, flex: 1 }]}>
-                              {bulkJobStatus.stopRequested ? "Stopping after current batch…" : "Background enrichment running…"}
+                            <Text style={[styles.aiWorkingText, { color: colors.primary, marginLeft: 8, flex: 1 }]}>
+                              {bulkJobStatus.stopRequested ? "Stopping after current batch…" : "AI enrichment is running…"}
                             </Text>
                             <Pressable
                               onPress={handleStopBulkEnrich}
@@ -2210,25 +2218,45 @@ export default function UploadScreen() {
                         AI expands up to 50 abbreviated part descriptions at a time into plain English. Review and save each result individually.
                       </Text>
 
+                      {/* "AI is working" banner — initial connecting phase */}
+                      {expandDescRunning && !expandDescProgress ? (
+                        <View style={[styles.aiWorkingBanner, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "40" }]}>
+                          <ActivityIndicator size="small" color={colors.primary} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.aiWorkingText, { color: colors.primary }]}>
+                              AI is analyzing descriptions…
+                            </Text>
+                            {expandDescModel ? (
+                              <Text style={[styles.aiWorkingSubtext, { color: colors.primary }]}>
+                                Model: {expandDescModel}
+                              </Text>
+                            ) : null}
+                          </View>
+                        </View>
+                      ) : null}
+
                       {/* Progress bar while streaming */}
                       {expandDescRunning && expandDescProgress ? (
-                        <View style={styles.progressContainer}>
-                          <View style={[styles.progressBar, { backgroundColor: colors.muted }]}>
-                            <View
-                              style={[styles.progressFill, {
-                                backgroundColor: colors.primary,
-                                width: expandDescProgress.total > 0 ? `${Math.round((expandDescProgress.done / expandDescProgress.total) * 100)}%` : "0%",
-                              }]}
-                            />
-                          </View>
-                          <Text style={[styles.progressText, { color: colors.foreground }]}>
-                            {expandDescProgress.done} / {expandDescProgress.total} expanded
-                          </Text>
-                          {expandDescModel ? (
-                            <Text style={[styles.progressText, { color: colors.mutedForeground, fontSize: 12 }]}>
-                              Model: {expandDescModel}
+                        <View style={[styles.aiWorkingBanner, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "40" }]}>
+                          <ActivityIndicator size="small" color={colors.primary} />
+                          <View style={{ flex: 1, gap: 6 }}>
+                            <Text style={[styles.aiWorkingText, { color: colors.primary }]}>
+                              AI is working — {expandDescProgress.done} / {expandDescProgress.total} expanded
                             </Text>
-                          ) : null}
+                            <View style={[styles.progressBar, { backgroundColor: colors.primary + "30" }]}>
+                              <View
+                                style={[styles.progressFill, {
+                                  backgroundColor: colors.primary,
+                                  width: expandDescProgress.total > 0 ? `${Math.round((expandDescProgress.done / expandDescProgress.total) * 100)}%` : "0%",
+                                }]}
+                              />
+                            </View>
+                            {expandDescModel ? (
+                              <Text style={[styles.aiWorkingSubtext, { color: colors.primary }]}>
+                                Model: {expandDescModel}
+                              </Text>
+                            ) : null}
+                          </View>
                         </View>
                       ) : null}
 
@@ -2749,6 +2777,9 @@ const styles = StyleSheet.create({
   uploadBtn: { marginTop: 12, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   uploadBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
   enrichCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 14 },
+  aiWorkingBanner: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, borderWidth: 1 },
+  aiWorkingText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  aiWorkingSubtext: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2, opacity: 0.8 },
   progressContainer: { gap: 8 },
   bulkStatusRow: { flexDirection: "row", alignItems: "center" },
   stopBtn: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, marginLeft: 8 },
