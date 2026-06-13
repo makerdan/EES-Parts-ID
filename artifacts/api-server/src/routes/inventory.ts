@@ -1382,6 +1382,7 @@ interface BulkEnrichJob {
   total: number | null;
   finishedAt: Date | null;
   lastError: string | null;
+  model: string | null;
 }
 
 const bulkEnrichJob: BulkEnrichJob = {
@@ -1393,6 +1394,7 @@ const bulkEnrichJob: BulkEnrichJob = {
   total: null,
   finishedAt: null,
   lastError: null,
+  model: null,
 };
 
 const BULK_ENRICH_MODEL      = process.env["ENRICH_MODEL"] ?? "gpt-4o-mini";
@@ -1655,6 +1657,7 @@ router.post("/bulk-enrich", requireAdminAuth, (_req, res) => {
   bulkEnrichJob.total = null;
   bulkEnrichJob.finishedAt = null;
   bulkEnrichJob.lastError = null;
+  bulkEnrichJob.model = BULK_ENRICH_MODEL;
 
   runBulkEnrich().catch((err) => {
     bulkEnrichJob.running = false;
