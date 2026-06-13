@@ -9,5 +9,6 @@ export const adminPreferencesTable = pgTable("admin_preferences", {
   scanSound: boolean("scan_sound").notNull().default(true),
   shelfPrefix: text("shelf_prefix"),
   shelfStep: integer("shelf_step"),
+  aiProvider: text("ai_provider"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

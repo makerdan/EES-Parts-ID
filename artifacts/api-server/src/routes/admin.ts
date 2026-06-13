@@ -256,9 +256,10 @@ router.get("/ai-provider", requireAdminAuth, (_req, res) => {
 });
 
 // ── POST /admin/ai-provider ───────────────────────────────────────────────────
-// Switches the active AI provider at runtime without restarting the server.
+// Switches the active AI provider at runtime without restarting the server,
+// and persists the choice to the database so it survives restarts.
 // Body: { provider: "poe" | "openai" }
-router.post("/ai-provider", requireAdminAuth, (req, res) => {
+router.post("/ai-provider", requireAdminAuth, async (req, res) => {
   const { provider } = req.body as { provider?: unknown };
 
   if (provider !== "poe" && provider !== "openai") {
@@ -269,11 +270,25 @@ router.post("/ai-provider", requireAdminAuth, (req, res) => {
 
   try {
     setProvider(provider as AIProvider);
-    return res.json({ provider: getProvider() });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return res.status(503).json({ error: message });
   }
+
+  let persisted = true;
+  try {
+    await db
+      .insert(adminPreferencesTable)
+      .values({ id: 1, aiProvider: provider, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: adminPreferencesTable.id,
+        set: { aiProvider: provider, updatedAt: new Date() },
+      });
+  } catch (dbErr) {
+    persisted = false;
+  }
+
+  return res.json({ provider: getProvider(), persisted });
 });
 
 export default router;
