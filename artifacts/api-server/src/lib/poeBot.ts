@@ -1,14 +1,25 @@
 /**
- * Native Poe bot caller using Poe's own SSE query protocol.
+ * Poe bot caller using the OpenAI-compatible API at https://api.poe.com/v1
  *
- * WHY NOT the OpenAI SDK:
- * The OpenAI SDK with baseURL "https://api.poe.com/bot/" always appends
- * "/chat/completions" → the URL becomes https://api.poe.com/bot/chat/completions,
- * which Poe does NOT serve. Poe's endpoint is POST /bot/{bot_name} with its
- * own SSE envelope — completely different from OpenAI's chat/completions schema.
+ * Key: process.env.POE_API_KEY2
+ * Endpoint: POST https://api.poe.com/v1/chat/completions  (NOT /bot/)
+ * Model names are Poe display names, e.g. "GPT-4o-Mini", "Claude-Sonnet-4.6"
+ *
+ * Reference: https://developer.poe.com/server-bots/accessing-other-bots-on-poe
  */
 
-import { randomUUID } from "crypto";
+import OpenAI from "openai";
+
+let _client: OpenAI | null = null;
+
+function getClient(): OpenAI {
+  if (!_client) {
+    const apiKey = process.env["POE_API_KEY2"];
+    if (!apiKey) throw new Error("POE_API_KEY2 is not set");
+    _client = new OpenAI({ apiKey, baseURL: "https://api.poe.com/v1" });
+  }
+  return _client;
+}
 
 export class PoeHttpError extends Error {
   readonly status: number;
@@ -29,20 +40,26 @@ export class PoeBotError extends Error {
 }
 
 export function isPoeCallAuthError(err: unknown): boolean {
-  return err instanceof PoeHttpError && (err.status === 401 || err.status === 403);
+  return (
+    err instanceof OpenAI.AuthenticationError ||
+    err instanceof OpenAI.PermissionDeniedError
+  );
 }
 
 export function isPoeCallTransientError(err: unknown): boolean {
-  if (err instanceof PoeHttpError) return err.status === 429 || err.status >= 500;
-  if (err instanceof PoeBotError) return err.allowRetry;
-  return false;
+  return (
+    err instanceof OpenAI.RateLimitError ||
+    err instanceof OpenAI.InternalServerError ||
+    err instanceof OpenAI.APIConnectionError ||
+    err instanceof OpenAI.APIConnectionTimeoutError
+  );
 }
 
 /**
- * Call a Poe bot and return the full concatenated text response.
+ * Call a Poe bot and return the full text response.
  *
- * @param botName           - Lowercase Poe bot slug (e.g. "gpt-5-mini", "gpt-4o").
- * @param systemInstruction - System-prompt text (injected as "system" role).
+ * @param botName           - Poe display-name (e.g. "GPT-4o-Mini", "Claude-Sonnet-4.6").
+ * @param systemInstruction - System-prompt text.
  * @param userMessage       - User turn content.
  */
 export async function callPoeBot(
@@ -50,82 +67,13 @@ export async function callPoeBot(
   systemInstruction: string,
   userMessage: string,
 ): Promise<string> {
-  const apiKey = process.env["POE_API_KEY2"];
-  if (!apiKey) throw new Error("POE_API_KEY2 is not set");
-
-  const nowMicros = Date.now() * 1000;
-  const messageId = randomUUID();
-
-  const body = {
-    version: "1.0",
-    type: "query",
-    query: [
-      {
-        role: "system",
-        content: systemInstruction,
-        content_type: "text/plain",
-        timestamp: nowMicros,
-        message_id: randomUUID(),
-        attachments: [],
-      },
-      {
-        role: "user",
-        content: userMessage,
-        content_type: "text/plain",
-        timestamp: nowMicros + 1,
-        message_id: messageId,
-        attachments: [],
-      },
+  const response = await getClient().chat.completions.create({
+    model: botName,
+    max_completion_tokens: 512,
+    messages: [
+      { role: "system", content: systemInstruction },
+      { role: "user", content: userMessage },
     ],
-    user_id: "",
-    conversation_id: randomUUID(),
-    message_id: messageId,
-  };
-
-  const response = await fetch(`https://api.poe.com/bot/${botName}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
-    body: JSON.stringify(body),
   });
-
-  if (!response.ok) {
-    throw new PoeHttpError(response.status, response.statusText);
-  }
-
-  const rawText = await response.text();
-  let result = "";
-  let currentEvent = "";
-
-  for (const line of rawText.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("event: ")) {
-      currentEvent = trimmed.slice(7).trim();
-    } else if (trimmed.startsWith("data: ")) {
-      const dataStr = trimmed.slice(6);
-      if (currentEvent === "text") {
-        try {
-          const data = JSON.parse(dataStr) as Record<string, unknown>;
-          if (typeof data["text"] === "string") result += data["text"] as string;
-        } catch {
-          /* skip malformed data lines */
-        }
-      } else if (currentEvent === "error") {
-        let allowRetry = false;
-        try {
-          const data = JSON.parse(dataStr) as Record<string, unknown>;
-          allowRetry = Boolean(data["allow_retry"]);
-        } catch {
-          /* ignore */
-        }
-        throw new PoeBotError(dataStr, allowRetry);
-      }
-      currentEvent = "";
-    }
-  }
-
-  return result.trim();
+  return response.choices[0]?.message?.content?.trim() ?? "";
 }

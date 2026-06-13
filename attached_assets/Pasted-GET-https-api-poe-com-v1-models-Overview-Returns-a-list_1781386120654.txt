@@ -1,0 +1,129 @@
+GET
+https://api.poe.com/v1/models
+Overview
+Returns a list of all models available via the Poe API.
+
+Popular models include:
+
+GPT-5-Pro - OpenAI's latest flagship model with extended reasoning
+GPT-5-Codex - Specialized for software engineering tasks
+Claude-Sonnet-4.5 - Anthropic's most advanced model
+Claude-Haiku-4.5 - Fast and efficient with frontier intelligence
+Gemini-2.5-Pro - Google's advanced model with web search
+Grok-4 - xAI's most intelligent language model
+DeepSeek-R1 - Top open-source reasoning model
+You can also access specialized bots for image generation (Nano-Banana, Amazon-Nova-Canvas), video generation (Amazon-Nova-Reel-1.1), and many other community-created models.
+
+Note: This endpoint does not require authentication and returns all publicly available models.
+
+Authentication
+Send your Poe API key in the Authorization header:
+
+
+Authorization: Bearer sk_test_51SAMPLEKEY
+All requests must be made over HTTPS.
+
+Parameters
+This endpoint does not accept query or path parameters.
+
+Responses
+Field	Type	Required	Description
+object	"list"	Optional	Object type identifier Allowed values: list
+data	object[]	Optional	
+data[].id	string	Required	Model identifier
+data[].object	"model"	Required	Object type, always "model" Allowed values: model
+data[].created	int64	Required	Unix timestamp in milliseconds of when the model was created
+data[].description	string	Optional	Detailed description of the model's capabilities, features, and usage instructions
+data[].owned_by	string	Required	Organization that owns the model
+data[].permission	object[]	Optional	Permission information for the model (typically empty)
+data[].root	string	Optional	Root model identifier
+data[].parent	string | null	Optional	Parent model identifier if this is a derivative model
+data[].architecture	object	Optional	Model architecture and modality information
+data[].architecture.input_modalities	"text" | "image" | "video" | "audio"[]	Optional	Supported input modalities
+data[].architecture.output_modalities	"text" | "image" | "video"[]	Optional	Supported output modalities
+data[].architecture.modality	string	Optional	Simplified modality string representation
+data[].pricing	object | null	Optional	Pricing information for the model. Null for free models or models with request-based pricing
+❌ Error codes
+Http	Type	Description
+429	rate_limit_error	Rate limit exceeded Rate limit exceeded (500 requests per minute)
+Best Practices
+Cache the models list in your application. Model availability doesn't change frequently, so you can safely cache this response for 1-24 hours.
+
+This endpoint returns all publicly available models. Consider:
+
+Caching: Models list changes infrequently, cache for 1-24 hours
+Filtering: Filter models by architecture.input_modalities for your use case
+Pricing: Use the pricing field to estimate costs before making requests
+🔁 Callbacks & webhooks
+No callbacks or webhooks are associated with this endpoint.
+
+Code example
+
+Retrieve the full model catalog with standard HTTP headers.
+
+cURL
+
+
+curl https://api.poe.com/v1/models \
+-H "Authorization: Bearer sk_test_51SAMPLEKEY" \
+-H "Accept: application/json"
+Example response
+
+
+{
+"object": "list",
+"data": [
+  {
+    "id": "Claude-Sonnet-4.5",
+    "object": "model",
+    "created": 1758868894776,
+    "description": "Claude Sonnet 4.5 represents a major leap forward in AI capability and alignment...",
+    "owned_by": "Anthropic",
+    "permission": [],
+    "root": "Claude-Sonnet-4.5",
+    "parent": null,
+    "architecture": {
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "modality": "text,image->text"
+    },
+    "pricing": {
+      "prompt": "0.0000026",
+      "completion": "0.000013",
+      "image": null,
+      "request": null
+    }
+  },
+  {
+    "id": "GPT-5-Pro",
+    "object": "model",
+    "created": 1759789057270,
+    "description": "OpenAI's latest flagship model with significantly improved coding skills...",
+    "owned_by": "OpenAI",
+    "permission": [],
+    "root": "GPT-5-Pro",
+    "parent": null,
+    "architecture": {
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "modality": "text,image->text"
+    },
+    "pricing": {
+      "prompt": "0.000013",
+      "completion": "0.00011",
+      "image": null,
+      "request": null
+    }
+  }
+]
+}
