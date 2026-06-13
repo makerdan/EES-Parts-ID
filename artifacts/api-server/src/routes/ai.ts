@@ -1,10 +1,12 @@
 import { Router } from "express";
 import { aiClient, IDENTIFY_MODEL } from "../lib/aiProvider";
+import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
 import { buildImageContent, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
 import { db } from "@workspace/db";
 import { aiRequestLogTable } from "@workspace/db";
 import { lt } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import OpenAI from "openai";
 
 const router = Router();
 
@@ -93,7 +95,24 @@ router.post("/identify", async (req, res) => {
       }
     });
   } catch (err) {
-    console.error(err);
+    if (isPoeAuthError(err)) {
+      logger.error({ err }, "AI auth error in POST /ai/identify");
+      return void res.status(401).json({ error: poeErrorMessage(err) });
+    }
+    if (err instanceof OpenAI.RateLimitError) {
+      logger.error({ err }, "AI rate-limit/quota error in POST /ai/identify");
+      return void res.status(429).json({ error: poeErrorMessage(err) });
+    }
+    if (isPoeTransientError(err)) {
+      logger.error({ err }, "AI transient error in POST /ai/identify");
+      return void res.status(503).json({ error: poeErrorMessage(err) });
+    }
+    const aiMsg = poeErrorMessage(err);
+    if (aiMsg) {
+      logger.error({ err }, "AI API error in POST /ai/identify");
+      return void res.status(502).json({ error: aiMsg });
+    }
+    logger.error({ err }, "Unexpected error in POST /ai/identify");
     res.status(500).json({ error: "AI identification failed" });
   }
 });
