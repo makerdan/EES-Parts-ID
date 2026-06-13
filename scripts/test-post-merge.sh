@@ -156,14 +156,14 @@ assert_exit "extra JSON fields accepted — exit 0" 0 $?
 # ---------------------------------------------------------------------------
 SCRIPT_CONTENT=$(cat "$SCRIPT_DIR/post-merge.sh")
 
-if echo "$SCRIPT_CONTENT" | grep -q 'pnpm --filter @workspace/api-spec run codegen'; then
+if echo "$SCRIPT_CONTENT" | grep -qE 'api-spec (run codegen|exec orval)'; then
   pass "codegen — command present in post-merge.sh"
 else
   fail "codegen — command missing from post-merge.sh"
 fi
 
 # Verify codegen line appears before the first health check invocation.
-CODEGEN_LINE=$(grep -n 'api-spec run codegen' "$SCRIPT_DIR/post-merge.sh" | head -1 | cut -d: -f1)
+CODEGEN_LINE=$(grep -nE 'api-spec (run codegen|exec orval)' "$SCRIPT_DIR/post-merge.sh" | head -1 | cut -d: -f1)
 HEALTHCHECK_LINE=$(grep -n 'check_api_health' "$SCRIPT_DIR/post-merge.sh" | grep -v '^[0-9]*:.*()' | head -1 | cut -d: -f1)
 if [[ -n "$CODEGEN_LINE" && -n "$HEALTHCHECK_LINE" && "$CODEGEN_LINE" -lt "$HEALTHCHECK_LINE" ]]; then
   pass "codegen — runs before health check"
@@ -175,11 +175,11 @@ fi
 # Test 7: codegen command is wrapped with a timeout guard
 # Ensures the codegen step cannot hang indefinitely and block future merges.
 # ---------------------------------------------------------------------------
-CODEGEN_TIMEOUT_LINE=$(grep -n 'timeout.*api-spec run codegen' "$SCRIPT_DIR/post-merge.sh" | head -1)
+CODEGEN_TIMEOUT_LINE=$(grep -nE 'timeout.*api-spec (run codegen|exec orval)' "$SCRIPT_DIR/post-merge.sh" | head -1)
 if [[ -n "$CODEGEN_TIMEOUT_LINE" ]]; then
   pass "codegen — wrapped with timeout guard"
 else
-  fail "codegen — must be wrapped with 'timeout <N> pnpm --filter @workspace/api-spec run codegen'"
+  fail "codegen — must be wrapped with 'timeout <N> pnpm --filter @workspace/api-spec (run codegen|exec orval)'"
 fi
 
 # Verify the timeout value does not exceed 120 seconds.
