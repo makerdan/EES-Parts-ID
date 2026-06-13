@@ -309,6 +309,90 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 12: db push is skipped when no schema files changed
+# Runs post-merge.sh as a subprocess with a mock git that reports only
+# non-schema changed files, and a mock pnpm that records whether it was
+# called with the db push arguments.
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR2=$(mktemp -d)
+DB_PUSH_CALLED_FILE="$MOCK_BIN_DIR2/db_push_called"
+
+cat > "$MOCK_BIN_DIR2/git" << 'MOCKEOF'
+#!/bin/bash
+echo "artifacts/parts-id/components/PartCard.tsx"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR2/git"
+
+cat > "$MOCK_BIN_DIR2/pnpm" << MOCKEOF
+#!/bin/bash
+# Record if db push was attempted
+if echo "\$*" | grep -q 'push'; then
+  touch "$DB_PUSH_CALLED_FILE"
+fi
+# Let verify-fts and orval succeed silently
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR2/pnpm"
+
+cat > "$MOCK_BIN_DIR2/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR2/curl"
+
+SKIP_DB_OUTPUT=$(PATH="$MOCK_BIN_DIR2:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+SKIP_DB_EXIT=$?
+rm -rf "$MOCK_BIN_DIR2"
+
+assert_exit     "db push skip — exits 0 when schema unchanged" 0 "$SKIP_DB_EXIT"
+assert_contains "db push skip — prints skip message" "Schema unchanged — skipping db push" "$SKIP_DB_OUTPUT"
+
+# ---------------------------------------------------------------------------
+# Test 13: db push runs when schema files changed
+# Runs post-merge.sh with a mock git that reports a schema file changed.
+# The mock pnpm records whether db push was called.
+# ---------------------------------------------------------------------------
+MOCK_BIN_DIR3=$(mktemp -d)
+DB_PUSH_CALLED_FILE3="$MOCK_BIN_DIR3/db_push_called"
+
+cat > "$MOCK_BIN_DIR3/git" << 'MOCKEOF'
+#!/bin/bash
+echo "lib/db/src/schema/inventory.ts"
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR3/git"
+
+cat > "$MOCK_BIN_DIR3/timeout" << MOCKEOF
+#!/bin/bash
+# Capture args: first arg is the timeout value, rest is the command
+shift
+# Record if this is a db push call
+if echo "\$*" | grep -q 'push'; then
+  touch "$DB_PUSH_CALLED_FILE3"
+fi
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR3/timeout"
+
+cat > "$MOCK_BIN_DIR3/pnpm" << 'MOCKEOF'
+#!/bin/bash
+exit 0
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR3/pnpm"
+
+cat > "$MOCK_BIN_DIR3/curl" << 'MOCKEOF'
+#!/bin/bash
+echo '{"status":"ok"}'
+MOCKEOF
+chmod +x "$MOCK_BIN_DIR3/curl"
+
+SCHEMA_DB_OUTPUT=$(PATH="$MOCK_BIN_DIR3:$PATH" REPLIT_DEV_DOMAIN="mock-domain.test" bash "$SCRIPT_DIR/post-merge.sh" 2>&1)
+SCHEMA_DB_EXIT=$?
+rm -rf "$MOCK_BIN_DIR3"
+
+assert_exit     "db push run — exits 0 when schema changed" 0 "$SCHEMA_DB_EXIT"
+assert_contains "db push run — prints running message" "Schema changed — running db push" "$SCHEMA_DB_OUTPUT"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
