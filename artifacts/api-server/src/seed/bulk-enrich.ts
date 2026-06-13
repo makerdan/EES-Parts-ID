@@ -17,7 +17,8 @@
 import { db, pool } from "@workspace/db";
 import { inventoryTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
-import { generateKeywords } from "../utils/generateKeywords";
+import { generateKeywords, type PoeEnrichedError } from "../utils/generateKeywords";
+import { poeErrorMessage } from "@workspace/integrations-poe-server";
 
 const BATCH_SIZE   = parseInt(process.env["ENRICH_BATCH_SIZE"]   ?? "10",  10);
 const CONCURRENCY  = parseInt(process.env["ENRICH_CONCURRENCY"]  ?? "5",   10);
@@ -27,6 +28,20 @@ const MODEL        = process.env["ENRICH_MODEL"] ?? "GPT-4o-mini";
 
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Returns the PoeEnrichedError shape if `err` is one, or null otherwise.
+ */
+function asPoeEnrichedError(err: unknown): PoeEnrichedError | null {
+  if (
+    err instanceof Error &&
+    "isPoeAuth" in err &&
+    "isPoeTransient" in err
+  ) {
+    return err as PoeEnrichedError;
+  }
+  return null;
 }
 
 async function enrichWithRetry(item: {
@@ -41,6 +56,15 @@ async function enrichWithRetry(item: {
       return await generateKeywords(item, MODEL);
     } catch (err) {
       lastErr = err;
+      const poeErr = asPoeEnrichedError(err);
+      if (poeErr) {
+        // Auth errors are fatal — propagate immediately so the outer loop aborts.
+        if (poeErr.isPoeAuth) throw err;
+        // Permanent non-auth Poe errors (bot not found, bad model, etc.) won't
+        // resolve on retry — fail fast for this item without burning retries.
+        if (!poeErr.isPoeTransient) throw err;
+      }
+      // Transient errors (rate limit, server error, timeout) are worth retrying.
       if (attempt < MAX_RETRIES) {
         const backoffMs = Math.min(1000 * 2 ** (attempt - 1), 8000);
         await sleep(backoffMs);
@@ -98,8 +122,18 @@ async function bulkEnrich() {
             .where(eq(inventoryTable.id, item.id));
           processed++;
         } else {
-          // Leave enrichedAt NULL so a future run will retry this item
-          console.error(`  ✗ id=${item.id} (${item.vendor}/${item.catalog}): ${r.reason}`);
+          const poeErr = asPoeEnrichedError(r.reason);
+          if (poeErr?.isPoeAuth) {
+            // Auth errors mean no further API calls will succeed — abort entirely.
+            console.error(`\n✗ Fatal Poe auth error — stopping run immediately.\n  ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+            console.error("  Fix the POE_API_KEY secret and re-run the script.");
+            await pool.end();
+            process.exit(1);
+          }
+          // Leave enrichedAt NULL so a future run will retry this item (if transient)
+          // or skip it if it was already resolved.
+          const label = poeErr && !poeErr.isPoeTransient ? "permanent Poe error" : "error";
+          console.error(`  ✗ id=${item.id} (${item.vendor}/${item.catalog}) [${label}]: ${r.reason instanceof Error ? r.reason.message : r.reason}`);
           errors++;
         }
       }
@@ -119,13 +153,19 @@ async function bulkEnrich() {
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\n=== Enrichment Complete ===`);
   console.log(`Enriched : ${processed}`);
-  console.log(`Errors   : ${errors}  (retryable – re-run script to process)`);
+  console.log(`Errors   : ${errors}  (transient errors are retryable – re-run script to process)`);
   console.log(`Time     : ${elapsed}s`);
 
   await pool.end();
 }
 
 bulkEnrich().catch((err) => {
-  console.error("Bulk enrichment failed:", err);
+  const poeMsg = poeErrorMessage(err);
+  if (poeMsg) {
+    console.error(`\nFatal Poe error: ${poeMsg}`);
+    console.error("  Fix the POE_API_KEY secret or Poe subscription and re-run.");
+  } else {
+    console.error("Bulk enrichment failed:", err);
+  }
   process.exit(1);
 });
