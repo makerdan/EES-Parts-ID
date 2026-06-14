@@ -37,6 +37,7 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { secondaryBtnBase } from "@/styles/shared";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
 import { useTrackScreen } from "@/utils/useTrackScreen";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   applyDiscardAll,
   runSaveAll,
@@ -57,6 +58,15 @@ const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN
     ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
     : "";
+
+const EXPAND_DESC_DRAFT_KEY = "@expandDesc:draft";
+type ExpandDescDraft = {
+  results: ExpandDescResult[];
+  streamDone: boolean;
+  model: string | null;
+  remaining: number | null;
+  savedAt: number;
+};
 
 const SQL_EXAMPLES: { label: string; group: string; sql: string }[] = [
   {
@@ -561,6 +571,7 @@ export default function UploadScreen() {
   const [expandDescRunning, setExpandDescRunning] = useState(false);
   const [expandDescError, setExpandDescError] = useState<string | null>(null);
   const [expandDescRemaining, setExpandDescRemaining] = useState<number | null>(null);
+  const [expandDescDraftSavedAt, setExpandDescDraftSavedAt] = useState<number | null>(null);
 
   // SQL query tab state
   const [queryText, setQueryText] = useState("SELECT * FROM inventory LIMIT 20");
@@ -921,6 +932,8 @@ export default function UploadScreen() {
   };
 
   const handleStartExpandDescriptions = async () => {
+    AsyncStorage.removeItem(EXPAND_DESC_DRAFT_KEY).catch(() => {});
+    setExpandDescDraftSavedAt(null);
     setExpandDescRunning(true);
     setExpandDescError(null);
     setExpandDescResults([]);
@@ -1061,6 +1074,58 @@ export default function UploadScreen() {
   const handleDiscardAll = () => {
     setExpandDescResults(prev => applyDiscardAll(prev, expandDescRunning));
   };
+
+  const handleClearExpandDescDraft = useCallback(() => {
+    AsyncStorage.removeItem(EXPAND_DESC_DRAFT_KEY).catch(() => {});
+    setExpandDescResults([]);
+    setExpandDescStreamDone(false);
+    setExpandDescModel(null);
+    setExpandDescRemaining(null);
+    setExpandDescDraftSavedAt(null);
+  }, []);
+
+  // Load draft on mount
+  useEffect(() => {
+    AsyncStorage.getItem(EXPAND_DESC_DRAFT_KEY).then(raw => {
+      if (!raw) return;
+      try {
+        const draft: ExpandDescDraft = JSON.parse(raw);
+        const pending = draft.results.filter(
+          r => r.savedStatus === "pending" || r.savedStatus === "saving",
+        ).map(r => r.savedStatus === "saving" ? { ...r, savedStatus: "pending" as const } : r);
+        if (pending.length === 0) {
+          AsyncStorage.removeItem(EXPAND_DESC_DRAFT_KEY).catch(() => {});
+          return;
+        }
+        setExpandDescResults(pending);
+        setExpandDescStreamDone(draft.streamDone);
+        setExpandDescModel(draft.model);
+        setExpandDescRemaining(draft.remaining);
+        setExpandDescDraftSavedAt(draft.savedAt);
+      } catch { /* ignore corrupt draft */ }
+    }).catch(() => {});
+  }, []);
+
+  // Save draft whenever results change (auto-clear when all resolved)
+  useEffect(() => {
+    if (expandDescResults.length === 0) return;
+    const hasPending = expandDescResults.some(
+      r => r.savedStatus === "pending" || r.savedStatus === "saving",
+    );
+    if (!hasPending) {
+      AsyncStorage.removeItem(EXPAND_DESC_DRAFT_KEY).catch(() => {});
+      setExpandDescDraftSavedAt(null);
+      return;
+    }
+    const draft: ExpandDescDraft = {
+      results: expandDescResults,
+      streamDone: expandDescStreamDone,
+      model: expandDescModel,
+      remaining: expandDescRemaining,
+      savedAt: Date.now(),
+    };
+    AsyncStorage.setItem(EXPAND_DESC_DRAFT_KEY, JSON.stringify(draft)).catch(() => {});
+  }, [expandDescResults, expandDescStreamDone, expandDescModel, expandDescRemaining]);
 
   const handlePickFile = async () => {
     setPasteText("");
@@ -2283,6 +2348,26 @@ export default function UploadScreen() {
                         );
                       })() : null}
 
+                      {/* Draft restored banner */}
+                      {expandDescDraftSavedAt !== null && !expandDescRunning && expandDescResults.some(r => r.savedStatus === "pending") ? (
+                        <View style={[styles.draftBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.draftBannerTitle, { color: colors.warning }]}>
+                              📋 Resumed from last session
+                            </Text>
+                            <Text style={[styles.draftBannerSub, { color: colors.warning }]}>
+                              {expandDescResults.filter(r => r.savedStatus === "pending").length} results waiting for review
+                            </Text>
+                          </View>
+                          <Pressable
+                            onPress={handleClearExpandDescDraft}
+                            style={[styles.draftClearBtn, { borderColor: colors.warning + "66" }]}
+                          >
+                            <Text style={[styles.draftClearBtnText, { color: colors.warning }]}>Clear</Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+
                       {/* Bulk actions */}
                       {expandDescResults.some(r => r.savedStatus === "pending" && !r.error) ? (
                         <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
@@ -2777,6 +2862,11 @@ const styles = StyleSheet.create({
   uploadBtn: { marginTop: 12, borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   uploadBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
   enrichCard: { borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 14 },
+  draftBanner: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, borderWidth: 1, marginTop: 10 },
+  draftBannerTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  draftBannerSub: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2, opacity: 0.85 },
+  draftClearBtn: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5 },
+  draftClearBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   aiWorkingBanner: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, borderWidth: 1 },
   aiWorkingText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   aiWorkingSubtext: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2, opacity: 0.8 },
