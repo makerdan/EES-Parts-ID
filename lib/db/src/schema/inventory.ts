@@ -143,6 +143,7 @@ export const catalogPdfJobTable = pgTable("catalog_pdf_job", {
   totalPages: integer("total_pages"),
   processedPages: integer("processed_pages").notNull().default(0),
   matchedParts: integer("matched_parts").notNull().default(0),
+  imagesMatched: integer("images_matched").notNull().default(0),
   startedAt: timestamp("started_at"),
   finishedAt: timestamp("finished_at"),
   errorMessage: text("error_message"),
