@@ -32,8 +32,8 @@ For each part return a JSON object with:
   - catalogNumber: the manufacturer catalog/part number (exact string, no spaces around hyphens)
   - description: short product description (max 200 chars)
   - confidence: how confident you are this is a real part number (0.0–1.0)
-  - hasPartImage: boolean — true if there is a product photo associated with this part on this page
-  - imageRegion: if hasPartImage is true, a normalised bounding box object { "x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0 } (values 0–1 as fraction of page dimensions) describing where the part image appears; otherwise null
+  - hasPartImage: boolean — true ONLY if a clearly visible product photograph or product illustration appears on this page for that specific part. Set false for pages that only contain text, tables, or specification data with no visible product image. When uncertain, set false.
+  - imageRegion: if hasPartImage is true, provide the tight normalised bounding box { "x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0 } (values 0.0–1.0 as fractions of page width/height) enclosing ONLY the product image itself — not surrounding text, white space, or other parts. The area (width × height) must be at least 0.02 (2% of the page) and should not exceed 0.85. If you cannot confidently locate the exact image boundaries, set imageRegion to null and hasPartImage to false.
 
 Return ONLY a JSON array of objects with exactly those 5 fields. No markdown, no explanation.
 If no parts are found, return an empty array [].`;

@@ -112,6 +112,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
 
       let processedPages = 0;
       let matchedParts = 0;
+      let imagesMatched = 0;
 
       for (const page of pages) {
         // Extract catalog entries from this page
@@ -136,37 +137,43 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
 
           if (!existing) continue;
 
-          // Upload part image to GCS if available.
-          // Primary: page is rendered (pdftoppm) + entry has imageRegion → crop
-          //          the region from the rendered page image using sharp.
-          // Fallback: page has embedded images → upload the first one.
+          // Upload part image when the page has a clearly located image region.
+          // Rendered path (pdftoppm): crop using the normalised imageRegion only —
+          // never upload the full rendered page as a "part image".
+          // Fallback path (pdfjs-dist): use the embedded image object directly.
           let imageUrl: string | null = null;
           if (entry.hasPartImage && page.images.length > 0) {
             const srcImg = page.images[0];
             if (srcImg) {
-              let imgToBuf: Buffer = srcImg;
-              if (page.isRendered && entry.imageRegion && page.pageWidth > 0 && page.pageHeight > 0) {
-                try {
+              let imgToBuf: Buffer | null = null;
+              if (page.isRendered) {
+                if (entry.imageRegion && page.pageWidth > 0 && page.pageHeight > 0) {
                   const { x, y, width, height } = entry.imageRegion;
-                  // Convert normalised coords to pixel region with safe clamping
-                  const left = Math.max(0, Math.round(x * page.pageWidth));
-                  const top = Math.max(0, Math.round(y * page.pageHeight));
-                  const w = Math.min(page.pageWidth - left, Math.max(1, Math.round(width * page.pageWidth)));
-                  const h = Math.min(page.pageHeight - top, Math.max(1, Math.round(height * page.pageHeight)));
-                  const sharp = await import("sharp");
-                  imgToBuf = await (sharp.default ?? sharp)(srcImg)
-                    .extract({ left, top, width: w, height: h })
-                    .png()
-                    .toBuffer();
-                } catch (cropErr) {
-                  console.warn("[catalog-pdf] Crop failed, using full page:", cropErr);
-                  imgToBuf = srcImg;
+                  if (width * height >= 0.02 && width * height <= 0.85) {
+                    try {
+                      const left = Math.max(0, Math.round(x * page.pageWidth));
+                      const top = Math.max(0, Math.round(y * page.pageHeight));
+                      const w = Math.min(page.pageWidth - left, Math.max(1, Math.round(width * page.pageWidth)));
+                      const h = Math.min(page.pageHeight - top, Math.max(1, Math.round(height * page.pageHeight)));
+                      const sharp = await import("sharp");
+                      imgToBuf = await (sharp.default ?? sharp)(srcImg)
+                        .extract({ left, top, width: w, height: h })
+                        .png()
+                        .toBuffer();
+                    } catch (cropErr) {
+                      console.warn("[catalog-pdf] Crop failed, skipping image:", cropErr);
+                    }
+                  }
                 }
+              } else {
+                imgToBuf = srcImg;
               }
-              try {
-                imageUrl = await uploadCatalogImage(imgToBuf, "image/png");
-              } catch (imgErr) {
-                console.warn("[catalog-pdf] Image upload failed:", imgErr);
+              if (imgToBuf) {
+                try {
+                  imageUrl = await uploadCatalogImage(imgToBuf, "image/png");
+                } catch (imgErr) {
+                  console.warn("[catalog-pdf] Image upload failed:", imgErr);
+                }
               }
             }
           }
@@ -185,6 +192,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
             })
             .where(eq(inventoryTable.id, match.inventoryId));
 
+          if (imageUrl) imagesMatched++;
           matchedParts++;
         }
 
@@ -195,6 +203,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
           .set({
             processedPages,
             matchedParts,
+            imagesMatched,
           })
           .where(eq(catalogPdfJobTable.id, jobRow.id));
       }
@@ -205,12 +214,13 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
           status: "done",
           processedPages,
           matchedParts,
+          imagesMatched,
           finishedAt: new Date(),
         })
         .where(eq(catalogPdfJobTable.id, jobRow.id));
 
       console.log(
-        `[catalog-pdf] job=${jobId} done — pages=${processedPages} matched=${matchedParts}`,
+        `[catalog-pdf] job=${jobId} done — pages=${processedPages} matched=${matchedParts} images=${imagesMatched}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -243,6 +253,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
     totalPages: row.totalPages,
     processedPages: row.processedPages,
     matchedParts: row.matchedParts,
+    imagesMatched: row.imagesMatched,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
     errorMessage: row.errorMessage,
@@ -347,6 +358,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
 
       let processedPages = resumeFromPage;
       let matchedParts = jobRow.matchedParts ?? 0;
+      let imagesMatched = jobRow.imagesMatched ?? 0;
 
       for (const page of remainingPages) {
         const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
@@ -373,28 +385,35 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
           if (entry.hasPartImage && page.images.length > 0) {
             const srcImg = page.images[0];
             if (srcImg) {
-              let imgToBuf: Buffer = srcImg;
-              if (page.isRendered && entry.imageRegion && page.pageWidth > 0 && page.pageHeight > 0) {
-                try {
+              let imgToBuf: Buffer | null = null;
+              if (page.isRendered) {
+                if (entry.imageRegion && page.pageWidth > 0 && page.pageHeight > 0) {
                   const { x, y, width, height } = entry.imageRegion;
-                  const left = Math.max(0, Math.round(x * page.pageWidth));
-                  const top = Math.max(0, Math.round(y * page.pageHeight));
-                  const w = Math.min(page.pageWidth - left, Math.max(1, Math.round(width * page.pageWidth)));
-                  const h = Math.min(page.pageHeight - top, Math.max(1, Math.round(height * page.pageHeight)));
-                  const sharp = await import("sharp");
-                  imgToBuf = await (sharp.default ?? sharp)(srcImg)
-                    .extract({ left, top, width: w, height: h })
-                    .png()
-                    .toBuffer();
-                } catch (cropErr) {
-                  console.warn("[catalog-pdf] Crop failed, using full page:", cropErr);
-                  imgToBuf = srcImg;
+                  if (width * height >= 0.02 && width * height <= 0.85) {
+                    try {
+                      const left = Math.max(0, Math.round(x * page.pageWidth));
+                      const top = Math.max(0, Math.round(y * page.pageHeight));
+                      const w = Math.min(page.pageWidth - left, Math.max(1, Math.round(width * page.pageWidth)));
+                      const h = Math.min(page.pageHeight - top, Math.max(1, Math.round(height * page.pageHeight)));
+                      const sharp = await import("sharp");
+                      imgToBuf = await (sharp.default ?? sharp)(srcImg)
+                        .extract({ left, top, width: w, height: h })
+                        .png()
+                        .toBuffer();
+                    } catch (cropErr) {
+                      console.warn("[catalog-pdf] Crop failed, skipping image:", cropErr);
+                    }
+                  }
                 }
+              } else {
+                imgToBuf = srcImg;
               }
-              try {
-                imageUrl = await uploadCatalogImage(imgToBuf, "image/png");
-              } catch (imgErr) {
-                console.warn("[catalog-pdf] Image upload failed:", imgErr);
+              if (imgToBuf) {
+                try {
+                  imageUrl = await uploadCatalogImage(imgToBuf, "image/png");
+                } catch (imgErr) {
+                  console.warn("[catalog-pdf] Image upload failed:", imgErr);
+                }
               }
             }
           }
@@ -412,23 +431,24 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
             })
             .where(eq(inventoryTable.id, match.inventoryId));
 
+          if (imageUrl) imagesMatched++;
           matchedParts++;
         }
 
         processedPages++;
         await db
           .update(catalogPdfJobTable)
-          .set({ processedPages, matchedParts })
+          .set({ processedPages, matchedParts, imagesMatched })
           .where(eq(catalogPdfJobTable.id, jobId));
       }
 
       await db
         .update(catalogPdfJobTable)
-        .set({ status: "done", processedPages, matchedParts, finishedAt: new Date() })
+        .set({ status: "done", processedPages, matchedParts, imagesMatched, finishedAt: new Date() })
         .where(eq(catalogPdfJobTable.id, jobId));
 
       console.log(
-        `[catalog-pdf] job=${jobId} resumed and done — pages=${processedPages} matched=${matchedParts}`,
+        `[catalog-pdf] job=${jobId} resumed and done — pages=${processedPages} matched=${matchedParts} images=${imagesMatched}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -34,6 +34,7 @@ type JobStatus = {
   totalPages: number | null;
   processedPages: number;
   matchedParts: number;
+  imagesMatched: number;
   errorMessage: string | null;
 };
 
@@ -138,6 +139,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         totalPages: null,
         processedPages: 0,
         matchedParts: 0,
+        imagesMatched: 0,
         errorMessage: null,
       });
       startPolling(jobId);
@@ -242,7 +244,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {isDone && jobStatus ? (
         <View style={[s.doneCard, { backgroundColor: colors.success + "18" }]}>
           <Text style={[s.doneText, { color: colors.success }]}>
-            Done — {jobStatus.matchedParts} part{jobStatus.matchedParts !== 1 ? "s" : ""} updated across {jobStatus.processedPages} pages
+            Done — {jobStatus.matchedParts} part{jobStatus.matchedParts !== 1 ? "s" : ""} updated across {jobStatus.processedPages} pages{jobStatus.imagesMatched > 0 ? `, ${jobStatus.imagesMatched} with images` : ""}
           </Text>
           <Pressable
             onPress={() => router.push(`/catalog-review?jobId=${jobStatus.jobId}`)}
