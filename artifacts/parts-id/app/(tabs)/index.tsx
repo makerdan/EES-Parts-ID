@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   SafeAreaView,
@@ -417,13 +418,15 @@ export default function SearchScreen() {
       syncRetryAttemptRef.current = 0; // success — reset backoff counter
       try {
         const syncedAt = Date.now();
-        await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
-        // Record when this authoritative full sync completed. The mount effect
-        // uses this to trigger a background re-sync when the cache is stale,
-        // which prunes items deleted server-side since the last sync.
-        await AsyncStorage.setItem(FUSE_CACHE_SYNCED_AT_KEY, String(syncedAt));
-        // Update in-memory state so any active offline warning clears immediately
-        // without requiring a remount.
+        if (Platform.OS !== "web") {
+          // Skip the write on web: localStorage has a ~5 MB quota and the full
+          // inventory JSON reliably exceeds it. The offline cache is for native
+          // only (warehouse workers with spotty connectivity). On web the data
+          // re-fetches from the server on next load.
+          await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(allItems));
+          await AsyncStorage.setItem(FUSE_CACHE_SYNCED_AT_KEY, String(syncedAt));
+        }
+        // Always update in-memory state so any active offline warning clears.
         setFuseSyncedAt(syncedAt);
       } catch (err) {
         reportStorageError("Could not save offline inventory cache", err);
@@ -626,9 +629,11 @@ export default function SearchScreen() {
             else merged.push(item);
           }
           buildFuseIndex(merged);
-          AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(err => {
-            reportStorageError("Could not save offline inventory cache", err);
-          });
+          if (Platform.OS !== "web") {
+            AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(merged)).catch(err => {
+              reportStorageError("Could not save offline inventory cache", err);
+            });
+          }
         }
 
         // Cache results keyed by query (with TTL pruning)
@@ -845,9 +850,11 @@ export default function SearchScreen() {
         it.id === item.id ? { ...it, dimensions: dims } : it,
       );
       buildFuseIndex(updated);
-      AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(updated)).catch(err => {
-        reportStorageError("Could not save offline inventory cache", err);
-      });
+      if (Platform.OS !== "web") {
+        AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(updated)).catch(err => {
+          reportStorageError("Could not save offline inventory cache", err);
+        });
+      }
       showToast("Dimensions saved.");
     } catch {
       showToast("Could not save dimensions — please try again.");
