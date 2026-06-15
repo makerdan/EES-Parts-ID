@@ -12,6 +12,8 @@
  *   - Undo of batchMove → PATCH each zone to its pre-drag position
  *   - Redo after undo  → PATCH with the "after" position
  *   - Redo stack cleared when a new operation is pushed
+ *   - Undo of bulk aisle reassignment (with sentinel conflict) → PATCH original aisleId + sectionNum
+ *   - Redo of bulk aisle reassignment → PATCH resolved aisleId + sectionNums (including sentinels)
  */
 
 import React from "react";
@@ -600,4 +602,164 @@ describe("ZoneEditor — undo / redo stack", () => {
     // This test does 101 async operations; give it ample time.
     30_000,
   );
+
+  // ── 9. Undo of bulk aisle reassignment (with sentinel conflict) ─────────────
+  //
+  // ZONE_1 (id=1, aisleId="12", sectionNum=1) and ZONE_2 (id=2, aisleId="13", sectionNum=1)
+  // share sectionNum=1. Moving both to aisle "15" triggers conflict resolution:
+  //   · Zone 1 keeps sectionNum=1 (no conflict) → body = { aisleId: "15" }
+  //   · Zone 2 collides → sentinel -1 assigned  → body = { aisleId: "15", sectionNum: -1 }
+  // Undo must restore each zone's original aisleId and sectionNum.
+  it("undo bulk aisle reassignment — PATCHes each zone back to its original aisleId and sectionNum", async () => {
+    const { container, fetchMock } = await setupEditor([ZONE_1, ZONE_2]);
+
+    // Select ZONE_1 then Shift+click ZONE_2 via the sidebar list to enter multi-select
+    await act(async () => {
+      const zone1Meta = within(container).getAllByText(/Aisle 12/)[0]!;
+      fireEvent.click(zone1Meta.parentElement!);
+    });
+    await act(async () => {});
+    await act(async () => {
+      const zone2Meta = within(container).getAllByText(/Aisle 13/)[0]!;
+      fireEvent.click(zone2Meta.parentElement!, { shiftKey: true });
+    });
+    await act(async () => {});
+
+    // Zones have different aisleIds so the multi-select aisle input shows "— mixed —"
+    await act(async () => {
+      const aisleInput = within(container).getByPlaceholderText("— mixed —");
+      fireEvent.change(aisleInput, { target: { value: "15" } });
+    });
+
+    // Click "Save 2 zones" — this calls handleMultiSave which shows a confirm dialog first
+    await act(async () => {
+      const saveBtn = within(container).getByText("Save 2 zones");
+      fireEvent.click(saveBtn);
+    });
+    await act(async () => {});
+
+    // Confirm the dialog ("Confirm" for non-destructive operations)
+    await act(async () => {
+      const confirmBtn = within(container).getByText("Confirm");
+      fireEvent.click(confirmBtn);
+    });
+
+    // Wait for PATCH calls for both zones to settle
+    await waitFor(
+      () => {
+        const all = fetchMock.mock.calls as [unknown, RequestInit][];
+        const p1 = patchBodiesFrom(all, 1);
+        const p2 = patchBodiesFrom(all, 2);
+        expect(p1.length + p2.length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 3000 },
+    );
+    await act(async () => {});
+
+    // Undo → each zone PATCHed back to its original aisleId and sectionNum
+    const afterBulk = callsAfter(fetchMock);
+    await pressUndo(fetchMock);
+
+    await waitFor(
+      () => {
+        const undo1 = patchBodiesFrom(afterBulk(), 1);
+        const undo2 = patchBodiesFrom(afterBulk(), 2);
+        expect(undo1).toHaveLength(1);
+        expect(undo2).toHaveLength(1);
+      },
+      { timeout: 3000 },
+    );
+
+    const undoCalls = afterBulk();
+    const undo1 = patchBodiesFrom(undoCalls, 1);
+    const undo2 = patchBodiesFrom(undoCalls, 2);
+
+    // Zone 1: original was aisleId="12", sectionNum=1
+    expect(undo1[0]).toMatchObject({ aisleId: ZONE_1.aisleId, sectionNum: ZONE_1.sectionNum });
+    // Zone 2: original was aisleId="13", sectionNum=1 (even though it received a sentinel)
+    expect(undo2[0]).toMatchObject({ aisleId: ZONE_2.aisleId, sectionNum: ZONE_2.sectionNum });
+  });
+
+  // ── 10. Redo of bulk aisle reassignment (including sentinel) ─────────────────
+  //
+  // After undoing the bulk reassignment, redo must re-apply the resolved "after"
+  // snapshots: zone 1 gets aisleId="15" + sectionNum=1, zone 2 gets aisleId="15"
+  // + sentinel sectionNum (< 0).
+  it("redo bulk aisle reassignment — PATCHes zones with resolved aisleId and sectionNums including the sentinel", async () => {
+    const { container, fetchMock } = await setupEditor([ZONE_1, ZONE_2]);
+
+    // Identical setup: select both zones and bulk-reassign to aisle "15"
+    await act(async () => {
+      const zone1Meta = within(container).getAllByText(/Aisle 12/)[0]!;
+      fireEvent.click(zone1Meta.parentElement!);
+    });
+    await act(async () => {});
+    await act(async () => {
+      const zone2Meta = within(container).getAllByText(/Aisle 13/)[0]!;
+      fireEvent.click(zone2Meta.parentElement!, { shiftKey: true });
+    });
+    await act(async () => {});
+
+    await act(async () => {
+      const aisleInput = within(container).getByPlaceholderText("— mixed —");
+      fireEvent.change(aisleInput, { target: { value: "15" } });
+    });
+
+    await act(async () => {
+      const saveBtn = within(container).getByText("Save 2 zones");
+      fireEvent.click(saveBtn);
+    });
+    await act(async () => {});
+
+    await act(async () => {
+      const confirmBtn = within(container).getByText("Confirm");
+      fireEvent.click(confirmBtn);
+    });
+
+    // Wait for the initial bulk PATCH calls to land
+    await waitFor(
+      () => {
+        const all = fetchMock.mock.calls as [unknown, RequestInit][];
+        const p1 = patchBodiesFrom(all, 1);
+        const p2 = patchBodiesFrom(all, 2);
+        expect(p1.length + p2.length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 3000 },
+    );
+    await act(async () => {});
+
+    // Capture the sentinel assigned to zone 2 from the original bulk PATCH
+    // (zone 2's body included sectionNum because of the conflict)
+    const allCallsAfterSave = fetchMock.mock.calls as [unknown, RequestInit][];
+    const zone2BulkPatch = patchBodiesFrom(allCallsAfterSave, 2)[0]!;
+    const sentinelSectionNum = zone2BulkPatch.sectionNum as number;
+    expect(sentinelSectionNum).toBeLessThan(0); // sanity check
+
+    // Undo the bulk reassignment
+    await pressUndo(fetchMock);
+
+    // Redo → zones should receive the resolved "after" values from the undo entry
+    const afterUndo = callsAfter(fetchMock);
+    await pressRedo(fetchMock);
+
+    await waitFor(
+      () => {
+        const redo1 = patchBodiesFrom(afterUndo(), 1);
+        const redo2 = patchBodiesFrom(afterUndo(), 2);
+        expect(redo1).toHaveLength(1);
+        expect(redo2).toHaveLength(1);
+      },
+      { timeout: 3000 },
+    );
+
+    const redoCalls = afterUndo();
+    const redo1 = patchBodiesFrom(redoCalls, 1);
+    const redo2 = patchBodiesFrom(redoCalls, 2);
+
+    // Zone 1 had no conflict → redo applies aisleId="15", sectionNum=1
+    expect(redo1[0]).toMatchObject({ aisleId: "15", sectionNum: ZONE_1.sectionNum });
+    // Zone 2 had a sentinel conflict → redo applies aisleId="15" + the same sentinel
+    expect(redo2[0]!.aisleId).toBe("15");
+    expect(redo2[0]!.sectionNum).toBe(sentinelSectionNum);
+  });
 });
