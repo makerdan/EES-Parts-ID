@@ -388,10 +388,10 @@ describe("ZoneEditor — undo / redo stack", () => {
   it("undo delete — re-POSTs the zone to restore it", async () => {
     const { container, fetchMock } = await setupEditor();
 
-    // Select ZONE_1 via the sidebar zone list (use within to scope query)
+    // Select ZONE_1 via the sidebar zone list (stable data-zone-id attribute)
     await act(async () => {
-      const zoneItem = container.querySelector('[data-testid="zone-item-1"]')!;
-      fireEvent.click(zoneItem);
+      const zoneEl = container.querySelector('[data-zone-id="1"]')!;
+      fireEvent.click(zoneEl);
     });
     await act(async () => {});
 
@@ -445,14 +445,14 @@ describe("ZoneEditor — undo / redo stack", () => {
 
     // Select ZONE_1 then Shift+click ZONE_2 via the sidebar zone list
     await act(async () => {
-      const zone1Item = container.querySelector('[data-testid="zone-item-1"]')!;
-      fireEvent.click(zone1Item);
+      const zone1El = container.querySelector('[data-zone-id="1"]')!;
+      fireEvent.click(zone1El);
     });
     await act(async () => {});
 
     await act(async () => {
-      const zone2Item = container.querySelector('[data-testid="zone-item-2"]')!;
-      fireEvent.click(zone2Item, { shiftKey: true });
+      const zone2El = container.querySelector('[data-zone-id="2"]')!;
+      fireEvent.click(zone2El, { shiftKey: true });
     });
     await act(async () => {});
 
@@ -615,13 +615,13 @@ describe("ZoneEditor — undo / redo stack", () => {
 
     // Select ZONE_1 then Shift+click ZONE_2 via the sidebar list to enter multi-select
     await act(async () => {
-      const zone1Meta = within(container).getAllByText(/Aisle 12/)[0]!;
-      fireEvent.click(zone1Meta.parentElement!);
+      const zone1El = container.querySelector('[data-zone-id="1"]')!;
+      fireEvent.click(zone1El);
     });
     await act(async () => {});
     await act(async () => {
-      const zone2Meta = within(container).getAllByText(/Aisle 13/)[0]!;
-      fireEvent.click(zone2Meta.parentElement!, { shiftKey: true });
+      const zone2El = container.querySelector('[data-zone-id="2"]')!;
+      fireEvent.click(zone2El, { shiftKey: true });
     });
     await act(async () => {});
 
@@ -690,13 +690,13 @@ describe("ZoneEditor — undo / redo stack", () => {
 
     // Identical setup: select both zones and bulk-reassign to aisle "15"
     await act(async () => {
-      const zone1Meta = within(container).getAllByText(/Aisle 12/)[0]!;
-      fireEvent.click(zone1Meta.parentElement!);
+      const zone1El = container.querySelector('[data-zone-id="1"]')!;
+      fireEvent.click(zone1El);
     });
     await act(async () => {});
     await act(async () => {
-      const zone2Meta = within(container).getAllByText(/Aisle 13/)[0]!;
-      fireEvent.click(zone2Meta.parentElement!, { shiftKey: true });
+      const zone2El = container.querySelector('[data-zone-id="2"]')!;
+      fireEvent.click(zone2El, { shiftKey: true });
     });
     await act(async () => {});
 
