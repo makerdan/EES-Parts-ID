@@ -2565,10 +2565,9 @@ export function ZoneEditor() {
                     background: sel ? "rgba(245,158,11,0.08)" : "transparent",
                   }}
                 >
-                  <div style={styles.zoneItemLabel}>{sectionNumToDisplay(zone.sectionNum)}</div>
+                  <div style={styles.zoneItemLabel}>Aisle {zone.aisleId} §{sectionNumToDisplay(zone.sectionNum)}</div>
                   <div style={styles.zoneItemMeta}>
-                    §{sectionNumToDisplay(zone.sectionNum)}
-                    {zone.isInventory ? "" : " · non-inv"}
+                    {zone.isInventory ? "inventory" : "non-inv"}
                   </div>
                 </div>
               );
