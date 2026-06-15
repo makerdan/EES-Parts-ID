@@ -358,7 +358,7 @@ describe("ZoneEditor — undo / redo stack", () => {
 
     // Fill in the aisle ID (required for Save Zone to be enabled)
     await act(async () => {
-      const aisleInput = within(container).getByPlaceholderText("e.g. 12");
+      const aisleInput = within(container).getByPlaceholderText("e.g. 09 or 22");
       fireEvent.change(aisleInput, { target: { value: "15" } });
     });
 
