@@ -390,8 +390,8 @@ describe("ZoneEditor — undo / redo stack", () => {
 
     // Select ZONE_1 via the sidebar zone list (use within to scope query)
     await act(async () => {
-      const metaEl = within(container).getAllByText(/Aisle 12/)[0]!;
-      fireEvent.click(metaEl.parentElement!);
+      const zoneItem = container.querySelector('[data-testid="zone-item-1"]')!;
+      fireEvent.click(zoneItem);
     });
     await act(async () => {});
 
@@ -445,14 +445,14 @@ describe("ZoneEditor — undo / redo stack", () => {
 
     // Select ZONE_1 then Shift+click ZONE_2 via the sidebar zone list
     await act(async () => {
-      const zone1Meta = within(container).getAllByText(/Aisle 12/)[0]!;
-      fireEvent.click(zone1Meta.parentElement!);
+      const zone1Item = container.querySelector('[data-testid="zone-item-1"]')!;
+      fireEvent.click(zone1Item);
     });
     await act(async () => {});
 
     await act(async () => {
-      const zone2Meta = within(container).getAllByText(/Aisle 13/)[0]!;
-      fireEvent.click(zone2Meta.parentElement!, { shiftKey: true });
+      const zone2Item = container.querySelector('[data-testid="zone-item-2"]')!;
+      fireEvent.click(zone2Item, { shiftKey: true });
     });
     await act(async () => {});
 
