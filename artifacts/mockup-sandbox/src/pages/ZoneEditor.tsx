@@ -327,7 +327,7 @@ function nextSentinelForAisle(zones: ZoneLike[], aisleId: string): number {
  * aisle, not explicitly overriding section numbers). When the user provides
  * an explicit sectionNum the payloads are returned unchanged — same as before.
  */
-function buildBulkAislePatchJobs(
+export function buildBulkAislePatchJobs(
   ids: number[],
   allZones: Zone[],
   updates: Partial<Zone>,
