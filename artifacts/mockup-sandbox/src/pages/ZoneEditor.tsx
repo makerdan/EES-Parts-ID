@@ -2545,7 +2545,7 @@ export function ZoneEditor() {
               return (
                 <div
                   key={zone.id}
-                  data-testid={`zone-item-${zone.id}`}
+                  data-zone-id={zone.id}
                   onClick={(e) => {
                     if (e.shiftKey) {
                       // Shift+click: toggle in multi-selection
