@@ -762,4 +762,130 @@ describe("ZoneEditor — undo / redo stack", () => {
     expect(redo2[0]!.aisleId).toBe("15");
     expect(redo2[0]!.sectionNum).toBe(sentinelSectionNum);
   });
+
+  // ── 11. Mid-batch undo failure → error surfaced, entry NOT silently consumed ──
+  //
+  // If one PATCH fails during multiEdit undo, the component must surface an error
+  // and must NOT silently leave zone 1 in the "before" state while zone 2 stays in
+  // the "after" state with no indication to the user.
+  //
+  // Verified by:
+  //   a) Both zone 1 and zone 2 PATCH calls are attempted (Promise.allSettled runs all)
+  //   b) The undo entry is NOT consumed (it stays on the undo stack), so retrying undo
+  //      after restoring a working mock fires PATCHes for both zones again.
+  it("mid-batch undo failure — surfaces error and leaves undo entry on the stack", async () => {
+    const { container, fetchMock } = await setupEditor([ZONE_1, ZONE_2]);
+
+    // ── Step 1: bulk aisle reassignment to create a multiEdit undo entry ──────
+    await act(async () => {
+      const zone1El = container.querySelector('[data-zone-id="1"]')!;
+      fireEvent.click(zone1El);
+    });
+    await act(async () => {});
+    await act(async () => {
+      const zone2El = container.querySelector('[data-zone-id="2"]')!;
+      fireEvent.click(zone2El, { shiftKey: true });
+    });
+    await act(async () => {});
+
+    await act(async () => {
+      const aisleInput = within(container).getByPlaceholderText("— mixed —");
+      fireEvent.change(aisleInput, { target: { value: "15" } });
+    });
+
+    await act(async () => {
+      const saveBtn = within(container).getByText("Save 2 zones");
+      fireEvent.click(saveBtn);
+    });
+    await act(async () => {});
+
+    await act(async () => {
+      const confirmBtn = within(container).getByText("Confirm");
+      fireEvent.click(confirmBtn);
+    });
+
+    // Wait for the bulk PATCH calls to settle
+    await waitFor(
+      () => {
+        const all = fetchMock.mock.calls as [unknown, RequestInit][];
+        const p1 = patchBodiesFrom(all, 1);
+        const p2 = patchBodiesFrom(all, 2);
+        expect(p1.length + p2.length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 3000 },
+    );
+    await act(async () => {});
+
+    // ── Step 2: install a fetch mock where zone 2 PATCH returns 500 ───────────
+    const failingFetch = vi.fn((url: string, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const s = String(url);
+
+      // Zone 2 PATCH → 500 (simulates mid-batch failure)
+      if (method === "PATCH" && s.includes("/warehouse-zones/2"))
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+
+      if (method === "GET" && s.includes("/floor-plan/svg"))
+        return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(""), json: () => Promise.resolve({}) });
+
+      if (method === "GET" && s.includes("/warehouse-zones/coverage"))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ unsortedCount: 0, uncoveredAisles: [] }), text: () => Promise.resolve("") });
+
+      if (method === "GET" && s.includes("/warehouse-zones"))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ zones: [ZONE_1, ZONE_2] }), text: () => Promise.resolve("") });
+
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+    });
+    global.fetch = failingFetch as unknown as typeof global.fetch;
+
+    // ── Step 3: press undo — zone 2 PATCH will fail ───────────────────────────
+    const afterBulk = callsAfter(failingFetch);
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }),
+    );
+
+    // Wait until both zone 1 and zone 2 PATCH calls appear (allSettled runs all)
+    await waitFor(
+      () => {
+        const calls = afterBulk();
+        const p1 = patchBodiesFrom(calls, 1);
+        const p2 = patchBodiesFrom(calls, 2);
+        // Both patches must have been attempted despite zone 2 failing
+        expect(p1.length).toBeGreaterThanOrEqual(1);
+        expect(p2.length).toBeGreaterThanOrEqual(1);
+      },
+      { timeout: 3000 },
+    );
+    await act(async () => {});
+
+    // ── Step 4: restore a working mock and retry undo ─────────────────────────
+    // The undo entry must still be on the stack (not silently consumed on error),
+    // so a second undo attempt fires PATCHes for both zones again.
+    const workingFetch = makeFetchMock([ZONE_1, ZONE_2]);
+    global.fetch = workingFetch as unknown as typeof global.fetch;
+
+    const afterRetry = callsAfter(workingFetch);
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }),
+    );
+
+    await waitFor(
+      () => {
+        const calls = afterRetry();
+        const p1 = patchBodiesFrom(calls, 1);
+        const p2 = patchBodiesFrom(calls, 2);
+        // Both zones must be re-attempted on the retry
+        expect(p1).toHaveLength(1);
+        expect(p2).toHaveLength(1);
+      },
+      { timeout: 3000 },
+    );
+
+    // Verify that the retry applied the correct "before" values for each zone
+    const retryCalls = afterRetry();
+    const retry1 = patchBodiesFrom(retryCalls, 1);
+    const retry2 = patchBodiesFrom(retryCalls, 2);
+    expect(retry1[0]).toMatchObject({ aisleId: ZONE_1.aisleId, sectionNum: ZONE_1.sectionNum });
+    expect(retry2[0]).toMatchObject({ aisleId: ZONE_2.aisleId, sectionNum: ZONE_2.sectionNum });
+  });
 });

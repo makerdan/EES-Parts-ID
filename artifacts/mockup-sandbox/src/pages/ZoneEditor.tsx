@@ -882,10 +882,22 @@ export function ZoneEditor() {
           await patchZone(entry.id, fwd ? entry.after : entry.before);
           toast.success(fwd ? "Redo: edit reapplied" : "Undo: edit reverted");
           break;
-        case "multiEdit":
-          await Promise.all(entry.changes.map((c) => patchZone(c.id, fwd ? c.after : c.before)));
+        case "multiEdit": {
+          const results = await Promise.allSettled(
+            entry.changes.map((c) => patchZone(c.id, fwd ? c.after : c.before)),
+          );
+          const failures = results
+            .map((r, i) => ({ r, id: entry.changes[i]!.id }))
+            .filter(({ r }) => r.status === "rejected");
+          if (failures.length > 0) {
+            const ids = failures.map(({ id }) => id).join(", ");
+            throw new Error(
+              `${failures.length} zone${failures.length > 1 ? "s" : ""} failed to update (zone${failures.length > 1 ? "s" : ""} ${ids}); some zones may be in an inconsistent state — please refresh and retry`,
+            );
+          }
           toast.success(fwd ? "Redo: edits reapplied" : "Undo: edits reverted");
           break;
+        }
       }
       // Move the entry between stacks
       if (dir === "undo") {
