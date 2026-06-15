@@ -312,6 +312,88 @@ function nextSentinelForAisle(zones: ZoneLike[], aisleId: string): number {
   return sentinels.length === 0 ? -1 : Math.min(...sentinels) - 1;
 }
 
+/**
+ * Builds per-zone PATCH payloads for a bulk aisle-ID update, resolving
+ * (aisleId, sectionNum) unique-constraint conflicts before any request fires.
+ *
+ * When zones from different source aisles share the same sectionNum value,
+ * moving them all to the same target aisle would create duplicate
+ * (newAisleId, sectionNum) pairs, which PostgreSQL rejects. This function
+ * detects those collisions and auto-assigns new negative sentinel sectionNums
+ * (displayed as "A", "B", …) to conflicting zones so every PATCH succeeds.
+ *
+ * Conflict resolution only activates when `updates.aisleId` is set AND
+ * `updates.sectionNum` is NOT set (i.e. the user is only reassigning the
+ * aisle, not explicitly overriding section numbers). When the user provides
+ * an explicit sectionNum the payloads are returned unchanged — same as before.
+ */
+function buildBulkAislePatchJobs(
+  ids: number[],
+  allZones: Zone[],
+  updates: Partial<Zone>,
+): Array<{ id: number; body: Partial<Zone>; before: MetaSnap; after: MetaSnap }> {
+  const targetAisleId = updates.aisleId;
+
+  if (!targetAisleId || updates.sectionNum !== undefined) {
+    // No aisleId change, or sectionNum explicitly set — use a uniform body for all.
+    return ids.map((id) => {
+      const zone = allZones.find((z) => z.id === id);
+      const before: MetaSnap = {};
+      if (updates.aisleId !== undefined) before.aisleId = zone?.aisleId;
+      if (updates.sectionNum !== undefined) before.sectionNum = zone?.sectionNum;
+      return { id, body: updates, before, after: updates as MetaSnap };
+    });
+  }
+
+  const normalizedTarget = normalizeAisleId(targetAisleId);
+  const selectedSet = new Set(ids);
+
+  // sectionNums already in use in the target aisle by NON-selected zones.
+  // We build this set as a "taken" pool and add to it as we resolve each zone
+  // in the batch so intra-batch conflicts are also caught.
+  const taken = new Set<number>(
+    allZones
+      .filter((z) => normalizeAisleId(z.aisleId) === normalizedTarget && !selectedSet.has(z.id))
+      .map((z) => z.sectionNum),
+  );
+
+  // Start allocating sentinels just below the lowest negative already in the
+  // target aisle (so we never collide with existing assigned sentinels there).
+  const existingTargetNegatives = allZones
+    .filter((z) => normalizeAisleId(z.aisleId) === normalizedTarget && z.sectionNum < 0)
+    .map((z) => z.sectionNum);
+  let nextSentinel = (existingTargetNegatives.length > 0 ? Math.min(...existingTargetNegatives) : 0) - 1;
+
+  return ids.map((id) => {
+    const zone = allZones.find((z) => z.id === id);
+    const existingSectionNum = zone?.sectionNum ?? 0;
+    const before: MetaSnap = {
+      aisleId: zone?.aisleId,
+      sectionNum: existingSectionNum,
+    };
+
+    let resolvedSectionNum: number;
+    let body: Partial<Zone>;
+
+    if (taken.has(existingSectionNum)) {
+      // Conflict — allocate the next available sentinel not yet claimed.
+      while (taken.has(nextSentinel)) nextSentinel--;
+      resolvedSectionNum = nextSentinel--;
+      body = { aisleId: normalizedTarget, sectionNum: resolvedSectionNum };
+    } else {
+      // No conflict — keep the zone's current sectionNum unchanged.
+      resolvedSectionNum = existingSectionNum;
+      body = { aisleId: normalizedTarget };
+    }
+
+    // Mark this sectionNum as taken so subsequent zones in the batch don't reuse it.
+    taken.add(resolvedSectionNum);
+
+    const after: MetaSnap = { aisleId: normalizedTarget, sectionNum: resolvedSectionNum };
+    return { id, body, before, after };
+  });
+}
+
 function screenToSvg(
   clientX: number,
   clientY: number,
@@ -1004,19 +1086,22 @@ export function ZoneEditor() {
     if (updates.sectionNum !== undefined) parts.push(`Section # → ${sectionNumToDisplay(updates.sectionNum)}`);
     const what = parts.length ? parts.join(", ") : "selected properties";
     if (!await showConfirm(`Update ${n} zone${n !== 1 ? "s" : ""}`, what)) return;
-    const undoChanges = [...selectedIds].map((id) => {
-      const z = zonesRef.current.find((z) => z.id === id);
-      const before: MetaSnap = {};
-      if (updates.aisleId !== undefined) before.aisleId = z?.aisleId;
-      if (updates.sectionNum !== undefined) before.sectionNum = z?.sectionNum;
-      return { id, before, after: updates as MetaSnap };
-    });
+    // Build per-zone patch bodies, resolving any (aisleId, sectionNum) conflicts
+    // that would arise when zones from different source aisles share a sectionNum.
+    const jobs = buildBulkAislePatchJobs([...selectedIds], zonesRef.current, updates);
+    const undoChanges = jobs.map(({ id, before, after }) => ({ id, before, after }));
     setMultiSaving(true);
     try {
-      await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
+      await Promise.all(jobs.map(({ id, body }) => patchZone(id, body)));
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
-      if (updates.sectionNum !== undefined) lastMultiSectionNumRef.current = sectionNumToDisplay(updates.sectionNum);
+      if (updates.sectionNum !== undefined) {
+        lastMultiSectionNumRef.current = sectionNumToDisplay(updates.sectionNum);
+      } else if (jobs.some((j) => j.body.sectionNum !== undefined)) {
+        // Some zones were auto-reassigned sentinels — values are now mixed, clear ref
+        // so a subsequent blur doesn't spuriously re-apply the old sectionNum.
+        lastMultiSectionNumRef.current = "";
+      }
       toast.success(`Updated ${n} zones`);
       await fetchZones();
     } catch (e) {
@@ -1041,19 +1126,19 @@ export function ZoneEditor() {
       if (parsed !== null) updates.sectionNum = parsed;
     }
     if (Object.keys(updates).length === 0) return;
-    const undoChanges = [...selectedIds].map((id) => {
-      const z = zonesRef.current.find((z) => z.id === id);
-      const before: MetaSnap = {};
-      if (updates.aisleId !== undefined) before.aisleId = z?.aisleId;
-      if (updates.sectionNum !== undefined) before.sectionNum = z?.sectionNum;
-      return { id, before, after: updates as MetaSnap };
-    });
+    // Build per-zone patch bodies, resolving any (aisleId, sectionNum) conflicts.
+    const jobs = buildBulkAislePatchJobs([...selectedIds], zonesRef.current, updates);
+    const undoChanges = jobs.map(({ id, before, after }) => ({ id, before, after }));
     setMultiSaving(true);
     try {
-      await Promise.all([...selectedIds].map((id) => patchZone(id, updates)));
+      await Promise.all(jobs.map(({ id, body }) => patchZone(id, body)));
       pushUndo({ type: "multiEdit", changes: undoChanges });
       if (updates.aisleId !== undefined) lastMultiAisleIdRef.current = updates.aisleId;
-      if (updates.sectionNum !== undefined) lastMultiSectionNumRef.current = sectionNumToDisplay(updates.sectionNum);
+      if (updates.sectionNum !== undefined) {
+        lastMultiSectionNumRef.current = sectionNumToDisplay(updates.sectionNum);
+      } else if (jobs.some((j) => j.body.sectionNum !== undefined)) {
+        lastMultiSectionNumRef.current = "";
+      }
       const n = selectedIds.size;
       toast.success(`Saved ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
