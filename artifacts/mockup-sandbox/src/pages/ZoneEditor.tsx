@@ -524,9 +524,6 @@ export function ZoneEditor() {
 
   // ── Auto-number panel state ────────────────────────────────────────────────
   const [autoNumOpen, setAutoNumOpen] = useState(false);
-  const [autoNumAisle, setAutoNumAisle] = useState<string>(() => {
-    try { return localStorage.getItem("zoneEditorAutoNumAisle") ?? ""; } catch { return ""; }
-  });
   const [autoNumStart, setAutoNumStart] = useState<number>(() => {
     try {
       const stored = localStorage.getItem("zoneEditorAutoNumStart");
@@ -597,9 +594,6 @@ export function ZoneEditor() {
     fillSensitivityRef.current = fillSensitivity;
     try { localStorage.setItem("zoneEditorFillSensitivity", String(fillSensitivity)); } catch {}
   }, [fillSensitivity]);
-  useEffect(() => {
-    try { localStorage.setItem("zoneEditorAutoNumAisle", autoNumAisle); } catch {}
-  }, [autoNumAisle]);
   useEffect(() => {
     try { localStorage.setItem("zoneEditorAutoNumStart", String(autoNumStart)); } catch {}
   }, [autoNumStart]);
@@ -1185,9 +1179,7 @@ export function ZoneEditor() {
         }
       }
       const n = autoNumPreview.length;
-      toast.success(
-        `Auto-numbered ${n} zone${n !== 1 ? "s" : ""} on aisle ${normalizeAisleId(autoNumAisle)}`,
-      );
+      toast.success(`Auto-numbered ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -1226,19 +1218,6 @@ export function ZoneEditor() {
     () => new Set(selectedZoneList.map((z) => z.sectionNum)),
     [selectedZoneList],
   );
-
-  // Pre-fill auto-number aisle from the current selection when the panel opens
-  // or when the selected aisle changes (only if the field is blank).
-  useEffect(() => {
-    if (!autoNumOpen) return;
-    const inferredAisle = selectedZone?.aisleId ?? (
-      isMulti && multiAisleIds.size === 1 ? [...multiAisleIds][0]! : ""
-    );
-    if (inferredAisle && !autoNumAisle.trim()) {
-      setAutoNumAisle(inferredAisle);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoNumOpen, selectedZone, isMulti, multiAisleIds]);
 
   // Sync multi-select form fields when selection or zones change
   useEffect(() => {
@@ -1731,13 +1710,11 @@ export function ZoneEditor() {
   }, [zones, dragZone, multiDragDelta, selectedIds]);
 
   // ── Auto-number computed values ────────────────────────────────────────────
-  // Zones on the target aisle ordered by sortOrder then svgY (tiebreaker).
+  // Selected zones ordered by sortOrder then svgY (tiebreaker).
   const autoNumPreview = useMemo(() => {
-    const trimmed = autoNumAisle.trim();
-    if (!trimmed || !isValidAisleId(trimmed)) return [];
-    const normed = normalizeAisleId(trimmed);
-    const aisleZones = zones.filter((z) => normalizeAisleId(z.aisleId) === normed);
-    const sorted = [...aisleZones].sort((a, b) => {
+    if (selectedIds.size === 0) return [];
+    const selected = zones.filter((z) => selectedIds.has(z.id));
+    const sorted = [...selected].sort((a, b) => {
       if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
       return a.svgY - b.svgY;
     });
@@ -1746,17 +1723,16 @@ export function ZoneEditor() {
       zone,
       newSectionNum: autoNumStart + i * inc,
     }));
-  }, [zones, autoNumAisle, autoNumStart, autoNumIncrement]);
+  }, [zones, selectedIds, autoNumStart, autoNumIncrement]);
 
-  // Zones on *other* aisles whose sectionNum matches any of the assigned numbers.
+  // Zones *outside* the selection whose sectionNum matches any of the assigned numbers.
   const autoNumCollisions = useMemo(() => {
     if (autoNumPreview.length === 0) return [] as Zone[];
-    const normed = normalizeAisleId(autoNumAisle.trim());
     const assignedNums = new Set(autoNumPreview.map((p) => p.newSectionNum));
     return zones.filter(
-      (z) => normalizeAisleId(z.aisleId) !== normed && assignedNums.has(z.sectionNum),
+      (z) => !selectedIds.has(z.id) && assignedNums.has(z.sectionNum),
     );
-  }, [zones, autoNumAisle, autoNumPreview]);
+  }, [zones, selectedIds, autoNumPreview]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -2338,19 +2314,7 @@ export function ZoneEditor() {
           {zones.length > 0 && (
             <SideSection style={{ flex: "none" }}>
               <button
-                onClick={() => {
-                  const next = !autoNumOpen;
-                  setAutoNumOpen(next);
-                  if (next) {
-                    // Pre-fill aisle on open
-                    const inferred =
-                      selectedZone?.aisleId ??
-                      (isMulti && multiAisleIds.size === 1
-                        ? [...multiAisleIds][0]!
-                        : "");
-                    if (inferred) setAutoNumAisle(inferred);
-                  }
-                }}
+                onClick={() => setAutoNumOpen((o) => !o)}
                 style={{
                   width: "100%",
                   display: "flex",
@@ -2379,28 +2343,6 @@ export function ZoneEditor() {
 
               {autoNumOpen && (
                 <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-                  {/* Aisle selector */}
-                  <div>
-                    <Label>Target aisle</Label>
-                    <input
-                      value={autoNumAisle}
-                      onChange={(e) => setAutoNumAisle(e.target.value.toUpperCase())}
-                      onBlur={(e) => setAutoNumAisle(formatTwoDigit(e.target.value))}
-                      placeholder="e.g. 09"
-                      style={{
-                        ...styles.input,
-                        borderColor: autoNumAisle.trim() && !isValidAisleId(autoNumAisle)
-                          ? "#f87171"
-                          : undefined,
-                      }}
-                    />
-                    {autoNumAisle.trim() && !isValidAisleId(autoNumAisle) && (
-                      <div style={{ fontSize: 11, color: "#f87171", marginTop: 2 }}>
-                        Must be a number (e.g. 09)
-                      </div>
-                    )}
-                  </div>
-
                   {/* Starting number */}
                   <div>
                     <Label>Starting number</Label>
@@ -2487,9 +2429,9 @@ export function ZoneEditor() {
                     </div>
                   )}
 
-                  {autoNumPreview.length === 0 && autoNumAisle.trim() && isValidAisleId(autoNumAisle) && (
+                  {selectedIds.size === 0 && (
                     <div style={{ fontSize: 11, color: "#9ca3af" }}>
-                      No zones found on aisle {normalizeAisleId(autoNumAisle)}.
+                      Select zones on the map to auto-number them.
                     </div>
                   )}
 
@@ -2504,7 +2446,7 @@ export function ZoneEditor() {
                       color: "#92400e",
                       lineHeight: 1.5,
                     }}>
-                      ⚠ {autoNumCollisions.length} zone{autoNumCollisions.length !== 1 ? "s" : ""} on other aisles
+                      ⚠ {autoNumCollisions.length} zone{autoNumCollisions.length !== 1 ? "s" : ""} outside the selection
                       share these section numbers:{" "}
                       {[...new Set(autoNumCollisions.map((z) => z.sectionNum))].join(", ")}.
                       Applying will proceed anyway.
