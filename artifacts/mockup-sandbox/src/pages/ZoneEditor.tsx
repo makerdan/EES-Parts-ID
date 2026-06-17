@@ -517,6 +517,11 @@ export function ZoneEditor() {
   // Track last-saved values so blur auto-save can diff against them
   const lastMultiAisleIdRef = useRef("");
   const lastMultiSectionNumRef = useRef("");
+  // Snapshot of selectedIds taken when the multi-edit form receives focus.
+  // handleMultiAutoSave uses this instead of live selectedIds so that clicking
+  // a new zone on the map (which changes selection before blur fires) does not
+  // cause auto-save to apply to the wrong zones.
+  const multiEditFocusSnapshotRef = useRef<Set<number>>(new Set());
   const [coverage, setCoverage] = useState<{
     unsortedCount: number;
     uncoveredAisles: string[];
@@ -1125,7 +1130,11 @@ export function ZoneEditor() {
 
   // Auto-save multi-select aisle data on blur (no confirm dialog)
   const handleMultiAutoSave = async () => {
-    if (multiSaving || selectedIds.size === 0) return;
+    // Use the snapshot captured at focus-time so that clicking a new zone
+    // (which changes selectedIds before blur fires) cannot redirect the save
+    // to the wrong zones.
+    const targetIds = multiEditFocusSnapshotRef.current;
+    if (multiSaving || targetIds.size === 0) return;
     const updates: Partial<Zone> = {};
     const trimmedAisle = multiAisleId.trim();
     if (trimmedAisle && trimmedAisle !== lastMultiAisleIdRef.current) {
@@ -1139,7 +1148,7 @@ export function ZoneEditor() {
     }
     if (Object.keys(updates).length === 0) return;
     // Build per-zone patch bodies, resolving any (aisleId, sectionNum) conflicts.
-    const jobs = buildBulkAislePatchJobs([...selectedIds], zonesRef.current, updates);
+    const jobs = buildBulkAislePatchJobs([...targetIds], zonesRef.current, updates);
     const undoChanges = jobs.map(({ id, before, after }) => ({ id, before, after }));
     setMultiSaving(true);
     try {
@@ -1151,7 +1160,7 @@ export function ZoneEditor() {
       } else if (jobs.some((j) => j.body.sectionNum !== undefined)) {
         lastMultiSectionNumRef.current = "";
       }
-      const n = selectedIds.size;
+      const n = targetIds.size;
       toast.success(`Saved ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
@@ -2173,6 +2182,9 @@ export function ZoneEditor() {
                 </div>
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                  onFocus={() => {
+                    multiEditFocusSnapshotRef.current = new Set(selectedIds);
+                  }}
                   onBlur={(e) => {
                     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
                       void handleMultiAutoSave();
