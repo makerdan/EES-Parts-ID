@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
+import { readPdfAsBase64, PdfTooLargeError } from "@/utils/readPdfAsBase64";
 import { useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 
@@ -26,7 +26,6 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   : "";
 
 const POLL_MS = 2500;
-const MAX_PDF_BYTES = 25 * 1024 * 1024; // 25 MB
 
 type JobStatus = {
   jobId: string;
@@ -93,16 +92,17 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0]!;
-      const info = await FileSystem.getInfoAsync(asset.uri);
-      if (info.exists && (info as { size?: number }).size && (info as { size?: number }).size! > MAX_PDF_BYTES) {
-        setError("PDF is too large (max 25 MB). Please split the catalog and try again.");
-        return;
+      try {
+        const base64 = await readPdfAsBase64(asset.uri);
+        setPdfBase64(base64);
+        setFilename(asset.name ?? "catalog.pdf");
+      } catch (err) {
+        if (err instanceof PdfTooLargeError) {
+          setError(err.message);
+        } else {
+          setError("Could not read the PDF file. Please try again.");
+        }
       }
-      const base64 = await FileSystem.readAsStringAsync(asset.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      setPdfBase64(base64);
-      setFilename(asset.name ?? "catalog.pdf");
     } catch {
       setError("Could not read the PDF file. Please try again.");
     }
