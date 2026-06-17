@@ -68,15 +68,19 @@ describe("buildBulkAislePatchJobs", () => {
     }
   });
 
-  it("no-conflict — after snapshots reflect the zone's existing sectionNum in the new aisle", () => {
+  it("no-conflict — after snapshots contain aisleId only (sectionNum omitted, matching the body)", () => {
     const zones = [zone(1, "12", 5), zone(2, "13", 7)];
     const jobs = buildBulkAislePatchJobs([1, 2], zones, { aisleId: "20" });
 
     const j1 = jobs.find((j) => j.id === 1)!;
     const j2 = jobs.find((j) => j.id === 2)!;
 
-    expect(j1.after).toMatchObject({ aisleId: "20", sectionNum: 5 });
-    expect(j2.after).toMatchObject({ aisleId: "20", sectionNum: 7 });
+    // No-conflict after omits sectionNum to match the original PATCH body exactly
+    // (adding sectionNum=unchanged would be a spurious field on redo).
+    expect(j1.after).toMatchObject({ aisleId: "20" });
+    expect(j1.after).not.toHaveProperty("sectionNum");
+    expect(j2.after).toMatchObject({ aisleId: "20" });
+    expect(j2.after).not.toHaveProperty("sectionNum");
   });
 
   // ── 2. Intra-batch conflict ────────────────────────────────────────────────
@@ -94,7 +98,8 @@ describe("buildBulkAislePatchJobs", () => {
     const j2 = jobs.find((j) => j.id === 2)!;
 
     expect(j1.body).toEqual({ aisleId: "30" });
-    expect(j1.after.sectionNum).toBe(2);
+    // No-conflict zone: after omits sectionNum (matches body which also omits it)
+    expect(j1.after).not.toHaveProperty("sectionNum");
 
     expect(j2.after.sectionNum).toBeLessThan(0);
     expect(j2.body).toHaveProperty("sectionNum");
@@ -133,7 +138,8 @@ describe("buildBulkAislePatchJobs", () => {
     const j = jobs[0]!;
 
     expect(j.body).toEqual({ aisleId: "15" });
-    expect(j.after.sectionNum).toBe(4);
+    // No-conflict zone: after omits sectionNum
+    expect(j.after).not.toHaveProperty("sectionNum");
   });
 
   // ── 4. Sentinel allocation below existing negatives ────────────────────────
@@ -151,7 +157,9 @@ describe("buildBulkAislePatchJobs", () => {
     const j1 = jobs.find((j) => j.id === 1)!;
     const j2 = jobs.find((j) => j.id === 2)!;
 
-    expect(j1.after.sectionNum).toBe(3);
+    // Zone 1 had no conflict: after omits sectionNum (matches body = { aisleId: "15" })
+    expect(j1.after).not.toHaveProperty("sectionNum");
+    // Zone 2 had a conflict: after includes the sentinel
     expect(j2.after.sectionNum).toBe(-3);
   });
 
@@ -239,7 +247,9 @@ describe("buildBulkAislePatchJobs", () => {
     const j = jobs[0]!;
 
     expect(j.before).toMatchObject({ aisleId: "7", sectionNum: 3 });
-    expect(j.after).toMatchObject({ aisleId: "8", sectionNum: 3 });
+    // No-conflict: after contains only aisleId (sectionNum omitted to match PATCH body)
+    expect(j.after).toMatchObject({ aisleId: "8" });
+    expect(j.after).not.toHaveProperty("sectionNum");
   });
 
   it("passthrough snapshot — before captures original fields, after mirrors updates", () => {

@@ -374,22 +374,26 @@ export function buildBulkAislePatchJobs(
 
     let resolvedSectionNum: number;
     let body: Partial<Zone>;
+    let after: MetaSnap;
 
     if (taken.has(existingSectionNum)) {
       // Conflict — allocate the next available sentinel not yet claimed.
       while (taken.has(nextSentinel)) nextSentinel--;
       resolvedSectionNum = nextSentinel--;
       body = { aisleId: normalizedTarget, sectionNum: resolvedSectionNum };
+      after = { aisleId: normalizedTarget, sectionNum: resolvedSectionNum };
     } else {
       // No conflict — keep the zone's current sectionNum unchanged.
+      // The PATCH body omits sectionNum (unchanged), so `after` must also omit
+      // it so the redo PATCH matches the original PATCH exactly.
       resolvedSectionNum = existingSectionNum;
       body = { aisleId: normalizedTarget };
+      after = { aisleId: normalizedTarget };
     }
 
     // Mark this sectionNum as taken so subsequent zones in the batch don't reuse it.
     taken.add(resolvedSectionNum);
 
-    const after: MetaSnap = { aisleId: normalizedTarget, sectionNum: resolvedSectionNum };
     return { id, body, before, after };
   });
 }
@@ -1591,11 +1595,11 @@ export function ZoneEditor() {
         };
       }
     } else if (modeRef.current === "fill") {
-      // Cancel any existing pending zone first (consistent with draw mode).
-      setPendingRect(null);
       setDraftRect(null);
       // Record screen position; the actual fill fires on mouseup if movement < 5px.
       // This prevents accidental fills when the user was just trying to pan.
+      // Do NOT clear pendingRect here — a failed fill (wall click) should leave
+      // any previously drawn pending rect visible.
       ixRef.current = { t: "fillPending", sx: e.clientX, sy: e.clientY };
     } else {
       const p = getSvgPt(e.clientX, e.clientY);
@@ -1606,6 +1610,9 @@ export function ZoneEditor() {
   };
 
   const onZoneMouseDown = (e: React.MouseEvent, zone: Zone) => {
+    // In Fill mode, don't intercept — let the event reach onSvgMouseDown
+    // so the flood-fill triggers normally even when clicking over a zone.
+    if (modeRef.current === "fill") return;
     e.stopPropagation();
     if (e.button !== 0) return;
 
@@ -2021,7 +2028,29 @@ export function ZoneEditor() {
                     {/* Corner handles (single-selected zone only) */}
                     {showHandles && (
                       <>
-                        {/* Corner handles */}
+                        {/* Edge handles rendered first (lower SVG paint order = below corners).
+                            Corners are rendered after so they sit on top and win click events
+                            on small zones where edge and corner handles overlap. */}
+                        {([
+                          { h: "n" as Handle, cx: zone.svgX + zone.svgWidth / 2, cy: zone.svgY,                  w: hs * 2.5, ht: hs },
+                          { h: "s" as Handle, cx: zone.svgX + zone.svgWidth / 2, cy: zone.svgY + zone.svgHeight, w: hs * 2.5, ht: hs },
+                          { h: "e" as Handle, cx: zone.svgX + zone.svgWidth,     cy: zone.svgY + zone.svgHeight / 2, w: hs, ht: hs * 2.5 },
+                          { h: "w" as Handle, cx: zone.svgX,                     cy: zone.svgY + zone.svgHeight / 2, w: hs, ht: hs * 2.5 },
+                        ]).map(({ h, cx, cy, w, ht }) => (
+                          <rect
+                            key={h}
+                            x={cx - w / 2}
+                            y={cy - ht / 2}
+                            width={w}
+                            height={ht}
+                            fill="#f59e0b"
+                            stroke="#000"
+                            strokeWidth={1.5 / tf.s}
+                            onMouseDown={(e) => onHandleMouseDown(e, zone, h)}
+                            style={{ cursor: HANDLE_CURSOR[h] }}
+                          />
+                        ))}
+                        {/* Corner handles — rendered last so they paint on top */}
                         {(["nw", "ne", "sw", "se"] as Handle[]).map((h) => {
                           const hx = h.includes("e")
                             ? zone.svgX + zone.svgWidth
@@ -2044,26 +2073,6 @@ export function ZoneEditor() {
                             />
                           );
                         })}
-                        {/* Edge handles — wider/taller bars to distinguish from corners */}
-                        {([
-                          { h: "n" as Handle, cx: zone.svgX + zone.svgWidth / 2, cy: zone.svgY,                  w: hs * 2.5, ht: hs },
-                          { h: "s" as Handle, cx: zone.svgX + zone.svgWidth / 2, cy: zone.svgY + zone.svgHeight, w: hs * 2.5, ht: hs },
-                          { h: "e" as Handle, cx: zone.svgX + zone.svgWidth,     cy: zone.svgY + zone.svgHeight / 2, w: hs, ht: hs * 2.5 },
-                          { h: "w" as Handle, cx: zone.svgX,                     cy: zone.svgY + zone.svgHeight / 2, w: hs, ht: hs * 2.5 },
-                        ]).map(({ h, cx, cy, w, ht }) => (
-                          <rect
-                            key={h}
-                            x={cx - w / 2}
-                            y={cy - ht / 2}
-                            width={w}
-                            height={ht}
-                            fill="#f59e0b"
-                            stroke="#000"
-                            strokeWidth={1.5 / tf.s}
-                            onMouseDown={(e) => onHandleMouseDown(e, zone, h)}
-                            style={{ cursor: HANDLE_CURSOR[h] }}
-                          />
-                        ))}
                       </>
                     )}
                   </g>
@@ -2180,7 +2189,7 @@ export function ZoneEditor() {
                     />
                     {multiSectionNums.size > 1 && (
                       <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>
-                        Mixed: {[...multiSectionNums].join(", ")}
+                        Mixed: {[...multiSectionNums].map((n) => sectionNumToDisplay(n)).join(", ")}
                       </div>
                     )}
                   </div>
@@ -2371,7 +2380,7 @@ export function ZoneEditor() {
                         min={0}
                         onChange={(e) => {
                           const v = parseInt(e.target.value, 10);
-                          if (!isNaN(v)) setAutoNumStart(v);
+                          if (!isNaN(v) && v >= 1) setAutoNumStart(v);
                         }}
                         style={{ ...styles.input, width: 70 }}
                       />
@@ -2418,7 +2427,7 @@ export function ZoneEditor() {
                             }}
                           >
                             <span style={{ color: "#6b7280" }}>
-                              Zone #{zone.id} ({zone.sectionNum} → )
+                              Zone #{zone.id} ({sectionNumToDisplay(zone.sectionNum)} → )
                             </span>
                             <span style={{ fontWeight: 600, color: "#7c3aed" }}>
                               {newSectionNum}
@@ -2448,7 +2457,7 @@ export function ZoneEditor() {
                     }}>
                       ⚠ {autoNumCollisions.length} zone{autoNumCollisions.length !== 1 ? "s" : ""} outside the selection
                       share these section numbers:{" "}
-                      {[...new Set(autoNumCollisions.map((z) => z.sectionNum))].join(", ")}.
+                      {[...new Set(autoNumCollisions.map((z) => sectionNumToDisplay(z.sectionNum)))].join(", ")}.
                       Applying will proceed anyway.
                     </div>
                   )}
@@ -2549,6 +2558,13 @@ export function ZoneForm({
   onChange: (f: FormState) => void;
   aisleIdError?: string | null;
 }) {
+  // Local raw string for the Section # field while the user is typing.
+  // null = field is not focused (show the canonical formatted value).
+  // This prevents the cursor jumping to position 0 when typing "15" — without
+  // local state, every keystroke re-formats via sectionNumToDisplay and
+  // React replaces the entire value, resetting the cursor.
+  const [rawSection, setRawSection] = useState<string | null>(null);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div>
@@ -2582,10 +2598,16 @@ export function ZoneForm({
       <div>
         <Label>Section #</Label>
         <input
-          value={sectionNumToDisplay(form.sectionNum)}
+          value={rawSection !== null ? rawSection : sectionNumToDisplay(form.sectionNum)}
+          onFocus={() => setRawSection(sectionNumToDisplay(form.sectionNum))}
           onChange={(e) => {
-            const parsed = parseSectionInput(e.target.value.toUpperCase());
+            const raw = e.target.value.toUpperCase();
+            setRawSection(raw);
+          }}
+          onBlur={() => {
+            const parsed = parseSectionInput(rawSection ?? "");
             onChange({ ...form, sectionNum: parsed ?? 0 });
+            setRawSection(null);
           }}
           placeholder="e.g. 06 or A"
           style={styles.input}

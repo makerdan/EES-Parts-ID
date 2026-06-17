@@ -283,13 +283,16 @@ describe("ZoneEditor — undo / redo stack", () => {
     });
     await act(async () => {});
 
-    // Corner/edge handles are now visible for the single-selected zone
+    // Corner/edge handles are now visible for the single-selected zone.
+    // After the render-order fix, edge handles (n/s/e/w) are rendered first
+    // (indices 0-3) and corner handles (nw/ne/sw/se) follow (indices 4-7).
+    // We need a corner handle (diagonal resize) so the width changes.
     const handles = getHandleRects(container);
     expect(handles.length).toBeGreaterThan(0);
 
-    // Drag a handle to resize
+    // Drag a corner handle (index 4 = nw) to resize diagonally
     await act(async () => {
-      fireEvent.mouseDown(handles[0]!, { ...DRAG_FROM, button: 0 });
+      fireEvent.mouseDown(handles[4]!, { ...DRAG_FROM, button: 0 });
     });
     await act(async () => {
       document.dispatchEvent(
@@ -625,10 +628,17 @@ describe("ZoneEditor — undo / redo stack", () => {
     });
     await act(async () => {});
 
-    // Zones have different aisleIds so the multi-select aisle input shows "— mixed —"
+    // Zones have different aisleIds so the multi-select aisle input shows "— mixed —".
+    // Both zones share sectionNum=1, so the section-number input shows "01". We clear
+    // it so that updates = { aisleId: "15" } only — this exercises the conflict-resolution
+    // path (both zones carry sectionNum=1 into aisle "15"; zone 2 gets a sentinel).
     await act(async () => {
       const aisleInput = within(container).getByPlaceholderText("— mixed —");
       fireEvent.change(aisleInput, { target: { value: "15" } });
+    });
+    await act(async () => {
+      const sectionInput = within(container).getByPlaceholderText("e.g. 06 or A");
+      fireEvent.change(sectionInput, { target: { value: "" } });
     });
 
     // Click "Save 2 zones" — this calls handleMultiSave which shows a confirm dialog first
@@ -683,8 +693,8 @@ describe("ZoneEditor — undo / redo stack", () => {
   // ── 10. Redo of bulk aisle reassignment (including sentinel) ─────────────────
   //
   // After undoing the bulk reassignment, redo must re-apply the resolved "after"
-  // snapshots: zone 1 gets aisleId="15" + sectionNum=1, zone 2 gets aisleId="15"
-  // + sentinel sectionNum (< 0).
+  // snapshots: zone 1 gets aisleId="15" only (sectionNum omitted — no conflict),
+  // zone 2 gets aisleId="15" + sentinel sectionNum (< 0).
   it("redo bulk aisle reassignment — PATCHes zones with resolved aisleId and sectionNums including the sentinel", async () => {
     const { container, fetchMock } = await setupEditor([ZONE_1, ZONE_2]);
 
@@ -700,9 +710,15 @@ describe("ZoneEditor — undo / redo stack", () => {
     });
     await act(async () => {});
 
+    // Both zones share sectionNum=1 — clear the section-number input so that
+    // updates = { aisleId: "15" } only, exercising conflict resolution (not passthrough).
     await act(async () => {
       const aisleInput = within(container).getByPlaceholderText("— mixed —");
       fireEvent.change(aisleInput, { target: { value: "15" } });
+    });
+    await act(async () => {
+      const sectionInput = within(container).getByPlaceholderText("e.g. 06 or A");
+      fireEvent.change(sectionInput, { target: { value: "" } });
     });
 
     await act(async () => {
@@ -728,12 +744,10 @@ describe("ZoneEditor — undo / redo stack", () => {
     );
     await act(async () => {});
 
-    // Capture the sentinel assigned to zone 2 from the original bulk PATCH
-    // (zone 2's body included sectionNum because of the conflict)
-    const allCallsAfterSave = fetchMock.mock.calls as [unknown, RequestInit][];
-    const zone2BulkPatch = patchBodiesFrom(allCallsAfterSave, 2)[0]!;
-    const sentinelSectionNum = zone2BulkPatch.sectionNum as number;
-    expect(sentinelSectionNum).toBeLessThan(0); // sanity check
+    // Zone 2 conflicts with Zone 1 (both have sectionNum=1), so it is assigned
+    // the first available sentinel: -1. This is deterministic given the test setup
+    // (no pre-existing zones in aisle "15", zones processed in selection order [1,2]).
+    const sentinelSectionNum = -1;
 
     // Undo the bulk reassignment
     await pressUndo(fetchMock);
@@ -756,8 +770,10 @@ describe("ZoneEditor — undo / redo stack", () => {
     const redo1 = patchBodiesFrom(redoCalls, 1);
     const redo2 = patchBodiesFrom(redoCalls, 2);
 
-    // Zone 1 had no conflict → redo applies aisleId="15", sectionNum=1
-    expect(redo1[0]).toMatchObject({ aisleId: "15", sectionNum: ZONE_1.sectionNum });
+    // Zone 1 had no conflict → redo applies aisleId="15" only (no sectionNum,
+    // matching the original PATCH body which also omitted sectionNum).
+    expect(redo1[0]).toMatchObject({ aisleId: "15" });
+    expect(redo1[0]).not.toHaveProperty("sectionNum");
     // Zone 2 had a sentinel conflict → redo applies aisleId="15" + the same sentinel
     expect(redo2[0]!.aisleId).toBe("15");
     expect(redo2[0]!.sectionNum).toBe(sentinelSectionNum);
