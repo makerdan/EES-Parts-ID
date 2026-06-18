@@ -528,13 +528,25 @@ export function ZoneEditor() {
 
   // ── Auto-number panel state ────────────────────────────────────────────────
   const [autoNumOpen, setAutoNumOpen] = useState(false);
-  const [autoNumStart, setAutoNumStart] = useState<number>(() => {
+  const [autoNumStartMode, setAutoNumStartMode] = useState<"1" | "2" | "custom">(() => {
     try {
-      const stored = localStorage.getItem("zoneEditorAutoNumStart");
-      if (stored !== null) { const n = Number(stored); if (Number.isInteger(n) && n >= 1) return n; }
+      const stored = localStorage.getItem("zoneEditorAutoNumStartMode");
+      if (stored === "1" || stored === "2" || stored === "custom") return stored;
     } catch {}
-    return 1;
+    return "1";
   });
+  const [autoNumStartCustom, setAutoNumStartCustom] = useState<string>(() => {
+    try { return localStorage.getItem("zoneEditorAutoNumStartCustom") ?? ""; } catch {}
+    return "";
+  });
+  const autoNumStart =
+    autoNumStartMode === "custom"
+      ? Math.max(1, parseInt(autoNumStartCustom, 10) || 1)
+      : Number(autoNumStartMode);
+  const autoNumDigits =
+    autoNumStartMode === "custom" && autoNumStartCustom.length > 1
+      ? autoNumStartCustom.length
+      : 1;
   const [autoNumIncrement, setAutoNumIncrement] = useState<number>(() => {
     try {
       const stored = localStorage.getItem("zoneEditorAutoNumIncrement");
@@ -543,6 +555,8 @@ export function ZoneEditor() {
     return 2;
   });
   const [autoNumApplying, setAutoNumApplying] = useState(false);
+  const [zoneEditOpen, setZoneEditOpen] = useState(true);
+  const [zoneListOpen, setZoneListOpen] = useState(true);
 
   // Branded confirm dialog (replaces window.confirm)
   const [confirmState, setConfirmState] = useState<{
@@ -599,8 +613,11 @@ export function ZoneEditor() {
     try { localStorage.setItem("zoneEditorFillSensitivity", String(fillSensitivity)); } catch {}
   }, [fillSensitivity]);
   useEffect(() => {
-    try { localStorage.setItem("zoneEditorAutoNumStart", String(autoNumStart)); } catch {}
-  }, [autoNumStart]);
+    try { localStorage.setItem("zoneEditorAutoNumStartMode", autoNumStartMode); } catch {}
+  }, [autoNumStartMode]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorAutoNumStartCustom", autoNumStartCustom); } catch {}
+  }, [autoNumStartCustom]);
   useEffect(() => {
     try { localStorage.setItem("zoneEditorAutoNumIncrement", String(autoNumIncrement)); } catch {}
   }, [autoNumIncrement]);
@@ -1726,20 +1743,12 @@ export function ZoneEditor() {
       return a.svgY - b.svgY;
     });
     const inc = Math.max(1, autoNumIncrement);
-    return sorted.map((zone, i) => ({
-      zone,
-      newSectionNum: autoNumStart + i * inc,
-    }));
-  }, [zones, selectedIds, autoNumStart, autoNumIncrement]);
-
-  // Zones *outside* the selection whose sectionNum matches any of the assigned numbers.
-  const autoNumCollisions = useMemo(() => {
-    if (autoNumPreview.length === 0) return [] as Zone[];
-    const assignedNums = new Set(autoNumPreview.map((p) => p.newSectionNum));
-    return zones.filter(
-      (z) => !selectedIds.has(z.id) && assignedNums.has(z.sectionNum),
-    );
-  }, [zones, selectedIds, autoNumPreview]);
+    return sorted.map((zone, i) => {
+      const num = autoNumStart + i * inc;
+      const display = autoNumDigits > 1 ? String(num).padStart(autoNumDigits, "0") : String(num);
+      return { zone, newSectionNum: num, newSectionNumDisplay: display };
+    });
+  }, [zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -2150,7 +2159,35 @@ export function ZoneEditor() {
         <div style={styles.sidebar}>
           {/* Context-sensitive form area */}
           <SideSection style={{ flex: "0 1 auto", overflowY: "auto", minHeight: 0 }}>
-            {isMulti ? (
+            <button
+              onClick={() => setZoneEditOpen((o) => !o)}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+                margin: 0,
+                marginBottom: zoneEditOpen ? 10 : 0,
+              }}
+            >
+              <span style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: "0.06em",
+                color: "#374151",
+                textTransform: "uppercase" as const,
+              }}>
+                Zone Edit
+              </span>
+              <span style={{ fontSize: 11, color: "#9ca3af" }}>
+                {zoneEditOpen ? "▲" : "▼"}
+              </span>
+            </button>
+            {zoneEditOpen && (isMulti ? (
               <>
                 <div style={styles.formTitle}>{selectedIds.size} zones selected</div>
                 <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 10, lineHeight: 1.4 }}>
@@ -2316,7 +2353,7 @@ export function ZoneEditor() {
                     : "Click inside any enclosed white area on the floor plan to auto-detect its bounding rectangle."
                   : "Click a zone to select it. Shift+click to multi-select. Shift+drag background for rubber-band select."}
               </div>
-            )}
+            ))}
           </SideSection>
 
           {/* ── Auto-number sections panel ─────────────────────────────────── */}
@@ -2355,36 +2392,36 @@ export function ZoneEditor() {
                   {/* Starting number */}
                   <div>
                     <Label>Starting number</Label>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      {[1, 2].map((v) => (
-                        <label key={v} style={{
-                          display: "flex", alignItems: "center", gap: 4,
-                          fontSize: 12, color: "#374151", cursor: "pointer",
-                        }}>
-                          <input
-                            type="radio"
-                            name="autoNumStart"
-                            checked={autoNumStart === v}
-                            onChange={() => setAutoNumStart(v)}
-                            style={{ cursor: "pointer" }}
-                          />
-                          {v} ({v === 1 ? "odd side" : "even side"})
-                        </label>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      {(["1", "2", "custom"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          onClick={() => setAutoNumStartMode(mode)}
+                          style={{
+                            padding: "3px 8px",
+                            fontSize: 11,
+                            fontWeight: autoNumStartMode === mode ? 700 : 400,
+                            border: "1px solid",
+                            borderColor: autoNumStartMode === mode ? "#7c3aed" : "#d1d5db",
+                            borderRadius: 4,
+                            background: autoNumStartMode === mode ? "#ede9fe" : "#fff",
+                            color: autoNumStartMode === mode ? "#7c3aed" : "#374151",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {mode === "1" ? "1 (odd)" : mode === "2" ? "2 (even)" : "Custom"}
+                        </button>
                       ))}
                     </div>
-                    <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 11, color: "#6b7280" }}>or custom:</span>
+                    {autoNumStartMode === "custom" && (
                       <input
-                        type="number"
-                        value={autoNumStart}
-                        min={0}
-                        onChange={(e) => {
-                          const v = parseInt(e.target.value, 10);
-                          if (!isNaN(v) && v >= 1) setAutoNumStart(v);
-                        }}
-                        style={{ ...styles.input, width: 70 }}
+                        type="text"
+                        value={autoNumStartCustom}
+                        onChange={(e) => setAutoNumStartCustom(e.target.value)}
+                        placeholder="e.g. 01 or 001"
+                        style={{ ...styles.input, width: 90, marginTop: 6 }}
                       />
-                    </div>
+                    )}
                   </div>
 
                   {/* Increment */}
@@ -2415,22 +2452,23 @@ export function ZoneEditor() {
                         fontSize: 11,
                         fontFamily: "monospace",
                       }}>
-                        {autoNumPreview.map(({ zone, newSectionNum }) => (
+                        {autoNumPreview.map(({ zone, newSectionNumDisplay }) => (
                           <div
                             key={zone.id}
                             style={{
                               padding: "3px 8px",
                               borderBottom: "1px solid #f3f4f6",
                               display: "flex",
-                              justifyContent: "space-between",
+                              justifyContent: "flex-start",
+                              gap: 6,
                               color: "#374151",
                             }}
                           >
                             <span style={{ color: "#6b7280" }}>
-                              Zone #{zone.id} ({sectionNumToDisplay(zone.sectionNum)} → )
+                              Zone #{zone.id} ({sectionNumToDisplay(zone.sectionNum)} →)
                             </span>
                             <span style={{ fontWeight: 600, color: "#7c3aed" }}>
-                              {newSectionNum}
+                              {newSectionNumDisplay}
                             </span>
                           </div>
                         ))}
@@ -2441,24 +2479,6 @@ export function ZoneEditor() {
                   {selectedIds.size === 0 && (
                     <div style={{ fontSize: 11, color: "#9ca3af" }}>
                       Select zones on the map to auto-number them.
-                    </div>
-                  )}
-
-                  {/* Collision warning */}
-                  {autoNumCollisions.length > 0 && (
-                    <div style={{
-                      padding: "6px 8px",
-                      background: "rgba(234,179,8,0.12)",
-                      border: "1px solid rgba(234,179,8,0.4)",
-                      borderRadius: 4,
-                      fontSize: 11,
-                      color: "#92400e",
-                      lineHeight: 1.5,
-                    }}>
-                      ⚠ {autoNumCollisions.length} zone{autoNumCollisions.length !== 1 ? "s" : ""} outside the selection
-                      share these section numbers:{" "}
-                      {[...new Set(autoNumCollisions.map((z) => sectionNumToDisplay(z.sectionNum)))].join(", ")}.
-                      Applying will proceed anyway.
                     </div>
                   )}
 
@@ -2481,11 +2501,36 @@ export function ZoneEditor() {
 
           {/* Zone list */}
           <div style={styles.zoneList}>
-            <div style={styles.listHeader}>
-              {zones.length} zone{zones.length !== 1 ? "s" : ""}
-              {selectedIds.size > 0 && ` · ${selectedIds.size} selected`}
-              {loading && " · loading…"}
-            </div>
+            <button
+              onClick={() => setZoneListOpen((o) => !o)}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "2px 12px 8px",
+                margin: 0,
+              }}
+            >
+              <span style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase" as const,
+                color: "#6b7280",
+              }}>
+                {zones.length} zone{zones.length !== 1 ? "s" : ""}
+                {selectedIds.size > 0 && ` · ${selectedIds.size} selected`}
+                {loading && " · loading…"}
+              </span>
+              <span style={{ fontSize: 11, color: "#9ca3af" }}>
+                {zoneListOpen ? "▲" : "▼"}
+              </span>
+            </button>
+            {zoneListOpen && (<>
             {coverage && (coverage.unsortedCount > 0 || coverage.uncoveredAisles.length > 0) && (
               <div style={styles.coverageBanner}>
                 {coverage.unsortedCount > 0 && (
@@ -2541,6 +2586,7 @@ export function ZoneEditor() {
                 No zones yet. Switch to Draw mode and drag on the map.
               </div>
             )}
+            </>)}
           </div>
         </div>
       </div>
