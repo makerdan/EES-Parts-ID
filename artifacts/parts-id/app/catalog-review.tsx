@@ -686,7 +686,7 @@ export default function CatalogReviewScreen() {
             <Text style={[s.retryBtnText, { color: colors.primaryForeground }]}>Retry</Text>
           </Pressable>
         </View>
-      ) : listData.length === 0 && failedJobs.length === 0 && Object.keys(resumeProgress).length === 0 ? (
+      ) : listData.length === 0 && failedJobs.length === 0 && Object.keys(resumeProgress).length === 0 && !(jobId && jobSummary && jobSummary.unmatchedParts.length > 0) ? (
         <View style={s.center}>
           <Text style={[s.emptyTitle, { color: colors.foreground }]}>
             {revertedIds.size > 0 ? "All reverted" : "No items to review"}

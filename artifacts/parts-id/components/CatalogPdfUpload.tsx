@@ -49,6 +49,7 @@ type JobStatus = {
   processedPages: number;
   matchedParts: number;
   imagesMatched: number;
+  unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
   errorMessage: string | null;
   failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
 };
@@ -133,13 +134,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const speedSamplesRef = useRef<{ t: number; loaded: number }[]>([]);
   const SPEED_WINDOW_MS = 4000;
   const SPEED_WINDOW_MAX = 20;
-
-  type FailedChunkInfo = {
-    chunkIndex: number;
-    totalChunks: number;
-    parentJobId: string | null;
-  };
-  const [failedChunkInfo, setFailedChunkInfo] = useState<FailedChunkInfo | null>(null);
 
   const [cancellingJob, setCancellingJob] = useState(false);
 
@@ -895,6 +889,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           <Text style={[s.doneText, { color: colors.success }]}>
             Done — {jobStatus.matchedParts} part{jobStatus.matchedParts !== 1 ? "s" : ""} updated across {jobStatus.processedPages} pages{jobStatus.imagesMatched > 0 ? `, ${jobStatus.imagesMatched} with images` : ""}
           </Text>
+          {jobStatus.unmatchedParts && jobStatus.unmatchedParts.length > 0 ? (
+            <Text style={[s.unmatchedNote, { color: colors.warning }]}>
+              {jobStatus.unmatchedParts.length} unrecognized part{jobStatus.unmatchedParts.length !== 1 ? "s" : ""} found — tap Review to see them
+            </Text>
+          ) : null}
           <Pressable
             onPress={() => router.push(`/catalog-review?jobId=${jobStatus.jobId}`)}
             style={[s.reviewBtn, { borderColor: colors.primary }]}
@@ -985,6 +984,7 @@ const s = StyleSheet.create({
   progressText: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center" },
   doneCard: { borderRadius: 10, padding: 14, gap: 10 },
   doneText: { fontSize: 14, fontFamily: "Inter_600SemiBold", lineHeight: 20 },
+  unmatchedNote: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
   reviewBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 9, paddingHorizontal: 14, alignSelf: "flex-start" },
   reviewBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   cancelBtn: { borderWidth: 1, borderRadius: 6, paddingVertical: 5, paddingHorizontal: 12 },
