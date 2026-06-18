@@ -396,6 +396,33 @@ describe("POST /api/inventory/add-part", () => {
     expect(res.body.error).toMatch(/already exists/i);
   });
 
+  it("returns 400 when description exceeds 500 characters", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-LONG-001`;
+    const longDescription = "x".repeat(501);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description: longDescription })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/500/);
+  });
+
+  it("accepts a description of exactly 500 characters", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-LONG-002`;
+    const exactDescription = "y".repeat(500);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description: exactDescription })
+      .expect(201);
+
+    expect(res.body.item.description).toBe(exactDescription);
+  });
+
   it("returns 400 when vendor is missing even if description is provided", async () => {
     const res = await supertest(app)
       .post("/api/inventory/add-part")

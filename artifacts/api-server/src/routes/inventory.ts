@@ -1048,6 +1048,13 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
     const upperVendor = vendor.trim().toUpperCase();
     const trimmedCatalog = catalog.trim();
     const trimmedDescription = description?.trim() ?? "";
+
+    const MAX_DESCRIPTION_LENGTH = 500;
+    if (trimmedDescription.length > MAX_DESCRIPTION_LENGTH) {
+      return void res.status(400).json({
+        error: `description must be ${MAX_DESCRIPTION_LENGTH} characters or fewer (got ${trimmedDescription.length})`,
+      });
+    }
     const binLocations = binLocation?.trim() ? [binLocation.trim()] : [];
 
     // Check for duplicate before inserting so we can return a clear 409.
