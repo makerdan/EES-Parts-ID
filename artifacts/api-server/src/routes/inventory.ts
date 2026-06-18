@@ -1034,9 +1034,10 @@ function requireAdminAuth(
 // combination already exists in the database.
 router.post("/add-part", requireAdminAuth, async (req, res) => {
   try {
-    const { vendor, catalog, binLocation } = req.body as {
+    const { vendor, catalog, description, binLocation } = req.body as {
       vendor?: string;
       catalog?: string;
+      description?: string;
       binLocation?: string;
     };
 
@@ -1046,6 +1047,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
 
     const upperVendor = vendor.trim().toUpperCase();
     const trimmedCatalog = catalog.trim();
+    const trimmedDescription = description?.trim() ?? "";
     const binLocations = binLocation?.trim() ? [binLocation.trim()] : [];
 
     // Check for duplicate before inserting so we can return a clear 409.
@@ -1068,7 +1070,7 @@ router.post("/add-part", requireAdminAuth, async (req, res) => {
       .values({
         vendor: upperVendor,
         catalog: trimmedCatalog,
-        description: "",
+        description: trimmedDescription,
         binLocations,
         aiKeywords: [],
       })

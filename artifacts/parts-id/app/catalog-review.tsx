@@ -12,11 +12,16 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   Pressable,
   RefreshControl,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -109,6 +114,58 @@ export default function CatalogReviewScreen() {
   });
   const showInfo = (title: string, message: string) =>
     setInfoDialog({ visible: true, title, message });
+
+  type AddForm = { vendor: string; catalog: string; description: string };
+  const [addModalPart, setAddModalPart] = useState<{ catalogNumber: string; description: string } | null>(null);
+  const [addForm, setAddForm] = useState<AddForm>({ vendor: "", catalog: "", description: "" });
+  const [addingInProgress, setAddingInProgress] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addedCatalogs, setAddedCatalogs] = useState<Set<string>>(new Set());
+
+  const openAddModal = (part: { catalogNumber: string; description: string }) => {
+    setAddForm({ vendor: "", catalog: part.catalogNumber, description: part.description });
+    setAddError(null);
+    setAddModalPart(part);
+  };
+
+  const handleAddToInventory = async () => {
+    if (!addForm.vendor.trim()) {
+      setAddError("Vendor is required.");
+      return;
+    }
+    setAddingInProgress(true);
+    setAddError(null);
+    try {
+      const r = await fetch(`${API_BASE}/admin/inventory/add-part`, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vendor: addForm.vendor.trim(),
+          catalog: addForm.catalog.trim(),
+          description: addForm.description.trim(),
+        }),
+      });
+      if (r.status === 401) { logoutAdmin(); return; }
+      if (r.status === 409) {
+        const body = await r.json().catch(() => ({})) as { error?: string };
+        setAddError(body.error ?? "This part already exists in inventory.");
+        return;
+      }
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({})) as { error?: string };
+        setAddError(body.error ?? "Failed to add part.");
+        return;
+      }
+      if (addModalPart) {
+        setAddedCatalogs((prev) => new Set([...prev, addModalPart.catalogNumber]));
+      }
+      setAddModalPart(null);
+    } catch {
+      setAddError("Network error. Please try again.");
+    } finally {
+      setAddingInProgress(false);
+    }
+  };
 
   const authHeaders: Record<string, string> = adminToken
     ? { Authorization: `Bearer ${adminToken}` }
@@ -485,6 +542,95 @@ export default function CatalogReviewScreen() {
         message={infoDialog.message}
         onDismiss={() => setInfoDialog(prev => ({ ...prev, visible: false }))}
       />
+
+      {/* Add to Inventory Modal */}
+      <Modal
+        visible={addModalPart !== null}
+        animationType="slide"
+        transparent
+        onRequestClose={() => { if (!addingInProgress) setAddModalPart(null); }}
+      >
+        <KeyboardAvoidingView
+          style={s.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <View style={[s.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={[s.modalHeader, { borderBottomColor: colors.border }]}>
+              <Text style={[s.modalTitle, { color: colors.foreground }]}>Add to Inventory</Text>
+              <Pressable
+                onPress={() => { if (!addingInProgress) setAddModalPart(null); }}
+                style={s.modalCloseBtn}
+                hitSlop={8}
+              >
+                <Text style={[s.modalCloseText, { color: colors.mutedForeground }]}>✕</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
+              <Text style={[s.fieldLabel, { color: colors.mutedForeground }]}>VENDOR *</Text>
+              <TextInput
+                style={[s.fieldInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+                placeholder="e.g. LEVITON"
+                placeholderTextColor={colors.mutedForeground}
+                value={addForm.vendor}
+                onChangeText={(v) => setAddForm((f) => ({ ...f, vendor: v }))}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                editable={!addingInProgress}
+              />
+
+              <Text style={[s.fieldLabel, { color: colors.mutedForeground, marginTop: 14 }]}>CATALOG NUMBER</Text>
+              <TextInput
+                style={[s.fieldInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+                placeholder="Catalog number"
+                placeholderTextColor={colors.mutedForeground}
+                value={addForm.catalog}
+                onChangeText={(v) => setAddForm((f) => ({ ...f, catalog: v }))}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!addingInProgress}
+              />
+
+              <Text style={[s.fieldLabel, { color: colors.mutedForeground, marginTop: 14 }]}>DESCRIPTION</Text>
+              <TextInput
+                style={[s.fieldInput, s.fieldInputMulti, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+                placeholder="Description"
+                placeholderTextColor={colors.mutedForeground}
+                value={addForm.description}
+                onChangeText={(v) => setAddForm((f) => ({ ...f, description: v }))}
+                multiline
+                numberOfLines={3}
+                editable={!addingInProgress}
+              />
+
+              {addError ? (
+                <Text style={[s.addErrorText, { color: colors.destructive }]}>{addError}</Text>
+              ) : null}
+            </ScrollView>
+
+            <View style={[s.modalFooter, { borderTopColor: colors.border }]}>
+              <Pressable
+                onPress={() => { if (!addingInProgress) setAddModalPart(null); }}
+                style={[s.modalCancelBtn, { borderColor: colors.border }]}
+                disabled={addingInProgress}
+              >
+                <Text style={[s.modalCancelText, { color: colors.mutedForeground }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleAddToInventory}
+                disabled={addingInProgress}
+                style={[s.modalSubmitBtn, { backgroundColor: colors.primary, opacity: addingInProgress ? 0.6 : 1 }]}
+              >
+                {addingInProgress ? (
+                  <ActivityIndicator size="small" color={colors.primaryForeground} />
+                ) : (
+                  <Text style={[s.modalSubmitText, { color: colors.primaryForeground }]}>Add to Inventory</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
       {/* Header */}
       <View style={[s.header, { borderBottomColor: colors.border }]}>
         <Pressable onPress={() => router.back()} style={s.backBtn}>
@@ -609,19 +755,38 @@ export default function CatalogReviewScreen() {
                           These part numbers were extracted by AI but don't match any item in your inventory. Review them to decide whether to add them.
                         </Text>
                       </View>
-                      {jobSummary.unmatchedParts.map((p, i) => (
-                        <View
-                          key={`${p.catalogNumber}-${i}`}
-                          style={[s.unmatchedRow, { backgroundColor: colors.card, borderColor: colors.border }]}
-                        >
-                          <Text style={[s.unmatchedCatalog, { color: colors.foreground }]}>{p.catalogNumber}</Text>
-                          {p.description ? (
-                            <Text style={[s.unmatchedDesc, { color: colors.mutedForeground }]} numberOfLines={2}>
-                              {p.description}
-                            </Text>
-                          ) : null}
-                        </View>
-                      ))}
+                      {jobSummary.unmatchedParts.map((p, i) => {
+                        const isAdded = addedCatalogs.has(p.catalogNumber);
+                        return (
+                          <View
+                            key={`${p.catalogNumber}-${i}`}
+                            style={[s.unmatchedRow, { backgroundColor: colors.card, borderColor: colors.border }]}
+                          >
+                            <View style={s.unmatchedRowTop}>
+                              <View style={s.unmatchedRowInfo}>
+                                <Text style={[s.unmatchedCatalog, { color: colors.foreground }]}>{p.catalogNumber}</Text>
+                                {p.description ? (
+                                  <Text style={[s.unmatchedDesc, { color: colors.mutedForeground }]} numberOfLines={2}>
+                                    {p.description}
+                                  </Text>
+                                ) : null}
+                              </View>
+                              {isAdded ? (
+                                <View style={[s.addedBadge, { backgroundColor: colors.primary + "22" }]}>
+                                  <Text style={[s.addedBadgeText, { color: colors.primary }]}>✓ Added</Text>
+                                </View>
+                              ) : (
+                                <Pressable
+                                  onPress={() => openAddModal(p)}
+                                  style={[s.addBtn, { backgroundColor: colors.primary }]}
+                                >
+                                  <Text style={[s.addBtnText, { color: colors.primaryForeground }]}>+ Add</Text>
+                                </Pressable>
+                              )}
+                            </View>
+                          </View>
+                        );
+                      })}
                     </>
                   ) : null}
                 </View>
@@ -704,6 +869,51 @@ const s = StyleSheet.create({
   unmatchedRow: {
     marginHorizontal: 12, marginTop: 6, borderRadius: 10, borderWidth: 1, padding: 12, gap: 4,
   },
+  unmatchedRowTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  unmatchedRowInfo: { flex: 1, gap: 4 },
   unmatchedCatalog: { fontSize: 13, fontFamily: "Inter_700Bold" },
   unmatchedDesc: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  addBtn: {
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8,
+  },
+  addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  addedBadge: {
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+  },
+  addedBadgeText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  modalOverlay: {
+    flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  modalSheet: {
+    borderTopLeftRadius: 20, borderTopRightRadius: 20, borderWidth: 1,
+    maxHeight: "85%",
+  },
+  modalHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 18, paddingVertical: 16, borderBottomWidth: 1,
+  },
+  modalTitle: { fontSize: 17, fontFamily: "Inter_700Bold" },
+  modalCloseBtn: { padding: 4 },
+  modalCloseText: { fontSize: 18, fontFamily: "Inter_400Regular" },
+  modalBody: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 8 },
+  fieldLabel: {
+    fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 6,
+  },
+  fieldInput: {
+    borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11,
+    fontSize: 15, fontFamily: "Inter_400Regular",
+  },
+  fieldInputMulti: { minHeight: 80, textAlignVertical: "top", paddingTop: 11 },
+  addErrorText: { fontSize: 13, fontFamily: "Inter_500Medium", marginTop: 10, marginBottom: 4 },
+  modalFooter: {
+    flexDirection: "row", gap: 10, paddingHorizontal: 18, paddingVertical: 16, borderTopWidth: 1,
+  },
+  modalCancelBtn: {
+    flex: 1, borderWidth: 1, borderRadius: 10, paddingVertical: 13, alignItems: "center",
+  },
+  modalCancelText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  modalSubmitBtn: {
+    flex: 2, borderRadius: 10, paddingVertical: 13, alignItems: "center", justifyContent: "center",
+  },
+  modalSubmitText: { fontSize: 14, fontFamily: "Inter_700Bold" },
 });
