@@ -146,7 +146,7 @@ export default function CatalogReviewScreen() {
   };
 
   const handleKeepExisting = () => {
-    if (addModalPart) {
+    if (addModalPart?.catalogNumber) {
       setAddedCatalogs((prev) => new Set([...prev, addModalPart.catalogNumber]));
     }
     setAddModalPart(null);
@@ -205,7 +205,7 @@ export default function CatalogReviewScreen() {
         return;
       }
       const body = await r.json().catch(() => ({})) as { item?: CreatedPart };
-      if (addModalPart) {
+      if (addModalPart?.catalogNumber) {
         setAddedCatalogs((prev) => new Set([...prev, addModalPart.catalogNumber]));
       }
       if (body.item) {

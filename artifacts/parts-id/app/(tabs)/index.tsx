@@ -388,6 +388,7 @@ export default function SearchScreen() {
             if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
             return res.json();
           });
+          if (!Array.isArray(data?.items)) throw new Error("Sync failed: unexpected response shape");
           return data;
         },
         500,
@@ -541,7 +542,7 @@ export default function SearchScreen() {
       setIsOffline(true);
       setOfflineCacheType(result.cacheType);
       setOfflineResults(result.results);
-    });
+    }).catch(console.error);
   }, [runFuseSearch]);
 
   // Fire a non-blocking translate-query request and update AI state when it
@@ -564,8 +565,14 @@ export default function SearchScreen() {
         catalogNumbers?: Array<string>;
         substitutes?: Array<SearchResult>;
         error?: string;
-      };
+      } | null;
       if (aiSearchGenRef.current !== gen) return;
+      if (!data) {
+        if (zeroResults) {
+          setAIZeroResults({ loading: false, partName: "", partSpecs: [], catalogNumbers: [], substitutes: [], error: "AI unavailable" });
+        }
+        return;
+      }
       if (zeroResults) {
         setAIZeroResults({
           loading: false,
@@ -646,7 +653,7 @@ export default function SearchScreen() {
           const pruned = pruneExpired(cache);
           pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
           saveQueryCache(pruned);
-        });
+        }).catch(console.error);
       },
       onError: () => {
         if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
@@ -1078,7 +1085,7 @@ export default function SearchScreen() {
                   setCacheClearedMsg("✓ Cache cleared — resyncing…");
                   syncAllInventory().then(() => {
                     setCacheClearedMsg(null);
-                  });
+                  }).catch(console.error);
                 }}
                 style={[styles.secondaryBtn, styles.clearCacheBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
               >
