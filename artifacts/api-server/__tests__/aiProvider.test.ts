@@ -281,3 +281,97 @@ describe("initProvider()", () => {
     expect(mod.getProvider()).toBe("poe");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// probePoeBotsOnStartup()
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("probePoeBotsOnStartup()", () => {
+  type MockClient = { chat: { completions: { create: jest.Mock } } };
+
+  // Helper: get logger mocks from the hoisted jest.mock() factory
+  function getLoggerMocks() {
+    return jest.requireMock<{ logger: { info: jest.Mock; warn: jest.Mock } }>(
+      "../src/lib/logger",
+    ).logger;
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    // Ensure we are on the poe provider (outer beforeEach already does this,
+    // but make it explicit so the intent is clear in this describe block)
+    mod.setProvider("poe");
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("resolves and logs a timeout warning for each bot when create never resolves", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    // Hang indefinitely — never resolves, never rejects
+    client.chat.completions.create.mockImplementation(() => new Promise(() => {}));
+
+    const probePromise = mod.probePoeBotsOnStartup();
+
+    // Advance past the 5 000 ms probe timeout so all per-bot timers fire
+    await jest.advanceTimersByTimeAsync(5100);
+    await probePromise;
+
+    const botNames = mod.getAllPoeModelNames();
+    const { warn } = getLoggerMocks();
+
+    expect(warn).toHaveBeenCalledTimes(botNames.length);
+    for (const botName of botNames) {
+      expect(warn).toHaveBeenCalledWith(
+        { botName },
+        expect.stringContaining("probe timed out"),
+      );
+    }
+  });
+
+  it("logs '— OK' for each bot when create resolves promptly", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockResolvedValue({ choices: [] });
+
+    await mod.probePoeBotsOnStartup();
+
+    const botNames = mod.getAllPoeModelNames();
+    const { info, warn } = getLoggerMocks();
+
+    // No warnings — all bots responded successfully
+    expect(warn).not.toHaveBeenCalled();
+
+    for (const botName of botNames) {
+      expect(info).toHaveBeenCalledWith(
+        { botName },
+        expect.stringContaining("— OK"),
+      );
+    }
+  });
+
+  it("is a no-op when the active provider is not 'poe'", async () => {
+    mod.setProvider("openai");
+    jest.clearAllMocks();
+
+    await mod.probePoeBotsOnStartup();
+
+    const { info, warn } = getLoggerMocks();
+    expect(warn).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it("does not leave any dangling timers after a successful probe", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockResolvedValue({ choices: [] });
+
+    await mod.probePoeBotsOnStartup();
+
+    // All per-bot timeouts should have been naturally cancelled (Promise.race
+    // won the race), so running all pending timers produces no extra warn calls
+    await jest.runAllTimersAsync();
+    const { warn } = getLoggerMocks();
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
