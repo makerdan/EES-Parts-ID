@@ -291,4 +291,12 @@ router.post("/ai-provider", requireAdminAuth, async (req, res) => {
   return res.json({ provider: getProvider(), persisted });
 });
 
+// ── POST /admin/restart ───────────────────────────────────────────────────────
+// Sends a 202 Accepted response, then exits the process after a short delay
+// so Replit's workflow runner can restart it automatically.
+router.post("/restart", requireAdminAuth, (_req, res) => {
+  res.status(202).json({ restarting: true });
+  setTimeout(() => process.exit(0), 200);
+});
+
 export default router;

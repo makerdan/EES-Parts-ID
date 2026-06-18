@@ -379,6 +379,10 @@ export interface UpdateWarehouseZoneBody {
   sortOrder?: number;
 }
 
+export interface AdminRestartResponse {
+  restarting: boolean;
+}
+
 export interface AiReferenceBody {
   question: string;
 }

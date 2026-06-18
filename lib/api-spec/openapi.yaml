@@ -16,6 +16,8 @@ tags:
     description: Dictionary lookups
   - name: ai
     description: AI identification and reference
+  - name: admin
+    description: Admin operations
 paths:
   /healthz:
     get:
@@ -514,6 +516,21 @@ paths:
           description: Admin token required
         "404":
           description: Zone not found
+
+  /admin/restart:
+    post:
+      operationId: adminRestart
+      tags: [admin]
+      summary: Restart the API server process (admin)
+      responses:
+        "202":
+          description: Restart initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRestartResponse"
+        "401":
+          description: Admin token required
 
   /ai/reference:
     post:
@@ -1240,6 +1257,14 @@ components:
           type: number
         sortOrder:
           type: integer
+
+    AdminRestartResponse:
+      type: object
+      properties:
+        restarting:
+          type: boolean
+      required:
+        - restarting
 
     AiReferenceBody:
       type: object

@@ -17,6 +17,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AdminRestartResponse,
   AiIdentifyBody,
   AiIdentifyResponse,
   AiReferenceBody,
@@ -1939,6 +1940,87 @@ export const useDeleteWarehouseZone = <
   TContext
 > => {
   return useMutation(getDeleteWarehouseZoneMutationOptions(options));
+};
+
+/**
+ * @summary Restart the API server process (admin)
+ */
+export const getAdminRestartUrl = () => {
+  return `/api/admin/restart`;
+};
+
+export const adminRestart = async (
+  options?: RequestInit,
+): Promise<AdminRestartResponse> => {
+  return customFetch<AdminRestartResponse>(getAdminRestartUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAdminRestartMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof adminRestart>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof adminRestart>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["adminRestart"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof adminRestart>>,
+    void
+  > = () => {
+    return adminRestart(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AdminRestartMutationResult = NonNullable<
+  Awaited<ReturnType<typeof adminRestart>>
+>;
+
+export type AdminRestartMutationError = ErrorType<void>;
+
+/**
+ * @summary Restart the API server process (admin)
+ */
+export const useAdminRestart = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof adminRestart>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof adminRestart>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getAdminRestartMutationOptions(options));
 };
 
 /**

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -11,6 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useApiStatus } from "@/hooks/useApiStatus";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as DocumentPicker from "expo-document-picker";
 import { File as FsFile, Paths as FsPaths } from "expo-file-system";
@@ -532,6 +534,22 @@ export default function UploadScreen() {
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
+  const { status: apiStatus, restarting: apiRestarting, triggerRestart } = useApiStatus({
+    apiBase: API_BASE,
+    adminToken: isAdmin ? adminToken : null,
+  });
+
+  const handleRestartPress = useCallback(() => {
+    Alert.alert(
+      "Restart API server?",
+      "The server will briefly go offline while it restarts.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Restart", style: "destructive", onPress: () => { triggerRestart(); } },
+      ],
+    );
+  }, [triggerRestart]);
+
   const lidarSupported = isLiDARSupported();
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
@@ -1475,9 +1493,41 @@ export default function UploadScreen() {
             <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
           </View>
           {isAdmin ? (
-            <Pressable onPress={logoutAdmin} style={[styles.lockBtn, { borderColor: colors.border }]}>
-              <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>🔓 Log Out</Text>
-            </Pressable>
+            <View style={styles.headerActions}>
+              <Pressable
+                onPress={handleRestartPress}
+                style={[
+                  styles.apiStatusPill,
+                  {
+                    backgroundColor:
+                      apiRestarting
+                        ? "#6b7280"
+                        : apiStatus === "ok"
+                        ? "#10b981"
+                        : apiStatus === "degraded"
+                        ? "#f59e0b"
+                        : apiStatus === "error"
+                        ? "#ef4444"
+                        : "#6b7280",
+                  },
+                ]}
+              >
+                <Text style={styles.apiStatusPillText}>
+                  {apiRestarting
+                    ? "⟳ Restarting…"
+                    : apiStatus === "ok"
+                    ? "● API: ok"
+                    : apiStatus === "degraded"
+                    ? "● API: degraded"
+                    : apiStatus === "error"
+                    ? "● API: error"
+                    : "● API: …"}
+                </Text>
+              </Pressable>
+              <Pressable onPress={logoutAdmin} style={[styles.lockBtn, { borderColor: colors.border }]}>
+                <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>🔓 Log Out</Text>
+              </Pressable>
+            </View>
           ) : null}
         </View>
       </View>
@@ -2842,6 +2892,9 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   lockBtn: { ...secondaryBtnBase, paddingHorizontal: 12, paddingVertical: 7 },
   lockBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  apiStatusPill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
+  apiStatusPillText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#ffffff" },
   tabBar: { flexDirection: "row", borderBottomWidth: 1 },
   tabItem: { flex: 1, alignItems: "center", paddingVertical: 12, borderBottomWidth: 2 },
   tabLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
