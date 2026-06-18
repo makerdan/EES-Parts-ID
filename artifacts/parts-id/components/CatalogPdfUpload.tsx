@@ -73,6 +73,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   }, [retryCountdown]);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
@@ -286,7 +287,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         const delaySec = Math.pow(2, attempt);
         setError(null);
         setRetryCountdown(delaySec);
-        setTimeout(() => handleStart(attempt + 1), delaySec * 1000);
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null;
+          handleStart(attempt + 1);
+        }, delaySec * 1000);
       } else {
         setLoading(false);
         setRetryCountdown(null);
@@ -302,6 +306,20 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (xhrRef.current) {
       xhrRef.current.abort();
     }
+  };
+
+  const handleCancelRetry = () => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    setRetryCountdown(null);
+    setLoading(false);
+    setUploadPct(null);
+    setUploadSpeed(null);
+    setUploadEta(null);
+    setError("Network error — check your connection and try again.");
+    setShowRetryBtn(true);
   };
 
   const isDone = jobStatus?.status === "done";
@@ -365,9 +383,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {/* Error / retry countdown */}
       {retryCountdown !== null ? (
         <View style={s.errorRow}>
-          <Text style={[s.error, { color: colors.destructive }]}>
+          <Text style={[s.error, { color: colors.destructive, flex: 1 }]}>
             Network error — retrying in {retryCountdown}…
           </Text>
+          <Pressable
+            onPress={handleCancelRetry}
+            style={[s.retryBtn, { borderColor: colors.destructive }]}
+          >
+            <Text style={[s.retryBtnText, { color: colors.destructive }]}>Cancel</Text>
+          </Pressable>
         </View>
       ) : error ? (
         <View style={s.errorRow}>
