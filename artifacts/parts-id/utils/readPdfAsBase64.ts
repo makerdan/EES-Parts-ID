@@ -196,7 +196,24 @@ export async function readPdfAsBase64(uri: string): Promise<string> {
   }
 
   // ── Web path ───────────────────────────────────────────────────────────────
-  const response = await fetch(uri);
+  // A 60-second AbortController timeout prevents fetch from hanging forever
+  // (e.g. when a blob URL is revoked before the read completes).
+  const controller = new AbortController();
+  const fetchTimeout = setTimeout(() => controller.abort(), 60_000);
+
+  const response = await fetch(uri, { signal: controller.signal }).then(
+    (r) => { clearTimeout(fetchTimeout); return r; },
+    (err: unknown) => {
+      clearTimeout(fetchTimeout);
+      if ((err as { name?: string }).name === "AbortError") {
+        throw new Error(
+          "Reading the PDF timed out — the file may be corrupted or too large for your browser. Please try again.",
+        );
+      }
+      throw err;
+    },
+  );
+
   if (!response.ok) {
     throw new Error(`Failed to read PDF: HTTP ${response.status}`);
   }

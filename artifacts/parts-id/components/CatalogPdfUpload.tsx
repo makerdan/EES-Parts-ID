@@ -97,14 +97,20 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setError(null);
     setPdfBase64(null);
     setFilename(null);
+    // Show loading immediately so the UI responds right away — on web,
+    // expo-document-picker can take several seconds to create the blob URL
+    // for large files before getDocumentAsync even returns.
+    setReadingFile(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: "application/pdf",
         copyToCacheDirectory: true,
       });
-      if (result.canceled || !result.assets?.[0]) return;
+      if (result.canceled || !result.assets?.[0]) {
+        setReadingFile(false);
+        return;
+      }
       const asset = result.assets[0]!;
-      setReadingFile(true);
       try {
         const base64 = await readPdfAsBase64(asset.uri);
         setPdfBase64(base64);
@@ -117,12 +123,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         ) {
           setError(err.message);
         } else {
-          setError("Could not read the PDF file. Please try again.");
+          setError((err as Error)?.message ?? "Could not read the PDF file. Please try again.");
         }
       } finally {
         setReadingFile(false);
       }
     } catch {
+      setReadingFile(false);
       setError("Could not read the PDF file. Please try again.");
     }
   };
