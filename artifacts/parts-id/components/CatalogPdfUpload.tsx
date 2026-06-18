@@ -269,9 +269,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
       {/* Vendor input */}
       <View style={s.fieldRow}>
-        <Text style={[s.label, { color: colors.mutedForeground }]}>Vendor</Text>
+        <Text style={[s.label, { color: colors.mutedForeground }]}>
+          Vendor <Text style={{ color: colors.destructive }}>*</Text>
+        </Text>
         <KeyboardDoneInput
-          style={[s.input, { backgroundColor: colors.muted, color: colors.foreground, borderColor: colors.border }]}
+          style={[s.input, {
+            backgroundColor: colors.muted,
+            color: colors.foreground,
+            borderColor: pdfBase64 && !vendor.trim() ? colors.destructive : colors.border,
+          }]}
           placeholder="e.g. EATON"
           placeholderTextColor={colors.mutedForeground}
           value={vendor}
@@ -317,21 +323,32 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
       {/* Start button */}
       {!isRunning && !isDone ? (
-        <Pressable
-          onPress={() => handleStart()}
-          disabled={!pdfBase64 || !vendor.trim() || loading || readingFile}
-          style={[s.startBtn, {
-            backgroundColor: !pdfBase64 || !vendor.trim() || loading || readingFile ? colors.muted : colors.primary,
-          }]}
-        >
-          {loading ? (
-            <ActivityIndicator color={colors.primaryForeground} />
-          ) : (
-            <Text style={[s.startBtnText, { color: !pdfBase64 || !vendor.trim() || readingFile ? colors.mutedForeground : colors.primaryForeground }]}>
-              Start Extraction
+        <>
+          <Pressable
+            onPress={() => handleStart()}
+            disabled={!pdfBase64 || !vendor.trim() || loading || readingFile}
+            style={[s.startBtn, {
+              backgroundColor: !pdfBase64 || !vendor.trim() || loading || readingFile ? colors.muted : colors.primary,
+            }]}
+          >
+            {loading ? (
+              <ActivityIndicator color={colors.primaryForeground} />
+            ) : (
+              <Text style={[s.startBtnText, { color: !pdfBase64 || !vendor.trim() || readingFile ? colors.mutedForeground : colors.primaryForeground }]}>
+                Start Extraction
+              </Text>
+            )}
+          </Pressable>
+          {(!pdfBase64 || !vendor.trim()) && !loading && !readingFile ? (
+            <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
+              {!pdfBase64 && !vendor.trim()
+                ? "Choose a PDF file and enter a vendor name to continue"
+                : !pdfBase64
+                  ? "Choose a PDF file above to continue"
+                  : "Enter a vendor name above to continue"}
             </Text>
-          )}
-        </Pressable>
+          ) : null}
+        </>
       ) : null}
 
       {/* Upload progress */}
@@ -437,6 +454,7 @@ const s = StyleSheet.create({
   retryBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   startBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   startBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  fieldHint: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 17 },
   progressBlock: { gap: 8 },
   progressRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   progressLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
