@@ -122,4 +122,8 @@ Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferen
   .then(() => probePoeBotsOnStartup())
   .then(() => {
     startServer(app, port, MAX_RETRIES);
+  })
+  .catch((err) => {
+    logger.error({ err }, "Fatal error during server startup — exiting");
+    process.exit(1);
   });
