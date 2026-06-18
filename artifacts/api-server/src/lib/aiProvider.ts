@@ -133,11 +133,18 @@ export const AI_PROVIDER: AIProvider = _provider;
 /** Poe bot used for keyword enrichment and reference Q&A (fast, cheap). */
 export const POE_ENRICH_BOT = "GPT-5-Mini";
 
-/** Poe bot used for part identification and catalog PDF extraction (vision capable). */
+/** Poe bot used for part identification from photos (vision capable). */
 export const POE_IDENTIFY_BOT = "Claude-Sonnet-4.5";
 
 /** Poe bot used for physical dimension estimation from photos (vision capable). */
 export const POE_DIMENSIONS_BOT = "Claude-Sonnet-4.5";
+
+/**
+ * Poe bot used exclusively for catalog PDF extraction (vision capable, Gemini).
+ * Name confirmed as "Gemini-3.1-Pro" — validated by probePoeBotsOnStartup() at boot.
+ * If the startup probe logs a 404 for this name, try "Gemini-2.5-Pro" as a fallback.
+ */
+export const POE_CATALOG_BOT = "Gemini-3.1-Pro";
 
 // ── Model defaults (re-derived at call time via helpers below) ────────────────
 
@@ -166,11 +173,11 @@ export function getReferenceModel(): string {
 }
 
 /**
- * Default model for catalog PDF extraction (vision capable — same tier as identify).
+ * Default model for catalog PDF extraction (Gemini vision — dedicated bot).
  * Reflects the currently active provider.
  */
 export function getCatalogModel(): string {
-  return getIdentifyModel();
+  return _provider === "openai" ? "gpt-4o" : POE_CATALOG_BOT;
 }
 
 /**
@@ -187,9 +194,10 @@ export function getDimensionsModel(): string {
  */
 export function getAllPoeModelNames(): string[] {
   return [
-    POE_ENRICH_BOT,    // enrich / reference
-    POE_IDENTIFY_BOT,  // identify / catalog
+    POE_ENRICH_BOT,     // enrich / reference
+    POE_IDENTIFY_BOT,   // identify (photo-based)
     POE_DIMENSIONS_BOT, // dimensions
+    POE_CATALOG_BOT,    // catalog PDF extraction
   ];
 }
 
@@ -264,7 +272,7 @@ export const REFERENCE_MODEL: string = ENRICH_MODEL;
 /**
  * @deprecated Use getCatalogModel() so the value updates after setProvider().
  */
-export const CATALOG_MODEL: string = IDENTIFY_MODEL;
+export const CATALOG_MODEL: string = _provider === "openai" ? "gpt-4o" : POE_CATALOG_BOT;
 
 /**
  * @deprecated Use getDimensionsModel() so the value updates after setProvider().
