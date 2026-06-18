@@ -433,4 +433,53 @@ describe("POST /api/inventory/add-part", () => {
     expect(res.body).toHaveProperty("error");
     expect(res.body.error).toMatch(/vendor.*catalog|catalog.*vendor|required/i);
   });
+
+  // ── Unrecognized-part edit-flow: description round-trip ───────────────────
+  // These tests simulate an admin editing an unrecognized part's description
+  // before confirming the add, and verify the description survives the full
+  // round-trip: POST body → 201 response → GET /api/inventory list.
+
+  it("description entered in the edit form is returned in the 201 response", async () => {
+    const catalog = `${CATALOG_PREFIX}EDIT-001`;
+    const description = "1/2\" conduit coupling, PVC schedule 40";
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    expect(res.body.item.description).toBe(description);
+  });
+
+  it("description entered in the edit form appears when the item is fetched from GET /api/inventory", async () => {
+    const catalog = `${CATALOG_PREFIX}EDIT-002`;
+    const description = "10A toggle switch, SPST, 120V";
+
+    const postRes = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    const insertedId: number = postRes.body.item.id;
+
+    // The GET endpoint is paginated (max 500 per page). Walk pages until the
+    // newly-inserted item is found or we exhaust the result set.
+    type ListItem = { id: number; description: string };
+    let found: ListItem | undefined;
+    let page = 1;
+    while (!found) {
+      const getRes = await supertest(app)
+        .get(`/api/inventory?limit=500&page=${page}`)
+        .expect(200);
+      const items = getRes.body.items as ListItem[];
+      found = items.find(item => item.id === insertedId);
+      if (items.length < 500) break;
+      page++;
+    }
+
+    expect(found).toBeDefined();
+    expect(found!.description).toBe(description);
+  });
 });
