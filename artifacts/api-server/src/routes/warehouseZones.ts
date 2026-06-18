@@ -3,6 +3,7 @@ import { eq, asc, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { warehouseZoneTable, inventoryTable } from "@workspace/db";
 import { CreateWarehouseZoneBody, UpdateWarehouseZoneBody } from "@workspace/api-zod";
+import { requireAdminAuth } from "./admin";
 
 /** Strips leading zeros from numeric aisle ID strings ("08" → "8", "A1" → "A1"). */
 function normalizeAisleId(v: string): string {
@@ -92,7 +93,7 @@ router.get("/coverage", async (_req, res) => {
 });
 
 // POST /warehouse-zones
-router.post("/", async (req, res) => {
+router.post("/", requireAdminAuth, async (req, res) => {
   const parsed = CreateWarehouseZoneBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
@@ -131,7 +132,7 @@ router.post("/", async (req, res) => {
 });
 
 // PATCH /warehouse-zones/:id
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", requireAdminAuth, async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -164,7 +165,7 @@ router.patch("/:id", async (req, res) => {
 });
 
 // DELETE /warehouse-zones/:id
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAdminAuth, async (req, res) => {
   const id = parseInt(String(req.params["id"]));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });

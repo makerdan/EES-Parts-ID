@@ -17,6 +17,10 @@ const router = Router();
 const adminPassword = process.env.ADMIN_PASSWORD ?? "";
 
 function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!adminPassword) {
+    res.status(503).json({ error: "Server misconfigured: ADMIN_PASSWORD is not set" });
+    return;
+  }
   const auth = req.headers["authorization"] ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   if (!token || !verifyAdminToken(token, adminPassword)) {
@@ -322,7 +326,7 @@ router.get("/quick-lookups/:label", async (req, res) => {
 
 // POST /reference/quick-lookups/:label — AI fallback + DB write-back
 // Called internally by the mobile client when cache misses at all layers.
-router.post("/quick-lookups/:label", async (req, res) => {
+router.post("/quick-lookups/:label", requireAdminAuth, async (req, res) => {
   try {
     const { label } = req.params;
     const { question } = req.body as { question: string };

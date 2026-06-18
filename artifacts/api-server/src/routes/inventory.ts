@@ -1999,7 +1999,7 @@ router.patch("/:id/enrich", requireAdminAuth, async (req, res) => {
 });
 
 // ── PATCH /inventory/:id/keywords ─────────────────────────────────────────────
-router.patch("/:id/keywords", async (req, res) => {
+router.patch("/:id/keywords", requireAdminAuth, async (req, res) => {
   try {
     const id = parseInt(req.params["id"] ?? "0");
     const { keywords } = req.body as { keywords: string[] };
