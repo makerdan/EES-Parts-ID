@@ -29,6 +29,31 @@ import { uploadCatalogImage } from "../lib/objectStorage";
 
 const router = Router();
 
+// ── PDF validation helper ──────────────────────────────────────────────────────
+// Decodes a small prefix of the base64 payload and validates it looks like a
+// real, non-encrypted PDF before we do any database work or async processing.
+//
+// Returns null if the payload is valid, or an error descriptor if it is not:
+//   { status: 400, message: string }
+function validatePdfBase64(pdfBase64: string): { status: 400; message: string } | null {
+  // Decode enough bytes to cover the magic bytes + a reasonable header scan.
+  // 4 KB of base64 ≈ ~3 KB of binary, more than enough to find %PDF- and /Encrypt.
+  const PREFIX_B64_LEN = 5500; // ~4 KB decoded
+  const prefix = Buffer.from(pdfBase64.slice(0, PREFIX_B64_LEN), "base64");
+
+  // Check PDF magic bytes — every valid PDF starts with "%PDF-"
+  if (prefix.length < 5 || prefix.slice(0, 5).toString("ascii") !== "%PDF-") {
+    return { status: 400, message: "Invalid file: not a PDF (missing %PDF- header)" };
+  }
+
+  // Check for password protection — encrypted PDFs contain an /Encrypt dictionary
+  if (prefix.includes("/Encrypt")) {
+    return { status: 400, message: "Invalid file: PDF is password-protected. Remove the password and try again." };
+  }
+
+  return null;
+}
+
 // ── Image helper ──────────────────────────────────────────────────────────────
 // Selects or crops the correct image buffer for one image slot of a catalog entry.
 //
@@ -119,6 +144,12 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   // Sanity-check the payload is reasonable (≤25 MB base64 ≈ ~18 MB PDF)
   if (pdfBase64.length > 35_000_000) {
     return void res.status(413).json({ error: "PDF too large (max ~25 MB)" });
+  }
+
+  // Validate magic bytes and reject encrypted PDFs before touching the DB
+  const pdfValidationError = validatePdfBase64(pdfBase64);
+  if (pdfValidationError) {
+    return void res.status(pdfValidationError.status).json({ error: pdfValidationError.message });
   }
 
   // Create the DB job record
@@ -335,6 +366,13 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   }
   if (pdfBase64.length > 35_000_000) {
     res.status(413).json({ error: "PDF too large (max ~25 MB)" });
+    return;
+  }
+
+  // Validate magic bytes and reject encrypted PDFs before touching the DB
+  const pdfValidationError = validatePdfBase64(pdfBase64);
+  if (pdfValidationError) {
+    res.status(pdfValidationError.status).json({ error: pdfValidationError.message });
     return;
   }
 
