@@ -18,6 +18,7 @@ import {
   InvalidPdfError,
   EncryptedPdfError,
   MAX_PDF_BYTES,
+  toFriendlyReadError,
 } from "../utils/readPdfAsBase64";
 
 // ── Platform mock ─────────────────────────────────────────────────────────────
@@ -379,5 +380,106 @@ describe("readPdfAsBase64 – native path (iOS)", () => {
     await expect(readPdfAsBase64("file:///var/mobile/secure.pdf")).rejects.toThrow(
       "Password-protected",
     );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// toFriendlyReadError
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("toFriendlyReadError", () => {
+  it("returns the InvalidPdfError message verbatim", () => {
+    const err = new InvalidPdfError();
+    expect(toFriendlyReadError(err)).toBe(err.message);
+  });
+
+  it("returns the EncryptedPdfError message verbatim", () => {
+    const err = new EncryptedPdfError();
+    expect(toFriendlyReadError(err)).toBe(err.message);
+  });
+
+  it("returns the PdfTooLargeError message verbatim", () => {
+    const err = new PdfTooLargeError();
+    expect(toFriendlyReadError(err)).toBe(err.message);
+  });
+
+  it("maps 'not found' message to the file-not-found copy", () => {
+    const result = toFriendlyReadError(new Error("Failed to read PDF: file not found"));
+    expect(result).toBe("The file could not be found. Please try picking it again.");
+  });
+
+  it("maps 'no such file' message to the file-not-found copy", () => {
+    const result = toFriendlyReadError(new Error("ENOENT: no such file or directory"));
+    expect(result).toBe("The file could not be found. Please try picking it again.");
+  });
+
+  it("maps 'timed out' message to the timeout copy", () => {
+    const result = toFriendlyReadError(new Error("Request timed out"));
+    expect(result).toBe("Reading the file timed out — it may be too large or corrupted. Please try again.");
+  });
+
+  it("maps 'timeout' message to the timeout copy", () => {
+    const result = toFriendlyReadError(new Error("fetch timeout"));
+    expect(result).toBe("Reading the file timed out — it may be too large or corrupted. Please try again.");
+  });
+
+  it("maps 'aborted' message to the timeout copy", () => {
+    const result = toFriendlyReadError(new Error("The operation was aborted"));
+    expect(result).toBe("Reading the file timed out — it may be too large or corrupted. Please try again.");
+  });
+
+  it("maps 'permission denied' message to the permission copy", () => {
+    const result = toFriendlyReadError(new Error("Permission denied"));
+    expect(result).toBe("Permission was denied when reading the file. Please try again.");
+  });
+
+  it("maps 'not permitted' message to the permission copy", () => {
+    const result = toFriendlyReadError(new Error("Operation not permitted"));
+    expect(result).toBe("Permission was denied when reading the file. Please try again.");
+  });
+
+  it("maps 'unauthorized' message to the permission copy", () => {
+    const result = toFriendlyReadError(new Error("unauthorized access"));
+    expect(result).toBe("Permission was denied when reading the file. Please try again.");
+  });
+
+  it("maps an HTTP status error message to the network copy", () => {
+    const result = toFriendlyReadError(new Error("Failed to read PDF: HTTP 403"));
+    expect(result).toBe("The file could not be loaded due to a network error. Please try again.");
+  });
+
+  it("maps an HTTP status with no space (e.g. 'HTTP500') to the network copy", () => {
+    const result = toFriendlyReadError(new Error("HTTP500 internal server error"));
+    expect(result).toBe("The file could not be loaded due to a network error. Please try again.");
+  });
+
+  it("returns the generic fallback for an unrecognised error message", () => {
+    const result = toFriendlyReadError(new Error("Something completely unexpected happened"));
+    expect(result).toBe("The file could not be opened. Please make sure it is a valid, unprotected PDF and try again.");
+  });
+
+  it("returns the generic fallback for a non-Error value (string)", () => {
+    const result = toFriendlyReadError("some string error");
+    expect(result).toBe("The file could not be opened. Please make sure it is a valid, unprotected PDF and try again.");
+  });
+
+  it("returns the generic fallback when passed null", () => {
+    const result = toFriendlyReadError(null);
+    expect(result).toBe("The file could not be opened. Please make sure it is a valid, unprotected PDF and try again.");
+  });
+
+  it("returns the generic fallback when passed undefined", () => {
+    const result = toFriendlyReadError(undefined);
+    expect(result).toBe("The file could not be opened. Please make sure it is a valid, unprotected PDF and try again.");
+  });
+
+  it("is case-insensitive for the 'NOT FOUND' pattern", () => {
+    const result = toFriendlyReadError(new Error("File NOT FOUND"));
+    expect(result).toBe("The file could not be found. Please try picking it again.");
+  });
+
+  it("is case-insensitive for the 'TIMED OUT' pattern", () => {
+    const result = toFriendlyReadError(new Error("TIMED OUT waiting for response"));
+    expect(result).toBe("Reading the file timed out — it may be too large or corrupted. Please try again.");
   });
 });
