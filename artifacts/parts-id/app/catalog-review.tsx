@@ -89,6 +89,7 @@ export default function CatalogReviewScreen() {
   const { adminToken, logoutAdmin, resumeProgress, setResumeProgress } = useApp();
 
   type JobSummary = {
+    vendor: string;
     partsFound: number;
     matchedParts: number;
     imagesMatched: number;
@@ -115,15 +116,20 @@ export default function CatalogReviewScreen() {
   const showInfo = (title: string, message: string) =>
     setInfoDialog({ visible: true, title, message });
 
-  type AddForm = { vendor: string; catalog: string; description: string };
+  type AddForm = { vendor: string; catalog: string; description: string; binLocation: string };
   const [addModalPart, setAddModalPart] = useState<{ catalogNumber: string; description: string } | null>(null);
-  const [addForm, setAddForm] = useState<AddForm>({ vendor: "", catalog: "", description: "" });
+  const [addForm, setAddForm] = useState<AddForm>({ vendor: "", catalog: "", description: "", binLocation: "" });
   const [addingInProgress, setAddingInProgress] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addedCatalogs, setAddedCatalogs] = useState<Set<string>>(new Set());
 
   const openAddModal = (part: { catalogNumber: string; description: string }) => {
-    setAddForm({ vendor: "", catalog: part.catalogNumber, description: part.description });
+    setAddForm({
+      vendor: jobSummary?.vendor ?? "",
+      catalog: part.catalogNumber,
+      description: part.description,
+      binLocation: "",
+    });
     setAddError(null);
     setAddModalPart(part);
   };
@@ -143,6 +149,7 @@ export default function CatalogReviewScreen() {
           vendor: addForm.vendor.trim(),
           catalog: addForm.catalog.trim(),
           description: addForm.description.trim(),
+          ...(addForm.binLocation.trim() ? { binLocation: addForm.binLocation.trim() } : {}),
         }),
       });
       if (r.status === 401) { logoutAdmin(); return; }
@@ -215,12 +222,14 @@ export default function CatalogReviewScreen() {
         if (secondRes.ok) {
           if (jobId) {
             const statusData = await secondRes.json() as {
+              vendor?: string;
               partsFound?: number;
               matchedParts?: number;
               imagesMatched?: number;
               unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
             };
             setJobSummary({
+              vendor: statusData.vendor ?? "",
               partsFound: statusData.partsFound ?? 0,
               matchedParts: statusData.matchedParts ?? 0,
               imagesMatched: statusData.imagesMatched ?? 0,
@@ -600,6 +609,18 @@ export default function CatalogReviewScreen() {
                 onChangeText={(v) => setAddForm((f) => ({ ...f, description: v }))}
                 multiline
                 numberOfLines={3}
+                editable={!addingInProgress}
+              />
+
+              <Text style={[s.fieldLabel, { color: colors.mutedForeground, marginTop: 14 }]}>BIN LOCATION</Text>
+              <TextInput
+                style={[s.fieldInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+                placeholder="e.g. A-12-3 (optional)"
+                placeholderTextColor={colors.mutedForeground}
+                value={addForm.binLocation}
+                onChangeText={(v) => setAddForm((f) => ({ ...f, binLocation: v }))}
+                autoCapitalize="characters"
+                autoCorrect={false}
                 editable={!addingInProgress}
               />
 

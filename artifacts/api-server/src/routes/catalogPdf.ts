@@ -625,6 +625,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
 
     return void res.json({
       jobId,
+      vendor: row.vendor,
       status: aggStatus,
       totalPages: totalPages > 0 ? totalPages : null,
       processedPages,
@@ -642,6 +643,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
   // ── Non-parent (child or legacy) job: return directly ────────────────────
   res.json({
     jobId,
+    vendor: row.vendor,
     status: row.status,
     totalPages: row.totalPages,
     processedPages: row.processedPages,
