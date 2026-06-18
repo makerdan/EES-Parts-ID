@@ -119,6 +119,7 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
           SUM(CASE WHEN status NOT IN ('done','failed','cancelled') THEN 1 ELSE 0 END) AS still_running,
           SUM(CASE WHEN status = 'failed'                           THEN 1 ELSE 0 END) AS failed_count,
           COALESCE(SUM(processed_pages), 0)                                AS sum_pages,
+          COALESCE(SUM(parts_found),     0)                                AS sum_found,
           COALESCE(SUM(matched_parts),   0)                                AS sum_matched,
           COALESCE(SUM(images_matched),  0)                                AS sum_images,
           (SELECT error_message FROM catalog_pdf_job
@@ -135,6 +136,7 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
         status           = CASE WHEN ca.failed_count > 0 THEN 'failed' ELSE 'done' END,
         error_message    = CASE WHEN ca.failed_count > 0 THEN ca.first_error ELSE NULL END,
         processed_pages  = ca.sum_pages,
+        parts_found      = ca.sum_found,
         matched_parts    = ca.sum_matched,
         images_matched   = ca.sum_images,
         finished_at      = NOW()
@@ -149,6 +151,9 @@ async function finalizeParentIfComplete(parentId: number): Promise<void> {
   }
 }
 
+// Maximum number of unmatched parts to store per job (prevents unbounded JSON blobs).
+const MAX_UNMATCHED_STORED = 300;
+
 // ── Core per-page processing loop ─────────────────────────────────────────────
 // Shared by both the POST (new job) and POST /resume routes.
 async function processPdfPages(
@@ -160,19 +165,30 @@ async function processPdfPages(
   pageOffset: number,
 ): Promise<void> {
   let processedPages = startPage;
+  let partsFound = 0;
   let matchedParts = 0;
   let imagesMatched = 0;
   let wasCancelled = false;
+  const unmatchedPartsList: Array<{ catalogNumber: string; description: string }> = [];
 
-  // Load existing matchedParts/imagesMatched for resume path
+  // Load existing counters for resume path
   if (startPage > 0) {
     const [existing] = await db
-      .select({ matchedParts: catalogPdfJobTable.matchedParts, imagesMatched: catalogPdfJobTable.imagesMatched })
+      .select({
+        partsFound: catalogPdfJobTable.partsFound,
+        matchedParts: catalogPdfJobTable.matchedParts,
+        imagesMatched: catalogPdfJobTable.imagesMatched,
+        unmatchedParts: catalogPdfJobTable.unmatchedParts,
+      })
       .from(catalogPdfJobTable)
       .where(eq(catalogPdfJobTable.id, jobId))
       .limit(1);
+    partsFound = existing?.partsFound ?? 0;
     matchedParts = existing?.matchedParts ?? 0;
     imagesMatched = existing?.imagesMatched ?? 0;
+    if (Array.isArray(existing?.unmatchedParts)) {
+      unmatchedPartsList.push(...existing.unmatchedParts);
+    }
   }
 
   const remainingPages = pages.slice(startPage);
@@ -190,11 +206,23 @@ async function processPdfPages(
 
     const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
 
+    // Count all AI-extracted entries toward partsFound (before confidence filter)
+    partsFound += entries.length;
+
     for (const entry of entries) {
       if (entry.confidence < 0.4) continue;
 
       const match = await matchCatalogNumber(normalizedVendor, entry.catalogNumber);
-      if (!match) continue;
+      if (!match) {
+        // Track unmatched parts (AI found it but no inventory row)
+        if (unmatchedPartsList.length < MAX_UNMATCHED_STORED) {
+          unmatchedPartsList.push({
+            catalogNumber: entry.catalogNumber,
+            description: entry.description,
+          });
+        }
+        continue;
+      }
 
       const [existing] = await db
         .select({
@@ -244,7 +272,13 @@ async function processPdfPages(
     processedPages++;
     await db
       .update(catalogPdfJobTable)
-      .set({ processedPages, matchedParts, imagesMatched })
+      .set({
+        processedPages,
+        partsFound,
+        matchedParts,
+        imagesMatched,
+        unmatchedParts: unmatchedPartsList.length > 0 ? unmatchedPartsList : null,
+      })
       .where(eq(catalogPdfJobTable.id, jobId));
   }
 
@@ -259,11 +293,19 @@ async function processPdfPages(
 
   await db
     .update(catalogPdfJobTable)
-    .set({ status: "done", processedPages, matchedParts, imagesMatched, finishedAt: new Date() })
+    .set({
+      status: "done",
+      processedPages,
+      partsFound,
+      matchedParts,
+      imagesMatched,
+      unmatchedParts: unmatchedPartsList.length > 0 ? unmatchedPartsList : null,
+      finishedAt: new Date(),
+    })
     .where(eq(catalogPdfJobTable.id, jobId));
 
   console.log(
-    `[catalog-pdf] job=${jobId} done — pages=${processedPages} matched=${matchedParts} images=${imagesMatched} (offset=${pageOffset})`,
+    `[catalog-pdf] job=${jobId} done — pages=${processedPages} found=${partsFound} matched=${matchedParts} images=${imagesMatched} unmatched=${unmatchedPartsList.length} (offset=${pageOffset})`,
   );
 
   if (parentJobId !== null) {
@@ -511,8 +553,10 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
         status: catalogPdfJobTable.status,
         totalPages: catalogPdfJobTable.totalPages,
         processedPages: catalogPdfJobTable.processedPages,
+        partsFound: catalogPdfJobTable.partsFound,
         matchedParts: catalogPdfJobTable.matchedParts,
         imagesMatched: catalogPdfJobTable.imagesMatched,
+        unmatchedParts: catalogPdfJobTable.unmatchedParts,
         errorMessage: catalogPdfJobTable.errorMessage,
       })
       .from(catalogPdfJobTable)
@@ -520,8 +564,20 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
 
     const totalPages = children.reduce((s, c) => s + (c.totalPages ?? 0), 0);
     const processedPages = children.reduce((s, c) => s + c.processedPages, 0);
+    const partsFound = children.reduce((s, c) => s + c.partsFound, 0);
     const matchedParts = children.reduce((s, c) => s + c.matchedParts, 0);
     const imagesMatched = children.reduce((s, c) => s + c.imagesMatched, 0);
+
+    // Aggregate unmatched parts from all children (cap total at MAX_UNMATCHED_STORED)
+    const aggregatedUnmatched: Array<{ catalogNumber: string; description: string }> = [];
+    for (const child of children) {
+      if (Array.isArray(child.unmatchedParts)) {
+        for (const p of child.unmatchedParts) {
+          if (aggregatedUnmatched.length >= MAX_UNMATCHED_STORED) break;
+          aggregatedUnmatched.push(p);
+        }
+      }
+    }
 
     // Derive aggregated status
     let aggStatus = row.status;
@@ -540,8 +596,10 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
       status: aggStatus,
       totalPages: totalPages > 0 ? totalPages : null,
       processedPages,
+      partsFound,
       matchedParts,
       imagesMatched,
+      unmatchedParts: aggregatedUnmatched,
       startedAt: row.startedAt,
       finishedAt: row.finishedAt,
       errorMessage: errorMessage ?? null,
@@ -554,8 +612,10 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
     status: row.status,
     totalPages: row.totalPages,
     processedPages: row.processedPages,
+    partsFound: row.partsFound,
     matchedParts: row.matchedParts,
     imagesMatched: row.imagesMatched,
+    unmatchedParts: row.unmatchedParts ?? [],
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
     errorMessage: row.errorMessage,

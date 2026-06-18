@@ -83,6 +83,13 @@ export default function CatalogReviewScreen() {
   const { jobId } = useLocalSearchParams<{ jobId?: string }>();
   const { adminToken, logoutAdmin, resumeProgress, setResumeProgress } = useApp();
 
+  type JobSummary = {
+    partsFound: number;
+    matchedParts: number;
+    imagesMatched: number;
+    unmatchedParts: Array<{ catalogNumber: string; description: string }>;
+  };
+
   const [groups, setGroups] = useState<SessionGroup[]>([]);
   const [failedJobs, setFailedJobs] = useState<FailedJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,6 +99,8 @@ export default function CatalogReviewScreen() {
   const [revertedIds, setRevertedIds] = useState<Set<number>>(new Set());
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const [resumingId, setResumingId] = useState<number | null>(null);
+  const [jobSummary, setJobSummary] = useState<JobSummary | null>(null);
+  const [unmatchedExpanded, setUnmatchedExpanded] = useState(false);
   // Track one poll interval per jobId so multiple concurrent resumes work and
   // we can re-attach polls when the screen remounts.
   const resumePollRef = useRef<Record<number, ReturnType<typeof setInterval>>>({});
@@ -114,10 +123,17 @@ export default function CatalogReviewScreen() {
       const url = jobId
         ? `${API_BASE}/admin/catalog-pdf/reviews?jobId=${jobId}`
         : `${API_BASE}/admin/catalog-pdf/reviews`;
-      const [reviewRes, failedRes] = await Promise.all([
+
+      const requests: Promise<Response>[] = [
         fetch(url, { headers: authHeaders }),
-        jobId ? Promise.resolve(null) : fetch(`${API_BASE}/admin/catalog-pdf/failed-jobs`, { headers: authHeaders }),
-      ]);
+      ];
+      if (!jobId) {
+        requests.push(fetch(`${API_BASE}/admin/catalog-pdf/failed-jobs`, { headers: authHeaders }));
+      } else {
+        requests.push(fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, { headers: authHeaders }));
+      }
+
+      const [reviewRes, secondRes] = await Promise.all(requests);
 
       if (reviewRes.status === 401) { logoutAdmin(); return; }
       if (!reviewRes.ok) throw new Error("Failed to load");
@@ -137,11 +153,26 @@ export default function CatalogReviewScreen() {
         [...groupMap.values()].sort((a, b) => (b.jobId ?? 0) - (a.jobId ?? 0)),
       );
 
-      if (failedRes) {
-        if (failedRes.status === 401) { logoutAdmin(); return; }
-        if (failedRes.ok) {
-          const failedData = await failedRes.json() as { jobs: FailedJob[] };
-          setFailedJobs(failedData.jobs);
+      if (secondRes) {
+        if (secondRes.status === 401) { logoutAdmin(); return; }
+        if (secondRes.ok) {
+          if (jobId) {
+            const statusData = await secondRes.json() as {
+              partsFound?: number;
+              matchedParts?: number;
+              imagesMatched?: number;
+              unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
+            };
+            setJobSummary({
+              partsFound: statusData.partsFound ?? 0,
+              matchedParts: statusData.matchedParts ?? 0,
+              imagesMatched: statusData.imagesMatched ?? 0,
+              unmatchedParts: statusData.unmatchedParts ?? [],
+            });
+          } else {
+            const failedData = await secondRes.json() as { jobs: FailedJob[] };
+            setFailedJobs(failedData.jobs);
+          }
         }
       }
     } catch {
@@ -412,7 +443,7 @@ export default function CatalogReviewScreen() {
           )}
         </View>
 
-        {/* Extracted part image */}
+        {/* Extracted part image — or explicit "no image found" placeholder */}
         {item.imageUrl ? (
           <View style={s.imageBlock}>
             <RetryImage
@@ -423,7 +454,12 @@ export default function CatalogReviewScreen() {
               resizeMode="contain"
             />
           </View>
-        ) : null}
+        ) : (
+          <View style={[s.noImageBlock, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+            <Text style={s.noImageIcon}>🚫</Text>
+            <Text style={[s.noImageText, { color: colors.mutedForeground }]}>No image found</Text>
+          </View>
+        )}
 
         {/* Revert button */}
         <Pressable
@@ -490,7 +526,31 @@ export default function CatalogReviewScreen() {
         </View>
       ) : (
         <>
-          {(listData.length > 0) ? (
+          {/* Job-specific extraction summary banner */}
+          {jobId && jobSummary ? (
+            <View style={[s.extractionBanner, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+              <View style={s.extractionStat}>
+                <Text style={s.extractionIcon}>📄</Text>
+                <Text style={[s.extractionStatNum, { color: colors.foreground }]}>{jobSummary.partsFound}</Text>
+                <Text style={[s.extractionStatLabel, { color: colors.mutedForeground }]}>parts found</Text>
+              </View>
+              <View style={[s.extractionDivider, { backgroundColor: colors.border }]} />
+              <View style={s.extractionStat}>
+                <Text style={s.extractionIcon}>✅</Text>
+                <Text style={[s.extractionStatNum, { color: colors.primary }]}>{jobSummary.matchedParts}</Text>
+                <Text style={[s.extractionStatLabel, { color: colors.mutedForeground }]}>matched</Text>
+              </View>
+              <View style={[s.extractionDivider, { backgroundColor: colors.border }]} />
+              <View style={s.extractionStat}>
+                <Text style={s.extractionIcon}>🖼️</Text>
+                <Text style={[s.extractionStatNum, { color: colors.foreground }]}>{jobSummary.imagesMatched}</Text>
+                <Text style={[s.extractionStatLabel, { color: colors.mutedForeground }]}>images</Text>
+              </View>
+            </View>
+          ) : null}
+
+          {/* General session summary bar (shown when not in job-specific view) */}
+          {(!jobId && listData.length > 0) ? (
             <View style={[s.summaryBar, { borderBottomColor: colors.border }]}>
               <Text style={[s.summaryText, { color: colors.mutedForeground }]}>
                 {totalActive} item{totalActive !== 1 ? "s" : ""} across {groups.filter(g => g.items.filter(i => !revertedIds.has(i.id)).length > 0).length} session{groups.length !== 1 ? "s" : ""}
@@ -498,6 +558,7 @@ export default function CatalogReviewScreen() {
               </Text>
             </View>
           ) : null}
+
           <FlatList
             data={listData}
             keyExtractor={(row, i) =>
@@ -526,6 +587,45 @@ export default function CatalogReviewScreen() {
                 onDismissResumeError={handleDismissResumeError}
                 colors={colors}
               />
+            }
+            ListFooterComponent={
+              jobId && jobSummary && jobSummary.unmatchedParts.length > 0 ? (
+                <View style={[s.unmatchedSection, { borderTopColor: colors.border }]}>
+                  <Pressable
+                    onPress={() => setUnmatchedExpanded((v) => !v)}
+                    style={[s.unmatchedHeader, { backgroundColor: colors.muted }]}
+                  >
+                    <Text style={[s.unmatchedHeaderText, { color: colors.foreground }]}>
+                      Unrecognized parts ({jobSummary.unmatchedParts.length})
+                    </Text>
+                    <Text style={[s.unmatchedChevron, { color: colors.mutedForeground }]}>
+                      {unmatchedExpanded ? "▲" : "▼"}
+                    </Text>
+                  </Pressable>
+                  {unmatchedExpanded ? (
+                    <>
+                      <View style={[s.unmatchedNote, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                        <Text style={[s.unmatchedNoteText, { color: colors.mutedForeground }]}>
+                          These part numbers were extracted by AI but don't match any item in your inventory. Review them to decide whether to add them.
+                        </Text>
+                      </View>
+                      {jobSummary.unmatchedParts.map((p, i) => (
+                        <View
+                          key={`${p.catalogNumber}-${i}`}
+                          style={[s.unmatchedRow, { backgroundColor: colors.card, borderColor: colors.border }]}
+                        >
+                          <Text style={[s.unmatchedCatalog, { color: colors.foreground }]}>{p.catalogNumber}</Text>
+                          {p.description ? (
+                            <Text style={[s.unmatchedDesc, { color: colors.mutedForeground }]} numberOfLines={2}>
+                              {p.description}
+                            </Text>
+                          ) : null}
+                        </View>
+                      ))}
+                    </>
+                  ) : null}
+                </View>
+              ) : null
             }
             contentContainerStyle={{ paddingBottom: 100 }}
           />
@@ -575,4 +675,35 @@ const s = StyleSheet.create({
   revertBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   imageBlock: { borderRadius: 8, overflow: "hidden", alignSelf: "flex-start" },
   partImage: { width: 120, height: 90 },
+  noImageBlock: {
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
+    borderWidth: 1, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, gap: 6,
+  },
+  noImageIcon: { fontSize: 14 },
+  noImageText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  extractionBanner: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-around",
+    paddingVertical: 14, paddingHorizontal: 14, borderBottomWidth: 1,
+  },
+  extractionStat: { alignItems: "center", flex: 1 },
+  extractionIcon: { fontSize: 18, marginBottom: 2 },
+  extractionStatNum: { fontSize: 22, fontFamily: "Inter_700Bold" },
+  extractionStatLabel: { fontSize: 11, fontFamily: "Inter_500Medium", marginTop: 2, textTransform: "uppercase", letterSpacing: 0.5 },
+  extractionDivider: { width: 1, height: 36 },
+  unmatchedSection: { marginTop: 8, borderTopWidth: 1 },
+  unmatchedHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 14, paddingVertical: 12,
+  },
+  unmatchedHeaderText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  unmatchedChevron: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  unmatchedNote: {
+    marginHorizontal: 12, marginTop: 6, padding: 12, borderRadius: 8, borderWidth: 1,
+  },
+  unmatchedNoteText: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
+  unmatchedRow: {
+    marginHorizontal: 12, marginTop: 6, borderRadius: 10, borderWidth: 1, padding: 12, gap: 4,
+  },
+  unmatchedCatalog: { fontSize: 13, fontFamily: "Inter_700Bold" },
+  unmatchedDesc: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
 });
