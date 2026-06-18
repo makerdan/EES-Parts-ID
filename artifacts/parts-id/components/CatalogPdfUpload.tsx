@@ -51,6 +51,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [readingFile, setReadingFile] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
 
@@ -112,31 +113,45 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     }
   };
 
-  const handleStart = async () => {
+  const handleStart = () => {
     if (!pdfBase64 || !vendor.trim() || !adminToken) return;
     setError(null);
     setJobStatus(null);
     setLoading(true);
-    try {
-      const r = await fetch(`${API_BASE}/admin/catalog-pdf`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${adminToken}`,
-        },
-        body: JSON.stringify({
-          pdfBase64,
-          vendor: vendor.trim(),
-          filename: filename ?? "catalog.pdf",
-        }),
-      });
-      if (r.status === 401) { onSessionExpired(); return; }
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({})) as { error?: string };
-        setError(body.error ?? "Failed to start job");
+    setUploadPct(0);
+
+    const body = JSON.stringify({
+      pdfBase64,
+      vendor: vendor.trim(),
+      filename: filename ?? "catalog.pdf",
+    });
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/admin/catalog-pdf`);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("Authorization", `Bearer ${adminToken}`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        setUploadPct(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      setUploadPct(null);
+      setLoading(false);
+      if (xhr.status === 401) { onSessionExpired(); return; }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        let errMsg = "Failed to start job";
+        try { errMsg = (JSON.parse(xhr.responseText) as { error?: string }).error ?? errMsg; } catch { /* ignore */ }
+        setError(errMsg);
         return;
       }
-      const { jobId } = await r.json() as { jobId: string };
+      let jobId: string;
+      try { jobId = (JSON.parse(xhr.responseText) as { jobId: string }).jobId; } catch {
+        setError("Unexpected server response.");
+        return;
+      }
       setJobStatus({
         jobId,
         status: "pending",
@@ -148,11 +163,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       });
       startPolling(jobId);
       setPdfBase64(null);
-    } catch {
-      setError("Network error — check your connection and try again.");
-    } finally {
+    };
+
+    xhr.onerror = () => {
+      setUploadPct(null);
       setLoading(false);
-    }
+      setError("Network error — check your connection and try again.");
+    };
+
+    xhr.send(body);
   };
 
   const isDone = jobStatus?.status === "done";
@@ -227,6 +246,18 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             </Text>
           )}
         </Pressable>
+      ) : null}
+
+      {/* Upload progress */}
+      {loading && uploadPct !== null ? (
+        <View style={s.progressBlock}>
+          <Text style={[s.progressLabel, { color: colors.foreground }]}>
+            Uploading… {uploadPct}%
+          </Text>
+          <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
+            <View style={[s.progressFill, { width: `${uploadPct}%`, backgroundColor: colors.primary }]} />
+          </View>
+        </View>
       ) : null}
 
       {/* Job progress */}
