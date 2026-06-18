@@ -374,4 +374,41 @@ describe("probePoeBotsOnStartup()", () => {
     const { warn } = getLoggerMocks();
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it("logs a 'not found' warning for each bot when create rejects with status 404", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockRejectedValue({ status: 404 });
+
+    await mod.probePoeBotsOnStartup();
+
+    const botNames = mod.getAllPoeModelNames();
+    const { warn } = getLoggerMocks();
+
+    expect(warn).toHaveBeenCalledTimes(botNames.length);
+    for (const botName of botNames) {
+      expect(warn).toHaveBeenCalledWith(
+        { botName },
+        expect.stringContaining("not found"),
+      );
+    }
+  });
+
+  it("logs a 'probe failed' warning for each bot when create rejects with a generic error", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    const genericError = new Error("Service Unavailable");
+    client.chat.completions.create.mockRejectedValue(genericError);
+
+    await mod.probePoeBotsOnStartup();
+
+    const botNames = mod.getAllPoeModelNames();
+    const { warn } = getLoggerMocks();
+
+    expect(warn).toHaveBeenCalledTimes(botNames.length);
+    for (const botName of botNames) {
+      expect(warn).toHaveBeenCalledWith(
+        { botName, err: genericError },
+        expect.stringContaining("probe failed"),
+      );
+    }
+  });
 });
