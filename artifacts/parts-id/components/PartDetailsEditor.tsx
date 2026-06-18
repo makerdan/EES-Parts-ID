@@ -325,6 +325,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
   const handleClearExpandedDesc = async () => {
     const current = itemRef.current;
     if (!current || !adminToken) return;
+    const previousText = expandedDescText;
     setExpandedDescText("");
     setExpandedDescSaving("saving");
     setExpandedDescError(null);
@@ -344,6 +345,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
       queryClient.invalidateQueries({ queryKey: ["inventory"] });
       setExpandedDescSaving("saved");
     } catch (err) {
+      setExpandedDescText(previousText);
       setExpandedDescError(err instanceof Error ? err.message : "Clear failed");
       setExpandedDescSaving("error");
     }

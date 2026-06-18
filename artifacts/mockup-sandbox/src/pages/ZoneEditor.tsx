@@ -1648,6 +1648,7 @@ export function ZoneEditor() {
               setDragZone(null);
             });
         } catch (err) {
+          setDragZone(null);
           toast.error(err instanceof Error ? err.message : String(err));
         }
         return;
