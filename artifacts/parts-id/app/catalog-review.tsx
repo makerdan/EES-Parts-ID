@@ -118,11 +118,13 @@ export default function CatalogReviewScreen() {
     setInfoDialog({ visible: true, title, message });
 
   type AddForm = { vendor: string; catalog: string; description: string; binLocation: string };
+  type CreatedPart = { id: number; vendor: string; catalog: string; description: string; binLocations: string[] };
   const [addModalPart, setAddModalPart] = useState<{ catalogNumber: string; description: string } | null>(null);
   const [addForm, setAddForm] = useState<AddForm>({ vendor: "", catalog: "", description: "", binLocation: "" });
   const [addingInProgress, setAddingInProgress] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addedCatalogs, setAddedCatalogs] = useState<Set<string>>(new Set());
+  const [addedItem, setAddedItem] = useState<CreatedPart | null>(null);
 
   const openAddModal = (part: { catalogNumber: string; description: string }) => {
     setAddForm({
@@ -132,6 +134,7 @@ export default function CatalogReviewScreen() {
       binLocation: "",
     });
     setAddError(null);
+    setAddedItem(null);
     setAddModalPart(part);
   };
 
@@ -164,10 +167,15 @@ export default function CatalogReviewScreen() {
         setAddError(body.error ?? "Failed to add part.");
         return;
       }
+      const body = await r.json().catch(() => ({})) as { item?: CreatedPart };
       if (addModalPart) {
         setAddedCatalogs((prev) => new Set([...prev, addModalPart.catalogNumber]));
       }
-      setAddModalPart(null);
+      if (body.item) {
+        setAddedItem(body.item);
+      } else {
+        setAddModalPart(null);
+      }
     } catch {
       setAddError("Network error. Please try again.");
     } finally {
@@ -566,9 +574,11 @@ export default function CatalogReviewScreen() {
         >
           <View style={[s.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={[s.modalHeader, { borderBottomColor: colors.border }]}>
-              <Text style={[s.modalTitle, { color: colors.foreground }]}>Add to Inventory</Text>
+              <Text style={[s.modalTitle, { color: colors.foreground }]}>
+                {addedItem ? "Part Added" : "Add to Inventory"}
+              </Text>
               <Pressable
-                onPress={() => { if (!addingInProgress) setAddModalPart(null); }}
+                onPress={() => { if (!addingInProgress) { setAddModalPart(null); setAddedItem(null); } }}
                 style={s.modalCloseBtn}
                 hitSlop={8}
               >
@@ -576,85 +586,144 @@ export default function CatalogReviewScreen() {
               </Pressable>
             </View>
 
-            <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
-              <Text style={[s.fieldLabel, { color: colors.mutedForeground }]}>VENDOR *</Text>
-              <TextInput
-                style={[s.fieldInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
-                placeholder="e.g. LEVITON"
-                placeholderTextColor={colors.mutedForeground}
-                value={addForm.vendor}
-                onChangeText={(v) => setAddForm((f) => ({ ...f, vendor: v }))}
-                autoCapitalize="characters"
-                autoCorrect={false}
-                editable={!addingInProgress}
-              />
+            {addedItem ? (
+              <>
+                <ScrollView style={s.modalBody}>
+                  <View style={s.successIconWrap}>
+                    <View style={[s.successIconCircle, { backgroundColor: colors.primary + "18" }]}>
+                      <Text style={s.successIconText}>✓</Text>
+                    </View>
+                    <Text style={[s.successHeading, { color: colors.foreground }]}>
+                      Added to inventory
+                    </Text>
+                    <Text style={[s.successSubheading, { color: colors.mutedForeground }]}>
+                      Item #{addedItem.id}
+                    </Text>
+                  </View>
 
-              <Text style={[s.fieldLabel, { color: colors.mutedForeground, marginTop: 14 }]}>CATALOG NUMBER</Text>
-              <TextInput
-                style={[s.fieldInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
-                placeholder="Catalog number"
-                placeholderTextColor={colors.mutedForeground}
-                value={addForm.catalog}
-                onChangeText={(v) => setAddForm((f) => ({ ...f, catalog: v }))}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!addingInProgress}
-              />
+                  <View style={[s.createdCard, { backgroundColor: colors.background, borderColor: colors.border }]}>
+                    <View style={s.createdRow}>
+                      <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>VENDOR</Text>
+                      <Text style={[s.createdValue, { color: colors.foreground }]}>{addedItem.vendor}</Text>
+                    </View>
+                    <View style={[s.createdDivider, { backgroundColor: colors.border }]} />
+                    <View style={s.createdRow}>
+                      <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>CATALOG</Text>
+                      <Text style={[s.createdValue, { color: colors.foreground }]}>{addedItem.catalog}</Text>
+                    </View>
+                    {addedItem.description ? (
+                      <>
+                        <View style={[s.createdDivider, { backgroundColor: colors.border }]} />
+                        <View style={s.createdRow}>
+                          <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+                          <Text style={[s.createdValue, { color: colors.foreground }]}>{addedItem.description}</Text>
+                        </View>
+                      </>
+                    ) : null}
+                    {addedItem.binLocations.length > 0 ? (
+                      <>
+                        <View style={[s.createdDivider, { backgroundColor: colors.border }]} />
+                        <View style={s.createdRow}>
+                          <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>BIN</Text>
+                          <Text style={[s.createdValue, { color: colors.foreground }]}>{addedItem.binLocations.join(", ")}</Text>
+                        </View>
+                      </>
+                    ) : null}
+                  </View>
+                </ScrollView>
 
-              <Text style={[s.fieldLabel, { color: colors.mutedForeground, marginTop: 14 }]}>DESCRIPTION</Text>
-              <TextInput
-                style={[s.fieldInput, s.fieldInputMulti, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
-                placeholder="Description"
-                placeholderTextColor={colors.mutedForeground}
-                value={addForm.description}
-                onChangeText={(v) => setAddForm((f) => ({ ...f, description: v }))}
-                multiline
-                numberOfLines={3}
-                editable={!addingInProgress}
-              />
+                <View style={[s.modalFooter, { borderTopColor: colors.border }]}>
+                  <Pressable
+                    onPress={() => { setAddModalPart(null); setAddedItem(null); }}
+                    style={[s.modalSubmitBtn, { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={[s.modalSubmitText, { color: colors.primaryForeground }]}>Done</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <>
+                <ScrollView style={s.modalBody} keyboardShouldPersistTaps="handled">
+                  <Text style={[s.fieldLabel, { color: colors.mutedForeground }]}>VENDOR *</Text>
+                  <TextInput
+                    style={[s.fieldInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+                    placeholder="e.g. LEVITON"
+                    placeholderTextColor={colors.mutedForeground}
+                    value={addForm.vendor}
+                    onChangeText={(v) => setAddForm((f) => ({ ...f, vendor: v }))}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    editable={!addingInProgress}
+                  />
 
-              <Text style={[s.fieldLabel, { color: colors.mutedForeground, marginTop: 14 }]}>BIN LOCATION</Text>
-              <TextInput
-                style={[s.fieldInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
-                placeholder="e.g. A-12-3 (optional)"
-                placeholderTextColor={colors.mutedForeground}
-                value={addForm.binLocation}
-                onChangeText={(v) => setAddForm((f) => ({ ...f, binLocation: v }))}
-                autoCapitalize="characters"
-                autoCorrect={false}
-                editable={!addingInProgress}
-              />
-              {addForm.binLocation.trim() && !isBinLocationValid(addForm.binLocation) ? (
-                <Text style={[s.binFormatHint, { color: colors.warning }]}>
-                  ⚠ {BIN_FORMAT_HINT}
-                </Text>
-              ) : null}
+                  <Text style={[s.fieldLabel, { color: colors.mutedForeground, marginTop: 14 }]}>CATALOG NUMBER</Text>
+                  <TextInput
+                    style={[s.fieldInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+                    placeholder="Catalog number"
+                    placeholderTextColor={colors.mutedForeground}
+                    value={addForm.catalog}
+                    onChangeText={(v) => setAddForm((f) => ({ ...f, catalog: v }))}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!addingInProgress}
+                  />
 
-              {addError ? (
-                <Text style={[s.addErrorText, { color: colors.destructive }]}>{addError}</Text>
-              ) : null}
-            </ScrollView>
+                  <Text style={[s.fieldLabel, { color: colors.mutedForeground, marginTop: 14 }]}>DESCRIPTION</Text>
+                  <TextInput
+                    style={[s.fieldInput, s.fieldInputMulti, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+                    placeholder="Description"
+                    placeholderTextColor={colors.mutedForeground}
+                    value={addForm.description}
+                    onChangeText={(v) => setAddForm((f) => ({ ...f, description: v }))}
+                    multiline
+                    numberOfLines={3}
+                    editable={!addingInProgress}
+                  />
 
-            <View style={[s.modalFooter, { borderTopColor: colors.border }]}>
-              <Pressable
-                onPress={() => { if (!addingInProgress) setAddModalPart(null); }}
-                style={[s.modalCancelBtn, { borderColor: colors.border }]}
-                disabled={addingInProgress}
-              >
-                <Text style={[s.modalCancelText, { color: colors.mutedForeground }]}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={handleAddToInventory}
-                disabled={addingInProgress}
-                style={[s.modalSubmitBtn, { backgroundColor: colors.primary, opacity: addingInProgress ? 0.6 : 1 }]}
-              >
-                {addingInProgress ? (
-                  <ActivityIndicator size="small" color={colors.primaryForeground} />
-                ) : (
-                  <Text style={[s.modalSubmitText, { color: colors.primaryForeground }]}>Add to Inventory</Text>
-                )}
-              </Pressable>
-            </View>
+                  <Text style={[s.fieldLabel, { color: colors.mutedForeground, marginTop: 14 }]}>BIN LOCATION</Text>
+                  <TextInput
+                    style={[s.fieldInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+                    placeholder="e.g. A-12-3 (optional)"
+                    placeholderTextColor={colors.mutedForeground}
+                    value={addForm.binLocation}
+                    onChangeText={(v) => setAddForm((f) => ({ ...f, binLocation: v }))}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    editable={!addingInProgress}
+                  />
+                  {addForm.binLocation.trim() && !isBinLocationValid(addForm.binLocation) ? (
+                    <Text style={[s.binFormatHint, { color: colors.warning }]}>
+                      ⚠ {BIN_FORMAT_HINT}
+                    </Text>
+                  ) : null}
+
+                  {addError ? (
+                    <Text style={[s.addErrorText, { color: colors.destructive }]}>{addError}</Text>
+                  ) : null}
+                </ScrollView>
+
+                <View style={[s.modalFooter, { borderTopColor: colors.border }]}>
+                  <Pressable
+                    onPress={() => { if (!addingInProgress) setAddModalPart(null); }}
+                    style={[s.modalCancelBtn, { borderColor: colors.border }]}
+                    disabled={addingInProgress}
+                  >
+                    <Text style={[s.modalCancelText, { color: colors.mutedForeground }]}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleAddToInventory}
+                    disabled={addingInProgress}
+                    style={[s.modalSubmitBtn, { backgroundColor: colors.primary, opacity: addingInProgress ? 0.6 : 1 }]}
+                  >
+                    {addingInProgress ? (
+                      <ActivityIndicator size="small" color={colors.primaryForeground} />
+                    ) : (
+                      <Text style={[s.modalSubmitText, { color: colors.primaryForeground }]}>Add to Inventory</Text>
+                    )}
+                  </Pressable>
+                </View>
+              </>
+            )}
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -944,4 +1013,22 @@ const s = StyleSheet.create({
     flex: 2, borderRadius: 10, paddingVertical: 13, alignItems: "center", justifyContent: "center",
   },
   modalSubmitText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  successIconWrap: { alignItems: "center", paddingVertical: 24, gap: 8 },
+  successIconCircle: {
+    width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center",
+  },
+  successIconText: { fontSize: 32, color: "#22c55e" },
+  successHeading: { fontSize: 18, fontFamily: "Inter_700Bold", marginTop: 4 },
+  successSubheading: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  createdCard: {
+    borderWidth: 1, borderRadius: 12, overflow: "hidden", marginBottom: 16,
+  },
+  createdRow: {
+    paddingHorizontal: 16, paddingVertical: 12, gap: 2,
+  },
+  createdLabel: {
+    fontSize: 10, fontFamily: "Inter_600SemiBold", letterSpacing: 0.6, textTransform: "uppercase",
+  },
+  createdValue: { fontSize: 15, fontFamily: "Inter_500Medium" },
+  createdDivider: { height: 1 },
 });
