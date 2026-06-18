@@ -43,6 +43,7 @@ interface Props {
 }
 
 export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
+  "use no memo";
   const colors = useColors();
   const router = useRouter();
 
