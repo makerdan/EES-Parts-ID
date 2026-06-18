@@ -126,6 +126,8 @@ export default function CatalogReviewScreen() {
   const [addedCatalogs, setAddedCatalogs] = useState<Set<string>>(new Set());
   const [addedItem, setAddedItem] = useState<CreatedPart | null>(null);
   const [duplicateItem, setDuplicateItem] = useState<CreatedPart | null>(null);
+  const [updatingDescription, setUpdatingDescription] = useState(false);
+  const [updateDescriptionError, setUpdateDescriptionError] = useState<string | null>(null);
 
   const openAddModal = (part: { catalogNumber: string; description: string }) => {
     setAddForm({
@@ -137,7 +139,37 @@ export default function CatalogReviewScreen() {
     setAddError(null);
     setAddedItem(null);
     setDuplicateItem(null);
+    setUpdatingDescription(false);
+    setUpdateDescriptionError(null);
     setAddModalPart(part);
+  };
+
+  const handleUpdateDescription = async () => {
+    if (!duplicateItem || updatingDescription) return;
+    setUpdatingDescription(true);
+    setUpdateDescriptionError(null);
+    try {
+      const r = await fetch(`${API_BASE}/admin/inventory/${duplicateItem.id}/description`, {
+        method: "PATCH",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ description: addForm.description.trim() }),
+      });
+      if (r.status === 401) { logoutAdmin(); return; }
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({})) as { error?: string };
+        setUpdateDescriptionError(body.error ?? "Failed to update description.");
+        return;
+      }
+      if (addModalPart) {
+        setAddedCatalogs((prev) => new Set([...prev, addModalPart.catalogNumber]));
+      }
+      setAddModalPart(null);
+      setDuplicateItem(null);
+    } catch {
+      setUpdateDescriptionError("Network error. Please try again.");
+    } finally {
+      setUpdatingDescription(false);
+    }
   };
 
   const handleAddToInventory = async () => {
@@ -672,15 +704,34 @@ export default function CatalogReviewScreen() {
                       <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>CATALOG</Text>
                       <Text style={[s.createdValue, { color: colors.foreground }]}>{duplicateItem.catalog}</Text>
                     </View>
-                    {duplicateItem.description ? (
-                      <>
-                        <View style={[s.createdDivider, { backgroundColor: colors.border }]} />
-                        <View style={s.createdRow}>
-                          <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
-                          <Text style={[s.createdValue, { color: colors.foreground }]}>{duplicateItem.description}</Text>
+                    <View style={[s.createdDivider, { backgroundColor: colors.border }]} />
+                    {/* Description comparison: show side-by-side when they differ */}
+                    {addForm.description.trim() && addForm.description.trim() !== duplicateItem.description ? (
+                      <View style={s.descCompareBlock}>
+                        <Text style={[s.createdLabel, { color: colors.mutedForeground, marginBottom: 8 }]}>DESCRIPTION</Text>
+                        <View style={s.descCompareRow}>
+                          <View style={[s.descCompareCol, { borderColor: colors.border }]}>
+                            <Text style={[s.descCompareColLabel, { color: colors.mutedForeground }]}>EXISTING</Text>
+                            <Text style={[s.descCompareColText, { color: colors.mutedForeground }]}>
+                              {duplicateItem.description || "(empty)"}
+                            </Text>
+                          </View>
+                          <View style={[s.descCompareCol, { borderColor: colors.primary + "66", backgroundColor: colors.primary + "08" }]}>
+                            <Text style={[s.descCompareColLabel, { color: colors.primary }]}>FROM PDF</Text>
+                            <Text style={[s.descCompareColText, { color: colors.foreground }]}>
+                              {addForm.description.trim()}
+                            </Text>
+                          </View>
                         </View>
-                      </>
-                    ) : null}
+                      </View>
+                    ) : (
+                      <View style={s.createdRow}>
+                        <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+                        <Text style={[s.createdValue, { color: colors.foreground }]}>
+                          {duplicateItem.description || "(none)"}
+                        </Text>
+                      </View>
+                    )}
                     {duplicateItem.binLocations.length > 0 ? (
                       <>
                         <View style={[s.createdDivider, { backgroundColor: colors.border }]} />
@@ -691,25 +742,63 @@ export default function CatalogReviewScreen() {
                       </>
                     ) : null}
                   </View>
+
+                  {addForm.description.trim() && addForm.description.trim() !== duplicateItem.description ? (
+                    <Pressable
+                      onPress={() => {
+                        setAddModalPart(null);
+                        setDuplicateItem(null);
+                        setUpdateDescriptionError(null);
+                        router.push({ pathname: "/edit-item", params: { item: JSON.stringify(duplicateItem) } });
+                      }}
+                      disabled={updatingDescription}
+                      style={s.viewExistingLink}
+                    >
+                      <Text style={[s.viewExistingLinkText, { color: colors.primary }]}>
+                        View / edit full entry →
+                      </Text>
+                    </Pressable>
+                  ) : null}
+
+                  {updateDescriptionError ? (
+                    <Text style={[s.addErrorText, { color: colors.destructive, marginTop: 8 }]}>
+                      {updateDescriptionError}
+                    </Text>
+                  ) : null}
                 </ScrollView>
 
                 <View style={[s.modalFooter, { borderTopColor: colors.border }]}>
                   <Pressable
-                    onPress={() => setDuplicateItem(null)}
+                    onPress={() => { setDuplicateItem(null); setUpdateDescriptionError(null); }}
                     style={[s.modalCancelBtn, { borderColor: colors.border }]}
+                    disabled={updatingDescription}
                   >
                     <Text style={[s.modalCancelText, { color: colors.mutedForeground }]}>Go Back</Text>
                   </Pressable>
-                  <Pressable
-                    onPress={() => {
-                      setAddModalPart(null);
-                      setDuplicateItem(null);
-                      router.push({ pathname: "/edit-item", params: { item: JSON.stringify(duplicateItem) } });
-                    }}
-                    style={[s.modalSubmitBtn, { backgroundColor: colors.primary }]}
-                  >
-                    <Text style={[s.modalSubmitText, { color: colors.primaryForeground }]}>View existing entry</Text>
-                  </Pressable>
+                  {addForm.description.trim() && addForm.description.trim() !== duplicateItem.description ? (
+                    <Pressable
+                      onPress={handleUpdateDescription}
+                      disabled={updatingDescription}
+                      style={[s.modalSubmitBtn, { backgroundColor: colors.primary, opacity: updatingDescription ? 0.6 : 1 }]}
+                    >
+                      {updatingDescription ? (
+                        <ActivityIndicator size="small" color={colors.primaryForeground} />
+                      ) : (
+                        <Text style={[s.modalSubmitText, { color: colors.primaryForeground }]}>Update description</Text>
+                      )}
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      onPress={() => {
+                        setAddModalPart(null);
+                        setDuplicateItem(null);
+                        router.push({ pathname: "/edit-item", params: { item: JSON.stringify(duplicateItem) } });
+                      }}
+                      style={[s.modalSubmitBtn, { backgroundColor: colors.primary }]}
+                    >
+                      <Text style={[s.modalSubmitText, { color: colors.primaryForeground }]}>View existing entry</Text>
+                    </Pressable>
+                  )}
                 </View>
               </>
             ) : (
@@ -1102,4 +1191,25 @@ const s = StyleSheet.create({
   },
   createdValue: { fontSize: 15, fontFamily: "Inter_500Medium" },
   createdDivider: { height: 1 },
+  descCompareBlock: {
+    paddingHorizontal: 16, paddingVertical: 12, gap: 2,
+  },
+  descCompareRow: {
+    flexDirection: "row", gap: 8, marginTop: 2,
+  },
+  descCompareCol: {
+    flex: 1, borderWidth: 1, borderRadius: 8, padding: 10, gap: 4,
+  },
+  descCompareColLabel: {
+    fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.6, textTransform: "uppercase",
+  },
+  descCompareColText: {
+    fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17,
+  },
+  viewExistingLink: {
+    alignSelf: "center", marginTop: 12, paddingVertical: 6, paddingHorizontal: 4,
+  },
+  viewExistingLinkText: {
+    fontSize: 13, fontFamily: "Inter_500Medium", textDecorationLine: "underline",
+  },
 });
