@@ -38,17 +38,20 @@ jest.mock("pdfjs-dist", () => ({
   },
 }));
 
-// ── OpenAI mock ───────────────────────────────────────────────────────────────
+// ── AI provider mock ──────────────────────────────────────────────────────────
+// catalogExtractor.ts calls getAiClient() from aiProvider – mock that module
+// directly so the factory never references a hoisted variable (safe pattern).
 const mockCreate = jest.fn();
 
-jest.mock("@workspace/integrations-openai-ai-server", () => ({
-  openai: {
+jest.mock("../src/lib/aiProvider", () => ({
+  getAiClient: () => ({
     chat: {
       completions: {
         create: mockCreate,
       },
     },
-  },
+  }),
+  getCatalogModel: () => "gpt-4o",
 }));
 
 // ── Imports (after all mocks are in place) ────────────────────────────────────
