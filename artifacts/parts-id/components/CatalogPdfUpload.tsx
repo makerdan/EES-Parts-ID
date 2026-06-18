@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as DocumentPicker from "expo-document-picker";
-import { readPdfAsBase64, PdfTooLargeError } from "@/utils/readPdfAsBase64";
+import { readPdfAsBase64, PdfTooLargeError, InvalidPdfError, EncryptedPdfError } from "@/utils/readPdfAsBase64";
 import { useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 
@@ -109,7 +109,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         setPdfBase64(base64);
         setFilename(asset.name ?? "catalog.pdf");
       } catch (err) {
-        if (err instanceof PdfTooLargeError) {
+        if (
+          err instanceof PdfTooLargeError ||
+          err instanceof InvalidPdfError ||
+          err instanceof EncryptedPdfError
+        ) {
           setError(err.message);
         } else {
           setError("Could not read the PDF file. Please try again.");
