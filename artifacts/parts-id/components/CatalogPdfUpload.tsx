@@ -82,6 +82,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [uploadSpeed, setUploadSpeed] = useState<number | null>(null);
   const [uploadEta, setUploadEta] = useState<number | null>(null);
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
+  const [chunksCompleted, setChunksCompleted] = useState(0);
+  const [chunksTotal, setChunksTotal] = useState(0);
 
   useEffect(() => {
     if (retryCountdown === null || retryCountdown <= 0) return;
@@ -312,6 +314,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       return;
     }
 
+    setChunksTotal(chunks.length);
+    setChunksCompleted(0);
+
     let parentJobId: string | null = null;
     let aborted = false;
 
@@ -343,6 +348,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         if (i === 0) {
           parentJobId = result.jobId;
         }
+        setChunksCompleted(i + 1);
       } catch (err) {
         const msg = (err as Error).message;
         if (msg === "__abort__") {
@@ -350,12 +356,16 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           setLoading(false);
           setUploadPct(null);
           setChunkLabel(null);
+          setChunksCompleted(0);
+          setChunksTotal(0);
           return;
         }
         // Network or server error
         setLoading(false);
         setUploadPct(null);
         setChunkLabel(null);
+        setChunksCompleted(0);
+        setChunksTotal(0);
         setError(msg === "__network__" ? "Network error — check your connection and try again." : msg);
         setShowRetryBtn(true);
         return;
@@ -367,6 +377,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     // All chunks uploaded — start polling parent job
     setUploadPct(null);
     setChunkLabel(null);
+    setChunksCompleted(0);
+    setChunksTotal(0);
     setLoading(false);
     setPdfBytes(null);
 
@@ -447,6 +459,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunkLabel(null);
     setUploadSpeed(null);
     setUploadEta(null);
+    setChunksCompleted(0);
+    setChunksTotal(0);
     speedSamplesRef.current = [];
 
     if (pdfBytes.length > CHUNK_SIZE_THRESHOLD) {
@@ -592,7 +606,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         </>
       ) : null}
 
-      {/* Upload progress — chunk label takes precedence over % for large files */}
+      {/* Upload progress — chunked mode shows step bar; single-file mode shows byte-level bar */}
       {loading && (chunkLabel !== null || uploadPct !== null) ? (
         <View style={s.progressBlock}>
           <View style={s.progressRow}>
@@ -603,6 +617,26 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               <Text style={[s.cancelBtnText, { color: colors.destructive }]}>Cancel</Text>
             </Pressable>
           </View>
+
+          {/* Chunked upload: step-based progress bar (advances per completed chunk,
+              with smooth sub-chunk XHR progress interpolated within each step) */}
+          {chunkLabel !== null && chunksTotal > 0 ? (
+            <>
+              <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
+                <View style={[s.progressFill, {
+                  width: `${Math.min(100, Math.round(
+                    ((chunksCompleted + (uploadPct ?? 0) / 100) / chunksTotal) * 100
+                  ))}%`,
+                  backgroundColor: colors.primary,
+                }]} />
+              </View>
+              <Text style={[s.progressText, { color: colors.mutedForeground }]}>
+                {chunksCompleted} of {chunksTotal} parts uploaded
+              </Text>
+            </>
+          ) : null}
+
+          {/* Single-file upload: byte-level progress bar */}
           {uploadPct !== null && chunkLabel === null ? (
             <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
               <View style={[s.progressFill, { width: `${uploadPct}%`, backgroundColor: colors.primary }]} />
