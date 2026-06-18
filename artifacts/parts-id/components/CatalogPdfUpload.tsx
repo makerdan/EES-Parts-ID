@@ -56,6 +56,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
 
@@ -127,6 +128,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     });
 
     const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
     xhr.open("POST", `${API_BASE}/admin/catalog-pdf`);
     xhr.setRequestHeader("Content-Type", "application/json");
     xhr.setRequestHeader("Authorization", `Bearer ${adminToken}`);
@@ -137,7 +139,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       }
     };
 
+    xhr.onabort = () => {
+      xhrRef.current = null;
+      setUploadPct(null);
+      setLoading(false);
+    };
+
     xhr.onload = () => {
+      xhrRef.current = null;
       setUploadPct(null);
       setLoading(false);
       if (xhr.status === 401) { onSessionExpired(); return; }
@@ -166,12 +175,19 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     };
 
     xhr.onerror = () => {
+      xhrRef.current = null;
       setUploadPct(null);
       setLoading(false);
       setError("Network error — check your connection and try again.");
     };
 
     xhr.send(body);
+  };
+
+  const handleCancel = () => {
+    if (xhrRef.current) {
+      xhrRef.current.abort();
+    }
   };
 
   const isDone = jobStatus?.status === "done";
@@ -251,9 +267,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {/* Upload progress */}
       {loading && uploadPct !== null ? (
         <View style={s.progressBlock}>
-          <Text style={[s.progressLabel, { color: colors.foreground }]}>
-            Uploading… {uploadPct}%
-          </Text>
+          <View style={s.progressRow}>
+            <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
+              Uploading… {uploadPct}%
+            </Text>
+            <Pressable onPress={handleCancel} style={[s.cancelBtn, { borderColor: colors.destructive }]}>
+              <Text style={[s.cancelBtnText, { color: colors.destructive }]}>Cancel</Text>
+            </Pressable>
+          </View>
           <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
             <View style={[s.progressFill, { width: `${uploadPct}%`, backgroundColor: colors.primary }]} />
           </View>
@@ -343,4 +364,6 @@ const s = StyleSheet.create({
   doneText: { fontSize: 14, fontFamily: "Inter_600SemiBold", lineHeight: 20 },
   reviewBtn: { borderWidth: 1, borderRadius: 8, paddingVertical: 9, paddingHorizontal: 14, alignSelf: "flex-start" },
   reviewBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  cancelBtn: { borderWidth: 1, borderRadius: 6, paddingVertical: 5, paddingHorizontal: 12 },
+  cancelBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
 });
