@@ -17,7 +17,7 @@
  */
 
 import { Router } from "express";
-import { eq, sql, and, desc } from "drizzle-orm";
+import { eq, sql, and, desc, inArray } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { inventoryTable, catalogPdfJobTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
@@ -377,7 +377,8 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
 });
 
 // ── GET /admin/catalog-pdf/failed-jobs ────────────────────────────────────────
-// Returns jobs that are in `failed` status and not dismissed, ordered newest-first.
+// Returns jobs that are in `failed` or `cancelled` status and not dismissed,
+// ordered newest-first.
 router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
   try {
     const rows = await db
@@ -395,7 +396,7 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
       })
       .from(catalogPdfJobTable)
       .where(and(
-        eq(catalogPdfJobTable.status, "failed"),
+        inArray(catalogPdfJobTable.status, ["failed", "cancelled"]),
         eq(catalogPdfJobTable.dismissed, false),
       ))
       .orderBy(desc(catalogPdfJobTable.createdAt));
@@ -585,7 +586,8 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
 });
 
 // ── POST /admin/catalog-pdf/:jobId/dismiss ────────────────────────────────────
-// Marks a failed job as dismissed so it no longer appears in the failed list.
+// Marks a failed or cancelled job as dismissed so it no longer appears in the
+// failed-jobs list.
 router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) => {
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
@@ -598,12 +600,12 @@ router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) =>
       .set({ dismissed: true })
       .where(and(
         eq(catalogPdfJobTable.id, jobId),
-        eq(catalogPdfJobTable.status, "failed"),
+        inArray(catalogPdfJobTable.status, ["failed", "cancelled"]),
       ))
       .returning({ id: catalogPdfJobTable.id });
 
     if (updated.length === 0) {
-      res.status(404).json({ error: "Job not found or not in failed state" });
+      res.status(404).json({ error: "Job not found or not in a dismissible state" });
       return;
     }
     res.json({ ok: true });

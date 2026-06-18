@@ -75,8 +75,13 @@ export function FailedJobsSection({
   // via ResumeProgressCard — including "failed" ones, which show an error card.
   const inProgressIds = new Set(Object.keys(resumeProgress).map(Number));
 
-  // Count only jobs that are truly still in the failed state (not resuming)
-  const stillFailedJobs = failedJobs.filter((j) => !inProgressIds.has(j.id));
+  // Split remaining jobs by status
+  const stillFailedJobs = failedJobs.filter(
+    (j) => !inProgressIds.has(j.id) && j.status !== "cancelled",
+  );
+  const cancelledJobs = failedJobs.filter(
+    (j) => !inProgressIds.has(j.id) && j.status === "cancelled",
+  );
 
   // Collect in-progress / done cards: jobs that have a resumeProgress entry
   // with status != "failed". These may still be in failedJobs (processing) or
@@ -94,7 +99,10 @@ export function FailedJobsSection({
     );
 
   const hasSomething =
-    stillFailedJobs.length > 0 || resumingJobs.length > 0 || doneOnlyIds.length > 0;
+    stillFailedJobs.length > 0 ||
+    cancelledJobs.length > 0 ||
+    resumingJobs.length > 0 ||
+    doneOnlyIds.length > 0;
 
   if (!hasSomething) return null;
 
@@ -221,6 +229,77 @@ export function FailedJobsSection({
             <Pressable
               onPress={() => onDismiss(job.id)}
               disabled={dismissingId === job.id || resumingId === job.id}
+              style={[s.dismissBtn, { borderColor: colors.mutedForeground + "55" }]}
+            >
+              <Text style={[s.dismissBtnText, { color: colors.mutedForeground }]}>
+                {dismissingId === job.id ? "Dismissing…" : "Dismiss"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      ))}
+
+      {/* Cancelled jobs section header */}
+      {cancelledJobs.length > 0 && (
+        <View
+          style={[
+            s.sectionHeader,
+            {
+              backgroundColor: colors.muted,
+              borderColor: colors.mutedForeground + "33",
+            },
+          ]}
+        >
+          <Text style={[s.sectionTitle, { color: colors.mutedForeground }]}>
+            {cancelledJobs.length} Cancelled Job{cancelledJobs.length !== 1 ? "s" : ""}
+          </Text>
+          <Text style={[s.sectionHint, { color: colors.mutedForeground }]}>
+            These jobs were cancelled before finishing. Dismiss them to clear the list.
+          </Text>
+        </View>
+      )}
+
+      {/* Cancelled job cards */}
+      {cancelledJobs.map((job) => (
+        <View
+          key={job.id}
+          style={[
+            s.card,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.mutedForeground + "33",
+            },
+          ]}
+        >
+          <View style={s.cardTop}>
+            <View style={s.cardIdent}>
+              <Text style={[s.cardVendor, { color: colors.foreground }]}>
+                {job.vendor}
+              </Text>
+              <Text
+                style={[s.cardFile, { color: colors.mutedForeground }]}
+                numberOfLines={1}
+              >
+                {job.filename}
+              </Text>
+            </View>
+            <View
+              style={[s.badge, { backgroundColor: colors.muted }]}
+            >
+              <Text style={[s.badgeText, { color: colors.mutedForeground }]}>
+                Cancelled
+              </Text>
+            </View>
+          </View>
+
+          <Text style={[s.meta, { color: colors.mutedForeground }]}>
+            {buildFailedJobMetaLine(job)}
+          </Text>
+
+          <View style={[s.actions, { justifyContent: "flex-end" }]}>
+            <Pressable
+              onPress={() => onDismiss(job.id)}
+              disabled={dismissingId === job.id}
               style={[s.dismissBtn, { borderColor: colors.mutedForeground + "55" }]}
             >
               <Text style={[s.dismissBtnText, { color: colors.mutedForeground }]}>
