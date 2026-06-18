@@ -125,6 +125,7 @@ export default function CatalogReviewScreen() {
   const [addError, setAddError] = useState<string | null>(null);
   const [addedCatalogs, setAddedCatalogs] = useState<Set<string>>(new Set());
   const [addedItem, setAddedItem] = useState<CreatedPart | null>(null);
+  const [duplicateItem, setDuplicateItem] = useState<CreatedPart | null>(null);
 
   const openAddModal = (part: { catalogNumber: string; description: string }) => {
     setAddForm({
@@ -135,6 +136,7 @@ export default function CatalogReviewScreen() {
     });
     setAddError(null);
     setAddedItem(null);
+    setDuplicateItem(null);
     setAddModalPart(part);
   };
 
@@ -158,8 +160,12 @@ export default function CatalogReviewScreen() {
       });
       if (r.status === 401) { logoutAdmin(); return; }
       if (r.status === 409) {
-        const body = await r.json().catch(() => ({})) as { error?: string };
-        setAddError(body.error ?? "This part already exists in inventory.");
+        const body = await r.json().catch(() => ({})) as { error?: string; existingItem?: CreatedPart };
+        if (body.existingItem) {
+          setDuplicateItem(body.existingItem);
+        } else {
+          setAddError(body.error ?? "This part already exists in inventory.");
+        }
         return;
       }
       if (!r.ok) {
@@ -566,7 +572,7 @@ export default function CatalogReviewScreen() {
         visible={addModalPart !== null}
         animationType="slide"
         transparent
-        onRequestClose={() => { if (!addingInProgress) setAddModalPart(null); }}
+        onRequestClose={() => { if (!addingInProgress) { setAddModalPart(null); setDuplicateItem(null); } }}
       >
         <KeyboardAvoidingView
           style={s.modalOverlay}
@@ -575,10 +581,10 @@ export default function CatalogReviewScreen() {
           <View style={[s.modalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={[s.modalHeader, { borderBottomColor: colors.border }]}>
               <Text style={[s.modalTitle, { color: colors.foreground }]}>
-                {addedItem ? "Part Added" : "Add to Inventory"}
+                {addedItem ? "Part Added" : duplicateItem ? "Already in Inventory" : "Add to Inventory"}
               </Text>
               <Pressable
-                onPress={() => { if (!addingInProgress) { setAddModalPart(null); setAddedItem(null); } }}
+                onPress={() => { if (!addingInProgress) { setAddModalPart(null); setAddedItem(null); setDuplicateItem(null); } }}
                 style={s.modalCloseBtn}
                 hitSlop={8}
               >
@@ -638,6 +644,71 @@ export default function CatalogReviewScreen() {
                     style={[s.modalSubmitBtn, { backgroundColor: colors.primary }]}
                   >
                     <Text style={[s.modalSubmitText, { color: colors.primaryForeground }]}>Done</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : duplicateItem ? (
+              <>
+                <ScrollView style={s.modalBody}>
+                  <View style={s.successIconWrap}>
+                    <View style={[s.successIconCircle, { backgroundColor: colors.warning + "18" }]}>
+                      <Text style={[s.successIconText, { color: colors.warning }]}>!</Text>
+                    </View>
+                    <Text style={[s.successHeading, { color: colors.foreground }]}>
+                      Part already exists
+                    </Text>
+                    <Text style={[s.successSubheading, { color: colors.mutedForeground }]}>
+                      This catalog number is already in inventory.
+                    </Text>
+                  </View>
+
+                  <View style={[s.createdCard, { backgroundColor: colors.background, borderColor: colors.border }]}>
+                    <View style={s.createdRow}>
+                      <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>VENDOR</Text>
+                      <Text style={[s.createdValue, { color: colors.foreground }]}>{duplicateItem.vendor}</Text>
+                    </View>
+                    <View style={[s.createdDivider, { backgroundColor: colors.border }]} />
+                    <View style={s.createdRow}>
+                      <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>CATALOG</Text>
+                      <Text style={[s.createdValue, { color: colors.foreground }]}>{duplicateItem.catalog}</Text>
+                    </View>
+                    {duplicateItem.description ? (
+                      <>
+                        <View style={[s.createdDivider, { backgroundColor: colors.border }]} />
+                        <View style={s.createdRow}>
+                          <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>DESCRIPTION</Text>
+                          <Text style={[s.createdValue, { color: colors.foreground }]}>{duplicateItem.description}</Text>
+                        </View>
+                      </>
+                    ) : null}
+                    {duplicateItem.binLocations.length > 0 ? (
+                      <>
+                        <View style={[s.createdDivider, { backgroundColor: colors.border }]} />
+                        <View style={s.createdRow}>
+                          <Text style={[s.createdLabel, { color: colors.mutedForeground }]}>BIN</Text>
+                          <Text style={[s.createdValue, { color: colors.foreground }]}>{duplicateItem.binLocations.join(", ")}</Text>
+                        </View>
+                      </>
+                    ) : null}
+                  </View>
+                </ScrollView>
+
+                <View style={[s.modalFooter, { borderTopColor: colors.border }]}>
+                  <Pressable
+                    onPress={() => setDuplicateItem(null)}
+                    style={[s.modalCancelBtn, { borderColor: colors.border }]}
+                  >
+                    <Text style={[s.modalCancelText, { color: colors.mutedForeground }]}>Go Back</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      setAddModalPart(null);
+                      setDuplicateItem(null);
+                      router.push({ pathname: "/edit-item", params: { item: JSON.stringify(duplicateItem) } });
+                    }}
+                    style={[s.modalSubmitBtn, { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={[s.modalSubmitText, { color: colors.primaryForeground }]}>View existing entry</Text>
                   </Pressable>
                 </View>
               </>
