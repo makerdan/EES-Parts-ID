@@ -57,6 +57,12 @@ type JobStatus = {
   failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
 };
 
+type FailedChunkInfo = {
+  chunkIndex: number;
+  totalChunks: number;
+  parentJobId: string | null;
+};
+
 interface Props {
   adminToken: string | null;
   onSessionExpired: () => void;
@@ -90,11 +96,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [chunksCompleted, setChunksCompleted] = useState(0);
   const [chunksTotal, setChunksTotal] = useState(0);
   const [overallUploadPct, setOverallUploadPct] = useState<number | null>(null);
-  type FailedChunkInfo = {
-    chunkIndex: number;
-    totalChunks: number;
-    parentJobId: string | null;
-  };
   const [failedChunkInfo, setFailedChunkInfo] = useState<FailedChunkInfo | null>(null);
 
   useEffect(() => {
