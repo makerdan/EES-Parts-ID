@@ -1,17 +1,31 @@
 const { getDefaultConfig } = require("expo/metro-config");
 const path = require("path");
+const fs = require("fs");
 
 const config = getDefaultConfig(__dirname);
 
-// Watch only the lib packages that Parts ID actually imports so Metro can
-// resolve pnpm symlinks whose real paths live outside projectRoot without
-// indexing unrelated artifacts or build output as the monorepo grows.
-// If a new @workspace/* dependency is added here, add its lib dir below.
+// Derive watchFolders from @workspace/* dependencies declared in package.json
+// so Metro automatically tracks any lib package added as a dependency — no
+// manual list to maintain.  The convention is @workspace/<name> → ../../lib/<name>.
 const libRoot = path.resolve(__dirname, "../../lib");
-const watchedLibs = [
-  path.join(libRoot, "api-client-react"),
-  path.join(libRoot, "zone-validation"),
-];
+const pkg = require("./package.json");
+const allDeps = {
+  ...pkg.dependencies,
+  ...pkg.devDependencies,
+};
+const watchedLibs = Object.keys(allDeps)
+  .filter((dep) => dep.startsWith("@workspace/"))
+  .map((dep) => {
+    const libName = dep.slice("@workspace/".length);
+    const libPath = path.join(libRoot, libName);
+    if (!fs.existsSync(libPath)) {
+      console.warn(
+        `[metro.config] WARNING: resolved path for ${dep} does not exist: ${libPath}`
+      );
+    }
+    return libPath;
+  })
+  .filter((libPath) => fs.existsSync(libPath));
 config.watchFolders = [...(config.watchFolders ?? []), ...watchedLibs];
 
 // Allow bundling .svg files as static assets (used by SvgUri via expo-asset)
