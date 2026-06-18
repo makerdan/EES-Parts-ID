@@ -28,7 +28,7 @@ import {
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as DocumentPicker from "expo-document-picker";
 import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
-import { readPdfAsBytes, InvalidPdfError, EncryptedPdfError, PdfTooLargeError } from "@/utils/readPdfAsBase64";
+import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
 import { splitPdfIntoChunks, PAGES_PER_CHUNK } from "@/utils/splitPdfIntoChunks";
 import { useNavigation, useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
@@ -201,30 +201,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     } catch { /* ignore — polling will pick up the change */ }
     finally { setCancellingJob(false); }
   }, [jobStatus, stopPolling, onSessionExpired]);
-
-  function toFriendlyReadError(err: unknown): string {
-    if (
-      err instanceof InvalidPdfError ||
-      err instanceof EncryptedPdfError ||
-      err instanceof PdfTooLargeError
-    ) {
-      return err.message;
-    }
-    const msg = (err as Error)?.message ?? "";
-    if (/not found|no such file/i.test(msg)) {
-      return "The file could not be found. Please try picking it again.";
-    }
-    if (/timed out|timeout|aborted/i.test(msg)) {
-      return "Reading the file timed out — it may be too large or corrupted. Please try again.";
-    }
-    if (/permission denied|not permitted|unauthorized/i.test(msg)) {
-      return "Permission was denied when reading the file. Please try again.";
-    }
-    if (/http\s*\d{3}/i.test(msg)) {
-      return "The file could not be loaded due to a network error. Please try again.";
-    }
-    return "The file could not be opened. Please make sure it is a valid, unprotected PDF and try again.";
-  }
 
   const handlePickFile = async () => {
     setError(null);

@@ -147,6 +147,42 @@ async function readRawBytes(uri: string, maxBytes?: number): Promise<Uint8Array>
   return bytes;
 }
 
+// ── Error message mapping ──────────────────────────────────────────────────────
+
+/**
+ * Maps a raw error thrown by readPdfAsBytes / readPdfAsBase64 (or the
+ * DocumentPicker wrapper) to a human-readable string suitable for display in
+ * the UI.
+ *
+ * Domain-specific error classes (InvalidPdfError, EncryptedPdfError,
+ * PdfTooLargeError) carry their own user-friendly messages and are returned
+ * verbatim. Generic OS / network errors are matched by pattern and converted
+ * to friendly copy.
+ */
+export function toFriendlyReadError(err: unknown): string {
+  if (
+    err instanceof InvalidPdfError ||
+    err instanceof EncryptedPdfError ||
+    err instanceof PdfTooLargeError
+  ) {
+    return err.message;
+  }
+  const msg = (err as Error)?.message ?? "";
+  if (/not found|no such file/i.test(msg)) {
+    return "The file could not be found. Please try picking it again.";
+  }
+  if (/timed out|timeout|aborted/i.test(msg)) {
+    return "Reading the file timed out — it may be too large or corrupted. Please try again.";
+  }
+  if (/permission denied|not permitted|unauthorized/i.test(msg)) {
+    return "Permission was denied when reading the file. Please try again.";
+  }
+  if (/http\s*\d{3}/i.test(msg)) {
+    return "The file could not be loaded due to a network error. Please try again.";
+  }
+  return "The file could not be opened. Please make sure it is a valid, unprotected PDF and try again.";
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
