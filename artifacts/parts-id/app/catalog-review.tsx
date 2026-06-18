@@ -94,7 +94,7 @@ export default function CatalogReviewScreen() {
     partsFound: number;
     matchedParts: number;
     imagesMatched: number;
-    unmatchedParts: Array<{ catalogNumber: string; description: string }>;
+    unmatchedParts: { catalogNumber: string; description: string }[];
   };
 
   const [groups, setGroups] = useState<SessionGroup[]>([]);
@@ -273,7 +273,7 @@ export default function CatalogReviewScreen() {
               partsFound?: number;
               matchedParts?: number;
               imagesMatched?: number;
-              unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
+              unmatchedParts?: { catalogNumber: string; description: string }[];
             };
             setJobSummary({
               vendor: statusData.vendor ?? "",

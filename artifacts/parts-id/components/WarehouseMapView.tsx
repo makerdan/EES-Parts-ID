@@ -88,12 +88,9 @@ import {
   MAX_SCALE,
   ZOOM_STOPS,
   parseContentViewBox,
-  fitContentViewport,
   computeFitTarget,
   clampScale,
   panBounds,
-  computeFocusPan,
-  runFocusAisleEffect,
   tileGridSize,
   zoomStopForScale,
   type ContentViewBox,
@@ -290,7 +287,7 @@ export function ZoneOverlayItem({
       fillOpacitySV.value = 0;
       fillOpacitySV.value = withTiming(1, { duration: 250 });
     }
-  }, [isPinnedNow]);
+  }, [isPinnedNow, fillOpacitySV]);
 
   const rectPinAnimatedProps = useAnimatedProps(() => ({
     strokeWidth: baseStroke / scale.value,
@@ -1282,7 +1279,6 @@ export function WarehouseMapView({
             const h = containerHRef.current;
             if (w > 0) {
               // Layout has already fired — we have real dimensions.
-              const rh = w / SVG_ASPECT;
               const { maxX, maxY } = panBounds(w, h, clampedS);
               const clampedTX = Math.max(-maxX, Math.min(maxX, tx));
               const clampedTY = Math.max(-maxY, Math.min(maxY, ty));

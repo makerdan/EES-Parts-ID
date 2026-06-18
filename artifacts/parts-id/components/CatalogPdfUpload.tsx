@@ -52,9 +52,9 @@ type JobStatus = {
   processedPages: number;
   matchedParts: number;
   imagesMatched: number;
-  unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
+  unmatchedParts?: { catalogNumber: string; description: string }[];
   errorMessage: string | null;
-  failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
+  failedChunks?: { chunkJobId: string; chunkIndex: number }[];
 };
 
 type FailedChunkInfo = {

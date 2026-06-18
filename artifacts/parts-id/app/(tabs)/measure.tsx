@@ -39,7 +39,7 @@ import {
   measureObject,
   NativeLidarDepthView,
 } from "lidar-measure";
-import { useApp, type DimensionUnit } from "@/contexts/AppContext";
+import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 import { fmtForUnit, parseFieldToMm } from "@/components/MeasurePartScreen";

@@ -111,7 +111,7 @@ export function runFocusAisleEffect(opts: {
   focusAisleNum: number;
   /** When set, the map centres on the specific section zone instead of the first aisle zone. */
   focusSectionNum?: number;
-  zones: ReadonlyArray<ZoneGeometry>;
+  zones: readonly ZoneGeometry[];
   containerW: number;
   containerH: number;
   /** The current zoom level — read to compute pan offset; never changed. */
@@ -266,7 +266,7 @@ export interface ZoomStop {
  * Scale values are chosen so each stop feels meaningfully different and the
  * overview stop (z0) is close to the default fit-to-content scale (~1.5×).
  */
-export const ZOOM_STOPS: ReadonlyArray<ZoomStop> = [
+export const ZOOM_STOPS: readonly ZoomStop[] = [
   { z: 0, scale: 1.5,  label: "overview" },
   { z: 1, scale: 4,    label: "aisle"    },
   { z: 2, scale: 10,   label: "section"  },

@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Image,
   Modal,
-  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -61,8 +60,7 @@ export default function PhotoScreen() {
   const [measureSearchVisible, setMeasureSearchVisible] = useState(false);
   /** The result card the admin dismissed/acted on — controls inline bridge card. */
   const [adminBridgeItem, setAdminBridgeItem] = useState<InventoryItem | null>(null);
-  /** Set when admin taps "Measure Now" on the bridge card — opens MeasurePartScreen. */
-  const [adminBridgeMeasureItem, setAdminBridgeMeasureItem] = useState<InventoryItem | null>(null);
+  const [, setAdminBridgeMeasureItem] = useState<InventoryItem | null>(null);
   /** Bin codes of the auto-pinned top result — controls inline "Navigate to Map" banner. */
   const [mapPromptBins, setMapPromptBins] = useState<string[]>([]);
   /** Item opened in the full detail/edit sheet — shows the "Map it!" button. */
@@ -124,33 +122,6 @@ export default function PhotoScreen() {
       ...variantPins,
     ]);
   }, [setPinnedParts]);
-
-  const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-    : "http://localhost:8080/api";
-
-  const handleAdminBridgeConfirm = React.useCallback(async (dims: PartDimensions) => {
-    const item = adminBridgeMeasureItem;
-    if (!item || !adminToken) return;
-    try {
-      const res = await fetch(`${API_BASE}/inventory/${item.id}/dimensions`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-        body: JSON.stringify(dims),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error ?? `Server error ${res.status}`);
-      }
-      showToast("Dimensions saved.");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Save failed";
-      showToast(`Failed to save dimensions — ${msg}`);
-    } finally {
-      setAdminBridgeMeasureItem(null);
-      router.navigate("/(tabs)/map");
-    }
-  }, [adminBridgeMeasureItem, adminToken, API_BASE, showToast]);
 
   const handleMeasureSearchConfirm = React.useCallback((dims: PartDimensions) => {
     setMeasureSearchVisible(false);
