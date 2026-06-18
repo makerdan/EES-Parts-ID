@@ -254,18 +254,34 @@ async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<str
       disableStream: true,
     }).promise;
 
+    const pageCount = Math.min(numPages, doc.numPages);
+
+    // Pre-fetch all structure trees concurrently to avoid one sequential
+    // round-trip per page inside the loop below.
+    const structTreeCache = new Map<number, unknown>();
+    await Promise.all(
+      Array.from({ length: pageCount }, async (_, i) => {
+        const p = i + 1;
+        try {
+          const pg = await doc.getPage(p);
+          const tree = await (pg as unknown as { getStructTree(): Promise<unknown> }).getStructTree();
+          structTreeCache.set(p, tree);
+        } catch { /* structure tree unavailable — non-fatal */ }
+      }),
+    );
+
     const results: string[] = [];
-    for (let p = 1; p <= Math.min(numPages, doc.numPages); p++) {
+    for (let p = 1; p <= pageCount; p++) {
       const page = await doc.getPage(p);
       const tc = await page.getTextContent();
       const items = tc.items as RawItem[];
 
-      // Collect figures from structure tree (best-effort)
+      // Use the pre-fetched structure tree from cache.
       const figures: StructFigure[] = [];
-      try {
-        const tree = await (page as unknown as { getStructTree(): Promise<unknown> }).getStructTree();
-        collectFigures(tree, figures);
-      } catch { /* structure tree unavailable — non-fatal */ }
+      const cachedTree = structTreeCache.get(p);
+      if (cachedTree !== undefined) {
+        collectFigures(cachedTree, figures);
+      }
 
       results.push(buildPageContext(items, figures));
       page.cleanup();
@@ -297,6 +313,21 @@ async function pdfJsFallback(pdfBuffer: Buffer): Promise<PageData[]> {
   } catch { /* images skipped */ }
 
   const numPages: number = doc.numPages;
+
+  // Pre-fetch all structure trees concurrently to avoid one sequential
+  // round-trip per page inside the loop below.
+  const structTreeCache = new Map<number, unknown>();
+  await Promise.all(
+    Array.from({ length: numPages }, async (_, i) => {
+      const p = i + 1;
+      try {
+        const pg = await doc.getPage(p);
+        const tree = await (pg as unknown as { getStructTree(): Promise<unknown> }).getStructTree();
+        structTreeCache.set(p, tree);
+      } catch { /* non-fatal */ }
+    }),
+  );
+
   const pages: PageData[] = [];
 
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
@@ -308,12 +339,12 @@ async function pdfJsFallback(pdfBuffer: Buffer): Promise<PageData[]> {
       const tc = await page.getTextContent();
       const items = tc.items as RawItem[];
 
-      // Collect figures from structure tree (best-effort)
+      // Use the pre-fetched structure tree from cache.
       const figures: StructFigure[] = [];
-      try {
-        const tree = await (page as unknown as { getStructTree(): Promise<unknown> }).getStructTree();
-        collectFigures(tree, figures);
-      } catch { /* non-fatal */ }
+      const cachedTree = structTreeCache.get(pageNum);
+      if (cachedTree !== undefined) {
+        collectFigures(cachedTree, figures);
+      }
 
       text = buildPageContext(items, figures);
     } catch { /* non-fatal */ }
