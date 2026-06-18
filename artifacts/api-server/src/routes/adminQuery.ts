@@ -77,7 +77,34 @@ function stripLeadingComments(input: string): string {
   return s;
 }
 
-const WRITE_KEYWORDS = /\b(insert|update|delete|drop|truncate|alter|create|replace|grant|revoke|copy|call|exec|execute|merge|upsert|set)\b/i;
+/**
+ * THREAT MODEL — what this validation does and does not protect:
+ *
+ * Protected:
+ *   - DDL/DML keywords (DROP, INSERT, UPDATE, DELETE, ALTER, TRUNCATE, GRANT,
+ *     REVOKE, CREATE, and others) are rejected via case-insensitive word-boundary
+ *     regex so that subqueries or column aliases that merely contain the word
+ *     cannot bypass the check (e.g. "updatedAt" won't match \bUPDATE\b).
+ *   - Stacked statements (e.g. `SELECT 1; DROP TABLE zones`) are rejected by
+ *     refusing any SQL that still contains a semicolon after trailing ones are
+ *     removed.  This prevents an inner statement from escaping the wrapper.
+ *   - Every query runs inside a read-only subquery wrapper:
+ *       SELECT * FROM (...) AS _admin_query_wrapper LIMIT N
+ *     so even a SELECT that somehow slipped through cannot directly mutate data.
+ *
+ * Remaining risk surface (accepted / out of scope):
+ *   - Information disclosure via subqueries: an admin could craft a SELECT
+ *     that reads tables beyond their normal scope through correlated subqueries
+ *     or JOINs.  This is accepted because the endpoint is admin-only and
+ *     requires a valid admin token.
+ *   - Keywords hidden inside SQL string literals or dollar-quoted blocks are
+ *     not fully stripped before scanning; the regex may produce false positives
+ *     (rejecting valid queries with e.g. a column value containing "DROP") but
+ *     not false negatives that would permit DDL.
+ *   - Full AST-level parsing is explicitly out of scope per the threat model.
+ */
+const WRITE_KEYWORDS =
+  /\b(drop|insert|update|delete|alter|truncate|grant|revoke|create|replace|copy|call|exec|execute|merge|upsert|set)\b/i;
 
 /**
  * Validate that the submitted SQL is a safe read-only SELECT statement.
@@ -100,6 +127,14 @@ function validateSelect(rawSql: string): string | null {
 
   if (WRITE_KEYWORDS.test(stripped)) {
     return "Query contains disallowed write or DDL keywords";
+  }
+
+  // Reject stacked statements: after stripping trailing semicolons, any
+  // remaining semicolon means a second statement could execute outside the
+  // wrapper (e.g. `SELECT 1; DROP TABLE zones`).
+  const withoutTrailingSemicolons = stripped.replace(/;+$/, "");
+  if (withoutTrailingSemicolons.includes(";")) {
+    return "Query must be a single statement (semicolons within the query are not permitted)";
   }
 
   return null;
