@@ -20,8 +20,12 @@ export function startServer(
         { port, retriesLeft: retries - 1 },
         "Port in use — retrying in 1s…",
       );
-      server.close();
-      setTimeout(() => startServer(app, port, retries - 1, retryDelayMs), retryDelayMs);
+      server.close(() => {
+        setTimeout(
+          () => startServer(app, port, retries - 1, retryDelayMs),
+          retryDelayMs,
+        );
+      });
     } else {
       logger.error({ err }, "Error listening on port");
       process.exit(1);

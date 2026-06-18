@@ -30,11 +30,15 @@ function makeOtherError(): NodeJS.ErrnoException {
 }
 
 type FakeServer = {
-  close: jest.Mock;
+  close: jest.Mock<void, [cb?: () => void]>;
   on: jest.Mock;
   triggerError: (err: NodeJS.ErrnoException) => void;
 };
 
+/**
+ * Builds a factory whose mock `server.close(cb)` invokes the callback via
+ * setImmediate, simulating real async OS socket teardown before the retry fires.
+ */
 function buildServerFactory(): { listen: jest.Mock; servers: FakeServer[] } {
   const servers: FakeServer[] = [];
 
@@ -42,7 +46,9 @@ function buildServerFactory(): { listen: jest.Mock; servers: FakeServer[] } {
     let errorCb: ((err: NodeJS.ErrnoException) => void) | undefined;
 
     const server: FakeServer = {
-      close: jest.fn(),
+      close: jest.fn((cb?: () => void) => {
+        if (cb) setImmediate(cb);
+      }),
       on: jest.fn((event: string, cb: unknown) => {
         if (event === "error") {
           errorCb = cb as (err: NodeJS.ErrnoException) => void;
@@ -149,5 +155,44 @@ describe("startServer", () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(listen).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry until the close callback fires", () => {
+    let pendingCloseCb: (() => void) | undefined;
+
+    const listen = jest.fn(() => {
+      let errorCb: ((err: NodeJS.ErrnoException) => void) | undefined;
+      const server: FakeServer = {
+        close: jest.fn((cb?: () => void) => {
+          pendingCloseCb = cb;
+        }),
+        on: jest.fn((event: string, cb: unknown) => {
+          if (event === "error") {
+            errorCb = cb as (err: NodeJS.ErrnoException) => void;
+          }
+        }),
+        triggerError: (err) => errorCb?.(err),
+      };
+      return server;
+    });
+
+    const mockApp = { listen } as never;
+    startServer(mockApp, 3000, 1, 0);
+
+    const server0 = listen.mock.results[0]!.value as FakeServer;
+    server0.triggerError(makeEaddrinuse());
+
+    // close was called, but callback is pending — retry must not have fired yet
+    expect(server0.close).toHaveBeenCalledTimes(1);
+    expect(listen).toHaveBeenCalledTimes(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    // Now release the close callback, which schedules the setTimeout(0) retry
+    pendingCloseCb!();
+    jest.runAllTimers();
+
+    // After the callback fires and timers drain, the retry should have happened
+    expect(listen).toHaveBeenCalledTimes(2);
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 });
