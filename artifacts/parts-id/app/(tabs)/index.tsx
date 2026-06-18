@@ -138,7 +138,7 @@ export default function SearchScreen() {
   "use no memo";
   useTrackScreen("Search");
   const colors = useColors();
-  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast, setPinnedParts, pendingMeasureSearch, setPendingMeasureSearch } = useApp();
+  const { logout, clearCache, settings, updateSetting, textFontScale, isLoading: settingsLoading, isAdmin, adminToken, registerLogoutHandler, setPendingMapFocus, showToast, setPinnedParts, pendingMeasureSearch, setPendingMeasureSearch, pendingInventorySearch, setPendingInventorySearch } = useApp();
   type SearchMode = "search" | "aisle" | "category";
   const [mode, setMode] = useState<SearchMode>("search");
   const [activeCategorySlug, setActiveCategorySlug] = useState<string | null>(null);
@@ -653,6 +653,31 @@ export default function SearchScreen() {
   // Keep the ref pointing at the latest mutation so the logout handler can
   // reset it without capturing a stale closure.
   searchMutationRef.current = searchMutation;
+
+  // Consume a pending inventory search set by cross-tab navigation (e.g.
+  // "View in Inventory" after adding a part from the catalog review screen).
+  // Clears existing filters, applies vendor+catalog from the pending params,
+  // and fires a search immediately so the item is visible on arrival.
+  useFocusEffect(useCallback(() => {
+    if (!pendingInventorySearch) return;
+    setPendingInventorySearch(null);
+    setMode("search");
+    setActiveCategorySlug(null);
+    setActiveCategoryLabel(null);
+    activeCategorySlugRef.current = null;
+    const merged: FilterValues = {
+      ...DEFAULT_FILTERS,
+      confidenceThreshold: settingsRef.current.defaultConfidenceThreshold,
+      vendor: pendingInventorySearch.vendor ?? "",
+      catalog: pendingInventorySearch.catalog ?? "",
+    };
+    setFilters(merged);
+    setTimeout(() => {
+      const body = buildSearchBody(merged, null);
+      searchMutation.mutate({ data: body });
+    }, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingInventorySearch]));
 
   // Consume a pending measure search set by the Photo tab's Measure flow.
   // When the Photo tab resolves dimensions and navigates the user back here,

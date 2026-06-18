@@ -87,7 +87,7 @@ export default function CatalogReviewScreen() {
   const colors = useColors();
   const router = useRouter();
   const { jobId } = useLocalSearchParams<{ jobId?: string }>();
-  const { adminToken, logoutAdmin, resumeProgress, setResumeProgress } = useApp();
+  const { adminToken, logoutAdmin, resumeProgress, setResumeProgress, setPendingInventorySearch } = useApp();
 
   type JobSummary = {
     vendor: string;
@@ -672,6 +672,20 @@ export default function CatalogReviewScreen() {
 
                 <View style={[s.modalFooter, { borderTopColor: colors.border }]}>
                   <Pressable
+                    onPress={() => {
+                      setPendingInventorySearch({
+                        vendor: addedItem.vendor,
+                        catalog: addedItem.catalog,
+                      });
+                      setAddModalPart(null);
+                      setAddedItem(null);
+                      router.navigate("/");
+                    }}
+                    style={[s.modalViewInvBtn, { borderColor: colors.primary }]}
+                  >
+                    <Text style={[s.modalViewInvText, { color: colors.primary }]}>View in Inventory</Text>
+                  </Pressable>
+                  <Pressable
                     onPress={() => { setAddModalPart(null); setAddedItem(null); }}
                     style={[s.modalSubmitBtn, { backgroundColor: colors.primary }]}
                   >
@@ -1173,6 +1187,10 @@ const s = StyleSheet.create({
     flex: 2, borderRadius: 10, paddingVertical: 13, alignItems: "center", justifyContent: "center",
   },
   modalSubmitText: { fontSize: 14, fontFamily: "Inter_700Bold" },
+  modalViewInvBtn: {
+    flex: 1, borderWidth: 1.5, borderRadius: 10, paddingVertical: 13, alignItems: "center", justifyContent: "center",
+  },
+  modalViewInvText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   successIconWrap: { alignItems: "center", paddingVertical: 24, gap: 8 },
   successIconCircle: {
     width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center",
