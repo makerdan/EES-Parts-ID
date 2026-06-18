@@ -534,7 +534,7 @@ export default function UploadScreen() {
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
-  const { status: apiStatus, restarting: apiRestarting, triggerRestart } = useApiStatus({
+  const { status: apiStatus, restarting: apiRestarting, triggerRestart, bots: apiBots } = useApiStatus({
     apiBase: API_BASE,
     adminToken: isAdmin ? adminToken : null,
   });
@@ -1494,36 +1494,83 @@ export default function UploadScreen() {
           </View>
           {isAdmin ? (
             <View style={styles.headerActions}>
-              <Pressable
-                onPress={handleRestartPress}
-                style={[
-                  styles.apiStatusPill,
-                  {
-                    backgroundColor:
-                      apiRestarting
-                        ? "#6b7280"
-                        : apiStatus === "ok"
-                        ? "#10b981"
-                        : apiStatus === "degraded"
-                        ? "#f59e0b"
-                        : apiStatus === "error"
-                        ? "#ef4444"
-                        : "#6b7280",
-                  },
-                ]}
-              >
-                <Text style={styles.apiStatusPillText}>
-                  {apiRestarting
-                    ? "⟳ Restarting…"
-                    : apiStatus === "ok"
-                    ? "● API: ok"
-                    : apiStatus === "degraded"
-                    ? "● API: degraded"
-                    : apiStatus === "error"
-                    ? "● API: error"
-                    : "● API: …"}
-                </Text>
-              </Pressable>
+              <View style={{ alignItems: "flex-end", gap: 4 }}>
+                <Pressable
+                  onPress={handleRestartPress}
+                  style={[
+                    styles.apiStatusPill,
+                    {
+                      backgroundColor:
+                        apiRestarting
+                          ? "#6b7280"
+                          : apiStatus === "ok"
+                          ? "#10b981"
+                          : apiStatus === "degraded"
+                          ? "#f59e0b"
+                          : apiStatus === "error"
+                          ? "#ef4444"
+                          : "#6b7280",
+                    },
+                  ]}
+                >
+                  <Text style={styles.apiStatusPillText}>
+                    {apiRestarting
+                      ? "⟳ Restarting…"
+                      : apiStatus === "ok"
+                      ? "● API: ok"
+                      : apiStatus === "degraded"
+                      ? "● API: degraded"
+                      : apiStatus === "error"
+                      ? "● API: error"
+                      : "● API: …"}
+                  </Text>
+                </Pressable>
+                {Object.keys(apiBots).length > 0 ? (
+                  <View style={styles.botStatusRow}>
+                    {Object.entries(apiBots).map(([name, botStatus]) => (
+                      <View
+                        key={name}
+                        style={[
+                          styles.botStatusChip,
+                          {
+                            backgroundColor:
+                              botStatus === "ok"
+                                ? "#10b98120"
+                                : botStatus === "timeout"
+                                ? "#f59e0b20"
+                                : "#ef444420",
+                            borderColor:
+                              botStatus === "ok"
+                                ? "#10b981"
+                                : botStatus === "timeout"
+                                ? "#f59e0b"
+                                : "#ef4444",
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.botStatusDot,
+                            {
+                              color:
+                                botStatus === "ok"
+                                  ? "#10b981"
+                                  : botStatus === "timeout"
+                                  ? "#f59e0b"
+                                  : "#ef4444",
+                            },
+                          ]}
+                        >
+                          ●
+                        </Text>
+                        <Text style={[styles.botStatusText, { color: colors.foreground }]} numberOfLines={1}>
+                          {name}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
               <Pressable onPress={logoutAdmin} style={[styles.lockBtn, { borderColor: colors.border }]}>
                 <Text style={[styles.lockBtnText, { color: colors.mutedForeground }]}>🔓 Log Out</Text>
               </Pressable>
@@ -2895,6 +2942,10 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   apiStatusPill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
   apiStatusPillText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#ffffff" },
+  botStatusRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, justifyContent: "flex-end" },
+  botStatusChip: { flexDirection: "row", alignItems: "center", borderRadius: 10, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2, gap: 3 },
+  botStatusDot: { fontSize: 8 },
+  botStatusText: { fontSize: 10, fontFamily: "Inter_500Medium", maxWidth: 100 },
   tabBar: { flexDirection: "row", borderBottomWidth: 1 },
   tabItem: { flex: 1, alignItems: "center", paddingVertical: 12, borderBottomWidth: 2 },
   tabLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold" },

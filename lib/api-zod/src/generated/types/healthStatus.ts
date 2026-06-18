@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { HealthStatusBots } from "./healthStatusBots";
 import type { HealthStatusStatus } from "./healthStatusStatus";
 
 export interface HealthStatus {
@@ -15,4 +16,6 @@ export interface HealthStatus {
   pool_idle?: number;
   /** Total connections in the pg pool */
   pool_total?: number;
+  /** Per-bot Poe reachability results from the startup probe */
+  bots?: HealthStatusBots;
 }

@@ -384,13 +384,23 @@ describe("probePoeBotsOnStartup()", () => {
     const botNames = mod.getAllPoeModelNames();
     const { warn } = getLoggerMocks();
 
-    expect(warn).toHaveBeenCalledTimes(botNames.length);
+    // When all bots return 404, the catalog bot also probes its fallback (which
+    // also returns 404), generating one extra warn — so total = botNames.length + 1.
+    expect(warn).toHaveBeenCalledTimes(botNames.length + 1);
+
+    // Each primary bot (including catalog) gets a "not found" / "not found — probing
+    // fallback" message that contains the words "not found".
     for (const botName of botNames) {
       expect(warn).toHaveBeenCalledWith(
-        { botName },
+        expect.objectContaining({ botName }),
         expect.stringContaining("not found"),
       );
     }
+    // The fallback bot also gets a warn about being unavailable.
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ botName: mod.POE_CATALOG_BOT_FALLBACK }),
+      expect.stringContaining("unavailable"),
+    );
   });
 
   it("logs a 'probe failed' warning for each bot when create rejects with a generic error", async () => {
@@ -473,5 +483,157 @@ describe("probePoeBotsOnStartup()", () => {
         expect.any(String),
       );
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getProbeSummary()
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getProbeSummary()", () => {
+  type MockClient = { chat: { completions: { create: jest.Mock } } };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mod.setProvider("poe");
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("returns an empty object when the provider is not 'poe', regardless of past probe runs", () => {
+    // getProbeSummary() guards on the active provider, so switching to openai
+    // always returns {} even if a poe probe already ran (stale module state).
+    mod.setProvider("openai");
+    expect(mod.getProbeSummary()).toEqual({});
+  });
+
+  it("returns 'ok' for every bot when all probes resolve promptly", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockResolvedValue({ choices: [] });
+
+    await mod.probePoeBotsOnStartup();
+
+    const summary = mod.getProbeSummary();
+    const botNames = mod.getAllPoeModelNames();
+    for (const name of botNames) {
+      expect(summary[name]).toBe("ok");
+    }
+  });
+
+  it("returns 'timeout' for every bot when create never resolves", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockImplementation(() => new Promise(() => {}));
+
+    const probePromise = mod.probePoeBotsOnStartup();
+    await jest.advanceTimersByTimeAsync(5100);
+    await probePromise;
+
+    const summary = mod.getProbeSummary();
+    const botNames = mod.getAllPoeModelNames();
+    for (const name of botNames) {
+      expect(summary[name]).toBe("timeout");
+    }
+  });
+
+  it("returns '404' for every bot when create rejects with status 404", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockRejectedValue({ status: 404 });
+
+    await mod.probePoeBotsOnStartup();
+
+    const summary = mod.getProbeSummary();
+    const botNames = mod.getAllPoeModelNames();
+    for (const name of botNames) {
+      // Catalog bot falls back and both primary and fallback appear in the summary.
+      // Non-catalog 404 bots get "404".
+      if (name === mod.POE_CATALOG_BOT) {
+        expect(summary[name]).toBe("404");
+      } else {
+        expect(summary[name]).toBe("404");
+      }
+    }
+  });
+
+  it("returns 'error' for every bot when create rejects with a generic error", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockRejectedValue(new Error("Service Unavailable"));
+
+    await mod.probePoeBotsOnStartup();
+
+    const summary = mod.getProbeSummary();
+    const botNames = mod.getAllPoeModelNames();
+    for (const name of botNames) {
+      expect(summary[name]).toBe("error");
+    }
+  });
+
+  it("records the fallback catalog bot as 'ok' when primary is 404 and fallback succeeds", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    // Mock by model name so the result is independent of call order (probes run in parallel).
+    client.chat.completions.create.mockImplementation(
+      async ({ model }: { model: string }) => {
+        if (model === mod.POE_CATALOG_BOT) throw { status: 404 };
+        return { choices: [] };
+      },
+    );
+
+    await mod.probePoeBotsOnStartup();
+
+    const summary = mod.getProbeSummary();
+    expect(summary[mod.POE_CATALOG_BOT]).toBe("404");
+    expect(summary[mod.POE_CATALOG_BOT_FALLBACK]).toBe("ok");
+  });
+
+  it("records the fallback catalog bot as 'error' when both primary and fallback fail", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    // Mock by model name: primary catalog → 404, fallback → generic error, all others → ok.
+    client.chat.completions.create.mockImplementation(
+      async ({ model }: { model: string }) => {
+        if (model === mod.POE_CATALOG_BOT) throw { status: 404 };
+        if (model === mod.POE_CATALOG_BOT_FALLBACK) throw new Error("fallback down");
+        return { choices: [] };
+      },
+    );
+
+    await mod.probePoeBotsOnStartup();
+
+    const summary = mod.getProbeSummary();
+    expect(summary[mod.POE_CATALOG_BOT]).toBe("404");
+    expect(summary[mod.POE_CATALOG_BOT_FALLBACK]).toBe("error");
+  });
+
+  it("clears previous results when probePoeBotsOnStartup() is called again", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    // First probe: all fail
+    client.chat.completions.create.mockRejectedValue(new Error("down"));
+    await mod.probePoeBotsOnStartup();
+
+    // Second probe: all succeed
+    jest.clearAllMocks();
+    client.chat.completions.create.mockResolvedValue({ choices: [] });
+    await mod.probePoeBotsOnStartup();
+
+    const summary = mod.getProbeSummary();
+    const botNames = mod.getAllPoeModelNames();
+    for (const name of botNames) {
+      expect(summary[name]).toBe("ok");
+    }
+  });
+
+  it("returns an empty object when the active provider is not 'poe'", async () => {
+    mod.setProvider("openai");
+
+    await mod.probePoeBotsOnStartup();
+
+    expect(mod.getProbeSummary()).toEqual({});
+  });
+
+  it("returns a plain object (not the internal Map)", () => {
+    const summary = mod.getProbeSummary();
+    expect(summary).not.toBeInstanceOf(Map);
+    expect(typeof summary).toBe("object");
   });
 });

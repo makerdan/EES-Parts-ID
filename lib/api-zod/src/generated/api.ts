@@ -25,6 +25,10 @@ export const HealthCheckResponse = zod.object({
     .number()
     .optional()
     .describe("Total connections in the pg pool"),
+  bots: zod
+    .record(zod.string(), zod.enum(["ok", "timeout", "404", "error"]))
+    .optional()
+    .describe("Per-bot Poe reachability results from the startup probe"),
 });
 
 /**

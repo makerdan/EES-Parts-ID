@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useFocusEffect } from "expo-router";
 
 export type ApiStatus = "ok" | "degraded" | "error" | "unknown";
+export type BotProbeStatus = "ok" | "timeout" | "404" | "error";
 
 export interface ApiStatusResult {
   status: ApiStatus;
   restarting: boolean;
   triggerRestart: () => Promise<void>;
+  bots: Record<string, BotProbeStatus>;
 }
 
 interface UseApiStatusOptions {
@@ -22,6 +24,7 @@ export function useApiStatus({
 }: UseApiStatusOptions): ApiStatusResult {
   const [status, setStatus] = useState<ApiStatus>("unknown");
   const [restarting, setRestarting] = useState(false);
+  const [bots, setBots] = useState<Record<string, BotProbeStatus>>({});
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const restartingRef = useRef(false);
 
@@ -31,6 +34,7 @@ export function useApiStatus({
       const res = await fetch(`${apiBase}/healthz`, { cache: "no-store" });
       if (!res.ok) {
         setStatus("error");
+        setBots({});
         return;
       }
       const data = await res.json();
@@ -40,8 +44,19 @@ export function useApiStatus({
       } else {
         setStatus("error");
       }
+      if (data?.bots && typeof data.bots === "object" && !Array.isArray(data.bots)) {
+        const VALID: Record<string, true> = { ok: true, timeout: true, "404": true, error: true };
+        const validated: Record<string, BotProbeStatus> = {};
+        for (const [k, v] of Object.entries(data.bots)) {
+          if (typeof v === "string" && VALID[v]) validated[k] = v as BotProbeStatus;
+        }
+        setBots(validated);
+      } else {
+        setBots({});
+      }
     } catch {
       setStatus("error");
+      setBots({});
     }
   }, [apiBase]);
 
@@ -124,5 +139,5 @@ export function useApiStatus({
     setTimeout(resumePoll, 1500);
   }, [adminToken, apiBase, startPolling, stopPolling]);
 
-  return { status, restarting, triggerRestart };
+  return { status, restarting, triggerRestart, bots };
 }

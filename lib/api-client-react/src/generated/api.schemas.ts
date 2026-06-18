@@ -14,6 +14,13 @@ export const HealthStatusStatus = {
   error: "error",
 } as const;
 
+/**
+ * Per-bot Poe reachability results from the startup probe
+ */
+export type HealthStatusBots = {
+  [key: string]: "ok" | "timeout" | "404" | "error";
+};
+
 export interface HealthStatus {
   status: HealthStatusStatus;
   /** Time in milliseconds taken by the SELECT 1 probe */
@@ -22,6 +29,8 @@ export interface HealthStatus {
   pool_idle?: number;
   /** Total connections in the pg pool */
   pool_total?: number;
+  /** Per-bot Poe reachability results from the startup probe */
+  bots?: HealthStatusBots;
 }
 
 export interface TaxonomyItemTypeNode {

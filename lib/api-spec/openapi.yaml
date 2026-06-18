@@ -565,6 +565,12 @@ components:
         pool_total:
           type: integer
           description: Total connections in the pg pool
+        bots:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, timeout, "404", error]
+          description: Per-bot Poe reachability results from the startup probe
       required:
         - status
 
