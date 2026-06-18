@@ -55,10 +55,17 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
 
+  const [uploadSpeed, setUploadSpeed] = useState<number | null>(null);
+  const [uploadEta, setUploadEta] = useState<number | null>(null);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  const speedSamplesRef = useRef<{ t: number; loaded: number }[]>([]);
+  const SPEED_WINDOW_MS = 4000;
+  const SPEED_WINDOW_MAX = 20;
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -120,6 +127,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setJobStatus(null);
     setLoading(true);
     setUploadPct(0);
+    setUploadSpeed(null);
+    setUploadEta(null);
+    speedSamplesRef.current = [];
 
     const body = JSON.stringify({
       pdfBase64,
@@ -136,6 +146,28 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
         setUploadPct(Math.round((e.loaded / e.total) * 100));
+
+        const now = Date.now();
+        const samples = speedSamplesRef.current;
+        samples.push({ t: now, loaded: e.loaded });
+        const cutoff = now - SPEED_WINDOW_MS;
+        while (samples.length > 1 && samples[0]!.t < cutoff) samples.shift();
+        if (samples.length > SPEED_WINDOW_MAX) samples.splice(0, samples.length - SPEED_WINDOW_MAX);
+
+        if (samples.length >= 2) {
+          const oldest = samples[0]!;
+          const newest = samples[samples.length - 1]!;
+          const dtMs = newest.t - oldest.t;
+          if (dtMs > 0) {
+            const bytesPerMs = (newest.loaded - oldest.loaded) / dtMs;
+            const bytesPerSec = bytesPerMs * 1000;
+            const speedMbs = bytesPerSec / (1024 * 1024);
+            setUploadSpeed(speedMbs);
+            const remaining = e.total - e.loaded;
+            const etaSec = bytesPerSec > 0 ? remaining / bytesPerSec : null;
+            setUploadEta(etaSec);
+          }
+        }
       }
     };
 
@@ -148,6 +180,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     xhr.onload = () => {
       xhrRef.current = null;
       setUploadPct(null);
+      setUploadSpeed(null);
+      setUploadEta(null);
       setLoading(false);
       if (xhr.status === 401) { onSessionExpired(); return; }
       if (xhr.status < 200 || xhr.status >= 300) {
@@ -177,6 +211,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     xhr.onerror = () => {
       xhrRef.current = null;
       setUploadPct(null);
+      setUploadSpeed(null);
+      setUploadEta(null);
       setLoading(false);
       setError("Network error — check your connection and try again.");
     };
@@ -278,6 +314,16 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
             <View style={[s.progressFill, { width: `${uploadPct}%`, backgroundColor: colors.primary }]} />
           </View>
+          {uploadSpeed !== null && uploadEta !== null ? (
+            <Text style={[s.progressText, { color: colors.mutedForeground }]}>
+              {uploadSpeed >= 1
+                ? `${uploadSpeed.toFixed(1)} MB/s`
+                : `${(uploadSpeed * 1024).toFixed(0)} KB/s`}
+              {uploadEta >= 60
+                ? ` · ~${Math.ceil(uploadEta / 60)} min remaining`
+                : ` · ~${Math.ceil(uploadEta)} sec remaining`}
+            </Text>
+          ) : null}
         </View>
       ) : null}
 
