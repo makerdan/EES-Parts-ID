@@ -79,7 +79,7 @@ export type ShelfAssignResult =
 export async function resolveShelfAssign(
   barcode: string,
   item: InventoryItem,
-  updateBarcodes: (id: number, barcodes: string[]) => Promise<InventoryItem>,
+  updateBarcodes: (id: number, barcodes: Array<string>) => Promise<InventoryItem>,
   upsertCache: (item: InventoryItem) => Promise<void>,
 ): Promise<ShelfAssignResult> {
   const existing = item.barcodes ?? [];

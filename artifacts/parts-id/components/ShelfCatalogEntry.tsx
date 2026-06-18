@@ -97,7 +97,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
           const data = await res.json() as { shelfPrefix: string | null; shelfStep: number | null };
           const hasServerPrefix = data.shelfPrefix !== null && data.shelfPrefix !== undefined;
           const hasServerStep = data.shelfStep !== null && data.shelfStep !== undefined
-            && (STEP_OPTIONS as readonly number[]).includes(data.shelfStep);
+            && (STEP_OPTIONS as ReadonlyArray<number>).includes(data.shelfStep);
           if (hasServerPrefix || hasServerStep) {
             if (hasServerPrefix) {
               setShelfPrefix(data.shelfPrefix as string);
@@ -122,7 +122,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       if (savedPrefix !== null && savedPrefix !== undefined) setShelfPrefix(savedPrefix);
       if (savedStep !== null && savedStep !== undefined) {
         const parsed = parseInt(savedStep, 10) as Step;
-        if ((STEP_OPTIONS as readonly number[]).includes(parsed)) setStep(parsed);
+        if ((STEP_OPTIONS as ReadonlyArray<number>).includes(parsed)) setStep(parsed);
       }
       hydratedRef.current = true;
     }).catch(() => {
@@ -298,7 +298,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       const createdItem = data.item;
 
       if (photo || photo2) {
-        const uploads: Promise<void>[] = [];
+        const uploads: Array<Promise<void>> = [];
         if (photo) uploads.push(uploadPhoto(createdItem.id, photo, 1));
         if (photo2) uploads.push(uploadPhoto(createdItem.id, photo2, 2));
         const results = await Promise.allSettled(uploads);
@@ -350,7 +350,7 @@ export function ShelfCatalogEntry({ visible, adminToken, onClose }: ShelfCatalog
       }
 
       if (duplicate.pendingPhoto || duplicate.pendingPhoto2) {
-        const uploads: Promise<void>[] = [];
+        const uploads: Array<Promise<void>> = [];
         if (duplicate.pendingPhoto) uploads.push(uploadPhoto(duplicate.item.id, duplicate.pendingPhoto, 1));
         if (duplicate.pendingPhoto2) uploads.push(uploadPhoto(duplicate.item.id, duplicate.pendingPhoto2, 2));
         const results = await Promise.allSettled(uploads);

@@ -32,7 +32,7 @@ export type ApiWarehouseZone = {
 };
 
 type ZoneCache = {
-  zones: ApiWarehouseZone[];
+  zones: Array<ApiWarehouseZone>;
 };
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -40,7 +40,7 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   : "http://localhost:8080/api";
 
 export function useWarehouseZones() {
-  const [zones, setZones] = useState<ApiWarehouseZone[]>([]);
+  const [zones, setZones] = useState<Array<ApiWarehouseZone>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const mountedRef = useRef(true);
@@ -53,7 +53,7 @@ export function useWarehouseZones() {
     if (fetchingRef.current) return;
     fetchingRef.current = true;
     try {
-      const data: { zones: ApiWarehouseZone[] } = await retryAsync(async () => {
+      const data: { zones: Array<ApiWarehouseZone> } = await retryAsync(async () => {
         const res = await fetch(`${API_BASE}/warehouse-zones`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();

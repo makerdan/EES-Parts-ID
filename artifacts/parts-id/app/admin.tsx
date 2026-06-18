@@ -40,13 +40,13 @@ type DashboardStats = {
   ai: {
     totalAllTime: number;
     totalThisMonth: number;
-    byFeature: ByFeature[];
+    byFeature: Array<ByFeature>;
   };
   screenViews: {
     totalAllTime: number;
     uniqueVisitorsToday: number;
-    byScreen: ByScreen[];
-    dailyLast30Days: DailyPoint[];
+    byScreen: Array<ByScreen>;
+    dailyLast30Days: Array<DailyPoint>;
   };
   summary: {
     inventoryItems: number;
@@ -110,7 +110,7 @@ function DailyBarChart({
   data,
   colors,
 }: {
-  data: DailyPoint[];
+  data: Array<DailyPoint>;
   colors: ReturnType<typeof useColors>;
 }) {
   if (data.length === 0) {

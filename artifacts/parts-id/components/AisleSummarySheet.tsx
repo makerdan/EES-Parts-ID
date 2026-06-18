@@ -18,10 +18,10 @@ import { filterSections, parseBin, type WarehouseZone } from "@/lib/aisleHierarc
 interface SummaryStats {
   skuCount: number;
   sectionCount: number;
-  topCategories: string[];
+  topCategories: Array<string>;
 }
 
-function summarise(zone: WarehouseZone, inventory: InventoryItem[]): SummaryStats | null {
+function summarise(zone: WarehouseZone, inventory: Array<InventoryItem>): SummaryStats | null {
   const inZone = inventory.filter(item => {
     const bins = item.binLocations ?? [];
     return bins.some(raw => {
@@ -65,7 +65,7 @@ function summarise(zone: WarehouseZone, inventory: InventoryItem[]): SummaryStat
 
 interface AisleSummarySheetProps {
   zone: WarehouseZone | null;
-  inventory: InventoryItem[];
+  inventory: Array<InventoryItem>;
   onClose: () => void;
   onBrowse: (zone: WarehouseZone) => void;
 }

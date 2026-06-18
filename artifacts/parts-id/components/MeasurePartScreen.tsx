@@ -505,7 +505,7 @@ export function MeasurePartScreen({
     axis?: RescanAxis;
   };
 
-  const fieldDefs: FieldDef[] = [
+  const fieldDefs: Array<FieldDef> = [
     { label: "Length",          value: lengthStr,   set: setLengthStr,   onBlur: () => { lengthMmRef.current   = parseFieldToMm(lengthStr,   unit); }, axis: "length" },
     { label: "Width",           value: widthStr,    set: setWidthStr,    onBlur: () => { widthMmRef.current    = parseFieldToMm(widthStr,    unit); }, axis: "width"  },
     { label: "Height",          value: heightStr,   set: setHeightStr,   onBlur: () => { heightMmRef.current   = parseFieldToMm(heightStr,   unit); }, axis: "height" },
@@ -769,7 +769,7 @@ export function MeasurePartScreen({
 
                 {/* Unit picker */}
                 <View style={ms.unitPickerRow}>
-                  {(["mm", "cm", "in"] as DimensionUnit[]).map((u) => (
+                  {(["mm", "cm", "in"] as Array<DimensionUnit>).map((u) => (
                     <Pressable
                       key={u}
                       onPress={() => {

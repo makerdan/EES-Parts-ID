@@ -3,7 +3,7 @@
  * Faster than `JSON.stringify(a) === JSON.stringify(b)` and avoids the
  * surprise where `undefined` / `NaN` round-trip differently.
  */
-export function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {
+export function arraysEqual<T>(a: ReadonlyArray<T>, b: ReadonlyArray<T>): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {

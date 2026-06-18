@@ -43,7 +43,7 @@ import {
 } from "@/lib/aisleHierarchy";
 
 export interface BrowseByAisleProps {
-  inventory: InventoryItem[];
+  inventory: Array<InventoryItem>;
   isSyncing: boolean;
   shelfViewEnabled: boolean;
   fontScale?: number;
@@ -51,7 +51,7 @@ export interface BrowseByAisleProps {
   onPartAdded?: () => void;
   onRefresh?: () => void | Promise<void>;
   initialAisle?: number;
-  sectionNumbers?: number[];
+  sectionNumbers?: Array<number>;
   adminToken?: string | null;
   isAdmin?: boolean;
   onShowOnMap?: (item: InventoryItem) => void;
@@ -577,7 +577,7 @@ function PartsListView({
 }) {
   const allParts = useMemo(() => {
     const seen = new Set<number>();
-    const out: PartOnShelf[] = [];
+    const out: Array<PartOnShelf> = [];
     for (const shelf of section.shelves) {
       for (const p of shelf.parts) {
         if (!seen.has(p.item.id)) {

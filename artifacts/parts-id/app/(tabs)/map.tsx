@@ -96,7 +96,7 @@ export default function MapScreen() {
    * Circle markers that show the worker exactly where in the aisle to walk.
    */
   const pinnedSections = useMemo(() => {
-    const m = new Map<number, number[]>();
+    const m = new Map<number, Array<number>>();
     for (const p of pinnedParts) {
       if (p.variant) continue;
       const parsed = parseBin(p.binCode);
@@ -112,7 +112,7 @@ export default function MapScreen() {
    * Maps aisleNum → list of distinct section numbers for VARIANT pins.
    */
   const variantSections = useMemo(() => {
-    const m = new Map<number, number[]>();
+    const m = new Map<number, Array<number>>();
     for (const p of pinnedParts) {
       if (!p.variant) continue;
       const parsed = parseBin(p.binCode);
@@ -227,8 +227,8 @@ export default function MapScreen() {
   const [drilldown, setDrilldown] = useState<WarehouseZone | null>(null);
   const [summaryZone, setSummaryZone] = useState<WarehouseZone | null>(null);
   const [selectedZone, setSelectedZone] = useState<ApiWarehouseZone | null>(null);
-  const inventoryRef = useRef<InventoryItem[]>([]);
-  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const inventoryRef = useRef<Array<InventoryItem>>([]);
+  const [inventory, setInventory] = useState<Array<InventoryItem>>([]);
 
   // ── Select / zone-tap mode ─────────────────────────────────────────────────
   const [selectMode, setSelectMode] = useState(false);
@@ -252,7 +252,7 @@ export default function MapScreen() {
     AsyncStorage.getItem(CYCLE_COUNTED_KEY).then((raw) => {
       if (!raw) return;
       try {
-        const ids = JSON.parse(raw) as number[];
+        const ids = JSON.parse(raw) as Array<number>;
         setCountedZoneIds(new Set(ids));
       } catch { /* ignore corrupt data */ }
     });
@@ -263,7 +263,7 @@ export default function MapScreen() {
       .then(raw => {
         if (!raw) return;
         try {
-          const items = JSON.parse(raw) as InventoryItem[];
+          const items = JSON.parse(raw) as Array<InventoryItem>;
           inventoryRef.current = items;
           setInventory(items);
         } catch { /* ignore corrupt cache */ }

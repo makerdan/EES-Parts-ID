@@ -34,7 +34,7 @@ interface SubcategoryNode {
   slug: string;
   label: string;
   count: number;
-  itemTypes: ItemTypeNode[];
+  itemTypes: Array<ItemTypeNode>;
 }
 
 interface CategoryNode {
@@ -42,11 +42,11 @@ interface CategoryNode {
   label: string;
   color: string;
   count: number;
-  subcategories: SubcategoryNode[];
+  subcategories: Array<SubcategoryNode>;
 }
 
 interface CategoriesResponse {
-  categories: CategoryNode[];
+  categories: Array<CategoryNode>;
 }
 
 type Level = "categories" | "subcategories" | "itemTypes";
@@ -452,7 +452,7 @@ function CategoryGrid({
   onSelect,
   fontScale = 1.0,
 }: {
-  categories: CategoryNode[];
+  categories: Array<CategoryNode>;
   colors: ColorMap;
   onSelect: (cat: CategoryNode) => void;
   fontScale?: number;
@@ -506,7 +506,7 @@ function SubcategoryList({
   parentCount,
   fontScale = 1.0,
 }: {
-  subcategories: SubcategoryNode[];
+  subcategories: Array<SubcategoryNode>;
   accentColor: string;
   colors: ColorMap;
   onSelect: (sub: SubcategoryNode) => void;
@@ -576,7 +576,7 @@ function ItemTypeList({
   parentCount,
   fontScale = 1.0,
 }: {
-  itemTypes: ItemTypeNode[];
+  itemTypes: Array<ItemTypeNode>;
   accentColor: string;
   colors: ColorMap;
   onSelect: (it: ItemTypeNode) => void;

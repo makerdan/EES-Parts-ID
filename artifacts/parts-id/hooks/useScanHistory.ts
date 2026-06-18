@@ -15,10 +15,10 @@ import {
  * - clear: erase all history
  */
 export function useScanHistory() {
-  const [history, setHistory] = useState<ScanEntry[]>([]);
+  const [history, setHistory] = useState<Array<ScanEntry>>([]);
   // Ref keeps addEntry's closure stable (no dep on history) while always
   // seeing the latest list so prependEntry deduplicates correctly.
-  const historyRef = useRef<ScanEntry[]>([]);
+  const historyRef = useRef<Array<ScanEntry>>([]);
 
   useEffect(() => {
     loadScanHistory().then((loaded) => {

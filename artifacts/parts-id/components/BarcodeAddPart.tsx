@@ -50,8 +50,8 @@ interface BulkQueueEntry {
 
 type ShelfSession = {
   shelfPrefix: string;
-  assignments: AssignmentEntry[];
-  bulkQueue: BulkQueueEntry[];
+  assignments: Array<AssignmentEntry>;
+  bulkQueue: Array<BulkQueueEntry>;
   bulkMode: boolean;
 };
 
@@ -181,11 +181,11 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
   const [shelfStep, setShelfStep] = useState<"pickshelf" | "scanning">("pickshelf");
   const [shelfScannedCode, setShelfScannedCode] = useState<string | null>(null);
   const [shelfAssignPicker, setShelfAssignPicker] = useState(false);
-  const [assignments, setAssignments] = useState<AssignmentEntry[]>([]);
+  const [assignments, setAssignments] = useState<Array<AssignmentEntry>>([]);
 
   // Bulk scan mode
   const [bulkMode, setBulkMode] = useState(false);
-  const [bulkQueue, setBulkQueue] = useState<BulkQueueEntry[]>([]);
+  const [bulkQueue, setBulkQueue] = useState<Array<BulkQueueEntry>>([]);
 
   // Session resume banner
   const [resumeSession, setResumeSession] = useState<ShelfSession | null>(null);
@@ -278,7 +278,7 @@ export function BarcodeAddPart({ scrollY = 0 }: BarcodeAddPartProps) {
     if (!pendingPhotoItem) return;
     if (pendingPhotoUri || pendingPhotoUri2) {
       setPhotoUploading(true);
-      const uploads: Promise<void>[] = [];
+      const uploads: Array<Promise<void>> = [];
       if (pendingPhotoUri) uploads.push(uploadPartPhoto(pendingPhotoItem.id, pendingPhotoUri, 1));
       if (pendingPhotoUri2) uploads.push(uploadPartPhoto(pendingPhotoItem.id, pendingPhotoUri2, 2));
       const results = await Promise.allSettled(uploads);

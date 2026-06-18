@@ -24,7 +24,7 @@ export async function lookupByBarcodeOffline(
   try {
     const raw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
     if (!raw) return null;
-    const items = JSON.parse(raw) as InventoryItem[];
+    const items = JSON.parse(raw) as Array<InventoryItem>;
     const match = items.find(
       (item) => Array.isArray(item.barcodes) && item.barcodes.includes(code),
     );
@@ -39,7 +39,7 @@ export async function upsertItemInBarcodeCache(
 ): Promise<void> {
   try {
     const raw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
-    const items: InventoryItem[] = raw ? (JSON.parse(raw) as InventoryItem[]) : [];
+    const items: Array<InventoryItem> = raw ? (JSON.parse(raw) as Array<InventoryItem>) : [];
     const idx = items.findIndex((item) => item.id === updatedItem.id);
     if (idx >= 0) {
       // Always update an existing entry — no size check needed.

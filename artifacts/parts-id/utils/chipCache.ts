@@ -69,7 +69,7 @@ export async function prefetchQuickLookups(
   try {
     const res = await fetch(`${apiBase}/reference/quick-lookups`);
     if (!res.ok) return;
-    const rows: { label: string; answer: string }[] = await res.json();
+    const rows: Array<{ label: string; answer: string }> = await res.json();
     const now = Date.now();
     for (const row of rows) {
       cache.set(row.label, { answer: row.answer, fetchedAt: now });

@@ -25,11 +25,11 @@ export async function saveBinsAndInvalidate(opts: {
   queryClient: QueryClientLike;
   mutateAsync: (args: {
     id: number;
-    data: { binLocations: string[] };
-  }) => Promise<{ binLocations: string[] }>;
+    data: { binLocations: Array<string> };
+  }) => Promise<{ binLocations: Array<string> }>;
   itemId: number;
-  bins: string[];
-}): Promise<{ binLocations: string[] }> {
+  bins: Array<string>;
+}): Promise<{ binLocations: Array<string> }> {
   const updated = await opts.mutateAsync({
     id: opts.itemId,
     data: { binLocations: opts.bins },
@@ -48,11 +48,11 @@ export async function saveBarcodesAndInvalidate(opts: {
   queryClient: QueryClientLike;
   mutateAsync: (args: {
     id: number;
-    data: { barcodes: string[] };
-  }) => Promise<{ barcodes: string[] }>;
+    data: { barcodes: Array<string> };
+  }) => Promise<{ barcodes: Array<string> }>;
   itemId: number;
-  barcodes: string[];
-}): Promise<{ barcodes: string[] }> {
+  barcodes: Array<string>;
+}): Promise<{ barcodes: Array<string> }> {
   const updated = await opts.mutateAsync({
     id: opts.itemId,
     data: { barcodes: opts.barcodes },
@@ -88,10 +88,10 @@ export async function undoBarcodeAndInvalidate(opts: {
   queryClient: QueryClientLike;
   mutateAsync: (args: {
     id: number;
-    data: { barcodes: string[] };
+    data: { barcodes: Array<string> };
   }) => Promise<InventoryItem>;
   itemId: number;
-  currentBarcodes: string[];
+  currentBarcodes: Array<string>;
   revokedBarcode: string;
 }): Promise<InventoryItem> {
   const newBarcodes = opts.currentBarcodes.filter(b => b !== opts.revokedBarcode);

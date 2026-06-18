@@ -78,7 +78,7 @@ type ReviewItem = {
 type SessionGroup = {
   job: JobMeta | null;
   jobId: number | null;
-  items: ReviewItem[];
+  items: Array<ReviewItem>;
 };
 
 export default function CatalogReviewScreen() {
@@ -94,11 +94,11 @@ export default function CatalogReviewScreen() {
     partsFound: number;
     matchedParts: number;
     imagesMatched: number;
-    unmatchedParts: { catalogNumber: string; description: string }[];
+    unmatchedParts: Array<{ catalogNumber: string; description: string }>;
   };
 
-  const [groups, setGroups] = useState<SessionGroup[]>([]);
-  const [failedJobs, setFailedJobs] = useState<FailedJob[]>([]);
+  const [groups, setGroups] = useState<Array<SessionGroup>>([]);
+  const [failedJobs, setFailedJobs] = useState<Array<FailedJob>>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,7 +118,7 @@ export default function CatalogReviewScreen() {
     setInfoDialog({ visible: true, title, message });
 
   type AddForm = { vendor: string; catalog: string; description: string; binLocation: string };
-  type CreatedPart = { id: number; vendor: string; catalog: string; description: string; binLocations: string[] };
+  type CreatedPart = { id: number; vendor: string; catalog: string; description: string; binLocations: Array<string> };
   const [addModalPart, setAddModalPart] = useState<{ catalogNumber: string; description: string } | null>(null);
   const [addForm, setAddForm] = useState<AddForm>({ vendor: "", catalog: "", description: "", binLocation: "" });
   const [addingInProgress, setAddingInProgress] = useState(false);
@@ -244,7 +244,7 @@ export default function CatalogReviewScreen() {
         ? `${API_BASE}/admin/catalog-pdf/reviews?jobId=${jobId}`
         : `${API_BASE}/admin/catalog-pdf/reviews`;
 
-      const requests: Promise<Response>[] = [
+      const requests: Array<Promise<Response>> = [
         fetch(url, { headers: authHeaders }),
       ];
       if (!jobId) {
@@ -257,7 +257,7 @@ export default function CatalogReviewScreen() {
 
       if (reviewRes.status === 401) { logoutAdmin(); return; }
       if (!reviewRes.ok) throw new Error("Failed to load");
-      const data = await reviewRes.json() as { items: ReviewItem[] };
+      const data = await reviewRes.json() as { items: Array<ReviewItem> };
 
       // Group by upload session (catalogPdfJobId)
       const groupMap = new Map<number | null, SessionGroup>();
@@ -282,7 +282,7 @@ export default function CatalogReviewScreen() {
               partsFound?: number;
               matchedParts?: number;
               imagesMatched?: number;
-              unmatchedParts?: { catalogNumber: string; description: string }[];
+              unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
             };
             setJobSummary({
               vendor: statusData.vendor ?? "",
@@ -292,7 +292,7 @@ export default function CatalogReviewScreen() {
               unmatchedParts: statusData.unmatchedParts ?? [],
             });
           } else {
-            const failedData = await secondRes.json() as { jobs: FailedJob[] };
+            const failedData = await secondRes.json() as { jobs: Array<FailedJob> };
             setFailedJobs(failedData.jobs);
           }
         }
@@ -492,7 +492,7 @@ export default function CatalogReviewScreen() {
     | { kind: "header"; group: SessionGroup }
     | { kind: "item"; item: ReviewItem };
 
-  const listData: ListRow[] = [];
+  const listData: Array<ListRow> = [];
   for (const group of groups) {
     const activeItems = group.items.filter((i) => !revertedIds.has(i.id));
     if (activeItems.length === 0) continue;

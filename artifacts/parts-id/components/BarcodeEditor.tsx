@@ -22,14 +22,14 @@ import { useColors } from "@/hooks/useColors";
 interface BarcodeEditorProps {
   item: InventoryItem | null;
   onClose: () => void;
-  onBarcodesChanged?: (id: number, barcodes: string[]) => void;
+  onBarcodesChanged?: (id: number, barcodes: Array<string>) => void;
 }
 
 export function BarcodeEditor({ item, onClose, onBarcodesChanged }: BarcodeEditorProps) {
   "use no memo";
   const colors = useColors();
   const queryClient = useQueryClient();
-  const [barcodes, setBarcodes] = useState<string[]>(item?.barcodes ?? []);
+  const [barcodes, setBarcodes] = useState<Array<string>>(item?.barcodes ?? []);
   const [newBarcode, setNewBarcode] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);

@@ -47,7 +47,7 @@ export function CatalogPickerModal({
   const [debouncedQuery, setDebouncedQuery] = useState(initialQuery ?? "");
   const [createError, setCreateError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(initialShowCreateForm ?? false);
-  const [lightboxUris, setLightboxUris] = useState<string[]>([]);
+  const [lightboxUris, setLightboxUris] = useState<Array<string>>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [newVendor, setNewVendor] = useState("");
   const [newBinLocation, setNewBinLocation] = useState("");

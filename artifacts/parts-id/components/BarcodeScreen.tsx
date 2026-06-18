@@ -96,7 +96,7 @@ export default function BarcodeScreen({ onClose }: BarcodeScreenProps = {}) {
       showToast("No bin location assigned — add a bin to this item first.");
       return;
     }
-    const newPins: PinnedPart[] = [];
+    const newPins: Array<PinnedPart> = [];
     let firstParsed: ReturnType<typeof parseBin> | null = null;
     for (const bin of bins) {
       const parsed = parseBin(bin);

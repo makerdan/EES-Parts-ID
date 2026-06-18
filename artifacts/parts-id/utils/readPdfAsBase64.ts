@@ -219,7 +219,7 @@ export async function readPdfAsBase64(uri: string): Promise<string> {
   for (let i = 0; i < bytes.length; i += CHUNK) {
     binary += String.fromCharCode.apply(
       null,
-      bytes.subarray(i, i + CHUNK) as unknown as number[],
+      bytes.subarray(i, i + CHUNK) as unknown as Array<number>,
     );
   }
   return btoa(binary);

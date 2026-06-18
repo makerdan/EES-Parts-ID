@@ -29,7 +29,7 @@ import { buildAisleHierarchy } from "@/lib/aisleHierarchy";
 import { useColors } from "@/hooks/useColors";
 
 type Props = {
-  inventory: InventoryItem[];
+  inventory: Array<InventoryItem>;
   onAislePress: (aisleNum: number) => void;
   focusAisleNum?: number | null;
   onFocusConsumed?: () => void;
@@ -93,7 +93,7 @@ export function WarehouseMapWeb({
     }
   }, [focusAisleNum, aisles, cellSize, onFocusConsumed, onFocusFailed]);
 
-  const rows: (typeof aisles)[] = [];
+  const rows: Array<typeof aisles> = [];
   for (let i = 0; i < aisles.length; i += COLS) {
     rows.push(aisles.slice(i, i + COLS));
   }

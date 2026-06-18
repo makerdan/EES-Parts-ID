@@ -2,8 +2,8 @@ export interface CsvInventoryRow {
   vendor: string;
   catalog: string;
   description: string;
-  binLocations: string[];
-  barcodes: string[];
+  binLocations: Array<string>;
+  barcodes: Array<string>;
 }
 
 export const INVENTORY_CSV_HEADER =
@@ -13,7 +13,7 @@ export function escapeField(v: string): string {
   return `"${v.replace(/"/g, '""')}"`;
 }
 
-export function serializeInventoryToCsv(items: CsvInventoryRow[]): string {
+export function serializeInventoryToCsv(items: Array<CsvInventoryRow>): string {
   const lines = items.map((item) => {
     const bin = item.binLocations.join(";");
     const barcodes = item.barcodes.join(",");
@@ -28,13 +28,13 @@ export interface DashboardStats {
   ai: {
     totalAllTime: number;
     totalThisMonth: number;
-    byFeature: { feature: string; total: number }[];
+    byFeature: Array<{ feature: string; total: number }>;
   };
   screenViews: {
     totalAllTime: number;
     uniqueVisitorsToday: number;
-    byScreen: { screenName: string; total: number }[];
-    dailyLast30Days: { date: string; total: number }[];
+    byScreen: Array<{ screenName: string; total: number }>;
+    dailyLast30Days: Array<{ date: string; total: number }>;
   };
   summary: {
     inventoryItems: number;
@@ -44,7 +44,7 @@ export interface DashboardStats {
 }
 
 export function serializeDashboardToCsv(stats: DashboardStats): string {
-  const sections: string[] = [];
+  const sections: Array<string> = [];
 
   sections.push("SUMMARY");
   sections.push("Metric,Value");

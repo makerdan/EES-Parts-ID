@@ -23,7 +23,7 @@ interface BinEditorProps {
   item: InventoryItem | null;
   onClose: () => void;
   /** Called after a save succeeds so callers can update local state. */
-  onBinsChanged?: (id: number, binLocations: string[]) => void;
+  onBinsChanged?: (id: number, binLocations: Array<string>) => void;
 }
 
 /**
@@ -34,7 +34,7 @@ interface BinEditorProps {
 export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
   const colors = useColors();
   const queryClient = useQueryClient();
-  const [bins, setBins] = useState<string[]>(item?.binLocations ?? []);
+  const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);
   const [newBin, setNewBin] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
