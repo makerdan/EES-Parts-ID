@@ -35,6 +35,7 @@ import { InfoDialog } from "@/components/ConfirmDialog";
 import type { ResumeProgress } from "@/types/catalogPdf";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 import { isBinLocationValid, BIN_FORMAT_HINT } from "@/utils/binValidation";
+import { performUpdateDescription } from "@/utils/updateDescription";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -155,30 +156,19 @@ export default function CatalogReviewScreen() {
 
   const handleUpdateDescription = async () => {
     if (!duplicateItem || updatingDescription) return;
-    setUpdatingDescription(true);
-    setUpdateDescriptionError(null);
-    try {
-      const r = await fetch(`${API_BASE}/admin/inventory/${duplicateItem.id}/description`, {
-        method: "PATCH",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({ description: addForm.description.trim() }),
-      });
-      if (r.status === 401) { logoutAdmin(); return; }
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({})) as { error?: string };
-        setUpdateDescriptionError(body.error ?? "Failed to update description.");
-        return;
-      }
-      if (addModalPart) {
-        setAddedCatalogs((prev) => new Set([...prev, addModalPart.catalogNumber]));
-      }
-      setAddModalPart(null);
-      setDuplicateItem(null);
-    } catch {
-      setUpdateDescriptionError("Network error. Please try again.");
-    } finally {
-      setUpdatingDescription(false);
-    }
+    await performUpdateDescription({
+      apiBase: API_BASE,
+      authHeaders,
+      duplicateItemId: duplicateItem.id,
+      description: addForm.description.trim(),
+      catalogNumber: addModalPart?.catalogNumber ?? null,
+      logoutAdmin,
+      setUpdatingDescription,
+      setUpdateDescriptionError,
+      setAddedCatalogs,
+      setAddModalPart: () => setAddModalPart(null),
+      setDuplicateItem: () => setDuplicateItem(null),
+    });
   };
 
   const handleAddToInventory = async () => {
