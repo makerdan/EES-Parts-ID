@@ -208,8 +208,6 @@ export function WarehouseMapWeb({
                   {row.map(aisle => {
                     const showPins = cellSize >= 100;
                     const maxSec = Math.max(1, ...aisle.sections.map(s => s.partCount));
-                    const isPinned = pinnedAisleNums?.has(aisle.aisleNum) ?? false;
-                    const isFocused = focusAisleNum === aisle.aisleNum;
                     return (
                       <Pressable
                         key={aisle.aisleNum}

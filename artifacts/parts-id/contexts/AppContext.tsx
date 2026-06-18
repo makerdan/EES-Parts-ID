@@ -11,7 +11,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Appearance, AppState, Platform, StyleSheet, Text, View, useColorScheme } from "react-native";
 import colorTokens from "@/constants/colors";
 import { setAuthTokenGetter, setBaseUrl, setUnauthorizedHandler } from "@workspace/api-client-react";
-import type { InventoryItem } from "@workspace/api-client-react";
 import {
   reportStorageError,
   setStorageErrorHandler,

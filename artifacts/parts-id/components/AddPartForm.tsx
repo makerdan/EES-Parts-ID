@@ -197,7 +197,7 @@ export function AddPartForm({ adminToken, onSuccess, initialDimensions }: AddPar
       }
 
       // Upload photos for each slot that has a URI. Failures are non-fatal.
-      const photoUploads: Array<() => Promise<void>> = [];
+      const photoUploads: (() => Promise<void>)[] = [];
       if (photoUri) {
         photoUploads.push(() => uploadPhoto(newItem.id, photoUri, 1));
       }

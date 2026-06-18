@@ -36,7 +36,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
 import { Feather } from "@expo/vector-icons";
 import { useApp, type DimensionUnit } from "@/contexts/AppContext";
-import { cancelMeasure, isLiDARSupported, measureObject, NativeLidarDepthView } from "lidar-measure";
+import { cancelMeasure, measureObject, NativeLidarDepthView } from "lidar-measure";
 import { getDeviceId } from "@/utils/deviceId";
 
 /**
