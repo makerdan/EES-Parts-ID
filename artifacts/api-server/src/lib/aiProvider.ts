@@ -195,8 +195,9 @@ export function getAllPoeModelNames(): string[] {
 
 /**
  * Probe each Poe bot name with a minimal completion request.
- * Logs a clear warning for any bot that returns a 404 (renamed / retired).
- * Advisory only — the server continues to start regardless.
+ * Logs a clear warning for any bot that returns a 404 (renamed / retired)
+ * or any other error (e.g. transient 500 from the provider).
+ * Advisory only — the server always continues to start regardless of outcome.
  * No-op when the active provider is not "poe".
  */
 export async function probePoeBotsOnStartup(): Promise<void> {
@@ -207,38 +208,42 @@ export async function probePoeBotsOnStartup(): Promise<void> {
   const botNames = getAllPoeModelNames();
   logger.info({ botNames }, "Probing Poe bot names on startup…");
 
-  await Promise.all(
-    botNames.map(async (botName) => {
-      try {
-        await _client.chat.completions.create({
-          model: botName,
-          messages: [{ role: "user", content: "hi" }],
-          max_tokens: 16,
-        });
-        logger.info({ botName }, `Poe bot '${botName}' — OK`);
-      } catch (err: unknown) {
-        const status =
-          err != null &&
-          typeof err === "object" &&
-          "status" in err &&
-          typeof (err as { status: unknown }).status === "number"
-            ? (err as { status: number }).status
-            : undefined;
+  try {
+    await Promise.all(
+      botNames.map(async (botName) => {
+        try {
+          await _client.chat.completions.create({
+            model: botName,
+            messages: [{ role: "user", content: "hi" }],
+            max_tokens: 16,
+          });
+          logger.info({ botName }, `Poe bot '${botName}' — OK`);
+        } catch (err: unknown) {
+          const status =
+            err != null &&
+            typeof err === "object" &&
+            "status" in err &&
+            typeof (err as { status: unknown }).status === "number"
+              ? (err as { status: number }).status
+              : undefined;
 
-        if (status === 404) {
-          logger.warn(
-            { botName },
-            `Poe bot '${botName}' not found — check bot name in aiProvider.ts`,
-          );
-        } else {
-          logger.warn(
-            { botName, err },
-            `Poe bot '${botName}' probe failed (non-404) — will try again at first real request`,
-          );
+          if (status === 404) {
+            logger.warn(
+              { botName },
+              `Poe bot '${botName}' not found — check bot name in aiProvider.ts`,
+            );
+          } else {
+            logger.warn(
+              { botName, err },
+              `Poe bot '${botName}' probe failed (status=${status ?? "unknown"}) — transient provider error, server will continue`,
+            );
+          }
         }
-      }
-    }),
-  );
+      }),
+    );
+  } catch (err) {
+    logger.warn({ err }, "probePoeBotsOnStartup: unexpected error during probe — server will continue");
+  }
 }
 
 /**
