@@ -341,7 +341,14 @@ export default function EditItemScreen() {
       }
 
       if (saves.length > 0) {
-        await Promise.all(saves);
+        const settled = await Promise.allSettled(saves);
+        const failures = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+        if (failures.length > 0) {
+          const firstMsg = failures[0].reason instanceof Error
+            ? failures[0].reason.message
+            : String(failures[0].reason ?? "Save failed");
+          throw new Error(firstMsg);
+        }
         const listKeyPrefix = getListInventoryQueryKey()[0];
 
         const patchItem = (i: InventoryItem): InventoryItem => {

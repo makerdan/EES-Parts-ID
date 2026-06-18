@@ -87,7 +87,7 @@ export default function RootLayout() {
     if (!fontsLoaded && !fontError) return;
     NetInfo.fetch().then((state) => {
       if (state.isConnected) prefetchSvgAsset();
-    });
+    }).catch(console.error);
   }, [fontsLoaded, fontError]);
 
   if (!fontsLoaded && !fontError) return null;
