@@ -3,12 +3,16 @@ const path = require("path");
 
 const config = getDefaultConfig(__dirname);
 
-// Watch the entire monorepo so Metro can resolve pnpm symlinks whose real
-// paths (e.g. lib/api-client-react/, lib/zone-validation/) live outside the
-// projectRoot (artifacts/parts-id). Without this, HMR triggers a SHA-1 crash
-// whenever those packages change.
-const workspaceRoot = path.resolve(__dirname, "../..");
-config.watchFolders = [...(config.watchFolders ?? []), workspaceRoot];
+// Watch only the lib packages that Parts ID actually imports so Metro can
+// resolve pnpm symlinks whose real paths live outside projectRoot without
+// indexing unrelated artifacts or build output as the monorepo grows.
+// If a new @workspace/* dependency is added here, add its lib dir below.
+const libRoot = path.resolve(__dirname, "../../lib");
+const watchedLibs = [
+  path.join(libRoot, "api-client-react"),
+  path.join(libRoot, "zone-validation"),
+];
+config.watchFolders = [...(config.watchFolders ?? []), ...watchedLibs];
 
 // Allow bundling .svg files as static assets (used by SvgUri via expo-asset)
 const { assetExts, sourceExts } = config.resolver;
