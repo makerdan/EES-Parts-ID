@@ -85,11 +85,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
   const [chunksCompleted, setChunksCompleted] = useState(0);
   const [chunksTotal, setChunksTotal] = useState(0);
-  const [failedChunkInfo, setFailedChunkInfo] = useState<{
-    chunkIndex: number;
-    totalChunks: number;
-    parentJobId: string | null;
-  } | null>(null);
+  const [overallUploadPct, setOverallUploadPct] = useState<number | null>(null);
 
   useEffect(() => {
     if (retryCountdown === null || retryCountdown <= 0) return;
@@ -247,6 +243,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     onNetwork: () => void,
     baseBytes = 0,
     remainingBytesAfter = 0,
+    totalBodyBytes = 0,
   ): void => {
     const token = adminToken!;
     const body = JSON.stringify({
@@ -267,6 +264,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         setUploadPct(Math.round((e.loaded / e.total) * 100));
         const now = Date.now();
         const cumulativeLoaded = baseBytes + e.loaded;
+        if (totalBodyBytes > 0) {
+          setOverallUploadPct(Math.round((cumulativeLoaded / totalBodyBytes) * 100));
+        }
         const samples = speedSamplesRef.current;
         samples.push({ t: now, loaded: cumulativeLoaded });
         const cutoff = now - SPEED_WINDOW_MS;
@@ -362,7 +362,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             base64,
             { chunkIndex: i, chunkCount: chunks.length, pageOffset: chunk.pageOffset, ...(parentJobId ? { parentJobId } : {}) },
             0, resolve, (msg) => reject(new Error(msg)), () => reject(new Error("__abort__")), () => reject(new Error("__network__")),
-            baseBytesAccum, remainingBytesAfter,
+            baseBytesAccum, remainingBytesAfter, totalBodyBytes,
           );
         });
 
@@ -375,6 +375,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           aborted = true;
           setLoading(false);
           setUploadPct(null);
+          setOverallUploadPct(null);
           setChunkLabel(null);
           setChunksCompleted(0);
           setChunksTotal(0);
@@ -384,6 +385,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         // Network or server error — surface targeted chunk retry
         setLoading(false);
         setUploadPct(null);
+        setOverallUploadPct(null);
         setUploadSpeed(null);
         setUploadEta(null);
         setChunkLabel(null);
@@ -403,6 +405,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
     // All chunks uploaded — start polling parent job
     setUploadPct(null);
+    setOverallUploadPct(null);
     setUploadSpeed(null);
     setUploadEta(null);
     setChunkLabel(null);
@@ -462,6 +465,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setFailedChunkInfo(null);
     setLoading(true);
     setUploadPct(0);
+    setOverallUploadPct(null);
     setChunkLabel(null);
     setUploadSpeed(null);
     setUploadEta(null);
@@ -507,13 +511,19 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setError(null);
     setLoading(true);
     setUploadPct(0);
+    setOverallUploadPct(null);
     setChunkLabel(`Uploading part ${chunkIndex + 1} of ${chunks.length}…`);
     setUploadSpeed(null);
     setUploadEta(null);
     speedSamplesRef.current = [];
 
+    const chunkBase64List = chunks.map(c => bytesToBase64(c.bytes));
+    const chunkBodySizes = chunkBase64List.map(b64 => b64.length);
+    const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
+    const baseBytesForChunk = chunkBodySizes.slice(0, chunkIndex).reduce((a, b) => a + b, 0);
+
     try {
-      const base64 = bytesToBase64(chunk.bytes);
+      const base64 = chunkBase64List[chunkIndex]!;
       await new Promise<void>((resolve, reject) => {
         sendSingleChunk(
           base64,
@@ -528,11 +538,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           (msg) => reject(new Error(msg)),
           () => reject(new Error("__abort__")),
           () => reject(new Error("__network__")),
+          baseBytesForChunk,
+          0,
+          totalBodyBytes,
         );
       });
 
       setLoading(false);
       setUploadPct(null);
+      setOverallUploadPct(null);
       setChunkLabel(null);
       // Reset the job status optimistically so polling reflects resumed work
       setJobStatus(prev =>
@@ -543,6 +557,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       const msg = (err as Error).message;
       setLoading(false);
       setUploadPct(null);
+      setOverallUploadPct(null);
       setChunkLabel(null);
       if (msg !== "__abort__") {
         setError(
@@ -621,6 +636,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     }
     setLoading(true);
     setUploadPct(0);
+    setOverallUploadPct(null);
     setChunkLabel(null);
     setUploadSpeed(null);
     setUploadEta(null);
@@ -650,6 +666,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setRetryCountdown(null);
     setLoading(false);
     setUploadPct(null);
+    setOverallUploadPct(null);
     setUploadSpeed(null);
     setUploadEta(null);
     setError("Network error — check your connection and try again.");
@@ -786,7 +803,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           <View style={s.progressRow}>
             <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
               {chunkLabel !== null
-                ? (uploadPct !== null ? `${chunkLabel} · ${uploadPct}%` : `${chunkLabel}…`)
+                ? `Uploading… ${overallUploadPct ?? 0}%`
                 : `Uploading… ${uploadPct ?? 0}%`}
             </Text>
             <Pressable onPress={handleCancel} style={[s.cancelBtn, { borderColor: colors.destructive }]}>
