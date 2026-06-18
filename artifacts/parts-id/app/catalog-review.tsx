@@ -34,6 +34,7 @@ import { FailedJobsSection } from "@/components/FailedJobsSection";
 import { InfoDialog } from "@/components/ConfirmDialog";
 import type { ResumeProgress } from "@/types/catalogPdf";
 import { useTrackScreen } from "@/utils/useTrackScreen";
+import { isBinLocationValid, BIN_FORMAT_HINT } from "@/utils/binValidation";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -623,6 +624,11 @@ export default function CatalogReviewScreen() {
                 autoCorrect={false}
                 editable={!addingInProgress}
               />
+              {addForm.binLocation.trim() && !isBinLocationValid(addForm.binLocation) ? (
+                <Text style={[s.binFormatHint, { color: colors.warning }]}>
+                  ⚠ {BIN_FORMAT_HINT}
+                </Text>
+              ) : null}
 
               {addError ? (
                 <Text style={[s.addErrorText, { color: colors.destructive }]}>{addError}</Text>
@@ -926,6 +932,7 @@ const s = StyleSheet.create({
   },
   fieldInputMulti: { minHeight: 80, textAlignVertical: "top", paddingTop: 11 },
   addErrorText: { fontSize: 13, fontFamily: "Inter_500Medium", marginTop: 10, marginBottom: 4 },
+  binFormatHint: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 5, marginBottom: 2 },
   modalFooter: {
     flexDirection: "row", gap: 10, paddingHorizontal: 18, paddingVertical: 16, borderTopWidth: 1,
   },
