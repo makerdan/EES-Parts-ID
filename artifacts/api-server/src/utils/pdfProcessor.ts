@@ -48,6 +48,140 @@ export async function extractPdfPages(pdfBuffer: Buffer): Promise<PageData[]> {
   return pdfJsFallback(pdfBuffer);
 }
 
+// ── Text reconstruction ────────────────────────────────────────────────────────
+
+interface RawItem {
+  str?: string;
+  transform?: number[];
+}
+
+interface PositionedItem {
+  str: string;
+  x: number;
+  y: number;
+}
+
+/**
+ * Reconstruct page text preserving reading order and table structure.
+ * Groups items by Y coordinate (±4 pt tolerance), sorts buckets top-to-bottom,
+ * items within each bucket left-to-right, then joins with tabs (columns) and
+ * newlines (rows). This keeps table rows intact instead of turning them into
+ * word soup.
+ */
+function reconstructText(items: RawItem[]): string {
+  const positioned: PositionedItem[] = items
+    .map((i) => ({ str: i.str ?? "", x: i.transform?.[4] ?? 0, y: i.transform?.[5] ?? 0 }))
+    .filter((i) => i.str.trim().length > 0);
+
+  if (positioned.length === 0) return "";
+
+  const buckets: PositionedItem[][] = [];
+  for (const item of positioned) {
+    const existing = buckets.find((b) => Math.abs(b[0].y - item.y) <= 4);
+    if (existing) {
+      existing.push(item);
+    } else {
+      buckets.push([item]);
+    }
+  }
+
+  // Sort buckets top-to-bottom (PDF y=0 is bottom, so higher y = higher on page)
+  buckets.sort((a, b) => b[0].y - a[0].y);
+
+  for (const bucket of buckets) {
+    bucket.sort((a, b) => a.x - b.x);
+  }
+
+  return buckets
+    .map((bucket) => bucket.map((i) => i.str).join("\t"))
+    .join("\n")
+    .trim();
+}
+
+// ── Structure tree helpers ─────────────────────────────────────────────────────
+
+interface StructFigure {
+  alt: string | null;
+  bbox: number[] | null;
+}
+
+interface StructNode {
+  role?: string;
+  type?: string;
+  alt?: string;
+  bbox?: number[];
+  children?: unknown[];
+}
+
+/** Walk the pdfjs structure tree recursively and collect Figure nodes. */
+function collectFigures(node: unknown, out: StructFigure[]): void {
+  if (!node || typeof node !== "object") return;
+  const n = node as StructNode;
+  if (n.role === "Figure") {
+    out.push({ alt: n.alt ?? null, bbox: n.bbox ?? null });
+  }
+  if (Array.isArray(n.children)) {
+    for (const child of n.children) {
+      collectFigures(child, out);
+    }
+  }
+}
+
+/**
+ * Build the contextual text block for one page:
+ * 1. Reconstructed reading-order text (tab-separated columns)
+ * 2. Image alt text lines from tagged PDF structure tree
+ * 3. Caption lines: text items spatially just below each figure bbox
+ */
+function buildPageContext(
+  items: RawItem[],
+  figures: StructFigure[],
+): string {
+  const baseText = reconstructText(items);
+
+  // Deduplicated alt text lines
+  const altLines: string[] = [];
+  const seenAlts = new Set<string>();
+  for (const fig of figures) {
+    if (fig.alt && fig.alt.trim()) {
+      const trimmed = fig.alt.trim();
+      if (!seenAlts.has(trimmed)) {
+        seenAlts.add(trimmed);
+        altLines.push(`Image alt: ${trimmed}`);
+      }
+    }
+  }
+
+  // Spatial caption extraction: text items whose baseline Y falls just below
+  // each figure's bottom edge (within 40 pts below the figure).
+  // PDF coordinate system: y increases upward, so figure bottom = bbox[1] (y_min).
+  const captionLines: string[] = [];
+  const positioned: PositionedItem[] = items
+    .map((i) => ({ str: i.str ?? "", x: i.transform?.[4] ?? 0, y: i.transform?.[5] ?? 0 }))
+    .filter((i) => i.str.trim().length > 0);
+
+  for (const fig of figures) {
+    if (!fig.bbox || fig.bbox.length < 4) continue;
+    const figBottom = fig.bbox[1]; // y_min (bottom of figure in PDF space)
+    const captionBand = figBottom - 40;
+
+    const below = positioned
+      .filter((i) => i.y < figBottom && i.y >= captionBand)
+      .sort((a, b) => a.x - b.x);
+
+    if (below.length > 0) {
+      const captionText = below.map((i) => i.str).join(" ").trim();
+      if (captionText) {
+        captionLines.push(`Caption: ${captionText}`);
+      }
+    }
+  }
+
+  const extras = [...altLines, ...captionLines];
+  if (extras.length === 0) return baseText;
+  return extras.join("\n") + (baseText ? "\n" + baseText : "");
+}
+
 // ── pdftoppm rendering (primary path) ────────────────────────────────────────
 
 async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<PageData[] | null> {
@@ -78,8 +212,8 @@ async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<PageData[] | nul
 
     if (pngFiles.length === 0) return null;
 
-    // Get page text via pdfjs-dist for supplementary context
-    const textByPage = await extractTextOnly(pdfBuffer, pngFiles.length);
+    // Get page text + alt text + captions via pdfjs-dist for supplementary context
+    const textByPage = await extractRichText(pdfBuffer, pngFiles.length);
 
     const pages: PageData[] = await Promise.all(
       pngFiles.map(async (fname, i) => {
@@ -104,8 +238,11 @@ async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<PageData[] | nul
   }
 }
 
-/** Extract text content only from all pages via pdfjs-dist. */
-async function extractTextOnly(pdfBuffer: Buffer, numPages: number): Promise<string[]> {
+/**
+ * Extract rich text context for all pages: reconstructed reading-order text,
+ * structure tree alt text, and spatial captions.
+ */
+async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<string[]> {
   try {
     const pdfjs = await import("pdfjs-dist");
     pdfjs.GlobalWorkerOptions.workerSrc = "";
@@ -121,12 +258,16 @@ async function extractTextOnly(pdfBuffer: Buffer, numPages: number): Promise<str
     for (let p = 1; p <= Math.min(numPages, doc.numPages); p++) {
       const page = await doc.getPage(p);
       const tc = await page.getTextContent();
-      const text = (tc.items as Array<{ str?: string }>)
-        .map((i) => i.str ?? "")
-        .join(" ")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-      results.push(text);
+      const items = tc.items as RawItem[];
+
+      // Collect figures from structure tree (best-effort)
+      const figures: StructFigure[] = [];
+      try {
+        const tree = await (page as unknown as { getStructTree(): Promise<unknown> }).getStructTree();
+        collectFigures(tree, figures);
+      } catch { /* structure tree unavailable — non-fatal */ }
+
+      results.push(buildPageContext(items, figures));
       page.cleanup();
     }
     return results;
@@ -165,11 +306,16 @@ async function pdfJsFallback(pdfBuffer: Buffer): Promise<PageData[]> {
 
     try {
       const tc = await page.getTextContent();
-      text = (tc.items as Array<{ str?: string }>)
-        .map((i) => i.str ?? "")
-        .join(" ")
-        .replace(/\s{2,}/g, " ")
-        .trim();
+      const items = tc.items as RawItem[];
+
+      // Collect figures from structure tree (best-effort)
+      const figures: StructFigure[] = [];
+      try {
+        const tree = await (page as unknown as { getStructTree(): Promise<unknown> }).getStructTree();
+        collectFigures(tree, figures);
+      } catch { /* non-fatal */ }
+
+      text = buildPageContext(items, figures);
     } catch { /* non-fatal */ }
 
     if (sharpFn) {
