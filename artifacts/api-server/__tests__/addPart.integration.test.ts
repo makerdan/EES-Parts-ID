@@ -317,4 +317,93 @@ describe("POST /api/inventory/add-part", () => {
       .send({ vendor: "JEST-VENDOR-B", catalog })
       .expect(201);
   });
+
+  // ── Description field ─────────────────────────────────────────────────────
+
+  it("persists the description in the returned item when provided", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-001`;
+    const description = "15A single-pole breaker, 120/240V";
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    expect(res.body.item.description).toBe(description);
+  });
+
+  it("persists the description in the database when provided", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-002`;
+    const description = "3/4\" EMT connector, steel";
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    const rows = await db
+      .select()
+      .from(inventoryTable)
+      .where(sql`${inventoryTable.catalog} = ${catalog}`);
+
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.description).toBe(description);
+  });
+
+  it("stores an empty description when description is omitted", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-003`;
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog })
+      .expect(201);
+
+    expect(res.body.item.description).toBe("");
+  });
+
+  it("trims leading/trailing whitespace from description before saving", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-004`;
+    const description = "  20A duplex receptacle  ";
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description })
+      .expect(201);
+
+    expect(res.body.item.description).toBe("20A duplex receptacle");
+  });
+
+  it("returns 409 with description present when a duplicate catalog+vendor already exists", async () => {
+    const catalog = `${CATALOG_PREFIX}DESC-DUP-001`;
+
+    await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description: "original description" })
+      .expect(201);
+
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ vendor: "JEST-VENDOR", catalog, description: "duplicate attempt" })
+      .expect(409);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/already exists/i);
+  });
+
+  it("returns 400 when vendor is missing even if description is provided", async () => {
+    const res = await supertest(app)
+      .post("/api/inventory/add-part")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ catalog: `${CATALOG_PREFIX}DESC-VAL-001`, description: "some description" })
+      .expect(400);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/vendor.*catalog|catalog.*vendor|required/i);
+  });
 });
