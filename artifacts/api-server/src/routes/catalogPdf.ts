@@ -417,6 +417,31 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     }
   }
 
+  // ── Chunk retry: clean up previous zero-progress failed child and reset parent ──
+  // When re-uploading a chunk (retry after failure), delete any previous failed or
+  // cancelled child job for this (parentJobId, chunkIndex) slot that processed 0
+  // pages — safe to remove because no inventory data was written. Then reset the
+  // parent from 'failed' → 'processing' so polling reflects the resumed work.
+  if (resolvedParentJobId !== null && chunkIndex !== null) {
+    await db
+      .delete(catalogPdfJobTable)
+      .where(
+        and(
+          eq(catalogPdfJobTable.parentJobId, resolvedParentJobId),
+          eq(catalogPdfJobTable.chunkIndex, chunkIndex),
+          inArray(catalogPdfJobTable.status, ["failed", "cancelled"]),
+          eq(catalogPdfJobTable.processedPages, 0),
+        ),
+      );
+
+    await db.execute(sql`
+      UPDATE catalog_pdf_job
+      SET status = 'processing', error_message = NULL, finished_at = NULL
+      WHERE id = ${resolvedParentJobId}
+        AND status = 'failed'
+    `);
+  }
+
   // ── Create child (or legacy) job record ───────────────────────────────────
   const [jobRow] = await db
     .insert(catalogPdfJobTable)
@@ -550,6 +575,8 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
   if (row.chunkCount !== null && row.parentJobId === null) {
     const children = await db
       .select({
+        id: catalogPdfJobTable.id,
+        chunkIndex: catalogPdfJobTable.chunkIndex,
         status: catalogPdfJobTable.status,
         totalPages: catalogPdfJobTable.totalPages,
         processedPages: catalogPdfJobTable.processedPages,
@@ -591,6 +618,11 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
     const failedChild = children.find((c) => c.status === "failed");
     const errorMessage = failedChild?.errorMessage ?? row.errorMessage;
 
+    // Expose which chunk jobs failed so the client can offer targeted retry
+    const failedChunks = children
+      .filter((c) => c.status === "failed")
+      .map((c) => ({ chunkJobId: String(c.id), chunkIndex: c.chunkIndex }));
+
     return void res.json({
       jobId,
       status: aggStatus,
@@ -603,6 +635,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
       startedAt: row.startedAt,
       finishedAt: row.finishedAt,
       errorMessage: errorMessage ?? null,
+      ...(failedChunks.length > 0 ? { failedChunks } : {}),
     });
   }
 
@@ -688,6 +721,18 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
       error: `Cannot resume a job with status "${jobRow.status}". Only failed or processing jobs can be resumed.`,
     });
     return;
+  }
+
+  // ── If this is a child chunk job, reset the parent from 'failed' → 'processing' ──
+  // The parent was marked failed when this child failed. Resuming the child means
+  // processing is back in-flight, so the parent should reflect that.
+  if (jobRow.parentJobId !== null) {
+    await db.execute(sql`
+      UPDATE catalog_pdf_job
+      SET status = 'processing', error_message = NULL, finished_at = NULL
+      WHERE id = ${jobRow.parentJobId}
+        AND status = 'failed'
+    `);
   }
 
   // ── Validate the PDF payload after confirming the job is resumable ───────────

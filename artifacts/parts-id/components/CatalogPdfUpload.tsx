@@ -129,6 +129,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const SPEED_WINDOW_MS = 4000;
   const SPEED_WINDOW_MAX = 20;
 
+  type FailedChunkInfo = {
+    chunkIndex: number;
+    totalChunks: number;
+    parentJobId: string | null;
+  };
+  const [failedChunkInfo, setFailedChunkInfo] = useState<FailedChunkInfo | null>(null);
+
   const [cancellingJob, setCancellingJob] = useState(false);
 
   const stopPolling = useCallback(() => {
@@ -294,33 +301,18 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     xhr.send(body);
   };
 
-  // ── Chunked upload flow ────────────────────────────────────────────────────
-  const handleChunkedUpload = async (bytes: Uint8Array): Promise<void> => {
-    let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
-    try {
-      chunks = await splitPdfIntoChunks(bytes, PAGES_PER_CHUNK);
-    } catch (err) {
-      setLoading(false);
-      setUploadPct(null);
-      setChunkLabel(null);
-      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
-      return;
-    }
-
-    // Single-element result: use the regular single-upload path
-    if (chunks.length === 1) {
-      const base64 = bytesToBase64(chunks[0]!.bytes);
-      handleSingleUpload(base64, 0);
-      return;
-    }
-
-    setChunksTotal(chunks.length);
-    setChunksCompleted(0);
-
-    let parentJobId: string | null = null;
+  // ── Chunked upload inner loop ──────────────────────────────────────────────
+  // Uploads chunks[startIndex..end], reusing existingParentJobId if provided.
+  // On success starts polling. On failure sets failedChunkInfo for targeted retry.
+  const uploadChunksFromIndex = async (
+    chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>,
+    startIndex: number,
+    existingParentJobId: string | null,
+  ): Promise<void> => {
+    let parentJobId: string | null = existingParentJobId;
     let aborted = false;
 
-    for (let i = 0; i < chunks.length; i++) {
+    for (let i = startIndex; i < chunks.length; i++) {
       if (aborted) break;
       const chunk = chunks[i]!;
       const base64 = bytesToBase64(chunk.bytes);
@@ -358,16 +350,21 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           setChunkLabel(null);
           setChunksCompleted(0);
           setChunksTotal(0);
+          setFailedChunkInfo(null);
           return;
         }
-        // Network or server error
+        // Network or server error — surface targeted chunk retry
         setLoading(false);
         setUploadPct(null);
         setChunkLabel(null);
         setChunksCompleted(0);
         setChunksTotal(0);
+        setFailedChunkInfo({
+          chunkIndex: i,
+          totalChunks: chunks.length,
+          parentJobId: i === 0 ? null : parentJobId,
+        });
         setError(msg === "__network__" ? "Network error — check your connection and try again." : msg);
-        setShowRetryBtn(true);
         return;
       }
     }
@@ -381,6 +378,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunksTotal(0);
     setLoading(false);
     setPdfBytes(null);
+    setFailedChunkInfo(null);
 
     setJobStatus({
       jobId: parentJobId,
@@ -392,6 +390,64 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       errorMessage: null,
     });
     startPolling(parentJobId);
+  };
+
+  // ── Chunked upload flow ────────────────────────────────────────────────────
+  const handleChunkedUpload = async (bytes: Uint8Array): Promise<void> => {
+    let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
+    try {
+      chunks = await splitPdfIntoChunks(bytes, PAGES_PER_CHUNK);
+    } catch (err) {
+      setLoading(false);
+      setUploadPct(null);
+      setChunkLabel(null);
+      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+      return;
+    }
+
+    // Single-element result: use the regular single-upload path
+    if (chunks.length === 1) {
+      const base64 = bytesToBase64(chunks[0]!.bytes);
+      handleSingleUpload(base64, 0);
+      return;
+    }
+
+    setChunksTotal(chunks.length);
+    setChunksCompleted(0);
+    await uploadChunksFromIndex(chunks, 0, null);
+  };
+
+  // ── Retry a single failed chunk (without re-uploading the whole file) ──────
+  const handleRetryChunk = async (): Promise<void> => {
+    if (!failedChunkInfo || !pdfBytes || !adminToken) return;
+
+    const { chunkIndex, parentJobId } = failedChunkInfo;
+    setError(null);
+    setFailedChunkInfo(null);
+    setLoading(true);
+    setUploadPct(0);
+    setChunkLabel(null);
+    setUploadSpeed(null);
+    setUploadEta(null);
+    speedSamplesRef.current = [];
+
+    if (chunkIndex === 0 || !parentJobId) {
+      // Chunk 0 failed before a parent job was created — restart everything
+      void handleChunkedUpload(pdfBytes);
+      return;
+    }
+
+    let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
+    try {
+      chunks = await splitPdfIntoChunks(pdfBytes, PAGES_PER_CHUNK);
+    } catch (err) {
+      setLoading(false);
+      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+      return;
+    }
+
+    // Resume from the failed chunk index, reusing the existing parent job
+    await uploadChunksFromIndex(chunks, chunkIndex, parentJobId);
   };
 
   // ── Legacy single-upload flow (small files) ───────────────────────────────
@@ -453,6 +509,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setError(null);
     setRetryCountdown(null);
     setShowRetryBtn(false);
+    setFailedChunkInfo(null);
     if (attempt === 0) setJobStatus(null);
     setLoading(true);
     setUploadPct(0);
@@ -565,7 +622,16 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       ) : error ? (
         <View style={s.errorRow}>
           <Text style={[s.error, { color: colors.destructive, flex: 1 }]}>{error}</Text>
-          {showRetryBtn ? (
+          {failedChunkInfo && pdfBytes ? (
+            <Pressable
+              onPress={() => { void handleRetryChunk(); }}
+              style={[s.retryBtn, { borderColor: colors.destructive }]}
+            >
+              <Text style={[s.retryBtnText, { color: colors.destructive }]}>
+                Retry part {failedChunkInfo.chunkIndex + 1}/{failedChunkInfo.totalChunks}
+              </Text>
+            </Pressable>
+          ) : showRetryBtn ? (
             <Pressable
               onPress={() => handleStart(0)}
               style={[s.retryBtn, { borderColor: colors.destructive }]}
