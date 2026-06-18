@@ -141,7 +141,8 @@ describe("readPdfAsBase64 – web path", () => {
     await readPdfAsBase64(uri);
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(mockFetch).toHaveBeenCalledWith(uri);
+    // Second arg is the AbortSignal options object — check only the URI.
+    expect(mockFetch).toHaveBeenCalledWith(uri, expect.objectContaining({ signal: expect.anything() }));
   });
 
   it("throws PdfTooLargeError when the buffer exceeds 25 MB", async () => {
@@ -172,6 +173,17 @@ describe("readPdfAsBase64 – web path", () => {
 
     await expect(readPdfAsBase64("blob:http://localhost/forbidden.pdf")).rejects.toThrow(
       "HTTP 403",
+    );
+  });
+
+  it("throws a user-friendly message when the fetch is aborted (timeout)", async () => {
+    const abortError = Object.assign(new Error("The user aborted a request."), {
+      name: "AbortError",
+    });
+    mockFetch.mockRejectedValueOnce(abortError);
+
+    await expect(readPdfAsBase64("blob:http://localhost/large.pdf")).rejects.toThrow(
+      "timed out",
     );
   });
 
