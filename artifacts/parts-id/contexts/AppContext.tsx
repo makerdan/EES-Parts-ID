@@ -377,7 +377,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       if (typeof setUnauthorizedHandler !== "function") return;
       setUnauthorizedHandler(() => {
-        secureDelete(ADMIN_TOKEN_KEY).catch(() => {});
+        secureDelete(ADMIN_TOKEN_KEY).catch(err => {
+          // eslint-disable-next-line no-console
+          console.warn("[AppContext] Failed to delete admin token from secure storage:", err);
+          reportStorageError("Could not clear admin session token", err);
+        });
         setAdminToken(null);
         showToast("Admin session expired. Please log in again.", "error");
       });
@@ -429,6 +433,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             if (merged.themeMode !== prev.themeMode) applyThemeMode(merged.themeMode);
             return merged;
           });
+        }).catch(err => {
+          // eslint-disable-next-line no-console
+          console.warn("[AppContext] Background admin profile sync failed:", err);
         });
       }
     }).catch(() => {
@@ -537,6 +544,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (merged.themeMode !== prev.themeMode) applyThemeMode(merged.themeMode);
           return merged;
         });
+      }).catch(err => {
+        // eslint-disable-next-line no-console
+        console.warn("[AppContext] Post-login admin profile sync failed:", err);
       });
 
       return { success: true };
