@@ -186,10 +186,14 @@ describe("model helpers reflect the active provider", () => {
     expect(mod.getIdentifyModel()).toBe("gpt-4o");
   });
 
-  it("getCatalogModel() matches getIdentifyModel() for both providers", () => {
-    expect(mod.getCatalogModel()).toBe(mod.getIdentifyModel());
+  it("getCatalogModel() returns the dedicated catalog bot (Gemini) when provider is 'poe'", () => {
+    expect(mod.getCatalogModel()).toBe(mod.POE_CATALOG_BOT);
+    expect(mod.getCatalogModel()).not.toBe(mod.POE_IDENTIFY_BOT);
+  });
+
+  it("getCatalogModel() returns 'gpt-4o' when provider is 'openai'", () => {
     mod.setProvider("openai");
-    expect(mod.getCatalogModel()).toBe(mod.getIdentifyModel());
+    expect(mod.getCatalogModel()).toBe("gpt-4o");
   });
 
   it("getReferenceModel() matches getEnrichModel() for both providers", () => {
