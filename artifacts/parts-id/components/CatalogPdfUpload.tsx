@@ -50,6 +50,7 @@ type JobStatus = {
   matchedParts: number;
   imagesMatched: number;
   errorMessage: string | null;
+  failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
 };
 
 interface Props {
@@ -101,6 +102,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
+  // Stores the split chunks so server-side failures can be retried without re-picking the file.
+  const chunksRef = useRef<Awaited<ReturnType<typeof splitPdfIntoChunks>> | null>(null);
+  const [hasStoredChunks, setHasStoredChunks] = useState(false);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
 
@@ -149,6 +153,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 
+  // Release stored chunk bytes when the job reaches a terminal success/cancel
+  // state (failure keeps them so the retry buttons remain available).
+  useEffect(() => {
+    if (jobStatus?.status === "done" || jobStatus?.status === "cancelled") {
+      chunksRef.current = null;
+      setHasStoredChunks(false);
+    }
+  }, [jobStatus?.status]);
+
   const startPolling = useCallback((jobId: string) => {
     stopPolling();
     pollRef.current = setInterval(async () => {
@@ -189,6 +202,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setError(null);
     setPdfBytes(null);
     setFilename(null);
+    chunksRef.current = null;
+    setHasStoredChunks(false);
     setReadingFile(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -418,6 +433,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       return;
     }
 
+    // Persist the chunks so server-side processing failures can be retried
+    // without the admin re-picking the file (pdfBytes is cleared after upload).
+    chunksRef.current = chunks;
+    setHasStoredChunks(true);
+
     setChunksTotal(chunks.length);
     setChunksCompleted(0);
 
@@ -468,6 +488,67 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
 
     await uploadChunksFromIndex(chunks, chunkIndex, parentJobId, chunkBase64List, chunkBodySizes, totalBodyBytes);
+  };
+
+  // ── Retry a specific chunk that failed during server-side AI processing ────
+  // Called from the polling-detected failure UI. pdfBytes may already be null,
+  // so this uses chunksRef (persisted when the chunked upload started).
+  const handleRetryServerChunk = async (chunkIndex: number): Promise<void> => {
+    const chunks = chunksRef.current;
+    const parentJobId = jobStatus?.jobId ?? null;
+    if (!chunks || !adminToken || !parentJobId) return;
+
+    const chunk = chunks[chunkIndex];
+    if (!chunk) return;
+
+    setError(null);
+    setLoading(true);
+    setUploadPct(0);
+    setChunkLabel(`Uploading part ${chunkIndex + 1} of ${chunks.length}…`);
+    setUploadSpeed(null);
+    setUploadEta(null);
+    speedSamplesRef.current = [];
+
+    try {
+      const base64 = bytesToBase64(chunk.bytes);
+      await new Promise<void>((resolve, reject) => {
+        sendSingleChunk(
+          base64,
+          {
+            chunkIndex,
+            chunkCount: chunks.length,
+            pageOffset: chunk.pageOffset,
+            parentJobId,
+          },
+          0,
+          () => resolve(),
+          (msg) => reject(new Error(msg)),
+          () => reject(new Error("__abort__")),
+          () => reject(new Error("__network__")),
+        );
+      });
+
+      setLoading(false);
+      setUploadPct(null);
+      setChunkLabel(null);
+      // Reset the job status optimistically so polling reflects resumed work
+      setJobStatus(prev =>
+        prev ? { ...prev, status: "processing", errorMessage: null, failedChunks: undefined } : prev,
+      );
+      startPolling(parentJobId);
+    } catch (err) {
+      const msg = (err as Error).message;
+      setLoading(false);
+      setUploadPct(null);
+      setChunkLabel(null);
+      if (msg !== "__abort__") {
+        setError(
+          msg === "__network__"
+            ? "Network error — check your connection and try again."
+            : msg,
+        );
+      }
+    }
   };
 
   // ── Legacy single-upload flow (small files) ───────────────────────────────
@@ -530,7 +611,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setRetryCountdown(null);
     setShowRetryBtn(false);
     setFailedChunkInfo(null);
-    if (attempt === 0) setJobStatus(null);
+    if (attempt === 0) {
+      setJobStatus(null);
+      chunksRef.current = null;
+      setHasStoredChunks(false);
+    }
     setLoading(true);
     setUploadPct(0);
     setChunkLabel(null);
@@ -821,12 +906,27 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           <Text style={[s.doneText, { color: colors.destructive }]}>
             Job failed: {jobStatus.errorMessage ?? "Unknown error"}
           </Text>
-          <Pressable
-            onPress={() => { setJobStatus(null); setFilename(null); }}
-            style={[s.reviewBtn, { borderColor: colors.destructive }]}
-          >
-            <Text style={[s.reviewBtnText, { color: colors.destructive }]}>Try again</Text>
-          </Pressable>
+          {hasStoredChunks && jobStatus.failedChunks && jobStatus.failedChunks.length > 0 ? (
+            jobStatus.failedChunks.map((fc) => (
+              <Pressable
+                key={fc.chunkJobId}
+                onPress={() => { void handleRetryServerChunk(fc.chunkIndex); }}
+                style={[s.reviewBtn, { borderColor: colors.primary }]}
+              >
+                <Text style={[s.reviewBtnText, { color: colors.primary }]}>
+                  Retry failed part {fc.chunkIndex + 1}
+                  {chunksRef.current ? `/${chunksRef.current.length}` : ""}
+                </Text>
+              </Pressable>
+            ))
+          ) : (
+            <Pressable
+              onPress={() => { setJobStatus(null); setFilename(null); chunksRef.current = null; setHasStoredChunks(false); }}
+              style={[s.reviewBtn, { borderColor: colors.destructive }]}
+            >
+              <Text style={[s.reviewBtnText, { color: colors.destructive }]}>Try again</Text>
+            </Pressable>
+          )}
         </View>
       ) : null}
     </View>
