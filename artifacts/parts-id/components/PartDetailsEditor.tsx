@@ -12,6 +12,7 @@ import {
   Modal,
 } from "react-native";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { isBinLocationValid, BIN_FORMAT_HINT } from "@/utils/binValidation";
 import * as Clipboard from "expo-clipboard";
 import { Feather } from "@expo/vector-icons";
 import * as FileSystem from "expo-file-system";
@@ -925,6 +926,11 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
                 </Text>
               </Pressable>
             </View>
+            {newBin.trim() && !isBinLocationValid(newBin) ? (
+              <Text style={[styles.fieldHint, { color: colors.warning, marginTop: 4 }]}>
+                ⚠ {BIN_FORMAT_HINT}
+              </Text>
+            ) : null}
 
             {/* Keywords */}
             <Text style={[styles.sectionLabel, { color: colors.mutedForeground, marginTop: 24 }]}>

@@ -20,6 +20,7 @@ import {
   useUpsertInventoryBatch,
 } from "@workspace/api-client-react";
 import { invalidateListCache } from "@/utils/editItemCache";
+import { isBinLocationValid, BIN_FORMAT_HINT } from "@/utils/binValidation";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -220,6 +221,11 @@ export function CatalogPickerModal({
                 color: colors.foreground,
               }]}
             />
+            {newBinLocation.trim() && !isBinLocationValid(newBinLocation) ? (
+              <Text style={{ color: colors.warning, fontSize: 11, marginTop: -6, marginBottom: 8, fontFamily: "Inter_400Regular" }}>
+                ⚠ {BIN_FORMAT_HINT}
+              </Text>
+            ) : null}
 
             {createError ? (
               <Text style={{ color: colors.destructive, fontSize: 12, marginBottom: 6, fontFamily: "Inter_400Regular" }}>{createError}</Text>

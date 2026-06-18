@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { isBinLocationValid, BIN_FORMAT_HINT } from "@/utils/binValidation";
 import type { InventoryItem } from "@workspace/api-client-react";
 import { useUpdateItemBins } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -209,6 +210,12 @@ export function BinEditor({ item, onClose, onBinsChanged }: BinEditorProps) {
             </Pressable>
           </View>
 
+          {newBin.trim() && !isBinLocationValid(newBin) ? (
+            <Text style={[styles.binFormatHint, { color: colors.warning }]}>
+              ⚠ {BIN_FORMAT_HINT}
+            </Text>
+          ) : null}
+
           {errorMsg ? (
             <Text style={[styles.errorText, { color: colors.destructive }]}>{errorMsg}</Text>
           ) : null}
@@ -311,6 +318,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  binFormatHint: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 5, marginBottom: 2 },
   errorText: { fontSize: 13, fontFamily: "Inter_500Medium", marginTop: 12 },
   footer: {
     flexDirection: "row",
