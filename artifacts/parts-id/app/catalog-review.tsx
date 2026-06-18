@@ -144,6 +144,15 @@ export default function CatalogReviewScreen() {
     setAddModalPart(part);
   };
 
+  const handleKeepExisting = () => {
+    if (addModalPart) {
+      setAddedCatalogs((prev) => new Set([...prev, addModalPart.catalogNumber]));
+    }
+    setAddModalPart(null);
+    setDuplicateItem(null);
+    setUpdateDescriptionError(null);
+  };
+
   const handleUpdateDescription = async () => {
     if (!duplicateItem || updatingDescription) return;
     setUpdatingDescription(true);
@@ -789,6 +798,13 @@ export default function CatalogReviewScreen() {
                   >
                     <Text style={[s.modalCancelText, { color: colors.mutedForeground }]}>Go Back</Text>
                   </Pressable>
+                  <Pressable
+                    onPress={handleKeepExisting}
+                    style={[s.modalDismissBtn, { borderColor: colors.border }]}
+                    disabled={updatingDescription}
+                  >
+                    <Text style={[s.modalCancelText, { color: colors.mutedForeground }]}>Keep existing</Text>
+                  </Pressable>
                   {addForm.description.trim() && addForm.description.trim() !== duplicateItem.description ? (
                     <Pressable
                       onPress={handleUpdateDescription}
@@ -1180,6 +1196,9 @@ const s = StyleSheet.create({
     flexDirection: "row", gap: 10, paddingHorizontal: 18, paddingVertical: 16, borderTopWidth: 1,
   },
   modalCancelBtn: {
+    flex: 1, borderWidth: 1, borderRadius: 10, paddingVertical: 13, alignItems: "center",
+  },
+  modalDismissBtn: {
     flex: 1, borderWidth: 1, borderRadius: 10, paddingVertical: 13, alignItems: "center",
   },
   modalCancelText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
