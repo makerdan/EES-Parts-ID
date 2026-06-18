@@ -413,7 +413,9 @@ export default function SearchScreen() {
           }
         }
         if (dirty) saveQueryCache(pruned);
-      }).catch(() => {});
+      }).catch((err) => {
+        console.error('[index] prune query cache', err);
+      });
 
       syncRetryAttemptRef.current = 0; // success — reset backoff counter
       try {
@@ -501,7 +503,8 @@ export default function SearchScreen() {
           syncAllInventory();
         });
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('[index] load fuse cache', err);
         syncAllInventory();
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -576,7 +579,8 @@ export default function SearchScreen() {
         setAITranslation({ terms: data.translatedTerms!, interpretation: data.interpretation ?? "" });
         setAITranslationDismissed(false);
       }
-    } catch {
+    } catch (err) {
+      console.error('[index] translateQuery', err);
       if (aiSearchGenRef.current !== gen) return;
       if (zeroResults) {
         setAIZeroResults({ loading: false, partName: "", partSpecs: [], catalogNumbers: [], substitutes: [], error: "AI unavailable" });

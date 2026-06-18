@@ -716,7 +716,9 @@ export default function UploadScreen() {
       if (!res.ok) return;
       const data = await res.json() as EnrichSummary;
       setEnrichSummary(data);
-    } catch {}
+    } catch (err) {
+      console.error('[upload] fetchEnrichSummary', err);
+    }
   }, [logoutAdmin]);
 
   const pollBulkStatus = useCallback(async () => {
@@ -739,7 +741,9 @@ export default function UploadScreen() {
         stopBulkPoll();
         void fetchEnrichSummary();
       }
-    } catch {}
+    } catch (err) {
+      console.error('[upload] pollBulkStatus', err);
+    }
   }, [stopBulkPoll, fetchEnrichSummary, logoutAdmin]);
 
   const startBulkPoll = useCallback(() => {
@@ -769,7 +773,9 @@ export default function UploadScreen() {
         stopMeasurePoll();
         void fetchEnrichSummary();
       }
-    } catch {}
+    } catch (err) {
+      console.error('[upload] pollMeasureStatus', err);
+    }
   }, [stopMeasurePoll, fetchEnrichSummary, logoutAdmin]);
 
   const startMeasurePoll = useCallback(() => {
@@ -819,8 +825,8 @@ export default function UploadScreen() {
           });
         }
       }
-    } catch {
-      // Non-critical — silently ignore export errors
+    } catch (err) {
+      console.error('[upload] handleQueryExport', err);
     } finally {
       setQueryExportPending(null);
     }
@@ -861,7 +867,10 @@ export default function UploadScreen() {
           setMeasureJobStatus(data);
           if (data.running) startMeasurePoll();
         }
-      } catch {}
+      } catch (err) {
+        console.error('[upload] load initial job status', err);
+        setUploadError("Could not load enrichment status. Check your connection.");
+      }
     })();
   }, [isAdmin, fetchEnrichSummary, startBulkPoll, stopBulkPoll, startMeasurePoll, stopMeasurePoll, logoutAdmin]);
 
@@ -1349,7 +1358,9 @@ export default function UploadScreen() {
             const data: EnrichProgress = JSON.parse(line.slice(6));
             setEnrichProgress(data);
             if (data.done) await inventoryQuery.refetch();
-          } catch {}
+          } catch (err) {
+            console.error('[upload] processLine SSE', err);
+          }
         };
         while (true) {
           const { done, value } = await reader.read();

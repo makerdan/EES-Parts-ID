@@ -254,7 +254,9 @@ export default function MapScreen() {
       try {
         const ids = JSON.parse(raw) as Array<number>;
         setCountedZoneIds(new Set(ids));
-      } catch { /* ignore corrupt data */ }
+      } catch (err) {
+        console.error('[map] parse cycle counted ids', err);
+      }
     });
   }, []);
 
@@ -266,7 +268,9 @@ export default function MapScreen() {
           const items = JSON.parse(raw) as Array<InventoryItem>;
           inventoryRef.current = items;
           setInventory(items);
-        } catch { /* ignore corrupt cache */ }
+        } catch (err) {
+          console.error('[map] parse fuse cache', err);
+        }
       });
   }, []);
 
