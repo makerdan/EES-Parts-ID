@@ -59,6 +59,16 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const [uploadSpeed, setUploadSpeed] = useState<number | null>(null);
   const [uploadEta, setUploadEta] = useState<number | null>(null);
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
+
+  // Tick the retry countdown down by 1 each second until it reaches 0.
+  useEffect(() => {
+    if (retryCountdown === null || retryCountdown <= 0) return;
+    const timer = setTimeout(() => {
+      setRetryCountdown(prev => (prev !== null && prev > 1 ? prev - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [retryCountdown]);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const xhrRef = useRef<XMLHttpRequest | null>(null);
@@ -139,6 +149,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const handleStart = (attempt = 0) => {
     if (!pdfBase64 || !vendor.trim() || !adminToken) return;
     setError(null);
+    setRetryCountdown(null);
     setShowRetryBtn(false);
     if (attempt === 0) setJobStatus(null);
     setLoading(true);
@@ -231,10 +242,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       setUploadEta(null);
       if (attempt < MAX_AUTO_RETRIES) {
         const delaySec = Math.pow(2, attempt);
-        setError(`Network error — retrying in ${delaySec}s… (attempt ${attempt + 1}/${MAX_AUTO_RETRIES})`);
+        setError(null);
+        setRetryCountdown(delaySec);
         setTimeout(() => handleStart(attempt + 1), delaySec * 1000);
       } else {
         setLoading(false);
+        setRetryCountdown(null);
         setError("Network error — check your connection and try again.");
         setShowRetryBtn(true);
       }
@@ -306,8 +319,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         )}
       </Pressable>
 
-      {/* Error */}
-      {error ? (
+      {/* Error / retry countdown */}
+      {retryCountdown !== null ? (
+        <View style={s.errorRow}>
+          <Text style={[s.error, { color: colors.destructive }]}>
+            Network error — retrying in {retryCountdown}…
+          </Text>
+        </View>
+      ) : error ? (
         <View style={s.errorRow}>
           <Text style={[s.error, { color: colors.destructive, flex: 1 }]}>{error}</Text>
           {showRetryBtn ? (
