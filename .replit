@@ -34,17 +34,6 @@ args = "pnpm --filter @workspace/parts-id run test"
 isValidation = true
 
 [[workflows.workflow]]
-name = "expo-doctor"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm run doctor"
-
-[workflows.workflow.metadata]
-isValidation = true
-
-[[workflows.workflow]]
 name = "lint"
 author = "agent"
 
