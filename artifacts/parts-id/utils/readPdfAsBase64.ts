@@ -11,19 +11,20 @@
  *  - Web — uses `fetch → arrayBuffer`, which handles `blob:` URIs produced by
  *    expo-document-picker on web.
  *
- * `readPdfAsBytes` does NOT enforce a maximum file size — large files are
- * chunked by the upload layer (splitPdfIntoChunks). It does validate that the
- * file is a well-formed, non-encrypted PDF.
- *
- * `readPdfAsBase64` wraps `readPdfAsBytes` and additionally enforces the
- * legacy 25 MB single-upload size limit. It exists for backward compatibility
- * with code paths that have not yet been updated to the chunked upload flow.
+ * Size checking:
+ *  - `readPdfAsBytes` has NO size limit — large files are chunked by the upload
+ *    layer (splitPdfIntoChunks). It only validates that the file is a
+ *    well-formed, non-encrypted PDF.
+ *  - `readPdfAsBase64` enforces the 25 MB (MAX_PDF_BYTES) size limit. Size is
+ *    checked BEFORE PDF validation so that an oversized file always produces
+ *    PdfTooLargeError rather than InvalidPdfError. On native, getInfoAsync's
+ *    reported size is used to bail out before reading the file at all.
  *
  * Throws with a user-friendly message when:
+ *  - (readPdfAsBase64 only) The file exceeds MAX_PDF_BYTES (25 MB)
  *  - The file is not a valid PDF (missing %PDF- magic bytes)
  *  - The file is password-protected (/Encrypt detected)
  *  - The read / fetch fails for any reason
- *  - (readPdfAsBase64 only) The file exceeds MAX_PDF_BYTES (25 MB)
  */
 
 import "buffer";
@@ -84,30 +85,37 @@ function validatePdfBytes(bytes: Uint8Array): void {
   }
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// ── Internal read helpers ─────────────────────────────────────────────────────
 
 /**
- * Read a PDF from the given URI and return the raw bytes as a Uint8Array.
+ * Reads the raw bytes from a URI without PDF validation.
  *
- * No file-size limit is enforced — the caller is responsible for deciding
- * whether to split the result into chunks before uploading.
+ * `maxBytes` — when provided, the function throws PdfTooLargeError if the
+ * file exceeds this size. On native, getInfoAsync's reported size is used for
+ * an early bail-out before reading; on web, the check runs after the fetch.
  */
-export async function readPdfAsBytes(uri: string): Promise<Uint8Array> {
+async function readRawBytes(uri: string, maxBytes?: number): Promise<Uint8Array> {
   if (Platform.OS !== "web") {
     // ── Native path ──────────────────────────────────────────────────────────
     const info = await FileSystem.getInfoAsync(uri).catch(() => null);
     if (info !== null && !info.exists) {
       throw new Error("Failed to read PDF: file not found");
     }
+    if (
+      maxBytes !== undefined &&
+      info !== null &&
+      "size" in info &&
+      typeof info.size === "number" &&
+      info.size > maxBytes
+    ) {
+      throw new PdfTooLargeError();
+    }
 
     const rawBase64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     });
     const base64 = rawBase64.replace(/\s/g, "");
-    const bytes = new Uint8Array(Buffer.from(base64, "base64"));
-
-    validatePdfBytes(bytes);
-    return bytes;
+    return new Uint8Array(Buffer.from(base64, "base64"));
   }
 
   // ── Web path ───────────────────────────────────────────────────────────────
@@ -133,6 +141,23 @@ export async function readPdfAsBytes(uri: string): Promise<Uint8Array> {
   const buffer = await response.arrayBuffer();
   const bytes = new Uint8Array(buffer);
 
+  if (maxBytes !== undefined && bytes.length > maxBytes) {
+    throw new PdfTooLargeError();
+  }
+  return bytes;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Read a PDF from the given URI and return the raw bytes as a Uint8Array.
+ *
+ * No file-size limit is enforced — large files are chunked by the upload layer
+ * (splitPdfIntoChunks). Validates that the file is a well-formed,
+ * non-encrypted PDF.
+ */
+export async function readPdfAsBytes(uri: string): Promise<Uint8Array> {
+  const bytes = await readRawBytes(uri);
   validatePdfBytes(bytes);
   return bytes;
 }
@@ -141,14 +166,16 @@ export async function readPdfAsBytes(uri: string): Promise<Uint8Array> {
  * Read a PDF from the given URI and return it as a base64-encoded string.
  *
  * Enforces a 25 MB size limit — throws PdfTooLargeError for larger files.
+ * Size is checked BEFORE PDF validation so that an oversized file always
+ * produces PdfTooLargeError rather than InvalidPdfError. On native,
+ * getInfoAsync's reported size is used to bail out before reading the file.
+ *
  * Use readPdfAsBytes for files that will be split into chunks before upload.
  */
 export async function readPdfAsBase64(uri: string): Promise<string> {
-  const bytes = await readPdfAsBytes(uri);
+  const bytes = await readRawBytes(uri, MAX_PDF_BYTES);
 
-  if (bytes.length > MAX_PDF_BYTES) {
-    throw new PdfTooLargeError();
-  }
+  validatePdfBytes(bytes);
 
   // Encode to base64
   const CHUNK = 0x8000;
