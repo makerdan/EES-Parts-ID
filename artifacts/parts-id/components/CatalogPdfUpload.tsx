@@ -42,6 +42,9 @@ const POLL_MS = 2500;
 /** Files above this threshold are split into chunks before uploading. */
 const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
 
+/** How many times an admin can retry a single server-side chunk before the button is disabled. */
+const MAX_SERVER_CHUNK_RETRIES = 3;
+
 type JobStatus = {
   jobId: string;
   status: "pending" | "processing" | "done" | "failed" | "cancelled";
@@ -87,6 +90,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [chunksCompleted, setChunksCompleted] = useState(0);
   const [chunksTotal, setChunksTotal] = useState(0);
   const [overallUploadPct, setOverallUploadPct] = useState<number | null>(null);
+  type FailedChunkInfo = {
+    chunkIndex: number;
+    totalChunks: number;
+    parentJobId: string | null;
+  };
+  const [failedChunkInfo, setFailedChunkInfo] = useState<FailedChunkInfo | null>(null);
 
   useEffect(() => {
     if (retryCountdown === null || retryCountdown <= 0) return;
@@ -134,6 +143,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const speedSamplesRef = useRef<{ t: number; loaded: number }[]>([]);
   const SPEED_WINDOW_MS = 4000;
   const SPEED_WINDOW_MAX = 20;
+
+  // Tracks how many times each chunk (by index) has been retried via handleRetryServerChunk.
+  const chunkRetryCountsRef = useRef<Map<number, number>>(new Map());
+
 
   const [cancellingJob, setCancellingJob] = useState(false);
 
@@ -194,6 +207,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setFilename(null);
     chunksRef.current = null;
     setHasStoredChunks(false);
+    chunkRetryCountsRef.current = new Map();
     setReadingFile(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -502,6 +516,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     const chunk = chunks[chunkIndex];
     if (!chunk) return;
 
+    // Enforce the retry cap — increment first, then check.
+    const prevCount = chunkRetryCountsRef.current.get(chunkIndex) ?? 0;
+    const newCount = prevCount + 1;
+    chunkRetryCountsRef.current.set(chunkIndex, newCount);
+    if (newCount > MAX_SERVER_CHUNK_RETRIES) return;
+
     setError(null);
     setLoading(true);
     setUploadPct(0);
@@ -627,6 +647,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       setJobStatus(null);
       chunksRef.current = null;
       setHasStoredChunks(false);
+      chunkRetryCountsRef.current = new Map();
     }
     setLoading(true);
     setUploadPct(0);
@@ -928,18 +949,33 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             Job failed: {jobStatus.errorMessage ?? "Unknown error"}
           </Text>
           {hasStoredChunks && jobStatus.failedChunks && jobStatus.failedChunks.length > 0 ? (
-            jobStatus.failedChunks.map((fc) => (
-              <Pressable
-                key={fc.chunkJobId}
-                onPress={() => { void handleRetryServerChunk(fc.chunkIndex); }}
-                style={[s.reviewBtn, { borderColor: colors.primary }]}
-              >
-                <Text style={[s.reviewBtnText, { color: colors.primary }]}>
-                  Retry failed part {fc.chunkIndex + 1}
-                  {chunksRef.current ? `/${chunksRef.current.length}` : ""}
-                </Text>
-              </Pressable>
-            ))
+            jobStatus.failedChunks.map((fc) => {
+              const retryCount = chunkRetryCountsRef.current.get(fc.chunkIndex) ?? 0;
+              const exhausted = retryCount >= MAX_SERVER_CHUNK_RETRIES;
+              const totalChunks = chunksRef.current?.length;
+              return (
+                <View key={fc.chunkJobId} style={{ gap: 6 }}>
+                  <Pressable
+                    onPress={() => { if (!exhausted) { void handleRetryServerChunk(fc.chunkIndex); } }}
+                    disabled={exhausted}
+                    style={[s.reviewBtn, {
+                      borderColor: exhausted ? colors.mutedForeground : colors.primary,
+                      opacity: exhausted ? 0.5 : 1,
+                    }]}
+                  >
+                    <Text style={[s.reviewBtnText, { color: exhausted ? colors.mutedForeground : colors.primary }]}>
+                      Retry failed part {fc.chunkIndex + 1}{totalChunks ? `/${totalChunks}` : ""}
+                      {retryCount > 0 && !exhausted ? ` (attempt ${retryCount + 1}/${MAX_SERVER_CHUNK_RETRIES})` : ""}
+                    </Text>
+                  </Pressable>
+                  {exhausted ? (
+                    <Text style={[s.hint, { color: colors.mutedForeground }]}>
+                      Part {fc.chunkIndex + 1} has failed {MAX_SERVER_CHUNK_RETRIES} times — consider cancelling and re-uploading a smaller file.
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })
           ) : (
             <Pressable
               onPress={() => { setJobStatus(null); setFilename(null); chunksRef.current = null; setHasStoredChunks(false); }}
