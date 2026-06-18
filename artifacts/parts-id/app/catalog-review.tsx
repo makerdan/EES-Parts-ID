@@ -185,7 +185,7 @@ export default function CatalogReviewScreen() {
             errorMessage: body.errorMessage ?? null,
           },
         }));
-        if (body.status === "done" || body.status === "failed") {
+        if (body.status === "done" || body.status === "failed" || body.status === "cancelled") {
           clearInterval(resumePollRef.current[id]);
           delete resumePollRef.current[id];
           setResumingId((prev) => (prev === id ? null : prev));
