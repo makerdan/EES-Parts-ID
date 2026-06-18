@@ -898,17 +898,58 @@ export function ZoneEditor() {
           toast.success(fwd ? "Redo: edit reapplied" : "Undo: edit reverted");
           break;
         case "multiEdit": {
-          const results = await Promise.allSettled(
-            entry.changes.map((c) => patchZone(c.id, fwd ? c.after : c.before)),
+          // Detect sectionNum-only changes (produced by handleAutoNumber).
+          // These can cause (aisleId, sectionNum) unique-constraint collisions
+          // during undo/redo when the before/after values overlap in the same
+          // aisle (e.g. a cyclic swap). Use a two-phase sentinel approach so
+          // all current values are vacated before any target value is written.
+          const isSectionNumOnly = entry.changes.every(
+            (c) =>
+              c.before.sectionNum !== undefined &&
+              c.before.aisleId === undefined &&
+              c.after.sectionNum !== undefined &&
+              c.after.aisleId === undefined,
           );
-          const failures = results
-            .map((r, i) => ({ r, id: entry.changes[i]!.id }))
-            .filter(({ r }) => r.status === "rejected");
-          if (failures.length > 0) {
-            const ids = failures.map(({ id }) => id).join(", ");
-            throw new Error(
-              `${failures.length} zone${failures.length > 1 ? "s" : ""} failed to update (zone${failures.length > 1 ? "s" : ""} ${ids}); some zones may be in an inconsistent state — please refresh and retry`,
+
+          if (isSectionNumOnly && entry.changes.length > 1) {
+            const currentZones = zonesRef.current;
+            const affectedIds = new Set(entry.changes.map((c) => c.id));
+            const affectedAisles = new Set(
+              currentZones
+                .filter((z) => affectedIds.has(z.id))
+                .map((z) => normalizeAisleId(z.aisleId)),
             );
+            const existingNegatives = currentZones
+              .filter((z) => affectedAisles.has(normalizeAisleId(z.aisleId)) && z.sectionNum < 0)
+              .map((z) => z.sectionNum);
+            let nextSentinel =
+              (existingNegatives.length > 0 ? Math.min(...existingNegatives) : 0) - 1;
+
+            const sentinelMap = entry.changes.map((c) => ({
+              id: c.id,
+              sentinel: nextSentinel--,
+              target: fwd ? c.after.sectionNum! : c.before.sectionNum!,
+            }));
+
+            for (const { id, sentinel } of sentinelMap) {
+              await patchZone(id, { sectionNum: sentinel });
+            }
+            for (const { id, target } of sentinelMap) {
+              await patchZone(id, { sectionNum: target });
+            }
+          } else {
+            const results = await Promise.allSettled(
+              entry.changes.map((c) => patchZone(c.id, fwd ? c.after : c.before)),
+            );
+            const failures = results
+              .map((r, i) => ({ r, id: entry.changes[i]!.id }))
+              .filter(({ r }) => r.status === "rejected");
+            if (failures.length > 0) {
+              const ids = failures.map(({ id }) => id).join(", ");
+              throw new Error(
+                `${failures.length} zone${failures.length > 1 ? "s" : ""} failed to update (zone${failures.length > 1 ? "s" : ""} ${ids}); some zones may be in an inconsistent state — please refresh and retry`,
+              );
+            }
           }
           toast.success(fwd ? "Redo: edits reapplied" : "Undo: edits reverted");
           break;
@@ -1186,11 +1227,34 @@ export function ZoneEditor() {
         before: { sectionNum: zone.sectionNum } as MetaSnap,
         after: { sectionNum: newSectionNum } as MetaSnap,
       }));
-      await Promise.all(
-        autoNumPreview.map(({ zone, newSectionNum }) =>
-          patchZone(zone.id, { sectionNum: newSectionNum }),
-        ),
+      // Two-phase apply to avoid (aisleId, sectionNum) unique constraint
+      // violations when new numbers overlap current numbers in the same aisle
+      // (e.g. a cyclic swap: A:1→2, B:2→1).
+      //
+      // Phase 1 — park every zone at a temporary negative sentinel that is
+      //            guaranteed not to collide with anything.
+      // Phase 2 — move each zone from its sentinel to its final sectionNum.
+      const affectedAisleIds = new Set(
+        autoNumPreview.map(({ zone }) => normalizeAisleId(zone.aisleId)),
       );
+      const existingNegatives = zones
+        .filter((z) => affectedAisleIds.has(normalizeAisleId(z.aisleId)) && z.sectionNum < 0)
+        .map((z) => z.sectionNum);
+      let nextSentinel =
+        (existingNegatives.length > 0 ? Math.min(...existingNegatives) : 0) - 1;
+
+      const sentinelMap = autoNumPreview.map(({ zone, newSectionNum }) => ({
+        id: zone.id,
+        sentinel: nextSentinel--,
+        newSectionNum,
+      }));
+
+      for (const { id, sentinel } of sentinelMap) {
+        await patchZone(id, { sectionNum: sentinel });
+      }
+      for (const { id, newSectionNum } of sentinelMap) {
+        await patchZone(id, { sectionNum: newSectionNum });
+      }
       pushUndo({ type: "multiEdit", changes: undoChanges });
       // Keep lastSavedFormRef consistent so the dup-conflict suppression doesn't fire
       if (selectedId) {
