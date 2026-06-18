@@ -53,6 +53,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [loading, setLoading] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showRetryBtn, setShowRetryBtn] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
 
   const [uploadSpeed, setUploadSpeed] = useState<number | null>(null);
@@ -121,10 +122,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     }
   };
 
-  const handleStart = () => {
+  const MAX_AUTO_RETRIES = 2;
+
+  const handleStart = (attempt = 0) => {
     if (!pdfBase64 || !vendor.trim() || !adminToken) return;
     setError(null);
-    setJobStatus(null);
+    setShowRetryBtn(false);
+    if (attempt === 0) setJobStatus(null);
     setLoading(true);
     setUploadPct(0);
     setUploadSpeed(null);
@@ -213,8 +217,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       setUploadPct(null);
       setUploadSpeed(null);
       setUploadEta(null);
-      setLoading(false);
-      setError("Network error — check your connection and try again.");
+      if (attempt < MAX_AUTO_RETRIES) {
+        const delaySec = Math.pow(2, attempt);
+        setError(`Network error — retrying in ${delaySec}s… (attempt ${attempt + 1}/${MAX_AUTO_RETRIES})`);
+        setTimeout(() => handleStart(attempt + 1), delaySec * 1000);
+      } else {
+        setLoading(false);
+        setError("Network error — check your connection and try again.");
+        setShowRetryBtn(true);
+      }
     };
 
     xhr.send(body);
@@ -278,13 +289,23 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
       {/* Error */}
       {error ? (
-        <Text style={[s.error, { color: colors.destructive }]}>{error}</Text>
+        <View style={s.errorRow}>
+          <Text style={[s.error, { color: colors.destructive, flex: 1 }]}>{error}</Text>
+          {showRetryBtn ? (
+            <Pressable
+              onPress={() => handleStart(0)}
+              style={[s.retryBtn, { borderColor: colors.destructive }]}
+            >
+              <Text style={[s.retryBtnText, { color: colors.destructive }]}>Retry</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
 
       {/* Start button */}
       {!isRunning && !isDone ? (
         <Pressable
-          onPress={handleStart}
+          onPress={() => handleStart()}
           disabled={!pdfBase64 || !vendor.trim() || loading || readingFile}
           style={[s.startBtn, {
             backgroundColor: !pdfBase64 || !vendor.trim() || loading || readingFile ? colors.muted : colors.primary,
@@ -397,7 +418,10 @@ const s = StyleSheet.create({
   },
   pickBtnInner: { flexDirection: "row", alignItems: "center", gap: 8 },
   pickBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  errorRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   error: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  retryBtn: { borderWidth: 1, borderRadius: 6, paddingVertical: 6, paddingHorizontal: 12 },
+  retryBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   startBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
   startBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
   progressBlock: { gap: 8 },
