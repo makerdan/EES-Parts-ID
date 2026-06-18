@@ -132,7 +132,7 @@ export type InsertInventory = z.infer<typeof insertInventorySchema>;
 export type Inventory = typeof inventoryTable.$inferSelect;
 
 // ── Catalog PDF Job ────────────────────────────────────────────────────────────
-export const PDF_JOB_STATUS = ["pending", "processing", "done", "failed"] as const;
+export const PDF_JOB_STATUS = ["pending", "processing", "done", "failed", "cancelled"] as const;
 export type PdfJobStatus = (typeof PDF_JOB_STATUS)[number];
 
 export const catalogPdfJobTable = pgTable("catalog_pdf_job", {

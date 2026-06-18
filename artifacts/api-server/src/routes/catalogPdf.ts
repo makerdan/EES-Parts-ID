@@ -193,8 +193,20 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
       let processedPages = 0;
       let matchedParts = 0;
       let imagesMatched = 0;
+      let wasCancelled = false;
 
       for (const page of pages) {
+        // Check for cancellation before processing each page
+        const [currentRow] = await db
+          .select({ status: catalogPdfJobTable.status })
+          .from(catalogPdfJobTable)
+          .where(eq(catalogPdfJobTable.id, jobRow.id))
+          .limit(1);
+        if (currentRow?.status === "cancelled") {
+          wasCancelled = true;
+          break;
+        }
+
         // Extract catalog entries from this page
         const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
 
@@ -266,6 +278,15 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
           .where(eq(catalogPdfJobTable.id, jobRow.id));
       }
 
+      if (wasCancelled) {
+        await db
+          .update(catalogPdfJobTable)
+          .set({ finishedAt: new Date() })
+          .where(eq(catalogPdfJobTable.id, jobRow.id));
+        console.log(`[catalog-pdf] job=${jobId} cancelled after page ${processedPages}`);
+        return;
+      }
+
       await db
         .update(catalogPdfJobTable)
         .set({
@@ -289,6 +310,43 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
       console.error(`[catalog-pdf] job=${jobId} failed:`, err);
     }
   });
+});
+
+// ── POST /admin/catalog-pdf/:jobId/cancel ─────────────────────────────────────
+// Marks a running job as cancelled. The background processing loop checks for
+// this status between pages and stops cleanly without marking the job as done.
+router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => {
+  const jobId = Number(req.params["jobId"]);
+  if (!Number.isFinite(jobId)) {
+    res.status(400).json({ error: "Invalid jobId" });
+    return;
+  }
+
+  const [jobRow] = await db
+    .select({ id: catalogPdfJobTable.id, status: catalogPdfJobTable.status })
+    .from(catalogPdfJobTable)
+    .where(eq(catalogPdfJobTable.id, jobId))
+    .limit(1);
+
+  if (!jobRow) {
+    res.status(404).json({ error: "Job not found" });
+    return;
+  }
+
+  if (jobRow.status !== "pending" && jobRow.status !== "processing") {
+    res.status(409).json({
+      error: `Cannot cancel a job with status "${jobRow.status}". Only pending or processing jobs can be cancelled.`,
+    });
+    return;
+  }
+
+  await db
+    .update(catalogPdfJobTable)
+    .set({ status: "cancelled", finishedAt: new Date() })
+    .where(eq(catalogPdfJobTable.id, jobId));
+
+  console.log(`[catalog-pdf] job=${jobId} cancel requested`);
+  res.json({ ok: true, jobId: String(jobId) });
 });
 
 // ── GET /admin/catalog-pdf/:jobId/status ──────────────────────────────────────
@@ -424,8 +482,20 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
       let processedPages = resumeFromPage;
       let matchedParts = jobRow.matchedParts ?? 0;
       let imagesMatched = jobRow.imagesMatched ?? 0;
+      let wasCancelled = false;
 
       for (const page of remainingPages) {
+        // Check for cancellation before processing each page
+        const [currentRow] = await db
+          .select({ status: catalogPdfJobTable.status })
+          .from(catalogPdfJobTable)
+          .where(eq(catalogPdfJobTable.id, jobId))
+          .limit(1);
+        if (currentRow?.status === "cancelled") {
+          wasCancelled = true;
+          break;
+        }
+
         const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
 
         for (const entry of entries) {
@@ -484,6 +554,15 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
           .update(catalogPdfJobTable)
           .set({ processedPages, matchedParts, imagesMatched })
           .where(eq(catalogPdfJobTable.id, jobId));
+      }
+
+      if (wasCancelled) {
+        await db
+          .update(catalogPdfJobTable)
+          .set({ finishedAt: new Date() })
+          .where(eq(catalogPdfJobTable.id, jobId));
+        console.log(`[catalog-pdf] job=${jobId} cancelled (resume) after page ${processedPages}`);
+        return;
       }
 
       await db

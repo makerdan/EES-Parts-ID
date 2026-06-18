@@ -30,7 +30,7 @@ const POLL_MS = 2500;
 
 type JobStatus = {
   jobId: string;
-  status: "pending" | "processing" | "done" | "failed";
+  status: "pending" | "processing" | "done" | "failed" | "cancelled";
   totalPages: number | null;
   processedPages: number;
   matchedParts: number;
@@ -101,6 +101,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const SPEED_WINDOW_MS = 4000;
   const SPEED_WINDOW_MAX = 20;
 
+  const [cancellingJob, setCancellingJob] = useState(false);
+
   const stopPolling = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
@@ -120,10 +122,28 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         if (!r.ok) return;
         const data = await r.json() as JobStatus;
         setJobStatus(data);
-        if (data.status === "done" || data.status === "failed") stopPolling();
+        if (data.status === "done" || data.status === "failed" || data.status === "cancelled") stopPolling();
       } catch { /* network blip — keep polling */ }
     }, POLL_MS);
   }, [stopPolling, onSessionExpired]);
+
+  const handleCancelJob = useCallback(async () => {
+    const token = adminTokenRef.current;
+    if (!token || !jobStatus?.jobId) return;
+    setCancellingJob(true);
+    try {
+      const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobStatus.jobId}/cancel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.status === 401) { stopPolling(); onSessionExpired(); return; }
+      if (r.ok) {
+        stopPolling();
+        setJobStatus(prev => prev ? { ...prev, status: "cancelled" } : prev);
+      }
+    } catch { /* ignore — polling will pick up the change */ }
+    finally { setCancellingJob(false); }
+  }, [jobStatus, stopPolling, onSessionExpired]);
 
   const handlePickFile = async () => {
     setError(null);
@@ -286,6 +306,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const isDone = jobStatus?.status === "done";
   const isFailed = jobStatus?.status === "failed";
+  const isCancelled = jobStatus?.status === "cancelled";
   const isRunning = jobStatus?.status === "pending" || jobStatus?.status === "processing";
 
   const progressPct =
@@ -424,9 +445,18 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         <View style={s.progressBlock}>
           <View style={s.progressRow}>
             <ActivityIndicator size="small" color={colors.primary} />
-            <Text style={[s.progressLabel, { color: colors.foreground }]}>
+            <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
               {jobStatus.status === "pending" ? "Starting…" : `Processing pages…`}
             </Text>
+            <Pressable
+              onPress={handleCancelJob}
+              disabled={cancellingJob}
+              style={[s.cancelBtn, { borderColor: colors.destructive, opacity: cancellingJob ? 0.5 : 1 }]}
+            >
+              <Text style={[s.cancelBtnText, { color: colors.destructive }]}>
+                {cancellingJob ? "Cancelling…" : "Cancel job"}
+              </Text>
+            </Pressable>
           </View>
           {progressPct !== null ? (
             <>
@@ -452,6 +482,24 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             style={[s.reviewBtn, { borderColor: colors.primary }]}
           >
             <Text style={[s.reviewBtnText, { color: colors.primary }]}>Review changes →</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Cancelled */}
+      {isCancelled && jobStatus ? (
+        <View style={[s.doneCard, { backgroundColor: colors.mutedForeground + "18" }]}>
+          <Text style={[s.doneText, { color: colors.mutedForeground }]}>
+            Job cancelled
+            {jobStatus.processedPages > 0
+              ? ` — stopped after ${jobStatus.processedPages} page${jobStatus.processedPages !== 1 ? "s" : ""}${jobStatus.matchedParts > 0 ? `, ${jobStatus.matchedParts} parts matched` : ""}`
+              : ""}
+          </Text>
+          <Pressable
+            onPress={() => { setJobStatus(null); setFilename(null); setCancellingJob(false); }}
+            style={[s.reviewBtn, { borderColor: colors.mutedForeground }]}
+          >
+            <Text style={[s.reviewBtnText, { color: colors.mutedForeground }]}>Start new job</Text>
           </Pressable>
         </View>
       ) : null}
