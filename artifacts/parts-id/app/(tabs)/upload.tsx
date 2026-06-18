@@ -962,6 +962,11 @@ export default function UploadScreen() {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
+      if (!reader) {
+        setExpandDescError("Export failed — no response body. Please try again.");
+        return;
+      }
+
       if (reader) {
         let sseBuffer = "";
 
@@ -1310,6 +1315,12 @@ export default function UploadScreen() {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
+      if (!reader) {
+        setUploadError("Enrichment failed — no response body. Please try again.");
+        setEnrichProgress(null);
+        return;
+      }
+
       if (reader) {
         // Buffer partial lines across chunk boundaries so we never try to parse
         // an incomplete "data: ..." SSE line.
@@ -1348,14 +1359,24 @@ export default function UploadScreen() {
       let page = 1;
       let allItems: InventoryItem[] = [];
       let total = Infinity;
+      let maxPages = Infinity;
+      let pagesFetched = 0;
 
       while (allItems.length < total) {
+        if (pagesFetched >= maxPages) {
+          console.warn("[handleExportCsv] page cap reached — aborting export", { page, pagesFetched, maxPages, total });
+          throw new Error("Export aborted — unexpected server response. Please try again.");
+        }
         const url = `${API_BASE}/inventory?page=${page}&limit=${pageSize}`;
         const res = await fetch(url, { headers: adminHeaders });
         if (!res.ok) throw new Error(`API error ${res.status}`);
         const data: { items: InventoryItem[]; total: number } = await res.json();
         total = data.total;
+        if (maxPages === Infinity) {
+          maxPages = Math.ceil(total / pageSize) + 1;
+        }
         allItems = allItems.concat(data.items);
+        pagesFetched++;
         if (data.items.length < pageSize) break;
         page++;
       }
