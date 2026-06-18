@@ -204,11 +204,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const handlePickFile = async () => {
     setError(null);
-    setPdfBytes(null);
-    setFilename(null);
-    chunksRef.current = null;
-    setHasStoredChunks(false);
-    chunkRetryCountsRef.current = new Map();
     setReadingFile(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -224,6 +219,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         const bytes = await readPdfAsBytes(asset.uri);
         setPdfBytes(bytes);
         setFilename(asset.name ?? "catalog.pdf");
+        chunksRef.current = null;
+        setHasStoredChunks(false);
+        chunkRetryCountsRef.current = new Map();
       } catch (err) {
         if (err instanceof InvalidPdfError || err instanceof EncryptedPdfError) {
           setError(err.message);
