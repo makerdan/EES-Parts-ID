@@ -398,6 +398,65 @@ export function buildBulkAislePatchJobs(
   });
 }
 
+/**
+ * Computes the ordered auto-number preview for a set of selected zones.
+ * Zones are sorted by sortOrder first, then by svgY (vertical position).
+ * Each zone is assigned a sequential sectionNum starting at `start` and
+ * incrementing by `increment` (clamped to a minimum of 1).
+ */
+export function buildAutoNumPreview(
+  zones: Zone[],
+  selectedIds: Set<number>,
+  start: number,
+  increment: number,
+  digits: number,
+): Array<{ zone: Zone; newSectionNum: number; newSectionNumDisplay: string }> {
+  if (selectedIds.size === 0) return [];
+  const selected = zones.filter((z) => selectedIds.has(z.id));
+  const sorted = [...selected].sort((a, b) => {
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    return a.svgY - b.svgY;
+  });
+  const inc = Math.max(1, increment);
+  return sorted.map((zone, i) => {
+    const num = start + i * inc;
+    const display = digits > 1 ? String(num).padStart(digits, "0") : String(num);
+    return { zone, newSectionNum: num, newSectionNumDisplay: display };
+  });
+}
+
+/**
+ * Builds the two-phase sentinel map used by handleAutoNumber to safely apply
+ * auto-numbering without triggering (aisleId, sectionNum) unique-constraint
+ * violations when the new numbers overlap the zones' current numbers.
+ *
+ * Returns an array of { id, sentinel, newSectionNum } tuples.
+ * The caller must:
+ *   Phase 1 — PATCH each zone to its `sentinel` value (temporary negative int).
+ *   Phase 2 — PATCH each zone from its sentinel to its final `newSectionNum`.
+ *
+ * Sentinels are negative integers allocated starting just below the lowest
+ * negative sectionNum already present in the affected aisles.
+ */
+export function buildAutoNumSentinelMap(
+  preview: Array<{ zone: Zone; newSectionNum: number }>,
+  allZones: Zone[],
+): Array<{ id: number; sentinel: number; newSectionNum: number }> {
+  const affectedAisleIds = new Set(
+    preview.map(({ zone }) => normalizeAisleId(zone.aisleId)),
+  );
+  const existingNegatives = allZones
+    .filter((z) => affectedAisleIds.has(normalizeAisleId(z.aisleId)) && z.sectionNum < 0)
+    .map((z) => z.sectionNum);
+  let nextSentinel =
+    (existingNegatives.length > 0 ? Math.min(...existingNegatives) : 0) - 1;
+  return preview.map(({ zone, newSectionNum }) => ({
+    id: zone.id,
+    sentinel: nextSentinel--,
+    newSectionNum,
+  }));
+}
+
 function screenToSvg(
   clientX: number,
   clientY: number,
@@ -1234,20 +1293,7 @@ export function ZoneEditor() {
       // Phase 1 — park every zone at a temporary negative sentinel that is
       //            guaranteed not to collide with anything.
       // Phase 2 — move each zone from its sentinel to its final sectionNum.
-      const affectedAisleIds = new Set(
-        autoNumPreview.map(({ zone }) => normalizeAisleId(zone.aisleId)),
-      );
-      const existingNegatives = zones
-        .filter((z) => affectedAisleIds.has(normalizeAisleId(z.aisleId)) && z.sectionNum < 0)
-        .map((z) => z.sectionNum);
-      let nextSentinel =
-        (existingNegatives.length > 0 ? Math.min(...existingNegatives) : 0) - 1;
-
-      const sentinelMap = autoNumPreview.map(({ zone, newSectionNum }) => ({
-        id: zone.id,
-        sentinel: nextSentinel--,
-        newSectionNum,
-      }));
+      const sentinelMap = buildAutoNumSentinelMap(autoNumPreview, zones);
 
       for (const { id, sentinel } of sentinelMap) {
         await patchZone(id, { sectionNum: sentinel });
@@ -1799,20 +1845,10 @@ export function ZoneEditor() {
 
   // ── Auto-number computed values ────────────────────────────────────────────
   // Selected zones ordered by sortOrder then svgY (tiebreaker).
-  const autoNumPreview = useMemo(() => {
-    if (selectedIds.size === 0) return [];
-    const selected = zones.filter((z) => selectedIds.has(z.id));
-    const sorted = [...selected].sort((a, b) => {
-      if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
-      return a.svgY - b.svgY;
-    });
-    const inc = Math.max(1, autoNumIncrement);
-    return sorted.map((zone, i) => {
-      const num = autoNumStart + i * inc;
-      const display = autoNumDigits > 1 ? String(num).padStart(autoNumDigits, "0") : String(num);
-      return { zone, newSectionNum: num, newSectionNumDisplay: display };
-    });
-  }, [zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits]);
+  const autoNumPreview = useMemo(
+    () => buildAutoNumPreview(zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits),
+    [zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits],
+  );
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
