@@ -32,9 +32,10 @@ export async function readPdfAsBase64(uri: string): Promise<string> {
     throw new PdfTooLargeError();
   }
   const bytes = new Uint8Array(buffer);
+  const CHUNK = 0x8000; // 32 KB — safe below V8 call-stack argument limit
   let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]!);
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as number[]);
   }
   return btoa(binary);
 }
