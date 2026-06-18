@@ -142,9 +142,23 @@ export const POE_DIMENSIONS_BOT = "Claude-Sonnet-4.5";
 /**
  * Poe bot used exclusively for catalog PDF extraction (vision capable, Gemini).
  * Name confirmed as "Gemini-3.1-Pro" — validated by probePoeBotsOnStartup() at boot.
- * If the startup probe logs a 404 for this name, try "Gemini-2.5-Pro" as a fallback.
+ * If the startup probe detects a 404, probePoeBotsOnStartup() automatically switches
+ * the effective catalog bot to POE_CATALOG_BOT_FALLBACK without requiring a redeploy.
  */
 export const POE_CATALOG_BOT = "Gemini-3.1-Pro";
+
+/**
+ * Fallback Poe bot name for catalog PDF extraction.
+ * Activated automatically by probePoeBotsOnStartup() when POE_CATALOG_BOT returns 404.
+ */
+export const POE_CATALOG_BOT_FALLBACK = "Gemini-2.5-Pro";
+
+/**
+ * Effective catalog bot name — starts as POE_CATALOG_BOT and may be updated to
+ * POE_CATALOG_BOT_FALLBACK at runtime by probePoeBotsOnStartup() when a 404 is detected.
+ * Always read via getCatalogModel() rather than this variable directly.
+ */
+let _effectiveCatalogBotName: string = POE_CATALOG_BOT;
 
 // ── Model defaults (re-derived at call time via helpers below) ────────────────
 
@@ -175,9 +189,12 @@ export function getReferenceModel(): string {
 /**
  * Default model for catalog PDF extraction (Gemini vision — dedicated bot).
  * Reflects the currently active provider.
+ * When provider is "poe", returns the effective catalog bot name — which may have
+ * been automatically switched to POE_CATALOG_BOT_FALLBACK by probePoeBotsOnStartup()
+ * if the primary bot returned 404 at startup.
  */
 export function getCatalogModel(): string {
-  return _provider === "openai" ? "gpt-4o" : POE_CATALOG_BOT;
+  return _provider === "openai" ? "gpt-4o" : _effectiveCatalogBotName;
 }
 
 /**
@@ -258,7 +275,36 @@ export async function probePoeBotsOnStartup(): Promise<void> {
               ? (err as { status: number }).status
               : undefined;
 
-          if (status === 404) {
+          if (status === 404 && botName === POE_CATALOG_BOT) {
+            logger.warn(
+              { botName, fallback: POE_CATALOG_BOT_FALLBACK },
+              `Poe catalog bot '${botName}' not found — probing fallback '${POE_CATALOG_BOT_FALLBACK}'`,
+            );
+            try {
+              await _client.chat.completions.create({
+                model: POE_CATALOG_BOT_FALLBACK,
+                messages: [{ role: "user", content: "hi" }],
+                max_tokens: 16,
+              });
+              _effectiveCatalogBotName = POE_CATALOG_BOT_FALLBACK;
+              logger.info(
+                { botName: POE_CATALOG_BOT_FALLBACK },
+                `Poe catalog bot switched to fallback '${POE_CATALOG_BOT_FALLBACK}' — OK`,
+              );
+            } catch (fallbackErr: unknown) {
+              const fallbackStatus =
+                fallbackErr != null &&
+                typeof fallbackErr === "object" &&
+                "status" in fallbackErr &&
+                typeof (fallbackErr as { status: unknown }).status === "number"
+                  ? (fallbackErr as { status: number }).status
+                  : undefined;
+              logger.warn(
+                { botName: POE_CATALOG_BOT_FALLBACK, err: fallbackErr, status: fallbackStatus },
+                `Poe catalog fallback bot '${POE_CATALOG_BOT_FALLBACK}' also unavailable (status=${fallbackStatus ?? "unknown"}) — catalog extraction may fail`,
+              );
+            }
+          } else if (status === 404) {
             logger.warn(
               { botName },
               `Poe bot '${botName}' not found — check bot name in aiProvider.ts`,
