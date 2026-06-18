@@ -149,6 +149,15 @@ export const catalogPdfJobTable = pgTable("catalog_pdf_job", {
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   dismissed: boolean("dismissed").notNull().default(false),
+  // ── Chunked-upload support ────────────────────────────────────────────────
+  // All nullable — existing single-chunk jobs have NULL for all four fields.
+  // parentJobId: set on every child job; null on parent and legacy jobs.
+  // chunkIndex / chunkCount: 0-based index of this chunk and total chunk count.
+  // pageOffset: number of pages that precede this chunk in the full document.
+  parentJobId: integer("parent_job_id"),
+  chunkIndex: integer("chunk_index"),
+  chunkCount: integer("chunk_count"),
+  pageOffset: integer("page_offset"),
 });
 
 export const insertCatalogPdfJobSchema = createInsertSchema(catalogPdfJobTable).omit({

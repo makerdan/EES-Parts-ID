@@ -1,26 +1,37 @@
 /**
- * readPdfAsBase64
+ * readPdfAsBase64 / readPdfAsBytes
  *
- * Reads a PDF from a URI and returns its contents encoded as a base64 string.
+ * Reads a PDF from a URI and returns its contents, either as a raw Uint8Array
+ * (readPdfAsBytes) or a base64-encoded string (readPdfAsBase64).
  *
  * Platform strategy:
  *  - Native (iOS / Android) — uses expo-file-system/legacy `readAsStringAsync`
  *    with Base64 encoding. This is the only reliable path for `file://` URIs
  *    on iOS; global `fetch('file://...')` is not guaranteed to work.
- *  - Web — uses `fetch → arrayBuffer → btoa`, which handles `blob:` URIs
- *    produced by expo-document-picker on web.
+ *  - Web — uses `fetch → arrayBuffer`, which handles `blob:` URIs produced by
+ *    expo-document-picker on web.
+ *
+ * `readPdfAsBytes` does NOT enforce a maximum file size — large files are
+ * chunked by the upload layer (splitPdfIntoChunks). It does validate that the
+ * file is a well-formed, non-encrypted PDF.
+ *
+ * `readPdfAsBase64` wraps `readPdfAsBytes` and additionally enforces the
+ * legacy 25 MB single-upload size limit. It exists for backward compatibility
+ * with code paths that have not yet been updated to the chunked upload flow.
  *
  * Throws with a user-friendly message when:
- *  - The file exceeds MAX_PDF_BYTES (25 MB)
  *  - The file is not a valid PDF (missing %PDF- magic bytes)
  *  - The file is password-protected (/Encrypt detected)
  *  - The read / fetch fails for any reason
+ *  - (readPdfAsBase64 only) The file exceeds MAX_PDF_BYTES (25 MB)
  */
 
+import "buffer";
+import { Buffer } from "buffer";
 import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 
-export const MAX_PDF_BYTES = 25 * 1024 * 1024; // 25 MB
+export const MAX_PDF_BYTES = 25 * 1024 * 1024; // 25 MB (legacy single-upload guard)
 
 export class PdfTooLargeError extends Error {
   constructor() {
@@ -43,53 +54,7 @@ export class EncryptedPdfError extends Error {
   }
 }
 
-// ── Base64 decode helpers ─────────────────────────────────────────────────────
-
-const B64_TABLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/**
- * Decodes the first `maxBytes` bytes from a base64 string without using atob.
- * Safe for both native and web environments.
- */
-function decodeBase64Prefix(base64: string, maxBytes: number): Uint8Array {
-  const charsNeeded = Math.ceil((maxBytes * 4) / 3) + 4;
-  const slice = base64.slice(0, Math.min(charsNeeded, base64.length));
-  const result: number[] = [];
-  for (let i = 0; i + 3 < slice.length && result.length < maxBytes; i += 4) {
-    const c0 = B64_TABLE.indexOf(slice[i]!);
-    const c1 = B64_TABLE.indexOf(slice[i + 1]!);
-    const c2 = B64_TABLE.indexOf(slice[i + 2]!);
-    const c3 = B64_TABLE.indexOf(slice[i + 3]!);
-    if (c0 < 0 || c1 < 0) break;
-    result.push((c0 << 2) | (c1 >> 4));
-    if (c2 >= 0 && result.length < maxBytes) result.push(((c1 & 0xf) << 4) | (c2 >> 2));
-    if (c3 >= 0 && result.length < maxBytes) result.push(((c2 & 0x3) << 6) | c3);
-  }
-  return new Uint8Array(result);
-}
-
-/**
- * Decodes the last `maxBytes` bytes from a base64 string without using atob.
- * Aligns to the nearest 4-char (3-byte) boundary before slicing.
- */
-function decodeBase64Suffix(base64: string, maxBytes: number): Uint8Array {
-  const charsNeeded = Math.ceil((maxBytes * 4) / 3) + 4;
-  const startChar = Math.max(0, base64.length - charsNeeded);
-  const alignedStart = startChar - (startChar % 4);
-  const slice = base64.slice(alignedStart);
-  const result: number[] = [];
-  for (let i = 0; i + 3 < slice.length; i += 4) {
-    const c0 = B64_TABLE.indexOf(slice[i]!);
-    const c1 = B64_TABLE.indexOf(slice[i + 1]!);
-    const c2 = B64_TABLE.indexOf(slice[i + 2]!);
-    const c3 = B64_TABLE.indexOf(slice[i + 3]!);
-    if (c0 < 0 || c1 < 0) break;
-    result.push((c0 << 2) | (c1 >> 4));
-    if (c2 >= 0) result.push(((c1 & 0xf) << 4) | (c2 >> 2));
-    if (c3 >= 0) result.push(((c2 & 0x3) << 6) | c3);
-  }
-  return new Uint8Array(result);
-}
+// ── Validation ────────────────────────────────────────────────────────────────
 
 function bytesToAscii(bytes: Uint8Array): string {
   let s = "";
@@ -97,109 +62,57 @@ function bytesToAscii(bytes: Uint8Array): string {
   return s;
 }
 
-// ── Validation ────────────────────────────────────────────────────────────────
-
 /**
- * Validates a base64-encoded PDF by checking for the %PDF- magic bytes and
- * sniffing for the /Encrypt dictionary marker that signals password protection.
- *
- * We search the first 2 KB for %PDF- (not just byte 0 — some generators prepend
- * a BOM or comment like `%iFilter-5.0\n` before the signature) and the last 2 KB
- * for /Encrypt (traditional trailer-based PDFs store the dictionary there).
- */
-function validatePdfBase64(base64: string): void {
-  const CHECK_BYTES = 2048;
-
-  const prefix = decodeBase64Prefix(base64, CHECK_BYTES);
-  const prefixStr = bytesToAscii(prefix);
-
-  // %PDF- must appear within the first 2 KB. Strict byte-0 check is too
-  // aggressive: real catalogs sometimes have a comment or BOM before the header.
-  if (!prefixStr.includes("%PDF-")) {
-    throw new InvalidPdfError();
-  }
-
-  // Check for /Encrypt in the prefix area (cross-reference stream PDFs, PDF 1.5+)
-  if (prefixStr.includes("/Encrypt")) {
-    throw new EncryptedPdfError();
-  }
-
-  // Check for /Encrypt in the suffix area (traditional trailer-based PDFs)
-  const suffix = decodeBase64Suffix(base64, CHECK_BYTES);
-  if (bytesToAscii(suffix).includes("/Encrypt")) {
-    throw new EncryptedPdfError();
-  }
-}
-
-/**
- * Validates a raw PDF byte array directly (faster than the base64 path).
+ * Validates a raw PDF byte array directly.
+ * Checks for the %PDF- magic bytes and the /Encrypt dictionary marker.
  */
 function validatePdfBytes(bytes: Uint8Array): void {
   const CHECK_BYTES = 2048;
 
   const prefixStr = bytesToAscii(bytes.subarray(0, Math.min(CHECK_BYTES, bytes.length)));
 
-  // %PDF- must appear within the first 2 KB (handles pre-header comments/BOMs).
   if (!prefixStr.includes("%PDF-")) {
     throw new InvalidPdfError();
   }
-
-  // Check prefix for /Encrypt (cross-reference stream PDFs)
   if (prefixStr.includes("/Encrypt")) {
     throw new EncryptedPdfError();
   }
 
-  // Check suffix for /Encrypt (traditional trailer-based PDFs)
   const suffixStart = Math.max(0, bytes.length - CHECK_BYTES);
-  const suffixStr = bytesToAscii(bytes.subarray(suffixStart));
-  if (suffixStr.includes("/Encrypt")) {
+  if (bytesToAscii(bytes.subarray(suffixStart)).includes("/Encrypt")) {
     throw new EncryptedPdfError();
   }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export async function readPdfAsBase64(uri: string): Promise<string> {
+/**
+ * Read a PDF from the given URI and return the raw bytes as a Uint8Array.
+ *
+ * No file-size limit is enforced — the caller is responsible for deciding
+ * whether to split the result into chunks before uploading.
+ */
+export async function readPdfAsBytes(uri: string): Promise<Uint8Array> {
   if (Platform.OS !== "web") {
     // ── Native path ──────────────────────────────────────────────────────────
-    // Use expo-file-system/legacy for reliable file:// URI reading on iOS/Android.
-    //
-    // getInfoAsync is used for a pre-flight size check so we don't load huge
-    // files into memory. On iOS, certain URI schemes (e.g. from iCloud or
-    // the Files app) can cause getInfoAsync to fail even when the file is
-    // perfectly readable, so failures are caught and ignored — we fall through
-    // to readAsStringAsync which will surface a clearer error if the file is
-    // genuinely unavailable.
     const info = await FileSystem.getInfoAsync(uri).catch(() => null);
     if (info !== null && !info.exists) {
       throw new Error("Failed to read PDF: file not found");
-    }
-    const fileSize = info ? (info as { size?: number }).size : undefined;
-    if (fileSize !== undefined && fileSize > MAX_PDF_BYTES) {
-      throw new PdfTooLargeError();
     }
 
     const rawBase64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     });
-    // Strip any whitespace — expo-file-system may emit MIME-style line-wrapped
-    // base64 on some iOS versions. A clean string is also required for upload.
     const base64 = rawBase64.replace(/\s/g, "");
+    const bytes = new Uint8Array(Buffer.from(base64, "base64"));
 
-    // Post-read size guard covers cases where getInfoAsync had no size info.
-    if (base64.length > Math.ceil(MAX_PDF_BYTES * (4 / 3))) {
-      throw new PdfTooLargeError();
-    }
-
-    validatePdfBase64(base64);
-    return base64;
+    validatePdfBytes(bytes);
+    return bytes;
   }
 
   // ── Web path ───────────────────────────────────────────────────────────────
-  // A 60-second AbortController timeout prevents fetch from hanging forever
-  // (e.g. when a blob URL is revoked before the read completes).
   const controller = new AbortController();
-  const fetchTimeout = setTimeout(() => controller.abort(), 60_000);
+  const fetchTimeout = setTimeout(() => controller.abort(), 120_000);
 
   const response = await fetch(uri, { signal: controller.signal }).then(
     (r) => { clearTimeout(fetchTimeout); return r; },
@@ -218,18 +131,33 @@ export async function readPdfAsBase64(uri: string): Promise<string> {
     throw new Error(`Failed to read PDF: HTTP ${response.status}`);
   }
   const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > MAX_PDF_BYTES) {
-    throw new PdfTooLargeError();
-  }
   const bytes = new Uint8Array(buffer);
 
-  // Validate on raw bytes before encoding (avoids redundant decode on web)
   validatePdfBytes(bytes);
+  return bytes;
+}
 
-  const CHUNK = 0x8000; // 32 KB — safe below V8 call-stack argument limit
+/**
+ * Read a PDF from the given URI and return it as a base64-encoded string.
+ *
+ * Enforces a 25 MB size limit — throws PdfTooLargeError for larger files.
+ * Use readPdfAsBytes for files that will be split into chunks before upload.
+ */
+export async function readPdfAsBase64(uri: string): Promise<string> {
+  const bytes = await readPdfAsBytes(uri);
+
+  if (bytes.length > MAX_PDF_BYTES) {
+    throw new PdfTooLargeError();
+  }
+
+  // Encode to base64
+  const CHUNK = 0x8000;
   let binary = "";
   for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as number[]);
+    binary += String.fromCharCode.apply(
+      null,
+      bytes.subarray(i, i + CHUNK) as unknown as number[],
+    );
   }
   return btoa(binary);
 }

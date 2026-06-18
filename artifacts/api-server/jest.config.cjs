@@ -28,8 +28,11 @@ module.exports = {
       "<rootDir>/../../lib/integrations-openai-ai-server/src/batch/index.ts",
     "^@workspace/integrations-openai-ai-server$":
       "<rootDir>/../../lib/integrations-openai-ai-server/src/index.ts",
+    // Map gemini-ai to a CJS stub so that p-limit (ESM-only) is never loaded
+    // in the Jest CJS environment. Tests that need real behaviour should add
+    // their own jest.mock() call on top of this stub.
     "^@workspace/integrations-gemini-ai$":
-      "<rootDir>/../../lib/integrations-gemini-ai/src/index.ts",
+      "<rootDir>/__mocks__/integrations-gemini-ai-mock.cjs",
     "^@workspace/integrations-poe-server$":
       "<rootDir>/../../lib/integrations-poe-server/src/index.ts",
   },

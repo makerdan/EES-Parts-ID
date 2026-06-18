@@ -1,11 +1,14 @@
 /**
  * POST /api/admin/catalog-pdf
- *   Accept a base64-encoded PDF + vendor name. Starts an async background job
- *   that extracts catalog data page-by-page using GPT-4o and updates matched
- *   inventory records. Returns a jobId for polling.
+ *   Accept a base64-encoded PDF + vendor name. Supports both single-chunk
+ *   (legacy) and multi-chunk uploads. For multi-chunk uploads the client
+ *   sends chunkIndex / chunkCount / parentJobId / pageOffset fields; the
+ *   server creates one parent job and one child job per chunk. Returns a
+ *   jobId for polling (always the parent job ID for multi-chunk uploads).
  *
  * GET /api/admin/catalog-pdf/:jobId/status
- *   Return the current progress of a running or completed job.
+ *   Return the current progress of a running or completed job. For parent
+ *   jobs, aggregates progress across all child jobs in real time.
  *
  * GET /api/admin/catalog-pdf/reviews
  *   List all inventory items where imageSource = 'pdf_extraction', grouped
@@ -17,7 +20,7 @@
  */
 
 import { Router } from "express";
-import { eq, sql, and, desc, inArray } from "drizzle-orm";
+import { eq, sql, and, desc, inArray, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { inventoryTable, catalogPdfJobTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
@@ -30,23 +33,14 @@ import { uploadCatalogImage } from "../lib/objectStorage";
 const router = Router();
 
 // ── PDF validation helper ──────────────────────────────────────────────────────
-// Decodes a small prefix of the base64 payload and validates it looks like a
-// real, non-encrypted PDF before we do any database work or async processing.
-//
-// Returns null if the payload is valid, or an error descriptor if it is not:
-//   { status: 400, message: string }
 function validatePdfBase64(pdfBase64: string): { status: 400; message: string } | null {
-  // Decode enough bytes to cover the magic bytes + a reasonable header scan.
-  // 4 KB of base64 ≈ ~3 KB of binary, more than enough to find %PDF- and /Encrypt.
-  const PREFIX_B64_LEN = 5500; // ~4 KB decoded
+  const PREFIX_B64_LEN = 5500;
   const prefix = Buffer.from(pdfBase64.slice(0, PREFIX_B64_LEN), "base64");
 
-  // Check PDF magic bytes — every valid PDF starts with "%PDF-"
   if (prefix.length < 5 || prefix.slice(0, 5).toString("ascii") !== "%PDF-") {
     return { status: 400, message: "Invalid file: not a PDF (missing %PDF- header)" };
   }
 
-  // Check for password protection — encrypted PDFs contain an /Encrypt dictionary
   if (prefix.includes("/Encrypt")) {
     return { status: 400, message: "Invalid file: PDF is password-protected. Remove the password and try again." };
   }
@@ -55,17 +49,6 @@ function validatePdfBase64(pdfBase64: string): { status: 400; message: string } 
 }
 
 // ── Image helper ──────────────────────────────────────────────────────────────
-// Selects or crops the correct image buffer for one image slot of a catalog entry.
-//
-// Rendered-page path (page.isRendered = true):
-//   page.images[0] is the full rendered page PNG. We crop using the normalised
-//   imageRegion bounding box.
-//
-// Embedded-image path (page.isRendered = false):
-//   page.images is an array of individual image objects extracted by pdfjs-dist.
-//   We select by index so each part gets the right image, not always images[0].
-//
-// Returns null when there's nothing valid to upload.
 type PageCtx = {
   isRendered: boolean;
   images: Buffer[];
@@ -122,16 +105,190 @@ function requireAdminAuth(
   next();
 }
 
+// ── Parent-job finalisation (atomic) ──────────────────────────────────────────
+// After a child job reaches a terminal state, check whether all siblings are
+// also terminal. If so, mark the parent as done or failed using a single
+// conditional UPDATE so that two chunks finishing simultaneously cannot both
+// (or neither) trigger the parent transition.
+async function finalizeParentIfComplete(parentId: number): Promise<void> {
+  try {
+    await db.execute(sql`
+      WITH child_agg AS (
+        SELECT
+          COUNT(*)                                                          AS total,
+          SUM(CASE WHEN status NOT IN ('done','failed','cancelled') THEN 1 ELSE 0 END) AS still_running,
+          SUM(CASE WHEN status = 'failed'                           THEN 1 ELSE 0 END) AS failed_count,
+          COALESCE(SUM(processed_pages), 0)                                AS sum_pages,
+          COALESCE(SUM(matched_parts),   0)                                AS sum_matched,
+          COALESCE(SUM(images_matched),  0)                                AS sum_images,
+          (SELECT error_message FROM catalog_pdf_job
+            WHERE parent_job_id = ${parentId} AND status = 'failed'
+            LIMIT 1)                                                        AS first_error
+        FROM catalog_pdf_job
+        WHERE parent_job_id = ${parentId}
+      ),
+      parent_info AS (
+        SELECT chunk_count FROM catalog_pdf_job WHERE id = ${parentId}
+      )
+      UPDATE catalog_pdf_job
+      SET
+        status           = CASE WHEN ca.failed_count > 0 THEN 'failed' ELSE 'done' END,
+        error_message    = CASE WHEN ca.failed_count > 0 THEN ca.first_error ELSE NULL END,
+        processed_pages  = ca.sum_pages,
+        matched_parts    = ca.sum_matched,
+        images_matched   = ca.sum_images,
+        finished_at      = NOW()
+      FROM child_agg ca, parent_info pi
+      WHERE catalog_pdf_job.id = ${parentId}
+        AND ca.still_running   = 0
+        AND ca.total           = pi.chunk_count
+        AND catalog_pdf_job.status NOT IN ('done', 'failed')
+    `);
+  } catch (err) {
+    console.error(`[catalog-pdf] finalizeParentIfComplete failed for parent=${parentId}:`, err);
+  }
+}
+
+// ── Core per-page processing loop ─────────────────────────────────────────────
+// Shared by both the POST (new job) and POST /resume routes.
+async function processPdfPages(
+  jobId: number,
+  pages: Awaited<ReturnType<typeof extractPdfPages>>,
+  startPage: number,
+  normalizedVendor: string,
+  parentJobId: number | null,
+  pageOffset: number,
+): Promise<void> {
+  let processedPages = startPage;
+  let matchedParts = 0;
+  let imagesMatched = 0;
+  let wasCancelled = false;
+
+  // Load existing matchedParts/imagesMatched for resume path
+  if (startPage > 0) {
+    const [existing] = await db
+      .select({ matchedParts: catalogPdfJobTable.matchedParts, imagesMatched: catalogPdfJobTable.imagesMatched })
+      .from(catalogPdfJobTable)
+      .where(eq(catalogPdfJobTable.id, jobId))
+      .limit(1);
+    matchedParts = existing?.matchedParts ?? 0;
+    imagesMatched = existing?.imagesMatched ?? 0;
+  }
+
+  const remainingPages = pages.slice(startPage);
+
+  for (const page of remainingPages) {
+    const [currentRow] = await db
+      .select({ status: catalogPdfJobTable.status })
+      .from(catalogPdfJobTable)
+      .where(eq(catalogPdfJobTable.id, jobId))
+      .limit(1);
+    if (currentRow?.status === "cancelled") {
+      wasCancelled = true;
+      break;
+    }
+
+    const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
+
+    for (const entry of entries) {
+      if (entry.confidence < 0.4) continue;
+
+      const match = await matchCatalogNumber(normalizedVendor, entry.catalogNumber);
+      if (!match) continue;
+
+      const [existing] = await db
+        .select({
+          id: inventoryTable.id,
+          description: inventoryTable.description,
+          imageSource: inventoryTable.imageSource,
+        })
+        .from(inventoryTable)
+        .where(eq(inventoryTable.id, match.inventoryId))
+        .limit(1);
+
+      if (!existing) continue;
+
+      let imageUrl: string | null = null;
+      let imageUrl2: string | null = null;
+      if (entry.hasPartImage && page.images.length > 0) {
+        const buf1 = await cropOrSelectImage(page, entry.imageRegion, entry.imageIndex);
+        if (buf1) {
+          try { imageUrl = await uploadCatalogImage(buf1, "image/png"); }
+          catch (err) { console.warn("[catalog-pdf] Image 1 upload failed:", err); }
+        }
+        const buf2 = await cropOrSelectImage(page, entry.imageRegion2, entry.imageIndex2);
+        if (buf2) {
+          try { imageUrl2 = await uploadCatalogImage(buf2, "image/png"); }
+          catch (err) { console.warn("[catalog-pdf] Image 2 upload failed:", err); }
+        }
+      }
+
+      await db
+        .update(inventoryTable)
+        .set({
+          description: entry.description || existing.description,
+          previousDescription: existing.description,
+          imageUrl,
+          imageUrl2,
+          imageSource: "pdf_extraction",
+          imageConfidence: match.similarityScore * entry.confidence,
+          catalogPdfJobId: jobId,
+          updatedAt: new Date(),
+        })
+        .where(eq(inventoryTable.id, match.inventoryId));
+
+      if (imageUrl) imagesMatched++;
+      matchedParts++;
+    }
+
+    processedPages++;
+    await db
+      .update(catalogPdfJobTable)
+      .set({ processedPages, matchedParts, imagesMatched })
+      .where(eq(catalogPdfJobTable.id, jobId));
+  }
+
+  if (wasCancelled) {
+    await db
+      .update(catalogPdfJobTable)
+      .set({ finishedAt: new Date() })
+      .where(eq(catalogPdfJobTable.id, jobId));
+    console.log(`[catalog-pdf] job=${jobId} cancelled after page ${processedPages} (offset=${pageOffset})`);
+    return;
+  }
+
+  await db
+    .update(catalogPdfJobTable)
+    .set({ status: "done", processedPages, matchedParts, imagesMatched, finishedAt: new Date() })
+    .where(eq(catalogPdfJobTable.id, jobId));
+
+  console.log(
+    `[catalog-pdf] job=${jobId} done — pages=${processedPages} matched=${matchedParts} images=${imagesMatched} (offset=${pageOffset})`,
+  );
+
+  if (parentJobId !== null) {
+    await finalizeParentIfComplete(parentJobId);
+  }
+}
+
 // ── POST /admin/catalog-pdf ───────────────────────────────────────────────────
 router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   const {
     pdfBase64,
     vendor,
     filename = "catalog.pdf",
+    chunkIndex: rawChunkIndex,
+    chunkCount: rawChunkCount,
+    parentJobId: rawParentJobId,
+    pageOffset: rawPageOffset,
   } = req.body as {
     pdfBase64?: string;
     vendor?: string;
     filename?: string;
+    chunkIndex?: number;
+    chunkCount?: number;
+    parentJobId?: string | number;
+    pageOffset?: number;
   };
 
   if (!pdfBase64 || typeof pdfBase64 !== "string") {
@@ -141,26 +298,100 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     return void res.status(400).json({ error: "Missing vendor field" });
   }
 
-  // Sanity-check the payload is reasonable (≤25 MB base64 ≈ ~18 MB PDF)
+  // Size guard only — content validation (magic bytes, /Encrypt) happens in the
+  // async processing loop when extractPdfPages is called, so that the job can be
+  // created synchronously and the client can poll for the failure status.
   if (pdfBase64.length > 35_000_000) {
-    return void res.status(413).json({ error: "PDF too large (max ~25 MB)" });
+    return void res.status(413).json({ error: "PDF too large (max ~25 MB per chunk)" });
   }
 
-  // Validate magic bytes and reject encrypted PDFs before touching the DB
-  const pdfValidationError = validatePdfBase64(pdfBase64);
-  if (pdfValidationError) {
-    return void res.status(pdfValidationError.status).json({ error: pdfValidationError.message });
+  const isChunked = rawChunkIndex !== undefined && rawChunkIndex !== null;
+  const chunkIndex = isChunked ? Number(rawChunkIndex) : null;
+  const chunkCount = isChunked ? Number(rawChunkCount) : null;
+  const pageOffset = isChunked ? (Number(rawPageOffset) || 0) : 0;
+  const normalizedVendor = vendor.trim().toUpperCase();
+
+  // ── Validate chunk parameters ──────────────────────────────────────────────
+  if (isChunked) {
+    if (
+      !Number.isFinite(chunkIndex) ||
+      !Number.isFinite(chunkCount) ||
+      chunkCount! < 1 ||
+      chunkIndex! < 0 ||
+      chunkIndex! >= chunkCount!
+    ) {
+      return void res.status(400).json({
+        error: `Invalid chunkIndex (${chunkIndex}) or chunkCount (${chunkCount})`,
+      });
+    }
   }
 
-  // Create the DB job record
+  // ── Parent job handling ────────────────────────────────────────────────────
+  let resolvedParentJobId: number | null = null;
+
+  if (isChunked) {
+    if (chunkIndex === 0 && (rawParentJobId === undefined || rawParentJobId === null)) {
+      // First chunk with no parent yet — create the parent job
+      const [parentRow] = await db
+        .insert(catalogPdfJobTable)
+        .values({
+          vendor: normalizedVendor,
+          filename: filename.trim(),
+          status: "pending",
+          processedPages: 0,
+          matchedParts: 0,
+          chunkCount: chunkCount!,
+        })
+        .returning({ id: catalogPdfJobTable.id });
+
+      if (!parentRow) {
+        return void res.status(500).json({ error: "Failed to create parent job record" });
+      }
+      resolvedParentJobId = parentRow.id;
+    } else {
+      // Subsequent chunk — validate that the parent exists
+      const pid = Number(rawParentJobId);
+      if (!Number.isFinite(pid)) {
+        return void res.status(400).json({ error: "Invalid parentJobId" });
+      }
+
+      const [parentRow] = await db
+        .select({ id: catalogPdfJobTable.id, chunkCount: catalogPdfJobTable.chunkCount })
+        .from(catalogPdfJobTable)
+        .where(eq(catalogPdfJobTable.id, pid))
+        .limit(1);
+
+      if (!parentRow) {
+        return void res.status(404).json({ error: "Parent job not found" });
+      }
+
+      if (chunkIndex! >= (parentRow.chunkCount ?? 0)) {
+        return void res.status(400).json({
+          error: `chunkIndex ${chunkIndex} is out of range for chunkCount ${parentRow.chunkCount}`,
+        });
+      }
+
+      resolvedParentJobId = pid;
+    }
+  }
+
+  // ── Create child (or legacy) job record ───────────────────────────────────
   const [jobRow] = await db
     .insert(catalogPdfJobTable)
     .values({
-      vendor: vendor.trim().toUpperCase(),
+      vendor: normalizedVendor,
       filename: filename.trim(),
       status: "pending",
       processedPages: 0,
       matchedParts: 0,
+      ...(isChunked
+        ? {
+            parentJobId: resolvedParentJobId,
+            chunkIndex: chunkIndex!,
+            chunkCount: chunkCount!,
+            pageOffset,
+          }
+        : {}),
     })
     .returning({ id: catalogPdfJobTable.id });
 
@@ -169,10 +400,13 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   }
 
   const jobId = String(jobRow.id);
-  const normalizedVendor = vendor.trim().toUpperCase();
 
-  // Respond immediately with the job ID — processing is async
-  res.json({ jobId, message: "Job started" });
+  // Respond immediately — processing is async
+  if (isChunked) {
+    res.json({ jobId: String(resolvedParentJobId), chunkJobId: jobId, message: "Chunk job started" });
+  } else {
+    res.json({ jobId, message: "Job started" });
+  }
 
   // ── Async processing ──────────────────────────────────────────────────────
   setImmediate(async () => {
@@ -190,116 +424,13 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         .set({ totalPages: pages.length })
         .where(eq(catalogPdfJobTable.id, jobRow.id));
 
-      let processedPages = 0;
-      let matchedParts = 0;
-      let imagesMatched = 0;
-      let wasCancelled = false;
-
-      for (const page of pages) {
-        // Check for cancellation before processing each page
-        const [currentRow] = await db
-          .select({ status: catalogPdfJobTable.status })
-          .from(catalogPdfJobTable)
-          .where(eq(catalogPdfJobTable.id, jobRow.id))
-          .limit(1);
-        if (currentRow?.status === "cancelled") {
-          wasCancelled = true;
-          break;
-        }
-
-        // Extract catalog entries from this page
-        const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
-
-        for (const entry of entries) {
-          if (entry.confidence < 0.4) continue;
-
-          const match = await matchCatalogNumber(normalizedVendor, entry.catalogNumber);
-          if (!match) continue;
-
-          // Fetch the current inventory row (to save previousDescription)
-          const [existing] = await db
-            .select({
-              id: inventoryTable.id,
-              description: inventoryTable.description,
-              imageSource: inventoryTable.imageSource,
-            })
-            .from(inventoryTable)
-            .where(eq(inventoryTable.id, match.inventoryId))
-            .limit(1);
-
-          if (!existing) continue;
-
-          // Upload up to two images per part using cropOrSelectImage.
-          // Slot 1 → imageUrl, Slot 2 → imageUrl2.
-          // The helper automatically handles rendered-page crop vs embedded-image index.
-          let imageUrl: string | null = null;
-          let imageUrl2: string | null = null;
-          if (entry.hasPartImage && page.images.length > 0) {
-            const buf1 = await cropOrSelectImage(page, entry.imageRegion, entry.imageIndex);
-            if (buf1) {
-              try { imageUrl = await uploadCatalogImage(buf1, "image/png"); }
-              catch (err) { console.warn("[catalog-pdf] Image 1 upload failed:", err); }
-            }
-            const buf2 = await cropOrSelectImage(page, entry.imageRegion2, entry.imageIndex2);
-            if (buf2) {
-              try { imageUrl2 = await uploadCatalogImage(buf2, "image/png"); }
-              catch (err) { console.warn("[catalog-pdf] Image 2 upload failed:", err); }
-            }
-          }
-
-          // Update the inventory record
-          await db
-            .update(inventoryTable)
-            .set({
-              description: entry.description || existing.description,
-              previousDescription: existing.description,
-              imageUrl,
-              imageUrl2,
-              imageSource: "pdf_extraction",
-              imageConfidence: match.similarityScore * entry.confidence,
-              catalogPdfJobId: jobRow.id,
-              updatedAt: new Date(),
-            })
-            .where(eq(inventoryTable.id, match.inventoryId));
-
-          if (imageUrl) imagesMatched++;
-          matchedParts++;
-        }
-
-        processedPages++;
-        // Persist progress to DB on every page so a restart can recover
-        await db
-          .update(catalogPdfJobTable)
-          .set({
-            processedPages,
-            matchedParts,
-            imagesMatched,
-          })
-          .where(eq(catalogPdfJobTable.id, jobRow.id));
-      }
-
-      if (wasCancelled) {
-        await db
-          .update(catalogPdfJobTable)
-          .set({ finishedAt: new Date() })
-          .where(eq(catalogPdfJobTable.id, jobRow.id));
-        console.log(`[catalog-pdf] job=${jobId} cancelled after page ${processedPages}`);
-        return;
-      }
-
-      await db
-        .update(catalogPdfJobTable)
-        .set({
-          status: "done",
-          processedPages,
-          matchedParts,
-          imagesMatched,
-          finishedAt: new Date(),
-        })
-        .where(eq(catalogPdfJobTable.id, jobRow.id));
-
-      console.log(
-        `[catalog-pdf] job=${jobId} done — pages=${processedPages} matched=${matchedParts} images=${imagesMatched}`,
+      await processPdfPages(
+        jobRow.id,
+        pages,
+        0,
+        normalizedVendor,
+        resolvedParentJobId,
+        pageOffset,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -308,13 +439,23 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
         .where(eq(catalogPdfJobTable.id, jobRow.id));
       console.error(`[catalog-pdf] job=${jobId} failed:`, err);
+
+      // Mark parent failed atomically (only if not already in a terminal state)
+      if (resolvedParentJobId !== null) {
+        await db.execute(sql`
+          UPDATE catalog_pdf_job
+          SET status = 'failed',
+              error_message = ${msg},
+              finished_at = NOW()
+          WHERE id = ${resolvedParentJobId}
+            AND status NOT IN ('done', 'failed')
+        `);
+      }
     }
   });
 });
 
 // ── POST /admin/catalog-pdf/:jobId/cancel ─────────────────────────────────────
-// Marks a running job as cancelled. The background processing loop checks for
-// this status between pages and stops cleanly without marking the job as done.
 router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => {
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
@@ -363,6 +504,51 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
     return void res.status(404).json({ error: "Job not found" });
   }
 
+  // ── Parent job: aggregate progress from children ──────────────────────────
+  if (row.chunkCount !== null && row.parentJobId === null) {
+    const children = await db
+      .select({
+        status: catalogPdfJobTable.status,
+        totalPages: catalogPdfJobTable.totalPages,
+        processedPages: catalogPdfJobTable.processedPages,
+        matchedParts: catalogPdfJobTable.matchedParts,
+        imagesMatched: catalogPdfJobTable.imagesMatched,
+        errorMessage: catalogPdfJobTable.errorMessage,
+      })
+      .from(catalogPdfJobTable)
+      .where(eq(catalogPdfJobTable.parentJobId, Number(jobId)));
+
+    const totalPages = children.reduce((s, c) => s + (c.totalPages ?? 0), 0);
+    const processedPages = children.reduce((s, c) => s + c.processedPages, 0);
+    const matchedParts = children.reduce((s, c) => s + c.matchedParts, 0);
+    const imagesMatched = children.reduce((s, c) => s + c.imagesMatched, 0);
+
+    // Derive aggregated status
+    let aggStatus = row.status;
+    if (row.status === "pending" || row.status === "processing") {
+      const anyProcessing = children.some(
+        (c) => c.status === "processing" || c.status === "pending",
+      );
+      aggStatus = anyProcessing ? "processing" : row.status;
+    }
+
+    const failedChild = children.find((c) => c.status === "failed");
+    const errorMessage = failedChild?.errorMessage ?? row.errorMessage;
+
+    return void res.json({
+      jobId,
+      status: aggStatus,
+      totalPages: totalPages > 0 ? totalPages : null,
+      processedPages,
+      matchedParts,
+      imagesMatched,
+      startedAt: row.startedAt,
+      finishedAt: row.finishedAt,
+      errorMessage: errorMessage ?? null,
+    });
+  }
+
+  // ── Non-parent (child or legacy) job: return directly ────────────────────
   res.json({
     jobId,
     status: row.status,
@@ -377,8 +563,8 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
 });
 
 // ── GET /admin/catalog-pdf/failed-jobs ────────────────────────────────────────
-// Returns jobs that are in `failed` or `cancelled` status and not dismissed,
-// ordered newest-first.
+// Returns jobs in `failed` or `cancelled` status that are not dismissed and not child jobs
+// (child jobs are hidden — only the parent appears in admin-facing lists).
 router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
   try {
     const rows = await db
@@ -398,6 +584,7 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
       .where(and(
         inArray(catalogPdfJobTable.status, ["failed", "cancelled"]),
         eq(catalogPdfJobTable.dismissed, false),
+        isNull(catalogPdfJobTable.parentJobId),
       ))
       .orderBy(desc(catalogPdfJobTable.createdAt));
 
@@ -409,8 +596,6 @@ router.get("/catalog-pdf/failed-jobs", requireAdminAuth, async (req, res) => {
 });
 
 // ── POST /admin/catalog-pdf/:jobId/resume ─────────────────────────────────────
-// Resume a failed (or stuck-processing) job from the last persisted page.
-// Body: { pdfBase64: string }
 router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => {
   const jobId = Number(req.params["jobId"]);
   if (!Number.isFinite(jobId)) {
@@ -418,24 +603,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
     return;
   }
 
-  const { pdfBase64 } = req.body as { pdfBase64?: string };
-  if (!pdfBase64 || typeof pdfBase64 !== "string") {
-    res.status(400).json({ error: "Missing pdfBase64 field" });
-    return;
-  }
-  if (pdfBase64.length > 35_000_000) {
-    res.status(413).json({ error: "PDF too large (max ~25 MB)" });
-    return;
-  }
-
-  // Validate magic bytes and reject encrypted PDFs before touching the DB
-  const pdfValidationError = validatePdfBase64(pdfBase64);
-  if (pdfValidationError) {
-    res.status(pdfValidationError.status).json({ error: pdfValidationError.message });
-    return;
-  }
-
-  // Fetch the existing job
+  // ── Job lookup and status checks come first so 404/409 are unambiguous ──────
   const [jobRow] = await db
     .select()
     .from(catalogPdfJobTable)
@@ -447,6 +615,14 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
     return;
   }
 
+  // Parent jobs cannot be resumed — each chunk would need to be re-uploaded individually
+  if (jobRow.chunkCount !== null && jobRow.parentJobId === null) {
+    res.status(409).json({
+      error: "Cannot resume a multi-chunk parent job. Re-upload the affected chunk(s) individually.",
+    });
+    return;
+  }
+
   if (jobRow.status !== "failed" && jobRow.status !== "processing") {
     res.status(409).json({
       error: `Cannot resume a job with status "${jobRow.status}". Only failed or processing jobs can be resumed.`,
@@ -454,10 +630,24 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
     return;
   }
 
+  // ── Validate the PDF payload after confirming the job is resumable ───────────
+  // Content validation (magic bytes, /Encrypt) happens asynchronously inside
+  // extractPdfPages; the synchronous handler only checks presence and size.
+  const { pdfBase64 } = req.body as { pdfBase64?: string };
+  if (!pdfBase64 || typeof pdfBase64 !== "string") {
+    res.status(400).json({ error: "Missing pdfBase64 field" });
+    return;
+  }
+  if (pdfBase64.length > 35_000_000) {
+    res.status(413).json({ error: "PDF too large (max ~25 MB)" });
+    return;
+  }
+
   const resumeFromPage = jobRow.processedPages ?? 0;
   const normalizedVendor = jobRow.vendor;
+  const pageOffset = jobRow.pageOffset ?? 0;
+  const parentJobId = jobRow.parentJobId ?? null;
 
-  // Transition back to processing
   await db
     .update(catalogPdfJobTable)
     .set({ status: "processing", errorMessage: null, finishedAt: null })
@@ -471,108 +661,18 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
       const pdfBuffer = Buffer.from(pdfBase64, "base64");
       const pages = await extractPdfPages(pdfBuffer);
 
-      // Update total pages in case it was unknown
       await db
         .update(catalogPdfJobTable)
         .set({ totalPages: pages.length })
         .where(eq(catalogPdfJobTable.id, jobId));
 
-      // Skip already-processed pages
-      const remainingPages = pages.slice(resumeFromPage);
-
-      let processedPages = resumeFromPage;
-      let matchedParts = jobRow.matchedParts ?? 0;
-      let imagesMatched = jobRow.imagesMatched ?? 0;
-      let wasCancelled = false;
-
-      for (const page of remainingPages) {
-        // Check for cancellation before processing each page
-        const [currentRow] = await db
-          .select({ status: catalogPdfJobTable.status })
-          .from(catalogPdfJobTable)
-          .where(eq(catalogPdfJobTable.id, jobId))
-          .limit(1);
-        if (currentRow?.status === "cancelled") {
-          wasCancelled = true;
-          break;
-        }
-
-        const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
-
-        for (const entry of entries) {
-          if (entry.confidence < 0.4) continue;
-
-          const match = await matchCatalogNumber(normalizedVendor, entry.catalogNumber);
-          if (!match) continue;
-
-          const [existing] = await db
-            .select({
-              id: inventoryTable.id,
-              description: inventoryTable.description,
-              imageSource: inventoryTable.imageSource,
-            })
-            .from(inventoryTable)
-            .where(eq(inventoryTable.id, match.inventoryId))
-            .limit(1);
-
-          if (!existing) continue;
-
-          let imageUrl: string | null = null;
-          let imageUrl2: string | null = null;
-          if (entry.hasPartImage && page.images.length > 0) {
-            const buf1 = await cropOrSelectImage(page, entry.imageRegion, entry.imageIndex);
-            if (buf1) {
-              try { imageUrl = await uploadCatalogImage(buf1, "image/png"); }
-              catch (err) { console.warn("[catalog-pdf] Image 1 upload failed:", err); }
-            }
-            const buf2 = await cropOrSelectImage(page, entry.imageRegion2, entry.imageIndex2);
-            if (buf2) {
-              try { imageUrl2 = await uploadCatalogImage(buf2, "image/png"); }
-              catch (err) { console.warn("[catalog-pdf] Image 2 upload failed:", err); }
-            }
-          }
-
-          await db
-            .update(inventoryTable)
-            .set({
-              description: entry.description || existing.description,
-              previousDescription: existing.description,
-              imageUrl,
-              imageUrl2,
-              imageSource: "pdf_extraction",
-              imageConfidence: match.similarityScore * entry.confidence,
-              catalogPdfJobId: jobId,
-              updatedAt: new Date(),
-            })
-            .where(eq(inventoryTable.id, match.inventoryId));
-
-          if (imageUrl) imagesMatched++;
-          matchedParts++;
-        }
-
-        processedPages++;
-        await db
-          .update(catalogPdfJobTable)
-          .set({ processedPages, matchedParts, imagesMatched })
-          .where(eq(catalogPdfJobTable.id, jobId));
-      }
-
-      if (wasCancelled) {
-        await db
-          .update(catalogPdfJobTable)
-          .set({ finishedAt: new Date() })
-          .where(eq(catalogPdfJobTable.id, jobId));
-        console.log(`[catalog-pdf] job=${jobId} cancelled (resume) after page ${processedPages}`);
-        return;
-      }
-
-      await db
-        .update(catalogPdfJobTable)
-        .set({ status: "done", processedPages, matchedParts, imagesMatched, finishedAt: new Date() })
-        .where(eq(catalogPdfJobTable.id, jobId));
-
-      console.log(
-        `[catalog-pdf] job=${jobId} resumed and done — pages=${processedPages} matched=${matchedParts} images=${imagesMatched}`,
+      await processPdfPages(
+        jobId,
+        pages,
+        resumeFromPage,
+        normalizedVendor,
+        parentJobId,
+        pageOffset,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -616,8 +716,6 @@ router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) =>
 });
 
 // ── GET /admin/catalog-pdf/reviews ────────────────────────────────────────────
-// Returns inventory items updated by PDF extraction, with the job metadata
-// and the before/after description for review.
 router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
   try {
     const jobIdFilter = req.query["jobId"] ? Number(req.query["jobId"]) : null;
@@ -646,7 +744,6 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
       )
       .orderBy(desc(inventoryTable.catalogPdfJobId), desc(inventoryTable.updatedAt));
 
-    // Attach job metadata for grouping
     const jobIds = [...new Set(rows.map((r) => r.catalogPdfJobId).filter(Boolean))] as number[];
     let jobs: { id: number; vendor: string; filename: string; status: string; createdAt: Date }[] = [];
     if (jobIds.length > 0) {

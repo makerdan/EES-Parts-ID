@@ -5,8 +5,17 @@
  * manufacturer PDF catalog, sends it to POST /api/admin/catalog-pdf, then
  * polls the job status endpoint and shows progress. When the job is done a
  * "Review changes" button links to the catalog-review screen.
+ *
+ * Large PDFs (> CHUNK_SIZE_THRESHOLD bytes) are split client-side into
+ * page-range chunks using pdf-lib and uploaded sequentially. Each chunk is
+ * sent with chunkIndex / chunkCount / parentJobId / pageOffset fields. The
+ * server creates a parent job for the first chunk and returns that parent ID
+ * for all subsequent polling. Small PDFs follow the existing single-upload
+ * path unchanged.
  */
 
+import "buffer";
+import { Buffer } from "buffer";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -19,7 +28,8 @@ import {
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as DocumentPicker from "expo-document-picker";
 import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
-import { readPdfAsBase64, PdfTooLargeError, InvalidPdfError, EncryptedPdfError } from "@/utils/readPdfAsBase64";
+import { readPdfAsBytes, InvalidPdfError, EncryptedPdfError } from "@/utils/readPdfAsBase64";
+import { splitPdfIntoChunks, PAGES_PER_CHUNK } from "@/utils/splitPdfIntoChunks";
 import { useNavigation, useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 
@@ -28,6 +38,9 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   : "";
 
 const POLL_MS = 2500;
+
+/** Files above this threshold are split into chunks before uploading. */
+const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
 
 type JobStatus = {
   jobId: string;
@@ -44,6 +57,11 @@ interface Props {
   onSessionExpired: () => void;
 }
 
+/** Encode a Uint8Array to a base64 string. */
+function bytesToBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
+}
+
 export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   "use no memo";
   const colors = useColors();
@@ -52,10 +70,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const [vendor, setVendor] = useState("");
   const [filename, setFilename] = useState<string | null>(null);
-  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
+  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [readingFile, setReadingFile] = useState(false);
   const [loading, setLoading] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [chunkLabel, setChunkLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRetryBtn, setShowRetryBtn] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
@@ -64,7 +83,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [uploadEta, setUploadEta] = useState<number | null>(null);
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
 
-  // Tick the retry countdown down by 1 each second until it reaches 0.
   useEffect(() => {
     if (retryCountdown === null || retryCountdown <= 0) return;
     const timer = setTimeout(() => {
@@ -155,11 +173,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const handlePickFile = async () => {
     setError(null);
-    setPdfBase64(null);
+    setPdfBytes(null);
     setFilename(null);
-    // Show loading immediately so the UI responds right away — on web,
-    // expo-document-picker can take several seconds to create the blob URL
-    // for large files before getDocumentAsync even returns.
     setReadingFile(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -172,15 +187,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       }
       const asset = result.assets[0]!;
       try {
-        const base64 = await readPdfAsBase64(asset.uri);
-        setPdfBase64(base64);
+        const bytes = await readPdfAsBytes(asset.uri);
+        setPdfBytes(bytes);
         setFilename(asset.name ?? "catalog.pdf");
       } catch (err) {
-        if (
-          err instanceof PdfTooLargeError ||
-          err instanceof InvalidPdfError ||
-          err instanceof EncryptedPdfError
-        ) {
+        if (err instanceof InvalidPdfError || err instanceof EncryptedPdfError) {
           setError(err.message);
         } else {
           setError((err as Error)?.message ?? "Could not read the PDF file. Please try again.");
@@ -196,41 +207,39 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const MAX_AUTO_RETRIES = 2;
 
-  const handleStart = (attempt = 0) => {
-    if (!pdfBase64 || !vendor.trim() || !adminToken) return;
-    setError(null);
-    setRetryCountdown(null);
-    setShowRetryBtn(false);
-    if (attempt === 0) setJobStatus(null);
-    setLoading(true);
-    setUploadPct(0);
-    setUploadSpeed(null);
-    setUploadEta(null);
-    speedSamplesRef.current = [];
-
+  // ── Single-chunk XHR upload ────────────────────────────────────────────────
+  const sendSingleChunk = (
+    base64: string,
+    extraFields: Record<string, unknown>,
+    attempt: number,
+    onSuccess: (resp: { jobId: string; chunkJobId?: string }) => void,
+    onFailure: (msg: string) => void,
+    onAbort: () => void,
+    onNetwork: () => void,
+  ): void => {
+    const token = adminToken!;
     const body = JSON.stringify({
-      pdfBase64,
+      pdfBase64: base64,
       vendor: vendor.trim(),
       filename: filename ?? "catalog.pdf",
+      ...extraFields,
     });
 
     const xhr = new XMLHttpRequest();
     xhrRef.current = xhr;
     xhr.open("POST", `${API_BASE}/admin/catalog-pdf`);
     xhr.setRequestHeader("Content-Type", "application/json");
-    xhr.setRequestHeader("Authorization", `Bearer ${adminToken}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
         setUploadPct(Math.round((e.loaded / e.total) * 100));
-
         const now = Date.now();
         const samples = speedSamplesRef.current;
         samples.push({ t: now, loaded: e.loaded });
         const cutoff = now - SPEED_WINDOW_MS;
         while (samples.length > 1 && samples[0]!.t < cutoff) samples.shift();
         if (samples.length > SPEED_WINDOW_MAX) samples.splice(0, samples.length - SPEED_WINDOW_MAX);
-
         if (samples.length >= 2) {
           const oldest = samples[0]!;
           const newest = samples[samples.length - 1]!;
@@ -238,51 +247,25 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           if (dtMs > 0) {
             const bytesPerMs = (newest.loaded - oldest.loaded) / dtMs;
             const bytesPerSec = bytesPerMs * 1000;
-            const speedMbs = bytesPerSec / (1024 * 1024);
-            setUploadSpeed(speedMbs);
-            const remaining = e.total - e.loaded;
-            const etaSec = bytesPerSec > 0 ? remaining / bytesPerSec : null;
-            setUploadEta(etaSec);
+            setUploadSpeed(bytesPerSec / (1024 * 1024));
+            setUploadEta(bytesPerSec > 0 ? (e.total - e.loaded) / bytesPerSec : null);
           }
         }
       }
     };
 
-    xhr.onabort = () => {
-      xhrRef.current = null;
-      setUploadPct(null);
-      setLoading(false);
-    };
-
+    xhr.onabort = () => { xhrRef.current = null; onAbort(); };
+    xhr.onerror = () => { xhrRef.current = null; onNetwork(); };
     xhr.onload = () => {
       xhrRef.current = null;
-      setUploadPct(null);
-      setUploadSpeed(null);
-      setUploadEta(null);
-      setLoading(false);
       if (xhr.status === 401) { onSessionExpired(); return; }
       if (xhr.status < 200 || xhr.status >= 300) {
         let errMsg = "Failed to start job";
         try { errMsg = (JSON.parse(xhr.responseText) as { error?: string }).error ?? errMsg; } catch { /* ignore */ }
-        setError(errMsg);
+        onFailure(errMsg);
         return;
       }
-      let jobId: string;
-      try { jobId = (JSON.parse(xhr.responseText) as { jobId: string }).jobId; } catch {
-        setError("Unexpected server response.");
-        return;
-      }
-      setJobStatus({
-        jobId,
-        status: "pending",
-        totalPages: null,
-        processedPages: 0,
-        matchedParts: 0,
-        imagesMatched: 0,
-        errorMessage: null,
-      });
-      startPolling(jobId);
-      setPdfBase64(null);
+      onSuccess(JSON.parse(xhr.responseText) as { jobId: string; chunkJobId?: string });
     };
 
     xhr.onerror = () => {
@@ -307,6 +290,171 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     };
 
     xhr.send(body);
+  };
+
+  // ── Chunked upload flow ────────────────────────────────────────────────────
+  const handleChunkedUpload = async (bytes: Uint8Array): Promise<void> => {
+    let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
+    try {
+      chunks = await splitPdfIntoChunks(bytes, PAGES_PER_CHUNK);
+    } catch (err) {
+      setLoading(false);
+      setUploadPct(null);
+      setChunkLabel(null);
+      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+      return;
+    }
+
+    // Single-element result: use the regular single-upload path
+    if (chunks.length === 1) {
+      const base64 = bytesToBase64(chunks[0]!.bytes);
+      handleSingleUpload(base64, 0);
+      return;
+    }
+
+    let parentJobId: string | null = null;
+    let aborted = false;
+
+    for (let i = 0; i < chunks.length; i++) {
+      if (aborted) break;
+      const chunk = chunks[i]!;
+      const base64 = bytesToBase64(chunk.bytes);
+      setChunkLabel(`Uploading part ${i + 1} of ${chunks.length}…`);
+      setUploadPct(null);
+
+      try {
+        const result = await new Promise<{ jobId: string; chunkJobId?: string }>((resolve, reject) => {
+          sendSingleChunk(
+            base64,
+            {
+              chunkIndex: i,
+              chunkCount: chunks.length,
+              pageOffset: chunk.pageOffset,
+              ...(parentJobId ? { parentJobId } : {}),
+            },
+            0,
+            resolve,
+            (msg) => reject(new Error(msg)),
+            () => reject(new Error("__abort__")),
+            () => reject(new Error("__network__")),
+          );
+        });
+
+        if (i === 0) {
+          parentJobId = result.jobId;
+        }
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (msg === "__abort__") {
+          aborted = true;
+          setLoading(false);
+          setUploadPct(null);
+          setChunkLabel(null);
+          return;
+        }
+        // Network or server error
+        setLoading(false);
+        setUploadPct(null);
+        setChunkLabel(null);
+        setError(msg === "__network__" ? "Network error — check your connection and try again." : msg);
+        setShowRetryBtn(true);
+        return;
+      }
+    }
+
+    if (aborted || !parentJobId) return;
+
+    // All chunks uploaded — start polling parent job
+    setUploadPct(null);
+    setChunkLabel(null);
+    setLoading(false);
+    setPdfBytes(null);
+
+    setJobStatus({
+      jobId: parentJobId,
+      status: "pending",
+      totalPages: null,
+      processedPages: 0,
+      matchedParts: 0,
+      imagesMatched: 0,
+      errorMessage: null,
+    });
+    startPolling(parentJobId);
+  };
+
+  // ── Legacy single-upload flow (small files) ───────────────────────────────
+  const handleSingleUpload = (base64: string, attempt: number): void => {
+    sendSingleChunk(
+      base64,
+      {},
+      attempt,
+      (resp) => {
+        setUploadPct(null);
+        setUploadSpeed(null);
+        setUploadEta(null);
+        setLoading(false);
+        const jobId = resp.jobId;
+        setJobStatus({
+          jobId,
+          status: "pending",
+          totalPages: null,
+          processedPages: 0,
+          matchedParts: 0,
+          imagesMatched: 0,
+          errorMessage: null,
+        });
+        startPolling(jobId);
+        setPdfBytes(null);
+      },
+      (errMsg) => {
+        setUploadPct(null);
+        setUploadSpeed(null);
+        setUploadEta(null);
+        setLoading(false);
+        setError(errMsg);
+      },
+      () => {
+        setUploadPct(null);
+        setLoading(false);
+      },
+      () => {
+        setUploadPct(null);
+        setUploadSpeed(null);
+        setUploadEta(null);
+        if (attempt < MAX_AUTO_RETRIES) {
+          const delaySec = Math.pow(2, attempt);
+          setError(null);
+          setRetryCountdown(delaySec);
+          setTimeout(() => handleStart(attempt + 1), delaySec * 1000);
+        } else {
+          setLoading(false);
+          setRetryCountdown(null);
+          setError("Network error — check your connection and try again.");
+          setShowRetryBtn(true);
+        }
+      },
+    );
+  };
+
+  const handleStart = (attempt = 0) => {
+    if (!pdfBytes || !vendor.trim() || !adminToken) return;
+    setError(null);
+    setRetryCountdown(null);
+    setShowRetryBtn(false);
+    if (attempt === 0) setJobStatus(null);
+    setLoading(true);
+    setUploadPct(0);
+    setChunkLabel(null);
+    setUploadSpeed(null);
+    setUploadEta(null);
+    speedSamplesRef.current = [];
+
+    if (pdfBytes.length > CHUNK_SIZE_THRESHOLD) {
+      void handleChunkedUpload(pdfBytes);
+    } else {
+      const base64 = bytesToBase64(pdfBytes);
+      handleSingleUpload(base64, attempt);
+    }
   };
 
   const handleCancel = () => {
@@ -357,7 +505,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           style={[s.input, {
             backgroundColor: colors.muted,
             color: colors.foreground,
-            borderColor: pdfBase64 && !vendor.trim() ? colors.destructive : colors.border,
+            borderColor: pdfBytes && !vendor.trim() ? colors.destructive : colors.border,
           }]}
           placeholder="e.g. EATON"
           placeholderTextColor={colors.mutedForeground}
@@ -419,24 +567,24 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         <>
           <Pressable
             onPress={() => handleStart()}
-            disabled={!pdfBase64 || !vendor.trim() || loading || readingFile}
+            disabled={!pdfBytes || !vendor.trim() || loading || readingFile}
             style={[s.startBtn, {
-              backgroundColor: !pdfBase64 || !vendor.trim() || loading || readingFile ? colors.muted : colors.primary,
+              backgroundColor: !pdfBytes || !vendor.trim() || loading || readingFile ? colors.muted : colors.primary,
             }]}
           >
             {loading ? (
               <ActivityIndicator color={colors.primaryForeground} />
             ) : (
-              <Text style={[s.startBtnText, { color: !pdfBase64 || !vendor.trim() || readingFile ? colors.mutedForeground : colors.primaryForeground }]}>
+              <Text style={[s.startBtnText, { color: !pdfBytes || !vendor.trim() || readingFile ? colors.mutedForeground : colors.primaryForeground }]}>
                 Start Extraction
               </Text>
             )}
           </Pressable>
-          {(!pdfBase64 || !vendor.trim()) && !loading && !readingFile ? (
+          {(!pdfBytes || !vendor.trim()) && !loading && !readingFile ? (
             <Text style={[s.fieldHint, { color: colors.mutedForeground }]}>
-              {!pdfBase64 && !vendor.trim()
+              {!pdfBytes && !vendor.trim()
                 ? "Choose a PDF file and enter a vendor name to continue"
-                : !pdfBase64
+                : !pdfBytes
                   ? "Choose a PDF file above to continue"
                   : "Enter a vendor name above to continue"}
             </Text>
@@ -444,21 +592,23 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         </>
       ) : null}
 
-      {/* Upload progress */}
-      {loading && uploadPct !== null ? (
+      {/* Upload progress — chunk label takes precedence over % for large files */}
+      {loading && (chunkLabel !== null || uploadPct !== null) ? (
         <View style={s.progressBlock}>
           <View style={s.progressRow}>
             <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
-              Uploading… {uploadPct}%
+              {chunkLabel ?? `Uploading… ${uploadPct ?? 0}%`}
             </Text>
             <Pressable onPress={handleCancel} style={[s.cancelBtn, { borderColor: colors.destructive }]}>
               <Text style={[s.cancelBtnText, { color: colors.destructive }]}>Cancel</Text>
             </Pressable>
           </View>
-          <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
-            <View style={[s.progressFill, { width: `${uploadPct}%`, backgroundColor: colors.primary }]} />
-          </View>
-          {uploadSpeed !== null && uploadEta !== null ? (
+          {uploadPct !== null && chunkLabel === null ? (
+            <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
+              <View style={[s.progressFill, { width: `${uploadPct}%`, backgroundColor: colors.primary }]} />
+            </View>
+          ) : null}
+          {uploadSpeed !== null && uploadEta !== null && chunkLabel === null ? (
             <Text style={[s.progressText, { color: colors.mutedForeground }]}>
               {uploadSpeed >= 1
                 ? `${uploadSpeed.toFixed(1)} MB/s`
@@ -477,7 +627,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           <View style={s.progressRow}>
             <ActivityIndicator size="small" color={colors.primary} />
             <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
-              {jobStatus.status === "pending" ? "Starting…" : `Processing pages…`}
+              {jobStatus.status === "pending" ? "Starting…" : "Processing pages…"}
             </Text>
             <Pressable
               onPress={handleCancelJob}
