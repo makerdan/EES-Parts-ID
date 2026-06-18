@@ -48,6 +48,12 @@ export type LidarDims = {
   diameter?: number | null;
 };
 
+/** Inventory search pre-filter set by cross-tab navigation (e.g. "View in Inventory" after adding a part). */
+export type InventorySearchParams = {
+  vendor?: string;
+  catalog?: string;
+};
+
 export type MeasureSearchParams = {
   minLength?: string;
   maxLength?: string;
@@ -262,6 +268,9 @@ interface AppContextValue {
   // Cross-tab: dimension-keyword search set by the Photo tab Measure flow
   pendingMeasureSearch: MeasureSearchParams | null;
   setPendingMeasureSearch: (search: MeasureSearchParams | null) => void;
+  // Cross-tab: vendor+catalog pre-filter set when navigating from "View in Inventory"
+  pendingInventorySearch: InventorySearchParams | null;
+  setPendingInventorySearch: (search: InventorySearchParams | null) => void;
   // Cross-tab: LiDAR dims captured in the Measure tab to pre-fill an item form
   pendingLidarDims: LidarDims | null;
   setPendingLidarDims: (dims: LidarDims | null) => void;
@@ -312,6 +321,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
   const [pinnedParts, setPinnedParts] = useState<PinnedPart[]>([]);
   const [pendingMeasureSearch, setPendingMeasureSearch] = useState<MeasureSearchParams | null>(null);
+  const [pendingInventorySearch, setPendingInventorySearch] = useState<InventorySearchParams | null>(null);
   const [pendingLidarDims, setPendingLidarDims] = useState<LidarDims | null>(null);
   const [resumeProgress, setResumeProgress] = useState<Record<number, ResumeProgress>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -610,6 +620,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setPinnedParts,
       pendingMeasureSearch,
       setPendingMeasureSearch,
+      pendingInventorySearch,
+      setPendingInventorySearch,
       pendingLidarDims,
       setPendingLidarDims,
       resumeProgress,
