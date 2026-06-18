@@ -337,7 +337,9 @@ export default function CatalogReviewScreen() {
           }
           fetchItems();
         }
-      } catch { /* silent */ }
+      } catch (err) {
+        console.error('[catalog-review] poll status', err);
+      }
     }, 3000);
   };
 
@@ -384,8 +386,9 @@ export default function CatalogReviewScreen() {
       if (r.ok) {
         setFailedJobs((prev) => prev.filter((j) => j.id !== jobId));
       }
-    } catch { /* silent */ }
-    finally { setDismissingId(null); }
+    } catch (err) {
+      console.error('[catalog-review] dismiss job', err);
+    } finally { setDismissingId(null); }
   };
 
   const handleResume = async (jobId: number) => {
@@ -468,8 +471,9 @@ export default function CatalogReviewScreen() {
       if (r.status === 401) { logoutAdmin(); return; }
       if (!r.ok) return;
       setRevertedIds((prev) => new Set([...prev, item.id]));
-    } catch { /* silent */ }
-    finally { setRevertingId(null); }
+    } catch (err) {
+      console.error('[catalog-review] revert item', err);
+    } finally { setRevertingId(null); }
   };
 
   const totalActive = groups.reduce(
