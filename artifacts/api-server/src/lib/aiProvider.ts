@@ -235,9 +235,9 @@ export async function probePoeBotsOnStartup(): Promise<void> {
 
   const PROBE_TIMEOUT_MS = 5000;
 
-  try {
-    await Promise.all(
-      botNames.map(async (botName) => {
+  await Promise.all(
+    botNames.map(async (botName) => {
+      try {
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(
             () => reject(new Error(`__PROBE_TIMEOUT__`)),
@@ -316,11 +316,14 @@ export async function probePoeBotsOnStartup(): Promise<void> {
             );
           }
         }
-      }),
-    );
-  } catch (err) {
-    logger.warn({ err }, "probePoeBotsOnStartup: unexpected error during probe — server will continue");
-  }
+      } catch (err: unknown) {
+        logger.warn(
+          { botName, err },
+          `Poe bot '${botName}' probe encountered an unexpected error — server will continue`,
+        );
+      }
+    }),
+  );
 }
 
 /**

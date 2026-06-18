@@ -411,4 +411,67 @@ describe("probePoeBotsOnStartup()", () => {
       );
     }
   });
+
+  it("one bot throwing an unrecognized error shape does not silence the remaining bots", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    const botNames = mod.getAllPoeModelNames();
+
+    // First bot throws a raw non-Error value (unrecognised shape)
+    client.chat.completions.create
+      .mockImplementationOnce(() => { throw "totally unexpected string"; })
+      // All subsequent bots succeed
+      .mockResolvedValue({ choices: [] });
+
+    await mod.probePoeBotsOnStartup();
+
+    const { info, warn } = getLoggerMocks();
+
+    // Exactly one warning — for the single failing bot
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // All remaining bots (everything after the first) are logged as OK
+    const okBots = botNames.slice(1);
+    for (const botName of okBots) {
+      expect(info).toHaveBeenCalledWith(
+        { botName },
+        expect.stringContaining("— OK"),
+      );
+    }
+  });
+
+  it("resolves without throwing even when every bot throws an unrecognized error shape", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    const botNames = mod.getAllPoeModelNames();
+
+    // Every bot throws a non-Error value
+    client.chat.completions.create.mockImplementation(() => {
+      throw { weird: true, code: "UNKNOWN_SHAPE" };
+    });
+
+    await expect(mod.probePoeBotsOnStartup()).resolves.toBeUndefined();
+
+    const { warn } = getLoggerMocks();
+    // One warning per bot — no bot is silenced
+    expect(warn).toHaveBeenCalledTimes(botNames.length);
+  });
+
+  it("logs a warn with the bot name for each bot that throws an unrecognized error shape", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    const botNames = mod.getAllPoeModelNames();
+    const unexpectedErr = { code: "UNEXPECTED" };
+
+    client.chat.completions.create.mockImplementation(() => {
+      throw unexpectedErr;
+    });
+
+    await mod.probePoeBotsOnStartup();
+
+    const { warn } = getLoggerMocks();
+    for (const botName of botNames) {
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ botName }),
+        expect.any(String),
+      );
+    }
+  });
 });
