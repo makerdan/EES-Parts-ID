@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as DocumentPicker from "expo-document-picker";
+import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
 import { readPdfAsBase64, PdfTooLargeError, InvalidPdfError, EncryptedPdfError } from "@/utils/readPdfAsBase64";
 import { useNavigation, useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
@@ -77,6 +78,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  useEffect(() => {
+    if (!loading) return;
+    activateKeepAwake("catalog-upload");
+    return () => { deactivateKeepAwake("catalog-upload"); };
+  }, [loading]);
 
   useEffect(() => {
     if (!loading) return;

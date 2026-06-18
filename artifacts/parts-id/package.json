@@ -85,6 +85,7 @@
     "expo-device": "^8.0.10",
     "expo-file-system": "~19.0.23",
     "expo-image-manipulator": "~14.0.8",
+    "expo-keep-awake": "^15.0.8",
     "expo-screen-orientation": "^9.0.9",
     "expo-sharing": "~14.0.8",
     "lidar-measure": "link:./modules/lidar-measure"
