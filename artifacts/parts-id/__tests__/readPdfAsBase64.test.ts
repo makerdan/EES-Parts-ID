@@ -273,6 +273,16 @@ describe("readPdfAsBase64 – native path (iOS)", () => {
     );
   });
 
+  it("proceeds when getInfoAsync itself throws (non-fatal — reads anyway)", async () => {
+    // On iOS, certain URI schemes cause getInfoAsync to throw even though
+    // the file is perfectly readable (e.g. iCloud Documents URIs).
+    mockGetInfoAsync.mockRejectedValueOnce(new Error("getInfoAsync internal error"));
+    mockReadAsStringAsync.mockResolvedValueOnce(PDF_MAGIC_B64);
+
+    // Should NOT reject — getInfoAsync failure is swallowed and read succeeds.
+    await expect(readPdfAsBase64("file:///var/mobile/Documents/catalog.pdf")).resolves.toBe(PDF_MAGIC_B64);
+  });
+
   it("propagates errors from readAsStringAsync", async () => {
     mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 512 });
     mockReadAsStringAsync.mockRejectedValueOnce(new Error("Permission denied"));
@@ -308,6 +318,37 @@ describe("readPdfAsBase64 – native path (iOS)", () => {
     await expect(readPdfAsBase64("file:///var/mobile/fake.pdf")).rejects.toThrow(
       "not a valid PDF",
     );
+  });
+
+  it("accepts a PDF whose header has a pre-header comment before %PDF-", async () => {
+    // Some generators (e.g. iFilter, certain print drivers) emit a comment line
+    // like `%iFilter-5.0\n` before the canonical `%PDF-x.y` signature.
+    // The previous strict byte-0 check would incorrectly reject these files.
+    const comment = new TextEncoder().encode("%iFilter-5.0\n");
+    const pdfBytes = makePdfBytes();
+    const combined = new Uint8Array(comment.length + pdfBytes.length);
+    combined.set(comment, 0);
+    combined.set(pdfBytes, comment.length);
+
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: combined.length });
+    mockReadAsStringAsync.mockResolvedValueOnce(toBase64(combined));
+
+    await expect(readPdfAsBase64("file:///var/mobile/vendor-catalog.pdf")).resolves.toBeDefined();
+  });
+
+  it("strips MIME-style newlines from base64 before validation and return", async () => {
+    // Simulate expo-file-system emitting 76-char-wrapped MIME base64 (if it ever does).
+    const rawB64 = PDF_MAGIC_B64;
+    // Artificially inject newlines as if MIME-wrapped
+    const wrapped = rawB64.slice(0, 4) + "\n" + rawB64.slice(4);
+
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 8 });
+    mockReadAsStringAsync.mockResolvedValueOnce(wrapped);
+
+    const result = await readPdfAsBase64("file:///var/mobile/Documents/catalog.pdf");
+    // Returned string must have no whitespace
+    expect(result).not.toMatch(/\s/);
+    expect(result).toBe(PDF_MAGIC_B64);
   });
 
   it("throws EncryptedPdfError when /Encrypt is present in the file", async () => {

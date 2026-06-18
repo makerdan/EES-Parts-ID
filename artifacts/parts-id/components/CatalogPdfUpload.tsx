@@ -255,8 +255,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     <View style={[s.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
       <Text style={[s.title, { color: colors.foreground }]}>PDF Catalog Importer</Text>
       <Text style={[s.hint, { color: colors.mutedForeground }]}>
-        Upload a manufacturer's product catalog PDF. The system will extract part
-        numbers and descriptions using AI and match them to your inventory.
+        Upload a manufacturer's product catalog PDF. The system will use AI to
+        extract part numbers, descriptions, and product images, then match them
+        to your inventory.
       </Text>
 
       {/* Vendor input */}

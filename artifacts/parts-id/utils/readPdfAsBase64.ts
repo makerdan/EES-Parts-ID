@@ -100,31 +100,27 @@ function bytesToAscii(bytes: Uint8Array): string {
 // ── Validation ────────────────────────────────────────────────────────────────
 
 /**
- * Validates a base64-encoded PDF by checking magic bytes and sniffing for the
- * /Encrypt dictionary marker that signals password protection.
+ * Validates a base64-encoded PDF by checking for the %PDF- magic bytes and
+ * sniffing for the /Encrypt dictionary marker that signals password protection.
  *
- * We check the first 2 KB (magic bytes + cross-reference stream /Encrypt for
- * newer PDFs) and the last 2 KB (traditional trailer /Encrypt for older PDFs).
+ * We search the first 2 KB for %PDF- (not just byte 0 — some generators prepend
+ * a BOM or comment like `%iFilter-5.0\n` before the signature) and the last 2 KB
+ * for /Encrypt (traditional trailer-based PDFs store the dictionary there).
  */
 function validatePdfBase64(base64: string): void {
   const CHECK_BYTES = 2048;
 
   const prefix = decodeBase64Prefix(base64, CHECK_BYTES);
+  const prefixStr = bytesToAscii(prefix);
 
-  // Must start with %PDF- (0x25 0x50 0x44 0x46 0x2D)
-  if (
-    prefix.length < 5 ||
-    prefix[0] !== 0x25 ||
-    prefix[1] !== 0x50 ||
-    prefix[2] !== 0x44 ||
-    prefix[3] !== 0x46 ||
-    prefix[4] !== 0x2D
-  ) {
+  // %PDF- must appear within the first 2 KB. Strict byte-0 check is too
+  // aggressive: real catalogs sometimes have a comment or BOM before the header.
+  if (!prefixStr.includes("%PDF-")) {
     throw new InvalidPdfError();
   }
 
   // Check for /Encrypt in the prefix area (cross-reference stream PDFs, PDF 1.5+)
-  if (bytesToAscii(prefix).includes("/Encrypt")) {
+  if (prefixStr.includes("/Encrypt")) {
     throw new EncryptedPdfError();
   }
 
@@ -139,22 +135,16 @@ function validatePdfBase64(base64: string): void {
  * Validates a raw PDF byte array directly (faster than the base64 path).
  */
 function validatePdfBytes(bytes: Uint8Array): void {
-  // Must start with %PDF-
-  if (
-    bytes.length < 5 ||
-    bytes[0] !== 0x25 ||
-    bytes[1] !== 0x50 ||
-    bytes[2] !== 0x44 ||
-    bytes[3] !== 0x46 ||
-    bytes[4] !== 0x2D
-  ) {
+  const CHECK_BYTES = 2048;
+
+  const prefixStr = bytesToAscii(bytes.subarray(0, Math.min(CHECK_BYTES, bytes.length)));
+
+  // %PDF- must appear within the first 2 KB (handles pre-header comments/BOMs).
+  if (!prefixStr.includes("%PDF-")) {
     throw new InvalidPdfError();
   }
 
-  const CHECK_BYTES = 2048;
-
   // Check prefix for /Encrypt (cross-reference stream PDFs)
-  const prefixStr = bytesToAscii(bytes.subarray(0, Math.min(CHECK_BYTES, bytes.length)));
   if (prefixStr.includes("/Encrypt")) {
     throw new EncryptedPdfError();
   }
@@ -173,19 +163,34 @@ export async function readPdfAsBase64(uri: string): Promise<string> {
   if (Platform.OS !== "web") {
     // ── Native path ──────────────────────────────────────────────────────────
     // Use expo-file-system/legacy for reliable file:// URI reading on iOS/Android.
-    const info = await FileSystem.getInfoAsync(uri);
-    if (!info.exists) {
+    //
+    // getInfoAsync is used for a pre-flight size check so we don't load huge
+    // files into memory. On iOS, certain URI schemes (e.g. from iCloud or
+    // the Files app) can cause getInfoAsync to fail even when the file is
+    // perfectly readable, so failures are caught and ignored — we fall through
+    // to readAsStringAsync which will surface a clearer error if the file is
+    // genuinely unavailable.
+    const info = await FileSystem.getInfoAsync(uri).catch(() => null);
+    if (info !== null && !info.exists) {
       throw new Error("Failed to read PDF: file not found");
     }
-    // `size` is present on the exists:true variant of FileInfo
-    const fileSize = (info as { size?: number }).size;
+    const fileSize = info ? (info as { size?: number }).size : undefined;
     if (fileSize !== undefined && fileSize > MAX_PDF_BYTES) {
       throw new PdfTooLargeError();
     }
-    const base64 = await FileSystem.readAsStringAsync(uri, {
+
+    const rawBase64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     });
-    // Validate after reading (native path yields base64 directly)
+    // Strip any whitespace — expo-file-system may emit MIME-style line-wrapped
+    // base64 on some iOS versions. A clean string is also required for upload.
+    const base64 = rawBase64.replace(/\s/g, "");
+
+    // Post-read size guard covers cases where getInfoAsync had no size info.
+    if (base64.length > Math.ceil(MAX_PDF_BYTES * (4 / 3))) {
+      throw new PdfTooLargeError();
+    }
+
     validatePdfBase64(base64);
     return base64;
   }
