@@ -204,6 +204,11 @@ async function processPdfPages(
       break;
     }
 
+    const textPreview = page.text.slice(0, 200).replace(/\n/g, " ");
+    console.log(
+      `[catalog-pdf] page=${page.pageNum + pageOffset} text=${page.text.length}chars images=${page.images.length} preview="${textPreview}"`,
+    );
+
     const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
 
     // Count all AI-extracted entries toward partsFound (before confidence filter)
