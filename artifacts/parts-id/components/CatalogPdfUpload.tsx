@@ -910,6 +910,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           <Text style={[s.doneText, { color: colors.success }]}>
             Done — {jobStatus.matchedParts} part{jobStatus.matchedParts !== 1 ? "s" : ""} updated across {jobStatus.processedPages} pages{jobStatus.imagesMatched > 0 ? `, ${jobStatus.imagesMatched} with images` : ""}
           </Text>
+          {jobStatus.matchedParts === 0 &&
+          (!jobStatus.unmatchedParts || jobStatus.unmatchedParts.length === 0) &&
+          jobStatus.processedPages > 0 ? (
+            <Text style={[s.unmatchedNote, { color: colors.warning }]}>
+              No parts were identified — the AI may be temporarily unavailable. Try again shortly.
+            </Text>
+          ) : null}
           {jobStatus.unmatchedParts && jobStatus.unmatchedParts.length > 0 ? (
             <Text style={[s.unmatchedNote, { color: colors.warning }]}>
               {jobStatus.unmatchedParts.length} unrecognized part{jobStatus.unmatchedParts.length !== 1 ? "s" : ""} found — tap Review to see them
