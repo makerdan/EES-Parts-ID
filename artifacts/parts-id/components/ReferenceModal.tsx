@@ -44,7 +44,7 @@ const QUICK_LOOKUP_CHIPS = [
   { label: "AWG",              question: "What does AWG mean, how does wire gauge numbering work, and which gauge should I use for common circuits?" },
 ] as const;
 
-const BREAKER_ATTRIBUTE_CHIPS: { label: string; answer: string }[] = [
+const BREAKER_ATTRIBUTE_CHIPS: Array<{ label: string; answer: string }> = [
   {
     label: "Amp Rating",
     answer: "**Amp Rating** is the maximum continuous current the breaker will carry without tripping. Common residential ratings are **15A** and **20A**; commercial/industrial panels use 30A, 60A, 100A, and higher. Always match the breaker amp rating to the wire gauge — 15A for 14 AWG, 20A for 12 AWG.",
@@ -99,9 +99,9 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
   // `chipLoading` — chip tap in flight; never drives the send-button spinner
   const [chipLoading, setChipLoading] = useState(false);
   const [isError, setIsError] = useState(false);
-  const [history, setHistory] = useState<{ q: string; a: string }[]>([]);
+  const [history, setHistory] = useState<Array<{ q: string; a: string }>>([]);
   const [inputCollapsed, setInputCollapsed] = useState(false);
-  const [activeBreakerChips, setActiveBreakerChips] = useState<string[]>([]);
+  const [activeBreakerChips, setActiveBreakerChips] = useState<Array<string>>([]);
   const [contactVisible, setContactVisible] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);

@@ -76,11 +76,11 @@ export default function EditItemScreen() {
   }, [isLoading, adminToken]);
 
   const [description, setDescription] = useState(item?.description ?? "");
-  const [bins, setBins] = useState<string[]>(item?.binLocations ?? []);
+  const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);
   const [newBin, setNewBin] = useState("");
-  const [barcodes, setBarcodes] = useState<string[]>(item?.barcodes ?? []);
+  const [barcodes, setBarcodes] = useState<Array<string>>(item?.barcodes ?? []);
   const [newBarcode, setNewBarcode] = useState("");
-  const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
+  const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -218,7 +218,7 @@ export default function EditItemScreen() {
       newDims.diameter !== (oldDims.diameter ?? null);
 
     try {
-      const saves: Promise<unknown>[] = [];
+      const saves: Array<Promise<unknown>> = [];
 
       if (description.trim() !== (current.description ?? "").trim()) {
         saves.push(

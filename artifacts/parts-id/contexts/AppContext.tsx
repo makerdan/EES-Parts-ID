@@ -83,9 +83,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   dimensionUnit: "mm",
 };
 
-const VALID_TEXT_SIZES: TextSize[] = ["small", "normal", "large"];
-const VALID_THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
-const VALID_DIMENSION_UNITS: DimensionUnit[] = ["mm", "cm", "in"];
+const VALID_TEXT_SIZES: Array<TextSize> = ["small", "normal", "large"];
+const VALID_THEME_MODES: Array<ThemeMode> = ["light", "dark", "system"];
+const VALID_DIMENSION_UNITS: Array<DimensionUnit> = ["mm", "cm", "in"];
 
 export async function loadSettings(): Promise<AppSettings> {
   try {
@@ -262,8 +262,8 @@ interface AppContextValue {
   pendingMapFocus: MapFocus | null;
   setPendingMapFocus: (focus: MapFocus | null) => void;
   // Cross-tab: parts currently pinned on the map from a search session
-  pinnedParts: PinnedPart[];
-  setPinnedParts: React.Dispatch<React.SetStateAction<PinnedPart[]>>;
+  pinnedParts: Array<PinnedPart>;
+  setPinnedParts: React.Dispatch<React.SetStateAction<Array<PinnedPart>>>;
   // Cross-tab: dimension-keyword search set by the Photo tab Measure flow
   pendingMeasureSearch: MeasureSearchParams | null;
   setPendingMeasureSearch: (search: MeasureSearchParams | null) => void;
@@ -318,7 +318,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [toastState, setToastState] = useState<{ message: string; type: ToastVariant } | null>(null);
   const [pendingMapFocus, setPendingMapFocus] = useState<MapFocus | null>(null);
-  const [pinnedParts, setPinnedParts] = useState<PinnedPart[]>([]);
+  const [pinnedParts, setPinnedParts] = useState<Array<PinnedPart>>([]);
   const [pendingMeasureSearch, setPendingMeasureSearch] = useState<MeasureSearchParams | null>(null);
   const [pendingInventorySearch, setPendingInventorySearch] = useState<InventorySearchParams | null>(null);
   const [pendingLidarDims, setPendingLidarDims] = useState<LidarDims | null>(null);
@@ -484,7 +484,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSettings(next);
     saveSettings(next);
     if (key === "themeMode") applyThemeMode(value as ThemeMode);
-    const PORTABLE_KEYS: (keyof AppSettings)[] = [
+    const PORTABLE_KEYS: Array<keyof AppSettings> = [
       "dimensionUnit", "textSize", "themeMode", "defaultConfidenceThreshold", "scanSound",
     ];
     if (PORTABLE_KEYS.includes(key) && adminTokenRef.current) {

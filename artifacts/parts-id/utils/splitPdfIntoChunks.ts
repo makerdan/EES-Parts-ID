@@ -29,7 +29,7 @@ export interface PdfChunk {
 export async function splitPdfIntoChunks(
   bytes: Uint8Array,
   pagesPerChunk: number = PAGES_PER_CHUNK,
-): Promise<PdfChunk[]> {
+): Promise<Array<PdfChunk>> {
   const { PDFDocument } = await import("pdf-lib");
   const srcDoc = await PDFDocument.load(bytes);
   const totalPages = srcDoc.getPageCount();
@@ -38,7 +38,7 @@ export async function splitPdfIntoChunks(
     return [{ bytes, pageOffset: 0, pageCount: totalPages }];
   }
 
-  const chunks: PdfChunk[] = [];
+  const chunks: Array<PdfChunk> = [];
   let pageOffset = 0;
 
   while (pageOffset < totalPages) {

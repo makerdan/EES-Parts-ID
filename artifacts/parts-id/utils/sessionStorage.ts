@@ -20,7 +20,7 @@ export const ADMIN_TOKEN_KEY   = "parts_id_admin_token";
  */
 export async function clearSessionStorage(
   secureDeleteFn: (key: string) => Promise<void>,
-  multiRemoveFn:  (keys: string[]) => Promise<void>,
+  multiRemoveFn:  (keys: Array<string>) => Promise<void>,
 ): Promise<void> {
   await secureDeleteFn(SESSION_KEY);
   await secureDeleteFn(ADMIN_TOKEN_KEY);

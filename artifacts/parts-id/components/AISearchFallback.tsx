@@ -13,7 +13,7 @@ import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 // ── SearchedAsRow ─────────────────────────────────────────────────────────────
 
 interface SearchedAsRowProps {
-  terms: string[];
+  terms: Array<string>;
   interpretation: string;
   onDismiss: () => void;
 }
@@ -94,9 +94,9 @@ const rowStyles = StyleSheet.create({
 interface AIZeroResultsCardProps {
   loading: boolean;
   partName: string;
-  partSpecs: string[];
-  catalogNumbers: string[];
-  substitutes: SearchResult[];
+  partSpecs: Array<string>;
+  catalogNumbers: Array<string>;
+  substitutes: Array<SearchResult>;
   error: string | null;
   onShowOnMap: (item: InventoryItem) => void;
   fontScale?: number;

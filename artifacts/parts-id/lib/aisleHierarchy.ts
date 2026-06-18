@@ -29,20 +29,20 @@ export type PartOnShelf = {
 export type ShelfNode = {
   shelfHundreds: number;
   label: string;
-  parts: PartOnShelf[];
+  parts: Array<PartOnShelf>;
 };
 
 export type SectionNode = {
   sectionNum: number;
   label: string;
-  shelves: ShelfNode[];
+  shelves: Array<ShelfNode>;
   partCount: number;
 };
 
 export type AisleNode = {
   aisleNum: number;
   label: string;
-  sections: SectionNode[];
+  sections: Array<SectionNode>;
   partCount: number;
 };
 
@@ -52,13 +52,13 @@ export type UnsortedPart = {
 };
 
 export type AisleHierarchy = {
-  aisles: AisleNode[];
-  unsorted: { parts: UnsortedPart[] };
+  aisles: Array<AisleNode>;
+  unsorted: { parts: Array<UnsortedPart> };
 };
 
 export type WarehouseZone = {
   aisleNum: number;
-  sectionNumbers?: number[];
+  sectionNumbers?: Array<number>;
 };
 
 export function parseBin(raw: string): ParsedBin | null {
@@ -70,9 +70,9 @@ export function parseBin(raw: string): ParsedBin | null {
   return { raw: raw.trim(), aisle, section, shelfHundreds: Math.floor(position / 100), position };
 }
 
-export function buildAisleHierarchy(inventory: InventoryItem[]): AisleHierarchy {
-  const aisleMap = new Map<number, Map<number, Map<number, PartOnShelf[]>>>();
-  const unsorted: UnsortedPart[] = [];
+export function buildAisleHierarchy(inventory: Array<InventoryItem>): AisleHierarchy {
+  const aisleMap = new Map<number, Map<number, Map<number, Array<PartOnShelf>>>>();
+  const unsorted: Array<UnsortedPart> = [];
 
   for (const item of inventory) {
     const bins = item.binLocations ?? [];
@@ -91,12 +91,12 @@ export function buildAisleHierarchy(inventory: InventoryItem[]): AisleHierarchy 
     if (!hasValid) unsorted.push({ item, rawBin: bins[0] ?? "" });
   }
 
-  const aisles: AisleNode[] = [];
+  const aisles: Array<AisleNode> = [];
   for (const [aisleNum, secMap] of aisleMap) {
-    const sections: SectionNode[] = [];
+    const sections: Array<SectionNode> = [];
     const aisleIds = new Set<number>();
     for (const [sectionNum, shelfMap] of secMap) {
-      const shelves: ShelfNode[] = [];
+      const shelves: Array<ShelfNode> = [];
       const secIds = new Set<number>();
       for (const [shelfHundreds, parts] of shelfMap) {
         const sorted = [...parts].sort((a, b) =>
@@ -129,9 +129,9 @@ export function buildAisleHierarchy(inventory: InventoryItem[]): AisleHierarchy 
 }
 
 export function filterSections(
-  sections: SectionNode[],
-  sectionNumbers?: number[],
-): SectionNode[] {
+  sections: Array<SectionNode>,
+  sectionNumbers?: Array<number>,
+): Array<SectionNode> {
   if (sectionNumbers && sectionNumbers.length > 0) {
     return sections.filter(s => sectionNumbers.includes(s.sectionNum));
   }

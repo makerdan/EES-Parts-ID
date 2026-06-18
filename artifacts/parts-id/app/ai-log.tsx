@@ -89,7 +89,7 @@ export default function AiLogScreen() {
   const router = useRouter();
   const { isAdmin, adminToken, isLoading } = useApp();
 
-  const [rows, setRows] = useState<LogRow[]>([]);
+  const [rows, setRows] = useState<Array<LogRow>>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +104,7 @@ export default function AiLogScreen() {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const data = (await res.json()) as LogRow[];
+      const data = (await res.json()) as Array<LogRow>;
       setRows(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load log");

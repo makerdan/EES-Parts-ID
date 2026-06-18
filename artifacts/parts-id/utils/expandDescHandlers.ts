@@ -20,9 +20,9 @@ export type ExpandDescResult = {
  * `isRunning` is true so the guard is testable.
  */
 export function applyDiscardAll(
-  results: ExpandDescResult[],
+  results: Array<ExpandDescResult>,
   isRunning: boolean,
-): ExpandDescResult[] {
+): Array<ExpandDescResult> {
   if (isRunning) return results;
   return results.map(r =>
     r.savedStatus === "pending" ? { ...r, savedStatus: "discarded" as const } : r,
@@ -41,7 +41,7 @@ export function applyDiscardAll(
  * called from the component).
  */
 export async function runSaveAll(
-  results: ExpandDescResult[],
+  results: Array<ExpandDescResult>,
   isRunning: boolean,
   onUpdate: (id: number, status: ExpandDescResult["savedStatus"]) => void,
   apiBase: string,

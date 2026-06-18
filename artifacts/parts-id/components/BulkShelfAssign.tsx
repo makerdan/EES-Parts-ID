@@ -48,10 +48,10 @@ function formatShelfPrefix(raw: string): string {
 
 /** Fetch every page of inventory until all items are collected.
  *  Pass binPrefix to restrict to a shelf; omit it for the full catalog. */
-async function fetchAllInventory(binPrefix?: string): Promise<InventoryItem[]> {
+async function fetchAllInventory(binPrefix?: string): Promise<Array<InventoryItem>> {
   const pageSize = 500;
   let page = 1;
-  const all: InventoryItem[] = [];
+  const all: Array<InventoryItem> = [];
   while (true) {
     const result = await listInventory({ page, limit: pageSize, binPrefix });
     all.push(...(result.items ?? []));
@@ -78,7 +78,7 @@ type ItemRowState = {
 type BulkSession = {
   shelfPrefix: string;
   /** Complete snapshot of shelf items loaded at session start. */
-  shelfItems: InventoryItem[];
+  shelfItems: Array<InventoryItem>;
   itemRowStates: Record<number, ItemRowState>;
   targetItemId: number | null;
 };
@@ -124,12 +124,12 @@ export function BulkShelfAssign({ visible, onClose }: BulkShelfAssignProps) {
   const [itemRowStates, setItemRowStates] = useState<Record<number, ItemRowState>>({});
 
   /** Items loaded for the current session shelf (complete, multi-page fetch). */
-  const [shelfItems, setShelfItems] = useState<InventoryItem[]>([]);
+  const [shelfItems, setShelfItems] = useState<Array<InventoryItem>>([]);
   /**
    * All inventory items — used for conflict detection. Populated by
    * fetchAllInventory and refreshed in the background after resume.
    */
-  const allItemsRef = useRef<InventoryItem[]>([]);
+  const allItemsRef = useRef<Array<InventoryItem>>([]);
 
   const [loadingItems, setLoadingItems] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);

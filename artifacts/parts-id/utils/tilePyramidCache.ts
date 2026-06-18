@@ -83,7 +83,7 @@ export async function prefetchZoomLevel(
 ): Promise<void> {
   if (Platform.OS === "web" || !svgHash) return;
 
-  const fetches: Promise<void>[] = [];
+  const fetches: Array<Promise<void>> = [];
   for (let row = range.r0; row <= range.r1; row++) {
     for (let col = range.c0; col <= range.c1; col++) {
       if (signal?.aborted) break;

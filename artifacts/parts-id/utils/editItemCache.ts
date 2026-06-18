@@ -18,7 +18,7 @@ export type AsyncStorageLike = {
 export type QueryClientLike = {
   invalidateQueries(
     arg:
-      | { queryKey: string[] }
+      | { queryKey: Array<string> }
       | { predicate: (q: { queryKey: unknown }) => boolean },
   ): Promise<void>;
 };

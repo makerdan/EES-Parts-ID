@@ -24,8 +24,8 @@ const FETCH_TIMEOUT_MS = 12_000;
 
 export interface PartCardData {
   displayName: string;
-  specs: { label: string; value: string }[];
-  crossRefs: string[];
+  specs: Array<{ label: string; value: string }>;
+  crossRefs: Array<string>;
   compatibilityNote: string;
 }
 

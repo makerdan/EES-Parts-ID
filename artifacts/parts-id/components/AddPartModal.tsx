@@ -149,7 +149,7 @@ export function AddPartModal({
       const newItem = data.item;
 
       if (photoUri || photoUri2) {
-        const uploads: Promise<void>[] = [];
+        const uploads: Array<Promise<void>> = [];
         if (photoUri) uploads.push(uploadPhoto(newItem.id, photoUri, 1));
         if (photoUri2) uploads.push(uploadPhoto(newItem.id, photoUri2, 2));
         const results = await Promise.allSettled(uploads);

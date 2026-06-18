@@ -58,7 +58,7 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   : "http://localhost:8080/api";
 
 
-type QueryCacheEntry = { timestamp: number; results: SearchResult[] };
+type QueryCacheEntry = { timestamp: number; results: Array<SearchResult> };
 
 async function loadQueryCache(): Promise<QueryCache<SearchResult>> {
   try {
@@ -187,7 +187,7 @@ export default function SearchScreen() {
       showToast("No bin location assigned — add a bin to this item first.");
       return;
     }
-    const newPins: PinnedPart[] = [];
+    const newPins: Array<PinnedPart> = [];
     let firstParsed: ReturnType<typeof parseBin> | null = null;
     for (const bin of bins) {
       const parsed = parseBin(bin);
@@ -209,7 +209,7 @@ export default function SearchScreen() {
     router.navigate("/(tabs)/map");
   }, [setPendingMapFocus, setPinnedParts, showToast]);
 
-  const handleVariantsToggle = useCallback((item: InventoryItem) => (variantItems: InventoryItem[], isOpen: boolean) => {
+  const handleVariantsToggle = useCallback((item: InventoryItem) => (variantItems: Array<InventoryItem>, isOpen: boolean) => {
     if (!isOpen) {
       // Only remove variant pins that belong to THIS item via groupId.
       // Other expanded cards' variant pins remain on the map, allowing
@@ -217,7 +217,7 @@ export default function SearchScreen() {
       setPinnedParts((prev) => prev.filter(p => !(p.variant && p.groupId === item.id)));
       return;
     }
-    const variantPins: PinnedPart[] = [];
+    const variantPins: Array<PinnedPart> = [];
     for (const v of variantItems) {
       for (const bin of (v.binLocations ?? [])) {
         const parsed = parseBin(bin);
@@ -233,7 +233,7 @@ export default function SearchScreen() {
     ]);
   }, [setPinnedParts]);
 
-  const [offlineResults, setOfflineResults] = useState<SearchResult[] | null>(null);
+  const [offlineResults, setOfflineResults] = useState<Array<SearchResult> | null>(null);
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
   const [isOffline, setIsOffline] = useState(false);
@@ -246,7 +246,7 @@ export default function SearchScreen() {
   const [dimensionCounts, setDimensionCounts] = useState<Record<string, Record<string, number>> | undefined>(undefined);
   // Local Fuse index seeded from AsyncStorage cache
   const fuseRef = useRef<Fuse<InventoryItem> | null>(null);
-  const fuseItemsRef = useRef<InventoryItem[]>([]);
+  const fuseItemsRef = useRef<Array<InventoryItem>>([]);
   const [cachedCount, setCachedCount] = useState(0);
   const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [syncError, setSyncError] = useState(false);
@@ -278,14 +278,14 @@ export default function SearchScreen() {
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
   // AI natural-language translation state
-  const [aiTranslation, setAITranslation] = useState<{ terms: string[]; interpretation: string } | null>(null);
+  const [aiTranslation, setAITranslation] = useState<{ terms: Array<string>; interpretation: string } | null>(null);
   const [aiTranslationDismissed, setAITranslationDismissed] = useState(false);
   type AIZeroResultsState = {
     loading: boolean;
     partName: string;
-    partSpecs: string[];
-    catalogNumbers: string[];
-    substitutes: SearchResult[];
+    partSpecs: Array<string>;
+    catalogNumbers: Array<string>;
+    substitutes: Array<SearchResult>;
     error: string | null;
   };
   const [aiZeroResults, setAIZeroResults] = useState<AIZeroResultsState | null>(null);
@@ -345,7 +345,7 @@ export default function SearchScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registerLogoutHandler]);
 
-  const buildFuseIndex = useCallback((items: InventoryItem[]) => {
+  const buildFuseIndex = useCallback((items: Array<InventoryItem>) => {
     fuseItemsRef.current = items;
     setCachedCount(items.length);
     fuseRef.current = new Fuse(items, {
@@ -383,7 +383,7 @@ export default function SearchScreen() {
     try {
       const allItems = await fetchInventoryPages(
         async (page, pageSize) => {
-          const data: { items: InventoryItem[]; total: number } = await retryAsync(async () => {
+          const data: { items: Array<InventoryItem>; total: number } = await retryAsync(async () => {
             const res = await fetch(`${API_BASE}/inventory?page=${page}&limit=${pageSize}`);
             if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
             return res.json();
@@ -473,9 +473,9 @@ export default function SearchScreen() {
           syncAllInventory();
           return;
         }
-        let items: InventoryItem[];
+        let items: Array<InventoryItem>;
         try {
-          items = JSON.parse(raw) as InventoryItem[];
+          items = JSON.parse(raw) as Array<InventoryItem>;
         } catch {
           // Corrupt cache — clear it and re-sync
           AsyncStorage.removeItem(FUSE_CACHE_KEY).catch(err => {
@@ -507,7 +507,7 @@ export default function SearchScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const runFuseSearch = useCallback((kw: string): SearchResult[] => {
+  const runFuseSearch = useCallback((kw: string): Array<SearchResult> => {
     if (!fuseRef.current || !kw.trim()) return [];
     return fuseRef.current
       .search(kw.trim(), { limit: 30 })
@@ -553,13 +553,13 @@ export default function SearchScreen() {
       if (aiSearchGenRef.current !== gen) return;
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json() as {
-        translatedTerms?: string[];
+        translatedTerms?: Array<string>;
         interpretation?: string;
         appliedTranslation?: boolean;
         partName?: string;
-        partSpecs?: string[];
-        catalogNumbers?: string[];
-        substitutes?: SearchResult[];
+        partSpecs?: Array<string>;
+        catalogNumbers?: Array<string>;
+        substitutes?: Array<SearchResult>;
         error?: string;
       };
       if (aiSearchGenRef.current !== gen) return;
@@ -886,8 +886,8 @@ export default function SearchScreen() {
     }
   }, [measureItem, adminToken, buildFuseIndex, showToast]);
 
-  const results: SearchResult[] = offlineResults ?? (searchMutation.data?.results ?? []);
-  const sizeUnknownResults: SearchResult[] = isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []);
+  const results: Array<SearchResult> = offlineResults ?? (searchMutation.data?.results ?? []);
+  const sizeUnknownResults: Array<SearchResult> = isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []);
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
 
@@ -923,7 +923,7 @@ export default function SearchScreen() {
     | { kind: "sizeUnknownHeader"; count: number }
     | { kind: "sizeUnknown"; result: SearchResult; index: number };
 
-  const flatListData: FlatListItem[] = [
+  const flatListData: Array<FlatListItem> = [
     ...results.map((result, index) => ({ kind: "result" as const, result, index })),
     ...(sizeUnknownResults.length > 0
       ? [
@@ -1123,7 +1123,7 @@ export default function SearchScreen() {
                 </Text>
               </View>
               <View style={styles.textSizePicker}>
-                {(["small", "normal", "large"] as TextSize[]).map(sz => (
+                {(["small", "normal", "large"] as Array<TextSize>).map(sz => (
                   <Pressable
                     key={sz}
                     onPress={() => updateSetting("textSize", sz)}
@@ -1156,7 +1156,7 @@ export default function SearchScreen() {
                 </Text>
               </View>
               <View style={styles.textSizePicker}>
-                {(["light", "dark", "system"] as ThemeMode[]).map(mode => (
+                {(["light", "dark", "system"] as Array<ThemeMode>).map(mode => (
                   <Pressable
                     key={mode}
                     onPress={() => updateSetting("themeMode", mode)}
@@ -1191,7 +1191,7 @@ export default function SearchScreen() {
                 </Text>
               </View>
               <View style={styles.textSizePicker}>
-                {(["mm", "cm", "in"] as DimensionUnit[]).map(u => (
+                {(["mm", "cm", "in"] as Array<DimensionUnit>).map(u => (
                   <Pressable
                     key={u}
                     onPress={() => updateSetting("dimensionUnit", u)}

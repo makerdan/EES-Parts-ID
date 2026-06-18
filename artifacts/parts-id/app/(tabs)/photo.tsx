@@ -39,15 +39,15 @@ export default function PhotoScreen() {
   useTrackScreen("Photo ID");
   const colors = useColors();
   const { textFontScale, isAdmin, adminToken, setPinnedParts, setPendingMapFocus, setPendingMeasureSearch, showToast } = useApp();
-  const [images, setImages] = useState<{ uri: string; base64: string }[]>([]);
+  const [images, setImages] = useState<Array<{ uri: string; base64: string }>>([]);
   const [keywords, setKeywords] = useState("");
   const [vendor, setVendor] = useState("");
   const [color, setColor] = useState("");
   const [size, setSize] = useState("");
   const [textNumbers, setTextNumbers] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [results, setResults] = useState<Array<SearchResult>>([]);
   const [aiSummary, setAiSummary] = useState("");
-  const [aiTerms, setAiTerms] = useState<string[]>([]);
+  const [aiTerms, setAiTerms] = useState<Array<string>>([]);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [barcodeScanVisible, setBarcodeScanVisible] = useState(false);
@@ -62,7 +62,7 @@ export default function PhotoScreen() {
   const [adminBridgeItem, setAdminBridgeItem] = useState<InventoryItem | null>(null);
   const [, setAdminBridgeMeasureItem] = useState<InventoryItem | null>(null);
   /** Bin codes of the auto-pinned top result — controls inline "Navigate to Map" banner. */
-  const [mapPromptBins, setMapPromptBins] = useState<string[]>([]);
+  const [mapPromptBins, setMapPromptBins] = useState<Array<string>>([]);
   /** Item opened in the full detail/edit sheet — shows the "Map it!" button. */
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
 
@@ -76,7 +76,7 @@ export default function PhotoScreen() {
       showToast("No bin location assigned — add a bin to this item first.");
       return;
     }
-    const newPins: PinnedPart[] = [];
+    const newPins: Array<PinnedPart> = [];
     let firstParsed: ReturnType<typeof parseBin> | null = null;
     for (const bin of bins) {
       const parsed = parseBin(bin);
@@ -103,12 +103,12 @@ export default function PhotoScreen() {
    * Scopes variant pin removal to this item via groupId (item.id) so multiple
    * expanded cards can coexist without interfering.
    */
-  const handleVariantsToggle = React.useCallback((item: InventoryItem) => (variantItems: InventoryItem[], isOpen: boolean) => {
+  const handleVariantsToggle = React.useCallback((item: InventoryItem) => (variantItems: Array<InventoryItem>, isOpen: boolean) => {
     if (!isOpen) {
       setPinnedParts((prev) => prev.filter(p => !(p.variant && p.groupId === item.id)));
       return;
     }
-    const variantPins: PinnedPart[] = [];
+    const variantPins: Array<PinnedPart> = [];
     for (const v of variantItems) {
       for (const bin of (v.binLocations ?? [])) {
         const parsed = parseBin(bin);
@@ -316,7 +316,7 @@ export default function PhotoScreen() {
         setAdminBridgeItem(null);
         if (searchResult.results.length > 0) {
           const topItem = searchResult.results[0].item;
-          const pins: PinnedPart[] = [];
+          const pins: Array<PinnedPart> = [];
           for (const bin of (topItem.binLocations ?? [])) {
             const parsed = parseBin(bin);
             if (parsed) pins.push({ binCode: bin, label: topItem.catalog, aisleNum: parsed.aisle });

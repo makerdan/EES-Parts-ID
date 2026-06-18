@@ -229,9 +229,9 @@ interface ZoneOverlayItemProps {
   /** Bin code label to render inside the zone when it is pinned (e.g. "17-06-204"). */
   binLabel?: string;
   /** Section numbers (0-99) for primary result pins — shown as proportionally-positioned markers within the zone. */
-  pinnedSections?: number[];
+  pinnedSections?: Array<number>;
   /** Section numbers (0-99) for variant result pins — shown as proportionally-positioned purple markers. */
-  variantSections?: number[];
+  variantSections?: Array<number>;
 }
 
 export function ZoneOverlayItem({
@@ -523,7 +523,7 @@ function PngTile({
 }
 
 export interface WarehouseMapViewProps {
-  zones: ApiWarehouseZone[];
+  zones: Array<ApiWarehouseZone>;
   zonesLoading: boolean;
   zonesError: boolean;
   onZonesRetry: () => void;
@@ -539,9 +539,9 @@ export interface WarehouseMapViewProps {
   /** Maps aisleNum → first bin code (e.g. "17-06-204") to render as a label inside the pinned zone. */
   pinnedBinLabels?: ReadonlyMap<number, string>;
   /** Maps aisleNum → list of section numbers for primary pins — drives section-level 3D pin markers. */
-  pinnedSectionsMap?: ReadonlyMap<number, number[]>;
+  pinnedSectionsMap?: ReadonlyMap<number, Array<number>>;
   /** Maps aisleNum → list of section numbers for variant pins — drives section-level 3D pin markers. */
-  variantSectionsMap?: ReadonlyMap<number, number[]>;
+  variantSectionsMap?: ReadonlyMap<number, Array<number>>;
   /**
    * When set, the map animates its viewport to center on this aisle's zone.
    * Consumed once; set to null after navigating away.
@@ -789,7 +789,7 @@ export function WarehouseMapView({
   // Mirror zones in a ref so the focusAisleNum effect can read the latest
   // zones without listing `zones` as a dependency (which would re-trigger
   // the auto-zoom every time zone data refreshes from the server).
-  const zonesRef = useRef<ApiWarehouseZone[]>([]);
+  const zonesRef = useRef<Array<ApiWarehouseZone>>([]);
   // Set to true by the focus effect when zones have not loaded yet so the
   // zones-change effect below can retry once they arrive.
   const pendingFocusRef = useRef(false);
@@ -1547,10 +1547,10 @@ export function WarehouseMapView({
   // (they were written at the end of the previous render), giving us the
   // exact tile set to fade out.
   interface TileSpec { col: number; row: number; }
-  interface FadeLayer { tiles: TileSpec[]; z: number; numTiles: number; }
+  interface FadeLayer { tiles: Array<TileSpec>; z: number; numTiles: number; }
 
   const prevRenderZoomRef = useRef(renderZoom);
-  const prevTilesRef = useRef<TileSpec[]>([]);
+  const prevTilesRef = useRef<Array<TileSpec>>([]);
   const pendingFadeRef = useRef<FadeLayer | null>(null);
   const [fadeOutLayer, setFadeOutLayer] = useState<FadeLayer | null>(null);
   const fadeOutOpacity = useSharedValue(0);
@@ -1572,14 +1572,14 @@ export function WarehouseMapView({
   // the visible range or numTiles changes — not on every animation frame.
   // PNG tile URIs are fetched asynchronously inside PngTile components so
   // this memo stays pure and fast.
-  const tiles = useMemo<TileSpec[]>(() => {
+  const tiles = useMemo<Array<TileSpec>>(() => {
     // Web: floor plan is embedded inside the shared SVG viewport — no tiling.
     // Native only: PNG tile grid.
     if (numTiles <= 1 || !svgHash || Platform.OS === "web") return [];
     const N = numTiles;
     const { c0, c1, r0, r1, N: rangeN } = visibleRange;
     if (rangeN !== N) return [];
-    const result: TileSpec[] = [];
+    const result: Array<TileSpec> = [];
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) {
         result.push({ col: c, row: r });

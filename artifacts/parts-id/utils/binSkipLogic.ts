@@ -8,18 +8,18 @@ export type ParsedRow = {
   vendor: string;
   catalog: string;
   description: string;
-  binLocations: string[];
-  barcodes: string[];
+  binLocations: Array<string>;
+  barcodes: Array<string>;
 };
 
 export type BinDiffRow = {
   vendor: string;
   catalog: string;
   status: "replace" | "add" | "preserve" | "none";
-  existingBins: string[];
-  incomingBins: string[];
+  existingBins: Array<string>;
+  incomingBins: Array<string>;
   barcodeStatus?: "replace" | "add" | "preserve" | "none" | "conflict";
-  existingBarcodes?: string[];
+  existingBarcodes?: Array<string>;
   /** Set when barcodeStatus === "conflict": the item that already owns one of the incoming barcodes. */
   conflictingItem?: { vendor: string; catalog: string };
 };
@@ -41,7 +41,7 @@ export function toggleSkipRow(prev: Set<number>, idx: number): Set<number> {
 /**
  * Collect every index in rows whose status is "replace".
  */
-export function getReplaceIndices(rows: BinDiffRow[]): number[] {
+export function getReplaceIndices(rows: Array<BinDiffRow>): Array<number> {
   return rows.map((r, i) => (r.status === "replace" ? i : -1)).filter(i => i >= 0);
 }
 
@@ -51,7 +51,7 @@ export function getReplaceIndices(rows: BinDiffRow[]): number[] {
  * - Otherwise → skip-all (return Set of all replace indices).
  * Mirrors the Pressable onPress handler in upload.tsx.
  */
-export function toggleSkipAll(rows: BinDiffRow[], current: Set<number>): Set<number> {
+export function toggleSkipAll(rows: Array<BinDiffRow>, current: Set<number>): Set<number> {
   const replaceIndices = getReplaceIndices(rows);
   const allSkipped = replaceIndices.length > 0 && replaceIndices.every(i => current.has(i));
   return allSkipped ? new Set() : new Set(replaceIndices);
@@ -64,7 +64,7 @@ export function toggleSkipAll(rows: BinDiffRow[], current: Set<number>): Set<num
 export function activeReplacementCount(
   willReplaceBins: number,
   skipBinRows: Set<number>,
-  rows: BinDiffRow[],
+  rows: Array<BinDiffRow>,
 ): number {
   return willReplaceBins - [...skipBinRows].filter(idx => rows[idx]?.status === "replace").length;
 }
@@ -77,7 +77,7 @@ export function activeReplacementCount(
 export function preservedBinCount(
   willPreserveBins: number,
   skipBinRows: Set<number>,
-  rows: BinDiffRow[],
+  rows: Array<BinDiffRow>,
 ): number {
   return willPreserveBins + [...skipBinRows].filter(idx => rows[idx]?.status === "replace").length;
 }
@@ -86,7 +86,7 @@ export function preservedBinCount(
  * Serialize parsed rows back to CSV, blanking the bin cell for any row
  * whose index is in skipBinRows (so the server keeps the existing assignment).
  */
-export function serializeToCsv(rows: ParsedRow[], skipBinRows: Set<number>): string {
+export function serializeToCsv(rows: Array<ParsedRow>, skipBinRows: Set<number>): string {
   const header = "Vendor,Catalog,Description,BinLocation,Barcodes";
   const escapeField = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const lines = rows.map((row, i) => {

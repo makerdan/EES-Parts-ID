@@ -52,9 +52,9 @@ type JobStatus = {
   processedPages: number;
   matchedParts: number;
   imagesMatched: number;
-  unmatchedParts?: { catalogNumber: string; description: string }[];
+  unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
   errorMessage: string | null;
-  failedChunks?: { chunkJobId: string; chunkIndex: number }[];
+  failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
 };
 
 type FailedChunkInfo = {
@@ -141,7 +141,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     return unsubscribe;
   }, [loading, navigation]);
 
-  const speedSamplesRef = useRef<{ t: number; loaded: number }[]>([]);
+  const speedSamplesRef = useRef<Array<{ t: number; loaded: number }>>([]);
   const SPEED_WINDOW_MS = 4000;
   const SPEED_WINDOW_MAX = 20;
 
@@ -337,8 +337,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>,
     startIndex: number,
     existingParentJobId: string | null,
-    chunkBase64List: string[],
-    chunkBodySizes: number[],
+    chunkBase64List: Array<string>,
+    chunkBodySizes: Array<number>,
     totalBodyBytes: number,
   ): Promise<void> => {
     let parentJobId: string | null = existingParentJobId;

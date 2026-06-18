@@ -63,14 +63,14 @@ const API_BASE =
 
 const EXPAND_DESC_DRAFT_KEY = "@expandDesc:draft";
 type ExpandDescDraft = {
-  results: ExpandDescResult[];
+  results: Array<ExpandDescResult>;
   streamDone: boolean;
   model: string | null;
   remaining: number | null;
   savedAt: number;
 };
 
-const SQL_EXAMPLES: { label: string; group: string; sql: string }[] = [
+const SQL_EXAMPLES: Array<{ label: string; group: string; sql: string }> = [
   {
     group: "Browse",
     label: "All parts (paginated)",
@@ -123,7 +123,7 @@ type BinDiffSummary = {
   willAddBins: number;
   willPreserveBins: number;
   noChange: number;
-  rows: BinDiffRow[];
+  rows: Array<BinDiffRow>;
   willReplaceBarcodes: number;
   willAddBarcodes: number;
   willPreserveBarcodes: number;
@@ -131,7 +131,7 @@ type BinDiffSummary = {
 };
 
 // CSV/XLSX cell may pack multiple bins separated by ; or | — split, trim, drop blanks.
-function parseBinCell(cell: string): string[] {
+function parseBinCell(cell: string): Array<string> {
   const trimmed = cell.trim();
   if (!trimmed) return [];
   return trimmed.split(/[;|]/).map(b => b.trim()).filter(b => b.length > 0);
@@ -144,7 +144,7 @@ type EnrichProgress = {
   etaSeconds?: number | null;
   done?: boolean;
   error?: string;
-  item?: { id: number; keywords: string[] };
+  item?: { id: number; keywords: Array<string> };
 };
 
 type BulkJobStatus = {
@@ -183,12 +183,12 @@ const DESC_ALIASES = ["description", "desc", "name", "product", "productname", "
 const BIN_ALIASES = ["bin", "bin location", "binlocation", "location", "loc", "shelf", "aisle", "bin#", "bin no"];
 const BARCODE_ALIASES = ["barcode", "barcodes", "barcode#", "upc", "ean", "gtin"];
 
-function findCol(headers: string[], aliases: string[]): number {
+function findCol(headers: Array<string>, aliases: Array<string>): number {
   return aliases.map(a => headers.indexOf(a)).find(i => i >= 0) ?? -1;
 }
 
 // ── Parse CSV text ─────────────────────────────────────────────────────────
-function parseCSV(rawText: string): ParsedRow[] {
+function parseCSV(rawText: string): Array<ParsedRow> {
   // Strip UTF-8 BOM (\uFEFF) if present so Excel-exported files parse correctly.
   const text = rawText.startsWith("\uFEFF") ? rawText.slice(1) : rawText;
   const lines = text.split(/\r?\n/).filter(l => l.trim());
@@ -201,7 +201,7 @@ function parseCSV(rawText: string): ParsedRow[] {
   const binCol = findCol(headers, BIN_ALIASES);
   const barcodeCol = findCol(headers, BARCODE_ALIASES);
 
-  const rows: ParsedRow[] = [];
+  const rows: Array<ParsedRow> = [];
   for (let i = 1; i < lines.length; i++) {
     const cells = splitCSVLine(lines[i]!);
     const vendor = vendorCol >= 0 ? cells[vendorCol]?.trim() ?? "" : "";
@@ -218,8 +218,8 @@ function parseCSV(rawText: string): ParsedRow[] {
   return rows;
 }
 
-function splitCSVLine(line: string): string[] {
-  const cells: string[] = [];
+function splitCSVLine(line: string): Array<string> {
+  const cells: Array<string> = [];
   let current = "";
   let inQuotes = false;
   for (let i = 0; i < line.length; i++) {
@@ -239,7 +239,7 @@ function splitCSVLine(line: string): string[] {
 }
 
 // ── Parse .xlsx/.xlsm via read-excel-file ─────────────────────────────────
-async function parseXlsx(uri: string): Promise<ParsedRow[]> {
+async function parseXlsx(uri: string): Promise<Array<ParsedRow>> {
   const response = await fetch(uri);
   const arrayBuffer = await response.arrayBuffer();
 
@@ -270,7 +270,7 @@ async function parseXlsx(uri: string): Promise<ParsedRow[]> {
   const binCol = findCol(headers, BIN_ALIASES);
   const barcodeCol = findCol(headers, BARCODE_ALIASES);
 
-  const rows: ParsedRow[] = [];
+  const rows: Array<ParsedRow> = [];
   for (let i = 1; i < bestRows.length; i++) {
     const cells = bestRows[i]!.map(c => String(c ?? "").trim());
     const vendor = vendorCol >= 0 ? cells[vendorCol] ?? "" : "";
@@ -551,7 +551,7 @@ export default function UploadScreen() {
   }, [triggerRestart]);
 
   const lidarSupported = isLiDARSupported();
-  const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
+  const [parsedRows, setParsedRows] = useState<Array<ParsedRow>>([]);
   const [rawCsv, setRawCsv] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileType, setFileType] = useState<"csv" | "xlsx" | null>(null);
@@ -582,7 +582,7 @@ export default function UploadScreen() {
   const [measureEnrichPending, setMeasureEnrichPending] = useState(false);
 
   // Expand-descriptions enrichment state
-  const [expandDescResults, setExpandDescResults] = useState<ExpandDescResult[]>([]);
+  const [expandDescResults, setExpandDescResults] = useState<Array<ExpandDescResult>>([]);
   const [expandDescProgress, setExpandDescProgress] = useState<{ done: number; total: number } | null>(null);
   const [expandDescModel, setExpandDescModel] = useState<string | null>(null);
   const [expandDescStreamDone, setExpandDescStreamDone] = useState(false);
@@ -594,7 +594,7 @@ export default function UploadScreen() {
   // SQL query tab state
   const [queryText, setQueryText] = useState("SELECT * FROM inventory LIMIT 20");
   const [queryRunning, setQueryRunning] = useState(false);
-  const [queryResult, setQueryResult] = useState<{ columns: string[]; rows: Record<string, unknown>[]; rowCount: number } | null>(null);
+  const [queryResult, setQueryResult] = useState<{ columns: Array<string>; rows: Array<Record<string, unknown>>; rowCount: number } | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryExportPending, setQueryExportPending] = useState<"csv" | "xlsx" | null>(null);
   const [queryHelpOpen, setQueryHelpOpen] = useState(false);
@@ -1174,7 +1174,7 @@ export default function UploadScreen() {
       setFileName(asset.name);
 
       const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
-      let rows: ParsedRow[] = [];
+      let rows: Array<ParsedRow> = [];
       // rawText holds the CSV string that will be sent to the admin upload
       // endpoint. For CSV/TXT files this is the file's raw text. For XLSX/ODS
       // files the parsed rows are serialized back to CSV so the server-side
@@ -1305,7 +1305,7 @@ export default function UploadScreen() {
     }
   };
 
-  const handleEnrich = async (idsToEnrich?: number[]) => {
+  const handleEnrich = async (idsToEnrich?: Array<number>) => {
     setEnrichProgress({ progress: 0, total: 0 });
     try {
       const body = idsToEnrich?.length ? { ids: idsToEnrich } : {};
@@ -1375,7 +1375,7 @@ export default function UploadScreen() {
     try {
       const pageSize = 200;
       let page = 1;
-      let allItems: InventoryItem[] = [];
+      let allItems: Array<InventoryItem> = [];
       let total = Infinity;
       let maxPages = Infinity;
       let pagesFetched = 0;
@@ -1388,7 +1388,7 @@ export default function UploadScreen() {
         const url = `${API_BASE}/inventory?page=${page}&limit=${pageSize}`;
         const res = await fetch(url, { headers: adminHeaders });
         if (!res.ok) throw new Error(`API error ${res.status}`);
-        const data: { items: InventoryItem[]; total: number } = await res.json();
+        const data: { items: Array<InventoryItem>; total: number } = await res.json();
         total = data.total;
         if (maxPages === Infinity) {
           maxPages = Math.ceil(total / pageSize) + 1;
@@ -2739,7 +2739,7 @@ export default function UploadScreen() {
                         setQueryError("Admin session expired. Please unlock again.");
                         return;
                       }
-                      const data = await res.json() as { columns?: string[]; rows?: Record<string, unknown>[]; rowCount?: number; error?: string };
+                      const data = await res.json() as { columns?: Array<string>; rows?: Array<Record<string, unknown>>; rowCount?: number; error?: string };
                       if (!res.ok || data.error) {
                         setQueryError(data.error ?? "Query failed");
                         return;

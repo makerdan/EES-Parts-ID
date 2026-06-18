@@ -74,11 +74,11 @@ interface FilterPanelProps {
 }
 
 // ── 16 required chip dimensions (must mirror CHIP_DIMS_SERVER in inventory.ts) ─
-const CHIP_DIMS: {
+const CHIP_DIMS: Array<{
   key: keyof FilterValues;
   label: string;
-  options: string[];
-}[] = [
+  options: Array<string>;
+}> = [
   {
     key: "category",
     label: "Category",
@@ -170,7 +170,7 @@ function ChipRow({
   counts,
 }: {
   label: string;
-  options: string[];
+  options: Array<string>;
   value: string;
   onChange: (v: string) => void;
   colors: ReturnType<typeof useColors>;
@@ -285,7 +285,7 @@ export function ConfidenceSlider({
   onChange: (v: number) => void;
   colors: ReturnType<typeof useColors>;
   /** Quick-pick preset values. Defaults to [0,20,40,60,80]. Pass a custom list to hide 0/"All". */
-  presets?: number[];
+  presets?: Array<number>;
 }) {
   "use no memo";
   // value is 0–100 (integer percentage)

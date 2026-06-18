@@ -31,7 +31,7 @@ function isValidEntry(e: unknown): e is ScanEntry {
   );
 }
 
-export async function loadScanHistory(): Promise<ScanEntry[]> {
+export async function loadScanHistory(): Promise<Array<ScanEntry>> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
@@ -43,7 +43,7 @@ export async function loadScanHistory(): Promise<ScanEntry[]> {
   }
 }
 
-export async function saveScanHistory(entries: ScanEntry[]): Promise<void> {
+export async function saveScanHistory(entries: Array<ScanEntry>): Promise<void> {
   try {
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
   } catch (err) {
@@ -58,9 +58,9 @@ export async function saveScanHistory(entries: ScanEntry[]): Promise<void> {
  * same barcode are removed. Trims to MAX_ENTRIES.
  */
 export function prependEntry(
-  existing: ScanEntry[],
+  existing: Array<ScanEntry>,
   entry: ScanEntry,
-): ScanEntry[] {
+): Array<ScanEntry> {
   const deduped = existing.filter(
     (e) => e.barcode !== entry.barcode || !!e.adminAction,
   );
@@ -82,7 +82,7 @@ export interface ScanGroup {
   label: string;
   /** YYYY-MM-DD key used as a stable collapse identifier */
   dateKey: string;
-  entries: ScanEntry[];
+  entries: Array<ScanEntry>;
 }
 
 function toLocalDateKey(isoString: string): string {
@@ -111,14 +111,14 @@ function labelForDateKey(dateKey: string, todayKey: string, yesterdayKey: string
  * Groups are ordered newest-first. Entries within each group preserve their
  * original order.
  */
-export function groupScansByDate(entries: ScanEntry[]): ScanGroup[] {
+export function groupScansByDate(entries: Array<ScanEntry>): Array<ScanGroup> {
   const now = new Date();
   const todayKey = toLocalDateKey(now.toISOString());
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayKey = toLocalDateKey(yesterday.toISOString());
 
-  const map = new Map<string, ScanEntry[]>();
+  const map = new Map<string, Array<ScanEntry>>();
   for (const entry of entries) {
     const key = toLocalDateKey(entry.timestamp);
     const bucket = map.get(key);

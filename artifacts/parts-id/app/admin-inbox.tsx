@@ -128,7 +128,7 @@ export default function AdminInboxScreen() {
   const router = useRouter();
   const { isAdmin, adminToken, isLoading } = useApp();
 
-  const [rows, setRows] = useState<MessageRow[]>([]);
+  const [rows, setRows] = useState<Array<MessageRow>>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +145,7 @@ export default function AdminInboxScreen() {
         headers: { Authorization: `Bearer ${adminToken}` },
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const data = (await res.json()) as MessageRow[];
+      const data = (await res.json()) as Array<MessageRow>;
       setRows(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load inbox");

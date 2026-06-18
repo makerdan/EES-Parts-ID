@@ -48,7 +48,7 @@ export interface FailedJobsSectionColors {
 }
 
 interface Props {
-  failedJobs: FailedJob[];
+  failedJobs: Array<FailedJob>;
   dismissingId: number | null;
   resumingId: number | null;
   resumeProgress: Record<number, ResumeProgress>;

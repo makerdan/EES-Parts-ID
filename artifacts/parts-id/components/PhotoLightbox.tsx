@@ -10,7 +10,7 @@ import {
 import { RetryImage } from "@/components/RetryImage";
 
 interface PhotoLightboxProps {
-  uris: string[];
+  uris: Array<string>;
   initialIndex?: number;
   onClose: () => void;
 }

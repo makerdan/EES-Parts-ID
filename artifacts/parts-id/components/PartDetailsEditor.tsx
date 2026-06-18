@@ -82,9 +82,9 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
   const updateBinsMutation = useUpdateItemBins();
   const updateKeywordsMutation = useUpdateItemKeywords();
   const [description, setDescription] = useState(item?.description ?? "");
-  const [bins, setBins] = useState<string[]>(item?.binLocations ?? []);
+  const [bins, setBins] = useState<Array<string>>(item?.binLocations ?? []);
   const [newBin, setNewBin] = useState("");
-  const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
+  const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -122,7 +122,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
   const [newPhotoData2, setNewPhotoData2] = useState<CapturedPhoto | null>(null);
   const [removeCurrentPhoto2, setRemoveCurrentPhoto2] = useState(false);
   // Lightbox state for previewing photos full-screen
-  const [lightboxUris, setLightboxUris] = useState<string[]>([]);
+  const [lightboxUris, setLightboxUris] = useState<Array<string>>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
 
   const itemRef = useRef(item);
@@ -362,7 +362,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
       restoreFn: () => void;
     };
 
-    const ops: SaveOp[] = [];
+    const ops: Array<SaveOp> = [];
 
     if (description.trim() !== (current.description ?? "").trim()) {
       ops.push({

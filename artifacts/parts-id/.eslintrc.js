@@ -1,5 +1,8 @@
 module.exports = {
   extends: ['expo'],
+  rules: {
+    '@typescript-eslint/array-type': ['error', { default: 'generic' }],
+  },
   ignorePatterns: [
     'node_modules/',
     'dist/',

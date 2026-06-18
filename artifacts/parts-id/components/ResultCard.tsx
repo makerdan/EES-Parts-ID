@@ -29,7 +29,7 @@ interface ResultCardProps {
    * Receives the full variants array and the new expanded state so the caller
    * can add / remove map location pins grouped by item.
    */
-  onVariantsToggle?: (variants: InventoryItem[], expanded: boolean) => void;
+  onVariantsToggle?: (variants: Array<InventoryItem>, expanded: boolean) => void;
   rank: number;
   fontScale?: number;
   /** When true, shows a "Size not measured" badge because no dimension data is stored for this item */
@@ -104,10 +104,10 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
-  const [lightboxUris, setLightboxUris] = useState<string[]>([]);
+  const [lightboxUris, setLightboxUris] = useState<Array<string>>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [reenrichState, setReenrichState] = useState<"idle" | "loading" | "done" | "error">("idle");
-  const [localKeywords, setLocalKeywords] = useState<string[] | null>(null);
+  const [localKeywords, setLocalKeywords] = useState<Array<string> | null>(null);
   const [localEnrichedAt, setLocalEnrichedAt] = useState<Date | string | null | undefined>(undefined);
   const { item, confidence, seriesLabel, variants } = result;
   const fs = (base: number) => Math.round(base * fontScale);
@@ -298,7 +298,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
             <Text style={[cardStyles.dimText, { color: colors.mutedForeground }]}>
               {(() => {
                 const d = (item as unknown as { dimensions: PartDimensions }).dimensions;
-                const parts: string[] = [];
+                const parts: Array<string> = [];
                 if (d.length != null && d.width != null && d.height != null) {
                   parts.push(`${d.length} × ${d.width} × ${d.height} mm`);
                 } else if (d.length != null) {

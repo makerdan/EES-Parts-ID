@@ -11,7 +11,7 @@ import type { FilterValues } from "@/components/FilterPanel";
 export const QUERY_CACHE_KEY = "parts_id_query_cache_v1";
 export const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-export type QueryCacheEntry<R = unknown> = { timestamp: number; results: R[] };
+export type QueryCacheEntry<R = unknown> = { timestamp: number; results: Array<R> };
 export type QueryCache<R = unknown> = Record<string, QueryCacheEntry<R>>;
 
 export function buildSearchBody(f: FilterValues, categorySlug?: string | null) {
@@ -105,9 +105,9 @@ export function formatRelativeAge(ts: number): string {
 
 export type OfflineFallbackResult<R = unknown> =
   /** A previous result for this exact query key was found in the TTL-pruned cache. */
-  | { cacheType: "exact"; results: R[] }
+  | { cacheType: "exact"; results: Array<R> }
   /** No exact cache match — results come from the local Fuse full-text index. */
-  | { cacheType: "fuse"; results: R[] };
+  | { cacheType: "fuse"; results: Array<R> };
 
 /**
  * Determine which offline result source to use for the given query.
@@ -122,7 +122,7 @@ export type OfflineFallbackResult<R = unknown> =
 export function resolveOfflineFallback<R>(opts: {
   queryKey: string;
   cache: QueryCache<R>;
-  fuseSearch: (kw: string) => R[];
+  fuseSearch: (kw: string) => Array<R>;
   keywords: string;
 }): OfflineFallbackResult<R> {
   const exactEntry = opts.cache[opts.queryKey];
@@ -138,7 +138,7 @@ export function resolveOfflineFallback<R>(opts: {
 export type SearchTier = "remote" | "exact" | "fuse";
 export type SearchPipelineResult<R> = {
   tier: SearchTier;
-  results: R[];
+  results: Array<R>;
 };
 
 /**
@@ -150,10 +150,10 @@ export type SearchPipelineResult<R> = {
  * The caller is responsible for pruning the cache before passing it in.
  */
 export async function runSearchPipeline<R>(opts: {
-  searchFn: () => Promise<R[]>;
+  searchFn: () => Promise<Array<R>>;
   queryKey: string;
   cache: QueryCache<R>;
-  fuseSearch: (kw: string) => R[];
+  fuseSearch: (kw: string) => Array<R>;
   keywords: string;
 }): Promise<SearchPipelineResult<R>> {
   try {
@@ -204,7 +204,7 @@ export function evictItemFromQueryCache<R extends { item: { id: number } }>(
 export type PageFetcher<T> = (
   page: number,
   pageSize: number,
-) => Promise<{ items: T[]; total: number }>;
+) => Promise<{ items: Array<T>; total: number }>;
 
 /**
  * Fetch all pages of inventory from the server, returning the combined list.
@@ -223,10 +223,10 @@ export async function fetchInventoryPages<T>(
   fetchPage: PageFetcher<T>,
   pageSize = 500,
   onProgress?: (loaded: number, total: number) => void,
-): Promise<T[]> {
+): Promise<Array<T>> {
   let page = 1;
   let total = 0;
-  const allItems: T[] = [];
+  const allItems: Array<T> = [];
   do {
     const data = await fetchPage(page, pageSize);
     if (data.items.length === 0) break;

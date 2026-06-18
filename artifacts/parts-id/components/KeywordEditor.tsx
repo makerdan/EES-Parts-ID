@@ -25,14 +25,14 @@ interface KeywordEditorProps {
   item: InventoryItem | null;
   onClose: () => void;
   /** Called after keywords are saved so parent can update local Fuse index */
-  onKeywordsChanged?: (id: number, keywords: string[]) => void;
+  onKeywordsChanged?: (id: number, keywords: Array<string>) => void;
 }
 
 const DEBOUNCE_MS = 900;
 
 type ItemSaveState = {
-  latest: string[];
-  lastSaved: string[];
+  latest: Array<string>;
+  lastSaved: Array<string>;
   saving: boolean;
 };
 
@@ -41,7 +41,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   const colors = useColors();
   const queryClient = useQueryClient();
   const { showToast } = useApp();
-  const [keywords, setKeywords] = useState<string[]>(item?.aiKeywords ?? []);
+  const [keywords, setKeywords] = useState<Array<string>>(item?.aiKeywords ?? []);
   const [newKeyword, setNewKeyword] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const updateMutation = useUpdateItemKeywords();
@@ -52,7 +52,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   // item A while a save is in flight, then quickly opening item B, will
   // NOT cause B's keywords to be written to A's id (or vice-versa).
   const stateByIdRef = useRef<Record<number, ItemSaveState>>({});
-  const ensureState = useCallback((id: number, kws: string[]): ItemSaveState => {
+  const ensureState = useCallback((id: number, kws: Array<string>): ItemSaveState => {
     let s = stateByIdRef.current[id];
     if (!s) {
       s = { latest: kws, lastSaved: kws, saving: false };
@@ -96,7 +96,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
     if (itemRef.current?.id === id) setSaveStatus("saving");
     s.saving = true;
     try {
-      await drainSave<string[]>({
+      await drainSave<Array<string>>({
         getLatest: () => s.latest,
         getLastSaved: () => s.lastSaved,
         setLastSaved: v => {
@@ -142,7 +142,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
   // edited when the debounce was scheduled — never a different item the
   // user may have opened in the meantime.
   const triggerSave = useCallback(
-    (kws: string[]) => {
+    (kws: Array<string>) => {
       const current = itemRef.current;
       if (!current) return;
       const id = current.id;
@@ -165,7 +165,7 @@ export function KeywordEditor({ item, onClose, onKeywordsChanged }: KeywordEdito
     };
   }, []);
 
-  const handleKeywordsChange = (next: string[]) => {
+  const handleKeywordsChange = (next: Array<string>) => {
     setKeywords(next);
     triggerSave(next);
   };
