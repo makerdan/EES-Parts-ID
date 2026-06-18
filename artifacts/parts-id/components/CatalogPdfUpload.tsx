@@ -49,6 +49,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [vendor, setVendor] = useState("");
   const [filename, setFilename] = useState<string | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
+  const [readingFile, setReadingFile] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
@@ -92,6 +93,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0]!;
+      setReadingFile(true);
       try {
         const base64 = await readPdfAsBase64(asset.uri);
         setPdfBase64(base64);
@@ -102,6 +104,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         } else {
           setError("Could not read the PDF file. Please try again.");
         }
+      } finally {
+        setReadingFile(false);
       }
     } catch {
       setError("Could not read the PDF file. Please try again.");
@@ -186,12 +190,19 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {/* File picker */}
       <Pressable
         onPress={handlePickFile}
-        disabled={isRunning || loading}
-        style={[s.pickBtn, { borderColor: isRunning || loading ? colors.border : colors.primary }]}
+        disabled={isRunning || loading || readingFile}
+        style={[s.pickBtn, { borderColor: isRunning || loading || readingFile ? colors.border : colors.primary }]}
       >
-        <Text style={[s.pickBtnText, { color: isRunning || loading ? colors.mutedForeground : colors.primary }]}>
-          {filename ? `PDF: ${filename}` : "Choose PDF File"}
-        </Text>
+        {readingFile ? (
+          <View style={s.pickBtnInner}>
+            <ActivityIndicator size="small" color={colors.mutedForeground} />
+            <Text style={[s.pickBtnText, { color: colors.mutedForeground }]}>Reading file…</Text>
+          </View>
+        ) : (
+          <Text style={[s.pickBtnText, { color: isRunning || loading ? colors.mutedForeground : colors.primary }]}>
+            {filename ? `PDF: ${filename}` : "Choose PDF File"}
+          </Text>
+        )}
       </Pressable>
 
       {/* Error */}
@@ -203,15 +214,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {!isRunning && !isDone ? (
         <Pressable
           onPress={handleStart}
-          disabled={!pdfBase64 || !vendor.trim() || loading}
+          disabled={!pdfBase64 || !vendor.trim() || loading || readingFile}
           style={[s.startBtn, {
-            backgroundColor: !pdfBase64 || !vendor.trim() || loading ? colors.muted : colors.primary,
+            backgroundColor: !pdfBase64 || !vendor.trim() || loading || readingFile ? colors.muted : colors.primary,
           }]}
         >
           {loading ? (
             <ActivityIndicator color={colors.primaryForeground} />
           ) : (
-            <Text style={[s.startBtnText, { color: !pdfBase64 || !vendor.trim() ? colors.mutedForeground : colors.primaryForeground }]}>
+            <Text style={[s.startBtnText, { color: !pdfBase64 || !vendor.trim() || readingFile ? colors.mutedForeground : colors.primaryForeground }]}>
               Start Extraction
             </Text>
           )}
@@ -286,6 +297,7 @@ const s = StyleSheet.create({
   pickBtn: {
     borderWidth: 2, borderRadius: 8, paddingVertical: 12, alignItems: "center",
   },
+  pickBtnInner: { flexDirection: "row", alignItems: "center", gap: 8 },
   pickBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   error: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
   startBtn: { borderRadius: 8, paddingVertical: 13, alignItems: "center" },
