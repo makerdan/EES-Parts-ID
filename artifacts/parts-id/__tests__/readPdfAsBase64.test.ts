@@ -12,7 +12,13 @@
  * The fix uses expo-file-system/legacy on native for reliable file:// reads.
  */
 
-import { readPdfAsBase64, PdfTooLargeError, MAX_PDF_BYTES } from "../utils/readPdfAsBase64";
+import {
+  readPdfAsBase64,
+  PdfTooLargeError,
+  InvalidPdfError,
+  EncryptedPdfError,
+  MAX_PDF_BYTES,
+} from "../utils/readPdfAsBase64";
 
 // ── Platform mock ─────────────────────────────────────────────────────────────
 // jest.mock is hoisted before variable initialisation, so we cannot close over
@@ -36,7 +42,7 @@ jest.mock("expo-file-system/legacy", () => ({
 const mockFetch = jest.fn<Promise<Response>, [RequestInfo, RequestInit?]>();
 global.fetch = mockFetch as unknown as typeof fetch;
 
-function mockFetchWithBuffer(buffer: ArrayBuffer, status = 200): void {
+function mockFetchWithBuffer(buffer: ArrayBufferLike, status = 200): void {
   mockFetch.mockResolvedValueOnce({
     ok: status >= 200 && status < 300,
     status,
@@ -49,6 +55,51 @@ function mockFetchWithBuffer(buffer: ArrayBuffer, status = 200): void {
 function setPlatformOS(os: string): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (jest.requireMock("react-native") as any).Platform.OS = os;
+}
+
+// ── PDF fixture helpers ───────────────────────────────────────────────────────
+
+/** Minimal valid PDF header bytes: %PDF-1.4 */
+const PDF_MAGIC = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34]);
+
+/** Base64 of "%PDF-1.4" — "JVBERi0xLjQ=" */
+const PDF_MAGIC_B64 = "JVBERi0xLjQ=";
+
+/** Builds a Uint8Array starting with %PDF-1.4 followed by extra bytes. */
+function makePdfBytes(extraBytes: Uint8Array = new Uint8Array(0)): Uint8Array {
+  const out = new Uint8Array(PDF_MAGIC.length + extraBytes.length);
+  out.set(PDF_MAGIC, 0);
+  out.set(extraBytes, PDF_MAGIC.length);
+  return out;
+}
+
+/** Builds a Uint8Array that starts with %PDF-1.4 and contains /Encrypt in the prefix window. */
+function makeEncryptedPdfBytes(): Uint8Array {
+  const encrypt = new TextEncoder().encode("/Encrypt");
+  return makePdfBytes(encrypt);
+}
+
+/**
+ * Builds a large byte array (> 4 KB) where %PDF-1.4 is at the start and
+ * /Encrypt appears only in the last 2 KB (suffix detection path).
+ */
+function makeSuffixEncryptedPdfBytes(): Uint8Array {
+  const totalSize = 5000;
+  const out = new Uint8Array(totalSize);
+  out.set(PDF_MAGIC, 0);
+  const encrypt = new TextEncoder().encode("/Encrypt");
+  out.set(encrypt, totalSize - encrypt.length);
+  return out;
+}
+
+/** Encodes a Uint8Array to base64 using the same chunk strategy as the module. */
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as number[]);
+  }
+  return btoa(binary);
 }
 
 beforeEach(() => {
@@ -64,7 +115,7 @@ describe("readPdfAsBase64 – web path", () => {
   beforeEach(() => { setPlatformOS("web"); });
 
   it("returns a non-empty base64 string for a small valid PDF", async () => {
-    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]); // %PDF
+    const bytes = makePdfBytes();
     mockFetchWithBuffer(bytes.buffer);
 
     const result = await readPdfAsBase64("blob:http://localhost/test-pdf");
@@ -74,7 +125,7 @@ describe("readPdfAsBase64 – web path", () => {
   });
 
   it("round-trips: decoding the result restores the original bytes", async () => {
-    const original = new Uint8Array([1, 2, 3, 4, 5, 100, 200, 255]);
+    const original = makePdfBytes(new Uint8Array([10, 20, 30, 100, 200, 255]));
     mockFetchWithBuffer(original.buffer);
 
     const b64 = await readPdfAsBase64("blob:http://localhost/test.pdf");
@@ -85,7 +136,7 @@ describe("readPdfAsBase64 – web path", () => {
 
   it("fetches the exact URI it receives", async () => {
     const uri = "blob:http://localhost/abc-123";
-    mockFetchWithBuffer(new Uint8Array([0]).buffer);
+    mockFetchWithBuffer(makePdfBytes().buffer);
 
     await readPdfAsBase64(uri);
 
@@ -101,8 +152,9 @@ describe("readPdfAsBase64 – web path", () => {
   });
 
   it("does NOT throw for a buffer exactly at the 25 MB limit", async () => {
-    const atLimit = new ArrayBuffer(MAX_PDF_BYTES);
-    mockFetchWithBuffer(atLimit);
+    const atLimit = new Uint8Array(MAX_PDF_BYTES);
+    atLimit.set(PDF_MAGIC, 0);
+    mockFetchWithBuffer(atLimit.buffer);
 
     await expect(readPdfAsBase64("blob:http://localhost/edge.pdf")).resolves.toBeDefined();
   });
@@ -122,6 +174,45 @@ describe("readPdfAsBase64 – web path", () => {
       "HTTP 403",
     );
   });
+
+  it("throws InvalidPdfError when the file does not start with %PDF-", async () => {
+    const nonPdf = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x04, 0x05]);
+    mockFetchWithBuffer(nonPdf.buffer);
+
+    await expect(readPdfAsBase64("blob:http://localhost/fake.pdf")).rejects.toBeInstanceOf(InvalidPdfError);
+  });
+
+  it("includes a user-friendly message in InvalidPdfError", async () => {
+    const nonPdf = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0]); // JPEG magic bytes
+    mockFetchWithBuffer(nonPdf.buffer);
+
+    await expect(readPdfAsBase64("blob:http://localhost/photo.pdf")).rejects.toThrow(
+      "not a valid PDF",
+    );
+  });
+
+  it("throws EncryptedPdfError when /Encrypt appears in the header", async () => {
+    const encrypted = makeEncryptedPdfBytes();
+    mockFetchWithBuffer(encrypted.buffer);
+
+    await expect(readPdfAsBase64("blob:http://localhost/secure.pdf")).rejects.toBeInstanceOf(EncryptedPdfError);
+  });
+
+  it("includes a user-friendly message in EncryptedPdfError", async () => {
+    const encrypted = makeEncryptedPdfBytes();
+    mockFetchWithBuffer(encrypted.buffer);
+
+    await expect(readPdfAsBase64("blob:http://localhost/secure.pdf")).rejects.toThrow(
+      "Password-protected",
+    );
+  });
+
+  it("throws EncryptedPdfError when /Encrypt appears in the trailer (suffix detection)", async () => {
+    const encrypted = makeSuffixEncryptedPdfBytes();
+    mockFetchWithBuffer(encrypted.buffer);
+
+    await expect(readPdfAsBase64("blob:http://localhost/oldformat.pdf")).rejects.toBeInstanceOf(EncryptedPdfError);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -133,18 +224,18 @@ describe("readPdfAsBase64 – native path (iOS)", () => {
 
   it("returns the base64 string from FileSystem on a valid file", async () => {
     mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 1024 });
-    mockReadAsStringAsync.mockResolvedValueOnce("AAEC");
+    mockReadAsStringAsync.mockResolvedValueOnce(PDF_MAGIC_B64);
 
     const result = await readPdfAsBase64("file:///var/mobile/Documents/catalog.pdf");
 
-    expect(result).toBe("AAEC");
+    expect(result).toBe(PDF_MAGIC_B64);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("reads the exact URI it receives", async () => {
     const uri = "file:///var/mobile/Documents/catalog.pdf";
     mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 512 });
-    mockReadAsStringAsync.mockResolvedValueOnce("dGVzdA==");
+    mockReadAsStringAsync.mockResolvedValueOnce(PDF_MAGIC_B64);
 
     await readPdfAsBase64(uri);
 
@@ -169,7 +260,7 @@ describe("readPdfAsBase64 – native path (iOS)", () => {
 
   it("does NOT throw for a file exactly at the 25 MB limit", async () => {
     mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: MAX_PDF_BYTES });
-    mockReadAsStringAsync.mockResolvedValueOnce("dGVzdA==");
+    mockReadAsStringAsync.mockResolvedValueOnce(PDF_MAGIC_B64);
 
     await expect(readPdfAsBase64("file:///var/mobile/edge.pdf")).resolves.toBeDefined();
   });
@@ -194,11 +285,46 @@ describe("readPdfAsBase64 – native path (iOS)", () => {
   it("also works when Platform.OS is 'android'", async () => {
     setPlatformOS("android");
     mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 1024 });
-    mockReadAsStringAsync.mockResolvedValueOnce("dGVzdA==");
+    mockReadAsStringAsync.mockResolvedValueOnce(PDF_MAGIC_B64);
 
     const result = await readPdfAsBase64("file:///storage/emulated/0/catalog.pdf");
 
-    expect(result).toBe("dGVzdA==");
+    expect(result).toBe(PDF_MAGIC_B64);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("throws InvalidPdfError when the file is not a PDF", async () => {
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 512 });
+    // "AAEC" decodes to [0x00, 0x01, 0x02] — no %PDF- magic
+    mockReadAsStringAsync.mockResolvedValueOnce("AAEC");
+
+    await expect(readPdfAsBase64("file:///var/mobile/fake.pdf")).rejects.toBeInstanceOf(InvalidPdfError);
+  });
+
+  it("includes a user-friendly message in InvalidPdfError on native", async () => {
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 512 });
+    mockReadAsStringAsync.mockResolvedValueOnce("AAEC");
+
+    await expect(readPdfAsBase64("file:///var/mobile/fake.pdf")).rejects.toThrow(
+      "not a valid PDF",
+    );
+  });
+
+  it("throws EncryptedPdfError when /Encrypt is present in the file", async () => {
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 64 });
+    const encrypted = makeEncryptedPdfBytes();
+    mockReadAsStringAsync.mockResolvedValueOnce(toBase64(encrypted));
+
+    await expect(readPdfAsBase64("file:///var/mobile/secure.pdf")).rejects.toBeInstanceOf(EncryptedPdfError);
+  });
+
+  it("includes a user-friendly message in EncryptedPdfError on native", async () => {
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 64 });
+    const encrypted = makeEncryptedPdfBytes();
+    mockReadAsStringAsync.mockResolvedValueOnce(toBase64(encrypted));
+
+    await expect(readPdfAsBase64("file:///var/mobile/secure.pdf")).rejects.toThrow(
+      "Password-protected",
+    );
   });
 });
