@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { HealthCheckResponse } from "@workspace/api-zod";
 import { db, pool } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { getProbeSummary } from "../lib/aiProvider";
 
 const router: IRouter = Router();
 
@@ -20,11 +21,14 @@ router.get("/healthz", async (_req, res) => {
 
     const status = db_latency_ms >= DB_LATENCY_DEGRADED_MS ? "degraded" : "ok";
 
+    const bots = getProbeSummary();
+
     const data = HealthCheckResponse.parse({
       status,
       db_latency_ms,
       pool_idle,
       pool_total,
+      bots: Object.keys(bots).length > 0 ? bots : undefined,
     });
     res.json(data);
   } catch {

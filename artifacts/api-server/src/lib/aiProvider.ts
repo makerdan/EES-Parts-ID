@@ -218,12 +218,31 @@ export function getAllPoeModelNames(): string[] {
   ];
 }
 
+// ── Per-bot probe results ─────────────────────────────────────────────────────
+
+/** Result status for a single Poe bot startup probe. */
+export type BotProbeStatus = "ok" | "timeout" | "404" | "error";
+
+/** Map of bot name → probe result, populated by probePoeBotsOnStartup(). */
+const _botProbeResults = new Map<string, BotProbeStatus>();
+
+/**
+ * Returns a snapshot of every bot that was probed at startup and its result.
+ * Returns an empty object when the active provider is not "poe" or before the
+ * first probe has completed.
+ */
+export function getProbeSummary(): Record<string, BotProbeStatus> {
+  if (_provider !== "poe") return {};
+  return Object.fromEntries(_botProbeResults);
+}
+
 /**
  * Probe each Poe bot name with a minimal completion request.
  * Logs a clear warning for any bot that returns a 404 (renamed / retired)
  * or any other error (e.g. transient 500 from the provider).
  * Advisory only — the server always continues to start regardless of outcome.
  * No-op when the active provider is not "poe".
+ * Stores per-bot results in module-level state accessible via getProbeSummary().
  */
 export async function probePoeBotsOnStartup(): Promise<void> {
   if (_provider !== "poe") {
@@ -231,6 +250,7 @@ export async function probePoeBotsOnStartup(): Promise<void> {
   }
 
   const botNames = getAllPoeModelNames();
+  _botProbeResults.clear();
   logger.info({ botNames }, "Probing Poe bot names on startup…");
 
   const PROBE_TIMEOUT_MS = 5000;
@@ -254,12 +274,14 @@ export async function probePoeBotsOnStartup(): Promise<void> {
             }),
             timeoutPromise,
           ]);
+          _botProbeResults.set(botName, "ok");
           logger.info({ botName }, `Poe bot '${botName}' — OK`);
         } catch (err: unknown) {
           if (
             err instanceof Error &&
             err.message === "__PROBE_TIMEOUT__"
           ) {
+            _botProbeResults.set(botName, "timeout");
             logger.warn(
               { botName },
               `Poe bot '${botName}' probe timed out after ${PROBE_TIMEOUT_MS}ms — server will continue`,
@@ -276,6 +298,7 @@ export async function probePoeBotsOnStartup(): Promise<void> {
               : undefined;
 
           if (status === 404 && botName === POE_CATALOG_BOT) {
+            _botProbeResults.set(botName, "404");
             logger.warn(
               { botName, fallback: POE_CATALOG_BOT_FALLBACK },
               `Poe catalog bot '${botName}' not found — probing fallback '${POE_CATALOG_BOT_FALLBACK}'`,
@@ -287,6 +310,7 @@ export async function probePoeBotsOnStartup(): Promise<void> {
                 max_tokens: 16,
               });
               _effectiveCatalogBotName = POE_CATALOG_BOT_FALLBACK;
+              _botProbeResults.set(POE_CATALOG_BOT_FALLBACK, "ok");
               logger.info(
                 { botName: POE_CATALOG_BOT_FALLBACK },
                 `Poe catalog bot switched to fallback '${POE_CATALOG_BOT_FALLBACK}' — OK`,
@@ -299,17 +323,23 @@ export async function probePoeBotsOnStartup(): Promise<void> {
                 typeof (fallbackErr as { status: unknown }).status === "number"
                   ? (fallbackErr as { status: number }).status
                   : undefined;
+              _botProbeResults.set(
+                POE_CATALOG_BOT_FALLBACK,
+                fallbackStatus === 404 ? "404" : "error",
+              );
               logger.warn(
                 { botName: POE_CATALOG_BOT_FALLBACK, err: fallbackErr, status: fallbackStatus },
                 `Poe catalog fallback bot '${POE_CATALOG_BOT_FALLBACK}' also unavailable (status=${fallbackStatus ?? "unknown"}) — catalog extraction may fail`,
               );
             }
           } else if (status === 404) {
+            _botProbeResults.set(botName, "404");
             logger.warn(
               { botName },
               `Poe bot '${botName}' not found — check bot name in aiProvider.ts`,
             );
           } else {
+            _botProbeResults.set(botName, "error");
             logger.warn(
               { botName, err },
               `Poe bot '${botName}' probe failed (status=${status ?? "unknown"}) — transient provider error, server will continue`,
@@ -317,6 +347,7 @@ export async function probePoeBotsOnStartup(): Promise<void> {
           }
         }
       } catch (err: unknown) {
+        _botProbeResults.set(botName, "error");
         logger.warn(
           { botName, err },
           `Poe bot '${botName}' probe encountered an unexpected error — server will continue`,
