@@ -216,17 +216,40 @@ export async function probePoeBotsOnStartup(): Promise<void> {
   const botNames = getAllPoeModelNames();
   logger.info({ botNames }, "Probing Poe bot names on startup…");
 
+  const PROBE_TIMEOUT_MS = 5000;
+
   try {
     await Promise.all(
       botNames.map(async (botName) => {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`__PROBE_TIMEOUT__`)),
+            PROBE_TIMEOUT_MS,
+          ),
+        );
+
         try {
-          await _client.chat.completions.create({
-            model: botName,
-            messages: [{ role: "user", content: "hi" }],
-            max_tokens: 16,
-          });
+          await Promise.race([
+            _client.chat.completions.create({
+              model: botName,
+              messages: [{ role: "user", content: "hi" }],
+              max_tokens: 16,
+            }),
+            timeoutPromise,
+          ]);
           logger.info({ botName }, `Poe bot '${botName}' — OK`);
         } catch (err: unknown) {
+          if (
+            err instanceof Error &&
+            err.message === "__PROBE_TIMEOUT__"
+          ) {
+            logger.warn(
+              { botName },
+              `Poe bot '${botName}' probe timed out after ${PROBE_TIMEOUT_MS}ms — server will continue`,
+            );
+            return;
+          }
+
           const status =
             err != null &&
             typeof err === "object" &&
