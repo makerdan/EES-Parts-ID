@@ -84,6 +84,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
   const [chunksCompleted, setChunksCompleted] = useState(0);
   const [chunksTotal, setChunksTotal] = useState(0);
+  const [failedChunkInfo, setFailedChunkInfo] = useState<{
+    chunkIndex: number;
+    totalChunks: number;
+    parentJobId: string | null;
+  } | null>(null);
 
   useEffect(() => {
     if (retryCountdown === null || retryCountdown <= 0) return;
@@ -225,6 +230,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     onFailure: (msg: string) => void,
     onAbort: () => void,
     onNetwork: () => void,
+    baseBytes = 0,
+    remainingBytesAfter = 0,
   ): void => {
     const token = adminToken!;
     const body = JSON.stringify({
@@ -244,8 +251,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       if (e.lengthComputable) {
         setUploadPct(Math.round((e.loaded / e.total) * 100));
         const now = Date.now();
+        const cumulativeLoaded = baseBytes + e.loaded;
         const samples = speedSamplesRef.current;
-        samples.push({ t: now, loaded: e.loaded });
+        samples.push({ t: now, loaded: cumulativeLoaded });
         const cutoff = now - SPEED_WINDOW_MS;
         while (samples.length > 1 && samples[0]!.t < cutoff) samples.shift();
         if (samples.length > SPEED_WINDOW_MAX) samples.splice(0, samples.length - SPEED_WINDOW_MAX);
@@ -257,7 +265,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             const bytesPerMs = (newest.loaded - oldest.loaded) / dtMs;
             const bytesPerSec = bytesPerMs * 1000;
             setUploadSpeed(bytesPerSec / (1024 * 1024));
-            setUploadEta(bytesPerSec > 0 ? (e.total - e.loaded) / bytesPerSec : null);
+            const bytesRemaining = (e.total - e.loaded) + remainingBytesAfter;
+            setUploadEta(bytesPerSec > 0 ? bytesRemaining / bytesPerSec : null);
           }
         }
       }
@@ -303,19 +312,29 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   // ── Chunked upload inner loop ──────────────────────────────────────────────
   // Uploads chunks[startIndex..end], reusing existingParentJobId if provided.
+  // chunkBase64List / chunkBodySizes / totalBodyBytes are pre-computed by the
+  // caller so byte offsets are accurate across the full multi-chunk sequence.
   // On success starts polling. On failure sets failedChunkInfo for targeted retry.
   const uploadChunksFromIndex = async (
     chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>,
     startIndex: number,
     existingParentJobId: string | null,
+    chunkBase64List: string[],
+    chunkBodySizes: number[],
+    totalBodyBytes: number,
   ): Promise<void> => {
     let parentJobId: string | null = existingParentJobId;
     let aborted = false;
 
+    // Bytes already uploaded by chunks before startIndex (for ETA accounting
+    // when retrying from a non-zero index).
+    let baseBytesAccum = chunkBodySizes.slice(0, startIndex).reduce((a, b) => a + b, 0);
+
     for (let i = startIndex; i < chunks.length; i++) {
       if (aborted) break;
       const chunk = chunks[i]!;
-      const base64 = bytesToBase64(chunk.bytes);
+      const base64 = chunkBase64List[i]!;
+      const remainingBytesAfter = totalBodyBytes - baseBytesAccum - chunkBodySizes[i]!;
       setChunkLabel(`Uploading part ${i + 1} of ${chunks.length}…`);
       setUploadPct(null);
 
@@ -323,23 +342,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         const result = await new Promise<{ jobId: string; chunkJobId?: string }>((resolve, reject) => {
           sendSingleChunk(
             base64,
-            {
-              chunkIndex: i,
-              chunkCount: chunks.length,
-              pageOffset: chunk.pageOffset,
-              ...(parentJobId ? { parentJobId } : {}),
-            },
-            0,
-            resolve,
-            (msg) => reject(new Error(msg)),
-            () => reject(new Error("__abort__")),
-            () => reject(new Error("__network__")),
+            { chunkIndex: i, chunkCount: chunks.length, pageOffset: chunk.pageOffset, ...(parentJobId ? { parentJobId } : {}) },
+            0, resolve, (msg) => reject(new Error(msg)), () => reject(new Error("__abort__")), () => reject(new Error("__network__")),
+            baseBytesAccum, remainingBytesAfter,
           );
         });
 
-        if (i === 0) {
-          parentJobId = result.jobId;
-        }
+        baseBytesAccum += chunkBodySizes[i]!;
+        if (i === 0) { parentJobId = result.jobId; }
         setChunksCompleted(i + 1);
       } catch (err) {
         const msg = (err as Error).message;
@@ -356,6 +366,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         // Network or server error — surface targeted chunk retry
         setLoading(false);
         setUploadPct(null);
+        setUploadSpeed(null);
+        setUploadEta(null);
         setChunkLabel(null);
         setChunksCompleted(0);
         setChunksTotal(0);
@@ -373,6 +385,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
     // All chunks uploaded — start polling parent job
     setUploadPct(null);
+    setUploadSpeed(null);
+    setUploadEta(null);
     setChunkLabel(null);
     setChunksCompleted(0);
     setChunksTotal(0);
@@ -380,15 +394,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setPdfBytes(null);
     setFailedChunkInfo(null);
 
-    setJobStatus({
-      jobId: parentJobId,
-      status: "pending",
-      totalPages: null,
-      processedPages: 0,
-      matchedParts: 0,
-      imagesMatched: 0,
-      errorMessage: null,
-    });
+    setJobStatus({ jobId: parentJobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
     startPolling(parentJobId);
   };
 
@@ -414,7 +420,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
     setChunksTotal(chunks.length);
     setChunksCompleted(0);
-    await uploadChunksFromIndex(chunks, 0, null);
+
+    // Pre-compute base64 strings and sizes for all chunks so byte offsets and
+    // remaining-bytes counts are accurate across the full multi-chunk sequence.
+    const chunkBase64List = chunks.map(c => bytesToBase64(c.bytes));
+    const chunkBodySizes = chunkBase64List.map(b64 => b64.length);
+    const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
+
+    await uploadChunksFromIndex(chunks, 0, null, chunkBase64List, chunkBodySizes, totalBodyBytes);
   };
 
   // ── Retry a single failed chunk (without re-uploading the whole file) ──────
@@ -446,8 +459,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       return;
     }
 
-    // Resume from the failed chunk index, reusing the existing parent job
-    await uploadChunksFromIndex(chunks, chunkIndex, parentJobId);
+    setChunksTotal(chunks.length);
+    setChunksCompleted(chunkIndex);
+
+    // Pre-compute sizes so ETA is accurate even when resuming mid-sequence.
+    const chunkBase64List = chunks.map(c => bytesToBase64(c.bytes));
+    const chunkBodySizes = chunkBase64List.map(b64 => b64.length);
+    const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
+
+    await uploadChunksFromIndex(chunks, chunkIndex, parentJobId, chunkBase64List, chunkBodySizes, totalBodyBytes);
   };
 
   // ── Legacy single-upload flow (small files) ───────────────────────────────
@@ -699,6 +719,16 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               <Text style={[s.progressText, { color: colors.mutedForeground }]}>
                 {chunksCompleted} of {chunksTotal} parts uploaded
               </Text>
+              {uploadSpeed !== null && uploadEta !== null ? (
+                <Text style={[s.progressText, { color: colors.mutedForeground }]}>
+                  {uploadSpeed >= 1
+                    ? `${uploadSpeed.toFixed(1)} MB/s`
+                    : `${(uploadSpeed * 1024).toFixed(0)} KB/s`}
+                  {uploadEta >= 60
+                    ? ` · ~${Math.ceil(uploadEta / 60)} min remaining`
+                    : ` · ~${Math.ceil(uploadEta)} sec remaining`}
+                </Text>
+              ) : null}
             </>
           ) : null}
 
