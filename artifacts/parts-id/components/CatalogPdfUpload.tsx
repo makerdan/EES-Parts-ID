@@ -350,8 +350,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       const chunk = chunks[i]!;
       const base64 = chunkBase64List[i]!;
       const remainingBytesAfter = totalBodyBytes - baseBytesAccum - chunkBodySizes[i]!;
-      setChunkLabel(`Uploading part ${i + 1} of ${chunks.length}…`);
+      setChunkLabel(`Part ${i + 1} of ${chunks.length}`);
       setUploadPct(null);
+      setUploadSpeed(null);
+      setUploadEta(null);
+      speedSamplesRef.current = [];
 
       try {
         const result = await new Promise<{ jobId: string; chunkJobId?: string }>((resolve, reject) => {
@@ -782,7 +785,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         <View style={s.progressBlock}>
           <View style={s.progressRow}>
             <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
-              {chunkLabel ?? `Uploading… ${uploadPct ?? 0}%`}
+              {chunkLabel !== null
+                ? (uploadPct !== null ? `${chunkLabel} · ${uploadPct}%` : `${chunkLabel}…`)
+                : `Uploading… ${uploadPct ?? 0}%`}
             </Text>
             <Pressable onPress={handleCancel} style={[s.cancelBtn, { borderColor: colors.destructive }]}>
               <Text style={[s.cancelBtnText, { color: colors.destructive }]}>Cancel</Text>
@@ -823,7 +828,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               <View style={[s.progressFill, { width: `${uploadPct}%`, backgroundColor: colors.primary }]} />
             </View>
           ) : null}
-          {uploadSpeed !== null && uploadEta !== null && chunkLabel === null ? (
+          {uploadSpeed !== null && uploadEta !== null ? (
             <Text style={[s.progressText, { color: colors.mutedForeground }]}>
               {uploadSpeed >= 1
                 ? `${uploadSpeed.toFixed(1)} MB/s`
