@@ -51,10 +51,12 @@ import { db, catalogPdfJobTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
+import { matchCatalogNumber } from "../src/utils/catalogMatcher";
 
 // ── Typed mocks ───────────────────────────────────────────────────────────────
 const mockExtractPdfPages = extractPdfPages as jest.MockedFunction<typeof extractPdfPages>;
 const mockExtractCatalogPage = extractCatalogPage as jest.MockedFunction<typeof extractCatalogPage>;
+const mockMatchCatalogNumber = matchCatalogNumber as jest.MockedFunction<typeof matchCatalogNumber>;
 
 // ── Minimal valid PDF stub ────────────────────────────────────────────────────
 // A real base64 %PDF-… header so validatePdfBase64 passes.
@@ -114,6 +116,7 @@ afterAll(async () => {
 beforeEach(() => {
   jest.clearAllMocks();
   mockExtractCatalogPage.mockResolvedValue([]);
+  mockMatchCatalogNumber.mockResolvedValue(null);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -366,6 +369,41 @@ describe("GET /api/admin/catalog-pdf/:id/status — parent job aggregation", () 
     expect(res.body.errorMessage).toContain("AI call timed out");
   });
 
+  it("aggregates partsFound and concatenates unmatchedParts from all children", async () => {
+    const parentId = await seedJob({ chunkCount: 2, status: "processing" });
+    await seedJob({
+      parentJobId: parentId, chunkIndex: 0, chunkCount: 2, pageOffset: 0,
+      status: "done",
+      partsFound: 10,
+      unmatchedParts: [
+        { catalogNumber: "CHILD1-001", description: "Part A" },
+        { catalogNumber: "CHILD1-002", description: "Part B" },
+      ],
+    });
+    await seedJob({
+      parentJobId: parentId, chunkIndex: 1, chunkCount: 2, pageOffset: 10,
+      status: "done",
+      partsFound: 8,
+      unmatchedParts: [
+        { catalogNumber: "CHILD2-001", description: "Part C" },
+      ],
+    });
+
+    const res = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${parentId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(res.body.partsFound).toBe(18); // 10 + 8
+    expect(res.body.unmatchedParts).toHaveLength(3); // 2 + 1
+    const catalogNumbers = (res.body.unmatchedParts as Array<{ catalogNumber: string }>).map(
+      (p) => p.catalogNumber,
+    );
+    expect(catalogNumbers).toContain("CHILD1-001");
+    expect(catalogNumbers).toContain("CHILD1-002");
+    expect(catalogNumbers).toContain("CHILD2-001");
+  });
+
   it("querying a child job directly returns that child's own status", async () => {
     const parentId = await seedJob({ chunkCount: 1, status: "processing" });
     const childId = await seedJob({
@@ -441,6 +479,124 @@ describe("GET /api/admin/catalog-pdf/failed-jobs — excludes child jobs", () =>
     // Child job must NOT appear
     expect(ids).not.toContain(childId);
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// partsFound counter and unmatchedParts behavior
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Minimal page shape accepted by processPdfPages / extractCatalogPage
+const STUB_PAGE = { text: "", images: [] as Buffer[], isRendered: false as const, pageWidth: 0, pageHeight: 0 };
+
+describe("partsFound counter and unmatchedParts behavior", () => {
+  it("partsFound counts all AI-extracted entries including those below confidence threshold", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce([STUB_PAGE]);
+    mockExtractCatalogPage.mockResolvedValueOnce([
+      { catalogNumber: "HIGH-001", description: "Part A", confidence: 0.9, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
+      { catalogNumber: "HIGH-002", description: "Part B", confidence: 0.5, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
+      { catalogNumber: "LOW-003", description: "Part C", confidence: 0.3, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
+    ]);
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: STUB_PDF_B64, vendor: "EATON", filename: "partsFound-test.pdf" })
+      .expect(200);
+
+    const jobId = Number(res.body.jobId);
+    seededIds.push(jobId);
+
+    await waitForDb(async () => {
+      const [row] = await db.select({ status: catalogPdfJobTable.status }).from(catalogPdfJobTable).where(eq(catalogPdfJobTable.id, jobId)).limit(1);
+      return row?.status === "done";
+    });
+
+    const statusRes = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${jobId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(statusRes.body.partsFound).toBe(3);
+  }, 15_000);
+
+  it("entries with confidence < 0.4 do not appear in unmatchedParts", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce([STUB_PAGE]);
+    mockExtractCatalogPage.mockResolvedValueOnce([
+      { catalogNumber: "HIGH-001", description: "Part A", confidence: 0.9, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
+      { catalogNumber: "HIGH-002", description: "Part B", confidence: 0.4, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
+      { catalogNumber: "LOW-003", description: "Part C", confidence: 0.39, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
+      { catalogNumber: "LOW-004", description: "Part D", confidence: 0.1, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
+    ]);
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: STUB_PDF_B64, vendor: "EATON", filename: "confidence-filter-test.pdf" })
+      .expect(200);
+
+    const jobId = Number(res.body.jobId);
+    seededIds.push(jobId);
+
+    await waitForDb(async () => {
+      const [row] = await db.select({ status: catalogPdfJobTable.status }).from(catalogPdfJobTable).where(eq(catalogPdfJobTable.id, jobId)).limit(1);
+      return row?.status === "done";
+    });
+
+    const statusRes = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${jobId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    // All 4 entries count toward partsFound before the filter
+    expect(statusRes.body.partsFound).toBe(4);
+
+    // Only the 2 entries with confidence >= 0.4 appear in unmatchedParts
+    const catalogNumbers = (statusRes.body.unmatchedParts as Array<{ catalogNumber: string }>).map(
+      (p) => p.catalogNumber,
+    );
+    expect(catalogNumbers).toContain("HIGH-001");
+    expect(catalogNumbers).toContain("HIGH-002");
+    expect(catalogNumbers).not.toContain("LOW-003");
+    expect(catalogNumbers).not.toContain("LOW-004");
+  }, 15_000);
+
+  it("caps unmatchedParts at 300 entries even when more parts are extracted", async () => {
+    const entries = Array.from({ length: 305 }, (_, i) => ({
+      catalogNumber: `PART-${String(i).padStart(4, "0")}`,
+      description: `Part ${i}`,
+      confidence: 0.8,
+      hasPartImage: false as const,
+      imageRegion: null,
+      imageRegion2: null,
+      imageIndex: -1,
+      imageIndex2: -1,
+    }));
+
+    mockExtractPdfPages.mockResolvedValueOnce([STUB_PAGE]);
+    mockExtractCatalogPage.mockResolvedValueOnce(entries);
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: STUB_PDF_B64, vendor: "EATON", filename: "cap-test.pdf" })
+      .expect(200);
+
+    const jobId = Number(res.body.jobId);
+    seededIds.push(jobId);
+
+    await waitForDb(async () => {
+      const [row] = await db.select({ status: catalogPdfJobTable.status }).from(catalogPdfJobTable).where(eq(catalogPdfJobTable.id, jobId)).limit(1);
+      return row?.status === "done";
+    });
+
+    const statusRes = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${jobId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(statusRes.body.partsFound).toBe(305);
+    expect(statusRes.body.unmatchedParts).toHaveLength(300);
+  }, 15_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
