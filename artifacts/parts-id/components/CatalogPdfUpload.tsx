@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   StyleSheet,
   Text,
@@ -18,7 +19,7 @@ import {
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import * as DocumentPicker from "expo-document-picker";
 import { readPdfAsBase64, PdfTooLargeError, InvalidPdfError, EncryptedPdfError } from "@/utils/readPdfAsBase64";
-import { useRouter } from "expo-router";
+import { useNavigation, useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -46,6 +47,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   "use no memo";
   const colors = useColors();
   const router = useRouter();
+  const navigation = useNavigation();
 
   const [vendor, setVendor] = useState("");
   const [filename, setFilename] = useState<string | null>(null);
@@ -74,6 +76,26 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const xhrRef = useRef<XMLHttpRequest | null>(null);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  useEffect(() => {
+    if (!loading) return;
+    const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+      e.preventDefault();
+      Alert.alert(
+        "Upload in progress",
+        "Are you sure you want to leave? The upload will be cancelled.",
+        [
+          { text: "Stay", style: "cancel" },
+          {
+            text: "Leave",
+            style: "destructive",
+            onPress: () => navigation.dispatch(e.data.action),
+          },
+        ]
+      );
+    });
+    return unsubscribe;
+  }, [loading, navigation]);
 
   const speedSamplesRef = useRef<{ t: number; loaded: number }[]>([]);
   const SPEED_WINDOW_MS = 4000;
