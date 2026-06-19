@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { useApiStatus } from "@/hooks/useApiStatus";
@@ -527,10 +528,19 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
   );
 });
 
+function abbreviateModelName(name: string): string {
+  const VENDOR_PREFIXES = ["claude", "gpt", "gemini", "mistral", "llama"];
+  const parts = name.split("-");
+  const rest = VENDOR_PREFIXES.includes(parts[0].toLowerCase()) ? parts.slice(1) : parts;
+  return rest.map((p) => (p.length > 0 && isNaN(Number(p[0])) ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" ");
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
   "use no memo";
   useTrackScreen("Upload");
+  const { width: screenWidth } = useWindowDimensions();
+  const isNarrow = screenWidth <= 320;
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
@@ -1557,6 +1567,7 @@ export default function UploadScreen() {
                                 ? "#f59e0b"
                                 : "#ef4444",
                           },
+                          isNarrow && { paddingHorizontal: 4, paddingVertical: 2 },
                         ]}
                       >
                         <Text
@@ -1574,8 +1585,15 @@ export default function UploadScreen() {
                         >
                           ●
                         </Text>
-                        <Text style={[styles.botStatusText, { color: colors.foreground }]} numberOfLines={1}>
-                          {name}
+                        <Text
+                          style={[
+                            styles.botStatusText,
+                            { color: colors.foreground },
+                            isNarrow && { fontSize: 9, maxWidth: 72 },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {isNarrow ? abbreviateModelName(name) : name}
                         </Text>
                       </View>
                     ))}
