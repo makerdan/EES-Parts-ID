@@ -379,8 +379,8 @@ export default function MapScreen() {
               </View>
             )}
           </View>
-          {/* Zone Editor: always visible; non-admins see a toast instead of opening the editor. */}
-          <View style={styles.zoneEditorWrapper}>
+          {/* Zone Editor: only shown to admins */}
+          {isAdmin && <View style={styles.zoneEditorWrapper}>
               <Pressable
                 onPress={() => {
                   if (zoneEditorLongPressed.current) {
@@ -420,7 +420,7 @@ export default function MapScreen() {
                   </Text>
                 </View>
               )}
-            </View>
+            </View>}
         </View>
       </View>
 
