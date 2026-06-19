@@ -45,12 +45,29 @@ jest.mock("react-native", () => {
     }) {
       return React.createElement("rn-pressable", { style, onPress }, children);
     },
-    ScrollView: function ScrollView({
-      children,
+    FlatList: function FlatList({
+      data,
+      renderItem,
+      ListHeaderComponent,
+      ListFooterComponent,
+      ListEmptyComponent,
+      keyExtractor,
     }: {
-      children?: React.ReactNode;
+      data?: unknown[];
+      renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
+      ListHeaderComponent?: React.ReactNode;
+      ListFooterComponent?: React.ReactNode;
+      ListEmptyComponent?: React.ReactNode;
+      keyExtractor?: (item: unknown, index: number) => string;
     }) {
-      return React.createElement("rn-scrollview", {}, children);
+      const items =
+        data && data.length > 0 && renderItem
+          ? data.map((item, index) => {
+              const key = keyExtractor ? keyExtractor(item, index) : String(index);
+              return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+            })
+          : (ListEmptyComponent ?? null);
+      return React.createElement("rn-flatlist", {}, ListHeaderComponent, items, ListFooterComponent);
     },
     StyleSheet: {
       create: (s: unknown) => s,

@@ -9,6 +9,7 @@
 import React, {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -159,7 +160,20 @@ export function WarehouseMapViewer() {
   }, [onWheel]);
 
   // Stroke width that stays visually consistent regardless of zoom
-  const sw = 2 / tf.s;
+  const sw = useMemo(() => 2 / tf.s, [tf.s]);
+
+  // Per-zone fill and font-size — memoized so pan events (which change tf.x/tf.y
+  // but not tf.s) do not recompute these values on every frame.
+  const zoneStyles = useMemo(
+    () =>
+      zones.map(zone => ({
+        fill: zone.isInventory
+          ? "rgba(0, 112, 255, 0.12)"
+          : "rgba(0, 112, 255, 0.05)",
+        fontSize: Math.min(zone.svgWidth, zone.svgHeight) * 0.18,
+      })),
+    [zones],
+  );
 
   return (
     <div style={styles.root}>
@@ -194,11 +208,8 @@ export function WarehouseMapViewer() {
           <g ref={floorPlanRef} pointerEvents="none" />
 
           {/* Zone overlays — read-only, no interaction */}
-          {zones.map((zone) => {
-            const fill = zone.isInventory
-              ? "rgba(0, 112, 255, 0.12)"
-              : "rgba(0, 112, 255, 0.05)";
-            const fontSize = Math.min(zone.svgWidth, zone.svgHeight) * 0.18;
+          {zones.map((zone, i) => {
+            const { fill, fontSize } = zoneStyles[i]!;
             return (
               <g key={zone.id} pointerEvents="none">
                 <rect
