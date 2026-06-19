@@ -514,6 +514,45 @@ const redoStackRef: { current: UndoEntry[] } = { current: [] };
 
 // ── Main Component ────────────────────────────────────────────────────────────
 export function ZoneEditor() {
+  // ── Admin auth ──────────────────────────────────────────────────────────────
+  const [adminToken, setAdminToken] = useState<string | null>(() => {
+    try { return sessionStorage.getItem("zoneEditorAdminToken"); } catch { return null; }
+  });
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  const clearToken = useCallback(() => {
+    try { sessionStorage.removeItem("zoneEditorAdminToken"); } catch {}
+    setAdminToken(null);
+  }, []);
+
+  const handleLogin = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError("");
+    setLoginLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/admin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: loginPassword }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setLoginError(body.error ?? "Login failed");
+        return;
+      }
+      const { token } = await res.json() as { token: string };
+      try { sessionStorage.setItem("zoneEditorAdminToken", token); } catch {}
+      setAdminToken(token);
+      setLoginPassword("");
+    } catch {
+      setLoginError("Network error — is the API server running?");
+    } finally {
+      setLoginLoading(false);
+    }
+  }, [loginPassword]);
+
   const [zones, setZones] = useState<Zone[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -768,8 +807,11 @@ export function ZoneEditor() {
 
   // ── API helpers ─────────────────────────────────────────────────────────────
   const headers = useCallback(
-    (): Record<string, string> => ({ "Content-Type": "application/json" }),
-    [],
+    (): Record<string, string> => ({
+      "Content-Type": "application/json",
+      ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+    }),
+    [adminToken],
   );
 
   const fetchZones = useCallback(async () => {
@@ -844,8 +886,9 @@ export function ZoneEditor() {
           ids.map((id) =>
             fetch(`${API_BASE}/warehouse-zones/${id}`, {
               method: "DELETE",
-              headers: { "Content-Type": "application/json" },
+              headers: headers(),
             }).then((res) => {
+              if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
               if (!res.ok) throw new Error(`HTTP ${res.status}`);
             }),
           ),
@@ -864,7 +907,7 @@ export function ZoneEditor() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [fetchZones, pushUndo]);
+  }, [fetchZones, pushUndo, headers, clearToken]);
 
   const patchZone = useCallback(
     async (id: number, updates: Partial<Zone>): Promise<boolean> => {
@@ -873,13 +916,14 @@ export function ZoneEditor() {
         headers: headers(),
         body: JSON.stringify(updates),
       });
+      if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
       return true;
     },
-    [headers],
+    [headers, clearToken],
   );
 
   // ── Apply an undo or redo entry against the server ───────────────────────
@@ -893,7 +937,6 @@ export function ZoneEditor() {
     if (srcStack.length === 0) { undoRedoBusyRef.current = false; return; }
     const entry = srcStack[srcStack.length - 1]!;
     const fwd = dir === "redo";
-    const jsonHdr = { "Content-Type": "application/json" };
     try {
       switch (entry.type) {
         case "move":
@@ -912,7 +955,8 @@ export function ZoneEditor() {
           if (!fwd) {
             // Undo create → delete the zone(s)
             await Promise.all(entry.zones.map(async (z) => {
-              const r = await fetch(`${API_BASE}/warehouse-zones/${z.id}`, { method: "DELETE", headers: jsonHdr });
+              const r = await fetch(`${API_BASE}/warehouse-zones/${z.id}`, { method: "DELETE", headers: headers() });
+              if (r.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
             }));
             const n = entry.zones.length;
@@ -920,7 +964,8 @@ export function ZoneEditor() {
           } else {
             // Redo create → re-POST; update zone ids in-place for symmetry
             const newZones = await Promise.all(entry.zones.map(async (z) => {
-              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: headers(), body: JSON.stringify({ aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              if (r.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return ((await r.json()) as { zone: Zone }).zone;
             }));
@@ -934,7 +979,8 @@ export function ZoneEditor() {
           if (!fwd) {
             // Undo delete → re-POST; update ids in-place for redo symmetry
             const newZones = await Promise.all(entry.zones.map(async (z) => {
-              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: jsonHdr, body: JSON.stringify({ aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              const r = await fetch(`${API_BASE}/warehouse-zones`, { method: "POST", headers: headers(), body: JSON.stringify({ aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, svgX: z.svgX, svgY: z.svgY, svgWidth: z.svgWidth, svgHeight: z.svgHeight, sortOrder: z.sortOrder }) });
+              if (r.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return ((await r.json()) as { zone: Zone }).zone;
             }));
@@ -944,7 +990,8 @@ export function ZoneEditor() {
           } else {
             // Redo delete → delete the zone(s)
             await Promise.all(entry.zones.map(async (z) => {
-              const r = await fetch(`${API_BASE}/warehouse-zones/${z.id}`, { method: "DELETE", headers: jsonHdr });
+              const r = await fetch(`${API_BASE}/warehouse-zones/${z.id}`, { method: "DELETE", headers: headers() });
+              if (r.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
             }));
             const n = entry.zones.length;
@@ -1030,7 +1077,7 @@ export function ZoneEditor() {
     } finally {
       undoRedoBusyRef.current = false;
     }
-  }, [patchZone, fetchZones]);
+  }, [patchZone, fetchZones, headers, clearToken]);
 
   useEffect(() => { applyUndoRedoRef.current = applyUndoRedo; }, [applyUndoRedo]);
 
@@ -1055,6 +1102,7 @@ export function ZoneEditor() {
           sortOrder: form.sortOrder,
         }),
       });
+      if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(err.error ?? `HTTP ${res.status}`);
@@ -1109,6 +1157,7 @@ export function ZoneEditor() {
         method: "DELETE",
         headers: headers(),
       });
+      if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       toast.success("Zone deleted");
       if (zoneToDelete) pushUndo({ type: "delete", zones: [zoneToDelete] });
@@ -1141,6 +1190,7 @@ export function ZoneEditor() {
           sortOrder: form.sortOrder,
         }),
       });
+      if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(err.error ?? `HTTP ${res.status}`);
@@ -1186,6 +1236,7 @@ export function ZoneEditor() {
               svgHeight: z.svgHeight,
             }),
           }).then(async (res) => {
+            if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
             if (!res.ok) {
               const err = await res.json().catch(() => ({})) as { error?: string };
               throw new Error(err.error ?? `HTTP ${res.status}`);
@@ -1855,6 +1906,74 @@ export function ZoneEditor() {
   return (
     <div style={styles.root}>
       <Toaster position="bottom-right" richColors />
+
+      {/* ── Admin Login Overlay ─────────────────────────────────────────────── */}
+      {!adminToken && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 2000,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          backgroundColor: "rgba(0,0,0,0.85)", padding: 24,
+        }}>
+          <form
+            onSubmit={(e) => { void handleLogin(e); }}
+            style={{
+              backgroundColor: "#161b22",
+              border: "1px solid #30363d",
+              borderRadius: 10,
+              padding: 32,
+              maxWidth: 360,
+              width: "100%",
+              fontFamily: "Inter, system-ui, sans-serif",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#f9fafb" }}>
+              Zone Editor — Admin Login
+            </div>
+            <div style={{ fontSize: 13, color: "#8b949e", lineHeight: 1.5 }}>
+              Enter the admin password to use the Zone Editor.
+            </div>
+            <input
+              type="password"
+              autoFocus
+              placeholder="Admin password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              style={{
+                backgroundColor: "#0d1117",
+                border: "1px solid #30363d",
+                borderRadius: 6,
+                padding: "8px 12px",
+                color: "#f9fafb",
+                fontSize: 14,
+                outline: "none",
+              }}
+            />
+            {loginError && (
+              <div style={{ fontSize: 12, color: "#f85149" }}>{loginError}</div>
+            )}
+            <button
+              type="submit"
+              disabled={loginLoading || !loginPassword}
+              style={{
+                backgroundColor: loginLoading || !loginPassword ? "#21262d" : "#238636",
+                color: loginLoading || !loginPassword ? "#8b949e" : "#fff",
+                border: "none",
+                borderRadius: 6,
+                padding: "9px 16px",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: loginLoading || !loginPassword ? "not-allowed" : "pointer",
+              }}
+            >
+              {loginLoading ? "Signing in…" : "Sign in"}
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* ── Branded Confirm Dialog ─────────────────────────────────────────── */}
       {confirmState.visible && (
