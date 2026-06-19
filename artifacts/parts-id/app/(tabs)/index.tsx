@@ -52,6 +52,9 @@ import {
 import { searchResetEvent } from "@/utils/searchResetEvent";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import { useTrackScreen } from "@/utils/useTrackScreen";
+import { SearchedAsRow, AIZeroResultsCard } from "@/components/AISearchFallback";
+import { runTranslateQuery } from "@/utils/translateQuery";
+import type { AIZeroResultsState } from "@/utils/translateQuery";
 
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
@@ -285,14 +288,6 @@ export default function SearchScreen() {
   // AI natural-language translation state
   const [aiTranslation, setAITranslation] = useState<{ terms: Array<string>; interpretation: string } | null>(null);
   const [aiTranslationDismissed, setAITranslationDismissed] = useState(false);
-  type AIZeroResultsState = {
-    loading: boolean;
-    partName: string;
-    partSpecs: Array<string>;
-    catalogNumbers: Array<string>;
-    substitutes: Array<SearchResult>;
-    error: string | null;
-  };
   const [aiZeroResults, setAIZeroResults] = useState<AIZeroResultsState | null>(null);
   // Monotonically-increasing generation counter — incremented on each new
   // search so stale translate-query responses are silently discarded.
@@ -563,51 +558,13 @@ export default function SearchScreen() {
   // Fire a non-blocking translate-query request and update AI state when it
   // resolves. Uses the generation counter to discard stale (superseded) responses.
   const translateQuery = useCallback(async (query: string, zeroResults: boolean, gen: number) => {
-    try {
-      const res = await fetch(`${API_BASE}/ai/translate-query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, zeroResults }),
-      });
-      if (aiSearchGenRef.current !== gen) return;
-      if (!res.ok) throw new Error(String(res.status));
-      const data = await res.json() as {
-        translatedTerms?: Array<string>;
-        interpretation?: string;
-        appliedTranslation?: boolean;
-        partName?: string;
-        partSpecs?: Array<string>;
-        catalogNumbers?: Array<string>;
-        substitutes?: Array<SearchResult>;
-        error?: string;
-      } | null;
-      if (aiSearchGenRef.current !== gen) return;
-      if (!data) {
-        if (zeroResults) {
-          setAIZeroResults({ loading: false, partName: "", partSpecs: [], catalogNumbers: [], substitutes: [], error: "AI unavailable" });
-        }
-        return;
-      }
-      if (zeroResults) {
-        setAIZeroResults({
-          loading: false,
-          partName: data.partName ?? "",
-          partSpecs: data.partSpecs ?? [],
-          catalogNumbers: data.catalogNumbers ?? [],
-          substitutes: data.substitutes ?? [],
-          error: null,
-        });
-      } else if (data.appliedTranslation && (data.translatedTerms?.length ?? 0) > 0) {
-        setAITranslation({ terms: data.translatedTerms!, interpretation: data.interpretation ?? "" });
-        setAITranslationDismissed(false);
-      }
-    } catch (err) {
-      console.error('[index] translateQuery', err);
-      if (aiSearchGenRef.current !== gen) return;
-      if (zeroResults) {
-        setAIZeroResults({ loading: false, partName: "", partSpecs: [], catalogNumbers: [], substitutes: [], error: "AI unavailable" });
-      }
-    }
+    await runTranslateQuery(query, zeroResults, gen, {
+      apiBase: API_BASE,
+      getGen: () => aiSearchGenRef.current,
+      setAIZeroResults,
+      setAITranslation: (t) => setAITranslation(t),
+      setAITranslationDismissed,
+    });
   // translateQuery depends only on stable API_BASE constant — safe to omit deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
