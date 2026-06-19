@@ -1,7 +1,10 @@
 module.exports = {
   extends: ['expo'],
+  plugins: ['simple-import-sort'],
   rules: {
     '@typescript-eslint/array-type': ['error', { default: 'generic' }],
+    'simple-import-sort/imports': 'error',
+    'simple-import-sort/exports': 'error',
   },
   ignorePatterns: [
     'node_modules/',

@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { reportStorageError } from "@/utils/storageErrorReporter";
 
 const STORAGE_KEY = "@partsid/barcode_scan_history";

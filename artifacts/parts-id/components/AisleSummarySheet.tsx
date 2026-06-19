@@ -3,6 +3,7 @@
  * a zone on the Warehouse Map. Provides a quick stat summary and a CTA to
  * launch BrowseByAisle for that zone.
  */
+import type { InventoryItem } from "@workspace/api-client-react";
 import React, { useMemo } from "react";
 import {
   Modal,
@@ -11,7 +12,7 @@ import {
   Text,
   View,
 } from "react-native";
-import type { InventoryItem } from "@workspace/api-client-react";
+
 import { useColors } from "@/hooks/useColors";
 import { filterSections, parseBin, type WarehouseZone } from "@/lib/aisleHierarchy";
 

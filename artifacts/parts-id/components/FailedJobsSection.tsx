@@ -18,11 +18,12 @@
 
 import React from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import {
-  displayErrorMessage,
-  buildFailedJobMetaLine,
-} from "@/utils/failedJobCard";
+
 import type { ResumeProgress } from "@/types/catalogPdf";
+import {
+  buildFailedJobMetaLine,
+  displayErrorMessage,
+} from "@/utils/failedJobCard";
 
 export interface FailedJob {
   id: number;

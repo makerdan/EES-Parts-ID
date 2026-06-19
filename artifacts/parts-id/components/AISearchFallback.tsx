@@ -1,3 +1,4 @@
+import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import React from "react";
 import {
   ActivityIndicator,
@@ -6,9 +7,9 @@ import {
   Text,
   View,
 } from "react-native";
-import { useColors } from "@/hooks/useColors";
+
 import { ResultCard } from "@/components/ResultCard";
-import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
+import { useColors } from "@/hooks/useColors";
 
 // ── SearchedAsRow ─────────────────────────────────────────────────────────────
 

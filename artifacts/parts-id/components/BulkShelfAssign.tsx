@@ -1,4 +1,14 @@
-import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem } from "@workspace/api-client-react";
+import {
+  listInventory,
+  useListInventory,
+  useUpdateItemBarcodes,
+} from "@workspace/api-client-react";
+import { type BarcodeScanningResult,CameraView, useCameraPermissions } from "expo-camera";
+import * as Haptics from "expo-haptics";
+import React, { useCallback, useEffect, useMemo,useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -11,23 +21,14 @@ import {
   Text,
   View,
 } from "react-native";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
-import * as Haptics from "expo-haptics";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useColors } from "@/hooks/useColors";
-import { useApp } from "@/contexts/AppContext";
-import {
-  listInventory,
-  useListInventory,
-  useUpdateItemBarcodes,
-} from "@workspace/api-client-react";
-import { invalidateListIfNew, undoBarcodeAndInvalidate } from "@/utils/listEditorHandlers";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
-import { resolveShelfAssign } from "@/utils/barcodeResolver";
-import { useQueryClient } from "@tanstack/react-query";
+
 import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
+import { resolveShelfAssign } from "@/utils/barcodeResolver";
+import { invalidateListIfNew, undoBarcodeAndInvalidate } from "@/utils/listEditorHandlers";
+import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 
 const BULK_SESSION_KEY = "parts_id_bulk_shelf_session_v1";
 /**

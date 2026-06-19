@@ -15,7 +15,11 @@
  */
 
 import "buffer";
+
 import { Buffer } from "buffer";
+import * as DocumentPicker from "expo-document-picker";
+import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
+import { useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -25,13 +29,11 @@ import {
   Text,
   View,
 } from "react-native";
+
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import * as DocumentPicker from "expo-document-picker";
-import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
-import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
-import { splitPdfIntoChunks, PAGES_PER_CHUNK } from "@/utils/splitPdfIntoChunks";
-import { useNavigation, useRouter } from "expo-router";
 import { useColors } from "@/hooks/useColors";
+import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
+import { PAGES_PER_CHUNK,splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`

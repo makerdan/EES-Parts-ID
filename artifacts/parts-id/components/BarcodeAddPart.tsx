@@ -1,7 +1,19 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem } from "@workspace/api-client-react";
 import {
-  Alert,
+  useListInventory,
+  useUpdateItemBarcodes,
+} from "@workspace/api-client-react";
+import { type AudioPlayer,createAudioPlayer } from "expo-audio";
+import { type BarcodeScanningResult,CameraView, useCameraPermissions } from "expo-camera";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Haptics from "expo-haptics";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect,useRef, useState } from "react";
+import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   Pressable,
   StyleSheet,
@@ -9,27 +21,16 @@ import {
   Text,
   View,
 } from "react-native";
-import * as FileSystem from "expo-file-system/legacy";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { useFocusEffect } from "expo-router";
-import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
-import * as Haptics from "expo-haptics";
-import { createAudioPlayer, type AudioPlayer } from "expo-audio";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useColors } from "@/hooks/useColors";
-import { useApp } from "@/contexts/AppContext";
-import { PartDetailsEditor } from "@/components/PartDetailsEditor";
-import {
-  useUpdateItemBarcodes,
-  useListInventory,
-} from "@workspace/api-client-react";
-import { invalidateListCache } from "@/utils/editItemCache";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
-import { resolveShelfAssign } from "@/utils/barcodeResolver";
-import { useQueryClient } from "@tanstack/react-query";
+
 import { CatalogPickerModal } from "@/components/CatalogPickerModal";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
+import { useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
+import { resolveShelfAssign } from "@/utils/barcodeResolver";
+import { invalidateListCache } from "@/utils/editItemCache";
+import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`

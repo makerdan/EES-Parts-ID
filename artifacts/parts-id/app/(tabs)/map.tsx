@@ -7,6 +7,12 @@
  *   - useWarehouseZones fetches on mount, on tab focus, and on app foreground.
  *   - Cached data is served immediately; background refresh keeps it fresh.
  */
+import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { InventoryItem } from "@workspace/api-client-react";
+import * as Clipboard from "expo-clipboard";
+import { useFocusEffect, useRouter } from "expo-router";
+import * as ScreenOrientation from "expo-screen-orientation";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Linking,
@@ -17,21 +23,16 @@ import {
   Text,
   View,
 } from "react-native";
-import * as Clipboard from "expo-clipboard";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect, useRouter } from "expo-router";
-import * as ScreenOrientation from "expo-screen-orientation";
-import { Feather } from "@expo/vector-icons";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { useColors } from "@/hooks/useColors";
-import { useApp } from "@/contexts/AppContext";
-import { BrowseByAisle } from "@/components/BrowseByAisle";
+
 import { AisleSummarySheet } from "@/components/AisleSummarySheet";
+import { BrowseByAisle } from "@/components/BrowseByAisle";
+import { WarehouseMapView } from "@/components/WarehouseMapView";
 import { ZoneActionMenu } from "@/components/ZoneActionMenu";
+import { useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
+import { type ApiWarehouseZone,useWarehouseZones } from "@/hooks/useWarehouseZones";
 import type { WarehouseZone } from "@/lib/aisleHierarchy";
 import { parseBin } from "@/lib/aisleHierarchy";
-import { WarehouseMapView } from "@/components/WarehouseMapView";
-import { useWarehouseZones, type ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { FUSE_CACHE_KEY } from "@/utils/offlineBarcode";
 import { swallowOrientationNotAvailable } from "@/utils/orientationLock";
 import { useTrackScreen } from "@/utils/useTrackScreen";

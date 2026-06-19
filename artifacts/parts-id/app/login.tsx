@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -8,10 +9,10 @@ import {
   Text,
   View,
 } from "react-native";
+
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { router } from "expo-router";
-import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
 
 export default function LoginScreen() {
   const colors = useColors();

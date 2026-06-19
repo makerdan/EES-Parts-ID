@@ -1,3 +1,12 @@
+import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { InventoryItem } from "@workspace/api-client-react";
+import { useListInventory } from "@workspace/api-client-react";
+import * as DocumentPicker from "expo-document-picker";
+import { File as FsFile, Paths as FsPaths } from "expo-file-system";
+import { useRouter } from "expo-router";
+import * as Sharing from "expo-sharing";
+import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -13,49 +22,39 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { useApiStatus } from "@/hooks/useApiStatus";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import * as DocumentPicker from "expo-document-picker";
-import { File as FsFile, Paths as FsPaths } from "expo-file-system";
-import * as Sharing from "expo-sharing";
-import { readSheet } from "read-excel-file/universal";
 import type { SheetData } from "read-excel-file/universal";
-import { useListInventory } from "@workspace/api-client-react";
+import { readSheet } from "read-excel-file/universal";
 
-import { useRouter } from "expo-router";
-import { Feather } from "@expo/vector-icons";
-import { isLiDARSupported } from "lidar-measure";
-import { useColors } from "@/hooks/useColors";
 import { AddPartForm } from "@/components/AddPartForm";
 import { BarcodeAddPart } from "@/components/BarcodeAddPart";
-import { ShelfCatalogEntry } from "@/components/ShelfCatalogEntry";
-import { BulkShelfAssign } from "@/components/BulkShelfAssign";
-import { ReferenceModal } from "@/components/ReferenceModal";
 import { BinEditor } from "@/components/BinEditor";
+import { BulkShelfAssign } from "@/components/BulkShelfAssign";
 import { CatalogPdfUpload } from "@/components/CatalogPdfUpload";
-import { useApp } from "@/contexts/AppContext";
-import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
-import type { InventoryItem } from "@workspace/api-client-react";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import { ReferenceModal } from "@/components/ReferenceModal";
+import { ShelfCatalogEntry } from "@/components/ShelfCatalogEntry";
+import { useApp } from "@/contexts/AppContext";
+import { useApiStatus } from "@/hooks/useApiStatus";
+import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
-import { serializeInventoryToCsv } from "@/utils/exportCsv";
-import { useTrackScreen } from "@/utils/useTrackScreen";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
-  applyDiscardAll,
-  runSaveAll,
-  type ExpandDescResult,
-} from "@/utils/expandDescHandlers";
-
-import {
-  type ParsedRow,
-  type BinDiffRow,
-  toggleSkipRow,
-  toggleSkipAll,
   activeReplacementCount,
+  type BinDiffRow,
+  type ParsedRow,
   preservedBinCount,
   serializeToCsv,
+  toggleSkipAll,
+  toggleSkipRow,
 } from "@/utils/binSkipLogic";
+import {
+  applyDiscardAll,
+  type ExpandDescResult,
+  runSaveAll,
+} from "@/utils/expandDescHandlers";
+import { serializeInventoryToCsv } from "@/utils/exportCsv";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN

@@ -1,3 +1,6 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { setAuthTokenGetter, setBaseUrl, setUnauthorizedHandler } from "@workspace/api-client-react";
+import * as SecureStore from "expo-secure-store";
 import React, {
   createContext,
   useCallback,
@@ -6,23 +9,21 @@ import React, {
   useRef,
   useState,
 } from "react";
-import * as SecureStore from "expo-secure-store";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Appearance, AppState, Platform, StyleSheet, Text, View, useColorScheme } from "react-native";
+import { Appearance, AppState, Platform, StyleSheet, Text, useColorScheme,View } from "react-native";
+
 import colorTokens from "@/constants/colors";
-import { setAuthTokenGetter, setBaseUrl, setUnauthorizedHandler } from "@workspace/api-client-react";
+import type { ResumeProgress } from "@/types/catalogPdf";
+import { type LogoutHandler,LogoutRegistry } from "@/utils/logoutRegistry";
+import {
+  ADMIN_TOKEN_KEY,
+  clearSessionStorage,
+  SEARCH_CACHE_KEYS,
+  SESSION_KEY,
+} from "@/utils/sessionStorage";
 import {
   reportStorageError,
   setStorageErrorHandler,
 } from "@/utils/storageErrorReporter";
-import { LogoutRegistry, type LogoutHandler } from "@/utils/logoutRegistry";
-import {
-  SEARCH_CACHE_KEYS,
-  SESSION_KEY,
-  ADMIN_TOKEN_KEY,
-  clearSessionStorage,
-} from "@/utils/sessionStorage";
-import type { ResumeProgress } from "@/types/catalogPdf";
 
 // ── App Settings ─────────────────────────────────────────────────────────────
 export const SETTINGS_KEY = "parts_id_settings_v1";

@@ -1,5 +1,5 @@
-import * as ImageManipulator from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from "expo-image-manipulator";
 
 const MIN_WIDTH = 800;
 const MAX_WIDTH = 1920;

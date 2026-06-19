@@ -11,13 +11,14 @@ import {
   Text,
   View,
 } from "react-native";
+
+import { ContactSheet } from "@/components/ContactSheet";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
-import { fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl, type CacheEntry } from "@/utils/chipCache";
-import { ContactSheet } from "@/components/ContactSheet";
-import { useApp } from "@/contexts/AppContext";
-import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { type CacheEntry,fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl } from "@/utils/chipCache";
 
 const API_BASE =
   process.env.EXPO_PUBLIC_DOMAIN

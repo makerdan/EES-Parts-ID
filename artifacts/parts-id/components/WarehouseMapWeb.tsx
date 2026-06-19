@@ -15,6 +15,7 @@
  * Uses only React Native primitives — no extra packages required.
  * Only rendered when Platform.OS === "web" (see app/(tabs)/map.tsx).
  */
+import type { InventoryItem } from "@workspace/api-client-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
@@ -24,9 +25,9 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { buildAisleHierarchy } from "@/lib/aisleHierarchy";
+
 import { useColors } from "@/hooks/useColors";
+import { buildAisleHierarchy } from "@/lib/aisleHierarchy";
 
 type Props = {
   inventory: Array<InventoryItem>;

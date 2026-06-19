@@ -5,19 +5,20 @@ import {
   Inter_700Bold,
   useFonts,
 } from "@expo-google-fonts/inter";
+import NetInfo from "@react-native-community/netinfo";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { Platform } from "react-native";
-import NetInfo from "@react-native-community/netinfo";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { AppProvider, useApp } from "@/contexts/AppContext";
-import { DismissKeyboard } from "@/components/DismissKeyboard";
+
 import { FEATHER_FONT_B64 } from "@/assets/fonts/featherBase64";
+import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { prefetchSvgAsset } from "@/components/WarehouseMapView";
+import { AppProvider, useApp } from "@/contexts/AppContext";
 
 SplashScreen.preventAutoHideAsync();
 

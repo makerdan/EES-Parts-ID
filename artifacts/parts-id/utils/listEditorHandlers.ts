@@ -11,8 +11,9 @@
  */
 
 import type { InventoryItem } from "@workspace/api-client-react";
-import { invalidateListCache } from "./editItemCache";
+
 import type { QueryClientLike } from "./editItemCache";
+import { invalidateListCache } from "./editItemCache";
 
 // ─── BinEditor ───────────────────────────────────────────────────────────────
 

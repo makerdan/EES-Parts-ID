@@ -10,9 +10,10 @@
  * - Error badge is suppressed when cached zones are already loaded — the map
  *   works offline as long as a prior successful fetch has been cached.
  */
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { retryAsync } from "@/utils/retryAsync";
 
 const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";

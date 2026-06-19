@@ -1,3 +1,5 @@
+import { Feather } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import React, { useCallback } from "react";
 import {
   Alert,
@@ -8,8 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
-import * as ImagePicker from "expo-image-picker";
+
 import { useColors } from "@/hooks/useColors";
 
 export interface PartPhotoPickerProps {

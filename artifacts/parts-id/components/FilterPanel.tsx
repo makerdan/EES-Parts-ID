@@ -1,6 +1,5 @@
+import { Feather } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useRef } from "react";
-import { useWebHorizontalScroll } from "@/hooks/useWebHorizontalScroll";
-import { usePersistedCollapse } from "@/hooks/usePersistedCollapse";
 import {
   Animated,
   LayoutAnimation,
@@ -14,10 +13,12 @@ import {
   UIManager,
   View,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
-import { useColors } from "@/hooks/useColors";
+
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { useColors } from "@/hooks/useColors";
+import { usePersistedCollapse } from "@/hooks/usePersistedCollapse";
+import { useWebHorizontalScroll } from "@/hooks/useWebHorizontalScroll";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);

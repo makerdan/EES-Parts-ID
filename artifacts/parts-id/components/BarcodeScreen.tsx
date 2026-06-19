@@ -1,4 +1,12 @@
-import React, { useState, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem } from "@workspace/api-client-react";
+import {
+  lookupByBarcode,
+  useUpdateItemBarcodes,
+} from "@workspace/api-client-react";
+import { type BarcodeScanningResult,CameraView, useCameraPermissions } from "expo-camera";
+import { router } from "expo-router";
+import React, { useCallback,useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -9,26 +17,19 @@ import {
   Text,
   View,
 } from "react-native";
-import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
-import { useColors } from "@/hooks/useColors";
-import { useApp, type PinnedPart } from "@/contexts/AppContext";
-import { PartDetailsEditor } from "@/components/PartDetailsEditor";
-import { parseBin } from "@/lib/aisleHierarchy";
-import {
-  lookupByBarcode,
-  useUpdateItemBarcodes,
-} from "@workspace/api-client-react";
-import { invalidateListCache } from "@/utils/editItemCache";
+
 import { CatalogPickerModal } from "@/components/CatalogPickerModal";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { lookupByBarcodeOffline, upsertItemInBarcodeCache, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
-import { resolveBarcodeCode } from "@/utils/barcodeResolver";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { ResultCard } from "@/components/ResultCard";
-import { useQueryClient } from "@tanstack/react-query";
+import { type PinnedPart,useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
 import { useScanHistory } from "@/hooks/useScanHistory";
+import { parseBin } from "@/lib/aisleHierarchy";
+import { resolveBarcodeCode } from "@/utils/barcodeResolver";
+import { invalidateListCache } from "@/utils/editItemCache";
+import { FUSE_SYNC_MAX_AGE_MS,getFuseCacheSyncedAt, lookupByBarcodeOffline, upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 import type { ScanEntry } from "@/utils/scanHistory";
 import { groupScansByDate } from "@/utils/scanHistory";
-import { router } from "expo-router";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -16,6 +16,10 @@
  *
  * Gating: iOS only — callers must hide the trigger on Android and Web.
  */
+import { Feather } from "@expo/vector-icons";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Device from "expo-device";
+import { cancelMeasure, measureObject, NativeLidarDepthView } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -31,12 +35,9 @@ import {
   Text,
   View,
 } from "react-native";
+
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { CameraView, useCameraPermissions } from "expo-camera";
-import * as Device from "expo-device";
-import { Feather } from "@expo/vector-icons";
-import { useApp, type DimensionUnit } from "@/contexts/AppContext";
-import { cancelMeasure, measureObject, NativeLidarDepthView } from "lidar-measure";
+import { type DimensionUnit,useApp } from "@/contexts/AppContext";
 import { getDeviceId } from "@/utils/deviceId";
 
 /**

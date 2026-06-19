@@ -10,6 +10,7 @@ import {
   type TextInputProps,
   View,
 } from "react-native";
+
 import { useColors } from "@/hooks/useColors";
 
 let _counter = 0;
