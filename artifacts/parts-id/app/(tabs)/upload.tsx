@@ -1499,7 +1499,7 @@ export default function UploadScreen() {
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerRow}>
-          <View>
+          <View style={{ flexShrink: 0 }}>
             <Text style={[styles.headerTitle, { color: colors.foreground }]}>📤 Inventory</Text>
             <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Upload & AI Enrich</Text>
           </View>
@@ -2950,7 +2950,7 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   lockBtn: { ...secondaryBtnBase, paddingHorizontal: 12, paddingVertical: 7 },
   lockBtnText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, maxWidth: "58%" },
   apiStatusPill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
   apiStatusPillText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#ffffff" },
   botStatusRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, justifyContent: "flex-end" },
