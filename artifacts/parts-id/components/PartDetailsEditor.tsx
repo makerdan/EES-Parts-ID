@@ -1,36 +1,37 @@
+import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
+import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
+import { getListInventoryQueryKey } from "@workspace/api-client-react";
+import * as Clipboard from "expo-clipboard";
+import * as FileSystem from "expo-file-system";
+import { isLiDARSupported } from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
-  Modal,
 } from "react-native";
+
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { isBinLocationValid, BIN_FORMAT_HINT } from "@/utils/binValidation";
-import * as Clipboard from "expo-clipboard";
-import { Feather } from "@expo/vector-icons";
-import * as FileSystem from "expo-file-system";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 import { PhotoLightbox } from "@/components/PhotoLightbox";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { InventoryItem, InventoryListResponse, SearchInventoryResponse, SearchResult } from "@workspace/api-client-react";
-import { useUpdateItemBins, useUpdateItemKeywords } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { getListInventoryQueryKey } from "@workspace/api-client-react";
-import { invalidateListCache } from "@/utils/editItemCache";
 import { useColors } from "@/hooks/useColors";
-import { DismissKeyboard } from "@/components/DismissKeyboard";
-import { MeasurePartScreen } from "@/components/MeasurePartScreen";
-import type { PartDimensions } from "@/components/MeasurePartScreen";
-import { isLiDARSupported } from "lidar-measure";
-import { QUERY_CACHE_KEY, evictItemFromQueryCache } from "@/utils/searchHelpers";
+import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
+import { invalidateListCache } from "@/utils/editItemCache";
 import type { QueryCache } from "@/utils/searchHelpers";
+import { evictItemFromQueryCache,QUERY_CACHE_KEY } from "@/utils/searchHelpers";
 
 interface CapturedPhoto {
   uri: string;

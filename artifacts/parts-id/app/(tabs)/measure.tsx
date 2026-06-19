@@ -15,6 +15,15 @@
  *
  * Hidden in the tab bar on non-LiDAR devices and non-admin users — see _layout.tsx.
  */
+import { Feather } from "@expo/vector-icons";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import {
+  cancelMeasure,
+  isLiDARSupported,
+  measureObject,
+  NativeLidarDepthView,
+} from "lidar-measure";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -29,20 +38,12 @@ import {
   Text,
   View,
 } from "react-native";
+
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { CameraView, useCameraPermissions } from "expo-camera";
-import { Feather } from "@expo/vector-icons";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import {
-  cancelMeasure,
-  isLiDARSupported,
-  measureObject,
-  NativeLidarDepthView,
-} from "lidar-measure";
+import { fmtForUnit, parseFieldToMm } from "@/components/MeasurePartScreen";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { useTrackScreen } from "@/utils/useTrackScreen";
-import { fmtForUnit, parseFieldToMm } from "@/components/MeasurePartScreen";
 
 const LIDAR_TIMEOUT_S = 4;
 

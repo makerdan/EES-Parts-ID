@@ -7,6 +7,8 @@
  *
  * Route: /admin-inbox
  */
+import { Feather } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -18,10 +20,9 @@ import {
   Text,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
-import { Feather } from "@expo/vector-icons";
-import { useColors } from "@/hooks/useColors";
+
 import { useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 

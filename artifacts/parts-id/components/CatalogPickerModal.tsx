@@ -1,4 +1,11 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import { Feather } from "@expo/vector-icons";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem } from "@workspace/api-client-react";
+import {
+  useSearchInventory,
+  useUpsertInventoryBatch,
+} from "@workspace/api-client-react";
+import React, { useCallback, useEffect,useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -10,19 +17,13 @@ import {
   Text,
   View,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
+
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { RetryImage } from "@/components/RetryImage";
 import { PhotoLightbox } from "@/components/PhotoLightbox";
+import { RetryImage } from "@/components/RetryImage";
 import { useColors } from "@/hooks/useColors";
-import {
-  useSearchInventory,
-  useUpsertInventoryBatch,
-} from "@workspace/api-client-react";
+import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
 import { invalidateListCache } from "@/utils/editItemCache";
-import { isBinLocationValid, BIN_FORMAT_HINT } from "@/utils/binValidation";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
 
 export function CatalogPickerModal({
   visible,

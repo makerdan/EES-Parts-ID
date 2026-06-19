@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+
 import {
-  loadScanHistory,
-  saveScanHistory,
-  prependEntry,
   clearScanHistory,
+  loadScanHistory,
+  prependEntry,
+  saveScanHistory,
   type ScanEntry,
 } from "@/utils/scanHistory";
 

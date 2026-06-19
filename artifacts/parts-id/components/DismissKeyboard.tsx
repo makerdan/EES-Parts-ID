@@ -1,11 +1,11 @@
 import React from "react";
 import {
+  type GestureResponderEvent,
   Keyboard,
   Platform,
+  type StyleProp,
   TouchableWithoutFeedback,
   View,
-  type GestureResponderEvent,
-  type StyleProp,
   type ViewStyle,
 } from "react-native";
 

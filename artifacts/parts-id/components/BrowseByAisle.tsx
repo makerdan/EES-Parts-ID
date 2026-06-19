@@ -4,6 +4,9 @@
  * Drill-down: Aisles → Sections → Parts (ShelfView or ResultCard list).
  * Works entirely from the locally cached inventory snapshot — no network needed.
  */
+import { Feather } from "@expo/vector-icons";
+import type { InventoryItem } from "@workspace/api-client-react";
+import { router } from "expo-router";
 import React, {
   useCallback,
   useEffect,
@@ -12,6 +15,7 @@ import React, {
   useState,
 } from "react";
 import {
+  ActivityIndicator,
   Animated,
   BackHandler,
   FlatList,
@@ -23,22 +27,19 @@ import {
   StyleSheet,
   Text,
   View,
-  ActivityIndicator,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
-import type { InventoryItem } from "@workspace/api-client-react";
+
+import { AddPartModal } from "@/components/AddPartModal";
+import { ResultCard } from "@/components/ResultCard";
 import { useColors } from "@/hooks/useColors";
 import { useWebDragScroll } from "@/hooks/useWebDragScroll";
-import { ResultCard } from "@/components/ResultCard";
-import { AddPartModal } from "@/components/AddPartModal";
-import { router } from "expo-router";
 import {
+  type AisleHierarchy,
+  type AisleNode,
   buildAisleHierarchy,
   filterSections,
-  type AisleNode,
-  type AisleHierarchy,
-  type SectionNode,
   type PartOnShelf,
+  type SectionNode,
   type ShelfNode,
 } from "@/lib/aisleHierarchy";
 

@@ -1,4 +1,10 @@
-import React, { useState, useRef, useEffect } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import type { SearchResult } from "@workspace/api-client-react";
+import type { InventoryItem } from "@workspace/api-client-react";
+import { lookupByBarcode,useAiIdentifyPart, useSearchInventory } from "@workspace/api-client-react";
+import * as ImagePicker from "expo-image-picker";
+import { router } from "expo-router";
+import React, { useEffect,useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -10,29 +16,24 @@ import {
   Text,
   View,
 } from "react-native";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import * as ImagePicker from "expo-image-picker";
-import { resizeImage } from "@/utils/resizeImage";
-import { useSearchInventory, useAiIdentifyPart, lookupByBarcode } from "@workspace/api-client-react";
-import type { SearchResult } from "@workspace/api-client-react";
-import { lookupByBarcodeOffline } from "@/utils/offlineBarcode";
-import { useScanHistory } from "@/hooks/useScanHistory";
-import type { ScanEntry } from "@/utils/scanHistory";
-import { useColors } from "@/hooks/useColors";
-import { useApp, type PinnedPart } from "@/contexts/AppContext";
-import { ResultCard } from "@/components/ResultCard";
-import { PartDetailsEditor } from "@/components/PartDetailsEditor";
-import { ReferenceModal } from "@/components/ReferenceModal";
+
 import { BarcodeScanModal } from "@/components/BarcodeScanModal";
 import BarcodeScreen from "@/components/BarcodeScreen";
-import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
-import type { InventoryItem } from "@workspace/api-client-react";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
+import { ReferenceModal } from "@/components/ReferenceModal";
+import { ResultCard } from "@/components/ResultCard";
+import { type PinnedPart,useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
+import { useScanHistory } from "@/hooks/useScanHistory";
 import { parseBin } from "@/lib/aisleHierarchy";
 import { secondaryBtnBase } from "@/styles/shared";
+import { lookupByBarcodeOffline } from "@/utils/offlineBarcode";
+import { resizeImage } from "@/utils/resizeImage";
+import type { ScanEntry } from "@/utils/scanHistory";
 import { useTrackScreen } from "@/utils/useTrackScreen";
-import { router } from "expo-router";
 
 export default function PhotoScreen() {
   "use no memo";

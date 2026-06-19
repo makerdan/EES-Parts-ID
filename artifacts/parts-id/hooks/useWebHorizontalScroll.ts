@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { Platform } from "react-native";
 import type { ScrollView } from "react-native";
+import { Platform } from "react-native";
 
 type ScrollableNode = { getScrollableNode: () => HTMLElement | undefined };
 

@@ -1,22 +1,23 @@
+import { Feather } from "@expo/vector-icons";
+import type { InventoryItem } from "@workspace/api-client-react";
+import * as FileSystem from "expo-file-system/legacy";
 import React, { useEffect, useState } from "react";
 import {
-  Alert,
   ActivityIndicator,
+  Alert,
   Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { Feather } from "@expo/vector-icons";
-import * as FileSystem from "expo-file-system/legacy";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { useColors } from "@/hooks/useColors";
-import { useApp } from "@/contexts/AppContext";
-import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
+import { useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`

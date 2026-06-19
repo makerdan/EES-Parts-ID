@@ -28,6 +28,9 @@
  *            its correct visual slot in the floor plan.  Falls back to a single
  *            oversample SvgUri when the SVG XML is not yet available.
  */
+import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Asset } from "expo-asset";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -42,9 +45,23 @@ import {
   useColorScheme,
   View,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Feather } from "@expo/vector-icons";
-import { Asset } from "expo-asset";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  runOnJS,
+  type SharedValue,
+  useAnimatedProps,
+  useAnimatedReaction,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
+import { Ellipse,G, Path, Rect, Svg, SvgUri, SvgXml, Text as SvgText } from "react-native-svg";
+
+import { useColors } from "@/hooks/useColors";
+import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
+import { warmupTiles } from "@/utils/floorPlan";
 import {
   getCachedData,
   getCachedHash,
@@ -56,45 +73,27 @@ import {
   setFallbackEmpty,
   type SvgData,
 } from "@/utils/floorPlanCache";
+// Pure viewport math is in utils/mapViewport — exported for testing.
+import {
+  clampScale,
+  computeFitTarget,
+  type ContentViewBox,
+  MAX_SCALE,
+  MIN_SCALE,
+  panBounds,
+  parseContentViewBox,
+  SVG_ASPECT,
+  SVG_VIEWBOX_H,
+  SVG_VIEWBOX_W,
+  tileGridSize,
+  ZOOM_STOPS,
+  zoomStopForScale,
+} from "@/utils/mapViewport";
 import {
   cleanStaleCacheDirs,
   fetchTile,
   prefetchZoomLevel,
 } from "@/utils/tilePyramidCache";
-import { warmupTiles } from "@/utils/floorPlan";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  runOnJS,
-  useAnimatedProps,
-  useAnimatedReaction,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSpring,
-  withTiming,
-  type SharedValue,
-} from "react-native-reanimated";
-import { Svg, Rect, G, Text as SvgText, SvgUri, SvgXml, Path, Ellipse } from "react-native-svg";
-
-import { useColors } from "@/hooks/useColors";
-import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
-
-// Pure viewport math is in utils/mapViewport — exported for testing.
-import {
-  SVG_VIEWBOX_W,
-  SVG_VIEWBOX_H,
-  SVG_ASPECT,
-  MIN_SCALE,
-  MAX_SCALE,
-  ZOOM_STOPS,
-  parseContentViewBox,
-  computeFitTarget,
-  clampScale,
-  panBounds,
-  tileGridSize,
-  zoomStopForScale,
-  type ContentViewBox,
-} from "@/utils/mapViewport";
 
 const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
 

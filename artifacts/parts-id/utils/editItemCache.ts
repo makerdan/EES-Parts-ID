@@ -5,10 +5,11 @@
  * independently without mounting the full screen.
  */
 
-import { QUERY_CACHE_KEY, evictItemFromQueryCache } from "@/utils/searchHelpers";
-import type { QueryCache } from "@/utils/searchHelpers";
 import type { SearchResult } from "@workspace/api-client-react";
 import { getListInventoryQueryKey } from "@workspace/api-client-react";
+
+import type { QueryCache } from "@/utils/searchHelpers";
+import { evictItemFromQueryCache,QUERY_CACHE_KEY } from "@/utils/searchHelpers";
 
 export type AsyncStorageLike = {
   getItem(key: string): Promise<string | null>;

@@ -1,3 +1,6 @@
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem } from "@workspace/api-client-react";
+import { useUpdateItemKeywords } from "@workspace/api-client-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -11,15 +14,13 @@ import {
   Text,
   View,
 } from "react-native";
+
+import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { useUpdateItemKeywords } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { arraysEqual } from "@/utils/arraysEqual";
 import { drainSave } from "@/utils/drainSave";
-import { useApp } from "@/contexts/AppContext";
-import { DismissKeyboard } from "@/components/DismissKeyboard";
 
 interface KeywordEditorProps {
   item: InventoryItem | null;

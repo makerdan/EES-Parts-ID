@@ -1,3 +1,8 @@
+import { Feather } from "@expo/vector-icons";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem } from "@workspace/api-client-react";
+import { useUpdateItemBarcodes } from "@workspace/api-client-react";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -10,14 +15,10 @@ import {
   Text,
   View,
 } from "react-native";
+
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { Feather } from "@expo/vector-icons";
-import { CameraView, useCameraPermissions } from "expo-camera";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { useUpdateItemBarcodes } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { saveBarcodesAndInvalidate } from "@/utils/listEditorHandlers";
 import { useColors } from "@/hooks/useColors";
+import { saveBarcodesAndInvalidate } from "@/utils/listEditorHandlers";
 
 interface BarcodeEditorProps {
   item: InventoryItem | null;

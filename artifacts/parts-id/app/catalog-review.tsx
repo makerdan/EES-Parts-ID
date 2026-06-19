@@ -8,6 +8,9 @@
  * Route: /catalog-review?jobId=<n>  (jobId optional — omit to show all)
  */
 
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -24,18 +27,16 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
-import { useColors } from "@/hooks/useColors";
-import { useApp } from "@/contexts/AppContext";
-import { RetryImage } from "@/components/RetryImage";
-import { FailedJobsSection } from "@/components/FailedJobsSection";
+
 import { InfoDialog } from "@/components/ConfirmDialog";
+import { FailedJobsSection } from "@/components/FailedJobsSection";
+import { RetryImage } from "@/components/RetryImage";
+import { useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
 import type { ResumeProgress } from "@/types/catalogPdf";
-import { useTrackScreen } from "@/utils/useTrackScreen";
-import { isBinLocationValid, BIN_FORMAT_HINT } from "@/utils/binValidation";
+import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
 import { performUpdateDescription } from "@/utils/updateDescription";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`

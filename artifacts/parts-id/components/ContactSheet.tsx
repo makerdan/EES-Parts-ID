@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -9,10 +10,10 @@ import {
   Text,
   View,
 } from "react-native";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useColors } from "@/hooks/useColors";
+
 import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { useColors } from "@/hooks/useColors";
 
 const DEVICE_TOKEN_KEY = "contact_device_token";
 

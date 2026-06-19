@@ -1,8 +1,9 @@
+import { Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { Tabs } from "expo-router";
-import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { Platform, StyleSheet, View } from "react-native";
+
 import { useColors, useIsDark } from "@/hooks/useColors";
 import { searchResetEvent } from "@/utils/searchResetEvent";
 

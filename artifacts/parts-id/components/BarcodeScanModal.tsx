@@ -1,4 +1,8 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem } from "@workspace/api-client-react";
+import { lookupByBarcode, useUpdateItemBarcodes } from "@workspace/api-client-react";
+import { type BarcodeScanningResult,CameraView, useCameraPermissions } from "expo-camera";
+import React, { useCallback, useEffect,useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -8,16 +12,13 @@ import {
   Text,
   View,
 } from "react-native";
-import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
-import { useColors } from "@/hooks/useColors";
-import { lookupByBarcode, useUpdateItemBarcodes } from "@workspace/api-client-react";
-import { invalidateListCache } from "@/utils/editItemCache";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { lookupByBarcodeOffline, upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
-import { useScanHistory } from "@/hooks/useScanHistory";
-import { useApp } from "@/contexts/AppContext";
-import { useQueryClient } from "@tanstack/react-query";
+
 import { CatalogPickerModal } from "@/components/CatalogPickerModal";
+import { useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
+import { useScanHistory } from "@/hooks/useScanHistory";
+import { invalidateListCache } from "@/utils/editItemCache";
+import { lookupByBarcodeOffline, upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
 
 interface BarcodeScanModalProps {
   visible: boolean;

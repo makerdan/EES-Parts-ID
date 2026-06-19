@@ -1,3 +1,4 @@
+import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -11,10 +12,10 @@ import {
   UIManager,
   View,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
-import { useColors } from "@/hooks/useColors";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+
 import type { FilterValues } from "@/components/FilterPanel";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { useColors } from "@/hooks/useColors";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);

@@ -1,3 +1,10 @@
+import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
+import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
+import { useSearchInventory } from "@workspace/api-client-react";
+import { router,useFocusEffect } from "expo-router";
+import Fuse from "fuse.js";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -13,44 +20,38 @@ import {
   Text,
   View,
 } from "react-native";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import NetInfo from "@react-native-community/netinfo";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import Fuse from "fuse.js";
-import { useSearchInventory } from "@workspace/api-client-react";
-import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
-import { useColors } from "@/hooks/useColors";
-import { FilterPanel, ConfidenceSlider, type FilterValues } from "@/components/FilterPanel";
-import { ResultCard } from "@/components/ResultCard";
-import { ReferenceModal } from "@/components/ReferenceModal";
-import { PartDetailsEditor } from "@/components/PartDetailsEditor";
-import { MeasurePartScreen } from "@/components/MeasurePartScreen";
-import type { PartDimensions } from "@/components/MeasurePartScreen";
+
+import { AIZeroResultsCard,SearchedAsRow } from "@/components/AISearchFallback";
 import { BrowseByAisle } from "@/components/BrowseByAisle";
 import { BrowseByCategory } from "@/components/BrowseByCategory";
-import { useApp, DEFAULT_SETTINGS, type TextSize, type ThemeMode, type DimensionUnit, type PinnedPart } from "@/contexts/AppContext";
+import { ConfidenceSlider, FilterPanel, type FilterValues } from "@/components/FilterPanel";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import type { PartDimensions } from "@/components/MeasurePartScreen";
+import { MeasurePartScreen } from "@/components/MeasurePartScreen";
+import { PartDetailsEditor } from "@/components/PartDetailsEditor";
+import { ReferenceModal } from "@/components/ReferenceModal";
+import { ResultCard } from "@/components/ResultCard";
+import { DEFAULT_SETTINGS, type DimensionUnit, type PinnedPart,type TextSize, type ThemeMode, useApp } from "@/contexts/AppContext";
+import { useColors } from "@/hooks/useColors";
 import { parseBin } from "@/lib/aisleHierarchy";
-import { useFocusEffect, router } from "expo-router";
-import { Feather } from "@expo/vector-icons";
 import { secondaryBtnBase } from "@/styles/shared";
-import { reportStorageError } from "@/utils/storageErrorReporter";
-import { retryAsync } from "@/utils/retryAsync";
+import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, FUSE_SYNC_MAX_AGE_MS,getFuseCacheSyncedAt } from "@/utils/offlineBarcode";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
-import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, getFuseCacheSyncedAt, FUSE_SYNC_MAX_AGE_MS } from "@/utils/offlineBarcode";
+import { retryAsync } from "@/utils/retryAsync";
+import type { QueryCache } from "@/utils/searchHelpers";
 import {
-  QUERY_CACHE_KEY,
   buildQueryKey,
   buildSearchBody,
-  pruneExpired,
-  formatStaleCacheWarning,
-  formatRelativeAge,
-  resolveOfflineFallback,
   fetchInventoryPages,
+  formatRelativeAge,
+  formatStaleCacheWarning,
+  pruneExpired,
+  QUERY_CACHE_KEY,
+  resolveOfflineFallback,
 } from "@/utils/searchHelpers";
-import type { QueryCache } from "@/utils/searchHelpers";
-import { useTrackScreen } from "@/utils/useTrackScreen";
 import { searchResetEvent } from "@/utils/searchResetEvent";
-import { SearchedAsRow, AIZeroResultsCard } from "@/components/AISearchFallback";
+import { reportStorageError } from "@/utils/storageErrorReporter";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN

@@ -28,9 +28,10 @@
  */
 
 import "buffer";
+
 import { Buffer } from "buffer";
-import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
+import { Platform } from "react-native";
 
 export const MAX_PDF_BYTES = 25 * 1024 * 1024; // 25 MB (legacy single-upload guard)
 

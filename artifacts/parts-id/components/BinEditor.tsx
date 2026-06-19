@@ -1,3 +1,6 @@
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem } from "@workspace/api-client-react";
+import { useUpdateItemBins } from "@workspace/api-client-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -10,14 +13,12 @@ import {
   Text,
   View,
 } from "react-native";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import { isBinLocationValid, BIN_FORMAT_HINT } from "@/utils/binValidation";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { useUpdateItemBins } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { saveBinsAndInvalidate } from "@/utils/listEditorHandlers";
-import { useColors } from "@/hooks/useColors";
+
 import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
+import { useColors } from "@/hooks/useColors";
+import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
+import { saveBinsAndInvalidate } from "@/utils/listEditorHandlers";
 
 interface BinEditorProps {
   item: InventoryItem | null;

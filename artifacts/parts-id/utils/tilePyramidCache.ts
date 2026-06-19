@@ -11,8 +11,8 @@
  * touching the filesystem.
  */
 
-import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
+import { Platform } from "react-native";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`

@@ -1,3 +1,9 @@
+import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useQueryClient } from "@tanstack/react-query";
+import type { InventoryItem } from "@workspace/api-client-react";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import * as FileSystem from "expo-file-system";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -10,16 +16,11 @@ import {
   Text,
   View,
 } from "react-native";
+
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as FileSystem from "expo-file-system";
-import { Feather } from "@expo/vector-icons";
-import { CameraView, useCameraPermissions } from "expo-camera";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { invalidateInventoryList } from "@/utils/listEditorHandlers";
 import { useColors } from "@/hooks/useColors";
+import { invalidateInventoryList } from "@/utils/listEditorHandlers";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`

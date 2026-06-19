@@ -3,8 +3,9 @@
  * Extracted from BarcodeScreen so the business logic is unit-testable without
  * rendering the component.
  */
-import { lookupByBarcode } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
+import { lookupByBarcode } from "@workspace/api-client-react";
+
 import { lookupByBarcodeOffline } from "@/utils/offlineBarcode";
 
 // ── Barcode resolution ────────────────────────────────────────────────────────

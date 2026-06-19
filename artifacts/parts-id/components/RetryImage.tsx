@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Image } from "react-native";
 import type { ImageStyle, StyleProp } from "react-native";
+import { Image } from "react-native";
+
 import { retryAsync } from "@/utils/retryAsync";
 
 interface RetryImageProps {

@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect,useState } from "react";
 import {
   Modal,
   Pressable,
+  StatusBar,
   StyleSheet,
   Text,
   View,
-  StatusBar,
 } from "react-native";
+
 import { RetryImage } from "@/components/RetryImage";
 
 interface PhotoLightboxProps {

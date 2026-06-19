@@ -1,7 +1,10 @@
+import type { InventoryItem } from "@workspace/api-client-react";
+import * as Clipboard from "expo-clipboard";
+import * as FileSystem from "expo-file-system/legacy";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  Alert,
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -11,13 +14,11 @@ import {
   Text,
   View,
 } from "react-native";
-import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
-import * as Clipboard from "expo-clipboard";
-import * as FileSystem from "expo-file-system/legacy";
-import type { InventoryItem } from "@workspace/api-client-react";
-import { useColors } from "@/hooks/useColors";
+
 import { DismissKeyboard } from "@/components/DismissKeyboard";
+import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
+import { useColors } from "@/hooks/useColors";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`

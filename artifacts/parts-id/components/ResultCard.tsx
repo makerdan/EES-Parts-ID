@@ -1,3 +1,5 @@
+import { Feather } from "@expo/vector-icons";
+import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -6,14 +8,13 @@ import {
   Text,
   View,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
-import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
+
 import type { PartDimensions } from "@/components/MeasurePartScreen";
-import { RetryImage } from "@/components/RetryImage";
-import { PinIcon } from "@/components/PinIcon";
-import { useColors } from "@/hooks/useColors";
-import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { PartCard } from "@/components/PartCard";
+import { PhotoLightbox } from "@/components/PhotoLightbox";
+import { PinIcon } from "@/components/PinIcon";
+import { RetryImage } from "@/components/RetryImage";
+import { useColors } from "@/hooks/useColors";
 
 interface ResultCardProps {
   result: SearchResult;
