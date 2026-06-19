@@ -148,6 +148,37 @@ describe("buildAutoNumPreview", () => {
     const result = buildAutoNumPreview(zones, new Set([42]), 1, 1, 1);
     expect(result[0]!.zone).toMatchObject({ id: 42, aisleId: "7", sectionNum: 5 });
   });
+
+  // 11. newSortOrder equals newSectionNum for each entry
+  it("sets newSortOrder equal to newSectionNum for each zone", () => {
+    const zones = [zone(1, "5", 99), zone(2, "5", 99), zone(3, "5", 99)];
+    const result = buildAutoNumPreview(zones, new Set([1, 2, 3]), 5, 3, 1);
+    for (const entry of result) {
+      expect(entry.newSortOrder).toBe(entry.newSectionNum);
+    }
+  });
+
+  // 12. newSortOrder reflects the sequential values derived from start + increment
+  it("newSortOrder matches the expected sequence (start=1, increment=2)", () => {
+    const zones = [zone(1, "5", 99), zone(2, "5", 99), zone(3, "5", 99)];
+    const result = buildAutoNumPreview(zones, new Set([1, 2, 3]), 1, 2, 1);
+    expect(result.map((r) => r.newSortOrder)).toEqual([1, 3, 5]);
+  });
+
+  // 13. newSortOrder is distinct for every zone in the batch
+  it("produces distinct newSortOrder values across all zones", () => {
+    const zones = [zone(1, "5", 10), zone(2, "5", 20), zone(3, "5", 30)];
+    const result = buildAutoNumPreview(zones, new Set([1, 2, 3]), 10, 10, 1);
+    const orders = result.map((r) => r.newSortOrder);
+    expect(new Set(orders).size).toBe(orders.length);
+  });
+
+  // 14. newSortOrder is preserved after zero-increment clamping
+  it("newSortOrder reflects the clamped increment=1 when increment=0 is given", () => {
+    const zones = [zone(1, "5", 99), zone(2, "5", 99)];
+    const result = buildAutoNumPreview(zones, new Set([1, 2]), 10, 0, 1);
+    expect(result.map((r) => r.newSortOrder)).toEqual([10, 11]);
+  });
 });
 
 // ── buildAutoNumSentinelMap ────────────────────────────────────────────────────
