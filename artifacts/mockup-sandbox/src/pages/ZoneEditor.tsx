@@ -410,7 +410,7 @@ export function buildAutoNumPreview(
   start: number,
   increment: number,
   digits: number,
-): Array<{ zone: Zone; newSectionNum: number; newSectionNumDisplay: string }> {
+): Array<{ zone: Zone; newSectionNum: number; newSectionNumDisplay: string; newSortOrder: number }> {
   if (selectedIds.size === 0) return [];
   const selected = zones.filter((z) => selectedIds.has(z.id));
   const sorted = [...selected].sort((a, b) => {
@@ -421,7 +421,7 @@ export function buildAutoNumPreview(
   return sorted.map((zone, i) => {
     const num = start + i * inc;
     const display = digits > 1 ? String(num).padStart(digits, "0") : String(num);
-    return { zone, newSectionNum: num, newSectionNumDisplay: display };
+    return { zone, newSectionNum: num, newSectionNumDisplay: display, newSortOrder: num };
   });
 }
 
@@ -652,6 +652,13 @@ export function ZoneEditor() {
     } catch {}
     return 2;
   });
+  const [autoNumSyncSortOrder, setAutoNumSyncSortOrder] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem("zoneEditorAutoNumSyncSortOrder");
+      if (stored !== null) return stored === "true";
+    } catch {}
+    return true;
+  });
   const [autoNumApplying, setAutoNumApplying] = useState(false);
   const [zoneEditOpen, setZoneEditOpen] = useState(true);
   const [zoneListOpen, setZoneListOpen] = useState(true);
@@ -719,6 +726,9 @@ export function ZoneEditor() {
   useEffect(() => {
     try { localStorage.setItem("zoneEditorAutoNumIncrement", String(autoNumIncrement)); } catch {}
   }, [autoNumIncrement]);
+  useEffect(() => {
+    try { localStorage.setItem("zoneEditorAutoNumSyncSortOrder", String(autoNumSyncSortOrder)); } catch {}
+  }, [autoNumSyncSortOrder]);
 
 
   // Fetch the latest uploaded floor plan. Tries the local API first; if it
@@ -1004,12 +1014,17 @@ export function ZoneEditor() {
           toast.success(fwd ? "Redo: edit reapplied" : "Undo: edit reverted");
           break;
         case "multiEdit": {
-          // Detect sectionNum-only changes (produced by handleAutoNumber).
-          // These can cause (aisleId, sectionNum) unique-constraint collisions
-          // during undo/redo when the before/after values overlap in the same
-          // aisle (e.g. a cyclic swap). Use a two-phase sentinel approach so
-          // all current values are vacated before any target value is written.
-          const isSectionNumOnly = entry.changes.every(
+          // Detect changes that involve sectionNum reassignment without an
+          // aisleId change (produced by handleAutoNumber). These can cause
+          // (aisleId, sectionNum) unique-constraint collisions during undo/redo
+          // when before/after values overlap in the same aisle (e.g. a cyclic
+          // swap). Use a two-phase sentinel approach so all current sectionNums
+          // are vacated before any target value is written.
+          //
+          // sortOrder may also be present in the snapshot (when the "sync sort
+          // order" checkbox was enabled). It is safe to patch sortOrder in Phase 2
+          // alongside the final sectionNum — no unique constraint applies to it.
+          const needsSentinel = entry.changes.every(
             (c) =>
               c.before.sectionNum !== undefined &&
               c.before.aisleId === undefined &&
@@ -1017,7 +1032,7 @@ export function ZoneEditor() {
               c.after.aisleId === undefined,
           );
 
-          if (isSectionNumOnly && entry.changes.length > 1) {
+          if (needsSentinel && entry.changes.length > 1) {
             const currentZones = zonesRef.current;
             const affectedIds = new Set(entry.changes.map((c) => c.id));
             const affectedAisles = new Set(
@@ -1031,17 +1046,23 @@ export function ZoneEditor() {
             let nextSentinel =
               (existingNegatives.length > 0 ? Math.min(...existingNegatives) : 0) - 1;
 
-            const sentinelMap = entry.changes.map((c) => ({
-              id: c.id,
-              sentinel: nextSentinel--,
-              target: fwd ? c.after.sectionNum! : c.before.sectionNum!,
-            }));
+            const sentinelMap = entry.changes.map((c) => {
+              const snap = fwd ? c.after : c.before;
+              return {
+                id: c.id,
+                sentinel: nextSentinel--,
+                targetSectionNum: snap.sectionNum!,
+                targetSortOrder: snap.sortOrder,
+              };
+            });
 
             for (const { id, sentinel } of sentinelMap) {
               await patchZone(id, { sectionNum: sentinel });
             }
-            for (const { id, target } of sentinelMap) {
-              await patchZone(id, { sectionNum: target });
+            for (const { id, targetSectionNum, targetSortOrder } of sentinelMap) {
+              const patch: Partial<Zone> = { sectionNum: targetSectionNum };
+              if (targetSortOrder !== undefined) patch.sortOrder = targetSortOrder;
+              await patchZone(id, patch);
             }
           } else {
             const results = await Promise.allSettled(
@@ -1332,10 +1353,16 @@ export function ZoneEditor() {
     if (autoNumPreview.length === 0) return;
     setAutoNumApplying(true);
     try {
-      const undoChanges = autoNumPreview.map(({ zone, newSectionNum }) => ({
+      const undoChanges = autoNumPreview.map(({ zone, newSectionNum, newSortOrder }) => ({
         id: zone.id,
-        before: { sectionNum: zone.sectionNum } as MetaSnap,
-        after: { sectionNum: newSectionNum } as MetaSnap,
+        before: {
+          sectionNum: zone.sectionNum,
+          ...(autoNumSyncSortOrder ? { sortOrder: zone.sortOrder } : {}),
+        } as MetaSnap,
+        after: {
+          sectionNum: newSectionNum,
+          ...(autoNumSyncSortOrder ? { sortOrder: newSortOrder } : {}),
+        } as MetaSnap,
       }));
       // Two-phase apply to avoid (aisleId, sectionNum) unique constraint
       // violations when new numbers overlap current numbers in the same aisle
@@ -1343,14 +1370,18 @@ export function ZoneEditor() {
       //
       // Phase 1 — park every zone at a temporary negative sentinel that is
       //            guaranteed not to collide with anything.
-      // Phase 2 — move each zone from its sentinel to its final sectionNum.
+      // Phase 2 — move each zone from its sentinel to its final sectionNum,
+      //            and (when sortOrder sync is enabled) also update sortOrder.
       const sentinelMap = buildAutoNumSentinelMap(autoNumPreview, zones);
 
       for (const { id, sentinel } of sentinelMap) {
         await patchZone(id, { sectionNum: sentinel });
       }
       for (const { id, newSectionNum } of sentinelMap) {
-        await patchZone(id, { sectionNum: newSectionNum });
+        const preview = autoNumPreview.find((p) => p.zone.id === id)!;
+        const patch: Partial<Zone> = { sectionNum: newSectionNum };
+        if (autoNumSyncSortOrder) patch.sortOrder = preview.newSortOrder;
+        await patchZone(id, patch);
       }
       pushUndo({ type: "multiEdit", changes: undoChanges });
       // Keep lastSavedFormRef consistent so the dup-conflict suppression doesn't fire
@@ -2695,6 +2726,19 @@ export function ZoneEditor() {
                       </div>
                     </div>
                   )}
+
+                  {/* Sync sort order checkbox */}
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
+                    <input
+                      type="checkbox"
+                      checked={autoNumSyncSortOrder}
+                      onChange={(e) => setAutoNumSyncSortOrder(e.target.checked)}
+                      style={{ cursor: "pointer", accentColor: "#7c3aed" }}
+                    />
+                    <span style={{ fontSize: 11, color: "#374151" }}>
+                      Sync sidebar sort order to match section numbers
+                    </span>
+                  </label>
 
                   {selectedIds.size === 0 && (
                     <div style={{ fontSize: 11, color: "#9ca3af" }}>
