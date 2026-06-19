@@ -254,6 +254,7 @@ export default function SearchScreen() {
   const [syncProgress, setSyncProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [syncError, setSyncError] = useState(false);
   const [syncRetryPending, setSyncRetryPending] = useState(false);
+  const [syncErrorDismissed, setSyncErrorDismissed] = useState(false);
   const syncRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncRetryAttemptRef = useRef(0);
   // Concurrency guard: prevents a second syncAllInventory from starting while
@@ -342,6 +343,8 @@ export default function SearchScreen() {
       setAITranslation(null);
       setAITranslationDismissed(false);
       setAIZeroResults(null);
+      setSyncError(false);
+      setSyncErrorDismissed(false);
       aiSearchGenRef.current += 1;
       searchMutationRef.current?.reset();
     });
@@ -466,6 +469,14 @@ export default function SearchScreen() {
       }
     };
   }, []);
+
+  // Auto-clear the dismissed state whenever the sync error resolves so the
+  // banner re-appears if a subsequent sync later fails again.
+  useEffect(() => {
+    if (!syncError) {
+      setSyncErrorDismissed(false);
+    }
+  }, [syncError]);
 
   // Seed local Fuse index from AsyncStorage on mount; sync from API if cache is
   // empty or stale. A stale cache (older than FUSE_SYNC_MAX_AGE_MS) is served
@@ -1305,6 +1316,27 @@ export default function SearchScreen() {
         </View>
       ) : null}
 
+      {/* Sync error banner — shown when background re-sync fails */}
+      {syncError && !syncErrorDismissed ? (
+        <View style={[styles.syncErrorBanner, { backgroundColor: colors.destructive + "14", borderBottomColor: colors.destructive + "44" }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.syncErrorBannerText, { color: colors.destructive }]}>
+              {syncRetryPending
+                ? "Offline data may be stale — retrying sync in background…"
+                : "Background sync failed — offline data may be stale. Pull down to retry."}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => setSyncErrorDismissed(true)}
+            hitSlop={8}
+            style={styles.syncErrorBannerDismiss}
+            accessibilityLabel="Dismiss sync error"
+          >
+            <Feather name="x" size={14} color={colors.destructive} />
+          </Pressable>
+        </View>
+      ) : null}
+
       {/* ── Persistent search bar — always visible ── */}
       <View style={[styles.searchBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <View style={styles.searchBarInputWrapper}>
@@ -1761,6 +1793,16 @@ const styles = StyleSheet.create({
   offlineBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
   offlineBanner: { paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1 },
   offlineBannerText: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  syncErrorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    gap: 8,
+  },
+  syncErrorBannerText: { fontSize: 12, fontFamily: "Inter_500Medium", lineHeight: 17 },
+  syncErrorBannerDismiss: { padding: 2 },
   headerBtn: { height: 44, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   logoutBtn: { flexDirection: "column", gap: 2, paddingVertical: 4, paddingHorizontal: 10 },
   addPartBtn: { width: 60, flexDirection: "column", gap: 2, paddingVertical: 4 },
