@@ -527,13 +527,6 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
   );
 });
 
-function abbreviateModelName(name: string): string {
-  const VENDOR_PREFIXES = ["claude", "gpt", "gemini", "mistral", "llama"];
-  const parts = name.split("-");
-  const rest = VENDOR_PREFIXES.includes(parts[0].toLowerCase()) ? parts.slice(1) : parts;
-  return rest.map((p) => (p.length > 0 && isNaN(Number(p[0])) ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" ");
-}
-
 // ── Main screen ───────────────────────────────────────────────────────────
 export default function UploadScreen() {
   "use no memo";
@@ -547,6 +540,7 @@ export default function UploadScreen() {
     apiBase: API_BASE,
     adminToken: isAdmin ? adminToken : null,
   });
+  const [activeBadge, setActiveBadge] = useState<string | null>(null);
 
   const handleRestartPress = useCallback(() => {
     Alert.alert(
@@ -1546,56 +1540,79 @@ export default function UploadScreen() {
                   </Text>
                 </Pressable>
                 {Object.keys(apiBots).length > 0 ? (
-                  <View style={styles.botStatusRow}>
-                    {Object.entries(apiBots).map(([name, botStatus]) => (
+                  <View>
+                    <View style={styles.botStatusRow}>
+                      {Object.entries(apiBots).map(([name, botStatus]) => {
+                        const dotColor =
+                          botStatus === "ok"
+                            ? "#10b981"
+                            : botStatus === "timeout"
+                            ? "#f59e0b"
+                            : "#ef4444";
+                        if (isNarrow) {
+                          return (
+                            <Pressable
+                              key={name}
+                              onPress={() =>
+                                setActiveBadge(activeBadge === name ? null : name)
+                              }
+                              style={[
+                                styles.botStatusBadge,
+                                { backgroundColor: dotColor },
+                                activeBadge === name && styles.botStatusBadgeActive,
+                              ]}
+                              accessibilityLabel={`${name}: ${botStatus}`}
+                              accessibilityRole="button"
+                            />
+                          );
+                        }
+                        return (
+                          <View
+                            key={name}
+                            style={[
+                              styles.botStatusChip,
+                              {
+                                backgroundColor: dotColor + "20",
+                                borderColor: dotColor,
+                              },
+                            ]}
+                          >
+                            <Text style={[styles.botStatusDot, { color: dotColor }]}>●</Text>
+                            <Text
+                              style={[styles.botStatusText, { color: colors.foreground }]}
+                              numberOfLines={1}
+                            >
+                              {name}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                    {isNarrow && activeBadge !== null && apiBots[activeBadge] !== undefined ? (
                       <View
-                        key={name}
                         style={[
-                          styles.botStatusChip,
-                          {
-                            backgroundColor:
-                              botStatus === "ok"
-                                ? "#10b98120"
-                                : botStatus === "timeout"
-                                ? "#f59e0b20"
-                                : "#ef444420",
-                            borderColor:
-                              botStatus === "ok"
-                                ? "#10b981"
-                                : botStatus === "timeout"
-                                ? "#f59e0b"
-                                : "#ef4444",
-                          },
-                          isNarrow && { paddingHorizontal: 4, paddingVertical: 2 },
+                          styles.botStatusPopover,
+                          { backgroundColor: colors.card, borderColor: colors.border },
                         ]}
                       >
                         <Text
-                          style={[
-                            styles.botStatusDot,
-                            {
-                              color:
-                                botStatus === "ok"
-                                  ? "#10b981"
-                                  : botStatus === "timeout"
-                                  ? "#f59e0b"
-                                  : "#ef4444",
-                            },
-                          ]}
+                          style={[styles.botStatusPopoverName, { color: colors.foreground }]}
+                          numberOfLines={2}
                         >
-                          ●
+                          {activeBadge}
                         </Text>
-                        <Text
-                          style={[
-                            styles.botStatusText,
-                            { color: colors.foreground },
-                            isNarrow && { fontSize: 9, maxWidth: 72 },
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {isNarrow ? abbreviateModelName(name) : name}
+                        <Text style={[styles.botStatusPopoverStatus, {
+                          color:
+                            apiBots[activeBadge] === "ok"
+                              ? "#10b981"
+                              : apiBots[activeBadge] === "timeout"
+                              ? "#f59e0b"
+                              : "#ef4444",
+                        }]}>
+                          {apiBots[activeBadge]}
                         </Text>
                       </View>
-                    ))}
+                    ) : null}
                   </View>
                 ) : null}
               </View>
@@ -2974,6 +2991,11 @@ const styles = StyleSheet.create({
   botStatusChip: { flexDirection: "row", alignItems: "center", borderRadius: 10, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2, gap: 3 },
   botStatusDot: { fontSize: 8 },
   botStatusText: { fontSize: 10, fontFamily: "Inter_500Medium", maxWidth: 100 },
+  botStatusBadge: { width: 12, height: 12, borderRadius: 6 },
+  botStatusBadgeActive: { width: 14, height: 14, borderRadius: 7, opacity: 0.85 },
+  botStatusPopover: { marginTop: 4, padding: 8, borderRadius: 8, borderWidth: 1, alignSelf: "flex-end", maxWidth: 180, gap: 2 },
+  botStatusPopoverName: { fontSize: 11, fontFamily: "Inter_500Medium", flexShrink: 1 },
+  botStatusPopoverStatus: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   tabBar: { flexDirection: "row", borderBottomWidth: 1 },
   tabItem: { flex: 1, alignItems: "center", paddingVertical: 12, borderBottomWidth: 2 },
   tabLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
