@@ -86,7 +86,10 @@ async function readNewestCacheTimestamp(): Promise<string> {
     const cache = JSON.parse(raw) as QueryCache<SearchResult>;
     const entries = Object.values(cache);
     if (entries.length === 0) return "No cached data";
-    const newest = Math.max(...entries.map((e: QueryCacheEntry) => e.timestamp));
+    const newest = entries.reduce(
+      (max: number, e: QueryCacheEntry) => (e.timestamp > max ? e.timestamp : max),
+      0,
+    );
     return formatRelativeAge(newest);
   } catch {
     return "No cached data";
