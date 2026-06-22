@@ -223,26 +223,15 @@ describe("POST /api/reference/quick-lookups/:label — auth guard", () => {
 });
 
 describe("POST /api/reference/quick-lookups/:label — ADMIN_PASSWORD unset → 503", () => {
-  it("returns 503 when ADMIN_PASSWORD env var is not set at server start", async () => {
-    // reference.ts captures process.env.ADMIN_PASSWORD at module-load time
-    // (const adminPassword = process.env.ADMIN_PASSWORD ?? "").  To verify
-    // the 503 branch we must load a fresh app instance with no password set.
+  it("returns 503 when ADMIN_PASSWORD env var is not set", async () => {
     const originalPassword = process.env.ADMIN_PASSWORD;
     delete process.env.ADMIN_PASSWORD;
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
-    let freshApp: any;
-    jest.isolateModules(() => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      freshApp = require("../src/app").default;
-    });
-
-    // Restore the env var immediately so subsequent tests are unaffected.
-    process.env.ADMIN_PASSWORD = originalPassword;
-
-    const res = await supertest(freshApp)
+    const res = await supertest(app)
       .post("/api/reference/quick-lookups/test-label")
       .send({ question: "What is the part number?" });
+
+    process.env.ADMIN_PASSWORD = originalPassword;
 
     expect(res.status).toBe(503);
     expect(res.body).toHaveProperty("error");
