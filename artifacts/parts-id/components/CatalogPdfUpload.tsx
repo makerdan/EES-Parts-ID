@@ -34,7 +34,7 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import { applyFallbackHeader, shouldUseFallback } from "@/utils/aiFallbackHeaders";
 import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
-import { PAGES_PER_CHUNK,splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
+import { getOrSplitChunks, PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
@@ -523,16 +523,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     // Reuse already-split chunks from the initial upload rather than
     // re-splitting the raw bytes (which discards the cached work).
     let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
-    if (chunksRef.current) {
-      chunks = chunksRef.current;
-    } else {
-      try {
-        chunks = await splitPdfIntoChunks(pdfBytes, PAGES_PER_CHUNK);
-      } catch (err) {
-        setLoading(false);
-        setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
-        return;
-      }
+    try {
+      chunks = await getOrSplitChunks(chunksRef.current, pdfBytes, PAGES_PER_CHUNK);
+    } catch (err) {
+      setLoading(false);
+      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+      return;
     }
 
     setChunksTotal(chunks.length);
