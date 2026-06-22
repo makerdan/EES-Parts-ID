@@ -329,7 +329,7 @@ export default function PhotoScreen() {
             setMapPromptBins(topItem.binLocations ?? []);
           }
           // Admin bridge: dismissible inline card when dimensions are missing
-          const topDims = (topItem as unknown as { dimensions?: { length?: number | null; width?: number | null; height?: number | null; diameter?: number | null } | null }).dimensions;
+          const topDims = topItem.dimensions;
           if (isAdmin && adminToken && (!topDims || (!topDims.length && !topDims.width && !topDims.height && !topDims.diameter))) {
             setAdminBridgeItem(topItem);
           }

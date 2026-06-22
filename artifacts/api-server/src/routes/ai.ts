@@ -347,10 +347,13 @@ router.post("/part-card", async (req, res) => {
     // Only cache if we got something useful
     if (displayName || specs.length > 0 || crossRefs.length > 0 || compatibilityNote) {
       partCardCache.set(cacheKey, { data, cachedAt: Date.now() });
-      // Evict oldest entries if cache grows large
+      // Evict oldest entries until the cache is within the 500-entry limit
       if (partCardCache.size > 500) {
-        const oldest = [...partCardCache.entries()].sort((a, b) => a[1].cachedAt - b[1].cachedAt)[0];
-        if (oldest) partCardCache.delete(oldest[0]);
+        const sorted = [...partCardCache.entries()].sort((a, b) => a[1].cachedAt - b[1].cachedAt);
+        for (const [key] of sorted) {
+          partCardCache.delete(key);
+          if (partCardCache.size <= 500) break;
+        }
       }
     }
 
@@ -378,10 +381,9 @@ router.post("/part-card", async (req, res) => {
   }
 });
 
-// POST /ai/reference — deprecated alias, forwards to /reference/ask behavior
-// Kept for backwards compat; primary route is /reference/ask
-router.post("/reference", async (req, res) => {
-  res.status(308).json({ message: "Use /api/reference/ask instead" });
+// POST /ai/reference — removed; use /api/reference/ask
+router.post("/reference", (_req, res) => {
+  res.status(410).json({ error: "This endpoint has been removed. Use /api/reference/ask instead." });
 });
 
 export default router;
