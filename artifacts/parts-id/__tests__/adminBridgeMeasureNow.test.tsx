@@ -10,11 +10,15 @@
  *      the bridge item as `initialItem`.
  *   3. MeasurePartScreen pre-fills dimension fields from initialItem.dimensions.
  *   4. Closing MeasurePartScreen clears adminBridgeMeasureItem (visible → false).
+ *   5. Confirming dimensions via onConfirm routes them to setPendingMeasureSearch
+ *      (dimension-filtered search) and navigates to "/" — NO server PATCH/PUT is
+ *      made. This is intentional: the bridge drives a search, not a data edit.
+ *      If persistence is ever added, these tests must be updated accordingly.
  *
  * Implementation notes:
  *   - PhotoScreen tests mock MeasurePartScreen so they can capture the props
- *     passed to it (visible, initialItem, onClose) without needing native camera
- *     modules loaded.
+ *     passed to it (visible, initialItem, onClose, onConfirm) without needing
+ *     native camera modules loaded.
  *   - The "pre-fills from initialItem.dimensions" assertion is covered in the
  *     MeasurePartScreen section, which mounts the real component with a
  *     synthetic InventoryItem and verifies the field strings.
@@ -195,9 +199,10 @@ jest.mock("fuse.js", () =>
 // Each render captures the latest visible, initialItem and onClose refs so the
 // assertions below can query them directly.
 
-let capturedMeasureVisible:  boolean = false;
-let capturedMeasureInitialItem: any   = null;
-let capturedMeasureOnClose:  (() => void) | null = null;
+let capturedMeasureVisible:   boolean = false;
+let capturedMeasureInitialItem: any    = null;
+let capturedMeasureOnClose:   (() => void) | null = null;
+let capturedMeasureOnConfirm: ((d: unknown) => void) | null = null;
 
 jest.mock("@/components/MeasurePartScreen", () => ({
   MeasurePartScreen: (props: {
@@ -207,9 +212,10 @@ jest.mock("@/components/MeasurePartScreen", () => ({
     initialItem?: any;
     adminToken: string;
   }) => {
-    capturedMeasureVisible    = props.visible;
+    capturedMeasureVisible     = props.visible;
     capturedMeasureInitialItem = props.initialItem ?? null;
-    capturedMeasureOnClose    = props.onClose;
+    capturedMeasureOnClose     = props.onClose;
+    capturedMeasureOnConfirm   = props.onConfirm;
     return null;
   },
 }));
@@ -325,9 +331,10 @@ afterEach(async () => {
     await act(async () => { activeTree!.unmount(); });
     activeTree = null;
   }
-  capturedMeasureVisible    = false;
+  capturedMeasureVisible     = false;
   capturedMeasureInitialItem = null;
-  capturedMeasureOnClose    = null;
+  capturedMeasureOnClose     = null;
+  capturedMeasureOnConfirm   = null;
   jest.clearAllMocks();
 });
 
@@ -548,6 +555,138 @@ describe("PhotoScreen – closing MeasurePartScreen clears adminBridgeMeasureIte
     // After close, the re-render passes initialItem=null (adminBridgeMeasureItem
     // was cleared inside the onClose handler).
     expect(capturedMeasureInitialItem).toBeNull();
+  });
+});
+
+// =============================================================================
+// 4. onConfirm — dimensions are routed to search, NOT persisted to the server
+//
+// Design intent: the admin bridge "Measure Now" flow is a *search assist* tool.
+// When the admin confirms dimensions, handleMeasureSearchConfirm converts them
+// into dimension-range search params and calls setPendingMeasureSearch so the
+// Search tab performs a pre-filtered query. No PATCH/PUT to the inventory item
+// is made. If persistence is ever added, update these tests.
+// =============================================================================
+
+describe("PhotoScreen – admin bridge onConfirm routes dimensions to search (no server write)", () => {
+  it("closes MeasurePartScreen (visible=false) after onConfirm is called", async () => {
+    const tree = await renderAdminWithBridgeCard();
+
+    const measureBtn = findPressable(tree.root, "Measure Now");
+    await act(async () => { measureBtn!.props.onPress(); });
+    expect(capturedMeasureVisible).toBe(true);
+
+    const confirmedDims = { length: 120, width: 85, height: 45, diameter: null };
+    await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
+
+    expect(capturedMeasureVisible).toBe(false);
+  });
+
+  it("calls setPendingMeasureSearch with exact min/max params derived from confirmed dimensions", async () => {
+    const tree = await renderAdminWithBridgeCard();
+
+    const measureBtn = findPressable(tree.root, "Measure Now");
+    await act(async () => { measureBtn!.props.onPress(); });
+
+    const confirmedDims = { length: 120, width: 85, height: 45, diameter: null };
+    await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
+
+    expect(mockSetPendingMeasureSearch).toHaveBeenCalledTimes(1);
+    expect(mockSetPendingMeasureSearch).toHaveBeenCalledWith({
+      minLength:   "120", maxLength:   "120",
+      minWidth:    "85",  maxWidth:    "85",
+      minHeight:   "45",  maxHeight:   "45",
+      minDiameter: "",    maxDiameter: "",
+    });
+  });
+
+  it("rounds fractional dimension values when building search params", async () => {
+    const tree = await renderAdminWithBridgeCard();
+
+    const measureBtn = findPressable(tree.root, "Measure Now");
+    await act(async () => { measureBtn!.props.onPress(); });
+
+    // LiDAR / AI estimates often return sub-mm floats; the handler rounds them.
+    const confirmedDims = { length: 119.7, width: 84.4, height: 45.5, diameter: null };
+    await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
+
+    expect(mockSetPendingMeasureSearch).toHaveBeenCalledWith({
+      minLength:   "120", maxLength:   "120",
+      minWidth:    "84",  maxWidth:    "84",
+      minHeight:   "46",  maxHeight:   "46",
+      minDiameter: "",    maxDiameter: "",
+    });
+  });
+
+  it("includes diameter in search params when a non-null diameter is confirmed", async () => {
+    const tree = await renderAdminWithBridgeCard();
+
+    const measureBtn = findPressable(tree.root, "Measure Now");
+    await act(async () => { measureBtn!.props.onPress(); });
+
+    const confirmedDims = { length: null, width: null, height: null, diameter: 32 };
+    await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
+
+    expect(mockSetPendingMeasureSearch).toHaveBeenCalledWith({
+      minLength:   "", maxLength:   "",
+      minWidth:    "", maxWidth:    "",
+      minHeight:   "", maxHeight:   "",
+      minDiameter: "32", maxDiameter: "32",
+    });
+  });
+
+  it("does NOT call setPendingMeasureSearch when all confirmed dimensions are null", async () => {
+    // handleMeasureSearchConfirm only forwards params when at least one value
+    // is non-empty — a fully-null result is silently discarded.
+    const tree = await renderAdminWithBridgeCard();
+
+    const measureBtn = findPressable(tree.root, "Measure Now");
+    await act(async () => { measureBtn!.props.onPress(); });
+
+    const confirmedDims = { length: null, width: null, height: null, diameter: null };
+    await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
+
+    expect(mockSetPendingMeasureSearch).not.toHaveBeenCalled();
+  });
+
+  it("navigates to the root tab ('/') after confirm — not to a server update path", async () => {
+    const tree = await renderAdminWithBridgeCard();
+
+    const measureBtn = findPressable(tree.root, "Measure Now");
+    await act(async () => { measureBtn!.props.onPress(); });
+
+    const confirmedDims = { length: 100, width: 60, height: 30, diameter: null };
+    await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
+
+    expect(mockRouterNavigate).toHaveBeenCalledWith("/");
+  });
+
+  it("does NOT make any inventory mutation calls after onConfirm (no server PATCH/PUT)", async () => {
+    // This test explicitly documents the absence of server persistence.
+    // useSearchInventory.mutateAsync fires once during the identify pipeline
+    // (inside renderAdminWithBridgeCard) and must NOT be called again when the
+    // admin confirms dimensions — confirming only updates the pending search
+    // filter, it does not write back to the inventory item.
+    // useAiIdentifyPart.mutateAsync likewise remains at exactly one call.
+    //
+    // If a future developer adds a PATCH/PUT mutation for dimension persistence
+    // they must add a useUpdateInventoryItem (or equivalent) mock here and
+    // assert it is called with the right item id and dimension payload.
+    const tree = await renderAdminWithBridgeCard();
+
+    const searchCallsBefore   = mockSearchMutateAsync.mock.calls.length;
+    const identifyCallsBefore = mockIdentifyMutateAsync.mock.calls.length;
+
+    const measureBtn = findPressable(tree.root, "Measure Now");
+    await act(async () => { measureBtn!.props.onPress(); });
+
+    const confirmedDims = { length: 100, width: 60, height: 30, diameter: null };
+    await act(async () => { capturedMeasureOnConfirm!(confirmedDims); });
+    await flushPromises();
+
+    // Neither mutation received additional calls after confirm.
+    expect(mockSearchMutateAsync).toHaveBeenCalledTimes(searchCallsBefore);
+    expect(mockIdentifyMutateAsync).toHaveBeenCalledTimes(identifyCallsBefore);
   });
 });
 
