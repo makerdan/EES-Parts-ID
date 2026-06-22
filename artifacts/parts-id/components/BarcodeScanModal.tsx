@@ -52,6 +52,31 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
   const [adminSuccessMsg, setAdminSuccessMsg] = useState<string | null>(null);
   const [adminAssignError, setAdminAssignError] = useState<string | null>(null);
 
+  const isMountedRef = useRef(true);
+  const timerIdsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  const clearAllTimers = useCallback(() => {
+    timerIdsRef.current.forEach(clearTimeout);
+    timerIdsRef.current.clear();
+  }, []);
+
+  const scheduleTimer = useCallback((fn: () => void, ms: number) => {
+    const id = setTimeout(() => {
+      timerIdsRef.current.delete(id);
+      if (isMountedRef.current) fn();
+    }, ms);
+    timerIdsRef.current.add(id);
+    return id;
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      clearAllTimers();
+    };
+  }, [clearAllTimers]);
+
   const clearPendingScan = useCallback(() => {
     pendingCommitRef.current = null;
     pendingCodeRef.current = null;
@@ -68,6 +93,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
 
   useEffect(() => {
     if (!visible) {
+      clearAllTimers();
       setScanPhase("idle");
       setNotFoundCode(null);
       setShowAdminPicker(false);
@@ -75,7 +101,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
       setAdminAssignError(null);
       clearPendingScan();
     }
-  }, [visible, clearPendingScan]);
+  }, [visible, clearPendingScan, clearAllTimers]);
 
   const handleAdminAssign = useCallback(
     async (item: InventoryItem) => {
@@ -93,6 +119,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
           await invalidateListCache({ queryClient });
           await upsertItemInBarcodeCache(updated);
         }
+        if (!isMountedRef.current) return;
         addEntry({
           barcode: notFoundCode,
           found: true,
@@ -103,14 +130,15 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
           adminAction: action,
         });
         setAdminSuccessMsg(action === "created" ? `Created ${item.catalog}` : `Linked to ${item.catalog}`);
-        setTimeout(() => {
+        scheduleTimer(() => {
           resetScan();
         }, 1800);
       } catch {
+        if (!isMountedRef.current) return;
         setAdminAssignError("Could not save — please try again.");
       }
     },
-    [notFoundCode, adminPickerMode, addEntry, updateBarcodesMutation, queryClient, resetScan],
+    [notFoundCode, adminPickerMode, addEntry, updateBarcodesMutation, queryClient, resetScan, scheduleTimer],
   );
 
   const handleBarcodeScanned = useCallback(
@@ -159,6 +187,7 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
 
         try {
           const item = await lookupByBarcode(encodeURIComponent(code));
+          if (!isMountedRef.current) return;
           setScanPhase("found");
           addEntry({
             barcode: code,
@@ -168,11 +197,12 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
             vendor: item.vendor,
             timestamp: new Date().toISOString(),
           });
-          setTimeout(() => {
+          scheduleTimer(() => {
             onFound(item, code, false);
             onClose();
           }, 500);
         } catch (err: unknown) {
+          if (!isMountedRef.current) return;
           const status =
             err && typeof err === "object" && "status" in err
               ? (err as { status: number }).status
@@ -183,10 +213,11 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
             if (isAdmin) {
               setNotFoundCode(code);
             } else {
-              setTimeout(resetScan, 4500);
+              scheduleTimer(resetScan, 4500);
             }
           } else if (status === null) {
             const offlineItem = await lookupByBarcodeOffline(code);
+            if (!isMountedRef.current) return;
             if (offlineItem) {
               setScanPhase("found");
               addEntry({
@@ -197,23 +228,23 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
                 vendor: offlineItem.vendor,
                 timestamp: new Date().toISOString(),
               });
-              setTimeout(() => {
+              scheduleTimer(() => {
                 onFound(offlineItem, code, true);
                 onClose();
               }, 500);
             } else {
               setScanPhase("offline_miss");
-              setTimeout(resetScan, 2500);
+              scheduleTimer(resetScan, 2500);
             }
           } else {
             setScanPhase("error");
-            setTimeout(resetScan, 2000);
+            scheduleTimer(resetScan, 2000);
           }
         }
       };
       pendingCommitRef.current = doCommit;
     },
-    [addEntry, onFound, onClose, resetScan, scanPhase, isAdmin],
+    [addEntry, onFound, onClose, resetScan, scanPhase, isAdmin, scheduleTimer],
   );
 
   const captureNow = useCallback(() => {
@@ -280,14 +311,16 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
                 Allow Camera Access
               </Text>
             </Pressable>
-            <Pressable
-              onPress={() => setCameraBypass(true)}
-              style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border }}
-            >
-              <Text style={{ color: colors.mutedForeground, fontSize: 14, fontFamily: "Inter_500Medium" }}>
-                Skip camera (dev only)
-              </Text>
-            </Pressable>
+            {__DEV__ ? (
+              <Pressable
+                onPress={() => setCameraBypass(true)}
+                style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border }}
+              >
+                <Text style={{ color: colors.mutedForeground, fontSize: 14, fontFamily: "Inter_500Medium" }}>
+                  Skip camera (dev only)
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : (
           <>
