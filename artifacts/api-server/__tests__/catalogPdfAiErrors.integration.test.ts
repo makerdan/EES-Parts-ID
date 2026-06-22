@@ -237,7 +237,96 @@ describe("CatalogAiError propagation — status API response", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Suite 3: CatalogAiError propagation in chunked uploads
+// Suite 3: Raw provider payload-too-large errors (isProviderPayloadTooLargeError)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Raw provider payload-too-large error — HTTP 413 response from chunk route", () => {
+  it("returns HTTP 413 with a user-friendly message when extractCatalogPage throws an error with status 413", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    const providerError = Object.assign(new Error("Request Entity Too Large"), { status: 413 });
+    mockExtractCatalogPage.mockRejectedValueOnce(providerError);
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: FAKE_PDF_BASE64, vendor: VENDOR })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect((res.body.error as string).toLowerCase()).toContain("too large");
+  });
+
+  it("returns HTTP 413 when extractCatalogPage throws an error with 'payload too large' in its message", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    const providerError = new Error("Request payload too large for the provider");
+    mockExtractCatalogPage.mockRejectedValueOnce(providerError);
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: FAKE_PDF_BASE64, vendor: VENDOR })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect((res.body.error as string).toLowerCase()).toContain("too large");
+  });
+
+  it("stores errorMessage='ai_payload_too_large' in the DB when returning HTTP 413", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    const providerError = Object.assign(new Error("Payload Too Large"), { status: 413 });
+    mockExtractCatalogPage.mockRejectedValueOnce(providerError);
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ pdfBase64: FAKE_PDF_BASE64, vendor: VENDOR })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+
+    // Find the most recently inserted failed job for this vendor and verify DB state
+    const { db: dbClient, catalogPdfJobTable: tbl } = await import("@workspace/db");
+    const { desc: descOrd } = await import("drizzle-orm");
+    const [latest] = await dbClient
+      .select({ id: tbl.id, status: tbl.status, errorMessage: tbl.errorMessage })
+      .from(tbl)
+      .orderBy(descOrd(tbl.id))
+      .limit(1);
+    if (latest) seededJobIds.push(latest.id);
+    expect(latest?.status).toBe("failed");
+    expect(latest?.errorMessage).toBe("ai_payload_too_large");
+  });
+
+  it("returns HTTP 413 and marks the parent job failed when a chunk encounters a provider 413 error", async () => {
+    const parentId = await seedParentJob();
+
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    const providerError = Object.assign(new Error("Request Entity Too Large"), { status: 413 });
+    mockExtractCatalogPage.mockRejectedValueOnce(providerError);
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        pdfBase64: FAKE_PDF_BASE64,
+        vendor: VENDOR,
+        chunkIndex: 0,
+        chunkCount: 2,
+        parentJobId: parentId,
+      })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect((res.body.error as string).toLowerCase()).toContain("too large");
+
+    const parentRow = await readJobRow(parentId);
+    expect(parentRow.status).toBe("failed");
+    expect(parentRow.errorMessage).toBe("ai_payload_too_large");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 4: CatalogAiError propagation in chunked uploads
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

@@ -30,6 +30,7 @@ import type { ImageRegion } from "../utils/catalogExtractor";
 import { matchCatalogNumber } from "../utils/catalogMatcher";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { PoeBotChainExhaustedError } from "../lib/poeBot";
+import { isProviderPayloadTooLargeError } from "../utils/aiHelpers";
 
 const router = Router();
 
@@ -483,61 +484,90 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
 
   const jobId = String(jobRow.id);
 
-  // Respond immediately — processing is async
-  if (isChunked) {
-    res.json({ jobId: String(resolvedParentJobId), chunkJobId: jobId, message: "Chunk job started" });
-  } else {
-    res.json({ jobId, message: "Job started" });
-  }
-
   const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
 
-  // ── Async processing ──────────────────────────────────────────────────────
-  setImmediate(async () => {
+  // ── Synchronous processing ────────────────────────────────────────────────
+  // Processing runs within the request handler so that provider payload-too-large
+  // errors can be translated to HTTP 413 before the response is sent.
+  await db
+    .update(catalogPdfJobTable)
+    .set({ status: "processing", startedAt: new Date() })
+    .where(eq(catalogPdfJobTable.id, jobRow.id));
+
+  try {
+    const pdfBuffer = Buffer.from(pdfBase64, "base64");
+    const pages = await extractPdfPages(pdfBuffer);
+
     await db
       .update(catalogPdfJobTable)
-      .set({ status: "processing", startedAt: new Date() })
+      .set({ totalPages: pages.length })
       .where(eq(catalogPdfJobTable.id, jobRow.id));
 
-    try {
-      const pdfBuffer = Buffer.from(pdfBase64, "base64");
-      const pages = await extractPdfPages(pdfBuffer);
+    await processPdfPages(
+      jobRow.id,
+      pages,
+      0,
+      normalizedVendor,
+      resolvedParentJobId,
+      pageOffset,
+      useOpenAiFallback,
+    );
 
+    // Processing succeeded — respond with job ID
+    if (isChunked) {
+      return void res.json({ jobId: String(resolvedParentJobId), chunkJobId: jobId, message: "Chunk job started" });
+    }
+    return void res.json({ jobId, message: "Job started" });
+  } catch (err) {
+    const isCatalogAiError = err instanceof Error && err.name === "CatalogAiError";
+    if (!isCatalogAiError && isProviderPayloadTooLargeError(err)) {
       await db
         .update(catalogPdfJobTable)
-        .set({ totalPages: pages.length })
+        .set({ status: "failed", errorMessage: "ai_payload_too_large", finishedAt: new Date() })
         .where(eq(catalogPdfJobTable.id, jobRow.id));
+      console.warn(`[catalog-pdf] job=${jobId} provider rejected payload as too large`);
 
-      await processPdfPages(
-        jobRow.id,
-        pages,
-        0,
-        normalizedVendor,
-        resolvedParentJobId,
-        pageOffset,
-        useOpenAiFallback,
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await db
-        .update(catalogPdfJobTable)
-        .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
-        .where(eq(catalogPdfJobTable.id, jobRow.id));
-      console.error(`[catalog-pdf] job=${jobId} failed:`, err);
-
-      // Mark parent failed atomically (only if not already in a terminal state)
       if (resolvedParentJobId !== null) {
         await db.execute(sql`
           UPDATE catalog_pdf_job
           SET status = 'failed',
-              error_message = ${msg},
+              error_message = 'ai_payload_too_large',
               finished_at = NOW()
           WHERE id = ${resolvedParentJobId}
             AND status NOT IN ('done', 'failed')
         `);
       }
+
+      return void res.status(413).json({
+        error: "Image payload too large — the AI provider rejected the request. Please use a lower-resolution or smaller PDF.",
+      });
     }
-  });
+
+    const msg = err instanceof Error ? err.message : String(err);
+    await db
+      .update(catalogPdfJobTable)
+      .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
+      .where(eq(catalogPdfJobTable.id, jobRow.id));
+    console.error(`[catalog-pdf] job=${jobId} failed:`, err);
+
+    // Mark parent failed atomically (only if not already in a terminal state)
+    if (resolvedParentJobId !== null) {
+      await db.execute(sql`
+        UPDATE catalog_pdf_job
+        SET status = 'failed',
+            error_message = ${msg},
+            finished_at = NOW()
+        WHERE id = ${resolvedParentJobId}
+          AND status NOT IN ('done', 'failed')
+      `);
+    }
+
+    // Return job ID so client can inspect the failure status via polling
+    if (isChunked) {
+      return void res.json({ jobId: String(resolvedParentJobId), chunkJobId: jobId, message: "Chunk job started" });
+    }
+    return void res.json({ jobId, message: "Job started" });
+  }
 });
 
 // ── POST /admin/catalog-pdf/:jobId/cancel ─────────────────────────────────────

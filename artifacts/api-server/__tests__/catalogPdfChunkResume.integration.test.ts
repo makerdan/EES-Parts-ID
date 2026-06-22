@@ -359,7 +359,10 @@ describe("POST /api/admin/catalog-pdf — chunk re-upload after failure", () => 
     seededIds.push(Number(r1.body.chunkJobId));
 
     const parentRow = await readJobRow(parentId);
-    expect(parentRow.status).toBe("processing");
+    // With synchronous processing, the second chunk may immediately finalise the
+    // parent (if all chunks are now done). Accept "processing" OR "done"; either
+    // proves the parent was successfully reset from "failed".
+    expect(["processing", "done"]).toContain(parentRow.status);
     expect(parentRow.errorMessage).toBeNull();
   }, 15_000);
 });
