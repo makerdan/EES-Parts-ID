@@ -23,7 +23,10 @@ jest.mock("@workspace/integrations-openai-ai-server", () => ({
 }));
 
 // ── Imports ───────────────────────────────────────────────────────────────────
-import { extractCatalogPage } from "../src/utils/catalogExtractor";
+import { CatalogAiError, extractCatalogPage } from "../src/utils/catalogExtractor";
+
+/** 20 MB in bytes — the total inline image cap for the Gemini Poe bots. */
+const GEMINI_TOTAL_LIMIT = 20 * 1024 * 1024;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -447,5 +450,64 @@ describe("extractCatalogPage – end-to-end fixture (Eaton BR series)", () => {
     const textEntry = userContent.find((c) => c.type === "text");
     // The text prompt includes "Vendor: Eaton\nPage text:\n" prefix + up to 3000 chars of page text
     expect(textEntry!.text!.length).toBeLessThanOrEqual("Vendor: Eaton\nPage text:\n".length + 3000);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// extractCatalogPage — payload size guard (ai_payload_too_large)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("extractCatalogPage — payload size guard", () => {
+  it("throws CatalogAiError with code ai_payload_too_large when total buffer size exceeds 20 MB", async () => {
+    // Two 11 MB buffers → 22 MB total — over the 20 MB Gemini inline limit.
+    const buf = Buffer.alloc(11 * 1024 * 1024, 0x01);
+
+    await expect(extractCatalogPage("some text", [buf, buf], "Eaton"))
+      .rejects.toBeInstanceOf(CatalogAiError);
+
+    await expect(extractCatalogPage("some text", [buf, buf], "Eaton"))
+      .rejects.toMatchObject({ code: "ai_payload_too_large" });
+  });
+
+  it("does not call the AI when the payload size guard fires", async () => {
+    const buf = Buffer.alloc(11 * 1024 * 1024, 0x02);
+
+    await expect(extractCatalogPage("some text", [buf, buf], "Eaton")).rejects.toBeInstanceOf(CatalogAiError);
+
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("throws with a message mentioning the size and limit in MB", async () => {
+    const buf = Buffer.alloc(11 * 1024 * 1024, 0x03);
+
+    let caught: unknown;
+    try {
+      await extractCatalogPage("some text", [buf, buf], "Eaton");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(CatalogAiError);
+    const error = caught as CatalogAiError;
+    expect(error.originalMessage).toMatch(/MB/);
+    expect(error.originalMessage).toMatch(/limit/i);
+  });
+
+  it("does NOT throw ai_payload_too_large when total buffer is exactly at the 20 MB limit (boundary — inclusive)", async () => {
+    // The guard uses strict `>`, so total === limit must pass the check.
+    // Two 10 MB buffers = exactly 20 MB total.  The guard should not fire;
+    // the call may fail later with ai_error (no live AI in test env), but
+    // must not be rejected as ai_payload_too_large.
+    const TEN_MB = 10 * 1024 * 1024;
+    const buf = Buffer.alloc(TEN_MB, 0x04);
+
+    try {
+      await extractCatalogPage("some text", [buf, buf], "Eaton");
+    } catch (err) {
+      if (err instanceof CatalogAiError) {
+        expect(err.code).not.toBe("ai_payload_too_large");
+      }
+      // Any other throw (network, ai_error, etc.) is fine — the guard did not fire.
+    }
   });
 });

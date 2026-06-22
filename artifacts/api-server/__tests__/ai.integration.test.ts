@@ -30,6 +30,14 @@ const OVERSIZED_IMAGE = base64OverBytes(20 * 1024 * 1024);
  */
 const LARGE_CHUNK = base64OverBytes(11 * 1024 * 1024);
 
+/**
+ * An image that decodes to just over 10 MB.
+ * Exceeds Claude Sonnet's 10 MB per-image limit (Poe path) but stays well
+ * under OpenAI's 20 MB per-image limit (OpenAI fallback path).
+ * Used to verify the per-model guard fires on the Poe path only.
+ */
+const CLAUDE_OVERSIZED_IMAGE = base64OverBytes(10 * 1024 * 1024);
+
 const mockCreate = jest.fn();
 
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
@@ -53,6 +61,20 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   batchProcessWithSSE: jest.fn(),
   isRateLimitError: jest.fn(() => false),
 }));
+
+// ── Mock getOpenAIFallbackClient so fallback-path tests never hit the network ─
+// When x-use-openai-fallback: true, ai.ts calls getOpenAIFallbackClient()
+// directly (not via tryPoeBotChain).  We replace it with a factory that
+// returns the same mockCreate-backed client used everywhere else.
+jest.mock("../src/lib/aiProvider", () => {
+  const actual = jest.requireActual<typeof import("../src/lib/aiProvider")>("../src/lib/aiProvider");
+  return {
+    ...actual,
+    getOpenAIFallbackClient: jest.fn(() => ({
+      chat: { completions: { create: mockCreate } },
+    })),
+  };
+});
 
 // ── Mock the Poe bot chain so tests never make real network calls ─────────────
 // tryPoeBotChain is replaced with a thin wrapper that invokes the caller's
@@ -342,4 +364,101 @@ describe("POST /api/ai/identify", () => {
     expect(res.body).toHaveProperty("error");
   });
 
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/ai/identify — per-model image size guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/ai/identify — per-model image size guard", () => {
+  // ── Poe path (default — no x-use-openai-fallback header) ────────────────────
+
+  it("returns 413 on the Poe path when a single image exceeds Claude's 10 MB per-image limit", async () => {
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .send({ images: [CLAUDE_OVERSIZED_IMAGE] })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/too large/i);
+    // Short-circuits before any AI call
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("413 per-image message names the offending image number and mentions MB and limit", async () => {
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .send({ images: [CLAUDE_OVERSIZED_IMAGE] })
+      .expect(413);
+
+    expect(res.body.error).toMatch(/image 1/i);
+    expect(res.body.error).toMatch(/MB/);
+    expect(res.body.error).toMatch(/limit/i);
+  });
+
+  it("413 per-image message includes an actionable hint about using a smaller image", async () => {
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .send({ images: [CLAUDE_OVERSIZED_IMAGE] })
+      .expect(413);
+
+    expect(res.body.error).toMatch(/smaller image/i);
+  });
+
+  it("returns 413 on the Poe path when the second image (not the first) exceeds 10 MB", async () => {
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .send({ images: [TINY_BASE64_JPEG, CLAUDE_OVERSIZED_IMAGE] })
+      .expect(413);
+
+    expect(res.body.error).toMatch(/image 2/i);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  // ── OpenAI fallback path (x-use-openai-fallback: true) ──────────────────────
+
+  it("accepts a 10–20 MB image on the OpenAI fallback path (per-image Claude check is skipped)", async () => {
+    // CLAUDE_OVERSIZED_IMAGE decodes to just over 10 MB.  On the Poe path it
+    // would be rejected with 413 by the per-image Claude check.  On the OpenAI
+    // fallback path that check is skipped, so the request should reach the AI
+    // and succeed.  getOpenAIFallbackClient is mocked at module level so no
+    // live network call is made.
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              searchTerms: ["relay"],
+              synonyms: [],
+              relatedTerms: [],
+              manufacturerVerified: false,
+              detectedVendor: null,
+              summary: "A relay.",
+            }),
+          },
+        },
+      ],
+    });
+
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .set("x-use-openai-fallback", "true")
+      .send({ images: [CLAUDE_OVERSIZED_IMAGE] })
+      .expect(200);
+
+    expect(res.body).toHaveProperty("searchTerms");
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 413 on the OpenAI fallback path when the image exceeds the 20 MB aggregate limit", async () => {
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .set("x-use-openai-fallback", "true")
+      .send({ images: [OVERSIZED_IMAGE] })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/too large/i);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
 });

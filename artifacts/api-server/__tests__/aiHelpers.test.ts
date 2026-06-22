@@ -1,6 +1,8 @@
 import {
   buildImageContent,
   checkImagePayloadSize,
+  checkPerImageSize,
+  estimateImageBytes,
   extractJsonFromText,
   MAX_IMAGE_PAYLOAD_BYTES,
   normalizeAnalysis,
@@ -20,6 +22,14 @@ function base64OfBytes(byteCount: number): string {
 /** Build a data: URI whose payload decodes to approximately `byteCount` bytes. */
 function dataUriOfBytes(byteCount: number): string {
   return `data:image/jpeg;base64,${base64OfBytes(byteCount)}`;
+}
+
+/**
+ * Build a bare base64 string whose decoded byte-size estimate strictly exceeds
+ * `byteCount`.  Using Math.ceil + 1 guarantees `ceil(chars * 3/4) > byteCount`.
+ */
+function base64OverBytes(byteCount: number): string {
+  return "A".repeat(Math.ceil((byteCount * 4) / 3) + 1);
 }
 
 // ── checkImagePayloadSize ─────────────────────────────────────────────────────
@@ -282,5 +292,118 @@ describe("normalizeAnalysis", () => {
       detectedVendor: null,
       summary: "",
     });
+  });
+});
+
+// ── estimateImageBytes ────────────────────────────────────────────────────────
+
+describe("estimateImageBytes", () => {
+  it("returns 0 for an empty string", () => {
+    expect(estimateImageBytes("")).toBe(0);
+  });
+
+  it("returns the decoded byte size for a bare base64 string (upper-bound formula)", () => {
+    // 4 base64 chars decode to exactly 3 bytes → ceil(4 * 3 / 4) = 3
+    expect(estimateImageBytes("AAAA")).toBe(3);
+  });
+
+  it("strips the data: prefix before computing size", () => {
+    // The data: URI prefix does not contribute to the decoded byte count
+    const bare = "AAAA";
+    const dataUri = `data:image/jpeg;base64,${bare}`;
+    expect(estimateImageBytes(dataUri)).toBe(estimateImageBytes(bare));
+  });
+
+  it("is consistent with base64OfBytes helper (decoded size ≤ target)", () => {
+    const TARGET = 1 * 1024 * 1024; // 1 MB
+    const str = base64OfBytes(TARGET);
+    expect(estimateImageBytes(str)).toBeLessThanOrEqual(TARGET);
+  });
+
+  it("is consistent with base64OverBytes helper (decoded size > target)", () => {
+    const TARGET = 1 * 1024 * 1024; // 1 MB
+    const str = base64OverBytes(TARGET);
+    expect(estimateImageBytes(str)).toBeGreaterThan(TARGET);
+  });
+
+  it("correctly estimates a realistic 5 MB image string", () => {
+    const FIVE_MB = 5 * 1024 * 1024;
+    const str = base64OfBytes(FIVE_MB);
+    const estimate = estimateImageBytes(str);
+    // Must be ≤ 5 MB and within 1 byte of 5 MB (upper-bound formula is tight)
+    expect(estimate).toBeLessThanOrEqual(FIVE_MB);
+    expect(estimate).toBeGreaterThan(FIVE_MB - 4);
+  });
+});
+
+// ── checkPerImageSize ─────────────────────────────────────────────────────────
+
+describe("checkPerImageSize", () => {
+  const LIMIT = 10 * 1024 * 1024; // 10 MB — matches Claude Sonnet's per-image cap
+
+  it("returns ok:true when the list is empty", () => {
+    expect(checkPerImageSize([], LIMIT)).toEqual({ ok: true });
+  });
+
+  it("returns ok:true when a single image is under the limit", () => {
+    expect(checkPerImageSize([base64OfBytes(1024)], LIMIT)).toEqual({ ok: true });
+  });
+
+  it("returns ok:true when a single image is exactly at the limit (boundary — inclusive)", () => {
+    expect(checkPerImageSize([base64OfBytes(LIMIT)], LIMIT)).toEqual({ ok: true });
+  });
+
+  it("returns ok:false when a single image is one byte over the limit (boundary — exclusive)", () => {
+    expect(checkPerImageSize([base64OverBytes(LIMIT)], LIMIT).ok).toBe(false);
+  });
+
+  it("returns ok:true when all images are individually within the limit (each under 10 MB)", () => {
+    const images = [
+      base64OfBytes(4 * 1024 * 1024),
+      base64OfBytes(4 * 1024 * 1024),
+    ];
+    expect(checkPerImageSize(images, LIMIT)).toEqual({ ok: true });
+  });
+
+  it("returns ok:false and imageIndex:0 when the first image exceeds the limit", () => {
+    const result = checkPerImageSize([base64OverBytes(LIMIT), base64OfBytes(1024)], LIMIT);
+    if (result.ok) throw new Error("expected ok:false");
+    expect(result.imageIndex).toBe(0);
+    expect(result.byteSize).toBeGreaterThan(LIMIT);
+  });
+
+  it("returns ok:false and imageIndex:1 when only the second image exceeds the limit", () => {
+    const result = checkPerImageSize([base64OfBytes(1024), base64OverBytes(LIMIT)], LIMIT);
+    if (result.ok) throw new Error("expected ok:false");
+    expect(result.imageIndex).toBe(1);
+    expect(result.byteSize).toBeGreaterThan(LIMIT);
+  });
+
+  it("reports the first oversized image even when multiple images exceed the limit", () => {
+    const result = checkPerImageSize(
+      [base64OverBytes(LIMIT), base64OverBytes(LIMIT)],
+      LIMIT,
+    );
+    if (result.ok) throw new Error("expected ok:false");
+    expect(result.imageIndex).toBe(0);
+  });
+
+  it("includes a human-readable message mentioning the image number (1-based), size, and limit", () => {
+    const result = checkPerImageSize([base64OfBytes(1024), base64OverBytes(LIMIT)], LIMIT);
+    if (result.ok) throw new Error("expected ok:false");
+    expect(result.message).toMatch(/image 2/i);
+    expect(result.message).toMatch(/MB/);
+    expect(result.message).toMatch(/limit/i);
+  });
+
+  it("includes an actionable hint about using a smaller image", () => {
+    const result = checkPerImageSize([base64OverBytes(LIMIT)], LIMIT);
+    if (result.ok) throw new Error("expected ok:false");
+    expect(result.message).toMatch(/smaller image/i);
+  });
+
+  it("works with data: URI strings as well as bare base64", () => {
+    expect(checkPerImageSize([`data:image/jpeg;base64,${base64OfBytes(1024)}`], LIMIT)).toEqual({ ok: true });
+    expect(checkPerImageSize([`data:image/jpeg;base64,${base64OverBytes(LIMIT)}`], LIMIT).ok).toBe(false);
   });
 });
