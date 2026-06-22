@@ -28,6 +28,7 @@ import {
   Animated,
   AppState,
   AppStateStatus,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -240,7 +241,7 @@ export function MeasurePartScreen({
       setWidthStr(fmtForUnit(seedDims?.width, currentUnit));
       setHeightStr(fmtForUnit(seedDims?.height, currentUnit));
       setDiameterStr(fmtForUnit(seedDims?.diameter, currentUnit));
-      if (!permission?.granted) requestPermission();
+      if (!permission?.granted && permission?.canAskAgain !== false) requestPermission();
     }
   }, [visible, initialDims, initialItem, permission, requestPermission]);
 
@@ -633,15 +634,32 @@ export function MeasurePartScreen({
               )}
 
               {!permission?.granted && Platform.OS !== "web" ? (
-                <Pressable onPress={requestPermission} style={ms.permBtn}>
-                  <Feather
-                    name="camera"
-                    size={14}
-                    color="#fff"
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text style={ms.permBtnText}>Enable Camera</Text>
-                </Pressable>
+                permission?.canAskAgain === false ? (
+                  <View style={{ alignItems: "center", gap: 8 }}>
+                    <Text style={[ms.permBtnText, { color: "rgba(255,255,255,0.7)", fontSize: 13, fontFamily: "Inter_400Regular" }]}>
+                      Camera access was permanently denied.
+                    </Text>
+                    <Pressable onPress={() => void Linking.openSettings()} style={ms.permBtn}>
+                      <Feather
+                        name="settings"
+                        size={14}
+                        color="#fff"
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={ms.permBtnText}>Open Settings</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable onPress={requestPermission} style={ms.permBtn}>
+                    <Feather
+                      name="camera"
+                      size={14}
+                      color="#fff"
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={ms.permBtnText}>Enable Camera</Text>
+                  </Pressable>
+                )
               ) : (
                 <Pressable
                   onPress={handleCapture}
