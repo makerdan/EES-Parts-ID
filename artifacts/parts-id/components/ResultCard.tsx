@@ -30,7 +30,7 @@ interface ResultCardProps {
    * Receives the full variants array and the new expanded state so the caller
    * can add / remove map location pins grouped by item.
    */
-  onVariantsToggle?: (variants: Array<InventoryItem>, expanded: boolean) => void;
+  onVariantsToggle?: (item: InventoryItem, variants: Array<InventoryItem>, expanded: boolean) => void;
   rank: number;
   fontScale?: number;
   /** When true, shows a "Size not measured" badge because no dimension data is stored for this item */
@@ -135,7 +135,7 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
     const next = !expanded;
     setExpanded(next);
     if (hasVariants && onVariantsToggle) {
-      onVariantsToggle(variants!, next);
+      onVariantsToggle(item, variants!, next);
     }
   };
 

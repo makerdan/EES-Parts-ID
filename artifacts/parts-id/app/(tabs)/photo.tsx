@@ -101,11 +101,12 @@ export default function PhotoScreen() {
   }, [setPendingMapFocus, setPinnedParts, showToast]);
 
   /**
-   * Curried: returns the onVariantsToggle handler for a specific ResultCard.
+   * Stable callback passed directly to ResultCard. Accepts (item, variantItems, isOpen)
+   * so a single reference is reused across renders instead of allocating one per card.
    * Scopes variant pin removal to this item via groupId (item.id) so multiple
    * expanded cards can coexist without interfering.
    */
-  const handleVariantsToggle = React.useCallback((item: InventoryItem) => (variantItems: Array<InventoryItem>, isOpen: boolean) => {
+  const handleVariantsToggle = React.useCallback((item: InventoryItem, variantItems: Array<InventoryItem>, isOpen: boolean) => {
     if (!isOpen) {
       setPinnedParts((prev) => prev.filter(p => !(p.variant && p.groupId === item.id)));
       return;
@@ -704,7 +705,7 @@ export default function PhotoScreen() {
                 result={{ item: barcodeResult, confidence: 1.0, matchReason: "barcode scan", seriesBase: null, seriesLabel: null, variants: [] }}
                 onEditItem={isAdmin ? (item) => setDetailsItem(item) : undefined}
                 onShowOnMap={handleShowOnMap}
-                onVariantsToggle={handleVariantsToggle(barcodeResult)}
+                onVariantsToggle={handleVariantsToggle}
                 rank={0}
                 fontScale={textFontScale}
               />
@@ -777,7 +778,7 @@ export default function PhotoScreen() {
                   result={result}
                   onEditItem={isAdmin ? (item) => setDetailsItem(item) : undefined}
                   onShowOnMap={handleShowOnMap}
-                  onVariantsToggle={handleVariantsToggle(result.item)}
+                  onVariantsToggle={handleVariantsToggle}
                   rank={index}
                   fontScale={textFontScale}
                   autoExpandPartCard={index === 0}
