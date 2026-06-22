@@ -728,7 +728,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
   hintText: { fontSize: 14, fontFamily: "Inter_400Regular" },
   errorText: { fontSize: 14, fontFamily: "Inter_500Medium", textAlign: "center" },
-  gridContent: { padding: 12 },
+  gridContent: { padding: 12, paddingBottom: 400 },
   gridRow: { gap: 10, marginBottom: 10 },
   categoryTile: {
     flex: 1,
