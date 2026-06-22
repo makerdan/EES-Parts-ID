@@ -205,6 +205,7 @@ interface Zone {
   svgWidth: number;
   svgHeight: number;
   sortOrder: number;
+  sectionCode?: string | null;
 }
 
 interface Tf { x: number; y: number; s: number }
@@ -216,7 +217,7 @@ type Mode = "pan" | "draw" | "fill";
 const UNDO_LIMIT = 50;
 type PositionSnap = { svgX: number; svgY: number };
 type GeomSnap    = { svgX: number; svgY: number; svgWidth: number; svgHeight: number };
-type MetaSnap    = Partial<Pick<Zone, "aisleId" | "sectionNum" | "isInventory" | "sortOrder">>;
+type MetaSnap    = Partial<Pick<Zone, "aisleId" | "sectionNum" | "isInventory" | "sortOrder" | "sectionCode">>;
 
 type UndoEntry =
   | { type: "move";       id: number; before: PositionSnap; after: PositionSnap }
@@ -264,6 +265,23 @@ function sectionNumToDisplay(n: number): string {
     val = Math.floor(val / 26);
   }
   return result;
+}
+
+/**
+ * Generates a random 4-letter uppercase section code (e.g. "JKQM") that is
+ * not already present in existingCodes. Retries on the rare collision.
+ * 26^4 = 456,976 possible codes — probability of collision is negligible until
+ * the zone count exceeds several thousand.
+ */
+export function generateUniqueSectionCode(existingCodes: Set<string>): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  for (;;) {
+    let code = "";
+    for (let i = 0; i < 4; i++) {
+      code += chars[Math.floor(Math.random() * 26)];
+    }
+    if (!existingCodes.has(code)) return code;
+  }
 }
 
 /**
@@ -630,6 +648,7 @@ export function ZoneEditor() {
     aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0,
   });
   const [saving, setSaving] = useState(false);
+  const [assigningCodes, setAssigningCodes] = useState(false);
 
   // Multi-select form fields
   const [multiAisleId, setMultiAisleId] = useState("");
@@ -1234,6 +1253,8 @@ export function ZoneEditor() {
     try {
       const targetAisleId = normalizeAisleId(form.aisleId);
       const nextSectionNum = nextSentinelForAisle(zones, targetAisleId);
+      const existingCodes = new Set(zones.flatMap((z) => (z.sectionCode ? [z.sectionCode] : [])));
+      const sectionCode = generateUniqueSectionCode(existingCodes);
       const res = await fetch(`${API_BASE}/warehouse-zones`, {
         method: "POST",
         headers: headers(),
@@ -1246,6 +1267,7 @@ export function ZoneEditor() {
           svgWidth: selectedZone.svgWidth,
           svgHeight: selectedZone.svgHeight,
           sortOrder: form.sortOrder,
+          sectionCode,
         }),
       });
       if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
@@ -1272,8 +1294,14 @@ export function ZoneEditor() {
     try {
       const aisleNextSentinel = new Map<string, number>();
       const sortedSelection = [...selectedZoneList].sort((a, b) => a.sectionNum - b.sectionNum);
+      const usedCodes = new Set(zones.flatMap((z) => (z.sectionCode ? [z.sectionCode] : [])));
+      const assignedCodes = sortedSelection.map(() => {
+        const code = generateUniqueSectionCode(usedCodes);
+        usedCodes.add(code);
+        return code;
+      });
       const results = await Promise.all(
-        sortedSelection.map((z) => {
+        sortedSelection.map((z, i) => {
           const aid = normalizeAisleId(z.aisleId);
           if (!aisleNextSentinel.has(aid)) {
             aisleNextSentinel.set(aid, nextSentinelForAisle(zones, aid));
@@ -1292,6 +1320,7 @@ export function ZoneEditor() {
               svgY: z.svgY + z.svgHeight + 4,
               svgWidth: z.svgWidth,
               svgHeight: z.svgHeight,
+              sectionCode: assignedCodes[i],
             }),
           }).then(async (res) => {
             if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
@@ -1312,6 +1341,39 @@ export function ZoneEditor() {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAssignCodes = async () => {
+    if (selectedIds.size === 0) return;
+    setAssigningCodes(true);
+    try {
+      const usedCodes = new Set(zones.flatMap((z) => (z.sectionCode ? [z.sectionCode] : [])));
+      const assignments = [...selectedIds].map((id) => {
+        const code = generateUniqueSectionCode(usedCodes);
+        usedCodes.add(code);
+        return { id, code };
+      });
+      const undoChanges = assignments.map(({ id, code }) => {
+        const zone = zones.find((z) => z.id === id);
+        return {
+          id,
+          before: { sectionCode: zone?.sectionCode ?? null } as MetaSnap,
+          after: { sectionCode: code } as MetaSnap,
+        };
+      });
+      await Promise.all(
+        assignments.map(({ id, code }) =>
+          patchZone(id, { sectionCode: code }),
+        ),
+      );
+      pushUndo({ type: "multiEdit", changes: undoChanges });
+      toast.success(`Assigned codes to ${assignments.length} zone${assignments.length !== 1 ? "s" : ""}`);
+      await fetchZones();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAssigningCodes(false);
     }
   };
 
@@ -2189,6 +2251,26 @@ export function ZoneEditor() {
           >
             ↪
           </button>
+          <div style={{ width: 1, background: "rgba(255,255,255,0.3)", margin: "0 2px" }} />
+          <button
+            title={selectedIds.size > 0 ? `Assign 4-letter codes to ${selectedIds.size} selected zone${selectedIds.size !== 1 ? "s" : ""}` : "Select zones first"}
+            disabled={selectedIds.size === 0 || assigningCodes}
+            onClick={() => { void handleAssignCodes(); }}
+            style={{
+              padding: "3px 9px",
+              borderRadius: 4,
+              background: selectedIds.size > 0 && !assigningCodes ? "rgba(245,158,11,0.18)" : "transparent",
+              color: selectedIds.size > 0 && !assigningCodes ? "#f59e0b" : "rgba(255,255,255,0.3)",
+              border: `1px solid ${selectedIds.size > 0 && !assigningCodes ? "#f59e0b" : "rgba(255,255,255,0.3)"}`,
+              cursor: selectedIds.size > 0 && !assigningCodes ? "pointer" : "default",
+              fontSize: 11,
+              fontWeight: 600,
+              lineHeight: 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {assigningCodes ? "Assigning…" : "Assign Codes"}
+          </button>
         </div>
         {mode === "fill" && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 8 }}>
@@ -2350,7 +2432,7 @@ export function ZoneEditor() {
                       paintOrder="stroke"
                       style={{ pointerEvents: "none", userSelect: "none" }}
                     >
-                      {sectionNumToDisplay(zone.sectionNum)}
+                      {zone.sectionCode ?? sectionNumToDisplay(zone.sectionNum)}
                     </text>
 
                     {/* Corner handles (single-selected zone only) */}
@@ -2605,7 +2687,7 @@ export function ZoneEditor() {
                     {selectedZone.svgHeight.toFixed(1)}
                   </div>
                 )}
-                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} />
+                <ZoneForm form={form} onChange={setForm} aisleIdError={aisleIdError} sectionCode={selectedZone?.sectionCode} />
                 {duplicateConflict && (pendingRect || selectedZone) && (
                   <div style={styles.dupWarning}>
                     ⚠ Section {sectionNumToDisplay(duplicateConflict.sectionNum)} already exists. Saving
@@ -2969,10 +3051,12 @@ export function ZoneForm({
   form,
   onChange,
   aisleIdError,
+  sectionCode,
 }: {
   form: FormState;
   onChange: (f: FormState) => void;
   aisleIdError?: string | null;
+  sectionCode?: string | null;
 }) {
   // Local raw string for the Section # field while the user is typing.
   // null = field is not focused (show the canonical formatted value).
@@ -3011,24 +3095,44 @@ export function ZoneForm({
           </div>
         )}
       </div>
-      <div>
-        <Label>Section #</Label>
-        <input
-          value={rawSection !== null ? rawSection : sectionNumToDisplay(form.sectionNum)}
-          onFocus={() => setRawSection(sectionNumToDisplay(form.sectionNum))}
-          onChange={(e) => {
-            const raw = e.target.value.toUpperCase();
-            setRawSection(raw);
-          }}
-          onBlur={() => {
-            const parsed = parseSectionInput(rawSection ?? "");
-            onChange({ ...form, sectionNum: parsed ?? 0 });
-            setRawSection(null);
-          }}
-          placeholder="e.g. 06 or A"
-          style={styles.input}
-        />
-      </div>
+      {sectionCode ? (
+        <div>
+          <Label>Section Code</Label>
+          <div style={{
+            fontFamily: "monospace",
+            fontSize: 15,
+            fontWeight: 700,
+            letterSpacing: "0.12em",
+            color: "#0070ff",
+            padding: "4px 8px",
+            background: "rgba(0,112,255,0.07)",
+            borderRadius: 4,
+            border: "1px solid rgba(0,112,255,0.2)",
+            userSelect: "text",
+          }}>
+            {sectionCode}
+          </div>
+        </div>
+      ) : (
+        <div>
+          <Label>Section #</Label>
+          <input
+            value={rawSection !== null ? rawSection : sectionNumToDisplay(form.sectionNum)}
+            onFocus={() => setRawSection(sectionNumToDisplay(form.sectionNum))}
+            onChange={(e) => {
+              const raw = e.target.value.toUpperCase();
+              setRawSection(raw);
+            }}
+            onBlur={() => {
+              const parsed = parseSectionInput(rawSection ?? "");
+              onChange({ ...form, sectionNum: parsed ?? 0 });
+              setRawSection(null);
+            }}
+            placeholder="e.g. 06 or A"
+            style={styles.input}
+          />
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <input
           type="checkbox"

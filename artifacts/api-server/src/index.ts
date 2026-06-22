@@ -130,7 +130,21 @@ async function migrateAdminPreferences(): Promise<void> {
   }
 }
 
-Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), checkZoneSectionNumIntegrity()])
+async function migrateWarehouseZoneSectionCode(): Promise<void> {
+  try {
+    await db.execute(sql`
+      ALTER TABLE warehouse_zone ADD COLUMN IF NOT EXISTS section_code TEXT
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS warehouse_zone_section_code_idx
+        ON warehouse_zone (section_code) WHERE section_code IS NOT NULL
+    `);
+  } catch (err) {
+    logger.error({ err }, "Failed to migrate warehouse_zone section_code column");
+  }
+}
+
+Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneSectionCode(), checkZoneSectionNumIntegrity()])
   .then(() => initProvider())
   .then(() => probePoeBotsOnStartup())
   .then(() => startServer(app, port, MAX_RETRIES))
