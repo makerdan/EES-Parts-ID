@@ -11,6 +11,7 @@ module.exports = {
     "^expo-file-system$": "<rootDir>/__mocks__/expo-file-system.js",
     "^expo-file-system/legacy$": "<rootDir>/__mocks__/expo-file-system-legacy.js",
     "^@/contexts/AppContext$": "<rootDir>/__mocks__/contexts/AppContext.js",
+    "^react-native-gesture-handler$": "<rootDir>/__mocks__/react-native-gesture-handler.js",
     "^@react-native-community/netinfo$": "<rootDir>/__mocks__/netinfo.js",
     "^lidar-measure$": "<rootDir>/__mocks__/lidar-measure.js",
     "^@/(.*)$": "<rootDir>/$1",
