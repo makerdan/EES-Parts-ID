@@ -11,9 +11,10 @@
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -221,9 +222,10 @@ export default function CatalogReviewScreen() {
     }
   };
 
-  const authHeaders: Record<string, string> = adminToken
-    ? { Authorization: `Bearer ${adminToken}` }
-    : {};
+  const authHeaders = useMemo<Record<string, string>>(
+    () => (adminToken ? { Authorization: `Bearer ${adminToken}` } : {} as Record<string, string>),
+    [adminToken],
+  );
 
   const fetchItems = useCallback(async (isRefresh = false) => {
     if (!adminToken) return;
@@ -386,9 +388,12 @@ export default function CatalogReviewScreen() {
       if (r.status === 401) { logoutAdmin(); return; }
       if (r.ok) {
         setFailedJobs((prev) => prev.filter((j) => j.id !== jobId));
+      } else {
+        Alert.alert("Dismiss failed", "Could not dismiss this job. Please try again.");
       }
     } catch (err) {
       console.error('[catalog-review] dismiss job', err);
+      Alert.alert("Dismiss failed", "Could not dismiss this job. Check your connection and try again.");
     } finally { setDismissingId(null); }
   };
 
@@ -470,10 +475,14 @@ export default function CatalogReviewScreen() {
         headers: authHeaders,
       });
       if (r.status === 401) { logoutAdmin(); return; }
-      if (!r.ok) return;
+      if (!r.ok) {
+        Alert.alert("Revert failed", "Could not revert this item. Please try again.");
+        return;
+      }
       setRevertedIds((prev) => new Set([...prev, item.id]));
     } catch (err) {
       console.error('[catalog-review] revert item', err);
+      Alert.alert("Revert failed", "Could not revert this item. Check your connection and try again.");
     } finally { setRevertingId(null); }
   };
 

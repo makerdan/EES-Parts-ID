@@ -223,6 +223,5 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     marginTop: 2,
     borderTopWidth: 1,
-    color: "#555",
   },
 });

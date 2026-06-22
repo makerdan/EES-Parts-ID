@@ -7,7 +7,7 @@ import { File as FsFile, Paths as FsPaths } from "expo-file-system";
 import { useRouter } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { isLiDARSupported } from "lidar-measure";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -622,13 +622,30 @@ export default function UploadScreen() {
   const inventoryQuery = useListInventory({ page: inventoryPage, limit: 50 });
 
   // Build admin auth headers for protected API calls
-  const adminHeaders: Record<string, string> = adminToken
-    ? { "Authorization": `Bearer ${adminToken}` }
-    : {};
+  const adminHeaders = useMemo<Record<string, string>>(
+    () => (adminToken ? { Authorization: `Bearer ${adminToken}` } : {} as Record<string, string>),
+    [adminToken],
+  );
 
   // Keep a ref so interval callbacks always see the current token
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+
+  // SSE reader refs — cancelled on unmount to prevent setState on unmounted component
+  const enrichReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const expandDescReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  // Abort flags — set true by the unmount cleanup so catch/finally blocks know
+  // not to call setState after the component has been torn down.
+  const enrichAbortedRef = useRef(false);
+  const expandDescAbortedRef = useRef(false);
+  useEffect(() => {
+    return () => {
+      enrichAbortedRef.current = true;
+      enrichReaderRef.current?.cancel().catch(() => {});
+      expandDescAbortedRef.current = true;
+      expandDescReaderRef.current?.cancel().catch(() => {});
+    };
+  }, []);
   const pasteDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-fetch bin-diff preview whenever the raw CSV changes so admins
@@ -962,6 +979,7 @@ export default function UploadScreen() {
   };
 
   const handleStartExpandDescriptions = async () => {
+    expandDescAbortedRef.current = false;
     AsyncStorage.removeItem(EXPAND_DESC_DRAFT_KEY).catch(() => {});
     setExpandDescDraftSavedAt(null);
     setExpandDescRunning(true);
@@ -997,65 +1015,70 @@ export default function UploadScreen() {
         return;
       }
 
-      if (reader) {
-        let sseBuffer = "";
+      expandDescReaderRef.current = reader;
+      let sseBuffer = "";
 
-        const processLine = (line: string) => {
-          if (!line.startsWith("data: ")) return;
-          try {
-            const data = JSON.parse(line.slice(6)) as {
-              done?: boolean;
-              processed?: number;
-              total?: number;
-              remaining?: number;
-              id?: number;
-              partNumber?: string;
-              originalDescription?: string;
-              expandedDescription?: string | null;
-              error?: string;
-              progress?: number;
-              model?: string;
-            };
-            if (data.model != null && data.id == null && !data.done) {
-              setExpandDescModel(data.model);
-              if (data.total != null) {
-                setExpandDescProgress({ done: 0, total: data.total });
-              }
-            } else if (data.done) {
-              setExpandDescStreamDone(true);
-              setExpandDescRemaining(data.remaining ?? null);
-              setExpandDescProgress({ done: data.processed ?? 0, total: data.total ?? 0 });
-            } else if (data.id != null) {
-              setExpandDescResults(prev => [...prev, {
-                id: data.id!,
-                partNumber: data.partNumber ?? "",
-                originalDescription: data.originalDescription ?? "",
-                expandedDescription: data.expandedDescription ?? null,
-                editedText: data.expandedDescription ?? "",
-                savedStatus: data.error ? "discarded" : "pending",
-                error: data.error,
-              }]);
-              if (data.progress != null && data.total != null) {
-                setExpandDescProgress({ done: data.progress, total: data.total });
-              }
+      const processLine = (line: string) => {
+        if (!line.startsWith("data: ")) return;
+        try {
+          const data = JSON.parse(line.slice(6)) as {
+            done?: boolean;
+            processed?: number;
+            total?: number;
+            remaining?: number;
+            id?: number;
+            partNumber?: string;
+            originalDescription?: string;
+            expandedDescription?: string | null;
+            error?: string;
+            progress?: number;
+            model?: string;
+          };
+          if (data.model != null && data.id == null && !data.done) {
+            setExpandDescModel(data.model);
+            if (data.total != null) {
+              setExpandDescProgress({ done: 0, total: data.total });
             }
-          } catch { /* ignore parse errors */ }
-        };
+          } else if (data.done) {
+            setExpandDescStreamDone(true);
+            setExpandDescRemaining(data.remaining ?? null);
+            setExpandDescProgress({ done: data.processed ?? 0, total: data.total ?? 0 });
+          } else if (data.id != null) {
+            setExpandDescResults(prev => [...prev, {
+              id: data.id!,
+              partNumber: data.partNumber ?? "",
+              originalDescription: data.originalDescription ?? "",
+              expandedDescription: data.expandedDescription ?? null,
+              editedText: data.expandedDescription ?? "",
+              savedStatus: data.error ? "discarded" : "pending",
+              error: data.error,
+            }]);
+            if (data.progress != null && data.total != null) {
+              setExpandDescProgress({ done: data.progress, total: data.total });
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      };
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          sseBuffer += decoder.decode(value, { stream: true });
-          const lines = sseBuffer.split("\n");
-          sseBuffer = lines.pop() ?? "";
-          for (const line of lines) processLine(line.trim());
-        }
-        if (sseBuffer.trim()) processLine(sseBuffer.trim());
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split("\n");
+        sseBuffer = lines.pop() ?? "";
+        for (const line of lines) processLine(line.trim());
       }
+      if (sseBuffer.trim()) processLine(sseBuffer.trim());
+      expandDescReaderRef.current = null;
     } catch {
-      setExpandDescError("Failed to expand descriptions. Check your connection and try again.");
+      if (!expandDescAbortedRef.current) {
+        setExpandDescError("Failed to expand descriptions. Check your connection and try again.");
+      }
+      expandDescReaderRef.current = null;
     } finally {
-      setExpandDescRunning(false);
+      if (!expandDescAbortedRef.current) {
+        setExpandDescRunning(false);
+      }
     }
   };
 
@@ -1318,6 +1341,7 @@ export default function UploadScreen() {
   };
 
   const handleEnrich = async (idsToEnrich?: Array<number>) => {
+    enrichAbortedRef.current = false;
     setEnrichProgress({ progress: 0, total: 0 });
     try {
       const body = idsToEnrich?.length ? { ids: idsToEnrich } : {};
@@ -1351,35 +1375,38 @@ export default function UploadScreen() {
         return;
       }
 
-      if (reader) {
-        // Buffer partial lines across chunk boundaries so we never try to parse
-        // an incomplete "data: ..." SSE line.
-        let sseBuffer = "";
-        const processLine = async (line: string) => {
-          if (!line.startsWith("data: ")) return;
-          try {
-            const data: EnrichProgress = JSON.parse(line.slice(6));
-            setEnrichProgress(data);
-            if (data.done) await inventoryQuery.refetch();
-          } catch (err) {
-            console.error('[upload] processLine SSE', err);
-          }
-        };
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          sseBuffer += decoder.decode(value, { stream: true });
-          const lines = sseBuffer.split("\n");
-          // Keep the last (possibly incomplete) line in the buffer
-          sseBuffer = lines.pop() ?? "";
-          for (const line of lines) await processLine(line);
+      enrichReaderRef.current = reader;
+      // Buffer partial lines across chunk boundaries so we never try to parse
+      // an incomplete "data: ..." SSE line.
+      let sseBuffer = "";
+      const processLine = async (line: string) => {
+        if (!line.startsWith("data: ")) return;
+        try {
+          const data: EnrichProgress = JSON.parse(line.slice(6));
+          setEnrichProgress(data);
+          if (data.done) await inventoryQuery.refetch();
+        } catch (err) {
+          console.error('[upload] processLine SSE', err);
         }
-        // Process any remaining buffered content when the stream closes
-        if (sseBuffer.trim()) await processLine(sseBuffer);
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split("\n");
+        // Keep the last (possibly incomplete) line in the buffer
+        sseBuffer = lines.pop() ?? "";
+        for (const line of lines) await processLine(line);
       }
+      // Process any remaining buffered content when the stream closes
+      if (sseBuffer.trim()) await processLine(sseBuffer);
+      enrichReaderRef.current = null;
     } catch {
-      setUploadError("AI enrichment failed — please check your connection and try again.");
-      setEnrichProgress(null);
+      if (!enrichAbortedRef.current) {
+        setUploadError("AI enrichment failed — please check your connection and try again.");
+        setEnrichProgress(null);
+      }
+      enrichReaderRef.current = null;
     }
   };
 
@@ -1414,21 +1441,21 @@ export default function UploadScreen() {
       }
 
       const csvContent = serializeInventoryToCsv(allItems);
-      const fileName = `inventory-export-${new Date().toISOString().slice(0, 10)}.csv`;
+      const exportFileName = `inventory-export-${new Date().toISOString().slice(0, 10)}.csv`;
 
       if (Platform.OS === "web") {
         const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = fileName;
+        a.download = exportFileName;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       } else {
-        const file = new FsFile(FsPaths.cache, fileName);
-        file.write(csvContent);
+        const file = new FsFile(FsPaths.cache, exportFileName);
+        await file.write(csvContent);
         const canShare = await Sharing.isAvailableAsync();
         if (canShare) {
           await Sharing.shareAsync(file.uri, {

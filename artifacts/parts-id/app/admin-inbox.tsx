@@ -227,14 +227,16 @@ export default function AdminInboxScreen() {
               colors={[colors.primary]}
             />
           }
-          renderItem={({ item }) => (
-            <MessageItem
-              row={item}
-              colors={colors}
-              adminToken={adminToken ?? ""}
-              onMarkRead={handleMarkRead}
-            />
-          )}
+          renderItem={({ item }) =>
+            adminToken ? (
+              <MessageItem
+                row={item}
+                colors={colors}
+                adminToken={adminToken}
+                onMarkRead={handleMarkRead}
+              />
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.centered}>
               <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
