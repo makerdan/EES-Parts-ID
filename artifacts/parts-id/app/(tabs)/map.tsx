@@ -388,10 +388,6 @@ export default function MapScreen() {
                     zoneEditorLongPressed.current = false;
                     return;
                   }
-                  if (!isAdmin) {
-                    showToast("Please log in as admin to access the Zone Editor.", "info");
-                    return;
-                  }
                   if (Platform.OS === "web") {
                     Linking.openURL(ZONE_EDITOR_URL);
                   } else {
