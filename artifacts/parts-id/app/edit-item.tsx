@@ -400,11 +400,13 @@ export default function EditItemScreen() {
     } catch (err) {
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: unknown }).message) : "Save failed";
-      setErrorMsg(
-        msg.includes("401")
-          ? "Admin session expired. Re-unlock and try again."
-          : "Could not save changes. Check connection and try again.",
-      );
+      if (msg.includes("401")) {
+        setErrorMsg("Admin session expired. Re-unlock and try again.");
+      } else if (msg && msg !== "Save failed" && !msg.startsWith("HTTP 5")) {
+        setErrorMsg(msg);
+      } else {
+        setErrorMsg("Could not save changes. Check connection and try again.");
+      }
       setSaveStatus("error");
     }
   };

@@ -2090,6 +2090,15 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
       return void res.status(400).json({ error: "imageBase64 is required" });
     }
 
+    const PHOTO_SIZE_LIMIT = 10 * 1024 * 1024; // 10 MB decoded
+    const estimatedBytes = estimateImageBytes(imageBase64);
+    if (estimatedBytes > PHOTO_SIZE_LIMIT) {
+      const mb = (estimatedBytes / (1024 * 1024)).toFixed(1);
+      return void res.status(413).json({
+        error: `Image too large (${mb} MB) — please reduce the photo size and try again (limit is 10 MB).`,
+      });
+    }
+
     const rawBuffer = Buffer.from(imageBase64, "base64");
     const { fullBuffer, thumbnailBuffer } = await resizeImages(rawBuffer);
 
@@ -2117,8 +2126,9 @@ router.patch("/:id/photo", requireAdminAuth, async (req, res) => {
       thumbnailUrl2: updated.thumbnailUrl2 ?? null,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to upload photo" });
+    const id = req.params["id"] ?? "unknown";
+    console.error(`[photo upload] item ${id}:`, err);
+    res.status(500).json({ error: "Failed to upload photo — please try again later." });
   }
 });
 
