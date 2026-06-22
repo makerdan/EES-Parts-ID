@@ -35,6 +35,7 @@ import { RetryImage } from "@/components/RetryImage";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import type { ResumeProgress } from "@/types/catalogPdf";
+import { buildResumeHeaders } from "@/utils/aiFallbackHeaders";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
 import { performUpdateDescription } from "@/utils/updateDescription";
 import { useTrackScreen } from "@/utils/useTrackScreen";
@@ -432,15 +433,10 @@ export default function CatalogReviewScreen() {
       });
 
       const job = failedJobs.find((j) => j.id === jobId);
-      const useFallback = job?.errorMessage === "poe_chain_exhausted";
 
       const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
         method: "POST",
-        headers: {
-          ...authHeaders,
-          "Content-Type": "application/json",
-          ...(useFallback ? { "x-use-openai-fallback": "true" } : {}),
-        },
+        headers: buildResumeHeaders(authHeaders, job?.errorMessage),
         body: JSON.stringify({ pdfBase64 }),
       });
 
