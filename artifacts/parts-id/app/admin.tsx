@@ -196,7 +196,7 @@ export default function AdminDashboardScreen() {
         URL.revokeObjectURL(url);
       } else {
         const file = new FsFile(FsPaths.cache, filename);
-        file.write(csv);
+        await file.write(csv);
         const canShare = await Sharing.isAvailableAsync();
         if (canShare) {
           await Sharing.shareAsync(file.uri, {
