@@ -21,6 +21,8 @@ import React, {
 } from "react";
 import { Toaster, toast } from "sonner";
 import { computeWheelZoom } from "../utils/wheelZoom";
+import { normRect as normRectUtil } from "../utils/rubberBandSelect";
+import { useRubberBand } from "../hooks/useRubberBand";
 import { isValidAisleId, findDuplicateConflict, normalizeAisleId, type ZoneLike } from "@workspace/zone-validation";
 import warehouseMapFallback from "../../public/warehouse-map.svg?raw";
 
@@ -502,19 +504,7 @@ function screenToSvg(
   };
 }
 
-function normRect(
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-): { svgX: number; svgY: number; svgWidth: number; svgHeight: number } {
-  return {
-    svgX: Math.min(x1, x2),
-    svgY: Math.min(y1, y2),
-    svgWidth: Math.abs(x2 - x1),
-    svgHeight: Math.abs(y2 - y1),
-  };
-}
+// normRect is imported from rubberBandSelect.ts as normRectUtil.
 
 const ANCHOR: Record<Handle, (z: Zone) => Pt> = {
   nw: (z) => ({ x: z.svgX + z.svgWidth, y: z.svgY + z.svgHeight }),
@@ -628,10 +618,6 @@ export function ZoneEditor() {
   } | null>(null);
   // pendingRect: drawn but not yet saved (shows in sidebar form)
   const [pendingRect, setPendingRect] = useState<{
-    x: number; y: number; w: number; h: number;
-  } | null>(null);
-  // rubberRect: live selection rectangle (Shift+drag in pan mode)
-  const [rubberRect, setRubberRect] = useState<{
     x: number; y: number; w: number; h: number;
   } | null>(null);
   // dragZone: live zone position during move/resize (single-select)
@@ -1572,6 +1558,16 @@ export function ZoneEditor() {
     return screenToSvg(clientX, clientY, rect, tfRef.current);
   }, []);
 
+  // ── Rubber-band selection (Shift+drag) ─────────────────────────────────────
+  const { rubberRect, onSvgMouseDown: onRubberMouseDown } = useRubberBand({
+    zonesRef,
+    tfRef,
+    getSvgPt,
+    selectedIds,
+    setSelectedIds,
+    setPendingRect,
+  });
+
   // ── Fill-mode click handler ─────────────────────────────────────────────────
   // Stable callback (reads from refs) — safe to call from any event handler.
   const handleFillClickRef = useRef<(clientX: number, clientY: number) => Promise<void>>(
@@ -1667,15 +1663,8 @@ export function ZoneEditor() {
 
       if (state.t === "draw") {
         ixRef.current = { ...state, x2: p.x, y2: p.y };
-        const r = normRect(state.x1, state.y1, p.x, p.y);
+        const r = normRectUtil(state.x1, state.y1, p.x, p.y);
         setDraftRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
-        return;
-      }
-
-      if (state.t === "rubber") {
-        ixRef.current = { ...state, x2: p.x, y2: p.y };
-        const r = normRect(state.x1, state.y1, p.x, p.y);
-        setRubberRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
         return;
       }
 
@@ -1707,7 +1696,7 @@ export function ZoneEditor() {
           const newX = Math.min(p.x, right - minSvg);
           updated = { ...base, svgX: newX, svgWidth: right - newX };
         } else {
-          const r = normRect(state.ax, state.ay, p.x, p.y);
+          const r = normRectUtil(state.ax, state.ay, p.x, p.y);
           updated = { ...base, ...r };
         }
         dragZoneRef.current = updated;
@@ -1736,7 +1725,7 @@ export function ZoneEditor() {
       }
 
       if (state.t === "draw") {
-        const r = normRect(state.x1, state.y1, state.x2, state.y2);
+        const r = normRectUtil(state.x1, state.y1, state.x2, state.y2);
         const minSvg = MIN_ZONE_PX / tfRef.current.s;
         setDraftRect(null);
         if (r.svgWidth < minSvg || r.svgHeight < minSvg) {
@@ -1756,42 +1745,6 @@ export function ZoneEditor() {
         const dy = e.clientY - state.sy;
         if (Math.hypot(dx, dy) < 5) {
           void handleFillClickRef.current(state.sx, state.sy);
-        }
-        return;
-      }
-
-      if (state.t === "rubber") {
-        setRubberRect(null);
-        const r = normRect(state.x1, state.y1, state.x2, state.y2);
-        const minSvg = MIN_ZONE_PX / tfRef.current.s;
-        if (r.svgWidth >= minSvg && r.svgHeight >= minSvg) {
-          const hits = zonesRef.current.filter(
-            (z) =>
-              z.svgX < r.svgX + r.svgWidth &&
-              z.svgX + z.svgWidth > r.svgX &&
-              z.svgY < r.svgY + r.svgHeight &&
-              z.svgY + z.svgHeight > r.svgY,
-          );
-          if (hits.length > 0) {
-            if (state.shift) {
-              // Shift+rubber-band toggles zones in/out of selection, matching
-              // Shift+click behavior. A pending (not-yet-saved) zone is also
-              // preserved so the user doesn't lose their drawn rect.
-              setSelectedIds((prev) => {
-                const next = new Set(prev);
-                for (const z of hits) {
-                  if (next.has(z.id)) next.delete(z.id);
-                  else next.add(z.id);
-                }
-                return next;
-              });
-              // Don't discard a pending zone when Shift+rubber-banding — the
-              // user is adding to a selection, not starting fresh.
-            } else {
-              setSelectedIds(new Set(hits.map((z) => z.id)));
-              setPendingRect(null);
-            }
-          }
         }
         return;
       }
@@ -1879,17 +1832,15 @@ export function ZoneEditor() {
     if (e.button !== 0) return;
     if (modeRef.current === "pan") {
       if (e.shiftKey) {
-        // Shift+drag → rubber-band selection
-        const p = getSvgPt(e.clientX, e.clientY);
-        ixRef.current = { t: "rubber", x1: p.x, y1: p.y, x2: p.x, y2: p.y, shift: true };
-        setRubberRect(null);
-      } else {
-        ixRef.current = {
-          t: "pan",
-          sx: e.clientX, sy: e.clientY,
-          tx: tfRef.current.x, ty: tfRef.current.y,
-        };
+        // Shift+drag → delegate entirely to the useRubberBand hook.
+        onRubberMouseDown(e);
+        return;
       }
+      ixRef.current = {
+        t: "pan",
+        sx: e.clientX, sy: e.clientY,
+        tx: tfRef.current.x, ty: tfRef.current.y,
+      };
     } else if (modeRef.current === "fill") {
       setDraftRect(null);
       // Record screen position; the actual fill fires on mouseup if movement < 5px.
