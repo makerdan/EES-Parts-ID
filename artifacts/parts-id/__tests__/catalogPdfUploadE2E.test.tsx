@@ -756,3 +756,111 @@ describe("CatalogPdfUpload — pre-flight validation guards", () => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Group 4 — 401 mid-chunk: session expiry during upload
+//
+// Verifies that when the server returns HTTP 401 during a chunk upload:
+//   1. The onSessionExpired callback is invoked.
+//   2. Loading is cleared (no rn-activity spinner leak in the tree).
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("CatalogPdfUpload — 401 mid-chunk: onSessionExpired is called and loading is cleared", () => {
+  // CHUNK_SIZE_THRESHOLD is 20 MB — bytes must exceed it to trigger the
+  // chunked upload path (handleChunkedUpload → uploadChunksFromIndex →
+  // sendChunkViaBackground), which is where the 401 fix lives.
+  const OVER_THRESHOLD = 20 * 1024 * 1024 + 1;
+
+  /** Minimal chunk shape expected by uploadChunksFromIndex. */
+  function makeChunks(n = 2) {
+    return Array.from({ length: n }, (_, i) => ({
+      bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      pageOffset: i * 20,
+    }));
+  }
+
+  /** Returns an uploadAsync mock that resolves with the given status. */
+  function installUploadTaskWithStatus(status: number, body = ""): jest.Mock {
+    const uploadAsync = jest.fn().mockResolvedValue({ status, body });
+    mockCreateUploadTask.mockReturnValue({ uploadAsync, cancelAsync: jest.fn() });
+    return uploadAsync;
+  }
+
+  async function pickChunkedFileSetVendorAndStart(
+    tree: renderer.ReactTestRenderer,
+    vendor = "ACME",
+  ): Promise<void> {
+    // Return bytes that exceed CHUNK_SIZE_THRESHOLD so handleChunkedUpload fires.
+    const largePdfBytes = new Uint8Array(OVER_THRESHOLD);
+    largePdfBytes.set(PDF_MAGIC, 0);
+
+    const file = makeFile(largePdfBytes);
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: "blob:http://localhost/catalog.pdf", name: "catalog.pdf", file }],
+    });
+    mockReadPdfAsBytes.mockResolvedValueOnce(largePdfBytes);
+
+    // splitPdfIntoChunks must return ≥2 chunks so the multi-chunk path is taken
+    // (a single-chunk result delegates to handleSingleUpload).
+    mockSplitPdfIntoChunks.mockResolvedValueOnce(makeChunks(2));
+
+    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    await act(async () => { pickBtn!.props.onPress(); });
+    await flushPromises();
+
+    expect(capturedOnChangeText).not.toBeNull();
+    await act(async () => { capturedOnChangeText!(vendor); });
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    expect(startBtn).not.toBeNull();
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+  }
+
+  it("calls onSessionExpired when the server returns 401 during a chunked upload", async () => {
+    installUploadTaskWithStatus(401);
+    const onSessionExpired = jest.fn();
+
+    const tree = await renderUploadCard("admin-tok", onSessionExpired);
+    activeTree = tree;
+
+    await pickChunkedFileSetVendorAndStart(tree);
+
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears loading (no rn-activity spinner) after a 401 response in a chunked upload", async () => {
+    installUploadTaskWithStatus(401);
+    const onSessionExpired = jest.fn();
+
+    const tree = await renderUploadCard("admin-tok", onSessionExpired);
+    activeTree = tree;
+
+    await pickChunkedFileSetVendorAndStart(tree);
+
+    // ActivityIndicator is mocked as "rn-activity" in __mocks__/react-native.js.
+    // After the 401 is handled, setLoading(false) must have been called so no
+    // spinner remains in the tree.
+    const spinners = tree.root.findAll(
+      (n) => (n.type as string) === "rn-activity",
+      { deep: true },
+    );
+    expect(spinners).toHaveLength(0);
+  });
+
+  it("does not call onSessionExpired when the server returns 200 on a chunked upload", async () => {
+    // First chunk succeeds; second chunk also returns 200 — no session expiry.
+    mockCreateUploadTask
+      .mockReturnValueOnce({ uploadAsync: jest.fn().mockResolvedValue({ status: 200, body: JSON.stringify({ jobId: "job-1" }) }), cancelAsync: jest.fn() })
+      .mockReturnValueOnce({ uploadAsync: jest.fn().mockResolvedValue({ status: 200, body: JSON.stringify({ jobId: "job-1", chunkJobId: "cjob-2" }) }), cancelAsync: jest.fn() });
+    const onSessionExpired = jest.fn();
+
+    const tree = await renderUploadCard("admin-tok", onSessionExpired);
+    activeTree = tree;
+
+    await pickChunkedFileSetVendorAndStart(tree);
+
+    expect(onSessionExpired).not.toHaveBeenCalled();
+  });
+});
+

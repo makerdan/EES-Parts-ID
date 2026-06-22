@@ -386,7 +386,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         onAbort();
         return;
       }
-      if (result.status === 401) { onSessionExpired(); return; }
+      if (result.status === 401) { onSessionExpired(); onFailure("__session_expired__"); return; }
       if (result.status < 200 || result.status >= 300) {
         let errMsg = "Failed to start job";
         try { errMsg = (JSON.parse(result.body) as { error?: string }).error ?? errMsg; } catch { /* ignore */ }
@@ -464,6 +464,16 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         if (msg === "__abort__") {
           aborted = true;
           // Manual cancel — full reset.
+          setLoading(false);
+          setChunkLabel(null);
+          setChunksCompleted(0);
+          setChunksTotal(0);
+          setUploadBytePct(null);
+          setFailedChunkInfo(null);
+          return;
+        }
+        if (msg === "__session_expired__") {
+          // Auth expired — full reset (onSessionExpired was already called above).
           setLoading(false);
           setChunkLabel(null);
           setChunksCompleted(0);
@@ -666,7 +676,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       (errMsg) => {
         setLoading(false);
         setUploadBytePct(null);
-        setError(errMsg);
+        // __session_expired__ is a sentinel — auth redirect was already handled
+        // by the onSessionExpired prop inside sendChunkViaBackground; no UI error.
+        if (errMsg !== "__session_expired__") setError(errMsg);
       },
       () => {
         setLoading(false);
