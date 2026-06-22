@@ -449,13 +449,17 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
       ? colors.success + "11"
       : result.savedStatus === "discarded"
         ? colors.muted
-        : colors.background;
+        : result.savedStatus === "error"
+          ? colors.destructive + "0d"
+          : colors.background;
   const cardBorder =
     result.savedStatus === "saved"
       ? colors.success + "44"
       : result.savedStatus === "discarded"
         ? colors.border
-        : colors.primary + "33";
+        : result.savedStatus === "error"
+          ? colors.destructive + "55"
+          : colors.primary + "33";
   return (
     <View style={{ borderRadius: 12, padding: 16, borderWidth: 1, gap: 12, marginBottom: 0, marginTop: 10, backgroundColor: cardBg, borderColor: cardBorder }}>
       <Text style={{ fontSize: 11, fontFamily: "Inter_600SemiBold", color: colors.mutedForeground }}>
@@ -493,30 +497,39 @@ const ExpandDescResultCard = React.memo(function ExpandDescResultCard({
         />
       )}
       {!isFinalised ? (
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          <Pressable
-            onPress={() => onSave(result.id, localText)}
-            disabled={result.savedStatus === "saving" || !localText.trim()}
-            style={{
-              flex: 1,
-              borderRadius: 8,
-              paddingVertical: 8,
-              alignItems: "center",
-              backgroundColor: (result.savedStatus === "saving" || !localText.trim()) ? colors.muted : colors.primary,
-            }}
-          >
-            {result.savedStatus === "saving" ? (
-              <ActivityIndicator size="small" color={colors.primaryForeground} />
-            ) : (
-              <Text style={{ color: colors.primaryForeground, fontSize: 13, fontFamily: "Inter_700Bold" }}>Save</Text>
-            )}
-          </Pressable>
-          <Pressable
-            onPress={() => onDiscard(result.id)}
-            style={{ flex: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center", backgroundColor: colors.muted }}
-          >
-            <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_700Bold" }}>Discard</Text>
-          </Pressable>
+        <View style={{ gap: 6 }}>
+          {result.savedStatus === "error" ? (
+            <Text style={{ fontSize: 12, fontFamily: "Inter_500Medium", color: colors.destructive }}>
+              ⚠ Save failed — tap to retry
+            </Text>
+          ) : null}
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable
+              onPress={() => onSave(result.id, localText)}
+              disabled={result.savedStatus === "saving" || !localText.trim()}
+              style={{
+                flex: 1,
+                borderRadius: 8,
+                paddingVertical: 8,
+                alignItems: "center",
+                backgroundColor: (result.savedStatus === "saving" || !localText.trim()) ? colors.muted : colors.primary,
+              }}
+            >
+              {result.savedStatus === "saving" ? (
+                <ActivityIndicator size="small" color={colors.primaryForeground} />
+              ) : (
+                <Text style={{ color: colors.primaryForeground, fontSize: 13, fontFamily: "Inter_700Bold" }}>
+                  {result.savedStatus === "error" ? "Retry" : "Save"}
+                </Text>
+              )}
+            </Pressable>
+            <Pressable
+              onPress={() => onDiscard(result.id)}
+              style={{ flex: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center", backgroundColor: colors.muted }}
+            >
+              <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_700Bold" }}>Discard</Text>
+            </Pressable>
+          </View>
         </View>
       ) : (
         <Text style={{ fontSize: 12, fontFamily: "Inter_600SemiBold", color: result.savedStatus === "saved" ? colors.success : colors.mutedForeground }}>
@@ -817,7 +830,10 @@ export default function UploadScreen() {
         logoutAdmin();
         return;
       }
-      if (!res.ok) return;
+      if (!res.ok) {
+        setQueryError(`Export failed: HTTP ${res.status}`);
+        return;
+      }
 
       const blob = await res.blob();
       const filename = `query-results.${format}`;
@@ -834,7 +850,7 @@ export default function UploadScreen() {
       } else {
         const arrayBuffer = await blob.arrayBuffer();
         const file = new FsFile(FsPaths.cache, filename);
-        file.write(new Uint8Array(arrayBuffer));
+        await file.write(new Uint8Array(arrayBuffer));
         const canShare = await Sharing.isAvailableAsync();
         if (canShare) {
           await Sharing.shareAsync(file.uri, {
@@ -847,6 +863,7 @@ export default function UploadScreen() {
       }
     } catch (err) {
       console.error('[upload] handleQueryExport', err);
+      setQueryError('Export failed — check your connection and try again.');
     } finally {
       setQueryExportPending(null);
     }
@@ -1063,7 +1080,7 @@ export default function UploadScreen() {
               setExpandDescProgress({ done: data.progress, total: data.total });
             }
           }
-        } catch { /* ignore parse errors */ }
+        } catch (err) { console.warn('[expandDesc] SSE parse error', line, err); }
       };
 
       while (true) {
@@ -1119,7 +1136,7 @@ export default function UploadScreen() {
       );
     } catch {
       setExpandDescResults(prev =>
-        prev.map(r => r.id === id ? { ...r, savedStatus: "pending" } : r),
+        prev.map(r => r.id === id ? { ...r, savedStatus: "error" } : r),
       );
     }
   }, [adminHeaders]);

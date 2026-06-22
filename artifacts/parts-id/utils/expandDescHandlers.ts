@@ -10,7 +10,7 @@ export type ExpandDescResult = {
   originalDescription: string;
   expandedDescription: string | null;
   editedText: string;
-  savedStatus: "pending" | "saving" | "saved" | "discarded";
+  savedStatus: "pending" | "saving" | "saved" | "discarded" | "error";
   error?: string;
 };
 
