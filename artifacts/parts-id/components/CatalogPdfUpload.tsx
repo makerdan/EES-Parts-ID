@@ -32,6 +32,7 @@ import {
 
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
+import { applyFallbackHeader, shouldUseFallback } from "@/utils/aiFallbackHeaders";
 import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
 import { PAGES_PER_CHUNK,splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 
@@ -301,9 +302,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     xhr.open("POST", `${API_BASE}/admin/catalog-pdf`);
     xhr.setRequestHeader("Content-Type", "application/json");
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-    if (withFallbackRef.current) {
-      xhr.setRequestHeader("x-use-openai-fallback", "true");
-    }
+    applyFallbackHeader(xhr, withFallbackRef.current);
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
@@ -572,7 +571,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
     // If this chunk was killed by a Poe outage, upgrade all subsequent retries
     // to use the OpenAI fallback (the same flag sendSingleChunk already reads).
-    if (jobStatus?.errorMessage === "poe_chain_exhausted") {
+    if (shouldUseFallback(jobStatus?.errorMessage)) {
       withFallbackRef.current = true;
     }
 
