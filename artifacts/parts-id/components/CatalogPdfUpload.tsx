@@ -167,6 +167,17 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 
+  useEffect(() => {
+    return () => {
+      xhrRef.current?.abort();
+      xhrRef.current = null;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Release stored chunk bytes and pdf bytes when the job reaches a terminal
   // success/cancel state (failure keeps them so retry remains available).
   useEffect(() => {
@@ -333,7 +344,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     };
 
     xhr.onabort = () => { xhrRef.current = null; onAbort(); };
-    xhr.onerror = () => { xhrRef.current = null; onNetwork(); };
     xhr.onload = () => {
       xhrRef.current = null;
       if (xhr.status === 401) { onSessionExpired(); return; }
@@ -351,20 +361,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       setUploadPct(null);
       setUploadSpeed(null);
       setUploadEta(null);
-      if (attempt < MAX_AUTO_RETRIES) {
-        const delaySec = Math.pow(2, attempt);
-        setError(null);
-        setRetryCountdown(delaySec);
-        retryTimerRef.current = setTimeout(() => {
-          retryTimerRef.current = null;
-          handleStart(attempt + 1);
-        }, delaySec * 1000);
-      } else {
-        setLoading(false);
-        setRetryCountdown(null);
-        setError("Network error — check your connection and try again.");
-        setShowRetryBtn(true);
-      }
+      onNetwork();
     };
 
     xhr.send(body);
@@ -671,7 +668,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           const delaySec = Math.pow(2, attempt);
           setError(null);
           setRetryCountdown(delaySec);
-          setTimeout(() => handleStart(attempt + 1), delaySec * 1000);
+          retryTimerRef.current = setTimeout(() => {
+            retryTimerRef.current = null;
+            handleStart(attempt + 1);
+          }, delaySec * 1000);
         } else {
           setLoading(false);
           setRetryCountdown(null);

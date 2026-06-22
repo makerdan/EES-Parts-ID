@@ -127,7 +127,7 @@ export async function extractCatalogPage(
         );
 
     const raw = response.choices[0]?.message?.content ?? "[]";
-    const match = raw.match(/\[[\s\S]*\]/);
+    const match = raw.match(/\[[\s\S]*?\]/);
     if (!match) return [];
 
     const parsed = JSON.parse(match[0]) as unknown[];

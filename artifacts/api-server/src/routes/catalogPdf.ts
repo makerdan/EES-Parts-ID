@@ -33,22 +33,6 @@ import { PoeBotChainExhaustedError } from "../lib/poeBot";
 
 const router = Router();
 
-// ── PDF validation helper ──────────────────────────────────────────────────────
-function validatePdfBase64(pdfBase64: string): { status: 400; message: string } | null {
-  const PREFIX_B64_LEN = 5500;
-  const prefix = Buffer.from(pdfBase64.slice(0, PREFIX_B64_LEN), "base64");
-
-  if (prefix.length < 5 || prefix.slice(0, 5).toString("ascii") !== "%PDF-") {
-    return { status: 400, message: "Invalid file: not a PDF (missing %PDF- header)" };
-  }
-
-  if (prefix.includes("/Encrypt")) {
-    return { status: 400, message: "Invalid file: PDF is password-protected. Remove the password and try again." };
-  }
-
-  return null;
-}
-
 // ── Image helper ──────────────────────────────────────────────────────────────
 type PageCtx = {
   isRendered: boolean;
@@ -165,8 +149,9 @@ async function processPdfPages(
   parentJobId: number | null,
   pageOffset: number,
   useOpenAiFallback = false,
+  processedPagesBase?: number,
 ): Promise<void> {
-  let processedPages = startPage;
+  let processedPages = processedPagesBase ?? startPage;
   let partsFound = 0;
   let matchedParts = 0;
   let imagesMatched = 0;
@@ -174,7 +159,7 @@ async function processPdfPages(
   const unmatchedPartsList: Array<{ catalogNumber: string; description: string }> = [];
 
   // Load existing counters for resume path
-  if (startPage > 0) {
+  if ((processedPagesBase ?? startPage) > 0) {
     const [existing] = await db
       .select({
         partsFound: catalogPdfJobTable.partsFound,
@@ -586,6 +571,13 @@ router.post("/catalog-pdf/:jobId/cancel", requireAdminAuth, async (req, res) => 
     .set({ status: "cancelled", finishedAt: new Date() })
     .where(eq(catalogPdfJobTable.id, jobId));
 
+  await db.execute(sql`
+    UPDATE catalog_pdf_job
+    SET status = 'cancelled', finished_at = NOW()
+    WHERE parent_job_id = ${jobId}
+      AND status IN ('pending', 'processing')
+  `);
+
   console.log(`[catalog-pdf] job=${jobId} cancel requested`);
   res.json({ ok: true, jobId: String(jobId) });
 });
@@ -751,7 +743,19 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
     return;
   }
 
-  if (jobRow.status !== "failed" && jobRow.status !== "processing") {
+  // ── Parse chunkPageOffset early so the status guard can allow chunked continuation ──
+  // When the client resumes a large file by splitting it into chunks, each chunk is
+  // posted sequentially. After chunk N−1 completes the job reaches 'done'; the status
+  // guard must allow 'done' so chunk N can continue from where the last chunk left off.
+  const { pdfBase64, chunkPageOffset: rawChunkPageOffset } = req.body as { pdfBase64?: string; chunkPageOffset?: number };
+  const isChunkedContinuation =
+    typeof rawChunkPageOffset === "number" && rawChunkPageOffset > 0;
+
+  if (
+    jobRow.status !== "failed" &&
+    jobRow.status !== "processing" &&
+    !(jobRow.status === "done" && isChunkedContinuation)
+  ) {
     res.status(409).json({
       error: `Cannot resume a job with status "${jobRow.status}". Only failed or processing jobs can be resumed.`,
     });
@@ -773,7 +777,6 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   // ── Validate the PDF payload after confirming the job is resumable ───────────
   // Content validation (magic bytes, /Encrypt) happens asynchronously inside
   // extractPdfPages; the synchronous handler only checks presence and size.
-  const { pdfBase64 } = req.body as { pdfBase64?: string };
   if (!pdfBase64 || typeof pdfBase64 !== "string") {
     res.status(400).json({ error: "Missing pdfBase64 field" });
     return;
@@ -783,9 +786,11 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
     return;
   }
 
+  const chunkPageOffset = typeof rawChunkPageOffset === "number" && rawChunkPageOffset >= 0 ? rawChunkPageOffset : 0;
   const resumeFromPage = jobRow.processedPages ?? 0;
+  const startPageWithinChunk = Math.max(0, resumeFromPage - chunkPageOffset);
   const normalizedVendor = jobRow.vendor;
-  const pageOffset = jobRow.pageOffset ?? 0;
+  const pageOffset = chunkPageOffset > 0 ? chunkPageOffset : (jobRow.pageOffset ?? 0);
   const parentJobId = jobRow.parentJobId ?? null;
 
   await db
@@ -811,11 +816,12 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
       await processPdfPages(
         jobId,
         pages,
-        resumeFromPage,
+        startPageWithinChunk,
         normalizedVendor,
         parentJobId,
         pageOffset,
         useOpenAiFallbackResume,
+        resumeFromPage,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -862,6 +868,11 @@ router.post("/catalog-pdf/:jobId/dismiss", requireAdminAuth, async (req, res) =>
 router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
   try {
     const jobIdFilter = req.query["jobId"] ? Number(req.query["jobId"]) : null;
+
+    if (jobIdFilter !== null && isNaN(jobIdFilter)) {
+      res.status(400).json({ error: "Invalid jobId" });
+      return;
+    }
 
     const rows = await db
       .select({
@@ -949,6 +960,7 @@ router.post("/catalog-pdf/reviews/:id/revert", requireAdminAuth, async (req, res
       description: row.previousDescription ?? "",
       previousDescription: null,
       imageUrl: null,
+      imageUrl2: null,
       imageSource: null,
       imageConfidence: null,
       catalogPdfJobId: null,

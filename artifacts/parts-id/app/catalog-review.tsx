@@ -8,6 +8,9 @@
  * Route: /catalog-review?jobId=<n>  (jobId optional — omit to show all)
  */
 
+import "buffer";
+
+import { Buffer } from "buffer";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -37,6 +40,7 @@ import { useColors } from "@/hooks/useColors";
 import type { ResumeProgress } from "@/types/catalogPdf";
 import { buildResumeHeaders } from "@/utils/aiFallbackHeaders";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
+import { PAGES_PER_CHUNK,splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 import { performUpdateDescription } from "@/utils/updateDescription";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
@@ -398,6 +402,8 @@ export default function CatalogReviewScreen() {
     } finally { setDismissingId(null); }
   };
 
+  const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024;
+
   const handleResume = async (jobId: number) => {
     if (resumingId) return;
 
@@ -415,16 +421,6 @@ export default function CatalogReviewScreen() {
     const asset = result.assets[0];
     const uri = asset.uri;
 
-    // Validate file size (max ~25 MB)
-    const MAX_PDF_BYTES = 25 * 1024 * 1024;
-    try {
-      const info = await FileSystem.getInfoAsync(uri);
-      if (info.exists && "size" in info && info.size > MAX_PDF_BYTES) {
-        showInfo("File too large", "Please select a PDF under 25 MB.");
-        return;
-      }
-    } catch { /* proceed even if size check fails */ }
-
     setResumingId(jobId);
 
     try {
@@ -433,18 +429,78 @@ export default function CatalogReviewScreen() {
       });
 
       const job = failedJobs.find((j) => j.id === jobId);
+      const resumeHeaders = buildResumeHeaders(authHeaders, job?.errorMessage);
 
-      const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
-        method: "POST",
-        headers: buildResumeHeaders(authHeaders, job?.errorMessage),
-        body: JSON.stringify({ pdfBase64 }),
-      });
+      // Estimate file size from base64 length (~75% of base64 chars = byte count)
+      const estimatedBytes = Math.floor(pdfBase64.length * 0.75);
 
-      if (r.status === 401) { logoutAdmin(); return; }
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({})) as { error?: string };
-        showInfo("Resume failed", body.error ?? "Could not resume the job.");
-        return;
+      if (estimatedBytes <= CHUNK_SIZE_THRESHOLD) {
+        // ── Small file: single-request path (unchanged) ─────────────────────
+        const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
+          method: "POST",
+          headers: resumeHeaders,
+          body: JSON.stringify({ pdfBase64 }),
+        });
+
+        if (r.status === 401) { logoutAdmin(); return; }
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({})) as { error?: string };
+          showInfo("Resume failed", body.error ?? "Could not resume the job.");
+          setResumingId(null);
+          return;
+        }
+      } else {
+        // ── Large file: split into chunks and post sequentially ──────────────
+        const bytes = new Uint8Array(Buffer.from(pdfBase64, "base64"));
+        let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
+        try {
+          chunks = await splitPdfIntoChunks(bytes, PAGES_PER_CHUNK);
+        } catch (splitErr) {
+          showInfo("Error", "Could not split the PDF: " + ((splitErr as Error)?.message ?? "Unknown error"));
+          setResumingId(null);
+          return;
+        }
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i]!;
+          const chunkBase64 = Buffer.from(chunk.bytes).toString("base64");
+
+          const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
+            method: "POST",
+            headers: resumeHeaders,
+            body: JSON.stringify({ pdfBase64: chunkBase64, chunkPageOffset: chunk.pageOffset }),
+          });
+
+          if (r.status === 401) { logoutAdmin(); return; }
+          if (!r.ok) {
+            const body = await r.json().catch(() => ({})) as { error?: string };
+            showInfo("Resume failed", body.error ?? "Could not resume the job.");
+            setResumingId(null);
+            return;
+          }
+
+          // Wait for this chunk to finish processing before sending the next
+          if (i < chunks.length - 1) {
+            const targetPages = chunk.pageOffset + chunk.pageCount;
+            let done = false;
+            for (let poll = 0; poll < 240 && !done; poll++) {
+              await new Promise<void>((resolve) => setTimeout(resolve, 2500));
+              try {
+                const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, { headers: authHeaders });
+                if (statusRes.ok) {
+                  const body = await statusRes.json() as { status: string; processedPages: number };
+                  if (body.status === "failed" || body.status === "cancelled") {
+                    showInfo("Resume failed", "The job failed while processing a chunk.");
+                    setResumingId(null);
+                    fetchItems();
+                    return;
+                  }
+                  done = body.processedPages >= targetPages || body.status === "done";
+                }
+              } catch { /* network blip, keep polling */ }
+            }
+          }
+        }
       }
 
       // Mark job as in-progress (keep it visible with a progress card)
