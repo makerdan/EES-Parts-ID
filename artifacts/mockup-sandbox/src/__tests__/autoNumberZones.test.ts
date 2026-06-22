@@ -28,7 +28,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildAutoNumPreview, buildAutoNumSentinelMap } from "../pages/ZoneEditor";
+import { buildAutoNumPreview, buildAutoNumSentinelMap, buildAutoNumCollisions } from "../pages/ZoneEditor";
 
 // ── Minimal zone fixture factory ───────────────────────────────────────────────
 
@@ -311,5 +311,127 @@ describe("buildAutoNumSentinelMap", () => {
     const map = buildAutoNumSentinelMap(preview, allZones);
     expect(map[0]!.sentinel).toBe(-6);
     expect(map[1]!.sentinel).toBe(-7);
+  });
+});
+
+// ── buildAutoNumCollisions ─────────────────────────────────────────────────────
+
+describe("buildAutoNumCollisions", () => {
+
+  // 1. No collision when all target sectionNums are free
+  it("returns an empty array when no non-selected zone holds any target sectionNum", () => {
+    const zones = [zone(1, "5", 1), zone(2, "5", 2), zone(3, "5", 3)];
+    const preview = [
+      { zone: zones[0]!, newSectionNum: 10 },
+      { zone: zones[1]!, newSectionNum: 20 },
+    ];
+    const result = buildAutoNumCollisions(preview, zones, new Set([1, 2]));
+    expect(result).toHaveLength(0);
+  });
+
+  // 2. Detects a collision with a non-selected zone in the same aisle
+  it("returns the colliding (aisleId, sectionNum) when a non-selected zone already holds the target sectionNum", () => {
+    const zones = [
+      zone(1, "5", 1), // selected — being re-numbered to §3
+      zone(2, "5", 3), // NOT selected — already holds §3
+    ];
+    const preview = [{ zone: zones[0]!, newSectionNum: 3 }];
+    const result = buildAutoNumCollisions(preview, zones, new Set([1]));
+    expect(result).toHaveLength(1);
+    expect(result[0]!.sectionNum).toBe(3);
+    expect(result[0]!.conflictingZoneId).toBe(2);
+  });
+
+  // 3. Does NOT flag a collision when the conflicting zone is itself selected
+  it("ignores selected zones — they will be moved in Phase 1 and cannot collide in Phase 2", () => {
+    // Classic cyclic swap: A(1)→2, B(2)→1 — both selected, no collision
+    const zones = [zone(1, "5", 1), zone(2, "5", 2)];
+    const preview = [
+      { zone: zones[0]!, newSectionNum: 2 },
+      { zone: zones[1]!, newSectionNum: 1 },
+    ];
+    const result = buildAutoNumCollisions(preview, zones, new Set([1, 2]));
+    expect(result).toHaveLength(0);
+  });
+
+  // 4. Detects multiple collisions across different target sectionNums
+  it("returns all collisions, one per conflicting (aisleId, sectionNum) pair", () => {
+    const zones = [
+      zone(1, "5", 1),  // selected → §10
+      zone(2, "5", 2),  // selected → §20
+      zone(3, "5", 10), // NOT selected — holds §10
+      zone(4, "5", 20), // NOT selected — holds §20
+    ];
+    const preview = [
+      { zone: zones[0]!, newSectionNum: 10 },
+      { zone: zones[1]!, newSectionNum: 20 },
+    ];
+    const result = buildAutoNumCollisions(preview, zones, new Set([1, 2]));
+    expect(result).toHaveLength(2);
+    const sectionNums = result.map((c) => c.sectionNum).sort((a, b) => a - b);
+    expect(sectionNums).toEqual([10, 20]);
+  });
+
+  // 5. Cross-aisle: non-selected zone in a different aisle does not collide
+  it("does not collide when the non-selected zone is in a different aisle", () => {
+    const zones = [
+      zone(1, "5", 1), // selected, aisle 5 → §3
+      zone(2, "6", 3), // NOT selected, but in aisle 6 — different aisle, no collision
+    ];
+    const preview = [{ zone: zones[0]!, newSectionNum: 3 }];
+    const result = buildAutoNumCollisions(preview, zones, new Set([1]));
+    expect(result).toHaveLength(0);
+  });
+
+  // 6. conflictingZoneId is the id of the blocking non-selected zone
+  it("conflictingZoneId matches the id of the non-selected zone that holds the target sectionNum", () => {
+    const zones = [
+      zone(10, "5", 1), // selected → §99
+      zone(77, "5", 99), // NOT selected — holds §99
+    ];
+    const preview = [{ zone: zones[0]!, newSectionNum: 99 }];
+    const result = buildAutoNumCollisions(preview, zones, new Set([10]));
+    expect(result[0]!.conflictingZoneId).toBe(77);
+  });
+});
+
+// ── Multi-aisle detection (used by the cross-aisle warning banner) ─────────────
+
+describe("multi-aisle detection via buildAutoNumPreview", () => {
+
+  // The Auto-Number panel computes the distinct aisle count from autoNumPreview
+  // using: new Set(autoNumPreview.map(p => normalizeAisleId(p.zone.aisleId))).size
+  // These tests verify that buildAutoNumPreview correctly preserves the aisleId of
+  // each zone so that the banner calculation is accurate.
+
+  // 1. Single aisle — all preview entries share the same aisleId
+  it("all preview entries have the same aisleId when all selected zones are in one aisle", () => {
+    const zones = [zone(1, "5", 1), zone(2, "5", 2), zone(3, "5", 3)];
+    const result = buildAutoNumPreview(zones, new Set([1, 2, 3]), 1, 1, 1);
+    const aisleIds = new Set(result.map((r) => r.zone.aisleId));
+    expect(aisleIds.size).toBe(1);
+  });
+
+  // 2. Multi-aisle — preview entries have distinct aisleIds
+  it("preview entries reflect multiple aisleIds when selected zones span more than one aisle", () => {
+    const zones = [
+      zone(1, "5", 1),
+      zone(2, "6", 1),
+      zone(3, "7", 1),
+    ];
+    const result = buildAutoNumPreview(zones, new Set([1, 2, 3]), 1, 1, 1);
+    const aisleIds = new Set(result.map((r) => r.zone.aisleId));
+    expect(aisleIds.size).toBe(3);
+  });
+
+  // 3. Unselected zones do not contribute aisleIds to the preview
+  it("aisleIds in the preview only reflect selected zones, not unselected ones", () => {
+    const zones = [
+      zone(1, "5", 1), // selected
+      zone(2, "6", 2), // NOT selected
+    ];
+    const result = buildAutoNumPreview(zones, new Set([1]), 1, 1, 1);
+    const aisleIds = result.map((r) => r.zone.aisleId);
+    expect(aisleIds).toEqual(["5"]);
   });
 });
