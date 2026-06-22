@@ -228,6 +228,51 @@ export function getAllPoeModelNames(): string[] {
 export type PoeFeature = "enrich" | "identify" | "dimensions" | "catalog";
 
 /**
+ * Vision-capable features whose chains must never include POE_ENRICH_BOT.
+ * GPT-5-Mini does not support inline image content and returns an HTTP 500 for
+ * any base64 image payload — including small ones.
+ */
+const VISION_FEATURES: PoeFeature[] = ["identify", "dimensions", "catalog"];
+
+/**
+ * Assert that POE_ENRICH_BOT (GPT-5-Mini) does not appear in any vision chain.
+ *
+ * GPT-5-Mini does not support inline image content. If it were placed in a
+ * vision chain it would silently fail every real call with an HTTP 500 from the
+ * provider. This guard turns that silent failure into a loud error at startup so
+ * the bug is caught before any user request reaches the affected route.
+ *
+ * Throws an Error listing every violation found.
+ * No-op when there are no violations.
+ *
+ * @param chainGetter - Optional override for the chain resolver; defaults to
+ *   `getPoeChainForFeature`. Provide a custom function in unit tests to simulate
+ *   a misconfigured chain without monkey-patching module internals.
+ */
+export function assertVisionChainInvariants(
+  chainGetter: (feature: PoeFeature) => string[] = getPoeChainForFeature,
+): void {
+  const violations: string[] = [];
+
+  for (const feature of VISION_FEATURES) {
+    const chain = chainGetter(feature);
+    if (chain.includes(POE_ENRICH_BOT)) {
+      violations.push(
+        `"${feature}" chain contains POE_ENRICH_BOT (${POE_ENRICH_BOT}) at position ${chain.indexOf(POE_ENRICH_BOT)}`,
+      );
+    }
+  }
+
+  if (violations.length > 0) {
+    throw new Error(
+      `Vision chain invariant violated — GPT-5-Mini must not appear in vision chains:\n` +
+        violations.map((v) => `  • ${v}`).join("\n") +
+        `\nFix: remove POE_ENRICH_BOT from the offending chain(s) in getPoeChainForFeature().`,
+    );
+  }
+}
+
+/**
  * Returns the ordered list of Poe bot names to attempt for the given feature.
  * The primary bot is first; vision-capable alternates follow.
  * Uses the effective catalog bot name (may have been switched at startup by
@@ -327,6 +372,9 @@ export async function probePoeBotsOnStartup(): Promise<void> {
   if (_provider !== "poe") {
     return;
   }
+
+  // Fail loudly before making any network calls if a chain invariant is broken.
+  assertVisionChainInvariants();
 
   const botNames = getAllPoeModelNames();
   _botProbeResults.clear();
