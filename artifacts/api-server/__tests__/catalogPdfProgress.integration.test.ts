@@ -52,7 +52,7 @@ import app from "../src/app";
 import { signAdminToken } from "../src/routes/admin";
 import { closePool } from "./helpers/testDb";
 import { db, catalogPdfJobTable, inventoryTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, desc } from "drizzle-orm";
 import { extractPdfPages } from "../src/utils/pdfProcessor";
 import { extractCatalogPage } from "../src/utils/catalogExtractor";
 import { matchCatalogNumber } from "../src/utils/catalogMatcher";
@@ -214,11 +214,17 @@ describe("PDF job progress — DB updated per page", () => {
       callCount++;
       if (callCount === 2) {
         // Page 1 has already finished and its DB update has been awaited.
-        const jobId = seededJobIds[seededJobIds.length - 1];
-        if (jobId !== undefined) {
-          const row = await readJobProgress(jobId);
-          stateAtStartOfPage2.processedPages = row.processedPages;
-          stateAtStartOfPage2.matchedParts = row.matchedParts;
+        // Query DB directly for the current processing job (seededJobIds is not
+        // yet populated during synchronous route processing).
+        const [latest] = await db
+          .select({ id: catalogPdfJobTable.id, processedPages: catalogPdfJobTable.processedPages, matchedParts: catalogPdfJobTable.matchedParts })
+          .from(catalogPdfJobTable)
+          .where(eq(catalogPdfJobTable.vendor, VENDOR))
+          .orderBy(desc(catalogPdfJobTable.id))
+          .limit(1);
+        if (latest) {
+          stateAtStartOfPage2.processedPages = latest.processedPages ?? -1;
+          stateAtStartOfPage2.matchedParts = latest.matchedParts ?? -1;
         }
       }
       return [];
@@ -266,11 +272,16 @@ describe("PDF job progress — DB updated per page", () => {
       callCount++;
       if (callCount === 2) {
         // Page 1 has already finished and its per-page DB update has been awaited.
-        const jobId = seededJobIds[seededJobIds.length - 1];
-        if (jobId !== undefined) {
-          const row = await readJobProgress(jobId);
-          stateAtStartOfPage2.processedPages = row.processedPages;
-          stateAtStartOfPage2.matchedParts = row.matchedParts;
+        // Query DB directly (seededJobIds not yet populated during synchronous processing).
+        const [latest] = await db
+          .select({ processedPages: catalogPdfJobTable.processedPages, matchedParts: catalogPdfJobTable.matchedParts })
+          .from(catalogPdfJobTable)
+          .where(eq(catalogPdfJobTable.vendor, VENDOR))
+          .orderBy(desc(catalogPdfJobTable.id))
+          .limit(1);
+        if (latest) {
+          stateAtStartOfPage2.processedPages = latest.processedPages ?? -1;
+          stateAtStartOfPage2.matchedParts = latest.matchedParts ?? -1;
         }
         return [];
       }
@@ -308,10 +319,15 @@ describe("PDF job progress — DB updated per page", () => {
     mockExtractCatalogPage.mockImplementation(async () => {
       callCount++;
       if (callCount >= 2) {
-        const jobId = seededJobIds[seededJobIds.length - 1];
-        if (jobId !== undefined) {
-          const row = await readJobProgress(jobId);
-          capturedCounts.push(row.processedPages);
+        // Query DB directly (seededJobIds not yet populated during synchronous processing).
+        const [latest] = await db
+          .select({ processedPages: catalogPdfJobTable.processedPages })
+          .from(catalogPdfJobTable)
+          .where(eq(catalogPdfJobTable.vendor, VENDOR))
+          .orderBy(desc(catalogPdfJobTable.id))
+          .limit(1);
+        if (latest?.processedPages !== undefined) {
+          capturedCounts.push(latest.processedPages);
         }
       }
       return [];
