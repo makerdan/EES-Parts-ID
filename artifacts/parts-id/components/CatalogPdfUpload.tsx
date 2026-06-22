@@ -12,19 +12,26 @@
  * server creates a parent job for the first chunk and returns that parent ID
  * for all subsequent polling. Small PDFs follow the existing single-upload
  * path unchanged.
+ *
+ * Background behaviour: uploads use expo-file-system's FileSystem.createUploadTask
+ * with FileSystemSessionType.BACKGROUND (NSURLSession background configuration on
+ * iOS, OkHttp on Android). Chunks continue transferring even when the app is
+ * backgrounded — no AppState guard or manual resume is needed. Each chunk's JSON
+ * body is written to a temp file in cacheDirectory, uploaded via BINARY_CONTENT,
+ * then deleted after the task resolves.
  */
 
 import "buffer";
 
 import { Buffer } from "buffer";
 import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
 import { useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  AppState,
   Pressable,
   StyleSheet,
   Text,
@@ -33,7 +40,7 @@ import {
 
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
-import { applyFallbackHeader, shouldUseFallback } from "@/utils/aiFallbackHeaders";
+import { shouldUseFallback } from "@/utils/aiFallbackHeaders";
 import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
 import { getOrSplitChunks, PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 
@@ -49,12 +56,10 @@ const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
 /** How many times an admin can retry a single server-side chunk before the button is disabled. */
 const MAX_SERVER_CHUNK_RETRIES = 3;
 
-/** Silent automatic retries on transient XHR network errors before surfacing to the user. */
+/** Silent automatic retries on transient network errors before surfacing to the user. */
 const MAX_SILENT_RETRIES = 2;
 /** Back-off delay between silent retries (ms). */
 const SILENT_RETRY_DELAY_MS = 2000;
-/** Per-chunk XHR timeout (ms). A stalled cellular connection produces the same recoverable retry as a network error. */
-const XHR_CHUNK_TIMEOUT_MS = 90_000;
 
 type JobStatus = {
   jobId: string;
@@ -103,14 +108,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
 }
 
-/**
- * Estimate the base64-encoded byte length for a Uint8Array without encoding it.
- * Standard base64 with padding is exactly ceil(byteLength / 3) * 4 characters.
- * Used to calculate ETA byte offsets without pre-materialising base64 strings.
- */
-function estimateBase64Size(bytes: Uint8Array): number {
-  return Math.ceil(bytes.length / 3) * 4;
-}
 
 export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   "use no memo";
@@ -123,26 +120,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [readingFile, setReadingFile] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [chunkLabel, setChunkLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRetryBtn, setShowRetryBtn] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
 
-  const [uploadSpeed, setUploadSpeed] = useState<number | null>(null);
-  const [uploadEta, setUploadEta] = useState<number | null>(null);
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
   const [chunksCompleted, setChunksCompleted] = useState(0);
   const [chunksTotal, setChunksTotal] = useState(0);
-  const [overallUploadPct, setOverallUploadPct] = useState<number | null>(null);
   const [failedChunkInfo, setFailedChunkInfo] = useState<FailedChunkInfo | null>(null);
-
-  // True when the OS moved the app to the background mid-upload and the in-flight
-  // XHR was aborted cleanly. Shows a "paused" card instead of an error.
-  const [isPaused, setIsPaused] = useState(false);
-  // Set to true by the AppState listener so the XHR abort handler knows to enter
-  // the "paused" path rather than the "aborted by user" path.
-  const appStatePausedRef = useRef(false);
 
   useEffect(() => {
     if (retryCountdown === null || retryCountdown <= 0) return;
@@ -154,7 +140,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  // Holds the active background upload task so Cancel can call cancelAsync().
+  const uploadTaskRef = useRef<FileSystem.UploadTask | null>(null);
   // Stores the split chunks so server-side failures can be retried without re-picking the file.
   const chunksRef = useRef<Awaited<ReturnType<typeof splitPdfIntoChunks>> | null>(null);
   const [hasStoredChunks, setHasStoredChunks] = useState(false);
@@ -172,39 +159,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (!loading) return;
     activateKeepAwake("catalog-upload");
     return () => { deactivateKeepAwake("catalog-upload"); };
-  }, [loading]);
-
-  // Restore paused-upload state if the component remounts mid-upload (e.g. the
-  // user navigated away while paused and then returned). The module-level cache
-  // outlives individual component instances within the same app session.
-  useEffect(() => {
-    if (_pausedUploadCache) {
-      const { failedChunkInfo, chunks, pdfBytes: cachedPdfBytes, vendor: cachedVendor, filename: cachedFilename } = _pausedUploadCache;
-      chunksRef.current = chunks;
-      setHasStoredChunks(chunks !== null);
-      setFailedChunkInfo(failedChunkInfo);
-      setIsPaused(true);
-      // Restore upload context so the Resume flow can proceed without requiring
-      // the admin to re-pick the file. pdfBytes is needed if the upload needs
-      // to restart from chunk 0; vendor is required for the parent-job creation.
-      if (cachedPdfBytes) setPdfBytes(cachedPdfBytes);
-      setVendor(cachedVendor);
-      if (cachedFilename) setFilename(cachedFilename);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Detect when the app goes to the background mid-upload. Abort the in-flight
-  // XHR cleanly and switch to a "paused" state so the user can resume on return.
-  useEffect(() => {
-    if (!loading) return;
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "background" || nextState === "inactive") {
-        appStatePausedRef.current = true;
-        xhrRef.current?.abort();
-      }
-    });
-    return () => subscription.remove();
   }, [loading]);
 
   useEffect(() => {
@@ -227,13 +181,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     return unsubscribe;
   }, [loading, navigation]);
 
-  const speedSamplesRef = useRef<Array<{ t: number; loaded: number }>>([]);
-  const SPEED_WINDOW_MS = 4000;
-  const SPEED_WINDOW_MAX = 20;
-
   // Tracks how many times each chunk (by index) has been retried via handleRetryServerChunk.
   const chunkRetryCountsRef = useRef<Map<number, number>>(new Map());
-
 
   const [cancellingJob, setCancellingJob] = useState(false);
 
@@ -245,8 +194,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   useEffect(() => {
     return () => {
-      xhrRef.current?.abort();
-      xhrRef.current = null;
+      if (uploadTaskRef.current) {
+        void uploadTaskRef.current.cancelAsync();
+        uploadTaskRef.current = null;
+      }
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
@@ -363,127 +314,97 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const MAX_AUTO_RETRIES = 2;
 
-  // ── Single-chunk XHR upload ────────────────────────────────────────────────
-  const sendSingleChunk = (
+  // ── Background-capable chunk upload ───────────────────────────────────────
+  // Uses FileSystem.createUploadTask with FileSystemSessionType.BACKGROUND so
+  // the native URLSession (iOS) / OkHttp (Android) layer can complete the
+  // in-flight request even while JS is suspended in the background.
+  // The JSON body is written to a temp file and sent as binary content with
+  // Content-Type: application/json; the temp file is deleted on completion.
+  const sendChunkViaBackground = async (
     base64: string,
     extraFields: Record<string, unknown>,
-    attempt: number,
     onSuccess: (resp: { jobId: string; chunkJobId?: string }) => void,
     onFailure: (msg: string) => void,
     onAbort: () => void,
     onNetwork: () => void,
-    baseBytes = 0,
-    remainingBytesAfter = 0,
-    totalBodyBytes = 0,
-  ): void => {
-    const token = adminToken!;
+  ): Promise<void> => {
+    const token = adminTokenRef.current!;
     const body = JSON.stringify({
       pdfBase64: base64,
       vendor: vendor.trim(),
       filename: filename ?? "catalog.pdf",
       ...extraFields,
     });
+    const tempUri = `${FileSystem.cacheDirectory}upload-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
 
-    const xhr = new XMLHttpRequest();
-    xhrRef.current = xhr;
-    xhr.open("POST", `${API_BASE}/admin/catalog-pdf`);
-    xhr.setRequestHeader("Content-Type", "application/json");
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-    applyFallbackHeader(xhr, withFallbackRef.current);
-    xhr.timeout = XHR_CHUNK_TIMEOUT_MS;
-    xhr.ontimeout = () => {
-      xhrRef.current = null;
-      setUploadPct(null);
-      setUploadSpeed(null);
-      setUploadEta(null);
+    try {
+      await FileSystem.writeAsStringAsync(tempUri, body, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+    } catch {
       onNetwork();
-    };
+      return;
+    }
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        setUploadPct(Math.round((e.loaded / e.total) * 100));
-        const now = Date.now();
-        const cumulativeLoaded = baseBytes + e.loaded;
-        if (totalBodyBytes > 0) {
-          setOverallUploadPct(Math.round((cumulativeLoaded / totalBodyBytes) * 100));
-        }
-        const samples = speedSamplesRef.current;
-        samples.push({ t: now, loaded: cumulativeLoaded });
-        const cutoff = now - SPEED_WINDOW_MS;
-        while (samples.length > 1 && samples[0]!.t < cutoff) samples.shift();
-        if (samples.length > SPEED_WINDOW_MAX) samples.splice(0, samples.length - SPEED_WINDOW_MAX);
-        if (samples.length >= 2) {
-          const oldest = samples[0]!;
-          const newest = samples[samples.length - 1]!;
-          const dtMs = newest.t - oldest.t;
-          if (dtMs > 0) {
-            const bytesPerMs = (newest.loaded - oldest.loaded) / dtMs;
-            const bytesPerSec = bytesPerMs * 1000;
-            setUploadSpeed(bytesPerSec / (1024 * 1024));
-            const bytesRemaining = (e.total - e.loaded) + remainingBytesAfter;
-            setUploadEta(bytesPerSec > 0 ? bytesRemaining / bytesPerSec : null);
-          }
-        }
+    try {
+      const task = FileSystem.createUploadTask(
+        `${API_BASE}/admin/catalog-pdf`,
+        tempUri,
+        {
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          httpMethod: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            ...(withFallbackRef.current ? { "x-use-openai-fallback": "true" } : {}),
+          },
+          sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
+        },
+      );
+      uploadTaskRef.current = task;
+      const result = await task.uploadAsync();
+      uploadTaskRef.current = null;
+
+      if (result === null || result === undefined) {
+        onAbort();
+        return;
       }
-    };
-
-    xhr.onabort = () => { xhrRef.current = null; onAbort(); };
-    xhr.onload = () => {
-      xhrRef.current = null;
-      if (xhr.status === 401) { onSessionExpired(); return; }
-      if (xhr.status < 200 || xhr.status >= 300) {
+      if (result.status === 401) { onSessionExpired(); return; }
+      if (result.status < 200 || result.status >= 300) {
         let errMsg = "Failed to start job";
-        try { errMsg = (JSON.parse(xhr.responseText) as { error?: string }).error ?? errMsg; } catch { /* ignore */ }
+        try { errMsg = (JSON.parse(result.body) as { error?: string }).error ?? errMsg; } catch { /* ignore */ }
         onFailure(errMsg);
         return;
       }
-      onSuccess(JSON.parse(xhr.responseText) as { jobId: string; chunkJobId?: string });
-    };
-
-    xhr.onerror = () => {
-      xhrRef.current = null;
-      setUploadPct(null);
-      setUploadSpeed(null);
-      setUploadEta(null);
+      onSuccess(JSON.parse(result.body) as { jobId: string; chunkJobId?: string });
+    } catch {
+      uploadTaskRef.current = null;
       onNetwork();
-    };
-
-    xhr.send(body);
+    } finally {
+      try { await FileSystem.deleteAsync(tempUri, { idempotent: true }); } catch { /* ignore */ }
+    }
   };
 
   // ── Chunked upload inner loop ──────────────────────────────────────────────
-  // Uploads chunks[startIndex..end], reusing existingParentJobId if provided.
-  // chunkBodySizes / totalBodyBytes are estimated byte offsets used for ETA
-  // accounting. Each chunk's base64 is encoded lazily (one at a time) inside
+  // Uploads chunks[startIndex..end] sequentially using the background-capable
+  // upload API. Each chunk's base64 is encoded lazily (one at a time) inside
   // the loop to avoid holding all base64 strings in the Hermes heap at once.
   // On success starts polling. On failure sets failedChunkInfo for targeted retry.
   const uploadChunksFromIndex = async (
     chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>,
     startIndex: number,
     existingParentJobId: string | null,
-    chunkBodySizes: Array<number>,
-    totalBodyBytes: number,
   ): Promise<void> => {
     let parentJobId: string | null = existingParentJobId;
     let aborted = false;
-
-    // Bytes already uploaded by chunks before startIndex (for ETA accounting
-    // when retrying from a non-zero index).
-    let baseBytesAccum = chunkBodySizes.slice(0, startIndex).reduce((a, b) => a + b, 0);
 
     for (let i = startIndex; i < chunks.length; i++) {
       if (aborted) break;
       const chunk = chunks[i]!;
       // Encode this chunk's bytes immediately before use, then let it be
-      // garbage-collected once the XHR body has been sent. This avoids holding
-      // all chunk base64 strings in the Hermes heap simultaneously.
+      // garbage-collected once the upload body has been sent.
       const base64 = bytesToBase64(chunk.bytes);
-      const remainingBytesAfter = totalBodyBytes - baseBytesAccum - chunkBodySizes[i]!;
       setChunkLabel(`Part ${i + 1} of ${chunks.length}`);
-      setUploadPct(null);
-      setUploadSpeed(null);
-      setUploadEta(null);
-      speedSamplesRef.current = [];
 
       // ── Silent transient retry loop ────────────────────────────────────────
       // Up to MAX_SILENT_RETRIES automatic retries on network errors before the
@@ -497,11 +418,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         }
         try {
           result = await new Promise<{ jobId: string; chunkJobId?: string }>((resolve, reject) => {
-            sendSingleChunk(
+            void sendChunkViaBackground(
               base64,
               { chunkIndex: i, chunkCount: chunks.length, pageOffset: chunk.pageOffset, ...(parentJobId ? { parentJobId } : {}) },
-              0, resolve, (msg) => reject(new Error(msg)), () => reject(new Error("__abort__")), () => reject(new Error("__network__")),
-              baseBytesAccum, remainingBytesAfter, totalBodyBytes,
+              resolve, (msg) => reject(new Error(msg)), () => reject(new Error("__abort__")), () => reject(new Error("__network__")),
             );
           });
           lastErr = null;
@@ -509,12 +429,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         } catch (err) {
           const msg = (err as Error).message;
           if (msg === "__abort__") {
-            // Abort is not retryable — exit the retry loop immediately.
             lastErr = err as Error;
             break;
           }
           if (msg === "__network__" && attempt < MAX_SILENT_RETRIES) {
-            // Transient network error — wait and retry silently.
             lastErr = err as Error;
             continue;
           }
@@ -527,54 +445,18 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         const msg = lastErr.message;
         if (msg === "__abort__") {
           aborted = true;
-          if (appStatePausedRef.current) {
-            // The abort was triggered by the OS backgrounding the app. Show a
-            // "paused" card rather than the normal abort cleanup so the user
-            // can tap Resume when they return to the foreground.
-            appStatePausedRef.current = false;
-            const pausedInfo: FailedChunkInfo = {
-              chunkIndex: i,
-              totalChunks: chunks.length,
-              parentJobId: i === 0 ? null : parentJobId,
-            };
-            // Persist to module-level cache so the paused card is restored if
-            // the component unmounts and remounts (e.g. user navigates away).
-            // pdfBytes/vendor/filename are captured via closure and are stable
-            // throughout the upload (they don't change once the upload starts).
-            _pausedUploadCache = { failedChunkInfo: pausedInfo, chunks, pdfBytes, vendor, filename };
-            setIsPaused(true);
-            setLoading(false);
-            setUploadPct(null);
-            setOverallUploadPct(null);
-            setUploadSpeed(null);
-            setUploadEta(null);
-            setChunkLabel(null);
-            setChunksCompleted(0);
-            setChunksTotal(0);
-            setFailedChunkInfo(pausedInfo);
-          } else {
-            // Manual cancel — full reset.
-            _pausedUploadCache = null;
-            setLoading(false);
-            setUploadPct(null);
-            setOverallUploadPct(null);
-            setUploadSpeed(null);
-            setUploadEta(null);
-            setChunkLabel(null);
-            setChunksCompleted(0);
-            setChunksTotal(0);
-            setFailedChunkInfo(null);
-          }
+          // Manual cancel — full reset.
+          setLoading(false);
+          setChunkLabel(null);
+          setChunksCompleted(0);
+          setChunksTotal(0);
+          setFailedChunkInfo(null);
           return;
         }
         // Network or server error — surface targeted chunk retry.
         // Intentionally preserve chunksCompleted and chunksTotal so the UI
         // continues to show "Part N of M failed" rather than blanking out.
         setLoading(false);
-        setUploadPct(null);
-        setOverallUploadPct(null);
-        setUploadSpeed(null);
-        setUploadEta(null);
         setChunkLabel(null);
         setFailedChunkInfo({
           chunkIndex: i,
@@ -585,7 +467,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         return;
       }
 
-      baseBytesAccum += chunkBodySizes[i]!;
       if (i === 0) { parentJobId = result!.jobId; }
       setChunksCompleted(i + 1);
     }
@@ -593,11 +474,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (aborted || !parentJobId) return;
 
     // All chunks uploaded — start polling parent job
-    _pausedUploadCache = null;
-    setUploadPct(null);
-    setOverallUploadPct(null);
-    setUploadSpeed(null);
-    setUploadEta(null);
     setChunkLabel(null);
     setChunksCompleted(0);
     setChunksTotal(0);
@@ -617,7 +493,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       chunks = await splitPdfIntoChunks(bytes, PAGES_PER_CHUNK);
     } catch (err) {
       setLoading(false);
-      setUploadPct(null);
       setChunkLabel(null);
       setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
       return;
@@ -644,12 +519,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       setChunksTotal(chunks.length);
       setChunksCompleted(0);
 
-      // Estimate byte sizes for ETA accounting. Actual base64 encoding is done
-      // lazily per-chunk inside uploadChunksFromIndex to keep memory usage low.
-      const chunkBodySizes = chunks.map(c => estimateBase64Size(c.bytes));
-      const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
-
-      await uploadChunksFromIndex(chunks, 0, null, chunkBodySizes, totalBodyBytes);
+      await uploadChunksFromIndex(chunks, 0, null);
     } finally {
       deactivateKeepAwake("catalog-upload");
     }
@@ -663,12 +533,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setError(null);
     setFailedChunkInfo(null);
     setLoading(true);
-    setUploadPct(0);
-    setOverallUploadPct(null);
     setChunkLabel(null);
-    setUploadSpeed(null);
-    setUploadEta(null);
-    speedSamplesRef.current = [];
 
     if (chunkIndex === 0 || !parentJobId) {
       // Chunk 0 failed before a parent job was created — restart everything
@@ -690,20 +555,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunksTotal(chunks.length);
     setChunksCompleted(chunkIndex);
 
-    // Estimate byte sizes for ETA accounting (lazy encoding inside the loop).
-    const chunkBodySizes = chunks.map(c => estimateBase64Size(c.bytes));
-    const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
-
-    await uploadChunksFromIndex(chunks, chunkIndex, parentJobId, chunkBodySizes, totalBodyBytes);
-  };
-
-  // Resumes an upload that was paused by the AppState backgrounding guard.
-  // Clears the paused flag then delegates to handleRetryChunk which already
-  // knows the correct chunk index via failedChunkInfo.
-  const handleResume = (): void => {
-    _pausedUploadCache = null;
-    setIsPaused(false);
-    void handleRetryChunk();
+    await uploadChunksFromIndex(chunks, chunkIndex, parentJobId);
   };
 
   // ── Retry a specific chunk that failed during server-side AI processing ────
@@ -725,49 +577,28 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
     setError(null);
     setLoading(true);
-    setUploadPct(0);
-    setOverallUploadPct(null);
     setChunkLabel(`Uploading part ${chunkIndex + 1} of ${chunks.length}…`);
-    setUploadSpeed(null);
-    setUploadEta(null);
-    speedSamplesRef.current = [];
 
     // If this chunk was killed by a Poe outage, upgrade all subsequent retries
-    // to use the OpenAI fallback (the same flag sendSingleChunk already reads).
+    // to use the OpenAI fallback.
     if (shouldUseFallback(jobStatus?.errorMessage)) {
       withFallbackRef.current = true;
     }
 
-    // Estimate sizes for ETA; encode only the one chunk being retried.
-    const chunkBodySizes = chunks.map(c => estimateBase64Size(c.bytes));
-    const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
-    const baseBytesForChunk = chunkBodySizes.slice(0, chunkIndex).reduce((a, b) => a + b, 0);
-
     try {
       const base64 = bytesToBase64(chunk.bytes);
       await new Promise<void>((resolve, reject) => {
-        sendSingleChunk(
+        void sendChunkViaBackground(
           base64,
-          {
-            chunkIndex,
-            chunkCount: chunks.length,
-            pageOffset: chunk.pageOffset,
-            parentJobId,
-          },
-          0,
+          { chunkIndex, chunkCount: chunks.length, pageOffset: chunk.pageOffset, parentJobId },
           () => resolve(),
           (msg) => reject(new Error(msg)),
           () => reject(new Error("__abort__")),
           () => reject(new Error("__network__")),
-          baseBytesForChunk,
-          0,
-          totalBodyBytes,
         );
       });
 
       setLoading(false);
-      setUploadPct(null);
-      setOverallUploadPct(null);
       setChunkLabel(null);
       // Reset the job status optimistically so polling reflects resumed work
       setJobStatus(prev =>
@@ -777,8 +608,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     } catch (err) {
       const msg = (err as Error).message;
       setLoading(false);
-      setUploadPct(null);
-      setOverallUploadPct(null);
       setChunkLabel(null);
       if (msg !== "__abort__") {
         setError(
@@ -790,16 +619,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     }
   };
 
-  // ── Legacy single-upload flow (small files) ───────────────────────────────
+  // ── Single-upload flow (small files) ─────────────────────────────────────
   const handleSingleUpload = (base64: string, attempt: number): void => {
-    sendSingleChunk(
+    void sendChunkViaBackground(
       base64,
       {},
-      attempt,
       (resp) => {
-        setUploadPct(null);
-        setUploadSpeed(null);
-        setUploadEta(null);
         setLoading(false);
         const jobId = resp.jobId;
         setJobStatus({
@@ -816,20 +641,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         // if the server-side job fails with poe_chain_exhausted.
       },
       (errMsg) => {
-        setUploadPct(null);
-        setUploadSpeed(null);
-        setUploadEta(null);
         setLoading(false);
         setError(errMsg);
       },
       () => {
-        setUploadPct(null);
         setLoading(false);
       },
       () => {
-        setUploadPct(null);
-        setUploadSpeed(null);
-        setUploadEta(null);
         if (attempt < MAX_AUTO_RETRIES) {
           const delaySec = Math.pow(2, attempt);
           setError(null);
@@ -855,7 +673,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setRetryCountdown(null);
     setShowRetryBtn(false);
     setFailedChunkInfo(null);
-    setIsPaused(false);
     if (attempt === 0) {
       setJobStatus(null);
       chunksRef.current = null;
@@ -867,14 +684,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       // useEffect. Do not reset here so the fallback flag survives the re-entry.
     }
     setLoading(true);
-    setUploadPct(0);
-    setOverallUploadPct(null);
     setChunkLabel(null);
-    setUploadSpeed(null);
-    setUploadEta(null);
     setChunksCompleted(0);
     setChunksTotal(0);
-    speedSamplesRef.current = [];
 
     if (pdfBytes.length > CHUNK_SIZE_THRESHOLD) {
       void handleChunkedUpload(pdfBytes);
@@ -889,8 +701,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   handleStartRef.current = handleStart;
 
   const handleCancel = () => {
-    if (xhrRef.current) {
-      xhrRef.current.abort();
+    if (uploadTaskRef.current) {
+      void uploadTaskRef.current.cancelAsync();
+      uploadTaskRef.current = null;
     }
   };
 
@@ -901,10 +714,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     }
     setRetryCountdown(null);
     setLoading(false);
-    setUploadPct(null);
-    setOverallUploadPct(null);
-    setUploadSpeed(null);
-    setUploadEta(null);
     setError("Network error — check your connection and try again.");
     setShowRetryBtn(true);
   };
@@ -966,24 +775,6 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           </Text>
         )}
       </Pressable>
-
-      {/* Upload paused (app went to background mid-upload) */}
-      {isPaused && !loading && failedChunkInfo ? (
-        <View style={[s.doneCard, { backgroundColor: colors.warning + "18" }]}>
-          <Text style={[s.doneText, { color: colors.warning }]}>
-            Upload paused — tap to resume
-          </Text>
-          <Text style={[s.hint, { color: colors.mutedForeground }]}>
-            Part {failedChunkInfo.chunkIndex + 1} of {failedChunkInfo.totalChunks} was in progress when the app went to the background.
-          </Text>
-          <Pressable
-            onPress={handleResume}
-            style={[s.reviewBtn, { borderColor: colors.primary }]}
-          >
-            <Text style={[s.reviewBtnText, { color: colors.primary }]}>Resume upload</Text>
-          </Pressable>
-        </View>
-      ) : null}
 
       {/* Error / retry countdown */}
       {retryCountdown !== null ? (
@@ -1051,64 +842,34 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         </>
       ) : null}
 
-      {/* Upload progress — chunked mode shows step bar; single-file mode shows byte-level bar */}
-      {loading && (chunkLabel !== null || uploadPct !== null) ? (
+      {/* Upload progress — chunked mode shows step bar; single-file shows spinner */}
+      {loading && !isRunning ? (
         <View style={s.progressBlock}>
           <View style={s.progressRow}>
             <Text style={[s.progressLabel, { color: colors.foreground, flex: 1 }]}>
-              {chunkLabel !== null
-                ? `Uploading… ${overallUploadPct ?? 0}%`
-                : `Uploading… ${uploadPct ?? 0}%`}
+              {chunkLabel !== null ? `Uploading… ${chunkLabel}` : "Uploading…"}
             </Text>
             <Pressable onPress={handleCancel} style={[s.cancelBtn, { borderColor: colors.destructive }]}>
               <Text style={[s.cancelBtnText, { color: colors.destructive }]}>Cancel</Text>
             </Pressable>
           </View>
 
-          {/* Chunked upload: step-based progress bar (advances per completed chunk,
-              with smooth sub-chunk XHR progress interpolated within each step) */}
+          {/* Chunked upload: step-based progress bar (advances per completed chunk) */}
           {chunkLabel !== null && chunksTotal > 0 ? (
             <>
               <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
                 <View style={[s.progressFill, {
-                  width: `${Math.min(100, Math.round(
-                    ((chunksCompleted + (uploadPct ?? 0) / 100) / chunksTotal) * 100
-                  ))}%`,
+                  width: `${Math.min(100, Math.round((chunksCompleted / chunksTotal) * 100))}%`,
                   backgroundColor: colors.primary,
                 }]} />
               </View>
               <Text style={[s.progressText, { color: colors.mutedForeground }]}>
                 {chunksCompleted} of {chunksTotal} parts uploaded
               </Text>
-              {uploadSpeed !== null && uploadEta !== null ? (
-                <Text style={[s.progressText, { color: colors.mutedForeground }]}>
-                  {uploadSpeed >= 1
-                    ? `${uploadSpeed.toFixed(1)} MB/s`
-                    : `${(uploadSpeed * 1024).toFixed(0)} KB/s`}
-                  {uploadEta >= 60
-                    ? ` · ~${Math.ceil(uploadEta / 60)} min remaining`
-                    : ` · ~${Math.ceil(uploadEta)} sec remaining`}
-                </Text>
-              ) : null}
             </>
-          ) : null}
-
-          {/* Single-file upload: byte-level progress bar */}
-          {uploadPct !== null && chunkLabel === null ? (
-            <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
-              <View style={[s.progressFill, { width: `${uploadPct}%`, backgroundColor: colors.primary }]} />
-            </View>
-          ) : null}
-          {uploadSpeed !== null && uploadEta !== null ? (
-            <Text style={[s.progressText, { color: colors.mutedForeground }]}>
-              {uploadSpeed >= 1
-                ? `${uploadSpeed.toFixed(1)} MB/s`
-                : `${(uploadSpeed * 1024).toFixed(0)} KB/s`}
-              {uploadEta >= 60
-                ? ` · ~${Math.ceil(uploadEta / 60)} min remaining`
-                : ` · ~${Math.ceil(uploadEta)} sec remaining`}
-            </Text>
-          ) : null}
+          ) : (
+            <ActivityIndicator size="small" color={colors.primary} />
+          )}
         </View>
       ) : null}
 
