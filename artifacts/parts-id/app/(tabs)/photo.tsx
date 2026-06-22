@@ -32,7 +32,7 @@ import { useScanHistory } from "@/hooks/useScanHistory";
 import { parseBin } from "@/lib/aisleHierarchy";
 import { secondaryBtnBase } from "@/styles/shared";
 import { lookupByBarcodeOffline } from "@/utils/offlineBarcode";
-import { resizeImage } from "@/utils/resizeImage";
+import { downscaleToFit, resizeImage, totalPayloadBytes } from "@/utils/resizeImage";
 import type { ScanEntry } from "@/utils/scanHistory";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
@@ -264,6 +264,26 @@ export default function PhotoScreen() {
     setAdminBridgeMeasureItem(null);
     setPinnedParts([]);
 
+    // Pre-flight: downscale images if total payload exceeds the 20 MB AI limit.
+    // This runs before the progress UI so the spinner reflects actual upload time.
+    const MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
+    let imagesToSend = images;
+    const payloadBytes = totalPayloadBytes(images.map((i) => i.base64));
+    if (payloadBytes > MAX_PAYLOAD_BYTES) {
+      // Budget 90 % of the limit split equally across images so the total
+      // lands safely under the cap even with base64 padding overhead.
+      const budgetPerImage = Math.floor((MAX_PAYLOAD_BYTES * 0.9) / images.length);
+      try {
+        const compressed = await Promise.all(
+          images.map((img) => downscaleToFit(img.uri, budgetPerImage)),
+        );
+        imagesToSend = compressed.map((r) => ({ uri: r.uri, base64: r.base64 }));
+        showToast("Photos compressed for upload");
+      } catch {
+        // Downscaling failed — proceed with originals; server will reject if still oversized.
+      }
+    }
+
     // Phase 1 — show "Uploading" immediately; advance to "Analysing" after 2 s,
     // which is roughly when photo data has been sent and the AI is processing.
     // Clear any lingering timer from a previous (now-superseded) request first.
@@ -277,7 +297,7 @@ export default function PhotoScreen() {
     try {
       const identifyResult = await identifyMutation.mutateAsync({
         data: {
-          images: images.map((i) => i.base64),
+          images: imagesToSend.map((i) => i.base64),
           keywords: keywords.trim() || undefined,
           vendor: vendor.trim() || undefined,
           color: color.trim() || undefined,
@@ -373,7 +393,7 @@ export default function PhotoScreen() {
                 try {
                   const fallbackResult = await aiIdentifyPart(
                     {
-                      images: images.map((i) => i.base64),
+                      images: imagesToSend.map((i) => i.base64),
                       keywords: keywords.trim() || undefined,
                       vendor: vendor.trim() || undefined,
                       color: color.trim() || undefined,

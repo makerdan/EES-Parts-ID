@@ -150,6 +150,8 @@ jest.mock("@/utils/resizeImage", () => {
   }
   return {
     resizeImage: mockResizeImage,
+    downscaleToFit: jest.fn().mockResolvedValue({ uri: "fake://resized.jpg", base64: "fakebase64" }),
+    totalPayloadBytes: jest.fn().mockReturnValue(0),
     ImageReadError,
   };
 });

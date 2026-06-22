@@ -191,6 +191,8 @@ jest.mock("@/utils/useTrackScreen", () => ({ useTrackScreen: jest.fn() }));
 
 jest.mock("@/utils/resizeImage", () => ({
   resizeImage: jest.fn().mockResolvedValue({ uri: "fake://resized.jpg", base64: "fakebase64" }),
+  downscaleToFit: jest.fn().mockResolvedValue({ uri: "fake://resized.jpg", base64: "fakebase64" }),
+  totalPayloadBytes: jest.fn().mockReturnValue(0),
 }));
 
 jest.mock("@/hooks/useScanHistory", () => ({

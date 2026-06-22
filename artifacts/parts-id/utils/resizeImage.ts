@@ -19,6 +19,87 @@ export class ImageReadError extends Error {
   }
 }
 
+/**
+ * Decode base64 string (with or without data: URI prefix) to byte size (upper bound).
+ */
+function base64ByteSize(b64OrDataUri: string): number {
+  const b64 = b64OrDataUri.startsWith("data:")
+    ? (b64OrDataUri.split(",")[1] ?? "")
+    : b64OrDataUri;
+  return Math.ceil((b64.length * 3) / 4);
+}
+
+/**
+ * Compression ladder used by downscaleToFit.
+ * Each entry is [maxWidth (0 = no resize), jpegQuality].
+ * Steps are tried in order until the image fits within the byte budget.
+ */
+const COMPRESSION_LADDER: Array<[number, number]> = [
+  [0, 0.5],
+  [0, 0.35],
+  [1280, 0.35],
+  [960, 0.25],
+  [800, 0.2],
+  [640, 0.15],
+];
+
+/**
+ * Re-compress `uri` until its base64 size fits within `maxBytes`.
+ * Walks a compression ladder of progressively lower quality / smaller dimensions.
+ * If the image fits at the last step, returns that result regardless (best effort).
+ *
+ * @param uri      Local image URI (file://)
+ * @param maxBytes Maximum allowed decoded byte size for this single image
+ */
+export async function downscaleToFit(
+  uri: string,
+  maxBytes: number,
+): Promise<ResizedImage> {
+  let currentUri = uri;
+
+  for (const [targetWidth, quality] of COMPRESSION_LADDER) {
+    const actions: Array<ImageManipulator.Action> =
+      targetWidth > 0 ? [{ resize: { width: targetWidth } }] : [];
+
+    try {
+      const result = await ImageManipulator.manipulateAsync(
+        currentUri,
+        actions,
+        { compress: quality, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+      );
+
+      const b64 = result.base64 ?? "";
+      if (base64ByteSize(b64) <= maxBytes) {
+        return { uri: result.uri, base64: `data:image/jpeg;base64,${b64}` };
+      }
+      currentUri = result.uri;
+    } catch (err) {
+      throw new ImageReadError(
+        "Could not compress the image — it may be in an unsupported format.",
+        err,
+      );
+    }
+  }
+
+  // Best effort: return whatever is at the end of the ladder
+  try {
+    const raw = await FileSystem.readAsStringAsync(currentUri, { encoding: "base64" });
+    return { uri: currentUri, base64: `data:image/jpeg;base64,${raw}` };
+  } catch (err) {
+    throw new ImageReadError(
+      "Could not read compressed image data.",
+      err,
+    );
+  }
+}
+
+/**
+ * Calculate total decoded byte size across an array of base64/data-URI strings.
+ */
+export function totalPayloadBytes(images: Array<string>): number {
+  return images.reduce((sum, img) => sum + base64ByteSize(img), 0);
+}
+
 export async function resizeImage(
   uri: string,
   width: number
