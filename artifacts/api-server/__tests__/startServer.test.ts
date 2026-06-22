@@ -80,9 +80,13 @@ describe("startServer", () => {
     jest.useRealTimers();
   });
 
-  it("exports MAX_RETRIES=5 and RETRY_DELAY_MS=1000", () => {
-    expect(MAX_RETRIES).toBe(5);
-    expect(RETRY_DELAY_MS).toBe(1000);
+  it("exports MAX_RETRIES=10 and RETRY_DELAY_MS=2000", () => {
+    expect(MAX_RETRIES).toBe(10);
+    expect(RETRY_DELAY_MS).toBe(2000);
+    // Guard: retry window must exceed the old defaults (5 retries × 1 s = 5 s)
+    // so a slow OS port-reclaim during dev restarts is handled without crashing.
+    expect(MAX_RETRIES).toBeGreaterThanOrEqual(8);
+    expect(RETRY_DELAY_MS).toBeGreaterThanOrEqual(1500);
   });
 
   it("calls process.exit(1) after exhausting all retries on EADDRINUSE", () => {

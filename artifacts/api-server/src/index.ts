@@ -19,6 +19,10 @@ process.on("unhandledRejection", (reason) => {
 const rawPort = process.env["PORT"];
 const isDev = process.env["NODE_ENV"] !== "production";
 
+if (!rawPort && isDev) {
+  logger.warn("PORT env var not set — falling back to 8080 in development");
+}
+
 const port = rawPort ? Number(rawPort) : isDev ? 8080 : NaN;
 
 if (Number.isNaN(port) || port <= 0) {
@@ -129,8 +133,17 @@ async function migrateAdminPreferences(): Promise<void> {
 Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), checkZoneSectionNumIntegrity()])
   .then(() => initProvider())
   .then(() => probePoeBotsOnStartup())
-  .then(() => {
-    startServer(app, port, MAX_RETRIES);
+  .then(() => startServer(app, port, MAX_RETRIES))
+  .then((server) => {
+    const shutdown = (signal: string) => {
+      logger.info({ signal }, "Received shutdown signal — draining in-flight requests");
+      server.close(() => {
+        logger.info("Server closed — exiting cleanly");
+        process.exit(0);
+      });
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
   })
   .catch((err) => {
     logger.error({ err }, "Fatal error during server startup — exiting");
