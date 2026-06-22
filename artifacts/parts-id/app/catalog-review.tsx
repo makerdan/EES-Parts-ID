@@ -419,6 +419,8 @@ export default function CatalogReviewScreen() {
     } finally { setDismissingId(null); }
   };
 
+  const _CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024;
+
   const handleResume = async (jobId: number) => {
     if (resumingId) return;
 

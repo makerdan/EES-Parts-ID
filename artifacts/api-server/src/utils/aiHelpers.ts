@@ -3,6 +3,45 @@
  * Extracted for unit testability — no network or DB dependencies.
  */
 
+/**
+ * Default maximum total image payload in bytes before the AI call is rejected.
+ * Matches the practical limit most vision providers enforce (~20 MB of raw pixel
+ * data encoded as base64).  Can be overridden in tests or via environment config.
+ */
+export const MAX_IMAGE_PAYLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
+
+/**
+ * Check whether the combined decoded byte size of a list of base64 image strings
+ * exceeds `limitBytes` (defaults to MAX_IMAGE_PAYLOAD_BYTES).
+ *
+ * Returns `{ ok: true }` when the payload is within the limit, or
+ * `{ ok: false, message, byteSize }` with a user-friendly message otherwise.
+ *
+ * Handles both bare base64 strings and data: URI strings
+ * (`data:image/jpeg;base64,<data>`).  The size estimate is an upper bound:
+ * `ceil(base64Chars * 3 / 4)`.
+ */
+export function checkImagePayloadSize(
+  images: string[],
+  limitBytes: number = MAX_IMAGE_PAYLOAD_BYTES,
+): { ok: true } | { ok: false; message: string; byteSize: number } {
+  const byteSize = images.reduce((sum, img) => {
+    const b64 = img.startsWith("data:") ? (img.split(",")[1] ?? "") : img;
+    return sum + Math.ceil((b64.length * 3) / 4);
+  }, 0);
+
+  if (byteSize > limitBytes) {
+    const mb = (byteSize / (1024 * 1024)).toFixed(1);
+    const limitMb = (limitBytes / (1024 * 1024)).toFixed(0);
+    return {
+      ok: false,
+      message: `Image payload too large (${mb} MB, limit ${limitMb} MB). Please use smaller or fewer images.`,
+      byteSize,
+    };
+  }
+  return { ok: true };
+}
+
 export interface AiAnalysis {
   partNumbers: string[];
   searchTerms: string[];
