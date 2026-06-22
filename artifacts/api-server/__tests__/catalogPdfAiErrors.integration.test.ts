@@ -1,0 +1,219 @@
+/**
+ * Integration tests verifying that CatalogAiError thrown by extractCatalogPage
+ * propagates correctly to the catalog_pdf_job row and is exposed via the
+ * status API endpoint.
+ *
+ * Covers:
+ *   - ai_error code → status=failed, non-null errorMessage in DB
+ *   - ai_payload_too_large code → matching code persisted in DB
+ *   - GET /api/admin/catalog-pdf/:jobId/status includes errorMessage in JSON
+ */
+
+// ── Module mocks — must be declared before any imports ────────────────────────
+
+jest.mock("@workspace/integrations-openai-ai-server", () => ({
+  openai: { chat: { completions: { create: jest.fn() } }, audio: { transcriptions: { create: jest.fn() } } },
+  generateImageBuffer: jest.fn(),
+  editImages: jest.fn(),
+  batchProcess: jest.fn(),
+  batchProcessWithSSE: jest.fn(),
+  isRateLimitError: jest.fn(() => false),
+}));
+
+jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
+  batchProcess: jest.fn(),
+  batchProcessWithSSE: jest.fn(),
+  isRateLimitError: jest.fn(() => false),
+}));
+
+jest.mock("../src/utils/pdfProcessor", () => ({
+  extractPdfPages: jest.fn(),
+}));
+
+jest.mock("../src/utils/catalogExtractor", () => {
+  const actual = jest.requireActual<typeof import("../src/utils/catalogExtractor")>(
+    "../src/utils/catalogExtractor",
+  );
+  return {
+    ...actual,
+    extractCatalogPage: jest.fn(),
+  };
+});
+
+jest.mock("../src/utils/catalogMatcher", () => ({
+  matchCatalogNumber: jest.fn(),
+}));
+
+jest.mock("../src/lib/objectStorage", () => ({
+  uploadCatalogImage: jest.fn(),
+}));
+
+// ── Imports ───────────────────────────────────────────────────────────────────
+
+import supertest from "supertest";
+import app from "../src/app";
+import { signAdminToken } from "../src/routes/admin";
+import { closePool } from "./helpers/testDb";
+import { db, catalogPdfJobTable } from "@workspace/db";
+import { eq, inArray } from "drizzle-orm";
+import { extractPdfPages } from "../src/utils/pdfProcessor";
+import { extractCatalogPage, CatalogAiError } from "../src/utils/catalogExtractor";
+
+// ── Typed mock handles ─────────────────────────────────────────────────────────
+
+const mockExtractPdfPages = extractPdfPages as jest.MockedFunction<typeof extractPdfPages>;
+const mockExtractCatalogPage = extractCatalogPage as jest.MockedFunction<typeof extractCatalogPage>;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const ADMIN_SECRET = "jest-ai-errors-secret";
+const VENDOR = "JEST-AI-ERRORS-VENDOR";
+const FAKE_PDF_BASE64 = Buffer.alloc(16).toString("base64");
+
+/** One minimal page returned by the mocked PDF extractor. */
+const ONE_FAKE_PAGE = [
+  { pageNum: 1, text: "page text", images: [], isRendered: false, pageWidth: 0, pageHeight: 0 },
+];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+let adminToken: string;
+const seededJobIds: number[] = [];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+async function readJobRow(jobId: number): Promise<{ status: string; errorMessage: string | null }> {
+  const [row] = await db
+    .select({
+      status: catalogPdfJobTable.status,
+      errorMessage: catalogPdfJobTable.errorMessage,
+    })
+    .from(catalogPdfJobTable)
+    .where(eq(catalogPdfJobTable.id, jobId))
+    .limit(1);
+  if (!row) throw new Error(`Job ${jobId} not found in DB`);
+  return row;
+}
+
+async function startJob(): Promise<string> {
+  const res = await supertest(app)
+    .post("/api/admin/catalog-pdf")
+    .set("Authorization", `Bearer ${adminToken}`)
+    .send({ pdfBase64: FAKE_PDF_BASE64, vendor: VENDOR })
+    .expect(200);
+  const { jobId } = res.body as { jobId: string };
+  seededJobIds.push(Number(jobId));
+  return jobId;
+}
+
+async function waitForTerminal(jobId: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${jobId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`);
+    const { status } = res.body as { status: string };
+    if (status === "done" || status === "failed") return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`Job ${jobId} did not reach a terminal state within ${timeoutMs}ms`);
+}
+
+// ── Setup / teardown ──────────────────────────────────────────────────────────
+
+beforeAll(async () => {
+  process.env.ADMIN_PASSWORD = ADMIN_SECRET;
+  adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
+}, 15_000);
+
+afterEach(() => {
+  jest.resetAllMocks();
+});
+
+afterAll(async () => {
+  if (seededJobIds.length > 0) {
+    await db
+      .delete(catalogPdfJobTable)
+      .where(inArray(catalogPdfJobTable.id, seededJobIds));
+  }
+  await closePool();
+}, 15_000);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 1: CatalogAiError propagation to the DB
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("CatalogAiError propagation — DB job row", () => {
+  it("sets status=failed and a non-null errorMessage when extractCatalogPage throws CatalogAiError('ai_error')", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockRejectedValueOnce(
+      new CatalogAiError("ai_error", "upstream AI provider returned an unexpected error"),
+    );
+
+    const jobId = await startJob();
+    await waitForTerminal(jobId);
+
+    const row = await readJobRow(Number(jobId));
+    expect(row.status).toBe("failed");
+    expect(row.errorMessage).not.toBeNull();
+    expect(row.errorMessage).toBe("ai_error");
+  });
+
+  it("persists the 'ai_payload_too_large' code as errorMessage when that variant is thrown", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockRejectedValueOnce(
+      new CatalogAiError("ai_payload_too_large", "request body too large (413)"),
+    );
+
+    const jobId = await startJob();
+    await waitForTerminal(jobId);
+
+    const row = await readJobRow(Number(jobId));
+    expect(row.status).toBe("failed");
+    expect(row.errorMessage).toBe("ai_payload_too_large");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 2: errorMessage exposed via status API
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("CatalogAiError propagation — status API response", () => {
+  it("includes errorMessage in the status JSON when the job fails with a CatalogAiError", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockRejectedValueOnce(
+      new CatalogAiError("ai_error", "AI call failed"),
+    );
+
+    const jobId = await startJob();
+    await waitForTerminal(jobId);
+
+    const res = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${jobId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(res.body.status).toBe("failed");
+    expect(res.body).toHaveProperty("errorMessage");
+    expect(res.body.errorMessage).toBe("ai_error");
+  });
+
+  it("includes errorMessage='ai_payload_too_large' in the status JSON for that variant", async () => {
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockRejectedValueOnce(
+      new CatalogAiError("ai_payload_too_large", "payload exceeded provider limit"),
+    );
+
+    const jobId = await startJob();
+    await waitForTerminal(jobId);
+
+    const res = await supertest(app)
+      .get(`/api/admin/catalog-pdf/${jobId}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(res.body.status).toBe("failed");
+    expect(res.body).toHaveProperty("errorMessage");
+    expect(res.body.errorMessage).toBe("ai_payload_too_large");
+  });
+});
