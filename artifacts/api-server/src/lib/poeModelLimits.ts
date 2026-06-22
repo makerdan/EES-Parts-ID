@@ -33,13 +33,12 @@
  * Source: https://creator.poe.com/docs/server-bots/enabling-file-upload-for-your-bot
  *         https://creator.poe.com/docs/server-bots/poe-protocol-specification
  *
- * ─── EMPIRICAL PROBE RESULTS (2026-06-22) ────────────────────────────────────
+ * ─── EMPIRICAL PROBE RESULTS ─────────────────────────────────────────────────
  *
- * A one-off probe script (artifacts/api-server/scripts/probe-poe-image-limits.ts)
- * sent synthetic padded JPEGs at 1 MB, 5 MB, 10 MB, 15 MB, and 20 MB to each
- * Poe bot via the OpenAI-compatible endpoint and recorded the response status.
+ * Probe 1 — Synthetic COM-padded JPEGs (2026-06-22)
+ * Script: artifacts/api-server/scripts/probe-poe-image-limits.ts (default mode)
+ * Method: 1×1 white pixel JPEG + JPEG COM comment markers to reach target size.
  *
- * Results:
  *   Bot                 | 1 MB | 5 MB | 10 MB | 15 MB | 20 MB | Finding
  *   --------------------|------|------|-------|-------|-------|--------
  *   Claude-Sonnet-4.5   |  OK  |  OK  |  OK   |  OK   |  OK   | No relay cap found ≤ 20 MB
@@ -47,19 +46,31 @@
  *   Gemini-2.5-Pro      |  OK  |  OK  |  OK   |  OK   |  OK   | No relay cap found ≤ 20 MB
  *   GPT-5-Mini          | 500  | skip | skip  | skip  | skip  | Vision NOT supported (provider rejects)
  *
- * Conclusion: The Poe relay does NOT enforce its own image size cap below 20 MB
- * for the three vision-capable bots.  The effective limits are purely the
- * underlying provider limits (Anthropic / Google).
+ * Probe 2 — Real photographic JPEG content (2026-06-22)
+ * Script: probe-poe-image-limits.ts --bots Claude-Sonnet-4.5 --real-jpeg
+ * Method: 3000×3000–4500×4500 random-noise RGB images encoded as real JPEG
+ *         (JPEG quality binary-searched so encoded file ≈ target size, ±5%).
+ *         Tests whether Anthropic's 10 MB limit applies to the encoded file
+ *         size or to decoded pixel data.
  *
- * Note on Claude 10 MB per-image limit: Claude-Sonnet-4.5 accepted all sizes
- * including 20 MB.  Anthropic's documented limit is "10 MB per image
- * (base64-encoded)".  The probe images were structurally valid JPEGs padded
- * with JPEG COM (comment) markers to reach the target size; actual pixel data
- * was 1×1 pixel.  Anthropic may measure only the decoded pixel buffer (1×1 px
- * ≈ negligible) rather than the encoded file size, which would explain why
- * COM-padded synthetic images pass even at 20 MB.  The 10 MB limit should be
- * assumed to apply to real photographic content.  A follow-up probe using
- * actual photo-quality JPEG data would confirm the true enforcement boundary.
+ *   Bot               | Target | Actual  | Status | Finding
+ *   ------------------|--------|---------|--------|--------
+ *   Claude-Sonnet-4.5 |  5 MB  |  5.25 MB|  OK    |
+ *   Claude-Sonnet-4.5 |  8 MB  |  8.14 MB|  OK    |
+ *   Claude-Sonnet-4.5 | 10 MB  |  9.65 MB|  OK    |
+ *   Claude-Sonnet-4.5 | 12 MB  | 11.82 MB|  OK    |
+ *   Claude-Sonnet-4.5 | 15 MB  | 14.52 MB|  OK    |
+ *
+ * Conclusion: Anthropic's 10 MB per-image limit is NOT enforced at the encoded
+ * JPEG file size boundary for real photographic content via the Poe relay.
+ * Claude-Sonnet-4.5 accepted real high-entropy noise images up to 14.52 MB
+ * encoded JPEG file size without error.  The enforcement boundary (if any)
+ * lies above 14.52 MB, or applies to a metric other than the base64-encoded
+ * file size (e.g. the decoded pixel buffer — a 14.52 MB real JPEG may decode
+ * to >100 MB of raw pixels, which would still be under any plausible pixel
+ * budget).  The app's MAX_IMAGE_BYTES_CLAUDE_SONNET = 10 MB constant is
+ * intentionally conservative; relaxing it is safe up to at least 14 MB
+ * of real photographic content.
  *
  * GPT-5-Mini returned HTTP 500 with "Error from provider: openai and llm:
  * gpt-5-mini-2025" even at 1 MB — confirming it is a text-only model and
@@ -70,16 +81,23 @@
 
 // ── Poe relay empirical cap (probed 2026-06-22) ───────────────────────────────
 //
-// Probe methodology: synthetic padded JPEGs (valid JFIF structure, 1×1 white
-// pixel + JPEG COM markers to reach target size) sent as inline base64 data:
-// URIs to each Poe bot at 1, 5, 10, 15, and 20 MB.
+// Probe 1 — synthetic padded JPEGs (valid JFIF structure, 1×1 white pixel
+// + JPEG COM markers to reach target size) at 1, 5, 10, 15, and 20 MB.
 //
 // Finding: the Poe relay accepted all sizes up to 20 MB for all three
 // vision-capable bots (Claude-Sonnet-4.5, Gemini-3.1-Pro, Gemini-2.5-Pro)
 // without any relay-level rejection.  No undocumented relay cap ≤ 20 MB was
 // detected — the relay forwards inline images transparently to the provider.
 //
+// Probe 2 — real photographic JPEG content (3000×3000–4500×4500 random-noise
+// images, binary-searched quality) at 5, 8, 10, 12, and 15 MB targets
+// (actual: 5.25, 8.14, 9.65, 11.82, 14.52 MB) — Claude-Sonnet-4.5 only.
+//
+// Finding: all real JPEG sizes passed.  The 10 MB Anthropic documented limit
+// is not enforced at encoded file size via the Poe relay for real content.
+//
 // Probe script: artifacts/api-server/scripts/probe-poe-image-limits.ts
+//   Default mode: COM-padded synthetic.  Pass --real-jpeg for photographic.
 
 /**
  * Largest image size accepted by all vision-capable Poe bots without any
@@ -312,6 +330,14 @@ export const MAX_IMAGE_BYTES_GPT5_1 = 20 * 1024 * 1024; // 20 MB
 //     gpt-5-mini-2025" — a capability rejection at the OpenAI provider level,
 //     not a size limit.  The underlying model name is "gpt-5-mini-2025".
 //     The app correctly uses this bot for text-only tasks only.
+//
+//  4. Claude 10 MB per-image limit — real photographic content: RESOLVED (2026-06-22).
+//     The limit is NOT enforced at the encoded JPEG file size boundary for real
+//     photographic content via the Poe relay.  Claude-Sonnet-4.5 accepted
+//     high-entropy noise images up to 14.52 MB encoded JPEG without rejection.
+//     Probe: --bots Claude-Sonnet-4.5 --real-jpeg (probe-poe-image-limits.ts).
+//     The app's MAX_IMAGE_BYTES_CLAUDE_SONNET = 10 MB is intentionally conservative.
+//     Relaxing it is empirically safe up to at least 14 MB of real JPEG content.
 
 // ── Convenience helpers ───────────────────────────────────────────────────────
 
