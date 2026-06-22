@@ -134,6 +134,11 @@ async function rubberBand(
 const DRAG_Z1 = { from: { clientX: 5, clientY: 5 }, to: { clientX: 65, clientY: 60 } };
 // Coordinates that cover both ZONE_1 and ZONE_2
 const DRAG_BOTH = { from: { clientX: 5, clientY: 5 }, to: { clientX: 130, clientY: 60 } };
+// Coordinates that cover ZONE_2 only.
+// Start at clientX=59 → svgX ≈ 328 (gap between zones, 300–400), so ZONE_1 (100–300) right
+// edge (300) does NOT exceed the rect start (328) and is excluded from the hit set.
+// End at clientX=110 → svgX ≈ 611, past ZONE_2 right edge (600).
+const DRAG_Z2 = { from: { clientX: 59, clientY: 5 }, to: { clientX: 110, clientY: 60 } };
 
 // ── DOM helpers ────────────────────────────────────────────────────────────────
 
@@ -190,16 +195,55 @@ describe("useRubberBand — Zone Editor integration", () => {
     expect(getSelectedZoneRects(container)).toHaveLength(2);
   });
 
-  it("second Shift+drag (plain) replaces the previous selection", async () => {
+  it("second Shift+drag is additive — does not deselect zones from the prior drag", async () => {
     const { container, svgEl } = await setupEditor([ZONE_1, ZONE_2]);
 
-    // First rubber-band selects both
+    // First rubber-band selects both zones
     await rubberBand(svgEl, DRAG_BOTH.from, DRAG_BOTH.to);
     expect(getSelectedZoneRects(container)).toHaveLength(2);
 
-    // Second rubber-band covers only ZONE_1
+    // Second rubber-band covers only ZONE_1 — additive, so ZONE_2 must remain selected
+    await rubberBand(svgEl, DRAG_Z1.from, DRAG_Z1.to);
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+  });
+
+  // ── Additive (Shift = union) behavior ────────────────────────────────────────
+
+  it("Shift+drag over a disjoint zone adds it to the existing selection", async () => {
+    // Design: Shift is an ADDITIVE modifier. The rubber-band unions new hits with
+    // the existing selection so that previously-selected zones are never lost.
+    const { container, svgEl } = await setupEditor([ZONE_1, ZONE_2]);
+
+    // Step 1: select ZONE_1 via rubber-band
     await rubberBand(svgEl, DRAG_Z1.from, DRAG_Z1.to);
     expect(getSelectedZoneRects(container)).toHaveLength(1);
+
+    // Step 2: rubber-band covers only ZONE_2 (starts in the gap between zones)
+    // Under the old replace-semantics this would give {ZONE_2} (ZONE_1 lost).
+    // With additive semantics both zones must be selected.
+    await rubberBand(svgEl, DRAG_Z2.from, DRAG_Z2.to);
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+  });
+
+  it("drag starting inside an already-selected zone preserves it alongside any new hits", async () => {
+    // Specific scenario from the bug: user has zones A and B selected, starts a
+    // Shift+drag from inside A (intending to widen the selection) but the
+    // rubber-band rect only captures A — B must not be silently deselected.
+    const { container, svgEl } = await setupEditor([ZONE_1, ZONE_2]);
+
+    // Both zones selected via a wide drag
+    await rubberBand(svgEl, DRAG_BOTH.from, DRAG_BOTH.to);
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+
+    // Start from inside ZONE_1 (clientX=30 → svgX≈167), end before ZONE_2 left
+    // edge — rubber rect covers ZONE_1 only, so ZONE_2 would be dropped under
+    // replace semantics.  With additive semantics ZONE_2 must stay selected.
+    await rubberBand(
+      svgEl,
+      { clientX: 30, clientY: 5 },
+      { clientX: 65, clientY: 60 },
+    );
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
   });
 
   it("rubberRect is cleared (not visible) after mouseup", async () => {
@@ -426,18 +470,18 @@ describe("useRubberBand — Zone Editor integration", () => {
 
   // ── Timing — rapid consecutive drags ────────────────────────────────────────
 
-  it("three consecutive Shift+drags leave only the last selection active", async () => {
+  it("three consecutive Shift+drags accumulate — all previously selected zones are retained", async () => {
     const { container, svgEl } = await setupEditor([ZONE_1, ZONE_2]);
 
-    // Drag 1: select ZONE_1
+    // Drag 1: select ZONE_1 → {1}
     await rubberBand(svgEl, DRAG_Z1.from, DRAG_Z1.to);
-    // Drag 2: select both
+    // Drag 2: add both → {1, 2}
     await rubberBand(svgEl, DRAG_BOTH.from, DRAG_BOTH.to);
-    // Drag 3: select ZONE_1 only (last selection wins)
+    // Drag 3: covers ZONE_1 only → additive union keeps {1, 2}
     await rubberBand(svgEl, DRAG_Z1.from, DRAG_Z1.to);
 
-    // Only the last drag result should be active
-    expect(getSelectedZoneRects(container)).toHaveLength(1);
+    // All accumulated zones must remain selected
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
   });
 
   it("no zombie document listeners remain after rapid drags", async () => {
