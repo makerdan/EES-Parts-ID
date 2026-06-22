@@ -189,11 +189,6 @@ describe("ZoneEditor fill mode — integration", () => {
   const RASTER_H = 512;
 
   beforeEach(() => {
-    // Pre-populate the admin token so the component skips the login modal.
-    // Without this, the password <input> remains focused and interactions that
-    // check document.activeElement silently no-op before reaching the canvas.
-    sessionStorage.setItem("zoneEditorAdminToken", "test-token");
-
     vi.useFakeTimers();
 
     // Mock URL helpers used by rasterizeSvg.
@@ -225,7 +220,6 @@ describe("ZoneEditor fill mode — integration", () => {
   });
 
   afterEach(() => {
-    sessionStorage.removeItem("zoneEditorAdminToken");
     vi.useRealTimers();
     vi.restoreAllMocks();
     // Restore the src property so other tests are not affected.
