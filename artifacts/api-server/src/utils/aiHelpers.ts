@@ -127,6 +127,29 @@ export function extractJsonFromText(text: string): Record<string, unknown> | nul
  * empty so the caller skips the inventory search; the raw text is kept as the
  * summary so the user sees what the AI said instead of garbage results.
  */
+/**
+ * Returns true when an error thrown by an AI provider indicates the request
+ * body was too large (HTTP 413 or a provider-specific "payload too large"
+ * message).  Used to translate opaque provider errors into a clear 413
+ * response before they fall through to the generic 500 handler.
+ */
+export function isProviderPayloadTooLargeError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { status?: number; message?: string; code?: string };
+  if (e.status === 413) return true;
+  const msg = (e.message ?? "").toLowerCase();
+  const code = (e.code ?? "").toLowerCase();
+  return (
+    msg.includes("too large") ||
+    (msg.includes("payload") && msg.includes("large")) ||
+    (msg.includes("image") && msg.includes("size")) ||
+    msg.includes("413") ||
+    code === "request_too_large" ||
+    code === "payload_too_large" ||
+    code === "image_too_large"
+  );
+}
+
 export function normalizeAnalysis(
   parsed: Record<string, unknown> | null,
   rawText: string,

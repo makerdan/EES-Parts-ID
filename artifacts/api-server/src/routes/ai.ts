@@ -2,7 +2,7 @@ import { Router } from "express";
 import { getAiClient, getIdentifyModel, getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
 import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
-import { buildImageContent, checkImagePayloadSize, checkPerImageSize, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
+import { buildImageContent, checkImagePayloadSize, checkPerImageSize, extractJsonFromText, normalizeAnalysis, isProviderPayloadTooLargeError } from "../utils/aiHelpers";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET } from "../lib/poeModelLimits";
 import { db } from "@workspace/db";
 import { aiRequestLogTable, inventoryTable, inventoryFtsVector } from "@workspace/db";
@@ -139,6 +139,12 @@ router.post("/identify", async (req, res) => {
     if (err instanceof OpenAI.RateLimitError) {
       logger.error({ err }, "AI rate-limit/quota error in POST /ai/identify");
       return void res.status(429).json({ error: poeErrorMessage(err) });
+    }
+    if (isProviderPayloadTooLargeError(err)) {
+      logger.warn({ err }, "Provider payload-too-large error in POST /ai/identify");
+      return void res.status(413).json({
+        error: "Image payload too large — the AI provider rejected the request. Please use smaller or fewer images.",
+      });
     }
     if (isPoeTransientError(err)) {
       logger.error({ err }, "AI transient error in POST /ai/identify");
