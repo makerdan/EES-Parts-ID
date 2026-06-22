@@ -1,8 +1,113 @@
 import {
   buildImageContent,
+  checkImagePayloadSize,
   extractJsonFromText,
+  MAX_IMAGE_PAYLOAD_BYTES,
   normalizeAnalysis,
 } from "../src/utils/aiHelpers";
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Build a bare base64 string that decodes to at most `byteCount` bytes.
+ * Using Math.floor ensures the round-trip estimate `ceil(chars * 3/4) <= byteCount`
+ * so boundary tests (exactly at the limit) behave deterministically.
+ */
+function base64OfBytes(byteCount: number): string {
+  return "A".repeat(Math.floor((byteCount * 4) / 3));
+}
+
+/** Build a data: URI whose payload decodes to approximately `byteCount` bytes. */
+function dataUriOfBytes(byteCount: number): string {
+  return `data:image/jpeg;base64,${base64OfBytes(byteCount)}`;
+}
+
+// ── checkImagePayloadSize ─────────────────────────────────────────────────────
+
+describe("checkImagePayloadSize", () => {
+  const LIMIT = 10 * 1024 * 1024; // 10 MB for test convenience
+
+  it("returns ok:true for a single small image (bare base64)", () => {
+    expect(checkImagePayloadSize([base64OfBytes(1024)], LIMIT)).toEqual({ ok: true });
+  });
+
+  it("returns ok:true for a single small image (data: URI)", () => {
+    expect(checkImagePayloadSize([dataUriOfBytes(1024)], LIMIT)).toEqual({ ok: true });
+  });
+
+  it("returns ok:true for multiple images that sum under the limit", () => {
+    const images = [
+      base64OfBytes(2 * 1024 * 1024),
+      dataUriOfBytes(3 * 1024 * 1024),
+    ]; // ~5 MB < 10 MB
+    expect(checkImagePayloadSize(images, LIMIT)).toEqual({ ok: true });
+  });
+
+  it("returns ok:false when a single image exceeds the limit", () => {
+    expect(checkImagePayloadSize([base64OfBytes(LIMIT + 1)], LIMIT).ok).toBe(false);
+  });
+
+  it("returns ok:false when combined images exceed the limit", () => {
+    const images = [
+      base64OfBytes(6 * 1024 * 1024),
+      base64OfBytes(6 * 1024 * 1024),
+    ]; // ~12 MB > 10 MB
+    expect(checkImagePayloadSize(images, LIMIT).ok).toBe(false);
+  });
+
+  it("includes byteSize in the failure result", () => {
+    const result = checkImagePayloadSize([base64OfBytes(LIMIT + 100)], LIMIT);
+    if (result.ok) throw new Error("expected ok:false");
+    expect(result.byteSize).toBeGreaterThan(LIMIT);
+  });
+
+  it("includes a human-readable message mentioning size and limit", () => {
+    const result = checkImagePayloadSize([base64OfBytes(LIMIT + 100)], LIMIT);
+    if (result.ok) throw new Error("expected ok:false");
+    expect(result.message).toMatch(/too large/i);
+    expect(result.message).toMatch(/MB/);
+    expect(result.message).toMatch(/limit/i);
+  });
+
+  it("includes an actionable hint about smaller or fewer images", () => {
+    const result = checkImagePayloadSize([base64OfBytes(LIMIT + 100)], LIMIT);
+    if (result.ok) throw new Error("expected ok:false");
+    expect(result.message).toMatch(/smaller or fewer images/i);
+  });
+
+  it("returns ok:true for an empty image list", () => {
+    expect(checkImagePayloadSize([], LIMIT)).toEqual({ ok: true });
+  });
+
+  it("strips the data: prefix before computing size so bare and URI strings are equivalent", () => {
+    const SMALL = 500 * 1024; // 500 KB
+    expect(checkImagePayloadSize([base64OfBytes(SMALL)], LIMIT)).toEqual({ ok: true });
+    expect(checkImagePayloadSize([dataUriOfBytes(SMALL)], LIMIT)).toEqual({ ok: true });
+  });
+
+  it("uses MAX_IMAGE_PAYLOAD_BYTES as the default when no limit is passed", () => {
+    // Just under the default → ok
+    expect(checkImagePayloadSize([base64OfBytes(MAX_IMAGE_PAYLOAD_BYTES - 100)])).toEqual({ ok: true });
+    // Just over the default → rejected
+    expect(checkImagePayloadSize([base64OfBytes(MAX_IMAGE_PAYLOAD_BYTES + 100)]).ok).toBe(false);
+  });
+
+  it("accepts a payload exactly at the limit (boundary — inclusive)", () => {
+    expect(checkImagePayloadSize([base64OfBytes(LIMIT)], LIMIT)).toEqual({ ok: true });
+  });
+
+  it("rejects a payload one byte over the limit (boundary — exclusive)", () => {
+    expect(checkImagePayloadSize([base64OfBytes(LIMIT + 1)], LIMIT).ok).toBe(false);
+  });
+});
+
+// ── MAX_IMAGE_PAYLOAD_BYTES ───────────────────────────────────────────────────
+
+describe("MAX_IMAGE_PAYLOAD_BYTES", () => {
+  it("is 20 MB", () => {
+    expect(MAX_IMAGE_PAYLOAD_BYTES).toBe(20 * 1024 * 1024);
+  });
+});
 
 // ── buildImageContent ─────────────────────────────────────────────────────────
 

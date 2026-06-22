@@ -2,7 +2,7 @@ import { Router } from "express";
 import { getAiClient, getIdentifyModel, getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
 import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
-import { buildImageContent, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
+import { buildImageContent, checkImagePayloadSize, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
 import { db } from "@workspace/db";
 import { aiRequestLogTable, inventoryTable, inventoryFtsVector } from "@workspace/db";
 import { lt, sql } from "drizzle-orm";
@@ -34,6 +34,11 @@ router.post("/identify", async (req, res) => {
 
     if (!images.length) {
       return void res.status(400).json({ error: "At least one image is required" });
+    }
+
+    const payloadCheck = checkImagePayloadSize(images);
+    if (!payloadCheck.ok) {
+      return void res.status(413).json({ error: payloadCheck.message });
     }
 
     const contextParts: string[] = [];
