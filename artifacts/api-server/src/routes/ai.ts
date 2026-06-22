@@ -5,8 +5,8 @@ import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace
 import { buildImageContent, checkImagePayloadSize, checkPerImageSize, extractJsonFromText, normalizeAnalysis, isProviderPayloadTooLargeError } from "../utils/aiHelpers";
 import { MAX_IMAGE_BYTES_CLAUDE_SONNET } from "../lib/poeModelLimits";
 import { db } from "@workspace/db";
-import { aiRequestLogTable, inventoryTable, inventoryFtsVector } from "@workspace/db";
-import { lt, sql } from "drizzle-orm";
+import { aiRequestLogTable, inventoryTable, inventoryFtsVector, partCardCacheTable } from "@workspace/db";
+import { eq, gt, lt, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import OpenAI from "openai";
 
@@ -291,13 +291,14 @@ router.post("/translate-query", async (req, res) => {
   }
 });
 
-// In-memory cache for part-card lookups keyed by "catalog|vendor"
+// L1 in-memory cache for part-card lookups keyed by "catalog|vendor"
 const partCardCache = new Map<string, { data: object; cachedAt: number }>();
-const PART_CARD_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const PART_CARD_L1_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (in-process hot cache)
+const PART_CARD_DB_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (DB persistent cache)
 
 // POST /ai/part-card
 // Returns web-sourced part info: display name, key specs, cross-refs, compatibility note.
-// Results are cached in memory keyed by catalog+vendor to avoid re-querying the AI.
+// Results are cached: L1 in-memory (24h) → L2 database (30-day TTL) → AI call.
 router.post("/part-card", async (req, res) => {
   try {
     const {
@@ -316,10 +317,30 @@ router.post("/part-card", async (req, res) => {
 
     const cacheKey = `${catalog.trim().toLowerCase()}|${vendor.trim().toLowerCase()}`;
 
-    // Serve from cache if fresh
+    // L1: serve from in-memory cache if fresh
     const cached = partCardCache.get(cacheKey);
-    if (cached && Date.now() - cached.cachedAt < PART_CARD_CACHE_TTL_MS) {
+    if (cached && Date.now() - cached.cachedAt < PART_CARD_L1_TTL_MS) {
       return void res.json(cached.data);
+    }
+
+    // L2: check the database for a row younger than 30 days
+    const thirtyDaysAgo = new Date(Date.now() - PART_CARD_DB_TTL_MS);
+    try {
+      const [dbRow] = await db
+        .select()
+        .from(partCardCacheTable)
+        .where(
+          sql`${partCardCacheTable.catalogKey} = ${cacheKey} AND ${partCardCacheTable.cachedAt} > ${thirtyDaysAgo}`,
+        )
+        .limit(1);
+
+      if (dbRow) {
+        const data = dbRow.data as object;
+        partCardCache.set(cacheKey, { data, cachedAt: Date.now() });
+        return void res.json(data);
+      }
+    } catch (dbErr) {
+      logger.warn({ err: dbErr }, "part-card: DB cache read failed, proceeding to AI");
     }
 
     const contextParts: string[] = [];
@@ -373,6 +394,7 @@ router.post("/part-card", async (req, res) => {
 
     // Only cache if we got something useful
     if (displayName || specs.length > 0 || crossRefs.length > 0 || compatibilityNote) {
+      // Populate L1 immediately
       partCardCache.set(cacheKey, { data, cachedAt: Date.now() });
       // Evict oldest entries until the cache is within the 500-entry limit
       if (partCardCache.size > 500) {
@@ -382,6 +404,21 @@ router.post("/part-card", async (req, res) => {
           if (partCardCache.size <= 500) break;
         }
       }
+
+      // Fire-and-forget: upsert into DB (non-blocking)
+      setImmediate(async () => {
+        try {
+          await db
+            .insert(partCardCacheTable)
+            .values({ catalogKey: cacheKey, data, cachedAt: new Date() })
+            .onConflictDoUpdate({
+              target: partCardCacheTable.catalogKey,
+              set: { data, cachedAt: new Date() },
+            });
+        } catch (dbErr) {
+          logger.warn({ err: dbErr }, "part-card: DB cache write failed");
+        }
+      });
     }
 
     return void res.json(data);
