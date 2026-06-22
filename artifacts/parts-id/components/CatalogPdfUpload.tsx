@@ -74,6 +74,25 @@ type FailedChunkInfo = {
   parentJobId: string | null;
 };
 
+/**
+ * Module-level cache that survives component unmount/remount within the same
+ * app session. Written when the OS backgrounds the app mid-chunk-upload and
+ * the in-flight XHR is aborted into the "paused" state. Read on mount so the
+ * "Paused" card reappears if the user navigates away and back while paused.
+ * Cleared when the upload starts fresh, completes, is cancelled, or resumes.
+ */
+type PausedUploadCache = {
+  failedChunkInfo: FailedChunkInfo;
+  chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>> | null;
+  /** Raw PDF bytes — needed so Resume can restart from chunk 0 if required. */
+  pdfBytes: Uint8Array | null;
+  /** Vendor string — required by the API for the first chunk's parent-job creation. */
+  vendor: string;
+  /** Display name of the picked file — restored so the filename label reappears. */
+  filename: string | null;
+};
+let _pausedUploadCache: PausedUploadCache | null = null;
+
 interface Props {
   adminToken: string | null;
   onSessionExpired: () => void;
@@ -154,6 +173,26 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     activateKeepAwake("catalog-upload");
     return () => { deactivateKeepAwake("catalog-upload"); };
   }, [loading]);
+
+  // Restore paused-upload state if the component remounts mid-upload (e.g. the
+  // user navigated away while paused and then returned). The module-level cache
+  // outlives individual component instances within the same app session.
+  useEffect(() => {
+    if (_pausedUploadCache) {
+      const { failedChunkInfo, chunks, pdfBytes: cachedPdfBytes, vendor: cachedVendor, filename: cachedFilename } = _pausedUploadCache;
+      chunksRef.current = chunks;
+      setHasStoredChunks(chunks !== null);
+      setFailedChunkInfo(failedChunkInfo);
+      setIsPaused(true);
+      // Restore upload context so the Resume flow can proceed without requiring
+      // the admin to re-pick the file. pdfBytes is needed if the upload needs
+      // to restart from chunk 0; vendor is required for the parent-job creation.
+      if (cachedPdfBytes) setPdfBytes(cachedPdfBytes);
+      setVendor(cachedVendor);
+      if (cachedFilename) setFilename(cachedFilename);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Detect when the app goes to the background mid-upload. Abort the in-flight
   // XHR cleanly and switch to a "paused" state so the user can resume on return.
@@ -493,6 +532,16 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             // "paused" card rather than the normal abort cleanup so the user
             // can tap Resume when they return to the foreground.
             appStatePausedRef.current = false;
+            const pausedInfo: FailedChunkInfo = {
+              chunkIndex: i,
+              totalChunks: chunks.length,
+              parentJobId: i === 0 ? null : parentJobId,
+            };
+            // Persist to module-level cache so the paused card is restored if
+            // the component unmounts and remounts (e.g. user navigates away).
+            // pdfBytes/vendor/filename are captured via closure and are stable
+            // throughout the upload (they don't change once the upload starts).
+            _pausedUploadCache = { failedChunkInfo: pausedInfo, chunks, pdfBytes, vendor, filename };
             setIsPaused(true);
             setLoading(false);
             setUploadPct(null);
@@ -502,13 +551,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             setChunkLabel(null);
             setChunksCompleted(0);
             setChunksTotal(0);
-            setFailedChunkInfo({
-              chunkIndex: i,
-              totalChunks: chunks.length,
-              parentJobId: i === 0 ? null : parentJobId,
-            });
+            setFailedChunkInfo(pausedInfo);
           } else {
             // Manual cancel — full reset.
+            _pausedUploadCache = null;
             setLoading(false);
             setUploadPct(null);
             setOverallUploadPct(null);
@@ -547,6 +593,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (aborted || !parentJobId) return;
 
     // All chunks uploaded — start polling parent job
+    _pausedUploadCache = null;
     setUploadPct(null);
     setOverallUploadPct(null);
     setUploadSpeed(null);
@@ -576,27 +623,36 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       return;
     }
 
-    // Single-element result: use the regular single-upload path
+    // Single-element result: delegate to the regular single-upload path.
+    // keep-awake for that path is handled by the useEffect on `loading`.
     if (chunks.length === 1) {
       const base64 = bytesToBase64(chunks[0]!.bytes);
       handleSingleUpload(base64, 0);
       return;
     }
 
-    // Persist the chunks so server-side processing failures can be retried
-    // without the admin re-picking the file (pdfBytes is cleared after upload).
-    chunksRef.current = chunks;
-    setHasStoredChunks(true);
+    // Multi-chunk path: activate keep-awake for the full upload lifetime.
+    // deactivateKeepAwake is called in the finally block so it fires on
+    // completion, abort, network error, and unexpected exceptions alike.
+    activateKeepAwake("catalog-upload");
+    try {
+      // Persist the chunks so server-side processing failures can be retried
+      // without the admin re-picking the file (pdfBytes is cleared after upload).
+      chunksRef.current = chunks;
+      setHasStoredChunks(true);
 
-    setChunksTotal(chunks.length);
-    setChunksCompleted(0);
+      setChunksTotal(chunks.length);
+      setChunksCompleted(0);
 
-    // Estimate byte sizes for ETA accounting. Actual base64 encoding is done
-    // lazily per-chunk inside uploadChunksFromIndex to keep memory usage low.
-    const chunkBodySizes = chunks.map(c => estimateBase64Size(c.bytes));
-    const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
+      // Estimate byte sizes for ETA accounting. Actual base64 encoding is done
+      // lazily per-chunk inside uploadChunksFromIndex to keep memory usage low.
+      const chunkBodySizes = chunks.map(c => estimateBase64Size(c.bytes));
+      const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
 
-    await uploadChunksFromIndex(chunks, 0, null, chunkBodySizes, totalBodyBytes);
+      await uploadChunksFromIndex(chunks, 0, null, chunkBodySizes, totalBodyBytes);
+    } finally {
+      deactivateKeepAwake("catalog-upload");
+    }
   };
 
   // ── Retry a single failed chunk (without re-uploading the whole file) ──────
@@ -645,6 +701,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   // Clears the paused flag then delegates to handleRetryChunk which already
   // knows the correct chunk index via failedChunkInfo.
   const handleResume = (): void => {
+    _pausedUploadCache = null;
     setIsPaused(false);
     void handleRetryChunk();
   };
@@ -793,6 +850,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const handleStart = (attempt = 0) => {
     if (!pdfBytes || !vendor.trim() || !adminToken) return;
+    _pausedUploadCache = null;
     setError(null);
     setRetryCountdown(null);
     setShowRetryBtn(false);
