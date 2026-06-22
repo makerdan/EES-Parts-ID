@@ -130,10 +130,15 @@ describe("ZoneEditor — wheel-zoom integration", () => {
   let addEventListenerSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    // Pre-populate the admin token so the component skips the login modal.
+    // Without this, the password <input> remains focused and interactions that
+    // check document.activeElement silently no-op before reaching the canvas.
+    sessionStorage.setItem("zoneEditorAdminToken", "test-token");
     addEventListenerSpy = vi.spyOn(EventTarget.prototype, "addEventListener");
   });
 
   afterEach(() => {
+    sessionStorage.removeItem("zoneEditorAdminToken");
     vi.restoreAllMocks();
   });
 
