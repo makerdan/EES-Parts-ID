@@ -322,6 +322,13 @@ export default function SearchScreen() {
         clearTimeout(searchTimeoutRef.current);
         searchTimeoutRef.current = null;
       }
+      // Cancel any pending sync retry so it doesn't fire auth-sensitive state
+      // updates after the user has logged out.
+      if (syncRetryTimerRef.current !== null) {
+        clearTimeout(syncRetryTimerRef.current);
+        syncRetryTimerRef.current = null;
+      }
+      setSyncRetryPending(false);
       searchAbortedRef.current = false;
       setMode("search");
       setActiveCategorySlug(null);
