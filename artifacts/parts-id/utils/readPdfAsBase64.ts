@@ -94,8 +94,13 @@ function validatePdfBytes(bytes: Uint8Array): void {
  * `maxBytes` — when provided, the function throws PdfTooLargeError if the
  * file exceeds this size. On native, getInfoAsync's reported size is used for
  * an early bail-out before reading; on web, the check runs after the fetch.
+ *
+ * `file` — optional native `File` object (available as `asset.file` on the
+ * DocumentPicker result on web). When provided on web, FileReader is used
+ * instead of fetch(blob:uri), which avoids silent failures in
+ * iframe/proxy environments such as the Replit canvas preview.
  */
-async function readRawBytes(uri: string, maxBytes?: number): Promise<Uint8Array> {
+async function readRawBytes(uri: string, maxBytes?: number, file?: File): Promise<Uint8Array> {
   if (Platform.OS !== "web") {
     // ── Native path ──────────────────────────────────────────────────────────
     const info = await FileSystem.getInfoAsync(uri).catch(() => null);
@@ -120,6 +125,29 @@ async function readRawBytes(uri: string, maxBytes?: number): Promise<Uint8Array>
   }
 
   // ── Web path ───────────────────────────────────────────────────────────────
+
+  // Prefer FileReader when the native File object is available (expo-document-picker
+  // on web exposes it as asset.file). This avoids the silent fetch(blob:uri) failure
+  // that occurs inside iframe/proxy environments like the Replit canvas preview.
+  if (file instanceof File) {
+    const bytes = await new Promise<Uint8Array>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolve(new Uint8Array(reader.result as ArrayBuffer));
+      };
+      reader.onerror = () => {
+        reject(new Error("Failed to read PDF: FileReader error"));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    if (maxBytes !== undefined && bytes.length > maxBytes) {
+      throw new PdfTooLargeError();
+    }
+    return bytes;
+  }
+
+  // Fallback: fetch(blob:uri) — used when asset.file is not available.
   const controller = new AbortController();
   const fetchTimeout = setTimeout(() => controller.abort(), 120_000);
 
@@ -192,9 +220,13 @@ export function toFriendlyReadError(err: unknown): string {
  * No file-size limit is enforced — large files are chunked by the upload layer
  * (splitPdfIntoChunks). Validates that the file is a well-formed,
  * non-encrypted PDF.
+ *
+ * `file` — optional native `File` object (available as `asset.file` on the
+ * DocumentPicker result on web). When provided, the web path uses FileReader
+ * instead of fetch(blob:uri) to avoid silent failures in proxy environments.
  */
-export async function readPdfAsBytes(uri: string): Promise<Uint8Array> {
-  const bytes = await readRawBytes(uri);
+export async function readPdfAsBytes(uri: string, file?: File): Promise<Uint8Array> {
+  const bytes = await readRawBytes(uri, undefined, file);
   validatePdfBytes(bytes);
   return bytes;
 }

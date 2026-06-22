@@ -295,14 +295,21 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       }
       const asset = result.assets[0]!;
       try {
-        const bytes = await readPdfAsBytes(asset.uri);
+        // On web, asset.file is the native File object exposed by
+        // expo-document-picker. Passing it lets readPdfAsBytes use FileReader
+        // instead of fetch(blob:uri), which silently fails in proxy/iframe
+        // environments like the Replit canvas preview.
+        const webFile = (asset as { file?: File }).file;
+        const bytes = await readPdfAsBytes(asset.uri, webFile);
         setPdfBytes(bytes);
         setFilename(asset.name ?? "catalog.pdf");
         chunksRef.current = null;
         setHasStoredChunks(false);
         chunkRetryCountsRef.current = new Map();
       } catch (err) {
-        setError(toFriendlyReadError(err));
+        const message = toFriendlyReadError(err);
+        setError(message);
+        Alert.alert("Could not read PDF", message);
       } finally {
         setReadingFile(false);
       }
