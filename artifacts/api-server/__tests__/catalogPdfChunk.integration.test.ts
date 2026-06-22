@@ -11,6 +11,9 @@
  */
 
 // ── Module mocks ─────────────────────────────────────────────────────────────
+
+const mockCreate = jest.fn();
+
 jest.mock("@workspace/integrations-openai-ai-server", () => ({
   openai: { chat: { completions: { create: jest.fn() } }, audio: { transcriptions: { create: jest.fn() } } },
   generateImageBuffer: jest.fn(),
@@ -25,6 +28,22 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   batchProcessWithSSE: jest.fn(),
   isRateLimitError: jest.fn(() => false),
 }));
+
+// ── Mock the Poe bot chain so tests never make real network calls ─────────────
+jest.mock("../src/lib/poeBot", () => {
+  class PoeBotChainExhaustedError extends Error {
+    constructor() {
+      super("All Poe bots in the fallback chain failed");
+      this.name = "PoeBotChainExhaustedError";
+    }
+  }
+  return {
+    tryPoeBotChain: jest.fn(async (_feature: unknown, fn: (client: unknown, model: string) => unknown) =>
+      fn({ chat: { completions: { create: mockCreate } } }, "test-model"),
+    ),
+    PoeBotChainExhaustedError,
+  };
+});
 
 jest.mock("../src/utils/pdfProcessor", () => ({
   extractPdfPages: jest.fn(),
