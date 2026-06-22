@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { InventoryItem } from "@workspace/api-client-react";
 
+import { reportStorageError } from "@/utils/storageErrorReporter";
+
 export const FUSE_CACHE_KEY = "parts_id_fuse_cache_v2";
 
 // Stores the unix timestamp (ms) of the last successful full inventory sync.
@@ -24,7 +26,9 @@ export async function lookupByBarcodeOffline(
   try {
     const raw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
     if (!raw) return null;
-    const items = JSON.parse(raw) as Array<InventoryItem>;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.every((i: unknown) => typeof (i as { id?: unknown })?.id === 'number')) return null;
+    const items = parsed as Array<InventoryItem>;
     const match = items.find(
       (item) => Array.isArray(item.barcodes) && item.barcodes.includes(code),
     );
@@ -39,7 +43,13 @@ export async function upsertItemInBarcodeCache(
 ): Promise<void> {
   try {
     const raw = await AsyncStorage.getItem(FUSE_CACHE_KEY);
-    const items: Array<InventoryItem> = raw ? (JSON.parse(raw) as Array<InventoryItem>) : [];
+    let items: Array<InventoryItem> = [];
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.every((i: unknown) => typeof (i as { id?: unknown })?.id === 'number')) {
+        items = parsed as Array<InventoryItem>;
+      }
+    }
     const idx = items.findIndex((item) => item.id === updatedItem.id);
     if (idx >= 0) {
       // Always update an existing entry — no size check needed.
@@ -52,8 +62,8 @@ export async function upsertItemInBarcodeCache(
       items.push(updatedItem);
     }
     await AsyncStorage.setItem(FUSE_CACHE_KEY, JSON.stringify(items));
-  } catch {
-    // Non-fatal: cache update failure should not surface to the user
+  } catch (err) {
+    reportStorageError("Could not update offline barcode cache", err);
   }
 }
 

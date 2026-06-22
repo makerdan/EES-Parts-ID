@@ -88,7 +88,7 @@ export async function runTranslateQuery(
       });
     } else if (data.appliedTranslation && (data.translatedTerms?.length ?? 0) > 0) {
       setAITranslation({
-        terms: data.translatedTerms!,
+        terms: data.translatedTerms ?? [],
         interpretation: data.interpretation ?? "",
       });
       setAITranslationDismissed(false);
