@@ -10,7 +10,8 @@
  *     → imageIndex / imageIndex2 are 0-based indices into that array.
  */
 
-import { getAiClient, getCatalogModel } from "../lib/aiProvider";
+import { getCatalogModel, getOpenAIFallbackClient } from "../lib/aiProvider";
+import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
 
 export interface ImageRegion {
   x: number;
@@ -104,14 +105,16 @@ export async function extractCatalogPage(
   if (userContent.length === 0) return [];
 
   try {
-    const response = await getAiClient().chat.completions.create({
-      model: getCatalogModel(),
-      max_completion_tokens: 2048,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userContent },
-      ],
-    });
+    const response = await tryPoeBotChain("catalog", (client, model) =>
+      client.chat.completions.create({
+        model,
+        max_completion_tokens: 2048,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userContent },
+        ],
+      }),
+    );
 
     const raw = response.choices[0]?.message?.content ?? "[]";
     const match = raw.match(/\[[\s\S]*\]/);
@@ -149,7 +152,10 @@ export async function extractCatalogPage(
         };
       });
   } catch (err) {
-    console.error("[catalog-extract] GPT-4o error:", err);
+    if (err instanceof PoeBotChainExhaustedError) {
+      throw err;
+    }
+    console.error("[catalog-extract] AI error:", err);
     return [];
   }
 }

@@ -1,12 +1,13 @@
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import type { SearchResult } from "@workspace/api-client-react";
 import type { InventoryItem } from "@workspace/api-client-react";
-import { lookupByBarcode,useAiIdentifyPart, useSearchInventory } from "@workspace/api-client-react";
+import { aiIdentifyPart,lookupByBarcode, useAiIdentifyPart, useSearchInventory } from "@workspace/api-client-react";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import React, { useEffect,useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Modal,
   Pressable,
@@ -337,6 +338,79 @@ export default function PhotoScreen() {
       // Check stale-request FIRST — don't touch shared timer/phase if superseded.
       if (requestIdRef.current !== thisRequestId) return;
       if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
+
+      // Poe chain exhausted — all bots failed; prompt the user to retry via OpenAI.
+      const isChainExhausted =
+        err instanceof Error &&
+        "data" in err &&
+        (err as { data?: { status?: string } }).data?.status === "poe_chain_exhausted";
+
+      if (isChainExhausted) {
+        setProgressPhase(null);
+        Alert.alert(
+          "AI Unavailable",
+          "All AI bots are currently unavailable. Retry using OpenAI instead?",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Use OpenAI",
+              onPress: async () => {
+                const retryRequestId = ++requestIdRef.current;
+                setInlineError(null);
+                setProgressPhase("uploading");
+                progressTimerRef.current = setTimeout(() => {
+                  if (requestIdRef.current === retryRequestId) setProgressPhase("analysing");
+                }, 2000);
+                try {
+                  const fallbackResult = await aiIdentifyPart(
+                    {
+                      images: images.map((i) => i.base64),
+                      keywords: keywords.trim() || undefined,
+                      vendor: vendor.trim() || undefined,
+                      color: color.trim() || undefined,
+                      size: size.trim() || undefined,
+                      textNumbers: textNumbers.trim() || undefined,
+                    },
+                    { headers: { "x-use-openai-fallback": "true" } },
+                  );
+                  if (requestIdRef.current !== retryRequestId) return;
+                  if (progressTimerRef.current) { clearTimeout(progressTimerRef.current); progressTimerRef.current = null; }
+                  setAiSummary(fallbackResult.summary);
+                  setAiTerms(fallbackResult.searchTerms);
+                  const allTerms = [
+                    ...fallbackResult.searchTerms,
+                    ...fallbackResult.synonyms.slice(0, 3),
+                  ].join(" ");
+                  if (allTerms.trim()) {
+                    setProgressPhase("searching");
+                    const searchResult = await searchMutation.mutateAsync({
+                      data: {
+                        keywords: allTerms,
+                        catalog: fallbackResult.partNumbers?.[0] || undefined,
+                        vendor: (fallbackResult.detectedVendor ?? vendor.trim()) || undefined,
+                        color: color.trim() || undefined,
+                        size: size.trim() || undefined,
+                        textNumbers: textNumbers.trim() || undefined,
+                        confidenceThreshold: 40,
+                      },
+                    });
+                    if (requestIdRef.current !== retryRequestId) return;
+                    setResults(searchResult.results);
+                  }
+                } catch {
+                  if (requestIdRef.current === retryRequestId) {
+                    setInlineError("OpenAI identification also failed — please try again later.");
+                  }
+                } finally {
+                  if (requestIdRef.current === retryRequestId) setProgressPhase(null);
+                }
+              },
+            },
+          ],
+        );
+        return;
+      }
+
       // Surface a meaningful message based on HTTP status (ApiError.status) when available
       const status =
         err instanceof Error && "status" in err

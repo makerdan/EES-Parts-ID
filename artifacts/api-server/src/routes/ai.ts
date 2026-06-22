@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { getAiClient, getIdentifyModel, getEnrichModel } from "../lib/aiProvider";
+import { getAiClient, getIdentifyModel, getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
+import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
 import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
 import { buildImageContent, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
 import { db } from "@workspace/db";
@@ -46,29 +47,40 @@ router.post("/identify", async (req, res) => {
 
     const imageContent = buildImageContent(images);
 
-    const response = await getAiClient().chat.completions.create({
-      model: getIdentifyModel(),
-      max_completion_tokens: 1024,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an expert electrical supply warehouse specialist. Analyze the provided image(s) and identify the electrical part. Return ONLY valid JSON with these fields: partNumbers (string[]), searchTerms (string[]), synonyms (string[]), relatedTerms (string[]), manufacturerVerified (boolean), detectedVendor (string|null), summary (string). partNumbers must contain ONLY the exact catalog/part numbers you can read directly from the image or label (e.g. [\"CHB5\", \"QO115\"]); leave it empty if no part number is clearly visible. searchTerms should include all descriptive terms, part numbers, manufacturer codes, and alternative names.",
-        },
-        {
-          role: "user",
-          content: [
-            ...imageContent,
-            {
-              type: "text" as const,
-              text: contextStr
-                ? `Identify this electrical part. Additional context:\n${contextStr}\n\nReturn JSON only.`
-                : "Identify this electrical part. Return JSON only.",
-            },
-          ],
-        },
-      ],
-    });
+    const identifyMessages = [
+      {
+        role: "system" as const,
+        content:
+          "You are an expert electrical supply warehouse specialist. Analyze the provided image(s) and identify the electrical part. Return ONLY valid JSON with these fields: partNumbers (string[]), searchTerms (string[]), synonyms (string[]), relatedTerms (string[]), manufacturerVerified (boolean), detectedVendor (string|null), summary (string). partNumbers must contain ONLY the exact catalog/part numbers you can read directly from the image or label (e.g. [\"CHB5\", \"QO115\"]); leave it empty if no part number is clearly visible. searchTerms should include all descriptive terms, part numbers, manufacturer codes, and alternative names.",
+      },
+      {
+        role: "user" as const,
+        content: [
+          ...imageContent,
+          {
+            type: "text" as const,
+            text: contextStr
+              ? `Identify this electrical part. Additional context:\n${contextStr}\n\nReturn JSON only.`
+              : "Identify this electrical part. Return JSON only.",
+          },
+        ],
+      },
+    ];
+
+    const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
+    const response = useOpenAiFallback
+      ? await getOpenAIFallbackClient().chat.completions.create({
+          model: getOpenAIModelForFeature("identify"),
+          max_completion_tokens: 1024,
+          messages: identifyMessages,
+        })
+      : await tryPoeBotChain("identify", (client, model) =>
+          client.chat.completions.create({
+            model,
+            max_completion_tokens: 1024,
+            messages: identifyMessages,
+          }),
+        );
 
     const text = response.choices[0]?.message?.content ?? "{}";
     const analysis = normalizeAnalysis(extractJsonFromText(text), text);
@@ -95,6 +107,10 @@ router.post("/identify", async (req, res) => {
       }
     });
   } catch (err) {
+    if (err instanceof PoeBotChainExhaustedError) {
+      logger.warn("Poe chain exhausted in POST /ai/identify");
+      return void res.status(503).json({ status: "poe_chain_exhausted" });
+    }
     if (isPoeAuthError(err)) {
       logger.error({ err }, "AI auth error in POST /ai/identify");
       return void res.status(401).json({ error: poeErrorMessage(err) });
