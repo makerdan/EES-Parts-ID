@@ -1,7 +1,6 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 
-const MIN_WIDTH = 800;
 const MAX_WIDTH = 1920;
 const JPEG_QUALITY = 0.7;
 
@@ -24,9 +23,11 @@ export async function resizeImage(
   uri: string,
   width: number
 ): Promise<ResizedImage> {
-  // Unknown width (0 or negative): metadata unavailable — pass through without
-  // resize rather than making an assumption about the image size.
-  if (width <= 0 || (width >= MIN_WIDTH && width <= MAX_WIDTH)) {
+  // Only downscale when the image exceeds MAX_WIDTH. All other cases — unknown
+  // width (0 or negative), already within range, or narrower than MIN_WIDTH —
+  // are passed through unchanged. Upscaling small images increases token cost
+  // and payload size with no quality benefit.
+  if (width <= 0 || width <= MAX_WIDTH) {
     try {
       const raw = await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
       return { uri, base64: `data:image/jpeg;base64,${raw}` };
@@ -38,8 +39,8 @@ export async function resizeImage(
     }
   }
 
-  // width > MAX_WIDTH → downscale; width < MIN_WIDTH → upscale.
-  const targetWidth = width > MAX_WIDTH ? MAX_WIDTH : MIN_WIDTH;
+  // width > MAX_WIDTH → downscale only.
+  const targetWidth = MAX_WIDTH;
 
   try {
     const result = await ImageManipulator.manipulateAsync(

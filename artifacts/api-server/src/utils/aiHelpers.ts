@@ -16,14 +16,14 @@ export interface AiAnalysis {
 /**
  * Convert a list of raw image strings (base64 or data: URIs) into the
  * OpenAI chat message image_url content block format.
- * At most 2 images are used to stay within token/context limits.
+ * At most 4 images are used (matching the UI capture limit).
  * Bare base64 strings (no data: prefix) are treated as JPEG.
  */
 export function buildImageContent(images: string[]): Array<{
   type: "image_url";
   image_url: { url: string };
 }> {
-  return images.slice(0, 2).map(img => ({
+  return images.slice(0, 4).map(img => ({
     type: "image_url" as const,
     image_url: {
       url: img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`,
@@ -48,7 +48,9 @@ export function extractJsonFromText(text: string): Record<string, unknown> | nul
 /**
  * Normalize a raw AI analysis object into a fully-typed AiAnalysis,
  * providing safe defaults for every field.
- * Falls back to splitting the raw text into word tokens when `parsed` is null.
+ * When `parsed` is null (AI returned non-JSON prose), search terms are left
+ * empty so the caller skips the inventory search; the raw text is kept as the
+ * summary so the user sees what the AI said instead of garbage results.
  */
 export function normalizeAnalysis(
   parsed: Record<string, unknown> | null,
@@ -57,7 +59,7 @@ export function normalizeAnalysis(
   if (!parsed) {
     return {
       partNumbers: [],
-      searchTerms: rawText.split(/\s+/).slice(0, 10),
+      searchTerms: [],
       synonyms: [],
       relatedTerms: [],
       manufacturerVerified: false,
