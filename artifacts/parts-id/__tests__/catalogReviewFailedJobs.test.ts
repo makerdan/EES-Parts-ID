@@ -356,3 +356,43 @@ describe("FailedJobsSection — re-failed progress card", () => {
     expect(texts).not.toContain("Failed");
   });
 });
+
+// ── Mid-loop chunk failure leaves card actionable ──────────────────────────────
+// Simulates what handleResume does when a chunk upload fails mid-loop:
+// it sets resumeProgress[jobId] to status "failed" with an errorMessage.
+// The card must show Resume + Dismiss so the admin is not stuck.
+
+describe("FailedJobsSection — mid-loop chunk failure leaves card actionable", () => {
+  const MID_LOOP_FAIL_PROGRESS: import("../types/catalogPdf").ResumeProgress = {
+    status: "failed",
+    processedPages: 0,
+    totalPages: null,
+    matchedParts: 0,
+    errorMessage: "Could not resume a chunk. Please try again.",
+  };
+
+  it("renders 'Failed again' badge after a mid-loop chunk error", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: MID_LOOP_FAIL_PROGRESS });
+    expect(texts).toContain("Failed again");
+  });
+
+  it("shows the chunk error message on the card", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: MID_LOOP_FAIL_PROGRESS });
+    expect(texts).toContain("Could not resume a chunk. Please try again.");
+  });
+
+  it("renders a Resume button so admin can retry after chunk failure", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: MID_LOOP_FAIL_PROGRESS });
+    expect(texts).toContain("Resume");
+  });
+
+  it("renders a Dismiss button so admin can clear the card after chunk failure", () => {
+    const { texts } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: MID_LOOP_FAIL_PROGRESS });
+    expect(texts).toContain("Dismiss");
+  });
+
+  it("does not show an 'Uploading' badge — card must not remain stuck mid-upload", () => {
+    const { allText } = renderSection([MOCK_JOB], null, null, { [MOCK_JOB.id]: MID_LOOP_FAIL_PROGRESS });
+    expect(allText).not.toContain("Uploading");
+  });
+});
