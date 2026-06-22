@@ -457,6 +457,39 @@ export function buildAutoNumSentinelMap(
   }));
 }
 
+/**
+ * Pre-flight collision check for auto-numbering.
+ *
+ * Returns the list of (aisleId, sectionNum) pairs where a non-selected zone
+ * already holds a sectionNum that a selected zone is about to be assigned.
+ * The DB's (aisleId, sectionNum) unique index would reject those Phase-2 PATCHes
+ * even after the sentinel dance, because the non-selected zone never moved.
+ *
+ * If any collisions are returned the caller should abort before Phase 1 starts.
+ */
+export function buildAutoNumCollisions(
+  preview: Array<{ zone: Zone; newSectionNum: number }>,
+  allZones: Zone[],
+  selectedIds: Set<number>,
+): Array<{ aisleId: string; sectionNum: number; conflictingZoneId: number }> {
+  // Build a lookup: normalized-aisleId + sectionNum → id, for every non-selected zone
+  const nonSelectedKey = new Map<string, number>();
+  for (const z of allZones) {
+    if (!selectedIds.has(z.id)) {
+      nonSelectedKey.set(`${normalizeAisleId(z.aisleId)}:${z.sectionNum}`, z.id);
+    }
+  }
+  const collisions: Array<{ aisleId: string; sectionNum: number; conflictingZoneId: number }> = [];
+  for (const { zone, newSectionNum } of preview) {
+    const aisleId = normalizeAisleId(zone.aisleId);
+    const conflictingZoneId = nonSelectedKey.get(`${aisleId}:${newSectionNum}`);
+    if (conflictingZoneId !== undefined) {
+      collisions.push({ aisleId, sectionNum: newSectionNum, conflictingZoneId });
+    }
+  }
+  return collisions;
+}
+
 function screenToSvg(
   clientX: number,
   clientY: number,
@@ -1351,32 +1384,50 @@ export function ZoneEditor() {
   // ── Auto-number handler ────────────────────────────────────────────────────
   const handleAutoNumber = async () => {
     if (autoNumPreview.length === 0) return;
+
+    // Pre-flight: catch collisions with non-selected zones BEFORE any DB writes.
+    // The two-phase sentinel strategy only parks selected zones, so a non-selected
+    // zone that already holds a target sectionNum would still cause a unique-index
+    // violation in Phase 2.
+    const collisions = buildAutoNumCollisions(autoNumPreview, zones, selectedIds);
+    if (collisions.length > 0) {
+      const { aisleId, sectionNum } = collisions[0]!;
+      toast.error(
+        `Section ${sectionNum} in Aisle ${aisleId} is already used by a zone that isn't selected. Select all zones in the aisle or choose a different starting number.`,
+      );
+      return;
+    }
+
+    // Build these before the try so they're accessible in the catch for rollback.
+    const undoChanges = autoNumPreview.map(({ zone, newSectionNum, newSortOrder }) => ({
+      id: zone.id,
+      before: {
+        sectionNum: zone.sectionNum,
+        ...(autoNumSyncSortOrder ? { sortOrder: zone.sortOrder } : {}),
+      } as MetaSnap,
+      after: {
+        sectionNum: newSectionNum,
+        ...(autoNumSyncSortOrder ? { sortOrder: newSortOrder } : {}),
+      } as MetaSnap,
+    }));
+    // Two-phase apply to avoid (aisleId, sectionNum) unique constraint
+    // violations when new numbers overlap current numbers in the same aisle
+    // (e.g. a cyclic swap: A:1→2, B:2→1).
+    //
+    // Phase 1 — park every zone at a temporary negative sentinel that is
+    //            guaranteed not to collide with anything.
+    // Phase 2 — move each zone from its sentinel to its final sectionNum,
+    //            and (when sortOrder sync is enabled) also update sortOrder.
+    const sentinelMap = buildAutoNumSentinelMap(autoNumPreview, zones);
+    let phase1Done = false;
+
     setAutoNumApplying(true);
     try {
-      const undoChanges = autoNumPreview.map(({ zone, newSectionNum, newSortOrder }) => ({
-        id: zone.id,
-        before: {
-          sectionNum: zone.sectionNum,
-          ...(autoNumSyncSortOrder ? { sortOrder: zone.sortOrder } : {}),
-        } as MetaSnap,
-        after: {
-          sectionNum: newSectionNum,
-          ...(autoNumSyncSortOrder ? { sortOrder: newSortOrder } : {}),
-        } as MetaSnap,
-      }));
-      // Two-phase apply to avoid (aisleId, sectionNum) unique constraint
-      // violations when new numbers overlap current numbers in the same aisle
-      // (e.g. a cyclic swap: A:1→2, B:2→1).
-      //
-      // Phase 1 — park every zone at a temporary negative sentinel that is
-      //            guaranteed not to collide with anything.
-      // Phase 2 — move each zone from its sentinel to its final sectionNum,
-      //            and (when sortOrder sync is enabled) also update sortOrder.
-      const sentinelMap = buildAutoNumSentinelMap(autoNumPreview, zones);
-
       for (const { id, sentinel } of sentinelMap) {
         await patchZone(id, { sectionNum: sentinel });
       }
+      phase1Done = true;
+
       for (const { id, newSectionNum } of sentinelMap) {
         const preview = autoNumPreview.find((p) => p.zone.id === id)!;
         const patch: Partial<Zone> = { sectionNum: newSectionNum };
@@ -1395,6 +1446,41 @@ export function ZoneEditor() {
       toast.success(`Auto-numbered ${n} zone${n !== 1 ? "s" : ""}`);
       await fetchZones();
     } catch (e) {
+      // Always re-sync the UI so the map reflects actual DB state, not stale local state.
+      await fetchZones().catch(() => {});
+
+      // Best-effort sentinel rollback: if Phase 1 ran but Phase 2 threw, some zones
+      // may be stuck at their negative sentinel values. Restore them to their originals.
+      if (phase1Done) {
+        try {
+          const res = await fetch(`${API_BASE}/warehouse-zones`);
+          if (res.ok) {
+            const data = await res.json() as { zones?: Zone[] };
+            const freshZones: Zone[] = data.zones ?? [];
+            const sentinelById = new Map(sentinelMap.map(({ id, sentinel }) => [id, sentinel]));
+            const originals = new Map(undoChanges.map(({ id, before }) => [id, before.sectionNum]));
+            const stillAtSentinel = freshZones.filter(
+              (z) => sentinelById.has(z.id) && z.sectionNum === sentinelById.get(z.id),
+            );
+            if (stillAtSentinel.length > 0) {
+              for (const z of stillAtSentinel) {
+                const orig = originals.get(z.id);
+                if (orig !== undefined) {
+                  await patchZone(z.id, { sectionNum: orig }).catch(() => {});
+                }
+              }
+              await fetchZones().catch(() => {});
+              toast.error(
+                `Auto-numbering failed and was rolled back. ${e instanceof Error ? e.message : String(e)}`,
+              );
+              return;
+            }
+          }
+        } catch {
+          // Rollback attempt itself failed — fall through to show the original error.
+        }
+      }
+
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setAutoNumApplying(false);
@@ -2724,6 +2810,20 @@ export function ZoneEditor() {
                           </div>
                         ))}
                       </div>
+                      {/* Cross-aisle warning */}
+                      {new Set(autoNumPreview.map((p) => normalizeAisleId(p.zone.aisleId))).size > 1 && (
+                        <div style={{
+                          marginTop: 6,
+                          background: "#fffbeb",
+                          border: "1px solid #fbbf24",
+                          borderRadius: 4,
+                          padding: "5px 8px",
+                          fontSize: 11,
+                          color: "#92400e",
+                        }}>
+                          ⚠ Zones span {new Set(autoNumPreview.map((p) => normalizeAisleId(p.zone.aisleId))).size} aisles — numbering will be assigned across all selected aisles.
+                        </div>
+                      )}
                     </div>
                   )}
 
