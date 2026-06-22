@@ -496,7 +496,7 @@ export default function CatalogReviewScreen() {
           const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
             method: "POST",
             headers: resumeHeaders,
-            body: JSON.stringify({ pdfBase64: chunkBase64, chunkPageOffset: chunk.pageOffset }),
+            body: JSON.stringify({ pdfBase64: chunkBase64, chunkPageOffset: chunk.pageOffset, chunkPageCount: chunk.pageCount }),
           });
 
           if (r.status === 401) { logoutAdmin(); return; }
