@@ -4,7 +4,7 @@ import type { InventoryItem } from "@workspace/api-client-react";
 import { aiIdentifyPart,lookupByBarcode, useAiIdentifyPart, useSearchInventory } from "@workspace/api-client-react";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import React, { useEffect,useRef, useState } from "react";
+import React, { useCallback, useEffect,useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -36,6 +36,8 @@ import { resizeImage } from "@/utils/resizeImage";
 import type { ScanEntry } from "@/utils/scanHistory";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
+type ProgressPhase = "uploading" | "analysing" | "searching" | null;
+
 export default function PhotoScreen() {
   "use no memo";
   useTrackScreen("Photo ID");
@@ -56,13 +58,12 @@ export default function PhotoScreen() {
   const [barcodeMoreVisible, setBarcodeMoreVisible] = useState(false);
   const [barcodeResult, setBarcodeResult] = useState<InventoryItem | null>(null);
   // Tracks which phase of the multi-step AI identification flow we are in.
-  type ProgressPhase = "uploading" | "analysing" | "searching" | null;
   const [progressPhase, setProgressPhase] = useState<ProgressPhase>(null);
 
   const [measureSearchVisible, setMeasureSearchVisible] = useState(false);
   /** The result card the admin dismissed/acted on — controls inline bridge card. */
   const [adminBridgeItem, setAdminBridgeItem] = useState<InventoryItem | null>(null);
-  const [, setAdminBridgeMeasureItem] = useState<InventoryItem | null>(null);
+  const [adminBridgeMeasureItem, setAdminBridgeMeasureItem] = useState<InventoryItem | null>(null);
   /** Bin codes of the auto-pinned top result — controls inline "Navigate to Map" banner. */
   const [mapPromptBins, setMapPromptBins] = useState<Array<string>>([]);
   /** Item opened in the full detail/edit sheet — shows the "Map it!" button. */
@@ -180,7 +181,7 @@ export default function PhotoScreen() {
     if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
   }, []);
 
-  const pickImage = async (source: "camera" | "library") => {
+  const pickImage = useCallback(async (source: "camera" | "library") => {
     if (images.length >= 4) {
       setInlineError("Max 4 images — remove one first before adding another.");
       return;
@@ -228,13 +229,13 @@ export default function PhotoScreen() {
         setIsProcessing(false);
       }
     }
-  };
+  }, [images, setInlineError, setIsProcessing, setImages]);
 
   const removeImage = (index: number) => {
     setImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleIdentify = async () => {
+  const handleIdentify = useCallback(async () => {
     if (!images.length) {
       setInlineError("Add at least one photo before identifying.");
       return;
@@ -432,7 +433,7 @@ export default function PhotoScreen() {
       // Only reset our own progress phase; never overwrite a newer request's state.
       if (requestIdRef.current === thisRequestId) setProgressPhase(null);
     }
-  };
+  }, [images, keywords, vendor, color, size, textNumbers, identifyMutation, searchMutation, requestIdRef, progressTimerRef, setPinnedParts, setInlineError, setProgressPhase, setResults, setAiSummary, setAiTerms, setMapPromptBins, setAdminBridgeItem, setAdminBridgeMeasureItem, setBarcodeResult, isAdmin, adminToken, showToast]);
 
   const isLoading = identifyMutation.isPending || searchMutation.isPending;
 
@@ -542,7 +543,7 @@ export default function PhotoScreen() {
               <Text style={[styles.recentScansTitle, { color: colors.mutedForeground }]}>Recent scans</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentScansRow}>
                 {recentFoundScans.map((entry) => {
-                  const isLoading = recentTapLoading === entry.barcode;
+                  const isChipLoading = recentTapLoading === entry.barcode;
                   return (
                     <Pressable
                       key={entry.barcode}
@@ -553,11 +554,11 @@ export default function PhotoScreen() {
                         {
                           backgroundColor: pressed && !recentTapLoading ? colors.muted : colors.card,
                           borderColor: colors.border,
-                          opacity: recentTapLoading && !isLoading ? 0.5 : 1,
+                          opacity: recentTapLoading && !isChipLoading ? 0.5 : 1,
                         },
                       ]}
                     >
-                      {isLoading ? (
+                      {isChipLoading ? (
                         <ActivityIndicator size="small" color={colors.primary} />
                       ) : (
                         <Feather name="maximize" size={12} color={colors.mutedForeground} />
@@ -761,6 +762,7 @@ export default function PhotoScreen() {
                         const item = adminBridgeItem;
                         setAdminBridgeItem(null);
                         setAdminBridgeMeasureItem(item);
+                        setMeasureSearchVisible(true);
                       }}
                       style={[styles.adminBridgeBtn, { backgroundColor: "#f59e0b", borderColor: "#d97706" }]}
                     >
@@ -848,8 +850,9 @@ export default function PhotoScreen() {
       {isAdmin && adminToken ? (
         <MeasurePartScreen
           visible={measureSearchVisible}
-          onClose={() => setMeasureSearchVisible(false)}
+          onClose={() => { setMeasureSearchVisible(false); setAdminBridgeMeasureItem(null); }}
           onConfirm={handleMeasureSearchConfirm}
+          initialItem={adminBridgeMeasureItem}
           adminToken={adminToken}
         />
       ) : null}

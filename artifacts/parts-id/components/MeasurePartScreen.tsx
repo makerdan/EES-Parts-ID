@@ -17,6 +17,7 @@
  * Gating: iOS only — callers must hide the trigger on Android and Web.
  */
 import { Feather } from "@expo/vector-icons";
+import type { InventoryItem } from "@workspace/api-client-react";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Device from "expo-device";
 import { cancelMeasure, measureObject, NativeLidarDepthView } from "lidar-measure";
@@ -94,6 +95,7 @@ interface MeasurePartScreenProps {
   onClose: () => void;
   onConfirm: (dims: PartDimensions) => void;
   initialDims?: PartDimensions | null;
+  initialItem?: InventoryItem | null;
   adminToken: string;
 }
 
@@ -133,6 +135,7 @@ export function MeasurePartScreen({
   onClose,
   onConfirm,
   initialDims,
+  initialItem,
   adminToken,
 }: MeasurePartScreenProps) {
   "use no memo";
@@ -225,18 +228,21 @@ export function MeasurePartScreen({
       // (which would reset measured values whenever the user switches units).
       const currentUnit = unitRef.current;
       fieldUnitRef.current = currentUnit;
-      // Seed canonical mm refs from initialDims
-      lengthMmRef.current   = initialDims?.length   ?? null;
-      widthMmRef.current    = initialDims?.width    ?? null;
-      heightMmRef.current   = initialDims?.height   ?? null;
-      diameterMmRef.current = initialDims?.diameter ?? null;
-      setLengthStr(fmtForUnit(initialDims?.length, currentUnit));
-      setWidthStr(fmtForUnit(initialDims?.width, currentUnit));
-      setHeightStr(fmtForUnit(initialDims?.height, currentUnit));
-      setDiameterStr(fmtForUnit(initialDims?.diameter, currentUnit));
+      // Seed canonical mm refs: prefer explicit initialDims, fall back to
+      // the dimensions stored on initialItem (e.g. admin bridge "Measure Now").
+      const itemDims = initialItem?.dimensions ?? null;
+      const seedDims: PartDimensions | null | undefined = initialDims ?? itemDims;
+      lengthMmRef.current   = seedDims?.length   ?? null;
+      widthMmRef.current    = seedDims?.width    ?? null;
+      heightMmRef.current   = seedDims?.height   ?? null;
+      diameterMmRef.current = seedDims?.diameter ?? null;
+      setLengthStr(fmtForUnit(seedDims?.length, currentUnit));
+      setWidthStr(fmtForUnit(seedDims?.width, currentUnit));
+      setHeightStr(fmtForUnit(seedDims?.height, currentUnit));
+      setDiameterStr(fmtForUnit(seedDims?.diameter, currentUnit));
       if (!permission?.granted) requestPermission();
     }
-  }, [visible, initialDims, permission, requestPermission]);
+  }, [visible, initialDims, initialItem, permission, requestPermission]);
 
   // Re-derive display strings from canonical mm refs when the unit changes.
   // Using the mm refs rather than re-parsing display strings avoids precision
