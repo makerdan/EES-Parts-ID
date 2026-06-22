@@ -28,7 +28,6 @@ import {
   expect,
   vi,
   afterEach,
-  beforeEach,
 } from "vitest";
 import {
   render,
@@ -168,15 +167,7 @@ function rubberRectVisible(container: HTMLElement): boolean {
 // ── Test suite ─────────────────────────────────────────────────────────────────
 
 describe("useRubberBand — Zone Editor integration", () => {
-  beforeEach(() => {
-    // Ensure adminToken is populated so login overlay doesn't block the SVG.
-    // (The login form is a visual overlay; it doesn't block DOM events, but
-    // setting a token avoids edge cases with event targets.)
-    try { sessionStorage.setItem("zoneEditorAdminToken", "test-token"); } catch {}
-  });
-
   afterEach(() => {
-    try { sessionStorage.removeItem("zoneEditorAdminToken"); } catch {}
     cleanup();
     vi.restoreAllMocks();
   });
