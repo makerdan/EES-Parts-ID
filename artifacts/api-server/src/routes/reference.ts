@@ -14,9 +14,8 @@ import { callGemini, callGeminiWithHistory, WEB_REFERENCE_MODEL } from "../lib/w
 
 const router = Router();
 
-const adminPassword = process.env.ADMIN_PASSWORD ?? "";
-
 function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  const adminPassword = process.env.ADMIN_PASSWORD ?? "";
   if (!adminPassword) {
     res.status(503).json({ error: "Server misconfigured: ADMIN_PASSWORD is not set" });
     return;
