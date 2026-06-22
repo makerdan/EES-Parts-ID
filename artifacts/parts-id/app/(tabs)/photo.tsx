@@ -733,6 +733,19 @@ export default function PhotoScreen() {
             </View>
           ) : null}
 
+          {/* AI couldn't extract part details — search was skipped */}
+          {identifyMutation.isSuccess && aiSummary && aiTerms.length === 0 && !isLoading ? (
+            <View style={[styles.aiNoTermsCard, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+              <Text style={[styles.aiNoTermsIcon]}>🤷</Text>
+              <Text style={[styles.aiNoTermsTitle, { color: colors.foreground }]}>
+                Couldn't extract part details
+              </Text>
+              <Text style={[styles.aiNoTermsBody, { color: colors.mutedForeground }]}>
+                The AI wasn't able to identify specific part information from this photo. Try a clearer image, or add a keyword or visible number above.
+              </Text>
+            </View>
+          ) : null}
+
           {/* Results */}
           {results.length > 0 ? (
             <View>
@@ -1003,4 +1016,14 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   adminBridgeBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  aiNoTermsCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 16,
+    alignItems: "center",
+    gap: 6,
+  },
+  aiNoTermsIcon: { fontSize: 28 },
+  aiNoTermsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", textAlign: "center" },
+  aiNoTermsBody: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 19 },
 });
