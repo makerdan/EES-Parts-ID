@@ -254,3 +254,75 @@ describe("tryPoeBotChain — non-poe provider skips chain logic", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// assertVisionChainInvariants() — startup guard for GPT-5-Mini
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("assertVisionChainInvariants()", () => {
+  it("does NOT throw when the current chains are correctly configured", () => {
+    expect(() => aiProvider.assertVisionChainInvariants()).not.toThrow();
+  });
+
+  it("identify chain does not contain POE_ENRICH_BOT (pre-condition for the guard)", () => {
+    const chain = aiProvider.getPoeChainForFeature("identify");
+    expect(chain).not.toContain(aiProvider.POE_ENRICH_BOT);
+  });
+
+  it("dimensions chain does not contain POE_ENRICH_BOT (pre-condition for the guard)", () => {
+    const chain = aiProvider.getPoeChainForFeature("dimensions");
+    expect(chain).not.toContain(aiProvider.POE_ENRICH_BOT);
+  });
+
+  it("catalog chain does not contain POE_ENRICH_BOT (pre-condition for the guard)", () => {
+    const chain = aiProvider.getPoeChainForFeature("catalog");
+    expect(chain).not.toContain(aiProvider.POE_ENRICH_BOT);
+  });
+
+  it("throws an error that names the violated feature when GPT-5-Mini is injected into a vision chain", () => {
+    const brokenChainGetter = (feature: string) => {
+      if (feature === "identify") {
+        return [aiProvider.POE_ENRICH_BOT, aiProvider.POE_IDENTIFY_BOT];
+      }
+      return aiProvider.getPoeChainForFeature(feature as Parameters<typeof aiProvider.getPoeChainForFeature>[0]);
+    };
+
+    expect(() => aiProvider.assertVisionChainInvariants(brokenChainGetter)).toThrow(
+      /Vision chain invariant violated/,
+    );
+
+    expect(() => aiProvider.assertVisionChainInvariants(brokenChainGetter)).toThrow(
+      /"identify" chain contains POE_ENRICH_BOT/,
+    );
+  });
+
+  it("error message names ALL violated features when multiple chains are broken", () => {
+    const brokenChainGetter = (feature: string) => {
+      if (feature === "identify" || feature === "dimensions") {
+        return [aiProvider.POE_ENRICH_BOT, aiProvider.POE_IDENTIFY_BOT];
+      }
+      return aiProvider.getPoeChainForFeature(feature as Parameters<typeof aiProvider.getPoeChainForFeature>[0]);
+    };
+
+    let errorMessage = "";
+    try {
+      aiProvider.assertVisionChainInvariants(brokenChainGetter);
+    } catch (err: unknown) {
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(errorMessage).toMatch(/"identify" chain contains POE_ENRICH_BOT/);
+    expect(errorMessage).toMatch(/"dimensions" chain contains POE_ENRICH_BOT/);
+  });
+
+  it("does NOT throw when GPT-5-Mini is injected only into the enrich chain (text-only, allowed)", () => {
+    const enrichOnlyGetter = (feature: string) => {
+      if (feature === "enrich") {
+        return [aiProvider.POE_ENRICH_BOT, aiProvider.POE_IDENTIFY_BOT];
+      }
+      return aiProvider.getPoeChainForFeature(feature as Parameters<typeof aiProvider.getPoeChainForFeature>[0]);
+    };
+
+    expect(() => aiProvider.assertVisionChainInvariants(enrichOnlyGetter)).not.toThrow();
+  });
+});
