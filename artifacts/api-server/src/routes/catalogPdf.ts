@@ -29,6 +29,7 @@ import { extractCatalogPage } from "../utils/catalogExtractor";
 import type { ImageRegion } from "../utils/catalogExtractor";
 import { matchCatalogNumber } from "../utils/catalogMatcher";
 import { uploadCatalogImage } from "../lib/objectStorage";
+import { PoeBotChainExhaustedError } from "../lib/poeBot";
 
 const router = Router();
 
@@ -163,6 +164,7 @@ async function processPdfPages(
   normalizedVendor: string,
   parentJobId: number | null,
   pageOffset: number,
+  useOpenAiFallback = false,
 ): Promise<void> {
   let processedPages = startPage;
   let partsFound = 0;
@@ -209,7 +211,30 @@ async function processPdfPages(
       `[catalog-pdf] page=${page.pageNum + pageOffset} text=${page.text.length}chars images=${page.images.length} preview="${textPreview}"`,
     );
 
-    const entries = await extractCatalogPage(page.text, page.images, normalizedVendor);
+    let entries: Awaited<ReturnType<typeof extractCatalogPage>>;
+    try {
+      entries = await extractCatalogPage(page.text, page.images, normalizedVendor, useOpenAiFallback);
+    } catch (err) {
+      if (err instanceof PoeBotChainExhaustedError) {
+        await db
+          .update(catalogPdfJobTable)
+          .set({ status: "failed", errorMessage: "poe_chain_exhausted", finishedAt: new Date() })
+          .where(eq(catalogPdfJobTable.id, jobId));
+        if (parentJobId !== null) {
+          await db.execute(sql`
+            UPDATE catalog_pdf_job
+            SET status = 'failed',
+                error_message = 'poe_chain_exhausted',
+                finished_at = NOW()
+            WHERE id = ${parentJobId}
+              AND status NOT IN ('done', 'failed')
+          `);
+        }
+        console.warn(`[catalog-pdf] job=${jobId} poe_chain_exhausted on page ${page.pageNum + pageOffset}`);
+        return;
+      }
+      throw err;
+    }
 
     // Count all AI-extracted entries toward partsFound (before confidence filter)
     partsFound += entries.length;
@@ -480,6 +505,8 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     res.json({ jobId, message: "Job started" });
   }
 
+  const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
+
   // ── Async processing ──────────────────────────────────────────────────────
   setImmediate(async () => {
     await db
@@ -503,6 +530,7 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         normalizedVendor,
         resolvedParentJobId,
         pageOffset,
+        useOpenAiFallback,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -765,6 +793,8 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
     .set({ status: "processing", errorMessage: null, finishedAt: null })
     .where(eq(catalogPdfJobTable.id, jobId));
 
+  const useOpenAiFallbackResume = req.headers["x-use-openai-fallback"] === "true";
+
   res.json({ jobId: String(jobId), message: "Job resuming", resumeFromPage });
 
   // ── Async resume processing ────────────────────────────────────────────────
@@ -785,6 +815,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
         normalizedVendor,
         parentJobId,
         pageOffset,
+        useOpenAiFallbackResume,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
