@@ -116,6 +116,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [hasStoredChunks, setHasStoredChunks] = useState(false);
   const adminTokenRef = useRef(adminToken);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+  // Set to true when retrying with OpenAI fallback after poe_chain_exhausted.
+  const withFallbackRef = useRef(false);
+  // Prevents showing the poe_chain_exhausted Alert more than once per job.
+  const poeExhaustedAlertShownRef = useRef(false);
+  // Stable ref to handleStart so the poe_chain_exhausted useEffect can call it
+  // without capturing a stale closure.
+  const handleStartRef = useRef<(attempt?: number) => void>(() => {});
 
   useEffect(() => {
     if (!loading) return;
@@ -159,14 +166,45 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 
-  // Release stored chunk bytes when the job reaches a terminal success/cancel
-  // state (failure keeps them so the retry buttons remain available).
+  // Release stored chunk bytes and pdf bytes when the job reaches a terminal
+  // success/cancel state (failure keeps them so retry remains available).
   useEffect(() => {
     if (jobStatus?.status === "done" || jobStatus?.status === "cancelled") {
       chunksRef.current = null;
       setHasStoredChunks(false);
+      setPdfBytes(null);
+      withFallbackRef.current = false;
+      poeExhaustedAlertShownRef.current = false;
     }
   }, [jobStatus?.status]);
+
+  // Detect poe_chain_exhausted from a job failure and offer the OpenAI fallback.
+  useEffect(() => {
+    if (
+      jobStatus?.status === "failed" &&
+      jobStatus.errorMessage === "poe_chain_exhausted" &&
+      !poeExhaustedAlertShownRef.current
+    ) {
+      poeExhaustedAlertShownRef.current = true;
+      Alert.alert(
+        "AI Unavailable",
+        "All AI bots are currently unavailable. Retry catalog extraction using OpenAI instead?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Use OpenAI",
+            onPress: () => {
+              setJobStatus(null);
+              withFallbackRef.current = true;
+              poeExhaustedAlertShownRef.current = false;
+              handleStartRef.current(0);
+            },
+          },
+        ],
+      );
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobStatus?.status, jobStatus?.errorMessage]);
 
   const startPolling = useCallback((jobId: string) => {
     stopPolling();
@@ -263,6 +301,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     xhr.open("POST", `${API_BASE}/admin/catalog-pdf`);
     xhr.setRequestHeader("Content-Type", "application/json");
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    if (withFallbackRef.current) {
+      xhr.setRequestHeader("x-use-openai-fallback", "true");
+    }
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
@@ -417,7 +458,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunksCompleted(0);
     setChunksTotal(0);
     setLoading(false);
-    setPdfBytes(null);
+    // pdfBytes intentionally kept so the "Use OpenAI" fallback can re-upload
+    // if the server-side job fails with poe_chain_exhausted.
     setFailedChunkInfo(null);
 
     setJobStatus({ jobId: parentJobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
@@ -602,7 +644,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           errorMessage: null,
         });
         startPolling(jobId);
-        setPdfBytes(null);
+        // pdfBytes intentionally kept so the "Use OpenAI" fallback can re-upload
+        // if the server-side job fails with poe_chain_exhausted.
       },
       (errMsg) => {
         setUploadPct(null);
@@ -645,6 +688,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       chunksRef.current = null;
       setHasStoredChunks(false);
       chunkRetryCountsRef.current = new Map();
+      poeExhaustedAlertShownRef.current = false;
+      // withFallbackRef is managed externally: set to true by the "Use OpenAI"
+      // alert before calling handleStart(0), reset to false by the done/cancelled
+      // useEffect. Do not reset here so the fallback flag survives the re-entry.
     }
     setLoading(true);
     setUploadPct(0);
@@ -663,6 +710,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       handleSingleUpload(base64, attempt);
     }
   };
+
+  // Keep handleStartRef in sync so the poe_chain_exhausted Alert can call the
+  // latest closure without a stale capture.
+  handleStartRef.current = handleStart;
 
   const handleCancel = () => {
     if (xhrRef.current) {
@@ -950,7 +1001,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {isFailed && jobStatus ? (
         <View style={[s.doneCard, { backgroundColor: colors.destructive + "18" }]}>
           <Text style={[s.doneText, { color: colors.destructive }]}>
-            Job failed: {jobStatus.errorMessage ?? "Unknown error"}
+            {jobStatus.errorMessage === "poe_chain_exhausted"
+              ? "All AI bots are currently unavailable"
+              : `Job failed: ${jobStatus.errorMessage ?? "Unknown error"}`}
           </Text>
           {hasStoredChunks && jobStatus.failedChunks && jobStatus.failedChunks.length > 0 ? (
             jobStatus.failedChunks.map((fc) => {

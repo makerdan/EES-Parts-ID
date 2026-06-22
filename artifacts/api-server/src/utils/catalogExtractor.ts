@@ -10,7 +10,7 @@
  *     → imageIndex / imageIndex2 are 0-based indices into that array.
  */
 
-import { getCatalogModel, getOpenAIFallbackClient } from "../lib/aiProvider";
+import { getCatalogModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
 
 export interface ImageRegion {
@@ -81,6 +81,7 @@ export async function extractCatalogPage(
   pageText: string,
   pageImages: Buffer[],
   vendor: string,
+  useOpenAiFallback = false,
 ): Promise<CatalogEntry[]> {
   if (!pageText.trim() && pageImages.length === 0) return [];
 
@@ -105,16 +106,25 @@ export async function extractCatalogPage(
   if (userContent.length === 0) return [];
 
   try {
-    const response = await tryPoeBotChain("catalog", (client, model) =>
-      client.chat.completions.create({
-        model,
-        max_completion_tokens: 2048,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userContent },
-        ],
-      }),
-    );
+    const response = useOpenAiFallback
+      ? await getOpenAIFallbackClient().chat.completions.create({
+          model: getOpenAIModelForFeature("catalog"),
+          max_completion_tokens: 2048,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: userContent },
+          ],
+        })
+      : await tryPoeBotChain("catalog", (client, model) =>
+          client.chat.completions.create({
+            model,
+            max_completion_tokens: 2048,
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              { role: "user", content: userContent },
+            ],
+          }),
+        );
 
     const raw = response.choices[0]?.message?.content ?? "[]";
     const match = raw.match(/\[[\s\S]*\]/);
