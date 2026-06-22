@@ -332,6 +332,7 @@ function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissEr
   const isDone = progress.status === "done";
   const isFailed = progress.status === "failed";
   const isUploading = progress.status === "uploading";
+  const isChunked = progress.totalChunks != null && progress.totalChunks > 1;
   const pct =
     progress.totalPages && progress.totalPages > 0
       ? Math.min(100, Math.round((progress.processedPages / progress.totalPages) * 100))
@@ -413,7 +414,13 @@ function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissEr
         <View style={[s.badge, { backgroundColor: isDone ? colors.primary + "22" : colors.primary + "18" }]}>
           {!isDone && <ActivityIndicator size="small" color={colors.primary} style={s.badgeSpinner} />}
           <Text style={[s.badgeText, { color: colors.primary }]}>
-            {isDone ? "Done" : isUploading ? "Starting…" : "Processing…"}
+            {isDone
+              ? "Done"
+              : isUploading && isChunked
+              ? `Uploading ${progress.chunkIndex} of ${progress.totalChunks}…`
+              : isUploading
+              ? "Uploading…"
+              : "Processing…"}
           </Text>
         </View>
       </View>
@@ -424,14 +431,25 @@ function ResumeProgressCard({ job, jobId, progress, onReviewChanges, onDismissEr
             <View
               style={[
                 s.progressFill,
-                { width: pct > 0 ? `${pct}%` : "4%", backgroundColor: colors.primary },
+                {
+                  width: isUploading && isChunked && progress.totalChunks
+                    ? `${Math.max(4, Math.round(((progress.chunkIndex ?? 1) / progress.totalChunks) * 100))}%`
+                    : pct > 0
+                    ? `${pct}%`
+                    : "4%",
+                  backgroundColor: colors.primary,
+                },
               ]}
             />
           </View>
           <Text style={[s.progressText, { color: colors.mutedForeground }]}>
-            {isUploading || progress.totalPages == null
-              ? "Starting…"
-              : `${progress.processedPages} / ${progress.totalPages} pages — ${progress.matchedParts} parts matched`}
+            {isUploading && isChunked
+              ? `Uploading part ${progress.chunkIndex} of ${progress.totalChunks}…`
+              : isUploading && !isChunked
+              ? "Uploading…"
+              : progress.totalPages == null
+              ? "Processing pages…"
+              : `Processing pages… ${progress.processedPages} / ${progress.totalPages} — ${progress.matchedParts} parts matched`}
           </Text>
         </>
       )}
