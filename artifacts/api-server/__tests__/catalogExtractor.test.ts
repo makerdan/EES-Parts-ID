@@ -22,6 +22,37 @@ jest.mock("@workspace/integrations-openai-ai-server", () => ({
   },
 }));
 
+// ── Mock the Poe bot chain so tests never make real network calls ─────────────
+// tryPoeBotChain is replaced with a thin wrapper that invokes the caller's
+// function with a dummy client whose create method is `mockCreate`.  This
+// makes every test that reaches the AI call fast, deterministic, and free of
+// network dependencies regardless of which AI_PROVIDER is configured.
+jest.mock("../src/lib/poeBot", () => {
+  class PoeBotChainExhaustedError extends Error {
+    constructor() {
+      super("All Poe bots in the fallback chain failed");
+      this.name = "PoeBotChainExhaustedError";
+    }
+  }
+  return {
+    tryPoeBotChain: jest.fn(async (_feature: unknown, fn: (client: unknown, model: string) => unknown) =>
+      fn({ chat: { completions: { create: mockCreate } } }, "gpt-4o"),
+    ),
+    PoeBotChainExhaustedError,
+  };
+});
+
+// ── Mock aiProvider so the OpenAI fallback path never hits the network ────────
+// getOpenAIFallbackClient is replaced with a factory returning the same
+// mockCreate-backed client used everywhere else.
+jest.mock("../src/lib/aiProvider", () => ({
+  getCatalogModel: jest.fn(() => "test-catalog-model"),
+  getOpenAIFallbackClient: jest.fn(() => ({
+    chat: { completions: { create: mockCreate } },
+  })),
+  getOpenAIModelForFeature: jest.fn(() => "gpt-4o"),
+}));
+
 // ── Imports ───────────────────────────────────────────────────────────────────
 import { CatalogAiError, extractCatalogPage } from "../src/utils/catalogExtractor";
 
@@ -62,7 +93,7 @@ Section 4: Safety Switches .......... 35
 // ─────────────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  jest.resetAllMocks();
+  jest.clearAllMocks();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,12 +152,14 @@ describe("extractCatalogPage – output shape", () => {
     expect(result).toEqual([]);
   });
 
-  it("returns [] and does not throw when GPT-4o throws an error", async () => {
+  it("throws CatalogAiError with code ai_error when the AI client throws", async () => {
     mockCreate.mockRejectedValueOnce(new Error("rate limit exceeded"));
 
-    const result = await extractCatalogPage("some text", [], "Eaton");
+    await expect(extractCatalogPage("some text", [], "Eaton"))
+      .rejects.toBeInstanceOf(CatalogAiError);
 
-    expect(result).toEqual([]);
+    await expect(extractCatalogPage("some text", [], "Eaton"))
+      .rejects.toMatchObject({ code: "ai_error" });
   });
 
   it("filters out entries missing a catalogNumber", async () => {
