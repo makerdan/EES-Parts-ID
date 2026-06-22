@@ -71,6 +71,12 @@ function makeFetchMock(zones = [ZONE_1]) {
 
 // ─── Render helper ────────────────────────────────────────────────────────────
 async function setupEditor(zones = [ZONE_1]) {
+  // Pre-populate the admin token so the component skips the login modal.
+  // Without this, the password <input> remains focused and the Ctrl+Z keydown
+  // handler returns early (active instanceof HTMLInputElement) before calling
+  // applyUndoRedo — causing all undo/redo assertions to fail.
+  sessionStorage.setItem("zoneEditorAdminToken", "test-token");
+
   const fetchMock = makeFetchMock(zones);
   global.fetch = fetchMock as unknown as typeof global.fetch;
 
@@ -242,6 +248,7 @@ describe("ZoneEditor — undo / redo stack", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    sessionStorage.removeItem("zoneEditorAdminToken");
   });
 
   // ── 1. Undo of move ──────────────────────────────────────────────────────────
