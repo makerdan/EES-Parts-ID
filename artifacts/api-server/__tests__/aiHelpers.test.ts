@@ -23,9 +23,9 @@ describe("buildImageContent", () => {
     expect(result.every(r => r.type === "image_url")).toBe(true);
   });
 
-  it("limits output to the first 2 images", () => {
-    const result = buildImageContent(["a", "b", "c", "d"]);
-    expect(result).toHaveLength(2);
+  it("limits output to the first 4 images", () => {
+    const result = buildImageContent(["a", "b", "c", "d", "e"]);
+    expect(result).toHaveLength(4);
   });
 
   it("handles an empty array", () => {
@@ -105,6 +105,7 @@ describe("normalizeAnalysis", () => {
     };
     const result = normalizeAnalysis(parsed, "");
     expect(result).toEqual({
+      partNumbers: [],
       searchTerms: ["relay"],
       synonyms: ["contactor"],
       relatedTerms: ["coil"],
@@ -114,28 +115,22 @@ describe("normalizeAnalysis", () => {
     });
   });
 
-  it("provides safe defaults when parsed is null (raw text fallback)", () => {
+  it("returns empty searchTerms and synonyms when parsed is null (non-JSON AI response)", () => {
     const rawText = "relay coil contactor motor";
     const result = normalizeAnalysis(null, rawText);
-    expect(result.searchTerms).toEqual(expect.any(Array));
-    expect(result.searchTerms.length).toBeGreaterThan(0);
+    expect(result.searchTerms).toEqual([]);
     expect(result.synonyms).toEqual([]);
     expect(result.relatedTerms).toEqual([]);
     expect(result.manufacturerVerified).toBe(false);
     expect(result.detectedVendor).toBeNull();
-    expect(result.summary).toBeTruthy();
+    expect(result.summary).toBe(rawText);
   });
 
-  it("limits raw text fallback searchTerms to 10 words", () => {
-    const longText = Array.from({ length: 20 }, (_, i) => `word${i}`).join(" ");
-    const result = normalizeAnalysis(null, longText);
-    expect(result.searchTerms).toHaveLength(10);
-  });
-
-  it("truncates the raw text fallback summary to 200 characters", () => {
+  it("preserves the raw AI text as the summary (up to 200 chars) when parsed is null", () => {
     const longText = "a".repeat(300);
     const result = normalizeAnalysis(null, longText);
-    expect(result.summary.length).toBeLessThanOrEqual(200);
+    expect(result.searchTerms).toHaveLength(0);
+    expect(result.summary).toHaveLength(200);
   });
 
   it("defaults non-array searchTerms to an empty array", () => {
@@ -166,6 +161,7 @@ describe("normalizeAnalysis", () => {
   it("handles an empty parsed object with all defaults", () => {
     const result = normalizeAnalysis({}, "");
     expect(result).toEqual({
+      partNumbers: [],
       searchTerms: [],
       synonyms: [],
       relatedTerms: [],

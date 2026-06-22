@@ -39,37 +39,28 @@ describe("resizeImage", () => {
     });
   });
 
-  describe("width below 800 — upscale to 800px", () => {
-    it("upscales a small image (400px) to 800px", async () => {
+  describe("width below 800 — pass through without upscale", () => {
+    it("passes through a small image (400px) without resizing", async () => {
       const result = await resizeImage(TEST_URI, 400);
 
-      expect(manipulateAsync).toHaveBeenCalledWith(
-        TEST_URI,
-        [{ resize: { width: 800 } }],
-        expect.objectContaining({ base64: true })
-      );
-      expect(result.uri).toBe(`resized://${TEST_URI}`);
-      expect(result.base64).toBe("data:image/jpeg;base64,RESIZED_BASE64");
+      expect(manipulateAsync).not.toHaveBeenCalled();
+      expect(readAsStringAsync).toHaveBeenCalledWith(TEST_URI, { encoding: "base64" });
+      expect(result.uri).toBe(TEST_URI);
+      expect(result.base64).toBe("data:image/jpeg;base64,RAW_BASE64");
     });
 
-    it("upscales an image at 799px (just below minimum) to 800px", async () => {
-      await resizeImage(TEST_URI, 799);
+    it("passes through an image at 799px (just below minimum) without resizing", async () => {
+      const result = await resizeImage(TEST_URI, 799);
 
-      expect(manipulateAsync).toHaveBeenCalledWith(
-        TEST_URI,
-        [{ resize: { width: 800 } }],
-        expect.anything()
-      );
+      expect(manipulateAsync).not.toHaveBeenCalled();
+      expect(result.uri).toBe(TEST_URI);
     });
 
-    it("upscales a very small image (1px) to 800px", async () => {
-      await resizeImage(TEST_URI, 1);
+    it("passes through a very small image (1px) without resizing", async () => {
+      const result = await resizeImage(TEST_URI, 1);
 
-      expect(manipulateAsync).toHaveBeenCalledWith(
-        TEST_URI,
-        [{ resize: { width: 800 } }],
-        expect.anything()
-      );
+      expect(manipulateAsync).not.toHaveBeenCalled();
+      expect(result.uri).toBe(TEST_URI);
     });
   });
 
@@ -153,7 +144,7 @@ describe("resizeImage", () => {
 
       let caught: unknown;
       try {
-        await resizeImage(TEST_URI, 400);
+        await resizeImage(TEST_URI, 4000);
       } catch (err) {
         caught = err;
       }
