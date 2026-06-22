@@ -340,6 +340,7 @@ describe("buildAutoNumCollisions", () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.sectionNum).toBe(3);
     expect(result[0]!.conflictingZoneId).toBe(2);
+    expect(result[0]!.blockingSectionNum).toBe(3);
   });
 
   // 3. Does NOT flag a collision when the conflicting zone is itself selected
@@ -392,6 +393,22 @@ describe("buildAutoNumCollisions", () => {
     const preview = [{ zone: zones[0]!, newSectionNum: 99 }];
     const result = buildAutoNumCollisions(preview, zones, new Set([10]));
     expect(result[0]!.conflictingZoneId).toBe(77);
+    expect(result[0]!.blockingSectionNum).toBe(99);
+  });
+
+  // 7. blockingSectionNum is the blocking zone's current sectionNum (not the target)
+  it("blockingSectionNum reflects the blocking zone's current sectionNum", () => {
+    // Zone 1 is at §7 (current). Zone 2 will be renumbered to §7 (target).
+    // The collision object should carry blockingSectionNum=7 (the blocker's current §).
+    const zones = [
+      zone(1, "5", 3),  // selected — being renumbered to §7
+      zone(2, "5", 7),  // NOT selected — currently at §7 (the blocker)
+    ];
+    const preview = [{ zone: zones[0]!, newSectionNum: 7 }];
+    const result = buildAutoNumCollisions(preview, zones, new Set([1]));
+    expect(result).toHaveLength(1);
+    expect(result[0]!.sectionNum).toBe(7);
+    expect(result[0]!.blockingSectionNum).toBe(7);
   });
 });
 

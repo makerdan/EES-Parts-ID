@@ -473,20 +473,20 @@ export function buildAutoNumCollisions(
   preview: Array<{ zone: Zone; newSectionNum: number }>,
   allZones: Zone[],
   selectedIds: Set<number>,
-): Array<{ aisleId: string; sectionNum: number; conflictingZoneId: number }> {
-  // Build a lookup: normalized-aisleId + sectionNum → id, for every non-selected zone
-  const nonSelectedKey = new Map<string, number>();
+): Array<{ aisleId: string; sectionNum: number; conflictingZoneId: number; blockingSectionNum: number }> {
+  // Build a lookup: normalized-aisleId + sectionNum → {id, sectionNum}, for every non-selected zone
+  const nonSelectedKey = new Map<string, { id: number; sectionNum: number }>();
   for (const z of allZones) {
     if (!selectedIds.has(z.id)) {
-      nonSelectedKey.set(`${normalizeAisleId(z.aisleId)}:${z.sectionNum}`, z.id);
+      nonSelectedKey.set(`${normalizeAisleId(z.aisleId)}:${z.sectionNum}`, { id: z.id, sectionNum: z.sectionNum });
     }
   }
-  const collisions: Array<{ aisleId: string; sectionNum: number; conflictingZoneId: number }> = [];
+  const collisions: Array<{ aisleId: string; sectionNum: number; conflictingZoneId: number; blockingSectionNum: number }> = [];
   for (const { zone, newSectionNum } of preview) {
     const aisleId = normalizeAisleId(zone.aisleId);
-    const conflictingZoneId = nonSelectedKey.get(`${aisleId}:${newSectionNum}`);
-    if (conflictingZoneId !== undefined) {
-      collisions.push({ aisleId, sectionNum: newSectionNum, conflictingZoneId });
+    const blocking = nonSelectedKey.get(`${aisleId}:${newSectionNum}`);
+    if (blocking !== undefined) {
+      collisions.push({ aisleId, sectionNum: newSectionNum, conflictingZoneId: blocking.id, blockingSectionNum: blocking.sectionNum });
     }
   }
   return collisions;
@@ -1395,9 +1395,9 @@ export function ZoneEditor() {
     // violation in Phase 2.
     const collisions = buildAutoNumCollisions(autoNumPreview, zones, selectedIds);
     if (collisions.length > 0) {
-      const { aisleId, sectionNum } = collisions[0]!;
+      const { aisleId, sectionNum, blockingSectionNum } = collisions[0]!;
       toast.error(
-        `Section ${sectionNum} in Aisle ${aisleId} is already used by a zone that isn't selected. Select all zones in the aisle or choose a different starting number.`,
+        `Section ${sectionNum} in Aisle ${aisleId} is taken by the zone currently at §${blockingSectionNum} — select it too or pick a different starting number.`,
       );
       return;
     }
@@ -1993,6 +1993,12 @@ export function ZoneEditor() {
   const autoNumPreview = useMemo(
     () => buildAutoNumPreview(zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits),
     [zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits],
+  );
+
+  // Live collision check — recomputed whenever the preview or zone list changes.
+  const liveCollisions = useMemo(
+    () => buildAutoNumCollisions(autoNumPreview, zones, selectedIds),
+    [autoNumPreview, zones, selectedIds],
   );
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -2819,6 +2825,30 @@ export function ZoneEditor() {
                   {selectedIds.size === 0 && (
                     <div style={{ fontSize: 11, color: "#9ca3af" }}>
                       Select zones on the map to auto-number them.
+                    </div>
+                  )}
+
+                  {/* Live collision warning */}
+                  {liveCollisions.length > 0 && (
+                    <div style={{
+                      background: "#fef2f2",
+                      border: "1px solid #fca5a5",
+                      borderRadius: 4,
+                      padding: "6px 8px",
+                      fontSize: 11,
+                      color: "#991b1b",
+                    }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        ⛔ Collision with {liveCollisions.length} non-selected zone{liveCollisions.length !== 1 ? "s" : ""}
+                      </div>
+                      {liveCollisions.map((c, i) => (
+                        <div key={i} style={{ marginTop: 2 }}>
+                          Aisle {c.aisleId}: §{c.sectionNum} is held by the zone currently at §{c.blockingSectionNum}
+                        </div>
+                      ))}
+                      <div style={{ marginTop: 5, color: "#7f1d1d" }}>
+                        Select the blocking zone(s) too, or choose a different starting number.
+                      </div>
                     </div>
                   )}
 
