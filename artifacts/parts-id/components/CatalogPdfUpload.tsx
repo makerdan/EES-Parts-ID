@@ -424,15 +424,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           setFailedChunkInfo(null);
           return;
         }
-        // Network or server error — surface targeted chunk retry
+        // Network or server error — surface targeted chunk retry.
+        // Intentionally preserve chunksCompleted and chunksTotal so the UI
+        // continues to show "Part N of M failed" rather than blanking out.
         setLoading(false);
         setUploadPct(null);
         setOverallUploadPct(null);
         setUploadSpeed(null);
         setUploadEta(null);
         setChunkLabel(null);
-        setChunksCompleted(0);
-        setChunksTotal(0);
         setFailedChunkInfo({
           chunkIndex: i,
           totalChunks: chunks.length,
