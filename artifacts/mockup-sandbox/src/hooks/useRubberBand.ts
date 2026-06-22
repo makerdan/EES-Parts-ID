@@ -148,10 +148,14 @@ export function useRubberBand<T extends RubberZone>({
         const hits = hitTestZones(zones, r, minSvg);
 
         if (hits.length > 0) {
-          // Rubber-band always replaces the selection with the new hit set.
-          // (Shift is the modifier that *enters* rubber-band mode, not a cue
-          // to toggle — toggling is reserved for Shift+click on individual zones.)
-          setSelectedIdsRef.current(new Set(hits.map((z) => z.id)));
+          // Design decision: Shift is an ADDITIVE modifier.
+          // The rubber-band result is unioned with the existing selection so
+          // that dragging over a second group never silently discards the first.
+          // This matches the UX convention in Figma, Illustrator, etc.
+          // Consequence: to deselect zones the user must click on empty canvas
+          // (the plain-click handler already handles that path).
+          const newIds = hits.map((z) => z.id);
+          setSelectedIdsRef.current((prev) => new Set([...prev, ...newIds]));
           setPendingRectRef.current(null);
         }
       };
