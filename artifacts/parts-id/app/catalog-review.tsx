@@ -12,7 +12,7 @@ import "buffer";
 
 import { Buffer } from "buffer";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
+import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -40,13 +40,23 @@ import { useColors } from "@/hooks/useColors";
 import type { ResumeProgress } from "@/types/catalogPdf";
 import { buildResumeHeaders } from "@/utils/aiFallbackHeaders";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
-import { PAGES_PER_CHUNK,splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
+import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
+import { PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 import { performUpdateDescription } from "@/utils/updateDescription";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "";
+
+function resumeBytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as Array<number>);
+  }
+  return btoa(binary);
+}
 
 type JobMeta = {
   id: number;
@@ -382,6 +392,14 @@ export default function CatalogReviewScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminToken]);
 
+  // Keep the screen awake while a resume upload is in progress so iOS does
+  // not sleep mid-upload (mirrors the keep-awake guard in CatalogPdfUpload).
+  useEffect(() => {
+    if (!resumingId) return;
+    activateKeepAwake("catalog-resume");
+    return () => { deactivateKeepAwake("catalog-resume"); };
+  }, [resumingId]);
+
   const handleDismiss = async (jobId: number) => {
     if (dismissingId) return;
     setDismissingId(jobId);
@@ -418,153 +436,87 @@ export default function CatalogReviewScreen() {
 
     if (result.canceled || !result.assets?.[0]) return;
 
-    const asset = result.assets[0];
-    const uri = asset.uri;
+    const uri = result.assets[0].uri;
+
+    // Read and validate the PDF (handles iOS file:// URIs, validates magic bytes
+    // and /Encrypt). No client-side size cap — the server enforces its own limit.
+    let pdfBytes: Uint8Array;
+    try {
+      pdfBytes = await readPdfAsBytes(uri);
+    } catch (err) {
+      showInfo("Error", toFriendlyReadError(err));
+      return;
+    }
 
     setResumingId(jobId);
+    const job = failedJobs.find((j) => j.id === jobId);
 
     try {
-      const pdfBase64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
+      // Attempt single-payload resume (works for single-file and child jobs).
+      const pdfBase64 = resumeBytesToBase64(pdfBytes);
+      const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
+        method: "POST",
+        headers: buildResumeHeaders(authHeaders, job?.errorMessage),
+        body: JSON.stringify({ pdfBase64 }),
       });
 
-      const job = failedJobs.find((j) => j.id === jobId);
-      const resumeHeaders = buildResumeHeaders(authHeaders, job?.errorMessage);
+      if (r.status === 401) { logoutAdmin(); return; }
 
-      // Estimate file size from base64 length (~75% of base64 chars = byte count)
-      const estimatedBytes = Math.floor(pdfBase64.length * 0.75);
-
-      if (estimatedBytes <= CHUNK_SIZE_THRESHOLD) {
-        // ── Small file: single-request path (unchanged) ─────────────────────
-        const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
-          method: "POST",
-          headers: resumeHeaders,
-          body: JSON.stringify({ pdfBase64 }),
+      if (r.status === 409) {
+        // Parent chunk job — server rejects it with 409. Fetch the failed child
+        // job IDs from the status endpoint, split the PDF, and resume each
+        // failed chunk individually (the child /resume endpoint accepts a
+        // page-range PDF and uses its stored pageOffset to process correctly).
+        const statusR = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
+          headers: authHeaders,
         });
-
-        if (r.status === 401) { logoutAdmin(); return; }
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({})) as { error?: string };
-          showInfo("Resume failed", body.error ?? "Could not resume the job.");
+        const statusBody = await statusR.json().catch(() => ({})) as {
+          failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
+        };
+        const failedChunks = statusBody.failedChunks ?? [];
+        if (failedChunks.length === 0) {
+          showInfo("Resume failed", "No resumable chunks found for this job. Please try again.");
           setResumingId(null);
           return;
         }
-      } else {
-        // ── Large file: split into chunks and post sequentially ──────────────
-        const bytes = new Uint8Array(Buffer.from(pdfBase64, "base64"));
+
         let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
         try {
-          chunks = await splitPdfIntoChunks(bytes, PAGES_PER_CHUNK);
-        } catch (splitErr) {
-          showInfo("Error", "Could not split the PDF: " + ((splitErr as Error)?.message ?? "Unknown error"));
+          chunks = await splitPdfIntoChunks(pdfBytes, PAGES_PER_CHUNK);
+        } catch (err) {
+          showInfo("Error", "Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
           setResumingId(null);
           return;
         }
 
-        // Show the progress card immediately so the admin sees something
-        setResumeProgress((prev) => ({
-          ...prev,
-          [jobId]: {
-            status: "uploading",
-            processedPages: 0,
-            totalPages: null,
-            matchedParts: 0,
-            errorMessage: null,
-            chunkIndex: 1,
-            totalChunks: chunks.length,
-          },
-        }));
-
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i]!;
-          const chunkBase64 = Buffer.from(chunk.bytes).toString("base64");
-
-          // Update which chunk is uploading right now
-          setResumeProgress((prev) => ({
-            ...prev,
-            [jobId]: {
-              status: "uploading",
-              processedPages: prev[jobId]?.processedPages ?? 0,
-              totalPages: prev[jobId]?.totalPages ?? null,
-              matchedParts: prev[jobId]?.matchedParts ?? 0,
-              errorMessage: null,
-              chunkIndex: i + 1,
-              totalChunks: chunks.length,
-            },
-          }));
-
-          const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
+        for (const { chunkJobId, chunkIndex } of failedChunks) {
+          const chunk = chunks[chunkIndex];
+          if (!chunk) continue;
+          const chunkBase64 = resumeBytesToBase64(chunk.bytes);
+          const cr = await fetch(`${API_BASE}/admin/catalog-pdf/${chunkJobId}/resume`, {
             method: "POST",
-            headers: resumeHeaders,
+            headers: buildResumeHeaders(authHeaders, job?.errorMessage),
             body: JSON.stringify({ pdfBase64: chunkBase64, chunkPageOffset: chunk.pageOffset, chunkPageCount: chunk.pageCount }),
           });
-
-          if (r.status === 401) { logoutAdmin(); return; }
-          if (!r.ok) {
-            const body = await r.json().catch(() => ({})) as { error?: string };
-            showInfo(
-              "Resume failed",
-              `Part ${i + 1} of ${chunks.length} failed: ${body.error ?? "Could not resume the job."}`,
-            );
+          if (cr.status === 401) { logoutAdmin(); return; }
+          if (!cr.ok) {
+            const body = await cr.json().catch(() => ({})) as { error?: string };
+            showInfo("Resume failed", body.error ?? "Could not resume a chunk. Please try again.");
             setResumingId(null);
             return;
           }
-
-          // Wait for this chunk to finish processing before sending the next
-          if (i < chunks.length - 1) {
-            const targetPages = chunk.pageOffset + chunk.pageCount;
-            let done = false;
-            for (let poll = 0; poll < 240 && !done; poll++) {
-              await new Promise<void>((resolve) => setTimeout(resolve, 2500));
-              try {
-                const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, { headers: authHeaders });
-                if (statusRes.ok) {
-                  const body = await statusRes.json() as {
-                    status: string;
-                    processedPages: number;
-                    totalPages: number | null;
-                    matchedParts: number;
-                  };
-                  if (body.status === "failed" || body.status === "cancelled") {
-                    showInfo("Resume failed", `The job failed while processing part ${i + 1} of ${chunks.length}.`);
-                    setResumingId(null);
-                    fetchItems();
-                    return;
-                  }
-                  // Show inter-chunk processing progress
-                  setResumeProgress((prev) => ({
-                    ...prev,
-                    [jobId]: {
-                      status: "processing",
-                      processedPages: body.processedPages,
-                      totalPages: body.totalPages ?? prev[jobId]?.totalPages ?? null,
-                      matchedParts: body.matchedParts ?? prev[jobId]?.matchedParts ?? 0,
-                      errorMessage: null,
-                      chunkIndex: i + 1,
-                      totalChunks: chunks.length,
-                    },
-                  }));
-                  done = body.processedPages >= targetPages || body.status === "done";
-                }
-              } catch { /* network blip, keep polling */ }
-            }
-          }
         }
+      } else if (!r.ok) {
+        const body = await r.json().catch(() => ({})) as { error?: string };
+        showInfo("Resume failed", body.error ?? "Could not resume the job.");
+        setResumingId(null);
+        return;
       }
 
-      // All chunks uploaded — keep the existing progress card visible and
-      // start the final status poll (it will update status naturally).
+      // Mark job as in-progress (keep it visible with a progress card)
       setResumeProgress((prev) => ({
         ...prev,
-        [jobId]: {
-          status: "uploading",
-          processedPages: prev[jobId]?.processedPages ?? 0,
-          totalPages: prev[jobId]?.totalPages ?? null,
-          matchedParts: prev[jobId]?.matchedParts ?? 0,
-          errorMessage: null,
-          chunkIndex: prev[jobId]?.chunkIndex,
-          totalChunks: prev[jobId]?.totalChunks,
-        },
+        [jobId]: { status: "uploading", processedPages: 0, totalPages: null, matchedParts: 0, errorMessage: null },
       }));
 
       // Poll until the job finishes, then refresh the review list
