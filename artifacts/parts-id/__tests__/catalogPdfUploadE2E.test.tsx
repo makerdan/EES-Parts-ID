@@ -548,3 +548,211 @@ describe("CatalogPdfUpload — full happy path: picker → read → first chunk 
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Group 3 — Pre-flight validation guards
+//
+// Verifies that the component rejects bad inputs before sendChunkViaBackground
+// fires, so failures surface as client-side errors instead of server-side ones.
+//
+//  • Blank vendor → Start button disabled; handler returns early
+//  • Zero-length PDF bytes → handler returns early with a user-visible error
+//  • InvalidPdfError from readPdfAsBytes → error shown; upload never started
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("CatalogPdfUpload — pre-flight validation guards", () => {
+  function installPendingUploadTask(): void {
+    const uploadAsync = jest.fn(() => new Promise<never>(() => {}));
+    mockCreateUploadTask.mockReturnValue({ uploadAsync, cancelAsync: jest.fn() });
+  }
+
+  async function pickFileWith(
+    tree: renderer.ReactTestRenderer,
+    bytes: Uint8Array,
+    name = "catalog.pdf",
+  ): Promise<void> {
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: "blob:http://localhost/catalog.pdf", name, file: makeFile(bytes) }],
+    });
+    mockReadPdfAsBytes.mockResolvedValueOnce(bytes);
+
+    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    await act(async () => { pickBtn!.props.onPress(); });
+    await flushPromises();
+  }
+
+  // ── Blank vendor ─────────────────────────────────────────────────────────
+
+  it("Start Extraction button is disabled when vendor is blank after a file is picked", async () => {
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    await pickFileWith(tree, makePdfBytes());
+    // Deliberately do NOT set vendor
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    expect(startBtn).not.toBeNull();
+    expect(startBtn!.props.disabled).toBe(true);
+  });
+
+  it("shows a hint prompting the admin to enter a vendor name when vendor is blank", async () => {
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    await pickFileWith(tree, makePdfBytes());
+
+    const allText = instText(tree.root);
+    expect(allText.toLowerCase()).toContain("vendor name");
+  });
+
+  it("does not fire the upload when vendor is blank: writeAsStringAsync is never called", async () => {
+    installPendingUploadTask();
+
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    await pickFileWith(tree, makePdfBytes());
+
+    // Button is disabled; pressing it should be a no-op
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    if (startBtn && !startBtn.props.disabled) {
+      await act(async () => { startBtn.props.onPress?.(); });
+      await flushPromises();
+    }
+
+    expect(mockWriteAsStringAsync).not.toHaveBeenCalled();
+    expect(mockCreateUploadTask).not.toHaveBeenCalled();
+  });
+
+  // ── Zero-length PDF bytes ─────────────────────────────────────────────────
+
+  it("Start Extraction button is enabled for zero-length bytes (guard lives in the handler)", async () => {
+    // A zero-length Uint8Array is truthy so the button disability logic
+    // does NOT catch it — the guard in handleStart is what prevents the request.
+    installPendingUploadTask();
+
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    await pickFileWith(tree, new Uint8Array(0));
+    await act(async () => { capturedOnChangeText!("ACME"); });
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    expect(startBtn).not.toBeNull();
+    // Disabled prop must be falsy (button is reachable so the handler fires)
+    expect(startBtn!.props.disabled).toBeFalsy();
+  });
+
+  it("does not call writeAsStringAsync when zero-length bytes are detected on Start", async () => {
+    installPendingUploadTask();
+
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    await pickFileWith(tree, new Uint8Array(0));
+    await act(async () => { capturedOnChangeText!("ACME"); });
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress?.(); });
+    await flushPromises();
+
+    expect(mockWriteAsStringAsync).not.toHaveBeenCalled();
+    expect(mockCreateUploadTask).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a user-visible error message when zero-length bytes are detected on Start", async () => {
+    installPendingUploadTask();
+
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    await pickFileWith(tree, new Uint8Array(0));
+    await act(async () => { capturedOnChangeText!("ACME"); });
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress?.(); });
+    await flushPromises();
+
+    const allText = instText(tree.root);
+    expect(allText.toLowerCase()).toContain("empty");
+  });
+
+  // ── InvalidPdfError from the read step ───────────────────────────────────
+
+  it("surfaces the InvalidPdfError message in the UI after the picker completes", async () => {
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: "blob:http://localhost/bad.pdf", name: "bad.pdf" }],
+    });
+    mockReadPdfAsBytes.mockRejectedValueOnce(
+      new Error("The selected file is not a valid PDF. Please choose a PDF file and try again."),
+    );
+
+    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    await act(async () => { pickBtn!.props.onPress(); });
+    await flushPromises();
+
+    const allText = instText(tree.root);
+    expect(allText).toContain("not a valid PDF");
+  });
+
+  it("does not start an upload after InvalidPdfError: writeAsStringAsync is never called", async () => {
+    installPendingUploadTask();
+
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: "blob:http://localhost/bad.pdf", name: "bad.pdf" }],
+    });
+    mockReadPdfAsBytes.mockRejectedValueOnce(
+      new Error("The selected file is not a valid PDF. Please choose a PDF file and try again."),
+    );
+
+    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    await act(async () => { pickBtn!.props.onPress(); });
+    await flushPromises();
+
+    // pdfBytes was never set, so Start remains disabled even with a vendor
+    await act(async () => { capturedOnChangeText!("ACME"); });
+    await flushPromises();
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    if (startBtn && !startBtn.props.disabled) {
+      await act(async () => { startBtn.props.onPress?.(); });
+      await flushPromises();
+    }
+
+    expect(mockWriteAsStringAsync).not.toHaveBeenCalled();
+    expect(mockCreateUploadTask).not.toHaveBeenCalled();
+  });
+
+  it("pdfBytes state is null after InvalidPdfError so Start button stays disabled", async () => {
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: "blob:http://localhost/bad.pdf", name: "bad.pdf" }],
+    });
+    mockReadPdfAsBytes.mockRejectedValueOnce(
+      new Error("The selected file is not a valid PDF. Please choose a PDF file and try again."),
+    );
+
+    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    await act(async () => { pickBtn!.props.onPress(); });
+    await flushPromises();
+
+    // Set vendor — Start button should still be disabled because pdfBytes is null
+    await act(async () => { capturedOnChangeText!("ACME"); });
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    expect(startBtn).not.toBeNull();
+    expect(startBtn!.props.disabled).toBe(true);
+  });
+});
+
