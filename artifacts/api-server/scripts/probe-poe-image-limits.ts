@@ -12,10 +12,21 @@
  *   pnpm --filter @workspace/api-server exec tsx scripts/probe-poe-image-limits.ts \
  *     --bots "Claude-Sonnet-4.5,Gemini-2.5-Pro"
  *
+ * Real-JPEG mode (photographic content instead of COM-padded synthetics):
+ *   pnpm --filter @workspace/api-server exec tsx scripts/probe-poe-image-limits.ts \
+ *     --bots "Claude-Sonnet-4.5" --real-jpeg
+ *
+ *   In this mode target sizes are 5 MB, 8 MB, 10 MB, 12 MB, and 15 MB.
+ *   Each image is a large noise photograph (random RGB pixels across a large
+ *   canvas) encoded as a real JPEG.  JPEG quality is binary-searched so the
+ *   encoded file lands within ±5 % of the target byte count.  This tests
+ *   whether Anthropic's 10 MB per-image limit applies to the encoded file size
+ *   or to some other measure (e.g. decoded pixel buffer).
+ *
  * Environment:
  *   POE_API_KEY2  — required; Poe OpenAI-compatible API key
  *
- * Methodology:
+ * Methodology (default):
  *   Each synthetic image is a structurally valid JPEG (1×1 white pixel) with
  *   JPEG COM (comment) markers inserted after the SOI byte to pad the file to
  *   the target size.  This ensures any relay-layer size check sees a correctly
@@ -32,6 +43,7 @@
 import OpenAI from "openai";
 import sharp from "sharp";
 import { writeFileSync } from "fs";
+import { randomBytes } from "crypto";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -50,12 +62,20 @@ const ALL_BOTS = [
   "GPT-5-Mini",
 ];
 
-const TARGET_SIZES_BYTES = [
+const DEFAULT_TARGET_SIZES_BYTES = [
   1 * 1024 * 1024,   //  1 MB
   5 * 1024 * 1024,   //  5 MB
   10 * 1024 * 1024,  // 10 MB
   15 * 1024 * 1024,  // 15 MB
   20 * 1024 * 1024,  // 20 MB
+];
+
+const REAL_JPEG_TARGET_SIZES_BYTES = [
+  5 * 1024 * 1024,   //  5 MB
+  8 * 1024 * 1024,   //  8 MB
+  10 * 1024 * 1024,  // 10 MB
+  12 * 1024 * 1024,  // 12 MB
+  15 * 1024 * 1024,  // 15 MB
 ];
 
 /** Per-request timeout (ms) — generous to allow large payloads to upload. */
@@ -71,6 +91,13 @@ const BOTS: string[] = botsArgVal
   ? botsArgVal.split(",").map((s) => s.trim()).filter(Boolean)
   : ALL_BOTS;
 
+// Parse --real-jpeg flag
+const REAL_JPEG_MODE = process.argv.includes("--real-jpeg");
+
+const TARGET_SIZES_BYTES = REAL_JPEG_MODE
+  ? REAL_JPEG_TARGET_SIZES_BYTES
+  : DEFAULT_TARGET_SIZES_BYTES;
+
 // ---------------------------------------------------------------------------
 // Poe client
 // ---------------------------------------------------------------------------
@@ -83,7 +110,7 @@ const client = new OpenAI({
 });
 
 // ---------------------------------------------------------------------------
-// Synthetic JPEG builder
+// Synthetic JPEG builder (COM-padded, default mode)
 // ---------------------------------------------------------------------------
 
 /**
@@ -135,6 +162,76 @@ async function buildPaddedJpeg(targetBytes: number): Promise<Buffer> {
 }
 
 // ---------------------------------------------------------------------------
+// Real photographic JPEG builder (--real-jpeg mode)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a real photographic-quality JPEG close to `targetBytes` in size.
+ *
+ * Strategy:
+ *   1. Create a raw random-noise RGB pixel buffer for a large canvas
+ *      (3 000 × 3 000 = 27 MP).  Random noise is highly incompressible for
+ *      JPEG, so moderate quality settings produce large encoded files that
+ *      are structurally indistinguishable from real photographs.
+ *   2. Binary-search the JPEG quality value (1–95) so the encoded output
+ *      lands within ±5 % of the target byte count.
+ *
+ * This tests whether Claude's 10 MB per-image limit is measured against the
+ * encoded JPEG file size (as documented) or some other quantity such as the
+ * decoded pixel buffer (which for a noise image would be ~27 MB regardless
+ * of target encode size).
+ */
+async function buildRealJpeg(targetBytes: number): Promise<Buffer> {
+  // Choose canvas size so that quality=95 produces headroom above targetBytes.
+  // Empirically: 3000×3000 noise at q=95 ≈ 8.7 MB; 4500×4500 ≈ ~19-20 MB.
+  // Use the smallest canvas whose q=95 ceiling clears targetBytes by ≥10%.
+  let WIDTH: number;
+  let HEIGHT: number;
+  if (targetBytes <= 6 * 1024 * 1024) {
+    WIDTH = HEIGHT = 3000; // ≈8.7 MB ceiling at q=95 — covers ≤6 MB easily
+  } else if (targetBytes <= 10 * 1024 * 1024) {
+    WIDTH = HEIGHT = 3500; // ~11-12 MB ceiling at q=95
+  } else {
+    WIDTH = HEIGHT = 4500; // ~19-20 MB ceiling at q=95 — covers ≤15 MB
+  }
+
+  const rawPixels = randomBytes(WIDTH * HEIGHT * 3); // random RGB noise
+
+  const tolerance = targetBytes * 0.05; // ±5 %
+
+  let lo = 1;
+  let hi = 95;
+  let bestBuf: Buffer | null = null;
+  let bestDelta = Infinity;
+
+  for (let iter = 0; iter < 14; iter++) {
+    const quality = Math.round((lo + hi) / 2);
+    const buf = await sharp(rawPixels, { raw: { width: WIDTH, height: HEIGHT, channels: 3 } })
+      .jpeg({ quality })
+      .toBuffer();
+
+    const delta = Math.abs(buf.length - targetBytes);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      bestBuf = buf;
+    }
+
+    if (delta <= tolerance) break;
+
+    if (buf.length < targetBytes) {
+      lo = quality + 1;
+    } else {
+      hi = quality - 1;
+    }
+
+    if (lo > hi) break;
+  }
+
+  if (!bestBuf) throw new Error("Binary search produced no buffer");
+  return bestBuf;
+}
+
+// ---------------------------------------------------------------------------
 // Probe a single bot at a single size
 // ---------------------------------------------------------------------------
 
@@ -145,6 +242,7 @@ interface ProbeResult {
   sizeMB: string;
   ok: boolean;
   skipped: boolean;
+  mode: "padded" | "real-jpeg";
   statusCode?: number;
   errorType?: string;
   errorMessage?: string;
@@ -153,13 +251,16 @@ interface ProbeResult {
 
 async function probeOne(botName: string, sizeBytes: number): Promise<ProbeResult> {
   const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(0) + " MB";
-  process.stdout.write(`  [${botName}] ${sizeMB.padStart(5)} ... `);
+  const modeTag = REAL_JPEG_MODE ? "real-jpeg" : "padded";
+  process.stdout.write(`  [${botName}] ${sizeMB.padStart(5)} (${modeTag}) ... `);
 
   const t0 = Date.now();
 
   let jpegBuffer: Buffer;
   try {
-    jpegBuffer = await buildPaddedJpeg(sizeBytes);
+    jpegBuffer = REAL_JPEG_MODE
+      ? await buildRealJpeg(sizeBytes)
+      : await buildPaddedJpeg(sizeBytes);
   } catch (buildErr) {
     process.stdout.write("BUILD ERROR\n");
     return {
@@ -169,6 +270,7 @@ async function probeOne(botName: string, sizeBytes: number): Promise<ProbeResult
       sizeMB,
       ok: false,
       skipped: false,
+      mode: modeTag,
       errorType: "BuildError",
       errorMessage: buildErr instanceof Error ? buildErr.message : String(buildErr),
     };
@@ -186,7 +288,7 @@ async function probeOne(botName: string, sizeBytes: number): Promise<ProbeResult
           role: "user",
           content: [
             { type: "image_url", image_url: { url: dataUri } },
-            { type: "text", text: "What color is this image? One word." },
+            { type: "text", text: "What color is dominant in this image? One word." },
           ] as Array<{ type: "image_url"; image_url: { url: string } } | { type: "text"; text: string }>,
         },
       ],
@@ -196,7 +298,7 @@ async function probeOne(botName: string, sizeBytes: number): Promise<ProbeResult
     process.stdout.write(
       `OK   (${(durationMs / 1000).toFixed(1)}s, actual ${(actualBytes / (1024 * 1024)).toFixed(2)} MB)\n`,
     );
-    return { bot: botName, sizeBytes, actualBytes, sizeMB, ok: true, skipped: false, durationMs };
+    return { bot: botName, sizeBytes, actualBytes, sizeMB, ok: true, skipped: false, mode: modeTag, durationMs };
   } catch (err: unknown) {
     const durationMs = Date.now() - t0;
     const statusCode =
@@ -216,6 +318,7 @@ async function probeOne(botName: string, sizeBytes: number): Promise<ProbeResult
       sizeMB,
       ok: false,
       skipped: false,
+      mode: modeTag,
       statusCode,
       errorType,
       errorMessage,
@@ -232,8 +335,15 @@ async function main() {
   const startedAt = new Date().toISOString();
   console.log("=== Poe Relay Image Size Probe ===");
   console.log(`Started : ${startedAt}`);
+  console.log(`Mode    : ${REAL_JPEG_MODE ? "real-jpeg (photographic noise, binary-search quality)" : "padded (COM-marker synthetic)"}`);
   console.log(`Bots    : ${BOTS.join(", ")}`);
   console.log(`Sizes   : ${TARGET_SIZES_BYTES.map((b) => (b / (1024 * 1024)).toFixed(0) + " MB").join(", ")}`);
+  if (REAL_JPEG_MODE) {
+    console.log();
+    console.log("Note: In real-jpeg mode each image is a 3000×3000 random-noise photograph");
+    console.log("      encoded as JPEG (quality binary-searched to ≈target size, ±5%).");
+    console.log("      Actual encoded sizes are printed next to each result.");
+  }
   console.log();
 
   const allResults: ProbeResult[] = [];
@@ -254,6 +364,7 @@ async function main() {
           sizeMB,
           ok: false,
           skipped: true,
+          mode: REAL_JPEG_MODE ? "real-jpeg" : "padded",
           errorType: "skipped",
           errorMessage: "Skipped — earlier size already failed",
         });
@@ -299,7 +410,7 @@ async function main() {
       console.log(`  First failure: ${firstFail.sizeMB} (${failActual} MB actual), HTTP ${firstFail.statusCode ?? "?"}`);
       console.log(`  Error        : ${(firstFail.errorMessage ?? "").slice(0, 120)}`);
     } else if (lastOk) {
-      console.log(`  All sizes up to ${lastOk.sizeMB} passed — relay cap > 20 MB (or not enforced at relay layer)`);
+      console.log(`  All sizes up to ${lastOk.sizeMB} passed — cap > ${lastOk.sizeMB} (or not enforced at relay layer)`);
     } else {
       console.log(`  No results recorded`);
     }
@@ -311,7 +422,17 @@ async function main() {
   const jsonPath = "/tmp/poe-probe-results.json";
   writeFileSync(
     jsonPath,
-    JSON.stringify({ probedAt: startedAt, bots: BOTS, targetSizesBytes: TARGET_SIZES_BYTES, results: allResults }, null, 2),
+    JSON.stringify(
+      {
+        probedAt: startedAt,
+        mode: REAL_JPEG_MODE ? "real-jpeg" : "padded",
+        bots: BOTS,
+        targetSizesBytes: TARGET_SIZES_BYTES,
+        results: allResults,
+      },
+      null,
+      2,
+    ),
   );
   console.log(`Full JSON results written to: ${jsonPath}`);
 }
