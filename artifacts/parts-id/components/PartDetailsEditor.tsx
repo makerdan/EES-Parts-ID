@@ -104,7 +104,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
   const [expandedDescError, setExpandedDescError] = useState<string | null>(null);
 
   // Dimensions state
-  const existingDims = (item as unknown as { dimensions?: PartDimensions | null })?.dimensions;
+  const existingDims = item?.dimensions;
   const [dimLength, setDimLength] = useState(fmtDim(existingDims?.length));
   const [dimWidth, setDimWidth] = useState(fmtDim(existingDims?.width));
   const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
@@ -178,7 +178,7 @@ export function PartDetailsEditor({ item, adminToken, onClose, onShowOnMap }: Pa
   useEffect(() => {
     const current = itemRef.current;
     if (!current) return;
-    const dims = (current as unknown as { dimensions?: PartDimensions | null })?.dimensions;
+    const dims = current?.dimensions;
     setDescription(current.description ?? "");
     setBins(current.binLocations ?? []);
     setKeywords(current.aiKeywords ?? []);

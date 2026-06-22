@@ -307,8 +307,7 @@ export function CatalogPickerModal({
                       onPress={(e) => {
                         e.stopPropagation?.();
                         const slot1 = r.item.imageUrl ?? r.item.thumbnailUrl;
-                        const slot2 = (r.item as unknown as { imageUrl2?: string | null; thumbnailUrl2?: string | null }).imageUrl2
-                          ?? (r.item as unknown as { imageUrl2?: string | null; thumbnailUrl2?: string | null }).thumbnailUrl2;
+                        const slot2 = r.item.imageUrl2 ?? r.item.thumbnailUrl2;
                         if (slot1) { setLightboxUris(slot2 ? [slot1, slot2] : [slot1]); setLightboxIndex(0); }
                       }}
                       hitSlop={4}
@@ -327,8 +326,7 @@ export function CatalogPickerModal({
                     </View>
                   )}
                   {(() => {
-                    const slot2Url = (r.item as unknown as { imageUrl2?: string | null; thumbnailUrl2?: string | null }).thumbnailUrl2
-                      ?? (r.item as unknown as { imageUrl2?: string | null; thumbnailUrl2?: string | null }).imageUrl2;
+                    const slot2Url = r.item.thumbnailUrl2 ?? r.item.imageUrl2;
                     if (!slot2Url) return null;
                     const slot1 = r.item.imageUrl ?? r.item.thumbnailUrl;
                     return (

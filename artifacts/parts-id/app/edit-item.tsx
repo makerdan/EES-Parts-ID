@@ -36,11 +36,6 @@ import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
 import { invalidateAllCachesAfterSave } from "@/utils/editItemCache";
 import { useTrackScreen } from "@/utils/useTrackScreen";
 
-type InventoryItemFull = InventoryItem & {
-  dimensions?: PartDimensions | null;
-  imageUrl2?: string | null;
-};
-
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "http://localhost:8080/api";
@@ -127,14 +122,14 @@ export default function EditItemScreen() {
   }, [sectionParam]);
 
   // Dimensions state
-  const existingDims = (item as InventoryItemFull)?.dimensions;
+  const existingDims = item?.dimensions;
   const [dimLength, setDimLength] = useState(fmtDim(existingDims?.length));
   const [dimWidth, setDimWidth] = useState(fmtDim(existingDims?.width));
   const [dimHeight, setDimHeight] = useState(fmtDim(existingDims?.height));
   const [dimDiameter, setDimDiameter] = useState(fmtDim(existingDims?.diameter));
 
   const [photoUri1, setPhotoUri1] = useState<string | null>(item?.imageUrl ?? null);
-  const [photoUri2, setPhotoUri2] = useState<string | null>((item as InventoryItemFull)?.imageUrl2 ?? null);
+  const [photoUri2, setPhotoUri2] = useState<string | null>(item?.imageUrl2 ?? null);
 
   const [permission, requestPermission] = useCameraPermissions();
   const scannerLockRef = useRef(false);
@@ -274,7 +269,7 @@ export default function EditItemScreen() {
       let capturedImageUrl2: string | null | undefined = undefined;
 
       const originalImageUrl = current.imageUrl ?? null;
-      const originalImageUrl2 = (current as InventoryItemFull).imageUrl2 ?? null;
+      const originalImageUrl2 = current.imageUrl2 ?? null;
 
       if (photoUri1 !== originalImageUrl) {
         if (photoUri1) {
@@ -440,7 +435,7 @@ export default function EditItemScreen() {
     parseDimField(dimHeight) !== (existingDims?.height ?? null) ||
     parseDimField(dimDiameter) !== (existingDims?.diameter ?? null) ||
     photoUri1 !== (item.imageUrl ?? null) ||
-    photoUri2 !== ((item as InventoryItemFull)?.imageUrl2 ?? null);
+    photoUri2 !== (item?.imageUrl2 ?? null);
 
   const statusColor =
     isSaving ? colors.warning
