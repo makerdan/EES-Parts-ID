@@ -13,5 +13,6 @@ export * from "./reference_log";
 export * from "./reference_answer_cache";
 export * from "./contact_messages";
 export * from "./ai_request_log";
+export * from "./part_card_cache";
 export * from "./screen_view_log";
 export * from "./admin_preferences";
