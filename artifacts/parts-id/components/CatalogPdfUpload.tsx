@@ -24,6 +24,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
+  AppStateStatus,
   Pressable,
   StyleSheet,
   Text,
@@ -100,6 +102,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [chunksTotal, setChunksTotal] = useState(0);
   const [overallUploadPct, setOverallUploadPct] = useState<number | null>(null);
   const [failedChunkInfo, setFailedChunkInfo] = useState<FailedChunkInfo | null>(null);
+  const [pausedUpload, setPausedUpload] = useState<{
+    chunkIndex: number;
+    parentJobId: string | null;
+  } | null>(null);
 
   useEffect(() => {
     if (retryCountdown === null || retryCountdown <= 0) return;
@@ -126,10 +132,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const handleStartRef = useRef<(attempt?: number) => void>(() => {});
 
   useEffect(() => {
-    if (!loading) return;
+    if (!loading && !pausedUpload) return;
     activateKeepAwake("catalog-upload");
     return () => { deactivateKeepAwake("catalog-upload"); };
-  }, [loading]);
+  }, [loading, pausedUpload]);
 
   useEffect(() => {
     if (!loading) return;
@@ -158,6 +164,18 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   // Tracks how many times each chunk (by index) has been retried via handleRetryServerChunk.
   const chunkRetryCountsRef = useRef<Map<number, number>>(new Map());
 
+
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const chunkBase64ListRef = useRef<Array<string>>([]);
+  const chunkBodySizesRef = useRef<Array<number>>([]);
+  const totalBodyBytesRef = useRef<number>(0);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next) => {
+      appStateRef.current = next;
+    });
+    return () => sub.remove();
+  }, []);
 
   const [cancellingJob, setCancellingJob] = useState(false);
 
@@ -418,10 +436,21 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           setLoading(false);
           setUploadPct(null);
           setOverallUploadPct(null);
+          setUploadSpeed(null);
+          setUploadEta(null);
           setChunkLabel(null);
-          setChunksCompleted(0);
-          setChunksTotal(0);
-          setFailedChunkInfo(null);
+          if (appStateRef.current !== "active") {
+            // App was backgrounded — the OS killed the connection.
+            // Preserve chunksCompleted / chunksTotal so the "Part N of M"
+            // progress label stays visible and the user can resume.
+            setPausedUpload({ chunkIndex: i, parentJobId });
+          } else {
+            // Manual cancel — full reset.
+            setChunksCompleted(0);
+            setChunksTotal(0);
+            setFailedChunkInfo(null);
+            setPausedUpload(null);
+          }
           return;
         }
         // Network or server error — surface targeted chunk retry.
@@ -495,6 +524,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     const chunkBase64List = chunks.map(c => bytesToBase64(c.bytes));
     const chunkBodySizes = chunkBase64List.map(b64 => b64.length);
     const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);
+
+    // Persist for resume-after-background use.
+    chunkBase64ListRef.current = chunkBase64List;
+    chunkBodySizesRef.current = chunkBodySizes;
+    totalBodyBytesRef.current = totalBodyBytes;
 
     await uploadChunksFromIndex(chunks, 0, null, chunkBase64List, chunkBodySizes, totalBodyBytes);
   };
@@ -690,6 +724,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setRetryCountdown(null);
     setShowRetryBtn(false);
     setFailedChunkInfo(null);
+    setPausedUpload(null);
     if (attempt === 0) {
       setJobStatus(null);
       chunksRef.current = null;
@@ -726,6 +761,34 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (xhrRef.current) {
       xhrRef.current.abort();
     }
+  };
+
+  const handleResume = () => {
+    if (!pausedUpload || !chunksRef.current) return;
+    const { chunkIndex, parentJobId } = pausedUpload;
+    setPausedUpload(null);
+    setError(null);
+    setLoading(true);
+    setUploadPct(0);
+    setOverallUploadPct(null);
+    setUploadSpeed(null);
+    setUploadEta(null);
+    speedSamplesRef.current = [];
+    void uploadChunksFromIndex(
+      chunksRef.current,
+      chunkIndex,
+      parentJobId,
+      chunkBase64ListRef.current,
+      chunkBodySizesRef.current,
+      totalBodyBytesRef.current,
+    );
+  };
+
+  const handleCancelPaused = () => {
+    setPausedUpload(null);
+    setChunksCompleted(0);
+    setChunksTotal(0);
+    setFailedChunkInfo(null);
   };
 
   const handleCancelRetry = () => {
@@ -925,6 +988,32 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                 : ` · ~${Math.ceil(uploadEta)} sec remaining`}
             </Text>
           ) : null}
+        </View>
+      ) : null}
+
+      {/* Paused — upload was interrupted by backgrounding */}
+      {pausedUpload && !loading ? (
+        <View style={[s.progressBlock, { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12 }]}>
+          <Text style={[s.progressLabel, { color: colors.foreground, marginBottom: 4 }]}>
+            Upload paused — {chunksCompleted} of {chunksTotal} part{chunksTotal !== 1 ? "s" : ""} uploaded
+          </Text>
+          <Text style={[s.progressText, { color: colors.mutedForeground, marginBottom: 10 }]}>
+            The app was sent to the background mid-upload. Tap Resume to continue where you left off.
+          </Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable
+              onPress={handleResume}
+              style={[s.startBtn, { flex: 1, backgroundColor: colors.primary, marginBottom: 0 }]}
+            >
+              <Text style={[s.startBtnText, { color: colors.primaryForeground }]}>Resume</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleCancelPaused}
+              style={[s.cancelBtn, { borderColor: colors.destructive, paddingHorizontal: 14 }]}
+            >
+              <Text style={[s.cancelBtnText, { color: colors.destructive }]}>Discard</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
