@@ -119,7 +119,9 @@ async function readNewestCacheTimestamp(): Promise<string> {
   try {
     const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
     if (!raw) return "No cached data";
-    const cache = JSON.parse(raw) as QueryCache<SearchResult>;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isValidQueryCache(parsed)) return "No cached data";
+    const cache = parsed;
     const entries = Object.values(cache);
     if (entries.length === 0) return "No cached data";
     const newest = entries.reduce(
@@ -297,6 +299,10 @@ export default function SearchScreen() {
   // one is already in flight (e.g. user taps Refresh while a background retry
   // is running), which would race on setSyncProgress and the Fuse index.
   const isSyncingRef = useRef(false);
+  // Tracks whether the component is still mounted. The retry-timer callback
+  // checks this before touching any React state to avoid the
+  // "can't perform a state update on an unmounted component" warning.
+  const isMountedRef = useRef(true);
   // Ref to the FlatList so the tab-press reset can scroll back to the top.
   const flatListRef = useRef<FlatList<FlatListItem> | null>(null);
   // Ref to the latest handleClear so the tab-press subscription (mounted once)
@@ -413,13 +419,19 @@ export default function SearchScreen() {
     if (isSyncingRef.current) return false;
     isSyncingRef.current = true;
 
+    // Convenience guard: every state setter that runs after an `await` is
+    // wrapped in this helper so that a mid-flight unmount turns them into
+    // no-ops rather than triggering the "can't update an unmounted component"
+    // warning. Ref checks are synchronous and safe to call at any time.
+    const ifMounted = (fn: () => void) => { if (isMountedRef.current) fn(); };
+
     // Cancel any pending auto-retry before starting a new attempt
     if (syncRetryTimerRef.current !== null) {
       clearTimeout(syncRetryTimerRef.current);
       syncRetryTimerRef.current = null;
     }
-    setSyncError(false);
-    setSyncRetryPending(false);
+    ifMounted(() => setSyncError(false));
+    ifMounted(() => setSyncRetryPending(false));
     let success = false;
     try {
       const allItems = await fetchInventoryPages(
@@ -433,7 +445,7 @@ export default function SearchScreen() {
           return data;
         },
         500,
-        (loaded, total) => setSyncProgress({ loaded, total }),
+        (loaded, total) => ifMounted(() => setSyncProgress({ loaded, total })),
       );
       buildFuseIndex(allItems);
 
@@ -442,7 +454,7 @@ export default function SearchScreen() {
       // referencing an id no longer present is stale and must be removed so
       // offline searches never surface deleted inventory.
       const liveIds = new Set(allItems.map(item => item.id));
-      loadQueryCache().then(cache => {
+      await updateQueryCache(cache => {
         let dirty = false;
         const pruned: QueryCache<SearchResult> = {};
         for (const [key, entry] of Object.entries(cache)) {
@@ -454,9 +466,7 @@ export default function SearchScreen() {
             dirty = true; // entry fully emptied — drop it
           }
         }
-        if (dirty) saveQueryCache(pruned);
-      }).catch((err) => {
-        console.error('[index] prune query cache', err);
+        return dirty ? pruned : cache;
       });
 
       syncRetryAttemptRef.current = 0; // success — reset backoff counter
@@ -471,26 +481,28 @@ export default function SearchScreen() {
           await AsyncStorage.setItem(FUSE_CACHE_SYNCED_AT_KEY, String(syncedAt));
         }
         // Always update in-memory state so any active offline warning clears.
-        setFuseSyncedAt(syncedAt);
+        ifMounted(() => setFuseSyncedAt(syncedAt));
       } catch (err) {
         reportStorageError("Could not save offline inventory cache", err);
       }
       success = true;
     } catch {
-      setSyncError(true);
+      ifMounted(() => setSyncError(true));
       // Schedule an automatic retry with exponential backoff (30 s → doubles → 5 min cap)
       const delay = Math.min(
         SYNC_RETRY_INITIAL_MS * Math.pow(2, syncRetryAttemptRef.current),
         SYNC_RETRY_MAX_MS,
       );
       syncRetryAttemptRef.current += 1;
-      setSyncRetryPending(true);
-      syncRetryTimerRef.current = setTimeout(() => {
-        syncRetryTimerRef.current = null;
-        syncAllInventory();
-      }, delay);
+      if (isMountedRef.current) {
+        setSyncRetryPending(true);
+        syncRetryTimerRef.current = setTimeout(() => {
+          syncRetryTimerRef.current = null;
+          if (isMountedRef.current) syncAllInventory();
+        }, delay);
+      }
     } finally {
-      setSyncProgress(null);
+      ifMounted(() => setSyncProgress(null));
       isSyncingRef.current = false;
     }
     return success;
@@ -498,8 +510,11 @@ export default function SearchScreen() {
 
   // Cancel pending auto-retry timer on unmount to prevent state updates
   // after the component is destroyed (e.g. user logs out mid-countdown).
+  // Also flip isMountedRef so any in-flight async work that outlives the
+  // component (e.g. the retry callback) becomes a no-op.
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
       if (syncRetryTimerRef.current !== null) {
         clearTimeout(syncRetryTimerRef.current);
         syncRetryTimerRef.current = null;
