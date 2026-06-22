@@ -28,6 +28,14 @@ describe("buildImageContent", () => {
     expect(result).toHaveLength(4);
   });
 
+  it("produces exactly 4 content blocks from a 4-image input (regression: previously truncated to 2)", () => {
+    const images = ["img1", "img2", "img3", "img4"];
+    const result = buildImageContent(images);
+    expect(result).toHaveLength(4);
+    expect(result[2].image_url.url).toBe("data:image/jpeg;base64,img3");
+    expect(result[3].image_url.url).toBe("data:image/jpeg;base64,img4");
+  });
+
   it("handles an empty array", () => {
     expect(buildImageContent([])).toHaveLength(0);
   });
