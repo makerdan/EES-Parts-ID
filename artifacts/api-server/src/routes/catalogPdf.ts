@@ -747,7 +747,7 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   // When the client resumes a large file by splitting it into chunks, each chunk is
   // posted sequentially. After chunk N−1 completes the job reaches 'done'; the status
   // guard must allow 'done' so chunk N can continue from where the last chunk left off.
-  const { pdfBase64, chunkPageOffset: rawChunkPageOffset } = req.body as { pdfBase64?: string; chunkPageOffset?: number };
+  const { pdfBase64, chunkPageOffset: rawChunkPageOffset, chunkPageCount: rawChunkPageCount } = req.body as { pdfBase64?: string; chunkPageOffset?: number; chunkPageCount?: number };
   const isChunkedContinuation =
     typeof rawChunkPageOffset === "number" && rawChunkPageOffset > 0;
 
@@ -792,6 +792,17 @@ router.post("/catalog-pdf/:jobId/resume", requireAdminAuth, async (req, res) => 
   const normalizedVendor = jobRow.vendor;
   const pageOffset = chunkPageOffset > 0 ? chunkPageOffset : (jobRow.pageOffset ?? 0);
   const parentJobId = jobRow.parentJobId ?? null;
+
+  // ── Idempotency guard: skip re-processing if this chunk was already completed ──
+  // When a network blip causes the client to retry a chunk, processedPages will
+  // already be >= chunkPageOffset + chunkPageCount, meaning every page in this
+  // chunk was already ingested. Return 200 with a no-op so the caller can
+  // advance to the next chunk without producing duplicate inventory entries.
+  const chunkPageCount = typeof rawChunkPageCount === "number" && rawChunkPageCount > 0 ? rawChunkPageCount : null;
+  if (chunkPageCount !== null && resumeFromPage >= chunkPageOffset + chunkPageCount) {
+    res.json({ jobId: String(jobId), message: "Chunk already processed, no-op", resumeFromPage });
+    return;
+  }
 
   await db
     .update(catalogPdfJobTable)
