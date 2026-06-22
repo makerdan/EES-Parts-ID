@@ -33,7 +33,7 @@ jest.mock("../src/app", () => ({}));
 const mockStartServer = jest.fn();
 jest.mock("../src/lib/startServer", () => ({
   startServer: mockStartServer,
-  MAX_RETRIES: 5,
+  MAX_RETRIES: 10,
 }));
 
 // ── aiProvider mock ───────────────────────────────────────────────────────────
