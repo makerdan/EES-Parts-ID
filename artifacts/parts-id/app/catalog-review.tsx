@@ -10,7 +10,6 @@
 
 import "buffer";
 
-import { Buffer } from "buffer";
 import * as DocumentPicker from "expo-document-picker";
 import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -420,8 +419,6 @@ export default function CatalogReviewScreen() {
     } finally { setDismissingId(null); }
   };
 
-  const CHUNK_SIZE_THRESHOLD = 20 * 1024 * 1024;
-
   const handleResume = async (jobId: number) => {
     if (resumingId) return;
 
@@ -489,7 +486,39 @@ export default function CatalogReviewScreen() {
           return;
         }
 
-        for (const { chunkJobId, chunkIndex } of failedChunks) {
+        // Show the card immediately with totalChunks so admins see it's working
+        setResumeProgress((prev) => ({
+          ...prev,
+          [jobId]: {
+            status: "uploading",
+            processedPages: 0,
+            totalPages: null,
+            matchedParts: 0,
+            errorMessage: null,
+            chunkIndex: 0,
+            totalChunks: failedChunks.length,
+          },
+        }));
+
+        for (let ci = 0; ci < failedChunks.length; ci++) {
+          const { chunkJobId, chunkIndex } = failedChunks[ci];
+
+          // Update which chunk we're sending so the progress card advances
+          setResumeProgress((prev) => ({
+            ...prev,
+            [jobId]: prev[jobId]
+              ? { ...prev[jobId], chunkIndex: ci + 1, totalChunks: failedChunks.length }
+              : {
+                  status: "uploading",
+                  processedPages: 0,
+                  totalPages: null,
+                  matchedParts: 0,
+                  errorMessage: null,
+                  chunkIndex: ci + 1,
+                  totalChunks: failedChunks.length,
+                },
+          }));
+
           const chunk = chunks[chunkIndex];
           if (!chunk) continue;
           const chunkBase64 = resumeBytesToBase64(chunk.bytes);
@@ -498,10 +527,27 @@ export default function CatalogReviewScreen() {
             headers: buildResumeHeaders(authHeaders, job?.errorMessage),
             body: JSON.stringify({ pdfBase64: chunkBase64, chunkPageOffset: chunk.pageOffset, chunkPageCount: chunk.pageCount }),
           });
-          if (cr.status === 401) { logoutAdmin(); return; }
+          if (cr.status === 401) {
+            // Clean up the in-progress card before logging out
+            setResumeProgress((prev) => { const n = { ...prev }; delete n[jobId]; return n; });
+            logoutAdmin();
+            return;
+          }
           if (!cr.ok) {
             const body = await cr.json().catch(() => ({})) as { error?: string };
-            showInfo("Resume failed", body.error ?? "Could not resume a chunk. Please try again.");
+            const errMsg = body.error ?? "Could not resume a chunk. Please try again.";
+            // Transition card to "failed" so admin can retry or dismiss
+            setResumeProgress((prev) => ({
+              ...prev,
+              [jobId]: {
+                status: "failed",
+                processedPages: prev[jobId]?.processedPages ?? 0,
+                totalPages: prev[jobId]?.totalPages ?? null,
+                matchedParts: prev[jobId]?.matchedParts ?? 0,
+                errorMessage: errMsg,
+              },
+            }));
+            showInfo("Resume failed", errMsg);
             setResumingId(null);
             return;
           }
