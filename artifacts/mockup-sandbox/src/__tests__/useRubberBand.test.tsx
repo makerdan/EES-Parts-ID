@@ -766,4 +766,42 @@ describe("useRubberBand — Zone Editor integration", () => {
     // Every keydown listener added must be removed on unmount
     expect(keydownRemovals).toBeGreaterThanOrEqual(keydownAdditions);
   });
+
+  // ── Shift+click individual zone toggle ───────────────────────────────────────
+
+  it("Shift+click a selected zone removes only that zone from the selection", async () => {
+    const { container, svgEl } = await setupEditor([ZONE_1, ZONE_2]);
+
+    // Rubber-band both zones into the selection
+    await rubberBand(svgEl, DRAG_BOTH.from, DRAG_BOTH.to);
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+
+    // Shift+click the first zone rect to deselect it
+    const zoneRects = getZoneFillRects(container);
+    await act(async () => {
+      fireEvent.mouseDown(zoneRects[0]!, { button: 0, shiftKey: true, clientX: 36, clientY: 31 });
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    // Only the second zone should remain selected
+    expect(getSelectedZoneRects(container)).toHaveLength(1);
+  });
+
+  it("Shift+click an unselected zone adds only that zone to the selection", async () => {
+    const { container, svgEl } = await setupEditor([ZONE_1, ZONE_2]);
+
+    // Start with ZONE_1 selected via rubber-band
+    await rubberBand(svgEl, DRAG_Z1.from, DRAG_Z1.to);
+    expect(getSelectedZoneRects(container)).toHaveLength(1);
+
+    // Shift+click the second zone rect (ZONE_2, which is not yet selected)
+    const zoneRects = getZoneFillRects(container);
+    await act(async () => {
+      fireEvent.mouseDown(zoneRects[1]!, { button: 0, shiftKey: true, clientX: 90, clientY: 31 });
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    // Both zones should now be selected
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+  });
 });
