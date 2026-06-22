@@ -461,9 +461,37 @@ export default function CatalogReviewScreen() {
           return;
         }
 
+        // Show the progress card immediately so the admin sees something
+        setResumeProgress((prev) => ({
+          ...prev,
+          [jobId]: {
+            status: "uploading",
+            processedPages: 0,
+            totalPages: null,
+            matchedParts: 0,
+            errorMessage: null,
+            chunkIndex: 1,
+            totalChunks: chunks.length,
+          },
+        }));
+
         for (let i = 0; i < chunks.length; i++) {
           const chunk = chunks[i]!;
           const chunkBase64 = Buffer.from(chunk.bytes).toString("base64");
+
+          // Update which chunk is uploading right now
+          setResumeProgress((prev) => ({
+            ...prev,
+            [jobId]: {
+              status: "uploading",
+              processedPages: prev[jobId]?.processedPages ?? 0,
+              totalPages: prev[jobId]?.totalPages ?? null,
+              matchedParts: prev[jobId]?.matchedParts ?? 0,
+              errorMessage: null,
+              chunkIndex: i + 1,
+              totalChunks: chunks.length,
+            },
+          }));
 
           const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
             method: "POST",
@@ -474,7 +502,10 @@ export default function CatalogReviewScreen() {
           if (r.status === 401) { logoutAdmin(); return; }
           if (!r.ok) {
             const body = await r.json().catch(() => ({})) as { error?: string };
-            showInfo("Resume failed", body.error ?? "Could not resume the job.");
+            showInfo(
+              "Resume failed",
+              `Part ${i + 1} of ${chunks.length} failed: ${body.error ?? "Could not resume the job."}`,
+            );
             setResumingId(null);
             return;
           }
@@ -488,13 +519,31 @@ export default function CatalogReviewScreen() {
               try {
                 const statusRes = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, { headers: authHeaders });
                 if (statusRes.ok) {
-                  const body = await statusRes.json() as { status: string; processedPages: number };
+                  const body = await statusRes.json() as {
+                    status: string;
+                    processedPages: number;
+                    totalPages: number | null;
+                    matchedParts: number;
+                  };
                   if (body.status === "failed" || body.status === "cancelled") {
-                    showInfo("Resume failed", "The job failed while processing a chunk.");
+                    showInfo("Resume failed", `The job failed while processing part ${i + 1} of ${chunks.length}.`);
                     setResumingId(null);
                     fetchItems();
                     return;
                   }
+                  // Show inter-chunk processing progress
+                  setResumeProgress((prev) => ({
+                    ...prev,
+                    [jobId]: {
+                      status: "processing",
+                      processedPages: body.processedPages,
+                      totalPages: body.totalPages ?? prev[jobId]?.totalPages ?? null,
+                      matchedParts: body.matchedParts ?? prev[jobId]?.matchedParts ?? 0,
+                      errorMessage: null,
+                      chunkIndex: i + 1,
+                      totalChunks: chunks.length,
+                    },
+                  }));
                   done = body.processedPages >= targetPages || body.status === "done";
                 }
               } catch { /* network blip, keep polling */ }
@@ -503,10 +552,19 @@ export default function CatalogReviewScreen() {
         }
       }
 
-      // Mark job as in-progress (keep it visible with a progress card)
+      // All chunks uploaded — keep the existing progress card visible and
+      // start the final status poll (it will update status naturally).
       setResumeProgress((prev) => ({
         ...prev,
-        [jobId]: { status: "uploading", processedPages: 0, totalPages: null, matchedParts: 0, errorMessage: null },
+        [jobId]: {
+          status: "uploading",
+          processedPages: prev[jobId]?.processedPages ?? 0,
+          totalPages: prev[jobId]?.totalPages ?? null,
+          matchedParts: prev[jobId]?.matchedParts ?? 0,
+          errorMessage: null,
+          chunkIndex: prev[jobId]?.chunkIndex,
+          totalChunks: prev[jobId]?.totalChunks,
+        },
       }));
 
       // Poll until the job finishes, then refresh the review list
