@@ -37,6 +37,28 @@ export interface PageData {
 const RENDER_DPI = 150;
 
 /**
+ * Lightweight synchronous pre-validation of a PDF buffer.
+ * Checks PDF magic bytes and detects encrypted PDFs without spawning any
+ * processes or loading pdfjs-dist. This runs on the HTTP request thread so
+ * it must complete in microseconds — full page rendering happens in the
+ * background task via extractPdfPages.
+ * Throws with a descriptive message if the PDF is invalid.
+ */
+export function validatePdf(pdfBuffer: Buffer): void {
+  if (pdfBuffer.length < 5 || pdfBuffer.slice(0, 5).toString("ascii") !== "%PDF-") {
+    throw new Error("Not a valid PDF file (missing %PDF- magic bytes)");
+  }
+  // Scan the first 64 KB for the /Encrypt entry present in all standard
+  // PDF encryption dictionaries. This detects password-protected PDFs
+  // before any heavy rendering begins.
+  const scanEnd = Math.min(pdfBuffer.length, 65_536);
+  const header = pdfBuffer.slice(0, scanEnd).toString("latin1");
+  if (/\/Encrypt\b/.test(header)) {
+    throw new Error("Encrypted PDF: cannot process password-protected PDFs");
+  }
+}
+
+/**
  * Process a PDF buffer and return per-page data ready for GPT-4o extraction.
  */
 export async function extractPdfPages(pdfBuffer: Buffer): Promise<PageData[]> {

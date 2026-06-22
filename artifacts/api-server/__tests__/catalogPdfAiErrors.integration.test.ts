@@ -46,6 +46,7 @@ jest.mock("../src/lib/poeBot", () => {
 
 jest.mock("../src/utils/pdfProcessor", () => ({
   extractPdfPages: jest.fn(),
+  validatePdf: jest.fn(),
 }));
 
 jest.mock("../src/utils/catalogExtractor", () => {
@@ -238,10 +239,12 @@ describe("CatalogAiError propagation — status API response", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Suite 3: Raw provider payload-too-large errors (isProviderPayloadTooLargeError)
+// Processing is now asynchronous: POST returns 200 immediately and the job
+// status is discovered via polling (no HTTP 413 from the route handler).
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Raw provider payload-too-large error — HTTP 413 response from chunk route", () => {
-  it("returns HTTP 413 with a user-friendly message when extractCatalogPage throws an error with status 413", async () => {
+describe("Raw provider payload-too-large error — job fails asynchronously with ai_payload_too_large", () => {
+  it("returns 200 immediately and job eventually has errorMessage='ai_payload_too_large' when extractCatalogPage throws a status-413 error", async () => {
     mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
     const providerError = Object.assign(new Error("Request Entity Too Large"), { status: 413 });
     mockExtractCatalogPage.mockRejectedValueOnce(providerError);
@@ -250,13 +253,18 @@ describe("Raw provider payload-too-large error — HTTP 413 response from chunk 
       .post("/api/admin/catalog-pdf")
       .set("Authorization", `Bearer ${adminToken}`)
       .send({ pdfBase64: FAKE_PDF_BASE64, vendor: VENDOR })
-      .expect(413);
+      .expect(200);
 
-    expect(res.body).toHaveProperty("error");
-    expect((res.body.error as string).toLowerCase()).toContain("too large");
+    const { jobId } = res.body as { jobId: string };
+    seededJobIds.push(Number(jobId));
+    await waitForTerminal(jobId);
+
+    const row = await readJobRow(Number(jobId));
+    expect(row.status).toBe("failed");
+    expect(row.errorMessage).toBe("ai_payload_too_large");
   });
 
-  it("returns HTTP 413 when extractCatalogPage throws an error with 'payload too large' in its message", async () => {
+  it("returns 200 immediately and job eventually has errorMessage='ai_payload_too_large' when extractCatalogPage throws 'payload too large'", async () => {
     mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
     const providerError = new Error("Request payload too large for the provider");
     mockExtractCatalogPage.mockRejectedValueOnce(providerError);
@@ -265,13 +273,18 @@ describe("Raw provider payload-too-large error — HTTP 413 response from chunk 
       .post("/api/admin/catalog-pdf")
       .set("Authorization", `Bearer ${adminToken}`)
       .send({ pdfBase64: FAKE_PDF_BASE64, vendor: VENDOR })
-      .expect(413);
+      .expect(200);
 
-    expect(res.body).toHaveProperty("error");
-    expect((res.body.error as string).toLowerCase()).toContain("too large");
+    const { jobId } = res.body as { jobId: string };
+    seededJobIds.push(Number(jobId));
+    await waitForTerminal(jobId);
+
+    const row = await readJobRow(Number(jobId));
+    expect(row.status).toBe("failed");
+    expect(row.errorMessage).toBe("ai_payload_too_large");
   });
 
-  it("stores errorMessage='ai_payload_too_large' in the DB when returning HTTP 413", async () => {
+  it("stores errorMessage='ai_payload_too_large' in the DB (status-413 provider error)", async () => {
     mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
     const providerError = Object.assign(new Error("Payload Too Large"), { status: 413 });
     mockExtractCatalogPage.mockRejectedValueOnce(providerError);
@@ -280,24 +293,18 @@ describe("Raw provider payload-too-large error — HTTP 413 response from chunk 
       .post("/api/admin/catalog-pdf")
       .set("Authorization", `Bearer ${adminToken}`)
       .send({ pdfBase64: FAKE_PDF_BASE64, vendor: VENDOR })
-      .expect(413);
+      .expect(200);
 
-    expect(res.body).toHaveProperty("error");
+    const { jobId } = res.body as { jobId: string };
+    seededJobIds.push(Number(jobId));
+    await waitForTerminal(jobId);
 
-    // Find the most recently inserted failed job for this vendor and verify DB state
-    const { db: dbClient, catalogPdfJobTable: tbl } = await import("@workspace/db");
-    const { desc: descOrd } = await import("drizzle-orm");
-    const [latest] = await dbClient
-      .select({ id: tbl.id, status: tbl.status, errorMessage: tbl.errorMessage })
-      .from(tbl)
-      .orderBy(descOrd(tbl.id))
-      .limit(1);
-    if (latest) seededJobIds.push(latest.id);
-    expect(latest?.status).toBe("failed");
-    expect(latest?.errorMessage).toBe("ai_payload_too_large");
+    const row = await readJobRow(Number(jobId));
+    expect(row.status).toBe("failed");
+    expect(row.errorMessage).toBe("ai_payload_too_large");
   });
 
-  it("returns HTTP 413 and marks the parent job failed when a chunk encounters a provider 413 error", async () => {
+  it("marks the parent job failed with ai_payload_too_large when a chunk encounters a provider 413 error", async () => {
     const parentId = await seedParentJob();
 
     mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
@@ -314,10 +321,15 @@ describe("Raw provider payload-too-large error — HTTP 413 response from chunk 
         chunkCount: 2,
         parentJobId: parentId,
       })
-      .expect(413);
+      .expect(200);
 
-    expect(res.body).toHaveProperty("error");
-    expect((res.body.error as string).toLowerCase()).toContain("too large");
+    const { chunkJobId } = res.body as { jobId: string; chunkJobId: string };
+    seededJobIds.push(Number(chunkJobId));
+    await waitForTerminal(chunkJobId);
+
+    const childRow = await readJobRow(Number(chunkJobId));
+    expect(childRow.status).toBe("failed");
+    expect(childRow.errorMessage).toBe("ai_payload_too_large");
 
     const parentRow = await readJobRow(parentId);
     expect(parentRow.status).toBe("failed");
