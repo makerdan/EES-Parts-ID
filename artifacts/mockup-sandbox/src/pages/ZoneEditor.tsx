@@ -938,6 +938,24 @@ export function ZoneEditor() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [fetchZones, pushUndo, headers, clearToken]);
 
+  // ── Keyboard Escape shortcut — clear active selection ────────────────────
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (selectedIdsRef.current.size === 0) return;
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      ) return;
+      e.preventDefault();
+      setSelectedIds(new Set());
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const patchZone = useCallback(
     async (id: number, updates: Partial<Zone>): Promise<boolean> => {
       const res = await fetch(`${API_BASE}/warehouse-zones/${id}`, {
