@@ -694,4 +694,76 @@ describe("useRubberBand — Zone Editor integration", () => {
       expect(container.textContent).toMatch(/No zones yet/i);
     });
   });
+
+  // ── Escape key — clear selection ─────────────────────────────────────────────
+
+  it("pressing Escape deselects all selected zones", async () => {
+    const { container, svgEl } = await setupEditor([ZONE_1, ZONE_2]);
+
+    // Select both zones via rubber-band
+    await rubberBand(svgEl, DRAG_BOTH.from, DRAG_BOTH.to);
+    expect(getSelectedZoneRects(container)).toHaveLength(2);
+
+    // Press Escape — selection must be cleared
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(getSelectedZoneRects(container)).toHaveLength(0);
+  });
+
+  it("pressing Escape when nothing is selected does not crash and leaves selection empty", async () => {
+    const { container } = await setupEditor([ZONE_1]);
+
+    // No selection yet — Escape should be a no-op
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(getSelectedZoneRects(container)).toHaveLength(0);
+  });
+
+  it("Escape is ignored when focus is inside a text input", async () => {
+    const { container, svgEl } = await setupEditor([ZONE_1]);
+
+    await rubberBand(svgEl, DRAG_Z1.from, DRAG_Z1.to);
+    expect(getSelectedZoneRects(container)).toHaveLength(1);
+
+    // Move focus into a text input and press Escape
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    // Selection must still be intact — text-field focus blocks the shortcut
+    expect(getSelectedZoneRects(container)).toHaveLength(1);
+
+    document.body.removeChild(input);
+  });
+
+  it("Escape listener is cleaned up when the component unmounts (no lingering window listeners)", async () => {
+    const addSpy = vi.spyOn(window, "addEventListener");
+    const removeSpy = vi.spyOn(window, "removeEventListener");
+
+    let unmount!: () => void;
+    const fetchMock = makeFetchMock([ZONE_1]);
+    global.fetch = fetchMock as unknown as typeof global.fetch;
+
+    await act(async () => {
+      ({ unmount } = render(<ZoneEditor />));
+    });
+
+    // Capture how many "keydown" listeners were added during mount
+    const keydownAdditions = addSpy.mock.calls.filter(([ev]) => ev === "keydown").length;
+
+    await act(async () => { unmount(); });
+
+    const keydownRemovals = removeSpy.mock.calls.filter(([ev]) => ev === "keydown").length;
+
+    // Every keydown listener added must be removed on unmount
+    expect(keydownRemovals).toBeGreaterThanOrEqual(keydownAdditions);
+  });
 });
