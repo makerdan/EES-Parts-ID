@@ -978,7 +978,7 @@ export default function UploadScreen() {
     }
   };
 
-  const handleStartExpandDescriptions = async () => {
+  const handleStartExpandDescriptions = async (extraHeaders?: Record<string, string>) => {
     expandDescAbortedRef.current = false;
     AsyncStorage.removeItem(EXPAND_DESC_DRAFT_KEY).catch(() => {});
     setExpandDescDraftSavedAt(null);
@@ -993,7 +993,7 @@ export default function UploadScreen() {
     try {
       const response = await fetch(`${API_BASE}/inventory/expand-descriptions`, {
         method: "POST",
-        headers: adminHeaders,
+        headers: { ...adminHeaders, ...extraHeaders },
       });
 
       if (!response.ok) {
@@ -1017,11 +1017,13 @@ export default function UploadScreen() {
 
       expandDescReaderRef.current = reader;
       let sseBuffer = "";
+      let poeChainExhausted = false;
 
       const processLine = (line: string) => {
         if (!line.startsWith("data: ")) return;
         try {
           const data = JSON.parse(line.slice(6)) as {
+            status?: string;
             done?: boolean;
             processed?: number;
             total?: number;
@@ -1034,6 +1036,10 @@ export default function UploadScreen() {
             progress?: number;
             model?: string;
           };
+          if (data.status === "poe_chain_exhausted") {
+            poeChainExhausted = true;
+            return;
+          }
           if (data.model != null && data.id == null && !data.done) {
             setExpandDescModel(data.model);
             if (data.total != null) {
@@ -1069,6 +1075,21 @@ export default function UploadScreen() {
         for (const line of lines) processLine(line.trim());
       }
       if (sseBuffer.trim()) processLine(sseBuffer.trim());
+
+      if (poeChainExhausted && !extraHeaders?.["x-use-openai-fallback"]) {
+        Alert.alert(
+          "AI Unavailable",
+          "All AI bots are currently unavailable. Retry using OpenAI instead?",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Use OpenAI",
+              onPress: () => handleStartExpandDescriptions({ "x-use-openai-fallback": "true" }),
+            },
+          ],
+        );
+      }
+
       expandDescReaderRef.current = null;
     } catch {
       if (!expandDescAbortedRef.current) {
@@ -2621,7 +2642,7 @@ export default function UploadScreen() {
                       ))}
 
                       <Pressable
-                        onPress={handleStartExpandDescriptions}
+                        onPress={() => handleStartExpandDescriptions()}
                         disabled={expandDescRunning}
                         style={[styles.enrichBtn, { backgroundColor: expandDescRunning ? colors.muted : colors.primary, marginTop: 10 }]}
                       >

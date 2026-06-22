@@ -218,6 +218,78 @@ export function getAllPoeModelNames(): string[] {
   ];
 }
 
+// ── Per-feature Poe bot chains ────────────────────────────────────────────────
+
+/**
+ * Identifies which Poe-backed feature a call belongs to.
+ * Used by callPoeBotWithChain() and tryPoeBotChain() to resolve the ordered
+ * fallback chain.
+ */
+export type PoeFeature = "enrich" | "identify" | "dimensions" | "catalog";
+
+/**
+ * Returns the ordered list of Poe bot names to attempt for the given feature.
+ * The primary bot is first; the remaining two Poe bots follow as alternates.
+ * Uses the effective catalog bot name (may have been switched at startup by
+ * probePoeBotsOnStartup() if POE_CATALOG_BOT returned 404).
+ */
+export function getPoeChainForFeature(feature: PoeFeature): string[] {
+  const catalogBot = _effectiveCatalogBotName;
+  switch (feature) {
+    case "enrich":
+      return [POE_ENRICH_BOT, POE_IDENTIFY_BOT, catalogBot];
+    case "identify":
+      return [POE_IDENTIFY_BOT, catalogBot, POE_ENRICH_BOT];
+    case "dimensions":
+      return [POE_DIMENSIONS_BOT, catalogBot, POE_ENRICH_BOT];
+    case "catalog":
+      return [catalogBot, POE_IDENTIFY_BOT, POE_ENRICH_BOT];
+  }
+}
+
+/**
+ * Returns the model name for the given feature using the currently active
+ * provider.  Used by tryPoeBotChain() when the active provider is not "poe"
+ * so the same chain helper works for both Poe and OpenAI providers.
+ */
+export function getModelForFeature(feature: PoeFeature): string {
+  switch (feature) {
+    case "enrich":     return getEnrichModel();
+    case "identify":   return getIdentifyModel();
+    case "dimensions": return getDimensionsModel();
+    case "catalog":    return getCatalogModel();
+  }
+}
+
+/** OpenAI model names for each feature — always OpenAI regardless of provider. */
+const OPENAI_FEATURE_MODELS: Record<PoeFeature, string> = {
+  enrich: "gpt-4o-mini",
+  identify: "gpt-4o",
+  dimensions: "gpt-5.1",
+  catalog: "gpt-4o",
+};
+
+/**
+ * Return the OpenAI model name for the given feature.
+ * Unlike getModelForFeature(), this always returns an OpenAI model name —
+ * never a Poe bot name — so it is safe to use when constructing one-off
+ * OpenAI fallback calls regardless of the active provider setting.
+ */
+export function getOpenAIModelForFeature(feature: PoeFeature): string {
+  return OPENAI_FEATURE_MODELS[feature];
+}
+
+/**
+ * Build a one-off OpenAI client using the Replit AI Integration credentials.
+ * Used by routes that receive the x-use-openai-fallback request header to
+ * serve a single request via OpenAI without flipping the global provider.
+ * Throws if AI_INTEGRATIONS_OPENAI_BASE_URL / AI_INTEGRATIONS_OPENAI_API_KEY
+ * are not set.
+ */
+export function getOpenAIFallbackClient(): OpenAI {
+  return buildOpenAIClient();
+}
+
 // ── Per-bot probe results ─────────────────────────────────────────────────────
 
 /** Result status for a single Poe bot startup probe. */

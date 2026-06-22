@@ -28,8 +28,8 @@ import {
 } from "../utils/searchHelpers";
 import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
 import { generateKeywords } from "../utils/generateKeywords";
-import { getAiClient, getEnrichModel, getDimensionsModel, POE_ENRICH_BOT } from "../lib/aiProvider";
-import { callPoeBot } from "../lib/poeBot";
+import { getAiClient, getEnrichModel, getDimensionsModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
+import { callPoeBotWithChain, tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { resizeImages } from "../utils/imageResize";
@@ -1544,7 +1544,7 @@ router.get("/enrich-summary", requireAdminAuth, async (_req, res) => {
 // SSE stream: calls OpenAI once per part and streams results.
 // Does NOT write to the DB — the client saves each result individually via
 // PATCH /:id/expanded-description once the admin approves the expansion.
-router.post("/expand-descriptions", requireAdminAuth, async (_req, res) => {
+router.post("/expand-descriptions", requireAdminAuth, async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -1578,22 +1578,41 @@ router.post("/expand-descriptions", requireAdminAuth, async (_req, res) => {
 
     send({ model: getEnrichModel(), total });
 
+    const enrichSystemPrompt =
+      "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory-friendly sentence. Requirements:\n" +
+      "- Use imperial units where applicable (inches, feet, pounds, \u00b0F).\n" +
+      "- Fix spacing errors (add missing spaces after commas and around units).\n" +
+      "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
+      "- Include essential keywords where present: capacity, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F), enclosure/venting if stated, and any ratings (A, kVA, etc.).\n" +
+      "- Do not add unsupported technical specs or assumptions. If you must infer a missing spec, put the inference in parentheses.\n" +
+      "- Do not include the phrase 'inventory item' or any meta commentary.\n" +
+      "- Output exactly one concise sentence per input line.\n\n" +
+      "Example\n" +
+      "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
+      "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.";
+
+    const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
+
     for (const item of itemsToExpand) {
       try {
-        const expandedDescription = await callPoeBot(
-          POE_ENRICH_BOT,
-          "You are an electrical supplies identifier with a degree in English language specializing in keyword and abbreviation expansion. Convert a single catalog description line into one clear, inventory-friendly sentence. Requirements:\n" +
-            "- Use imperial units where applicable (inches, feet, pounds, \u00b0F).\n" +
-            "- Fix spacing errors (add missing spaces after commas and around units).\n" +
-            "- Expand all abbreviations and jargon into plain language (e.g., kVA, XFMR \u2192 transformer; 3PH \u2192 three-phase; V \u2192 volts; Y \u2192 wye; FPT/MPT \u2192 female/male pipe thread; AWG \u2192 American Wire Gauge).\n" +
-            "- Include essential keywords where present: capacity, phase, primary voltage, secondary voltage, connection (delta/wye), efficiency standard, temperature rise (report both \u00b0C and \u00b0F), enclosure/venting if stated, and any ratings (A, kVA, etc.).\n" +
-            "- Do not add unsupported technical specs or assumptions. If you must infer a missing spec, put the inference in parentheses.\n" +
-            "- Do not include the phrase 'inventory item' or any meta commentary.\n" +
-            "- Output exactly one concise sentence per input line.\n\n" +
-            "Example\n" +
-            "Input: 225KVA VENTD XFMR DOE2016 EFF 3PH 480-208Y/120 150 (temp rise)\n" +
-            "Output: 225 kVA ventilated three-phase transformer, DOE 2016 efficiency compliant, primary 480 V, secondary 208Y/120 V, 302 \u00b0F (150 \u00b0C) temperature rise.",
-          `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
+        const expandedDescription = (
+          useOpenAiFallback
+            ? await (async () => {
+                const resp = await getOpenAIFallbackClient().chat.completions.create({
+                  model: getOpenAIModelForFeature("enrich"),
+                  max_completion_tokens: 512,
+                  messages: [
+                    { role: "system", content: enrichSystemPrompt },
+                    { role: "user", content: `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:` },
+                  ],
+                });
+                return resp.choices[0]?.message?.content?.trim() ?? "";
+              })()
+            : await callPoeBotWithChain(
+                "enrich",
+                enrichSystemPrompt,
+                `Vendor: ${item.vendor}\nCatalog: ${item.catalog}\nOriginal description: ${item.description}\n\nExpand this description:`,
+              )
         ) || item.description;
         processed++;
         send({
@@ -1605,6 +1624,11 @@ router.post("/expand-descriptions", requireAdminAuth, async (_req, res) => {
           total,
         });
       } catch (aiErr) {
+        if (aiErr instanceof PoeBotChainExhaustedError) {
+          send({ status: "poe_chain_exhausted" });
+          res.end();
+          return;
+        }
         processed++;
         send({
           id: item.id,
@@ -2303,20 +2327,17 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
       return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
     }
 
-    const response = await getAiClient().chat.completions.create({
-      model: getDimensionsModel(),
-      max_completion_tokens: 256,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image_url",
-              image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "low" },
-            },
-            {
-              type: "text",
-              text: `Look at this image of an electrical or mechanical part.
+    const dimMessages = [
+      {
+        role: "user" as const,
+        content: [
+          {
+            type: "image_url" as const,
+            image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "low" as const },
+          },
+          {
+            type: "text" as const,
+            text: `Look at this image of an electrical or mechanical part.
 Estimate the part's physical dimensions in millimetres.
 If you can see a common scale reference object in the frame, use its known dimensions to anchor your estimate. Reference sizes: US quarter ≈ 24.26 mm diameter; US dollar bill 156 × 66 mm; credit card 85.6 × 54 mm; standard 12-inch ruler 305 mm long.
 Reply with ONLY a JSON object — no prose — in exactly this shape:
@@ -2325,11 +2346,25 @@ Use null for any value you cannot estimate with reasonable confidence.
 "length" is the longest dimension; "width" and "height" are the other two;
 "diameter" applies only to round/cylindrical parts.
 All values must be positive numbers (mm) or null.`,
-            },
-          ],
-        },
-      ],
-    });
+          },
+        ],
+      },
+    ];
+
+    const useOpenAiFallbackSearch = req.headers["x-use-openai-fallback"] === "true";
+    const response = useOpenAiFallbackSearch
+      ? await getOpenAIFallbackClient().chat.completions.create({
+          model: getOpenAIModelForFeature("dimensions"),
+          max_completion_tokens: 256,
+          messages: dimMessages,
+        })
+      : await tryPoeBotChain("dimensions", (client, model) =>
+          client.chat.completions.create({
+            model,
+            max_completion_tokens: 256,
+            messages: dimMessages,
+          }),
+        );
 
     const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
 
@@ -2362,6 +2397,9 @@ All values must be positive numbers (mm) or null.`,
       diameter: sanitize(parsed.diameter),
     });
   } catch (err) {
+    if (err instanceof PoeBotChainExhaustedError) {
+      return void res.status(503).json({ status: "poe_chain_exhausted" });
+    }
     console.error("[estimate-dimensions/search]", err);
     res.status(500).json({ error: "Dimension estimation failed" });
   }
@@ -2387,20 +2425,17 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
       return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
     }
 
-    const response = await getAiClient().chat.completions.create({
-      model: getDimensionsModel(),
-      max_completion_tokens: 256,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image_url",
-              image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "low" },
-            },
-            {
-              type: "text",
-              text: `Look at this image of an electrical or mechanical part.
+    const adminDimMessages = [
+      {
+        role: "user" as const,
+        content: [
+          {
+            type: "image_url" as const,
+            image_url: { url: `data:${mimeType};base64,${imageBase64}`, detail: "low" as const },
+          },
+          {
+            type: "text" as const,
+            text: `Look at this image of an electrical or mechanical part.
 Estimate the part's physical dimensions in millimetres.
 If you can see a common scale reference object in the frame, use its known dimensions to anchor your estimate. Reference sizes: US quarter ≈ 24.26 mm diameter; US dollar bill 156 × 66 mm; credit card 85.6 × 54 mm; standard 12-inch ruler 305 mm long.
 Reply with ONLY a JSON object — no prose — in exactly this shape:
@@ -2409,11 +2444,25 @@ Use null for any value you cannot estimate with reasonable confidence.
 "length" is the longest dimension; "width" and "height" are the other two;
 "diameter" applies only to round/cylindrical parts.
 All values must be positive numbers (mm) or null.`,
-            },
-          ],
-        },
-      ],
-    });
+          },
+        ],
+      },
+    ];
+
+    const useOpenAiFallbackAdmin = req.headers["x-use-openai-fallback"] === "true";
+    const response = useOpenAiFallbackAdmin
+      ? await getOpenAIFallbackClient().chat.completions.create({
+          model: getOpenAIModelForFeature("dimensions"),
+          max_completion_tokens: 256,
+          messages: adminDimMessages,
+        })
+      : await tryPoeBotChain("dimensions", (client, model) =>
+          client.chat.completions.create({
+            model,
+            max_completion_tokens: 256,
+            messages: adminDimMessages,
+          }),
+        );
 
     const raw = response.choices[0]?.message?.content?.trim() ?? "{}";
 
@@ -2448,6 +2497,9 @@ All values must be positive numbers (mm) or null.`,
       diameter: sanitize(parsed.diameter),
     });
   } catch (err) {
+    if (err instanceof PoeBotChainExhaustedError) {
+      return void res.status(503).json({ status: "poe_chain_exhausted" });
+    }
     console.error("[estimate-dimensions]", err);
     res.status(500).json({ error: "Dimension estimation failed" });
   }

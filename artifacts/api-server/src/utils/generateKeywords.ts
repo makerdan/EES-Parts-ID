@@ -8,7 +8,7 @@
 
 import { getEnrichModel } from "../lib/aiProvider";
 import {
-  callPoeBot,
+  callPoeBotWithChain,
   isPoeCallAuthError,
   isPoeCallTransientError,
 } from "../lib/poeBot";
@@ -61,13 +61,18 @@ export interface PoeEnrichedError extends Error {
  *  - `isPoeTransient === true` → worth retrying after backoff
  *  - both false                → permanent non-auth error (bad model name, etc.); don't retry
  *
+ * Uses the per-feature Poe fallback chain when the active provider is "poe".
+ * The `model` parameter is kept for backwards-compat but is ignored — the
+ * chain determines which bot(s) to try.
+ *
  * @param item   - The inventory item to generate keywords for.
- * @param model  - The AI model/bot to use (defaults to provider default).
+ * @param model  - Ignored (kept for backwards-compat); the chain picks the bot.
  */
 export async function generateKeywords(
   item: EnrichItem,
   model: string = getEnrichModel(),
 ): Promise<string[]> {
+  void model;
   const systemInstruction =
     "You are an electrical supplies identifier and warehouse cataloger specializing in keyword extraction for searchable inventory systems. " +
     "Given a catalog item from an electrical supply distributor, return ONLY a JSON array of 6-10 short keyword strings that maximize searchability. " +
@@ -86,7 +91,7 @@ export async function generateKeywords(
 
   let text: string;
   try {
-    text = await callPoeBot(model, systemInstruction, userMessage);
+    text = await callPoeBotWithChain("enrich", systemInstruction, userMessage);
   } catch (err) {
     const enriched = new Error(String(err)) as PoeEnrichedError;
     enriched.isPoeAuth = isPoeCallAuthError(err);

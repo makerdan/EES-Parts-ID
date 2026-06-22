@@ -9,6 +9,13 @@
  */
 
 import OpenAI from "openai";
+import {
+  getPoeChainForFeature,
+  getProvider,
+  getAiClient,
+  getModelForFeature,
+  type PoeFeature,
+} from "./aiProvider";
 
 let _client: OpenAI | null = null;
 
@@ -76,4 +83,98 @@ export async function callPoeBot(
     ],
   });
   return response.choices[0]?.message?.content?.trim() ?? "";
+}
+
+// ── Fallback chain utilities ──────────────────────────────────────────────────
+
+/**
+ * Sentinel error thrown when all Poe bots in a feature's fallback chain have
+ * been exhausted by transient errors.  Route handlers should surface this as
+ * HTTP 503 with `{ status: 'poe_chain_exhausted' }` so the mobile client can
+ * prompt the user to retry via OpenAI (x-use-openai-fallback header).
+ */
+export class PoeBotChainExhaustedError extends Error {
+  constructor() {
+    super("All Poe bots in the fallback chain failed");
+    this.name = "PoeBotChainExhaustedError";
+  }
+}
+
+function isChainableError(err: unknown): boolean {
+  return isPoeCallTransientError(err) || err instanceof PoeHttpError;
+}
+
+/**
+ * Call a Poe-backed text feature with automatic sequential chain fallback.
+ *
+ * When provider is "poe": iterates through the feature's bot chain in order,
+ * skipping each bot on transient errors and trying the next one.
+ * Throws PoeBotChainExhaustedError when all bots fail with transient errors.
+ *
+ * When provider is not "poe" (e.g. "openai"): delegates to a single call
+ * using the provider's default model — no chaining is applied.
+ *
+ * Auth errors and other permanent failures are re-thrown immediately without
+ * trying the remaining bots.
+ */
+export async function callPoeBotWithChain(
+  feature: PoeFeature,
+  systemInstruction: string,
+  userMessage: string,
+): Promise<string> {
+  if (getProvider() !== "poe") {
+    // Non-poe provider: use the global AI client (e.g. OpenAI) with the
+    // provider's default model — do NOT use the dedicated Poe client.
+    const response = await getAiClient().chat.completions.create({
+      model: getModelForFeature(feature),
+      max_completion_tokens: 512,
+      messages: [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: userMessage },
+      ],
+    });
+    return response.choices[0]?.message?.content?.trim() ?? "";
+  }
+  const chain = getPoeChainForFeature(feature);
+  for (const botName of chain) {
+    try {
+      return await callPoeBot(botName, systemInstruction, userMessage);
+    } catch (err) {
+      if (isChainableError(err)) continue;
+      throw err;
+    }
+  }
+  throw new PoeBotChainExhaustedError();
+}
+
+/**
+ * Generic Poe chain helper for multimodal (vision) calls that need a raw
+ * OpenAI-compatible client and model name.
+ *
+ * When provider is "poe": iterates through the feature's bot chain, passing
+ * the dedicated Poe client and the candidate bot name to `fn` for each attempt.
+ * Throws PoeBotChainExhaustedError when all bots fail with transient errors.
+ *
+ * When provider is not "poe": calls `fn` once with the active global AI client
+ * and the provider's default model for the feature — no chaining is applied.
+ *
+ * Auth errors and other permanent failures are re-thrown immediately.
+ */
+export async function tryPoeBotChain<T>(
+  feature: PoeFeature,
+  fn: (client: OpenAI, modelName: string) => Promise<T>,
+): Promise<T> {
+  if (getProvider() !== "poe") {
+    return fn(getAiClient(), getModelForFeature(feature));
+  }
+  const chain = getPoeChainForFeature(feature);
+  for (const botName of chain) {
+    try {
+      return await fn(getClient(), botName);
+    } catch (err) {
+      if (isChainableError(err)) continue;
+      throw err;
+    }
+  }
+  throw new PoeBotChainExhaustedError();
 }
