@@ -82,6 +82,24 @@ async function saveQueryCache(cache: QueryCache<SearchResult>): Promise<void> {
   }
 }
 
+// Serialise every read→mutate→write sequence through a single promise chain so
+// two concurrent completions (e.g. onSuccess racing with runOfflineFallback)
+// cannot both read a stale snapshot and clobber each other's write.
+let _queryCacheWriteLock: Promise<void> = Promise.resolve();
+
+async function updateQueryCache(
+  mutate: (cache: QueryCache<SearchResult>) => QueryCache<SearchResult>,
+): Promise<void> {
+  const next = _queryCacheWriteLock.then(async () => {
+    const cache = await loadQueryCache();
+    await saveQueryCache(mutate(cache));
+  });
+  // The shared lock must never reject — swallow errors so subsequent writes are
+  // not permanently blocked by a single failed operation.
+  _queryCacheWriteLock = next.catch(() => {});
+  return next;
+}
+
 async function readNewestCacheTimestamp(): Promise<string> {
   try {
     const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
@@ -376,9 +394,9 @@ export default function SearchScreen() {
   const SYNC_RETRY_MAX_MS     = 300_000;  // 5 min ceiling
 
   // Fetch all inventory items in pages and build the Fuse cache
-  const syncAllInventory = useCallback(async () => {
+  const syncAllInventory = useCallback(async (): Promise<boolean> => {
     // Prevent concurrent syncs from racing on setSyncProgress and the Fuse index.
-    if (isSyncingRef.current) return;
+    if (isSyncingRef.current) return false;
     isSyncingRef.current = true;
 
     // Cancel any pending auto-retry before starting a new attempt
@@ -388,6 +406,7 @@ export default function SearchScreen() {
     }
     setSyncError(false);
     setSyncRetryPending(false);
+    let success = false;
     try {
       const allItems = await fetchInventoryPages(
         async (page, pageSize) => {
@@ -442,6 +461,7 @@ export default function SearchScreen() {
       } catch (err) {
         reportStorageError("Could not save offline inventory cache", err);
       }
+      success = true;
     } catch {
       setSyncError(true);
       // Schedule an automatic retry with exponential backoff (30 s → doubles → 5 min cap)
@@ -459,6 +479,7 @@ export default function SearchScreen() {
       setSyncProgress(null);
       isSyncingRef.current = false;
     }
+    return success;
   }, [buildFuseIndex]);
 
   // Cancel pending auto-retry timer on unmount to prevent state updates
@@ -544,11 +565,14 @@ export default function SearchScreen() {
   const runOfflineFallback = useCallback(() => {
     const f = filtersRef.current;
     const queryKey = buildQueryKey(f);
-    loadQueryCache().then(cache => {
+    const kw = [f.keywords, f.catalog, f.vendor, f.category, f.voltage, f.amperage]
+      .filter(Boolean).join(" ");
+    // Serialise through the shared write lock so a concurrent onSuccess write
+    // cannot clobber the pruned snapshot we're about to read.
+    const next = _queryCacheWriteLock.then(async () => {
+      const cache = await loadQueryCache();
       const pruned = pruneExpired(cache);
-      if (Object.keys(pruned).length !== Object.keys(cache).length) saveQueryCache(pruned);
-      const kw = [f.keywords, f.catalog, f.vendor, f.category, f.voltage, f.amperage]
-        .filter(Boolean).join(" ");
+      if (Object.keys(pruned).length !== Object.keys(cache).length) await saveQueryCache(pruned);
       const result = resolveOfflineFallback({
         queryKey,
         cache: pruned,
@@ -558,7 +582,9 @@ export default function SearchScreen() {
       setIsOffline(true);
       setOfflineCacheType(result.cacheType);
       setOfflineResults(result.results);
-    }).catch(console.error);
+    });
+    _queryCacheWriteLock = next.catch(() => {});
+    next.catch(console.error);
   }, [runFuseSearch]);
 
   // Fire a non-blocking translate-query request and update AI state when it
@@ -625,12 +651,14 @@ export default function SearchScreen() {
           }
         }
 
-        // Cache results keyed by query (with TTL pruning)
+        // Cache results keyed by query (with TTL pruning).
+        // Serialised through the shared write lock to prevent a concurrent
+        // runOfflineFallback from overwriting a stale snapshot.
         const queryKey = buildQueryKey(filtersRef.current);
-        loadQueryCache().then(cache => {
+        updateQueryCache(cache => {
           const pruned = pruneExpired(cache);
           pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
-          saveQueryCache(pruned);
+          return pruned;
         }).catch(console.error);
       },
       onError: () => {
@@ -735,7 +763,7 @@ export default function SearchScreen() {
     const _aiGen = ++aiSearchGenRef.current;
     const _aiQuery = filters.keywords.trim() || filters.catalog.trim();
     if (_aiQuery) translateQuery(_aiQuery, false, _aiGen);
-    const body = buildSearchBody(filters, activeCategorySlugRef.current);
+    const body = buildSearchBody(filtersRef.current, activeCategorySlugRef.current);
     searchMutation.mutate({ data: body });
     // Fall back to offline if API hasn't responded within the timeout
     searchTimeoutRef.current = setTimeout(() => {
@@ -949,7 +977,7 @@ export default function SearchScreen() {
               <Pressable
                 onPress={() => {
                   syncAllInventory();
-                  NetInfo.fetch().then(state => setIsOffline(!state.isConnected));
+                  NetInfo.fetch().then(state => setIsOffline(!state.isConnected)).catch(() => {});
                 }}
                 style={[styles.statusBadge, { backgroundColor: colors.primary + "18" }]}
               >
@@ -1061,8 +1089,8 @@ export default function SearchScreen() {
                   setOfflineResults(null);
                   setCacheAge("No cached data");
                   setCacheClearedMsg("✓ Cache cleared — resyncing…");
-                  syncAllInventory().then(() => {
-                    setCacheClearedMsg(null);
+                  syncAllInventory().then(ok => {
+                    setCacheClearedMsg(ok ? null : "Sync failed — tap to retry");
                   }).catch(console.error);
                 }}
                 style={[styles.secondaryBtn, styles.clearCacheBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
@@ -1378,7 +1406,7 @@ export default function SearchScreen() {
           isAdmin={isAdmin}
           adminToken={adminToken}
           onPartAdded={() => syncAllInventory()}
-          onRefresh={syncAllInventory}
+          onRefresh={() => { syncAllInventory(); }}
           onShowOnMap={handleShowOnMap}
         />
       ) : mode === "category" ? (
@@ -1409,7 +1437,7 @@ export default function SearchScreen() {
           refreshControl={
             <RefreshControl
               refreshing={syncProgress !== null}
-              onRefresh={syncAllInventory}
+              onRefresh={() => { syncAllInventory(); }}
               tintColor={colors.primary}
               colors={[colors.primary]}
             />
@@ -1436,7 +1464,10 @@ export default function SearchScreen() {
                     onPress={() => {
                       const lower = Math.max(0, filters.confidenceThreshold - 20);
                       handleChange("confidenceThreshold", lower);
-                      setTimeout(handleSearch, 50);
+                      // Update the ref immediately so handleSearch reads the new
+                      // threshold — don't rely on React state + useEffect propagation.
+                      filtersRef.current = { ...filtersRef.current, confidenceThreshold: lower };
+                      handleSearch();
                     }}
                     style={[styles.belowThresholdBanner, {
                       backgroundColor: colors.warning + "18",
@@ -1555,7 +1586,10 @@ export default function SearchScreen() {
                     onPress={() => {
                       const lower = Math.max(0, filters.confidenceThreshold - 20);
                       handleChange("confidenceThreshold", lower);
-                      setTimeout(handleSearch, 50);
+                      // Update the ref immediately so handleSearch reads the new
+                      // threshold — don't rely on React state + useEffect propagation.
+                      filtersRef.current = { ...filtersRef.current, confidenceThreshold: lower };
+                      handleSearch();
                     }}
                     style={[styles.lowerThresholdBtn, {
                       backgroundColor: colors.warning + "18",
