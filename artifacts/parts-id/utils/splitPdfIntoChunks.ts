@@ -20,6 +20,32 @@ export interface PdfChunk {
 }
 
 /**
+ * Return the cached chunks when available, otherwise split the PDF from scratch.
+ *
+ * This is the branching logic used by `handleRetryChunk` in CatalogPdfUpload so
+ * that the decision can be unit-tested without rendering the full component.
+ *
+ * `splitFn` defaults to `splitPdfIntoChunks` and exists solely to allow unit
+ * tests to inject a spy without fighting same-module binding issues.
+ *
+ * @param cached       Previously-split chunks stored in chunksRef.current, or null.
+ * @param bytes        Raw PDF bytes — only consumed when `cached` is null.
+ * @param pagesPerChunk  Forwarded to splitFn when a fresh split is needed.
+ * @param splitFn      Overridable split implementation (default: splitPdfIntoChunks).
+ */
+export async function getOrSplitChunks(
+  cached: Array<PdfChunk> | null,
+  bytes: Uint8Array,
+  pagesPerChunk: number = PAGES_PER_CHUNK,
+  splitFn: (b: Uint8Array, n: number) => Promise<Array<PdfChunk>> = splitPdfIntoChunks,
+): Promise<Array<PdfChunk>> {
+  if (cached !== null) {
+    return cached;
+  }
+  return splitFn(bytes, pagesPerChunk);
+}
+
+/**
  * Split `bytes` into chunks of at most `pagesPerChunk` pages.
  *
  * @param bytes        Full PDF as a Uint8Array.
