@@ -109,6 +109,7 @@ router.post("/", requireAdminAuth, async (req, res) => {
       svgWidth,
       svgHeight,
       sortOrder,
+      sectionCode,
     } = parsed.data;
     const aisleId = normalizeAisleId(rawAisleId);
     const [zone] = await db
@@ -122,6 +123,7 @@ router.post("/", requireAdminAuth, async (req, res) => {
         svgWidth,
         svgHeight,
         sortOrder: sortOrder ?? 0,
+        ...(sectionCode !== undefined ? { sectionCode } : {}),
       })
       .returning();
     res.status(201).json({ zone });

@@ -181,6 +181,7 @@ export const warehouseZoneTable = pgTable(
     svgWidth: real("svg_width").notNull(),
     svgHeight: real("svg_height").notNull(),
     sortOrder: integer("sort_order").notNull().default(0),
+    sectionCode: text("section_code"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -189,6 +190,7 @@ export const warehouseZoneTable = pgTable(
       table.aisleId,
       table.sectionNum,
     ),
+    uniqueIndex("warehouse_zone_section_code_idx").on(table.sectionCode),
   ],
 );
 

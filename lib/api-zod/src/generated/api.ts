@@ -1344,6 +1344,7 @@ export const ListWarehouseZonesResponse = zod.object({
       id: zod.number(),
       aisleId: zod.string(),
       sectionNum: zod.number(),
+      sectionCode: zod.string().nullable(),
       isInventory: zod.boolean(),
       svgX: zod.number(),
       svgY: zod.number(),
@@ -1360,9 +1361,17 @@ export const ListWarehouseZonesResponse = zod.object({
  * @summary Create a warehouse zone overlay (admin)
  */
 
+export const createWarehouseZoneBodySectionCodeRegExp = new RegExp(
+  "^[A-Z]{4}$",
+);
+
 export const CreateWarehouseZoneBody = zod.object({
   aisleId: zod.string().min(1),
   sectionNum: zod.number().optional(),
+  sectionCode: zod
+    .string()
+    .regex(createWarehouseZoneBodySectionCodeRegExp)
+    .nullish(),
   isInventory: zod.boolean().optional(),
   svgX: zod.number(),
   svgY: zod.number(),
@@ -1378,9 +1387,17 @@ export const UpdateWarehouseZoneParams = zod.object({
   id: zod.coerce.number(),
 });
 
+export const updateWarehouseZoneBodySectionCodeRegExp = new RegExp(
+  "^[A-Z]{4}$",
+);
+
 export const UpdateWarehouseZoneBody = zod.object({
   aisleId: zod.string().min(1).optional(),
   sectionNum: zod.number().optional(),
+  sectionCode: zod
+    .string()
+    .regex(updateWarehouseZoneBodySectionCodeRegExp)
+    .nullish(),
   isInventory: zod.boolean().optional(),
   svgX: zod.number().optional(),
   svgY: zod.number().optional(),
@@ -1394,6 +1411,7 @@ export const UpdateWarehouseZoneResponse = zod.object({
     id: zod.number(),
     aisleId: zod.string(),
     sectionNum: zod.number(),
+    sectionCode: zod.string().nullable(),
     isInventory: zod.boolean(),
     svgX: zod.number(),
     svgY: zod.number(),
