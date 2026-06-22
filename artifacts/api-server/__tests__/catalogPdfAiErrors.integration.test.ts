@@ -217,3 +217,98 @@ describe("CatalogAiError propagation — status API response", () => {
     expect(res.body.errorMessage).toBe("ai_payload_too_large");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite 3: CatalogAiError propagation in chunked uploads
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Inserts a bare parent job row directly into the DB so we can submit a child
+ * chunk against it.  Returns the new parent's id and registers it for cleanup.
+ */
+async function seedParentJob(): Promise<number> {
+  const [row] = await db
+    .insert(catalogPdfJobTable)
+    .values({
+      vendor: VENDOR,
+      filename: "jest-ai-errors-chunk.pdf",
+      status: "pending",
+      processedPages: 0,
+      matchedParts: 0,
+      chunkCount: 2,
+    })
+    .returning({ id: catalogPdfJobTable.id });
+  if (!row) throw new Error("Failed to seed parent job for chunked AI error test");
+  seededJobIds.push(row.id);
+  return row.id;
+}
+
+describe("CatalogAiError propagation — chunked upload (child + parent)", () => {
+  it("sets child status=failed with error code and propagates to parent when extractCatalogPage throws CatalogAiError('ai_error')", async () => {
+    const parentId = await seedParentJob();
+
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockRejectedValueOnce(
+      new CatalogAiError("ai_error", "upstream AI provider error in chunk"),
+    );
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        pdfBase64: FAKE_PDF_BASE64,
+        vendor: VENDOR,
+        chunkIndex: 0,
+        chunkCount: 2,
+        parentJobId: parentId,
+      })
+      .expect(200);
+
+    const { chunkJobId } = res.body as { jobId: string; chunkJobId: string };
+    seededJobIds.push(Number(chunkJobId));
+
+    await waitForTerminal(chunkJobId);
+
+    const childRow = await readJobRow(Number(chunkJobId));
+    expect(childRow.status).toBe("failed");
+    expect(childRow.errorMessage).toBe("ai_error");
+
+    const parentRow = await readJobRow(parentId);
+    expect(parentRow.status).toBe("failed");
+    expect(parentRow.errorMessage).toBe("ai_error");
+  });
+
+  it("propagates 'ai_payload_too_large' from a chunk to the parent job", async () => {
+    const parentId = await seedParentJob();
+
+    mockExtractPdfPages.mockResolvedValueOnce(ONE_FAKE_PAGE);
+    mockExtractCatalogPage.mockRejectedValueOnce(
+      new CatalogAiError("ai_payload_too_large", "chunk payload exceeded provider limit"),
+    );
+
+    const res = await supertest(app)
+      .post("/api/admin/catalog-pdf")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        pdfBase64: FAKE_PDF_BASE64,
+        vendor: VENDOR,
+        chunkIndex: 0,
+        chunkCount: 2,
+        parentJobId: parentId,
+      })
+      .expect(200);
+
+    const { chunkJobId } = res.body as { jobId: string; chunkJobId: string };
+    seededJobIds.push(Number(chunkJobId));
+
+    await waitForTerminal(chunkJobId);
+
+    const childRow = await readJobRow(Number(chunkJobId));
+    expect(childRow.status).toBe("failed");
+    expect(childRow.errorMessage).toBe("ai_payload_too_large");
+
+    const parentRow = await readJobRow(parentId);
+    expect(parentRow.status).toBe("failed");
+    expect(parentRow.errorMessage).toBe("ai_payload_too_large");
+  });
+});
