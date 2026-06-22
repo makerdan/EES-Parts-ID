@@ -11,6 +11,42 @@
 export const MAX_IMAGE_PAYLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
 
 /**
+ * Estimate the decoded byte size of a single base64 image string (bare or data: URI).
+ * Uses the upper-bound formula: ceil(base64Chars * 3 / 4).
+ */
+export function estimateImageBytes(img: string): number {
+  const b64 = img.startsWith("data:") ? (img.split(",")[1] ?? "") : img;
+  return Math.ceil((b64.length * 3) / 4);
+}
+
+/**
+ * Check whether any individual image in the list exceeds `limitBytes`.
+ * Use this for models with a strict per-image size cap (e.g. Claude Sonnet: 10 MB).
+ *
+ * Returns `{ ok: true }` when every image is within the limit, or
+ * `{ ok: false, message, imageIndex, byteSize }` for the first oversized image.
+ */
+export function checkPerImageSize(
+  images: string[],
+  limitBytes: number,
+): { ok: true } | { ok: false; message: string; imageIndex: number; byteSize: number } {
+  for (let i = 0; i < images.length; i++) {
+    const byteSize = estimateImageBytes(images[i]);
+    if (byteSize > limitBytes) {
+      const mb = (byteSize / (1024 * 1024)).toFixed(1);
+      const limitMb = (limitBytes / (1024 * 1024)).toFixed(0);
+      return {
+        ok: false,
+        message: `Image ${i + 1} is too large (${mb} MB) — limit is ${limitMb} MB per image. Please use a smaller image.`,
+        imageIndex: i,
+        byteSize,
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/**
  * Check whether the combined decoded byte size of a list of base64 image strings
  * exceeds `limitBytes` (defaults to MAX_IMAGE_PAYLOAD_BYTES).
  *

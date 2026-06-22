@@ -28,7 +28,9 @@ import {
 } from "../utils/searchHelpers";
 import { TAXONOMY, findNodeBySlug, collectKeywords, getAllTaxonomyKeywords } from "@workspace/db";
 import { generateKeywords } from "../utils/generateKeywords";
-import { getAiClient, getEnrichModel, getDimensionsModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
+import { getAiClient, getEnrichModel, getDimensionsModel, getOpenAIFallbackClient, getOpenAIModelForFeature, getProvider } from "../lib/aiProvider";
+import { MAX_IMAGE_BYTES_CLAUDE_SONNET, MAX_IMAGE_BYTES_GPT5_1 } from "../lib/poeModelLimits";
+import { estimateImageBytes } from "../utils/aiHelpers";
 import { callPoeBotWithChain, tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
 import { invalidateReferenceAnswerCache } from "../lib/answerCache";
 import { uploadCatalogImage } from "../lib/objectStorage";
@@ -2323,8 +2325,23 @@ router.post("/estimate-dimensions/search", estimateSearchRateLimiter, async (req
       return void res.status(400).json({ error: "imageBase64 is required" });
     }
 
-    if (imageBase64.length > 5_000_000) {
-      return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
+    // Enforce per-model image size limit before calling the AI.
+    // Poe path uses Claude Sonnet (10 MB per image); OpenAI fallback uses
+    // gpt-5.1 (20 MB per image).  Read the header here so the limit is
+    // consistent with the model actually used below.
+    const useOpenAiFallbackSearch = req.headers["x-use-openai-fallback"] === "true";
+    {
+      const perModelLimit = useOpenAiFallbackSearch
+        ? MAX_IMAGE_BYTES_GPT5_1
+        : MAX_IMAGE_BYTES_CLAUDE_SONNET;
+      const imgBytes = estimateImageBytes(imageBase64);
+      if (imgBytes > perModelLimit) {
+        const mb = (imgBytes / (1024 * 1024)).toFixed(1);
+        const limitMb = (perModelLimit / (1024 * 1024)).toFixed(0);
+        return void res.status(413).json({
+          error: `Image too large (${mb} MB) — limit is ${limitMb} MB. Please reduce photo quality or size.`,
+        });
+      }
     }
 
     const dimMessages = [
@@ -2351,7 +2368,6 @@ All values must be positive numbers (mm) or null.`,
       },
     ];
 
-    const useOpenAiFallbackSearch = req.headers["x-use-openai-fallback"] === "true";
     const response = useOpenAiFallbackSearch
       ? await getOpenAIFallbackClient().chat.completions.create({
           model: getOpenAIModelForFeature("dimensions"),
@@ -2420,9 +2436,22 @@ router.post("/estimate-dimensions", requireAdminAuth, async (req, res) => {
       return void res.status(400).json({ error: "imageBase64 is required" });
     }
 
-    // Sanity-check size (≈4 MB base64 ≈ 3 MB binary)
-    if (imageBase64.length > 5_000_000) {
-      return void res.status(413).json({ error: "Image too large — please use quality ≤ 0.5" });
+    // Enforce per-model image size limit before calling the AI.
+    // Poe path uses Claude Sonnet (10 MB per image); OpenAI fallback uses
+    // gpt-5.1 (20 MB per image).
+    const useOpenAiFallbackAdmin = req.headers["x-use-openai-fallback"] === "true";
+    {
+      const perModelLimit = useOpenAiFallbackAdmin
+        ? MAX_IMAGE_BYTES_GPT5_1
+        : MAX_IMAGE_BYTES_CLAUDE_SONNET;
+      const imgBytes = estimateImageBytes(imageBase64);
+      if (imgBytes > perModelLimit) {
+        const mb = (imgBytes / (1024 * 1024)).toFixed(1);
+        const limitMb = (perModelLimit / (1024 * 1024)).toFixed(0);
+        return void res.status(413).json({
+          error: `Image too large (${mb} MB) — limit is ${limitMb} MB. Please reduce photo quality or size.`,
+        });
+      }
     }
 
     const adminDimMessages = [
@@ -2449,7 +2478,6 @@ All values must be positive numbers (mm) or null.`,
       },
     ];
 
-    const useOpenAiFallbackAdmin = req.headers["x-use-openai-fallback"] === "true";
     const response = useOpenAiFallbackAdmin
       ? await getOpenAIFallbackClient().chat.completions.create({
           model: getOpenAIModelForFeature("dimensions"),

@@ -2,7 +2,8 @@ import { Router } from "express";
 import { getAiClient, getIdentifyModel, getEnrichModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
 import { isPoeAuthError, isPoeTransientError, poeErrorMessage } from "@workspace/integrations-poe-server";
-import { buildImageContent, checkImagePayloadSize, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
+import { buildImageContent, checkImagePayloadSize, checkPerImageSize, extractJsonFromText, normalizeAnalysis } from "../utils/aiHelpers";
+import { MAX_IMAGE_BYTES_CLAUDE_SONNET } from "../lib/poeModelLimits";
 import { db } from "@workspace/db";
 import { aiRequestLogTable, inventoryTable, inventoryFtsVector } from "@workspace/db";
 import { lt, sql } from "drizzle-orm";
@@ -36,9 +37,25 @@ router.post("/identify", async (req, res) => {
       return void res.status(400).json({ error: "At least one image is required" });
     }
 
+    // Read the fallback header early so it's available for per-model size checks.
+    const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
+
     const payloadCheck = checkImagePayloadSize(images);
     if (!payloadCheck.ok) {
       return void res.status(413).json({ error: payloadCheck.message });
+    }
+
+    // Per-image check for Claude Sonnet: Anthropic enforces a 10 MB per-image
+    // limit that is tighter than the 20 MB aggregate cap above.  An image
+    // between 10–20 MB would pass the aggregate check but be silently rejected
+    // by Anthropic.  Apply this check for the Poe path (Claude is the primary
+    // model).  The OpenAI fallback uses gpt-4o (20 MB per image), already
+    // covered by the aggregate check above.
+    if (!useOpenAiFallback) {
+      const perImageCheck = checkPerImageSize(images, MAX_IMAGE_BYTES_CLAUDE_SONNET);
+      if (!perImageCheck.ok) {
+        return void res.status(413).json({ error: perImageCheck.message });
+      }
     }
 
     const contextParts: string[] = [];
@@ -72,7 +89,6 @@ router.post("/identify", async (req, res) => {
       },
     ];
 
-    const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
     const response = useOpenAiFallback
       ? await getOpenAIFallbackClient().chat.completions.create({
           model: getOpenAIModelForFeature("identify"),
