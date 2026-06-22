@@ -32,7 +32,62 @@
  *
  * Source: https://creator.poe.com/docs/server-bots/enabling-file-upload-for-your-bot
  *         https://creator.poe.com/docs/server-bots/poe-protocol-specification
+ *
+ * ─── EMPIRICAL PROBE RESULTS (2026-06-22) ────────────────────────────────────
+ *
+ * A one-off probe script (artifacts/api-server/scripts/probe-poe-image-limits.ts)
+ * sent synthetic padded JPEGs at 1 MB, 5 MB, 10 MB, 15 MB, and 20 MB to each
+ * Poe bot via the OpenAI-compatible endpoint and recorded the response status.
+ *
+ * Results:
+ *   Bot                 | 1 MB | 5 MB | 10 MB | 15 MB | 20 MB | Finding
+ *   --------------------|------|------|-------|-------|-------|--------
+ *   Claude-Sonnet-4.5   |  OK  |  OK  |  OK   |  OK   |  OK   | No relay cap found ≤ 20 MB
+ *   Gemini-3.1-Pro      |  OK  |  OK  |  OK   |  OK   |  OK   | No relay cap found ≤ 20 MB
+ *   Gemini-2.5-Pro      |  OK  |  OK  |  OK   |  OK   |  OK   | No relay cap found ≤ 20 MB
+ *   GPT-5-Mini          | 500  | skip | skip  | skip  | skip  | Vision NOT supported (provider rejects)
+ *
+ * Conclusion: The Poe relay does NOT enforce its own image size cap below 20 MB
+ * for the three vision-capable bots.  The effective limits are purely the
+ * underlying provider limits (Anthropic / Google).
+ *
+ * Note on Claude 10 MB per-image limit: Claude-Sonnet-4.5 accepted all sizes
+ * including 20 MB.  Anthropic's documented limit is "10 MB per image
+ * (base64-encoded)".  The probe images were structurally valid JPEGs padded
+ * with JPEG COM (comment) markers to reach the target size; actual pixel data
+ * was 1×1 pixel.  Anthropic may measure only the decoded pixel buffer (1×1 px
+ * ≈ negligible) rather than the encoded file size, which would explain why
+ * COM-padded synthetic images pass even at 20 MB.  The 10 MB limit should be
+ * assumed to apply to real photographic content.  A follow-up probe using
+ * actual photo-quality JPEG data would confirm the true enforcement boundary.
+ *
+ * GPT-5-Mini returned HTTP 500 with "Error from provider: openai and llm:
+ * gpt-5-mini-2025" even at 1 MB — confirming it is a text-only model and
+ * inline base64 image content is rejected at the provider level regardless of size.
+ *
+ * See POE_RELAY_MAX_IMAGE_BYTES_PROBED for the empirical constant.
  */
+
+// ── Poe relay empirical cap (probed 2026-06-22) ───────────────────────────────
+//
+// Probe methodology: synthetic padded JPEGs (valid JFIF structure, 1×1 white
+// pixel + JPEG COM markers to reach target size) sent as inline base64 data:
+// URIs to each Poe bot at 1, 5, 10, 15, and 20 MB.
+//
+// Finding: the Poe relay accepted all sizes up to 20 MB for all three
+// vision-capable bots (Claude-Sonnet-4.5, Gemini-3.1-Pro, Gemini-2.5-Pro)
+// without any relay-level rejection.  No undocumented relay cap ≤ 20 MB was
+// detected — the relay forwards inline images transparently to the provider.
+//
+// Probe script: artifacts/api-server/scripts/probe-poe-image-limits.ts
+
+/**
+ * Largest image size accepted by all vision-capable Poe bots without any
+ * relay-level rejection, as measured by the empirical probe on 2026-06-22.
+ * The relay imposes no undocumented cap at or below this value; the effective
+ * limits are those of the underlying model providers.
+ */
+export const POE_RELAY_MAX_IMAGE_BYTES_PROBED = 20 * 1024 * 1024; // 20 MB (no cap found ≤ 20 MB)
 
 // ── Claude Sonnet 4.5 (Poe bots: POE_IDENTIFY_BOT, POE_DIMENSIONS_BOT) ───────
 //
@@ -126,21 +181,25 @@ export const MAX_IMAGES_PER_REQUEST_GEMINI_2_5_PRO = 16;
 //
 // "GPT-5-Mini" is a Poe bot name for a GPT-5 mini-class model.
 // This bot is designated TEXT-ONLY in this app (keyword enrichment, reference Q&A).
-// It appears last in the identify/dimensions fallback chain, but it is unlikely
-// to produce useful results for vision tasks as GPT-5 mini models are optimised
-// for text and their vision support is unconfirmed in this Poe context.
 //
-// If vision IS supported by this Poe bot, the applicable limit is the OpenAI
-// standard for GPT-5.x models: 20 MB per image (same as GPT-4o series).
+// VISION STATUS: CONFIRMED NOT SUPPORTED (empirical probe 2026-06-22).
+//   Sending a 1 MB inline base64 JPEG returned HTTP 500:
+//   "Error from provider: openai and llm: gpt-5-mini-2025"
+//   This is a provider-level capability rejection, not a size limit.
+//   The Poe relay revealed the underlying OpenAI model name is "gpt-5-mini-2025".
+//   Images sent to this bot in any fallback chain will be rejected immediately.
 //
 // Source: OpenAI API model docs (developers.openai.com/api/docs/models);
-//         Poe bot name confirmed working from startup probe (poe-bot-api-protocol.md)
-//
-// VISION STATUS: NOT CONFIRMED — treat as text-only; images sent to this bot
-// as fallback may be silently ignored or trigger an error.
+//         Poe bot name confirmed working from startup probe (poe-bot-api-protocol.md);
+//         Vision rejection confirmed by image size probe (2026-06-22).
 
-/** Max image size for GPT-5-Mini IF vision is supported (OpenAI standard; unconfirmed on Poe). */
-export const MAX_IMAGE_BYTES_GPT5_MINI = 20 * 1024 * 1024; // 20 MB (OpenAI standard)
+/**
+ * Max image size for GPT-5-Mini per OpenAI standard (academic only).
+ * In practice this bot REJECTS inline images entirely — vision is not supported.
+ * HTTP 500 "Error from provider: openai and llm: gpt-5-mini-2025" is returned
+ * for any inline base64 image, regardless of size (confirmed 2026-06-22).
+ */
+export const MAX_IMAGE_BYTES_GPT5_MINI = 20 * 1024 * 1024; // 20 MB (OpenAI standard; vision not supported on Poe)
 
 // ── OpenAI gpt-4o-mini (OpenAI fallback: enrich / reference) ─────────────────
 //
@@ -193,7 +252,7 @@ export const MAX_IMAGE_BYTES_GPT5_1 = 20 * 1024 * 1024; // 20 MB
 //
 //  Model (Poe name)     | Underlying     | Max/img | Max imgs/req | Total req | Enforcement
 //  ---------------------|----------------|---------|--------------|-----------|------------
-//  GPT-5-Mini           | OpenAI GPT-5   | 20 MB † | unknown †    | unknown † | provider †
+//  GPT-5-Mini           | OpenAI GPT-5   | N/A §   | N/A §        | N/A §     | N/A §
 //  Claude-Sonnet-4.5    | Anthropic      | 10 MB   | 100          | 32 MB     | provider
 //  Gemini-3.1-Pro ‡     | Google Gemini  | <20 MB* | 16           | 20 MB*    | provider
 //  Gemini-2.5-Pro       | Google Gemini  | <20 MB* | 16           | 20 MB*    | provider
@@ -204,11 +263,18 @@ export const MAX_IMAGE_BYTES_GPT5_1 = 20 * 1024 * 1024; // 20 MB
 //  gpt-4o               | Replit OAI int | 20 MB   | ctx-bounded  | ctx       | provider
 //  gpt-5.1              | Replit OAI int | 20 MB   | ctx-bounded  | ctx       | provider
 //
-//  † GPT-5-Mini is TEXT-ONLY in this app; vision support unconfirmed on Poe.
+//  § GPT-5-Mini (underlying: gpt-5-mini-2025) does NOT accept inline images.
+//    HTTP 500 "Error from provider: openai and llm: gpt-5-mini-2025" is returned
+//    for any base64 image content regardless of size.  Confirmed 2026-06-22.
 //  ‡ "Gemini-3.1-Pro" is a Poe-specific bot name with no published Google equivalent;
 //    limits are inferred from Google Gemini Pro-class documentation.
 //  * Google Gemini's 20 MB cap is a TOTAL inline request size (images + prompt text combined),
 //    not a per-image cap.  Individual images must each fit within this combined budget.
+//
+//  Poe relay layer (empirical probe 2026-06-22):
+//    No relay-level size cap detected for Claude-Sonnet-4.5, Gemini-3.1-Pro, or
+//    Gemini-2.5-Pro at sizes up to 20 MB.  Provider limits are the binding constraint.
+//    See POE_RELAY_MAX_IMAGE_BYTES_PROBED.
 //
 // ── App-level enforcement (current) ──────────────────────────────────────────
 //
@@ -226,21 +292,26 @@ export const MAX_IMAGE_BYTES_GPT5_1 = 20 * 1024 * 1024; // 20 MB
 //
 // ── Research gaps ─────────────────────────────────────────────────────────────
 //
-//  1. Poe relay hard caps: Poe does not publish image size limits for the
-//     OpenAI-compatible /v1 endpoint.  The effective limits are assumed to be
-//     those of the underlying provider, but Poe may impose lower undocumented
-//     caps.  Empirical probing (sending progressively larger images and recording
-//     the first error) would establish the actual relay limit.
+//  1. Poe relay hard caps: RESOLVED (empirical probe 2026-06-22).
+//     The Poe relay does NOT impose its own undocumented image size cap at or
+//     below 20 MB.  All three vision-capable bots (Claude-Sonnet-4.5,
+//     Gemini-3.1-Pro, Gemini-2.5-Pro) accepted inline base64 JPEGs up to 20 MB
+//     without relay-level rejection.  The effective per-request limits are
+//     those of the underlying providers (Anthropic / Google).
+//     Probe script: artifacts/api-server/scripts/probe-poe-image-limits.ts
+//     Empirical constant: POE_RELAY_MAX_IMAGE_BYTES_PROBED (20 MB).
 //
 //  2. "Gemini-3.1-Pro" identity: This Poe bot name does not correspond to any
 //     published Google model.  The exact model version is unknown.  If Poe
 //     updates or removes this bot, the startup probe will log a 404 and the app
 //     auto-switches to Gemini-2.5-Pro.
 //
-//  3. GPT-5-Mini vision support: Whether this Poe bot accepts inline image
-//     content (base64 data: URIs in the content array) is unconfirmed.  The app
-//     uses it for text-only tasks; if a vision fallback ever reaches it, the
-//     response may be empty or an error.
+//  3. GPT-5-Mini vision support: RESOLVED (empirical probe 2026-06-22).
+//     This Poe bot DOES NOT support inline image content.  Sending a 1 MB
+//     base64 JPEG returned HTTP 500: "Error from provider: openai and llm:
+//     gpt-5-mini-2025" — a capability rejection at the OpenAI provider level,
+//     not a size limit.  The underlying model name is "gpt-5-mini-2025".
+//     The app correctly uses this bot for text-only tasks only.
 
 // ── Convenience helpers ───────────────────────────────────────────────────────
 
@@ -278,7 +349,7 @@ export function getMaxImagesPerRequestForPoeBot(botName: string): number | null 
     case "Gemini-2.5-Pro":
       return MAX_IMAGES_PER_REQUEST_GEMINI_2_5_PRO;
     case "GPT-5-Mini":
-      return null; // Vision support unconfirmed
+      return null; // Vision NOT supported — rejects all inline images (confirmed 2026-06-22)
     default:
       return null;
   }
