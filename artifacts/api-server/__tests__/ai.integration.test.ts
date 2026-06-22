@@ -54,6 +54,26 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
   isRateLimitError: jest.fn(() => false),
 }));
 
+// ── Mock the Poe bot chain so tests never make real network calls ─────────────
+// tryPoeBotChain is replaced with a thin wrapper that invokes the caller's
+// function with a dummy client whose create method is `mockCreate`.  This
+// makes every test that reaches the AI call fast, deterministic, and free of
+// network dependencies regardless of which AI_PROVIDER is configured.
+jest.mock("../src/lib/poeBot", () => {
+  class PoeBotChainExhaustedError extends Error {
+    constructor() {
+      super("All Poe bots in the fallback chain failed");
+      this.name = "PoeBotChainExhaustedError";
+    }
+  }
+  return {
+    tryPoeBotChain: jest.fn(async (_feature: unknown, fn: (client: unknown, model: string) => unknown) =>
+      fn({ chat: { completions: { create: mockCreate } } }, "test-model"),
+    ),
+    PoeBotChainExhaustedError,
+  };
+});
+
 // ── Imports ───────────────────────────────────────────────────────────────────
 import supertest from "supertest";
 import app from "../src/app";
@@ -201,9 +221,12 @@ describe("POST /api/ai/identify", () => {
       .expect(200);
 
     expect(mockCreate).toHaveBeenCalledTimes(1);
-    // Verify the call was made with the correct model
+    // Verify context fields are forwarded into the prompt messages
     const callArg = mockCreate.mock.calls[0][0];
-    expect(callArg.model).toBe("gpt-4o");
+    const userMsg = callArg.messages.find((m: { role: string }) => m.role === "user");
+    const userText = JSON.stringify(userMsg?.content ?? "");
+    expect(userText).toMatch(/toggle switch/i);
+    expect(userText).toMatch(/Hubbell/i);
 
     expect(res.body.searchTerms).toContain("switch");
   });
@@ -263,6 +286,60 @@ describe("POST /api/ai/identify", () => {
       .expect(413);
 
     expect(res.body.error).toMatch(/smaller or fewer images/i);
+  });
+
+  // ── Provider-level payload-too-large errors ────────────────────────────────
+
+  it("returns 413 when the AI provider rejects with a status-413 error", async () => {
+    const providerError = Object.assign(new Error("Request entity too large"), { status: 413 });
+    mockCreate.mockRejectedValueOnce(providerError);
+
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .send({ images: [TINY_BASE64_JPEG] })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/too large/i);
+    expect(res.body.error).toMatch(/smaller or fewer images/i);
+  });
+
+  it("returns 413 when the AI provider rejects with a 'too large' message", async () => {
+    mockCreate.mockRejectedValueOnce(new Error("image too large for provider request"));
+
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .send({ images: [TINY_BASE64_JPEG] })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/too large/i);
+    expect(res.body.error).toMatch(/smaller or fewer images/i);
+  });
+
+  it("returns 413 when the AI provider rejects with a request_too_large code", async () => {
+    const providerError = Object.assign(new Error("Request too large"), { code: "request_too_large" });
+    mockCreate.mockRejectedValueOnce(providerError);
+
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .send({ images: [TINY_BASE64_JPEG] })
+      .expect(413);
+
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toMatch(/too large/i);
+    expect(res.body.error).toMatch(/smaller or fewer images/i);
+  });
+
+  it("does NOT return 413 for a generic AI error (falls through to 500)", async () => {
+    mockCreate.mockRejectedValueOnce(new Error("Internal server error"));
+
+    const res = await supertest(app)
+      .post("/api/ai/identify")
+      .send({ images: [TINY_BASE64_JPEG] })
+      .expect(500);
+
+    expect(res.body).toHaveProperty("error");
   });
 
 });
