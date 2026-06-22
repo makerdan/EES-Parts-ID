@@ -520,13 +520,19 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       return;
     }
 
+    // Reuse already-split chunks from the initial upload rather than
+    // re-splitting the raw bytes (which discards the cached work).
     let chunks: Awaited<ReturnType<typeof splitPdfIntoChunks>>;
-    try {
-      chunks = await splitPdfIntoChunks(pdfBytes, PAGES_PER_CHUNK);
-    } catch (err) {
-      setLoading(false);
-      setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
-      return;
+    if (chunksRef.current) {
+      chunks = chunksRef.current;
+    } else {
+      try {
+        chunks = await splitPdfIntoChunks(pdfBytes, PAGES_PER_CHUNK);
+      } catch (err) {
+        setLoading(false);
+        setError("Failed to prepare PDF chunks: " + ((err as Error)?.message ?? "Unknown error"));
+        return;
+      }
     }
 
     setChunksTotal(chunks.length);
@@ -980,6 +986,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             style={[s.reviewBtn, { borderColor: colors.primary }]}
           >
             <Text style={[s.reviewBtnText, { color: colors.primary }]}>Review changes →</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => { setJobStatus(null); setFilename(null); setPdfBytes(null); }}
+            style={[s.reviewBtn, { borderColor: colors.mutedForeground }]}
+          >
+            <Text style={[s.reviewBtnText, { color: colors.mutedForeground }]}>Start new extraction</Text>
           </Pressable>
         </View>
       ) : null}
