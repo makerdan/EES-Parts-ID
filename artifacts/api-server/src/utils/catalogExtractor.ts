@@ -35,6 +35,18 @@ export interface CatalogEntry {
   imageIndex2: number;
 }
 
+/** Thrown when the AI call fails for any reason other than chain exhaustion. */
+export class CatalogAiError extends Error {
+  readonly code: string;
+  readonly originalMessage: string;
+  constructor(code: string, originalMessage: string) {
+    super(code);
+    this.name = "CatalogAiError";
+    this.code = code;
+    this.originalMessage = originalMessage;
+  }
+}
+
 const SYSTEM_PROMPT = `You are an expert electrical supply catalog parser.
 Given the text and/or images from a single page of a manufacturer's product catalog, extract all parts listed on the page.
 For each part return a JSON object with these 8 fields:
@@ -165,7 +177,15 @@ export async function extractCatalogPage(
     if (err instanceof PoeBotChainExhaustedError) {
       throw err;
     }
-    console.error("[catalog-extract] AI error:", err);
-    return [];
+    // Detect payload-too-large responses (HTTP 413 / provider-specific messages)
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isPayloadTooLarge =
+      errMsg.includes("413") ||
+      errMsg.toLowerCase().includes("too large") ||
+      errMsg.toLowerCase().includes("payload") ||
+      (err as { status?: number }).status === 413;
+    const code = isPayloadTooLarge ? "ai_payload_too_large" : "ai_error";
+    console.error(`[catalog-extract] AI error (${code}):`, err);
+    throw new CatalogAiError(code, errMsg);
   }
 }
