@@ -51,10 +51,9 @@ import {
 } from "@/utils/searchHelpers";
 import { searchResetEvent } from "@/utils/searchResetEvent";
 import { reportStorageError } from "@/utils/storageErrorReporter";
-import { useTrackScreen } from "@/utils/useTrackScreen";
-import { SearchedAsRow, AIZeroResultsCard } from "@/components/AISearchFallback";
-import { runTranslateQuery } from "@/utils/translateQuery";
 import type { AIZeroResultsState } from "@/utils/translateQuery";
+import { runTranslateQuery } from "@/utils/translateQuery";
+import { useTrackScreen } from "@/utils/useTrackScreen";
 
 
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
