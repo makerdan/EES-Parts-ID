@@ -5,7 +5,7 @@ import type { InventoryItem, SearchResult } from "@workspace/api-client-react";
 import { useSearchInventory } from "@workspace/api-client-react";
 import { router,useFocusEffect } from "expo-router";
 import Fuse from "fuse.js";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -233,7 +233,7 @@ export default function SearchScreen() {
     router.navigate("/(tabs)/map");
   }, [setPendingMapFocus, setPinnedParts, showToast]);
 
-  const handleVariantsToggle = useCallback((item: InventoryItem) => (variantItems: Array<InventoryItem>, isOpen: boolean) => {
+  const handleVariantsToggle = useCallback((item: InventoryItem, variantItems: Array<InventoryItem>, isOpen: boolean) => {
     if (!isOpen) {
       // Only remove variant pins that belong to THIS item via groupId.
       // Other expanded cards' variant pins remain on the map, allowing
@@ -261,7 +261,6 @@ export default function SearchScreen() {
   // Local string state for the custom threshold TextInput in Settings
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
   const [isOffline, setIsOffline] = useState(false);
-  const [, setOfflineCacheType] = useState<"exact" | "fuse" | null>(null);
   const [fuseSyncedAt, setFuseSyncedAt] = useState<number | null>(null);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
@@ -355,7 +354,6 @@ export default function SearchScreen() {
       setFilters({ ...DEFAULT_FILTERS, confidenceThreshold: settingsRef.current.defaultConfidenceThreshold });
       setOfflineResults(null);
       setIsOffline(false);
-      setOfflineCacheType(null);
       setFuseSyncedAt(null);
       setDimensionCounts(undefined);
       setShowSimilarSizeBanner(false);
@@ -580,7 +578,6 @@ export default function SearchScreen() {
         keywords: kw,
       });
       setIsOffline(true);
-      setOfflineCacheType(result.cacheType);
       setOfflineResults(result.results);
     });
     _queryCacheWriteLock = next.catch(() => {});
@@ -608,7 +605,6 @@ export default function SearchScreen() {
         if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
         setIsOffline(false);
         setOfflineResults(null);
-        setOfflineCacheType(null);
         setDimensionCounts(data.dimensionCounts as Record<string, Record<string, number>> | undefined);
 
         // Show the "similar size" suggestion banner when the search returned
@@ -752,7 +748,6 @@ export default function SearchScreen() {
     setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
-    setOfflineCacheType(null);
     setAITranslation(null);
     setAITranslationDismissed(false);
     setAIZeroResults(null);
@@ -785,7 +780,6 @@ export default function SearchScreen() {
     searchMutation.reset();
     setOfflineResults(null);
     setIsOffline(false);
-    setOfflineCacheType(null);
     setDimensionCounts(undefined);
     setShowSimilarSizeBanner(false);
     setSimilarSizeTolerance(0.10);
@@ -835,7 +829,6 @@ export default function SearchScreen() {
     setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
-    setOfflineCacheType(null);
     setAIZeroResults(null);
     aiSearchGenRef.current += 1;
     searchAbortedRef.current = false;
@@ -858,7 +851,6 @@ export default function SearchScreen() {
     setPinnedParts([]);
     setOfflineResults(null);
     setIsOffline(false);
-    setOfflineCacheType(null);
     setAITranslation(null);
     setAITranslationDismissed(false);
     setAIZeroResults(null);
@@ -903,6 +895,17 @@ export default function SearchScreen() {
     }
   }, [measureItem, adminToken, buildFuseIndex, showToast]);
 
+  // Stable per-item re-enrich callback. adminToken is captured; a new function
+  // is only allocated when the token changes (e.g. after login/logout).
+  const handleReenrichKeywords = useCallback(async (item: InventoryItem): Promise<InventoryItem> => {
+    const res = await fetch(`${API_BASE}/inventory/${item.id}/enrich`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+    });
+    if (!res.ok) throw new Error(`Re-enrich failed: ${res.status}`);
+    return res.json() as Promise<InventoryItem>;
+  }, [adminToken]);
+
   const results: Array<SearchResult> = offlineResults ?? (searchMutation.data?.results ?? []);
   const sizeUnknownResults: Array<SearchResult> = isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []);
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
@@ -940,7 +943,9 @@ export default function SearchScreen() {
     | { kind: "sizeUnknownHeader"; count: number }
     | { kind: "sizeUnknown"; result: SearchResult; index: number };
 
-  const flatListData: Array<FlatListItem> = [
+  // Memoised so FlatList's data prop is a stable reference between renders
+  // when the underlying query results have not changed.
+  const flatListData = useMemo<Array<FlatListItem>>(() => [
     ...results.map((result, index) => ({ kind: "result" as const, result, index })),
     ...(sizeUnknownResults.length > 0
       ? [
@@ -948,7 +953,7 @@ export default function SearchScreen() {
           ...sizeUnknownResults.map((result, index) => ({ kind: "sizeUnknown" as const, result, index })),
         ]
       : []),
-  ];
+  ], [results, sizeUnknownResults]);
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -1673,18 +1678,11 @@ export default function SearchScreen() {
                 onEditItem={isAdmin ? (item) => router.push({ pathname: "/edit-item", params: { item: JSON.stringify(item) } }) : undefined}
                 onShowOnMap={handleShowOnMap}
                 onMeasure={isAdmin && listItem.kind === "sizeUnknown" ? setMeasureItem : undefined}
-                onVariantsToggle={handleVariantsToggle(result.item)}
+                onVariantsToggle={handleVariantsToggle}
                 rank={index}
                 fontScale={textFontScale}
                 sizeUnknown={listItem.kind === "sizeUnknown"}
-                onReenrichKeywords={isAdmin && adminToken ? async (item) => {
-                  const res = await fetch(`${API_BASE}/inventory/${item.id}/enrich`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-                  });
-                  if (!res.ok) throw new Error(`Re-enrich failed: ${res.status}`);
-                  return res.json();
-                } : undefined}
+                onReenrichKeywords={isAdmin && adminToken ? handleReenrichKeywords : undefined}
               />
             </View>
           );
