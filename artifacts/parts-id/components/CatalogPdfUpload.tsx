@@ -570,6 +570,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setUploadEta(null);
     speedSamplesRef.current = [];
 
+    // If this chunk was killed by a Poe outage, upgrade all subsequent retries
+    // to use the OpenAI fallback (the same flag sendSingleChunk already reads).
+    if (jobStatus?.errorMessage === "poe_chain_exhausted") {
+      withFallbackRef.current = true;
+    }
+
     const chunkBase64List = chunks.map(c => bytesToBase64(c.bytes));
     const chunkBodySizes = chunkBase64List.map(b64 => b64.length);
     const totalBodyBytes = chunkBodySizes.reduce((a, b) => a + b, 0);

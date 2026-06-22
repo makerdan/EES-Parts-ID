@@ -431,9 +431,16 @@ export default function CatalogReviewScreen() {
         encoding: FileSystem.EncodingType.Base64,
       });
 
+      const job = failedJobs.find((j) => j.id === jobId);
+      const useFallback = job?.errorMessage === "poe_chain_exhausted";
+
       const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/resume`, {
         method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+          ...(useFallback ? { "x-use-openai-fallback": "true" } : {}),
+        },
         body: JSON.stringify({ pdfBase64 }),
       });
 
