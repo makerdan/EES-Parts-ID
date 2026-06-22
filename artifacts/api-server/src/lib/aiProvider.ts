@@ -229,9 +229,16 @@ export type PoeFeature = "enrich" | "identify" | "dimensions" | "catalog";
 
 /**
  * Returns the ordered list of Poe bot names to attempt for the given feature.
- * The primary bot is first; the remaining two Poe bots follow as alternates.
+ * The primary bot is first; vision-capable alternates follow.
  * Uses the effective catalog bot name (may have been switched at startup by
  * probePoeBotsOnStartup() if POE_CATALOG_BOT returned 404).
+ *
+ * Note: GPT-5-Mini (POE_ENRICH_BOT) is intentionally excluded from the
+ * `identify`, `dimensions`, and `catalog` chains because it does NOT support
+ * inline image content — HTTP 500 "Error from provider: openai and llm:
+ * gpt-5-mini-2025" is returned for any base64 image regardless of size
+ * (confirmed by probe 2026-06-22, documented in poeModelLimits.ts).
+ * It remains valid for the text-only `enrich` feature.
  */
 export function getPoeChainForFeature(feature: PoeFeature): string[] {
   const catalogBot = _effectiveCatalogBotName;
@@ -239,11 +246,11 @@ export function getPoeChainForFeature(feature: PoeFeature): string[] {
     case "enrich":
       return [POE_ENRICH_BOT, POE_IDENTIFY_BOT, catalogBot];
     case "identify":
-      return [POE_IDENTIFY_BOT, catalogBot, POE_ENRICH_BOT];
+      return [POE_IDENTIFY_BOT, catalogBot];
     case "dimensions":
-      return [POE_DIMENSIONS_BOT, catalogBot, POE_ENRICH_BOT];
+      return [POE_DIMENSIONS_BOT, catalogBot];
     case "catalog":
-      return [catalogBot, POE_IDENTIFY_BOT, POE_ENRICH_BOT];
+      return [catalogBot, POE_IDENTIFY_BOT];
   }
 }
 
