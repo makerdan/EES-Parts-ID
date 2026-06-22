@@ -1420,6 +1420,13 @@ export function ZoneEditor() {
         if (autoNumSyncSortOrder) patch.sortOrder = preview.newSortOrder;
         await patchZone(id, patch);
       }
+      // IMPORTANT: pushUndo must remain here — after BOTH phases have fully
+      // succeeded — and must never be moved before the try/catch or before the
+      // Phase 2 loop.  If it were called before Phase 2 (or before the catch
+      // path is known to be unreachable), a subsequent failure would leave an
+      // undo entry that describes a state transition that never completed,
+      // producing corrupt undo behaviour (the "before" snapshot would match
+      // the sentinel values, not the real originals).
       pushUndo({ type: "multiEdit", changes: undoChanges });
       // Keep lastSavedFormRef consistent so the dup-conflict suppression doesn't fire
       if (selectedId) {
