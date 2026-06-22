@@ -129,6 +129,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [chunksCompleted, setChunksCompleted] = useState(0);
   const [chunksTotal, setChunksTotal] = useState(0);
   const [failedChunkInfo, setFailedChunkInfo] = useState<FailedChunkInfo | null>(null);
+  /** Byte-level upload progress (0–100) for the current chunk or single-file upload. Null = not yet started. */
+  const [uploadBytePct, setUploadBytePct] = useState<number | null>(null);
 
   useEffect(() => {
     if (retryCountdown === null || retryCountdown <= 0) return;
@@ -334,6 +336,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     onFailure: (msg: string) => void,
     onAbort: () => void,
     onNetwork: () => void,
+    onProgress?: (pct: number) => void,
   ): Promise<void> => {
     const token = adminTokenRef.current!;
     const body = JSON.stringify({
@@ -367,6 +370,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           },
           sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
         },
+        onProgress
+          ? (data) => {
+              if (data.totalBytesExpectedToSend > 0) {
+                onProgress(Math.round((data.totalBytesSent / data.totalBytesExpectedToSend) * 100));
+              }
+            }
+          : undefined,
       );
       uploadTaskRef.current = task;
       const result = await task.uploadAsync();
@@ -429,6 +439,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               base64,
               { chunkIndex: i, chunkCount: chunks.length, pageOffset: chunk.pageOffset, ...(parentJobId ? { parentJobId } : {}) },
               resolve, (msg) => reject(new Error(msg)), () => reject(new Error("__abort__")), () => reject(new Error("__network__")),
+              (pct) => setUploadBytePct(pct),
             );
           });
           lastErr = null;
@@ -457,6 +468,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           setChunkLabel(null);
           setChunksCompleted(0);
           setChunksTotal(0);
+          setUploadBytePct(null);
           setFailedChunkInfo(null);
           return;
         }
@@ -465,6 +477,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         // continues to show "Part N of M failed" rather than blanking out.
         setLoading(false);
         setChunkLabel(null);
+        setUploadBytePct(null);
         setFailedChunkInfo({
           chunkIndex: i,
           totalChunks: chunks.length,
@@ -475,6 +488,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       }
 
       if (i === 0) { parentJobId = result!.jobId; }
+      setUploadBytePct(null);
       setChunksCompleted(i + 1);
     }
 
@@ -484,6 +498,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunkLabel(null);
     setChunksCompleted(0);
     setChunksTotal(0);
+    setUploadBytePct(null);
     setLoading(false);
     // pdfBytes intentionally kept so the "Use OpenAI" fallback can re-upload
     // if the server-side job fails with poe_chain_exhausted.
@@ -633,6 +648,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {},
       (resp) => {
         setLoading(false);
+        setUploadBytePct(null);
         const jobId = resp.jobId;
         setJobStatus({
           jobId,
@@ -649,15 +665,18 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       },
       (errMsg) => {
         setLoading(false);
+        setUploadBytePct(null);
         setError(errMsg);
       },
       () => {
         setLoading(false);
+        setUploadBytePct(null);
       },
       () => {
         if (attempt < MAX_AUTO_RETRIES) {
           const delaySec = Math.pow(2, attempt);
           setError(null);
+          setUploadBytePct(null);
           setRetryCountdown(delaySec);
           retryTimerRef.current = setTimeout(() => {
             retryTimerRef.current = null;
@@ -665,11 +684,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           }, delaySec * 1000);
         } else {
           setLoading(false);
+          setUploadBytePct(null);
           setRetryCountdown(null);
           setError("Network error — check your connection and try again.");
           setShowRetryBtn(true);
         }
       },
+      (pct) => setUploadBytePct(pct),
     );
   };
 
@@ -694,6 +715,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunkLabel(null);
     setChunksCompleted(0);
     setChunksTotal(0);
+    setUploadBytePct(null);
 
     if (pdfBytes.length > CHUNK_SIZE_THRESHOLD) {
       void handleChunkedUpload(pdfBytes);
@@ -849,7 +871,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         </>
       ) : null}
 
-      {/* Upload progress — chunked mode shows step bar; single-file shows spinner */}
+      {/* Upload progress — chunked mode shows step bar; single-file shows byte progress */}
       {loading && !isRunning ? (
         <View style={s.progressBlock}>
           <View style={s.progressRow}>
@@ -861,20 +883,38 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             </Pressable>
           </View>
 
-          {/* Chunked upload: step-based progress bar (advances per completed chunk) */}
           {chunkLabel !== null && chunksTotal > 0 ? (
+            // Chunked upload: combined bar — advances per completed chunk and also
+            // updates within the current chunk as bytes are sent.
             <>
               <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
                 <View style={[s.progressFill, {
-                  width: `${Math.min(100, Math.round((chunksCompleted / chunksTotal) * 100))}%`,
+                  width: `${Math.min(100, Math.round(((chunksCompleted + (uploadBytePct ?? 0) / 100) / chunksTotal) * 100))}%`,
                   backgroundColor: colors.primary,
                 }]} />
               </View>
               <Text style={[s.progressText, { color: colors.mutedForeground }]}>
                 {chunksCompleted} of {chunksTotal} parts uploaded
+                {uploadBytePct !== null && uploadBytePct > 0 && chunksCompleted < chunksTotal
+                  ? ` — part ${chunksCompleted + 1}: ${uploadBytePct}%`
+                  : ""}
+              </Text>
+            </>
+          ) : uploadBytePct !== null ? (
+            // Single-file upload: real byte-level progress bar
+            <>
+              <View style={[s.progressBar, { backgroundColor: colors.muted }]}>
+                <View style={[s.progressFill, {
+                  width: `${uploadBytePct}%`,
+                  backgroundColor: colors.primary,
+                }]} />
+              </View>
+              <Text style={[s.progressText, { color: colors.mutedForeground }]}>
+                {uploadBytePct}% uploaded
               </Text>
             </>
           ) : (
+            // Fallback spinner before first progress event arrives
             <ActivityIndicator size="small" color={colors.primary} />
           )}
         </View>
