@@ -12,6 +12,7 @@
 
 import { getCatalogModel, getOpenAIFallbackClient, getOpenAIModelForFeature } from "../lib/aiProvider";
 import { tryPoeBotChain, PoeBotChainExhaustedError } from "../lib/poeBot";
+import { MAX_REQUEST_BYTES_GEMINI_3_1_PRO } from "../lib/poeModelLimits";
 
 export interface ImageRegion {
   x: number;
@@ -97,6 +98,22 @@ export async function extractCatalogPage(
 ): Promise<CatalogEntry[]> {
   if (!pageText.trim() && pageImages.length === 0) return [];
 
+  // Enforce Gemini's 20 MB total inline request cap before building the
+  // content array.  Gemini's limit covers all images + prompt text combined;
+  // the prompt text is small (~3 KB) so summing image buffer sizes gives a
+  // safe and accurate upper bound.  Failing fast here avoids a silent provider
+  // rejection that would otherwise surface as an empty or garbled response.
+  const imagesToSend = pageImages.slice(0, 4);
+  const totalImageBytes = imagesToSend.reduce((sum, buf) => sum + buf.length, 0);
+  if (totalImageBytes > MAX_REQUEST_BYTES_GEMINI_3_1_PRO) {
+    const mb = (totalImageBytes / (1024 * 1024)).toFixed(1);
+    const limitMb = (MAX_REQUEST_BYTES_GEMINI_3_1_PRO / (1024 * 1024)).toFixed(0);
+    throw new CatalogAiError(
+      "ai_payload_too_large",
+      `Image payload too large (${mb} MB, limit ${limitMb} MB). Please use fewer or smaller page images.`,
+    );
+  }
+
   const userContent: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [];
 
   if (pageText.trim()) {
@@ -107,7 +124,6 @@ export async function extractCatalogPage(
   }
 
   // Include up to 4 images from the page (rendered page image or embedded images)
-  const imagesToSend = pageImages.slice(0, 4);
   for (const imgBuf of imagesToSend) {
     userContent.push({
       type: "image_url",
