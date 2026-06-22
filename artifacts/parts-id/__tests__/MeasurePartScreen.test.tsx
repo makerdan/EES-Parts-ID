@@ -162,6 +162,14 @@ function hasText(root: TestInst, text: string): boolean {
   return instText(root).includes(text);
 }
 
+/** Collect all non-empty `value` props from rn-text-input nodes in the tree. */
+function findInputValues(root: TestInst): string[] {
+  return root
+    .findAll(n => (n.type as string) === "rn-text-input", { deep: true })
+    .map(n => String(n.props.value ?? ""))
+    .filter(Boolean);
+}
+
 // ─── Per-test cleanup state ───────────────────────────────────────────────────
 
 /**
@@ -861,5 +869,118 @@ describe("MeasurePartScreen – AI photo-estimate error handling", () => {
 
     expect(hasText(tree.root, "Network request failed")).toBe(true);
     expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+  });
+});
+
+// ─── initialItem dimension seeding ───────────────────────────────────────────
+//
+// When the admin bridge "Measure Now" flow opens MeasurePartScreen it passes
+// the InventoryItem as `initialItem` (not `initialDims`).  The component seeds
+// the dimension input fields from initialItem.dimensions when no explicit
+// initialDims is provided.  These tests verify that seeding path end-to-end.
+
+describe("MeasurePartScreen – initialItem dimension seeding", () => {
+  it("seeds the dimension fields from initialItem.dimensions when initialDims is null", async () => {
+    expoDevice.modelName = "iPhone 11";
+
+    const seedItem = {
+      id: 99,
+      catalog: "WIDGET-X",
+      description: "Seeded from item",
+      binLocations: [],
+      dimensions: { length: 200, width: 100, height: 50, diameter: null },
+    };
+
+    const tree = await render(
+      <MeasurePartScreen
+        {...DEFAULT_PROPS}
+        initialDims={null}
+        initialItem={seedItem as any}
+      />
+    );
+
+    await press(tree.root, "Enter manually instead");
+
+    expect(hasText(tree.root, "200")).toBe(true);
+    expect(hasText(tree.root, "100")).toBe(true);
+    expect(hasText(tree.root, "50")).toBe(true);
+  });
+
+  it("seeds the diameter field when initialItem.dimensions contains only a diameter", async () => {
+    expoDevice.modelName = "iPhone 11";
+
+    const seedItem = {
+      id: 100,
+      catalog: "PIPE-D",
+      description: "Pipe with diameter",
+      binLocations: [],
+      dimensions: { length: null, width: null, height: null, diameter: 38 },
+    };
+
+    const tree = await render(
+      <MeasurePartScreen
+        {...DEFAULT_PROPS}
+        initialDims={null}
+        initialItem={seedItem as any}
+      />
+    );
+
+    await press(tree.root, "Enter manually instead");
+
+    // diameter-only: L/W/H are empty so the dimPreview text node is absent;
+    // check the TextInput value prop directly instead.
+    expect(findInputValues(tree.root)).toContain("38");
+  });
+
+  it("prefers explicit initialDims over initialItem.dimensions when both are provided", async () => {
+    expoDevice.modelName = "iPhone 11";
+
+    const seedItem = {
+      id: 101,
+      catalog: "OVERRIDE-TEST",
+      description: "Should be overridden",
+      binLocations: [],
+      dimensions: { length: 999, width: 888, height: 777, diameter: null },
+    };
+
+    const tree = await render(
+      <MeasurePartScreen
+        {...DEFAULT_PROPS}
+        initialDims={{ length: 200, width: 100, height: 50, diameter: null }}
+        initialItem={seedItem as any}
+      />
+    );
+
+    await press(tree.root, "Enter manually instead");
+
+    expect(hasText(tree.root, "200")).toBe(true);
+    expect(hasText(tree.root, "100")).toBe(true);
+    expect(hasText(tree.root, "50")).toBe(true);
+    expect(hasText(tree.root, "999")).toBe(false);
+  });
+
+  it("leaves fields empty when both initialDims and initialItem.dimensions are null", async () => {
+    expoDevice.modelName = "iPhone 11";
+
+    const seedItem = {
+      id: 102,
+      catalog: "EMPTY-DIMS",
+      description: "No dims",
+      binLocations: [],
+      dimensions: null,
+    };
+
+    const tree = await render(
+      <MeasurePartScreen
+        {...DEFAULT_PROPS}
+        initialDims={null}
+        initialItem={seedItem as any}
+      />
+    );
+
+    await press(tree.root, "Enter manually instead");
+
+    expect(hasText(tree.root, "Review Dimensions")).toBe(true);
+    expect(hasText(tree.root, "200")).toBe(false);
   });
 });
