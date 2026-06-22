@@ -24,7 +24,7 @@ import { eq, sql, and, desc, inArray, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { inventoryTable, catalogPdfJobTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
-import { extractPdfPages } from "../utils/pdfProcessor";
+import { extractPdfPages, validatePdf } from "../utils/pdfProcessor";
 import { extractCatalogPage } from "../utils/catalogExtractor";
 import type { ImageRegion } from "../utils/catalogExtractor";
 import { matchCatalogNumber } from "../utils/catalogMatcher";
@@ -356,9 +356,6 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
     return void res.status(400).json({ error: "Missing vendor field" });
   }
 
-  // Size guard only — content validation (magic bytes, /Encrypt) happens in the
-  // async processing loop when extractPdfPages is called, so that the job can be
-  // created synchronously and the client can poll for the failure status.
   if (pdfBase64.length > 35_000_000) {
     return void res.status(413).json({ error: "PDF too large (max ~25 MB per chunk)" });
   }
@@ -382,6 +379,20 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
         error: `Invalid chunkIndex (${chunkIndex}) or chunkCount (${chunkCount})`,
       });
     }
+  }
+
+  // ── Lightweight synchronous pre-validation ────────────────────────────────
+  // validatePdf checks magic bytes and encryption in microseconds (no spawned
+  // processes, no heavy parsing). Corrupt or encrypted uploads get an immediate
+  // 400 before any DB record is written. Full page rendering (extractPdfPages)
+  // runs in the background after the 200 response has been sent.
+  const pdfBuffer = Buffer.from(pdfBase64, "base64");
+  try {
+    validatePdf(pdfBuffer);
+  } catch (preErr) {
+    const msg = preErr instanceof Error ? preErr.message : String(preErr);
+    console.warn(`[catalog-pdf] PDF pre-validation failed: ${msg}`);
+    return void res.status(400).json({ error: msg });
   }
 
   // ── Parent job handling ────────────────────────────────────────────────────
@@ -486,88 +497,75 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
 
   const useOpenAiFallback = req.headers["x-use-openai-fallback"] === "true";
 
-  // ── Synchronous processing ────────────────────────────────────────────────
-  // Processing runs within the request handler so that provider payload-too-large
-  // errors can be translated to HTTP 413 before the response is sent.
+  // ── Mark job as processing ─────────────────────────────────────────────────
   await db
     .update(catalogPdfJobTable)
     .set({ status: "processing", startedAt: new Date() })
     .where(eq(catalogPdfJobTable.id, jobRow.id));
 
-  try {
-    const pdfBuffer = Buffer.from(pdfBase64, "base64");
-    const pages = await extractPdfPages(pdfBuffer);
+  // ── Respond immediately ────────────────────────────────────────────────────
+  // Processing continues in the background; the client polls the status endpoint.
+  if (isChunked) {
+    res.json({ jobId: String(resolvedParentJobId), chunkJobId: jobId, message: "Chunk job started" });
+  } else {
+    res.json({ jobId, message: "Job started" });
+  }
 
-    await db
-      .update(catalogPdfJobTable)
-      .set({ totalPages: pages.length })
-      .where(eq(catalogPdfJobTable.id, jobRow.id));
-
-    await processPdfPages(
-      jobRow.id,
-      pages,
-      0,
-      normalizedVendor,
-      resolvedParentJobId,
-      pageOffset,
-      useOpenAiFallback,
-    );
-
-    // Processing succeeded — respond with job ID
-    if (isChunked) {
-      return void res.json({ jobId: String(resolvedParentJobId), chunkJobId: jobId, message: "Chunk job started" });
-    }
-    return void res.json({ jobId, message: "Job started" });
-  } catch (err) {
-    const isCatalogAiError = err instanceof Error && err.name === "CatalogAiError";
-    if (!isCatalogAiError && isProviderPayloadTooLargeError(err)) {
+  // ── Background processing ──────────────────────────────────────────────────
+  // extractPdfPages (full rendering via pdftoppm) runs here, off the request
+  // thread. pdfBuffer was decoded synchronously before the 200 response, so
+  // no re-parsing of the base64 payload is needed.
+  setImmediate(async () => {
+    try {
+      const pages = await extractPdfPages(pdfBuffer);
       await db
         .update(catalogPdfJobTable)
-        .set({ status: "failed", errorMessage: "ai_payload_too_large", finishedAt: new Date() })
+        .set({ totalPages: pages.length })
         .where(eq(catalogPdfJobTable.id, jobRow.id));
-      console.warn(`[catalog-pdf] job=${jobId} provider rejected payload as too large`);
+
+      await processPdfPages(
+        jobRow.id,
+        pages,
+        0,
+        normalizedVendor,
+        resolvedParentJobId,
+        pageOffset,
+        useOpenAiFallback,
+      );
+    } catch (err) {
+      // Translate raw provider payload-too-large errors to the canonical job
+      // error code so the status endpoint surfaces a consistent value.
+      const isCatalogAiError = err instanceof Error && err.name === "CatalogAiError";
+      const errorCode =
+        !isCatalogAiError && isProviderPayloadTooLargeError(err)
+          ? "ai_payload_too_large"
+          : err instanceof Error
+            ? err.message
+            : String(err);
+
+      await db
+        .update(catalogPdfJobTable)
+        .set({ status: "failed", errorMessage: errorCode, finishedAt: new Date() })
+        .where(eq(catalogPdfJobTable.id, jobRow.id));
+
+      if (!isCatalogAiError && isProviderPayloadTooLargeError(err)) {
+        console.warn(`[catalog-pdf] job=${jobId} provider rejected payload as too large`);
+      } else {
+        console.error(`[catalog-pdf] job=${jobId} background processing failed:`, err);
+      }
 
       if (resolvedParentJobId !== null) {
         await db.execute(sql`
           UPDATE catalog_pdf_job
           SET status = 'failed',
-              error_message = 'ai_payload_too_large',
+              error_message = ${errorCode},
               finished_at = NOW()
           WHERE id = ${resolvedParentJobId}
             AND status NOT IN ('done', 'failed')
         `);
       }
-
-      return void res.status(413).json({
-        error: "Image payload too large — the AI provider rejected the request. Please use a lower-resolution or smaller PDF.",
-      });
     }
-
-    const msg = err instanceof Error ? err.message : String(err);
-    await db
-      .update(catalogPdfJobTable)
-      .set({ status: "failed", errorMessage: msg, finishedAt: new Date() })
-      .where(eq(catalogPdfJobTable.id, jobRow.id));
-    console.error(`[catalog-pdf] job=${jobId} failed:`, err);
-
-    // Mark parent failed atomically (only if not already in a terminal state)
-    if (resolvedParentJobId !== null) {
-      await db.execute(sql`
-        UPDATE catalog_pdf_job
-        SET status = 'failed',
-            error_message = ${msg},
-            finished_at = NOW()
-        WHERE id = ${resolvedParentJobId}
-          AND status NOT IN ('done', 'failed')
-      `);
-    }
-
-    // Return job ID so client can inspect the failure status via polling
-    if (isChunked) {
-      return void res.json({ jobId: String(resolvedParentJobId), chunkJobId: jobId, message: "Chunk job started" });
-    }
-    return void res.json({ jobId, message: "Job started" });
-  }
+  });
 });
 
 // ── POST /admin/catalog-pdf/:jobId/cancel ─────────────────────────────────────

@@ -47,6 +47,7 @@ jest.mock("../src/lib/poeBot", () => {
 
 jest.mock("../src/utils/pdfProcessor", () => ({
   extractPdfPages: jest.fn(),
+  validatePdf: jest.fn(),
 }));
 
 jest.mock("../src/utils/catalogExtractor", () => ({

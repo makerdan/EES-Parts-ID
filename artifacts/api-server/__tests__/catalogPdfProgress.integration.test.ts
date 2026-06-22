@@ -31,6 +31,7 @@ jest.mock("@workspace/integrations-openai-ai-server/batch", () => ({
 
 jest.mock("../src/utils/pdfProcessor", () => ({
   extractPdfPages: jest.fn(),
+  validatePdf: jest.fn(),
 }));
 
 jest.mock("../src/utils/catalogExtractor", () => ({
