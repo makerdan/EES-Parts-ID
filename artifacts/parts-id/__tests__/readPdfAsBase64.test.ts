@@ -14,6 +14,7 @@
 
 import {
   readPdfAsBase64,
+  readPdfAsBytes,
   PdfTooLargeError,
   InvalidPdfError,
   EncryptedPdfError,
@@ -380,6 +381,273 @@ describe("readPdfAsBase64 – native path (iOS)", () => {
     await expect(readPdfAsBase64("file:///var/mobile/secure.pdf")).rejects.toThrow(
       "Password-protected",
     );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// readPdfAsBytes – web FileReader path  (file instanceof File)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * FileReader is a browser-only API not present in the Node test environment.
+ * We install a fake on global so the `file instanceof File` branch in
+ * readRawBytes can be exercised without a real browser.
+ */
+
+interface FakeReaderInstance {
+  result: ArrayBufferLike | null;
+  onload: (() => void) | null;
+  onerror: (() => void) | null;
+  readAsArrayBuffer: jest.Mock;
+}
+
+describe("readPdfAsBytes – web FileReader path (file instanceof File)", () => {
+  let readerInstance: FakeReaderInstance;
+
+  class FakeFileReader implements FakeReaderInstance {
+    result: ArrayBufferLike | null = null;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    readAsArrayBuffer = jest.fn((_file: File) => {
+      readerInstance = this;
+    });
+    constructor() {
+      readerInstance = this;
+    }
+  }
+
+  const origFileReader = (global as Record<string, unknown>).FileReader;
+
+  beforeEach(() => {
+    setPlatformOS("web");
+    (global as Record<string, unknown>).FileReader = FakeFileReader;
+  });
+
+  afterEach(() => {
+    if (origFileReader !== undefined) {
+      (global as Record<string, unknown>).FileReader = origFileReader;
+    } else {
+      delete (global as Record<string, unknown>).FileReader;
+    }
+  });
+
+  /** Wraps bytes in a real File so `file instanceof File` passes in source code. */
+  function makeFile(bytes: Uint8Array): File {
+    return new File([bytes.buffer as ArrayBuffer], "catalog.pdf", { type: "application/pdf" });
+  }
+
+  it("returns the PDF bytes read via FileReader", async () => {
+    const bytes = makePdfBytes();
+    const promise = readPdfAsBytes("blob:http://localhost/test.pdf", makeFile(bytes));
+
+    readerInstance.result = bytes.buffer as ArrayBuffer;
+    readerInstance.onload!();
+
+    const result = await promise;
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(Array.from(result)).toEqual(Array.from(bytes));
+  });
+
+  it("does not call fetch when the File object is supplied", async () => {
+    const bytes = makePdfBytes();
+    const promise = readPdfAsBytes("blob:http://localhost/test.pdf", makeFile(bytes));
+
+    readerInstance.result = bytes.buffer as ArrayBuffer;
+    readerInstance.onload!();
+    await promise;
+
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("calls readAsArrayBuffer with the supplied File", async () => {
+    const bytes = makePdfBytes();
+    const file = makeFile(bytes);
+    const promise = readPdfAsBytes("blob:http://localhost/test.pdf", file);
+
+    readerInstance.result = bytes.buffer as ArrayBuffer;
+    readerInstance.onload!();
+    await promise;
+
+    expect(readerInstance.readAsArrayBuffer).toHaveBeenCalledWith(file);
+  });
+
+  it("rejects with a user-friendly message when FileReader fires onerror", async () => {
+    const bytes = makePdfBytes();
+    const promise = readPdfAsBytes("blob:http://localhost/test.pdf", makeFile(bytes));
+
+    readerInstance.onerror!();
+
+    await expect(promise).rejects.toThrow("Failed to read PDF: FileReader error");
+  });
+
+  it("rejects and does not call fetch on FileReader error", async () => {
+    const bytes = makePdfBytes();
+    const promise = readPdfAsBytes("blob:http://localhost/test.pdf", makeFile(bytes));
+
+    readerInstance.onerror!();
+
+    await expect(promise).rejects.toThrow();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("throws InvalidPdfError when FileReader returns non-PDF bytes", async () => {
+    const nonPdf = new Uint8Array([0x00, 0x01, 0x02, 0x03]);
+    const promise = readPdfAsBytes("blob:http://localhost/fake.pdf", makeFile(nonPdf));
+
+    readerInstance.result = nonPdf.buffer as ArrayBuffer;
+    readerInstance.onload!();
+
+    await expect(promise).rejects.toBeInstanceOf(InvalidPdfError);
+  });
+
+  it("throws EncryptedPdfError when FileReader returns an encrypted PDF", async () => {
+    const encrypted = makeEncryptedPdfBytes();
+    const promise = readPdfAsBytes("blob:http://localhost/secure.pdf", makeFile(encrypted));
+
+    readerInstance.result = encrypted.buffer as ArrayBuffer;
+    readerInstance.onload!();
+
+    await expect(promise).rejects.toBeInstanceOf(EncryptedPdfError);
+  });
+
+  it("does not enforce a size cap (no PdfTooLargeError for large files)", async () => {
+    // readPdfAsBytes has no size limit — large files are chunked upstream.
+    const big = new Uint8Array(MAX_PDF_BYTES + 1);
+    big.set(PDF_MAGIC, 0);
+    const promise = readPdfAsBytes("blob:http://localhost/big.pdf", makeFile(big));
+
+    readerInstance.result = big.buffer as ArrayBuffer;
+    readerInstance.onload!();
+
+    // Must resolve (possibly throwing InvalidPdfError if content is wrong,
+    // but NOT PdfTooLargeError).
+    await expect(promise).resolves.toBeDefined();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// readPdfAsBytes – web fetch fallback  (file is undefined / not a File)
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("readPdfAsBytes – web fetch fallback (file is undefined)", () => {
+  beforeEach(() => { setPlatformOS("web"); });
+
+  it("falls back to fetch when file is not provided", async () => {
+    const bytes = makePdfBytes();
+    mockFetchWithBuffer(bytes.buffer);
+
+    const result = await readPdfAsBytes("blob:http://localhost/test.pdf");
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(result).toBeInstanceOf(Uint8Array);
+  });
+
+  it("falls back to fetch when file is explicitly undefined", async () => {
+    const bytes = makePdfBytes();
+    mockFetchWithBuffer(bytes.buffer);
+
+    const result = await readPdfAsBytes("blob:http://localhost/test.pdf", undefined);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(Array.from(result)).toEqual(Array.from(bytes));
+  });
+
+  it("returns the correct bytes via the fetch fallback", async () => {
+    const bytes = makePdfBytes(new Uint8Array([0xAB, 0xCD, 0xEF]));
+    mockFetchWithBuffer(bytes.buffer);
+
+    const result = await readPdfAsBytes("blob:http://localhost/test.pdf");
+
+    expect(Array.from(result)).toEqual(Array.from(bytes));
+  });
+
+  it("throws InvalidPdfError via fetch when the content is not a PDF", async () => {
+    const nonPdf = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0]); // JPEG magic
+    mockFetchWithBuffer(nonPdf.buffer);
+
+    await expect(readPdfAsBytes("blob:http://localhost/image.pdf")).rejects.toBeInstanceOf(InvalidPdfError);
+  });
+
+  it("propagates a network error from the fetch fallback", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("Network request failed"));
+
+    await expect(readPdfAsBytes("blob:http://localhost/fail.pdf")).rejects.toThrow(
+      "Network request failed",
+    );
+  });
+
+  it("throws when the fetch fallback returns a non-OK HTTP status", async () => {
+    mockFetchWithBuffer(new ArrayBuffer(0), 403);
+
+    await expect(readPdfAsBytes("blob:http://localhost/forbidden.pdf")).rejects.toThrow(
+      "HTTP 403",
+    );
+  });
+
+  it("does not throw PdfTooLargeError even for buffers over 25 MB", async () => {
+    // readPdfAsBytes imposes no size limit.
+    const big = new Uint8Array(MAX_PDF_BYTES + 1);
+    big.set(PDF_MAGIC, 0);
+    mockFetchWithBuffer(big.buffer);
+
+    await expect(readPdfAsBytes("blob:http://localhost/big.pdf")).resolves.toBeDefined();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// readPdfAsBytes – native path  (file argument is irrelevant)
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("readPdfAsBytes – native path (file argument ignored)", () => {
+  beforeEach(() => { setPlatformOS("ios"); });
+
+  it("uses expo-file-system on native regardless of the file argument", async () => {
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: PDF_MAGIC.length });
+    mockReadAsStringAsync.mockResolvedValueOnce(PDF_MAGIC_B64);
+
+    const result = await readPdfAsBytes("file:///var/mobile/catalog.pdf", {} as File);
+
+    expect(mockReadAsStringAsync).toHaveBeenCalledTimes(1);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result).toBeInstanceOf(Uint8Array);
+  });
+
+  it("does not call fetch when file argument is omitted on native", async () => {
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: PDF_MAGIC.length });
+    mockReadAsStringAsync.mockResolvedValueOnce(PDF_MAGIC_B64);
+
+    await readPdfAsBytes("file:///var/mobile/catalog.pdf");
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockReadAsStringAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns validated bytes from expo-file-system on native", async () => {
+    const bytes = makePdfBytes(new Uint8Array([0x0A, 0x0B]));
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: bytes.length });
+    mockReadAsStringAsync.mockResolvedValueOnce(toBase64(bytes));
+
+    const result = await readPdfAsBytes("file:///var/mobile/catalog.pdf");
+
+    expect(Array.from(result)).toEqual(Array.from(bytes));
+  });
+
+  it("throws InvalidPdfError on native when the file is not a PDF", async () => {
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: 4 });
+    mockReadAsStringAsync.mockResolvedValueOnce("AAEC"); // [0x00, 0x01, 0x02]
+
+    await expect(readPdfAsBytes("file:///var/mobile/fake.pdf")).rejects.toBeInstanceOf(InvalidPdfError);
+  });
+
+  it("also works with Platform.OS === 'android' (ignores file argument)", async () => {
+    setPlatformOS("android");
+    mockGetInfoAsync.mockResolvedValueOnce({ exists: true, size: PDF_MAGIC.length });
+    mockReadAsStringAsync.mockResolvedValueOnce(PDF_MAGIC_B64);
+
+    await readPdfAsBytes("file:///storage/emulated/0/catalog.pdf", {} as File);
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockReadAsStringAsync).toHaveBeenCalledTimes(1);
   });
 });
 
