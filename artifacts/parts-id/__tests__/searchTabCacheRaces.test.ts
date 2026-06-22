@@ -339,3 +339,85 @@ describe("retry-timer unmount guard — no state setter calls after unmount", ()
     expect(jest.getTimerCount()).toBe(0);
   });
 });
+
+// ── Harness: syncAllInventory post-sync cache pruning ─────────────────────────
+//
+// Mirrors the pruning mutate function passed to updateQueryCache inside
+// syncAllInventory (index.tsx lines 457-470).  The full sync yields the
+// authoritative live item set; any cached SearchResult referencing a deleted
+// item ID must be removed so offline searches never surface deleted inventory.
+//
+// Two properties are verified:
+//   A. Deleted item IDs are absent and live IDs are retained after pruning.
+//   B. The original cache object is returned by reference (no redundant write)
+//      when every cached result ID is still present in the live inventory.
+
+type PruneSearchResult = { item: { id: string } };
+type PruneCache = Record<string, { timestamp: number; results: PruneSearchResult[] }>;
+
+function makePruneMutate(liveIds: Set<string>) {
+  return function prune(cache: PruneCache): PruneCache {
+    let dirty = false;
+    const pruned: PruneCache = {};
+    for (const [key, entry] of Object.entries(cache)) {
+      const kept = entry.results.filter(r => liveIds.has(r.item.id));
+      if (kept.length !== entry.results.length) dirty = true;
+      if (kept.length > 0) {
+        pruned[key] = { ...entry, results: kept };
+      } else {
+        dirty = true; // entry fully emptied — drop it
+      }
+    }
+    return dirty ? pruned : cache;
+  };
+}
+
+// ── Suite 4: syncAllInventory post-sync cache pruning ────────────────────────
+
+describe("syncAllInventory — post-sync cache pruning of stale search results", () => {
+  it("removes deleted item IDs from cache entries and drops fully-emptied entries", () => {
+    const cache: PruneCache = {
+      "bolts query": {
+        timestamp: 1_000,
+        results: [
+          { item: { id: "live-1" } },
+          { item: { id: "deleted-2" } },
+        ],
+      },
+      "nuts query": {
+        timestamp: 2_000,
+        results: [
+          { item: { id: "deleted-3" } },
+        ],
+      },
+    };
+
+    const liveIds = new Set(["live-1"]);
+    const result = makePruneMutate(liveIds)(cache);
+
+    // "bolts query" keeps live-1 and drops deleted-2
+    expect(result["bolts query"]).toBeDefined();
+    expect(result["bolts query"].results).toEqual([{ item: { id: "live-1" } }]);
+
+    // "nuts query" was fully emptied — it must be absent from the result
+    expect(result["nuts query"]).toBeUndefined();
+  });
+
+  it("returns the original cache object unchanged (no redundant write) when no items were deleted", () => {
+    const cache: PruneCache = {
+      "bolts query": {
+        timestamp: 1_000,
+        results: [
+          { item: { id: "live-1" } },
+          { item: { id: "live-2" } },
+        ],
+      },
+    };
+
+    const liveIds = new Set(["live-1", "live-2"]);
+    const result = makePruneMutate(liveIds)(cache);
+
+    // All cached IDs are still live — must be the exact same reference (dirty=false path)
+    expect(result).toBe(cache);
+  });
+});
