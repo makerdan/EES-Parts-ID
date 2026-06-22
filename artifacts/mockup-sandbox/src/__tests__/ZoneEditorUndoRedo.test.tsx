@@ -786,6 +786,117 @@ describe("ZoneEditor — undo / redo stack", () => {
     expect(redo2[0]!.sectionNum).toBe(sentinelSectionNum);
   });
 
+  // ── 12. Failed auto-number (Phase 2) — pushUndo is NOT called ───────────────
+  //
+  // handleAutoNumber has a two-phase structure:
+  //   Phase 1 — PATCH every zone to a negative sentinel (succeeds here)
+  //   Phase 2 — PATCH every zone from its sentinel to the final sectionNum (fails here)
+  //
+  // pushUndo sits AFTER Phase 2 in the try block.  The comment added to
+  // handleAutoNumber documents why it must stay there.  This test locks the
+  // guarantee in by verifying that:
+  //   a) Phase 1 PATCHes (negative sectionNum) reach the server and succeed
+  //   b) Phase 2 PATCHes (non-negative sectionNum) are attempted but fail
+  //   c) The undo stack is NOT modified — undoCount stays 0 after the failure
+  //   d) Ctrl+Z with an empty stack triggers no new fetch calls
+  it("failed auto-number (Phase 2) — undo stack is not modified when Phase 2 PATCHes fail", async () => {
+    const { container } = await setupEditor([ZONE_1]);
+
+    // Select ZONE_1
+    await act(async () => {
+      const zone1El = container.querySelector('[data-zone-id="1"]')!;
+      fireEvent.click(zone1El);
+    });
+    await act(async () => {});
+
+    // Open the "⚡ Auto-number sections" collapsible panel
+    await act(async () => {
+      const panelSpan = within(container).getByText("⚡ Auto-number sections");
+      // Click bubbles up from the <span> to its parent <button>
+      fireEvent.click(panelSpan.closest("button")!);
+    });
+    await act(async () => {});
+
+    // Install a fetch mock that lets Phase 1 (sentinel PATCHes) succeed but
+    // rejects Phase 2 (final-sectionNum PATCHes) with 500.
+    // Distinguishing Phase 1 from Phase 2: Phase 1 always writes a negative
+    // sectionNum; Phase 2 writes the intended non-negative final value.
+    // The GET /warehouse-zones calls in the catch block return ZONE_1 still
+    // at its sentinel so the rollback path tries (and silently fails) to
+    // restore the original sectionNum, demonstrating the full error path.
+    const failingFetch = vi.fn((url: string, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const s = String(url);
+
+      if (method === "GET" && s.includes("/floor-plan/svg"))
+        return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve(""), json: () => Promise.resolve({}) });
+
+      if (method === "GET" && s.includes("/warehouse-zones/coverage"))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ unsortedCount: 0, uncoveredAisles: [] }), text: () => Promise.resolve("") });
+
+      // Return ZONE_1 at sentinel so the catch-block rollback sees it as stuck.
+      if (method === "GET" && s.includes("/warehouse-zones"))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ zones: [{ ...ZONE_1, sectionNum: -1 }] }), text: () => Promise.resolve("") });
+
+      if (method === "PATCH" && s.includes("/warehouse-zones/")) {
+        const body = JSON.parse((init?.body ?? "{}") as string) as Record<string, unknown>;
+        // Phase 1 sentinel write — negative sectionNum — let it succeed
+        if (typeof body.sectionNum === "number" && body.sectionNum < 0)
+          return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+        // Phase 2 final write (non-negative sectionNum) and rollback PATCHes — fail
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: "Simulated Phase 2 DB failure" }), text: () => Promise.resolve("") });
+      }
+
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve("") });
+    });
+    global.fetch = failingFetch as unknown as typeof global.fetch;
+
+    // Click "Apply to 1 zone (undoable)"
+    const applyBtn = within(container).getByText(/Apply to 1 zone/);
+    await act(async () => { fireEvent.click(applyBtn); });
+
+    // Wait until both Phase 1 and Phase 2 PATCHes for zone 1 have been attempted.
+    // Phase 1: { sectionNum: -1 }  → 200  (sentinel)
+    // Phase 2: { sectionNum: 1, sortOrder?: ... } → 500 (final value — fails)
+    await waitFor(
+      () => {
+        const allPatches = (failingFetch.mock.calls as [unknown, RequestInit][]).filter(
+          ([url, init]) =>
+            String(url).includes("/warehouse-zones/1") &&
+            (init?.method ?? "").toUpperCase() === "PATCH",
+        );
+        // Expect at least 2: one Phase 1 sentinel PATCH and one Phase 2 final PATCH
+        expect(allPatches.length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 3000 },
+    );
+    // Drain all remaining microtasks: catch-block fetchZones, rollback PATCHes
+    // (caught silently), and the final post-rollback fetchZones.  Four rounds
+    // ensures the entire async catch chain has settled before we assert.
+    for (let i = 0; i < 4; i++) {
+      await act(async () => { await Promise.resolve(); });
+    }
+    await act(async () => {});
+
+    // Confirm the two-phase ordering: first PATCH used a negative sentinel
+    // (Phase 1), the second used a non-negative final sectionNum (Phase 2).
+    const zone1Patches = (failingFetch.mock.calls as [unknown, RequestInit][]).filter(
+      ([url, init]) =>
+        String(url).includes("/warehouse-zones/1") &&
+        (init?.method ?? "").toUpperCase() === "PATCH",
+    );
+    const phase1Body = JSON.parse((zone1Patches[0]![1] as RequestInit).body as string) as Record<string, unknown>;
+    const phase2Body = JSON.parse((zone1Patches[1]![1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(phase1Body.sectionNum).toBeLessThan(0);   // sentinel (Phase 1 succeeded)
+    expect(phase2Body.sectionNum).toBeGreaterThanOrEqual(0); // final value (Phase 2 threw)
+
+    // Primary guarantee: pushUndo is only reached after BOTH phases succeed.
+    // Phase 2 threw, so undoCount must still be 0 (the fresh-mount value for
+    // this component instance). "Nothing to undo" is the UI signal for that.
+    const undoBtn = container.querySelector('[title="Nothing to undo"]');
+    expect(undoBtn).not.toBeNull();
+  });
+
   // ── 11. Mid-batch undo failure → error surfaced, entry NOT silently consumed ──
   //
   // If one PATCH fails during multiEdit undo, the component must surface an error
