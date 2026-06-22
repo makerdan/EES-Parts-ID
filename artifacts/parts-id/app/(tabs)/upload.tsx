@@ -1122,8 +1122,7 @@ export default function UploadScreen() {
         prev.map(r => r.id === id ? { ...r, savedStatus: "pending" } : r),
       );
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [API_BASE, adminHeaders]);
+  }, [adminHeaders]);
 
   const handleDiscardExpandResult = useCallback((id: number) => {
     setExpandDescResults(prev =>
@@ -2631,15 +2630,19 @@ export default function UploadScreen() {
                       ) : null}
 
                       {/* Per-result cards */}
-                      {expandDescResults.map((result) => (
-                        <ExpandDescResultCard
-                          key={result.id}
-                          result={result}
-                          onSave={handleSaveExpandResult}
-                          onDiscard={handleDiscardExpandResult}
-                          onTextBlur={handleTextBlur}
-                        />
-                      ))}
+                      <FlatList
+                        data={expandDescResults}
+                        keyExtractor={r => String(r.id)}
+                        scrollEnabled={false}
+                        renderItem={({ item }) => (
+                          <ExpandDescResultCard
+                            result={item}
+                            onSave={handleSaveExpandResult}
+                            onDiscard={handleDiscardExpandResult}
+                            onTextBlur={handleTextBlur}
+                          />
+                        )}
+                      />
 
                       <Pressable
                         onPress={() => handleStartExpandDescriptions()}
@@ -2861,6 +2864,14 @@ export default function UploadScreen() {
                   style={[styles.queryInput, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                   textAlignVertical="top"
                 />
+
+                {/\b(DELETE|DROP|TRUNCATE|UPDATE|INSERT)\b/i.test(queryText) ? (
+                  <View style={[styles.queryWriteWarning, { backgroundColor: "#f59e0b18", borderColor: "#f59e0b44" }]}>
+                    <Text style={[styles.queryWriteWarningText, { color: "#b45309" }]}>
+                      ⚠ This query contains a write operation. Make sure you intend to modify data.
+                    </Text>
+                  </View>
+                ) : null}
 
                 <Pressable
                   onPress={async () => {
@@ -3157,6 +3168,8 @@ const styles = StyleSheet.create({
   queryRunBtnText: { fontSize: 15, fontFamily: "Inter_700Bold" },
   queryErrorBox: { borderWidth: 1, borderRadius: 8, padding: 12 },
   queryErrorText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
+  queryWriteWarning: { borderWidth: 1, borderRadius: 8, padding: 12, marginBottom: 8 },
+  queryWriteWarningText: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
   queryEmptyBox: { borderRadius: 8, padding: 14, alignItems: "center" },
   queryEmptyText: { fontSize: 13, fontFamily: "Inter_400Regular" },
   queryResultsWrapper: { gap: 8 },
