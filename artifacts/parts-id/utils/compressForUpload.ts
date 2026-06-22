@@ -9,8 +9,8 @@ export interface ImageEntry {
 
 /**
  * Pre-flight compression: if the total decoded size of `images` exceeds the
- * 20 MB AI payload limit, walks the downscale ladder on every image so the
- * combined payload lands safely below the cap.
+ * 20 MB AI payload limit, walks the downscale ladder on each image that
+ * exceeds its share of the budget, leaving already-small images untouched.
  *
  * On success, fires `showToast` to inform the user and returns the compressed
  * set.  On failure (downscaleToFit throws), silently falls back to the
@@ -28,7 +28,13 @@ export async function compressImagesForUpload(
   );
   try {
     const compressed = await Promise.all(
-      images.map((img) => downscaleToFit(img.uri, budgetPerImage)),
+      images.map((img) => {
+        const imgBytes = totalPayloadBytes([img.base64]);
+        if (imgBytes <= budgetPerImage) {
+          return Promise.resolve({ uri: img.uri, base64: img.base64 });
+        }
+        return downscaleToFit(img.uri, budgetPerImage);
+      }),
     );
     showToast("Photos compressed for upload");
     return compressed.map((r) => ({ uri: r.uri, base64: r.base64 }));

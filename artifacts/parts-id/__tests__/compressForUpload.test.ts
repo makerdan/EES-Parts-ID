@@ -1,12 +1,15 @@
 /**
  * Integration-style tests for compressImagesForUpload (utils/compressForUpload.ts).
  *
- * These tests verify the three behaviours described in the task:
+ * These tests verify the four behaviours:
  *   1. When the total payload is within 20 MB the images are returned unchanged
  *      and neither downscaleToFit nor the toast fires.
- *   2. When the total payload exceeds 20 MB, downscaleToFit is called for every
- *      image and the "Photos compressed for upload" toast is shown.
- *   3. When downscaleToFit throws, the original images are returned unchanged
+ *   2. When the total payload exceeds 20 MB, downscaleToFit is called only for
+ *      images that exceed their per-image budget, and the
+ *      "Photos compressed for upload" toast is shown.
+ *   3. Images already within their per-image budget are passed through unchanged
+ *      even when the total payload exceeds 20 MB.
+ *   4. When downscaleToFit throws, the original images are returned unchanged
  *      (the identify call is NOT blocked).
  *
  * Both totalPayloadBytes and downscaleToFit are mocked so the tests are fast
@@ -73,8 +76,9 @@ describe("payload within the 20 MB limit — no compression needed", () => {
 // ─── payload exceeds limit ────────────────────────────────────────────────────
 
 describe("payload exceeds the 20 MB limit — compression triggered", () => {
-  it("calls downscaleToFit once per image when payload is over 20 MB", async () => {
+  it("calls downscaleToFit for every image when all images exceed their per-image budget", async () => {
     const images = makeImages(3);
+    // totalPayloadBytes returns an oversized value for every call (total + per-image checks)
     mockTotalPayloadBytes.mockReturnValue(MAX_UPLOAD_PAYLOAD_BYTES + 1);
     mockDownscaleToFit.mockImplementation(async (uri: string) => ({
       uri,
@@ -159,6 +163,77 @@ describe("payload exceeds the 20 MB limit — compression triggered", () => {
       images[0].base64,
       images[1].base64,
     ]);
+  });
+});
+
+// ─── selective compression — only oversized images are recompressed ───────────
+
+describe("selective compression — only oversized images are recompressed", () => {
+  it("skips downscaleToFit for an image already within its per-image budget", async () => {
+    const images = makeImages(2);
+    const budgetPerImage = Math.floor((MAX_UPLOAD_PAYLOAD_BYTES * 0.9) / 2);
+
+    // First call: total payload check — over the limit
+    mockTotalPayloadBytes.mockReturnValueOnce(MAX_UPLOAD_PAYLOAD_BYTES + 1);
+    // Second call: per-image check for image 0 — over budget, must compress
+    mockTotalPayloadBytes.mockReturnValueOnce(budgetPerImage + 1);
+    // Third call: per-image check for image 1 — already within budget, skip
+    mockTotalPayloadBytes.mockReturnValueOnce(budgetPerImage - 1);
+
+    mockDownscaleToFit.mockResolvedValue({ uri: "r://c0.jpg", base64: "data:image/jpeg;base64,COMP0" });
+
+    await compressImagesForUpload(images, jest.fn());
+
+    expect(mockDownscaleToFit).toHaveBeenCalledTimes(1);
+    expect(mockDownscaleToFit).toHaveBeenCalledWith("file:///photo0.jpg", budgetPerImage);
+  });
+
+  it("leaves already-small images unchanged in the result", async () => {
+    const images = makeImages(2);
+    const budgetPerImage = Math.floor((MAX_UPLOAD_PAYLOAD_BYTES * 0.9) / 2);
+
+    mockTotalPayloadBytes.mockReturnValueOnce(MAX_UPLOAD_PAYLOAD_BYTES + 1);
+    mockTotalPayloadBytes.mockReturnValueOnce(budgetPerImage + 1); // image 0: oversized
+    mockTotalPayloadBytes.mockReturnValueOnce(budgetPerImage - 1); // image 1: fits
+
+    mockDownscaleToFit.mockResolvedValue({ uri: "r://c0.jpg", base64: "data:image/jpeg;base64,COMP0" });
+
+    const result = await compressImagesForUpload(images, jest.fn());
+
+    expect(result).toEqual([
+      { uri: "r://c0.jpg", base64: "data:image/jpeg;base64,COMP0" },
+      { uri: "file:///photo1.jpg", base64: "data:image/jpeg;base64,BASE64_1" },
+    ]);
+  });
+
+  it("does not call downscaleToFit at all when every image is already within budget", async () => {
+    const images = makeImages(3);
+    const budgetPerImage = Math.floor((MAX_UPLOAD_PAYLOAD_BYTES * 0.9) / 3);
+
+    // Total is over the limit but each individual image fits its share
+    mockTotalPayloadBytes.mockReturnValueOnce(MAX_UPLOAD_PAYLOAD_BYTES + 1);
+    mockTotalPayloadBytes.mockReturnValue(budgetPerImage - 1);
+
+    await compressImagesForUpload(images, jest.fn());
+
+    expect(mockDownscaleToFit).not.toHaveBeenCalled();
+  });
+
+  it("still shows the toast even when only one image required compression", async () => {
+    const images = makeImages(2);
+    const budgetPerImage = Math.floor((MAX_UPLOAD_PAYLOAD_BYTES * 0.9) / 2);
+
+    mockTotalPayloadBytes.mockReturnValueOnce(MAX_UPLOAD_PAYLOAD_BYTES + 1);
+    mockTotalPayloadBytes.mockReturnValueOnce(budgetPerImage + 1); // image 0: oversized
+    mockTotalPayloadBytes.mockReturnValueOnce(budgetPerImage - 1); // image 1: fits
+
+    mockDownscaleToFit.mockResolvedValue({ uri: "r://c0.jpg", base64: "data:image/jpeg;base64,COMP0" });
+    const showToast = jest.fn();
+
+    await compressImagesForUpload(images, showToast);
+
+    expect(showToast).toHaveBeenCalledWith("Photos compressed for upload");
+    expect(showToast).toHaveBeenCalledTimes(1);
   });
 });
 
