@@ -696,6 +696,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const handleStart = (attempt = 0) => {
     if (!pdfBytes || !vendor.trim() || !adminToken) return;
+    if (pdfBytes.length === 0) {
+      setError("The selected PDF appears to be empty. Please choose a different file.");
+      return;
+    }
     _pausedUploadCache = null;
     setError(null);
     setRetryCountdown(null);
