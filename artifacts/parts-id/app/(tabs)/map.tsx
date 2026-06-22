@@ -250,29 +250,43 @@ export default function MapScreen() {
   const [countedZoneIds, setCountedZoneIds] = useState<Set<number>>(new Set());
 
   React.useEffect(() => {
+    let alive = true;
     AsyncStorage.getItem(CYCLE_COUNTED_KEY).then((raw) => {
-      if (!raw) return;
+      if (!alive || !raw) return;
       try {
-        const ids = JSON.parse(raw) as Array<number>;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+          console.warn('[map] CYCLE_COUNTED_KEY: expected array, got', typeof parsed);
+          return;
+        }
+        const ids = parsed.filter((v): v is number => typeof v === 'number');
         setCountedZoneIds(new Set(ids));
       } catch (err) {
         console.error('[map] parse cycle counted ids', err);
       }
     });
+    return () => { alive = false; };
   }, []);
 
   React.useEffect(() => {
+    let alive = true;
     AsyncStorage.getItem(FUSE_CACHE_KEY)
       .then(raw => {
-        if (!raw) return;
+        if (!alive || !raw) return;
         try {
-          const items = JSON.parse(raw) as Array<InventoryItem>;
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) {
+            console.warn('[map] FUSE_CACHE_KEY: expected array, got', typeof parsed);
+            return;
+          }
+          const items = parsed as Array<InventoryItem>;
           inventoryRef.current = items;
           setInventory(items);
         } catch (err) {
           console.error('[map] parse fuse cache', err);
         }
       });
+    return () => { alive = false; };
   }, []);
 
   const handleZoneTap = useCallback((zone: ApiWarehouseZone) => {
@@ -515,11 +529,14 @@ export default function MapScreen() {
           focusAisleNum={focusAisleNum}
           focusSectionNum={focusSectionNum}
           onFocusConsumed={() => { setFocusAisleNum(null); setFocusSectionNum(null); }}
-          onFocusFailed={() => {
-            setFocusFailedBanner(`No map zone found for aisle ${focusAisleNum} — check the warehouse configuration.`);
-            setFocusAisleNum(null);
-            setFocusSectionNum(null);
-          }}
+          onFocusFailed={(() => {
+            const capturedAisle = focusAisleNum;
+            return () => {
+              setFocusFailedBanner(`No map zone found for aisle ${capturedAisle} — check the warehouse configuration.`);
+              setFocusAisleNum(null);
+              setFocusSectionNum(null);
+            };
+          })()}
           selectedZoneId={selectedZone?.id}
           onPanStart={handleMapPanStart}
         />
