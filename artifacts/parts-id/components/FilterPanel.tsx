@@ -296,6 +296,7 @@ export function ConfidenceSlider({
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
 
   const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
+  const trackPageXRef = useRef(0);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -303,12 +304,13 @@ export function ConfidenceSlider({
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: (e) => {
         if (trackWidth.current === 0) return;
+        trackPageXRef.current = e.nativeEvent.pageX - e.nativeEvent.locationX;
         const x = e.nativeEvent.locationX;
         onChangeRef.current(clamp((x / trackWidth.current) * 100));
       },
       onPanResponderMove: (e) => {
         if (trackWidth.current === 0) return;
-        const x = e.nativeEvent.locationX;
+        const x = e.nativeEvent.pageX - trackPageXRef.current;
         onChangeRef.current(clamp((x / trackWidth.current) * 100));
       },
     }),

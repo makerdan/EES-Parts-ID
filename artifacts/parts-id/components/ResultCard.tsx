@@ -9,7 +9,6 @@ import {
   View,
 } from "react-native";
 
-import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { PartCard } from "@/components/PartCard";
 import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { PinIcon } from "@/components/PinIcon";
@@ -292,13 +291,13 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
               <Text style={[cardStyles.dimText, { color: colors.warning }]}>Size not measured</Text>
             </View>
           )
-        ) : (item as unknown as { dimensions?: PartDimensions | null }).dimensions &&
-         Object.values((item as unknown as { dimensions: PartDimensions }).dimensions).some(v => v != null) ? (
+        ) : item.dimensions &&
+         Object.values(item.dimensions).some(v => v != null) ? (
           <View style={[cardStyles.dimBadge, { backgroundColor: colors.muted }]}>
             <Text style={[cardStyles.dimIcon, { color: colors.mutedForeground }]}>📐</Text>
             <Text style={[cardStyles.dimText, { color: colors.mutedForeground }]}>
               {(() => {
-                const d = (item as unknown as { dimensions: PartDimensions }).dimensions;
+                const d = item.dimensions!;
                 const parts: Array<string> = [];
                 if (d.length != null && d.width != null && d.height != null) {
                   parts.push(`${d.length} × ${d.width} × ${d.height} mm`);

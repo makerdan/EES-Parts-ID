@@ -63,11 +63,26 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
 
 type QueryCacheEntry = { timestamp: number; results: Array<SearchResult> };
 
+function isValidQueryCache(value: unknown): value is QueryCache<SearchResult> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>).every(
+    (entry) =>
+      typeof (entry as { timestamp?: unknown })?.timestamp === 'number' &&
+      Array.isArray((entry as { results?: unknown })?.results),
+  );
+}
+
 async function loadQueryCache(): Promise<QueryCache<SearchResult>> {
   try {
     const raw = await AsyncStorage.getItem(QUERY_CACHE_KEY);
     if (!raw) return {};
-    return JSON.parse(raw) as QueryCache<SearchResult>;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isValidQueryCache(parsed)) {
+      reportStorageError("Corrupt query cache detected — discarding", new Error("invalid shape"));
+      AsyncStorage.removeItem(QUERY_CACHE_KEY).catch(() => {});
+      return {};
+    }
+    return parsed;
   } catch { return {}; }
 }
 
@@ -262,6 +277,7 @@ export default function SearchScreen() {
   const [confThresholdInput, setConfThresholdInput] = useState(String(DEFAULT_SETTINGS.defaultConfidenceThreshold));
   const [isOffline, setIsOffline] = useState(false);
   const [fuseSyncedAt, setFuseSyncedAt] = useState<number | null>(null);
+  const offlineCacheRef = useRef<{ type: 'exact' | 'fuse'; timestamp: number | null }>({ type: 'fuse', timestamp: null });
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [cacheClearedMsg, setCacheClearedMsg] = useState<string | null>(null);
   const [cacheAge, setCacheAge] = useState<string | null>(null);
@@ -513,7 +529,11 @@ export default function SearchScreen() {
         }
         let items: Array<InventoryItem>;
         try {
-          items = JSON.parse(raw) as Array<InventoryItem>;
+          const parsed: unknown = JSON.parse(raw);
+          if (!Array.isArray(parsed) || !parsed.every((i: unknown) => typeof (i as { id?: unknown })?.id === 'number')) {
+            throw new SyntaxError('invalid shape');
+          }
+          items = parsed as Array<InventoryItem>;
         } catch {
           // Corrupt cache — clear it and re-sync
           AsyncStorage.removeItem(FUSE_CACHE_KEY).catch(err => {
@@ -577,11 +597,15 @@ export default function SearchScreen() {
         fuseSearch: runFuseSearch,
         keywords: kw,
       });
+      offlineCacheRef.current = {
+        type: result.cacheType,
+        timestamp: result.cacheType === 'exact' ? (pruned[queryKey]?.timestamp ?? null) : null,
+      };
       setIsOffline(true);
       setOfflineResults(result.results);
     });
     _queryCacheWriteLock = next.catch(() => {});
-    next.catch(console.error);
+    next.catch(err => reportStorageError("Could not run offline fallback", err));
   }, [runFuseSearch]);
 
   // Fire a non-blocking translate-query request and update AI state when it
@@ -655,7 +679,7 @@ export default function SearchScreen() {
           const pruned = pruneExpired(cache);
           pruned[queryKey] = { timestamp: Date.now(), results: data.results ?? [] };
           return pruned;
-        }).catch(console.error);
+        }).catch(err => reportStorageError("Could not save query cache after search", err));
       },
       onError: () => {
         if (searchTimeoutRef.current) { clearTimeout(searchTimeoutRef.current); searchTimeoutRef.current = null; }
@@ -1523,13 +1547,19 @@ export default function SearchScreen() {
                 </Text>
               </View>
             ) : null}
-            {isOffline && offlineResults !== null && offlineResults.length > 0 && (fuseSyncedAt == null || Date.now() - fuseSyncedAt > FUSE_SYNC_MAX_AGE_MS) ? (
-              <View style={[styles.staleCacheNote, { backgroundColor: colors.warning + "15", borderColor: colors.warning + "44" }]}>
-                <Text style={[styles.staleCacheNoteText, { color: colors.warning }]}>
-                  ⚠ {formatStaleCacheWarning(fuseSyncedAt)}
-                </Text>
-              </View>
-            ) : null}
+            {isOffline && offlineResults !== null && offlineResults.length > 0 && (() => {
+              const srcTs = offlineCacheRef.current.type === 'exact'
+                ? offlineCacheRef.current.timestamp
+                : fuseSyncedAt;
+              if (srcTs != null && Date.now() - srcTs <= FUSE_SYNC_MAX_AGE_MS) return null;
+              return (
+                <View style={[styles.staleCacheNote, { backgroundColor: colors.warning + "15", borderColor: colors.warning + "44" }]}>
+                  <Text style={[styles.staleCacheNoteText, { color: colors.warning }]}>
+                    ⚠ {formatStaleCacheWarning(srcTs)}
+                  </Text>
+                </View>
+              );
+            })()}
 
             {/* Empty state */}
             {hasResults && results.length === 0 && !isOffline ? (
