@@ -104,6 +104,19 @@ function isChainableError(err: unknown): boolean {
   return isPoeCallTransientError(err) || err instanceof PoeHttpError;
 }
 
+function getChainRetryDelayMs(): number {
+  const raw = process.env["POE_CHAIN_RETRY_DELAY_MS"];
+  if (raw !== undefined) {
+    const parsed = parseInt(raw, 10);
+    if (!isNaN(parsed) && parsed >= 0) return parsed;
+  }
+  return 500;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Call a Poe-backed text feature with automatic sequential chain fallback.
  *
@@ -136,7 +149,10 @@ export async function callPoeBotWithChain(
     return response.choices[0]?.message?.content?.trim() ?? "";
   }
   const chain = getPoeChainForFeature(feature);
+  let isFirstAttempt = true;
   for (const botName of chain) {
+    if (!isFirstAttempt) await sleep(getChainRetryDelayMs());
+    isFirstAttempt = false;
     try {
       return await callPoeBot(botName, systemInstruction, userMessage);
     } catch (err) {
@@ -168,7 +184,10 @@ export async function tryPoeBotChain<T>(
     return fn(getAiClient(), getModelForFeature(feature));
   }
   const chain = getPoeChainForFeature(feature);
+  let isFirstAttempt = true;
   for (const botName of chain) {
+    if (!isFirstAttempt) await sleep(getChainRetryDelayMs());
+    isFirstAttempt = false;
     try {
       return await fn(getClient(), botName);
     } catch (err) {
