@@ -198,11 +198,15 @@ export default function MapScreen() {
   // Also consume any pending map focus set from the Search tab ("Show on map").
   useFocusEffect(
     useCallback(() => {
+      let stillFocused = true;
       refetchZones();
       // Defer orientation unlock past the tab-switch animation so it does not
       // block the JS thread during the transition and cause a visible freeze.
+      // Gate on stillFocused so a rapid blur before the timer fires cancels it.
       const orientTimer = setTimeout(() => {
-        void ScreenOrientation.unlockAsync().catch(swallowOrientationNotAvailable);
+        if (stillFocused) {
+          void ScreenOrientation.unlockAsync().catch(swallowOrientationNotAvailable);
+        }
       }, 300);
 
       const focus = pendingMapFocusRef.current;
@@ -215,6 +219,7 @@ export default function MapScreen() {
       }
 
       return () => {
+        stillFocused = false;
         clearTimeout(orientTimer);
         void ScreenOrientation.lockAsync(
           ScreenOrientation.OrientationLock.PORTRAIT_UP,

@@ -202,6 +202,13 @@ export default function PhotoScreen() {
         aspect: [4, 3],
       });
     } else {
+      if (ImagePicker.requestMediaLibraryPermissionsAsync) {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== "granted") {
+          setInlineError("Photo library access denied — please enable it in your device Settings.");
+          return;
+        }
+      }
       const remainingSlots = 4 - images.length;
       result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: "images",

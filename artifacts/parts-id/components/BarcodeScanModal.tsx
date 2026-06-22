@@ -5,6 +5,7 @@ import { type BarcodeScanningResult,CameraView, useCameraPermissions } from "exp
 import React, { useCallback, useEffect,useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   Pressable,
   SafeAreaView,
@@ -303,14 +304,30 @@ export function BarcodeScanModal({ visible, onClose, onFound }: BarcodeScanModal
             <Text style={{ color: colors.foreground, fontSize: 15, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 22 }}>
               Camera access is required for barcode scanning.
             </Text>
-            <Pressable
-              onPress={requestPermission}
-              style={{ paddingHorizontal: 24, paddingVertical: 14, borderRadius: 10, backgroundColor: colors.primary }}
-            >
-              <Text style={{ color: colors.primaryForeground, fontSize: 15, fontFamily: "Inter_600SemiBold" }}>
-                Allow Camera Access
-              </Text>
-            </Pressable>
+            {permission.canAskAgain ? (
+              <Pressable
+                onPress={requestPermission}
+                style={{ paddingHorizontal: 24, paddingVertical: 14, borderRadius: 10, backgroundColor: colors.primary }}
+              >
+                <Text style={{ color: colors.primaryForeground, fontSize: 15, fontFamily: "Inter_600SemiBold" }}>
+                  Allow Camera Access
+                </Text>
+              </Pressable>
+            ) : (
+              <>
+                <Text style={{ color: colors.mutedForeground, fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 }}>
+                  Camera access was permanently denied. Enable it in Settings to use the scanner.
+                </Text>
+                <Pressable
+                  onPress={() => void Linking.openSettings()}
+                  style={{ paddingHorizontal: 24, paddingVertical: 14, borderRadius: 10, backgroundColor: colors.primary }}
+                >
+                  <Text style={{ color: colors.primaryForeground, fontSize: 15, fontFamily: "Inter_600SemiBold" }}>
+                    Open Settings
+                  </Text>
+                </Pressable>
+              </>
+            )}
             {__DEV__ ? (
               <Pressable
                 onPress={() => setCameraBypass(true)}
