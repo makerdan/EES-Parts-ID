@@ -1,13 +1,12 @@
 import React from "react";
 import {
-  type GestureResponderEvent,
   Keyboard,
   Platform,
   type StyleProp,
-  TouchableWithoutFeedback,
   View,
   type ViewStyle,
 } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
 type Props = {
   children: React.ReactNode;
@@ -27,27 +26,22 @@ type Props = {
 };
 
 export function DismissKeyboard({ children, style, suppressDismissRef }: Props) {
-  const handlePress = React.useCallback(
-    (event: GestureResponderEvent): void => {
-      if (suppressDismissRef?.current === true) {
-        return;
-      }
-      const maybeInput = event.target as unknown as { focus?: () => void } | null;
-      if (maybeInput && typeof maybeInput.focus === "function") {
-        maybeInput.focus();
-      } else {
-        Keyboard.dismiss();
-      }
-    },
-    [suppressDismissRef],
-  );
-
   if (Platform.OS === "web") {
     return <View style={[{ flex: 1 }, style]}>{children}</View>;
   }
+
+  const tap = Gesture.Tap()
+    .runOnJS(true)
+    .onEnd(() => {
+      if (suppressDismissRef?.current === true) {
+        return;
+      }
+      Keyboard.dismiss();
+    });
+
   return (
-    <TouchableWithoutFeedback accessible={false} onPress={handlePress}>
+    <GestureDetector gesture={tap}>
       <View style={[{ flex: 1 }, style]}>{children}</View>
-    </TouchableWithoutFeedback>
+    </GestureDetector>
   );
 }

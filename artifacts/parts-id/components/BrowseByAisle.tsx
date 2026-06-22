@@ -78,6 +78,8 @@ function useSectionSwipe(
   return useMemo(
     () =>
       PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, g) =>
           enabled &&
           Math.abs(g.dx) > threshold &&
@@ -104,6 +106,8 @@ function useCardItemSwipe(
   return useMemo(
     () =>
       PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, g) =>
           enabled &&
           Platform.OS === "ios" &&
@@ -505,11 +509,11 @@ function SectionShelfView({
         nextLabel={nextLabel}
         colors={colors}
       />
+      <View style={{ flex: 1 }} {...cardItemPanHandlers}>
       <ScrollView
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 160 }}
-        {...cardItemPanHandlers}
       >
         {orderedShelves.map(shelf => (
           <ShelfRow
@@ -545,6 +549,7 @@ function SectionShelfView({
           </View>
         )}
       </ScrollView>
+      </View>
     </View>
   );
 }
