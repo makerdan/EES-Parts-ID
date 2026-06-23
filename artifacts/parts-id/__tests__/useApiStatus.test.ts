@@ -180,7 +180,7 @@ describe("useApiStatus", () => {
       expect(result.current.status).toBe("error");
     });
 
-    it("calls /healthz with cache: 'no-store'", async () => {
+    it("calls /healthz with cache: 'no-store' and an AbortSignal", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({ status: "ok" }),
@@ -193,7 +193,10 @@ describe("useApiStatus", () => {
       act(() => { triggerFocus(); });
       await flushPromises();
 
-      expect(mockFetch).toHaveBeenCalledWith(`${API_BASE}/healthz`, { cache: "no-store" });
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${API_BASE}/healthz`,
+        expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
+      );
       expect(result.current.status).toBe("ok");
     });
   });
@@ -253,6 +256,36 @@ describe("useApiStatus", () => {
       await flushMicrotasks();
 
       expect(mockFetch.mock.calls.length).toBe(callsAtBlur);
+    });
+
+    it("resets status to 'unknown' immediately on focus before the first poll resolves", async () => {
+      jest.useFakeTimers();
+
+      // First poll: set status to "ok" so the hook has a known non-unknown state
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok" }),
+      } as Response);
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN, intervalMs: 60_000 }),
+      );
+
+      // First focus — poll resolves to "ok"
+      let blur: (() => void) | void;
+      act(() => { blur = triggerFocus(); });
+      await flushMicrotasks();
+      expect(result.current.status).toBe("ok");
+
+      // Blur the tab
+      act(() => { if (typeof blur === "function") blur(); });
+
+      // Second focus: next poll is pending (never resolves)
+      mockFetch.mockReturnValue(new Promise(() => {}));
+      act(() => { triggerFocus(); });
+
+      // Status must be "unknown" immediately — before the poll resolves
+      expect(result.current.status).toBe("unknown");
     });
 
     it("does not start polling when adminToken is null", async () => {

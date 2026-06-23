@@ -211,10 +211,10 @@ if [[ -f "$PARTS_PKG" ]]; then
     fail "metro-port-guard — --port \$PORT MISSING from parts-id dev script"
   fi
 
-  if echo "$DEV_SCRIPT" | grep -q -- '--non-interactive'; then
-    pass "metro-port-guard — --non-interactive present in parts-id dev script"
+  if echo "$DEV_SCRIPT" | grep -qE 'CI=1|--non-interactive'; then
+    pass "metro-port-guard — non-interactive flag (CI=1 or --non-interactive) present in parts-id dev script"
   else
-    fail "metro-port-guard — --non-interactive MISSING from parts-id dev script"
+    fail "metro-port-guard — non-interactive flag (CI=1 or --non-interactive) MISSING from parts-id dev script"
   fi
 else
   fail "metro-port-guard — artifacts/parts-id/package.json not found"

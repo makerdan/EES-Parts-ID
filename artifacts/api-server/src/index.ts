@@ -20,10 +20,10 @@ const rawPort = process.env["PORT"];
 const isDev = process.env["NODE_ENV"] !== "production";
 
 if (!rawPort && isDev) {
-  logger.warn("PORT env var not set — falling back to 8080 in development");
+  logger.warn("PORT env var not set — falling back to 3001 in development");
 }
 
-const port = rawPort ? Number(rawPort) : isDev ? 8080 : NaN;
+const port = rawPort ? Number(rawPort) : isDev ? 3001 : NaN;
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(

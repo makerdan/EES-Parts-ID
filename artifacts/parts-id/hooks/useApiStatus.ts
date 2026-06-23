@@ -30,8 +30,11 @@ export function useApiStatus({
 
   const poll = useCallback(async () => {
     if (restartingRef.current) return;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8_000);
     try {
-      const res = await fetch(`${apiBase}/healthz`, { cache: "no-store" });
+      const res = await fetch(`${apiBase}/healthz`, { cache: "no-store", signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!res.ok) {
         setStatus("error");
         setBots({});
@@ -55,6 +58,7 @@ export function useApiStatus({
         setBots({});
       }
     } catch {
+      clearTimeout(timeoutId);
       setStatus("error");
       setBots({});
     }
@@ -81,6 +85,7 @@ export function useApiStatus({
   useFocusEffect(
     useCallback(() => {
       if (!adminToken) return;
+      setStatus("unknown");
       startPolling();
       return () => {
         stopPolling();
