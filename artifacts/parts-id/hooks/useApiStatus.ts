@@ -126,13 +126,19 @@ export function useApiStatus({
     setRestarting(true);
     setStatus("unknown");
     stopPolling();
+    const restartController = new AbortController();
+    const restartTimeoutId = setTimeout(() => restartController.abort(), 10_000);
     try {
       await fetch(`${apiBase}/admin/restart`, {
         method: "POST",
         headers: { Authorization: `Bearer ${adminToken}` },
+        signal: restartController.signal,
       });
     } catch {
-      // Expected — process exits so the connection drops before a response arrives
+      // Expected — process exits so the connection drops before a response arrives,
+      // or the 10 s timeout fires if the server stalls before shutting down
+    } finally {
+      clearTimeout(restartTimeoutId);
     }
     // Poll until the server comes back (up to ~30 s)
     const maxAttempts = 20;

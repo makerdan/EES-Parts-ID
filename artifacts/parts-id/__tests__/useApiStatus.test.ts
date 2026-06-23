@@ -15,6 +15,7 @@
  *  - triggerRestart polls /healthz until server responds, then clears restarting
  *  - triggerRestart maps unrecognised healthz status to "ok" after restart
  *  - triggerRestart falls back to status="error" after max attempts
+ *  - triggerRestart abandons a hanging restart POST after 10 s and still starts recovery polling
  *  - triggerRestart is a no-op when adminToken is null
  *  - second concurrent triggerRestart call is ignored while one is in progress
  *  - AppState "active" restarts polling and resets status when screen is focused
@@ -495,10 +496,14 @@ describe("useApiStatus", () => {
       await act(async () => { result.current.triggerRestart(); });
       await flushMicrotasks();
 
-      expect(mockFetch).toHaveBeenCalledWith(`${API_BASE}/admin/restart`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
-      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        `${API_BASE}/admin/restart`,
+        expect.objectContaining({
+          method: "POST",
+          headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+          signal: expect.any(AbortSignal),
+        }),
+      );
     });
 
     it("polls /healthz after restart and clears restarting when server is up", async () => {
@@ -603,6 +608,58 @@ describe("useApiStatus", () => {
       }
 
       expect(result.current.status).toBe("error");
+      expect(result.current.restarting).toBe(false);
+    });
+
+    it("abandons a hanging restart POST after 10 s timeout and still starts recovery polling", async () => {
+      jest.useFakeTimers();
+
+      // The restart POST hangs forever — only resolves when its AbortSignal fires
+      let restartAborted = false;
+      mockFetch.mockImplementation((url, opts) => {
+        if (String(url).includes("/admin/restart")) {
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = (opts as RequestInit | undefined)?.signal;
+            if (signal) {
+              signal.addEventListener("abort", () => {
+                restartAborted = true;
+                reject(new DOMException("The operation was aborted.", "AbortError"));
+              });
+            }
+          });
+        }
+        // /healthz: succeed immediately so recovery completes cleanly
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ status: "ok" }),
+        } as Response);
+      });
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+      );
+
+      // Fire triggerRestart — it will hang on the POST
+      act(() => { result.current.triggerRestart(); });
+      await flushMicrotasks();
+
+      // Verify we are still stuck in "restarting" (POST hasn't resolved)
+      expect(result.current.restarting).toBe(true);
+      expect(restartAborted).toBe(false);
+
+      // Advance past the 10 s POST timeout — the AbortController fires
+      await act(async () => { jest.advanceTimersByTime(10_000); });
+      await flushMicrotasks();
+
+      // The POST was aborted
+      expect(restartAborted).toBe(true);
+
+      // Recovery polling should now begin: advance past the 1 500 ms initial delay
+      await act(async () => { jest.advanceTimersByTime(1500); });
+      await flushMicrotasks();
+
+      // Server responded — restarting should be cleared
+      expect(result.current.status).toBe("ok");
       expect(result.current.restarting).toBe(false);
     });
 
