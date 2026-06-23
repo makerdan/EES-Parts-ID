@@ -2329,7 +2329,7 @@ export default function UploadScreen() {
                   <InventoryRow item={item} colors={colors} onEditBins={setBinEditorItem} />
                 )}
                 contentContainerStyle={{ paddingBottom: 120 }}
-                ListHeaderComponent={() => (
+                ListHeaderComponent={
                   <View style={{ padding: 16 }}>
                     {/* PDF Catalog Import */}
                     <CatalogPdfUpload
@@ -2860,7 +2860,7 @@ export default function UploadScreen() {
                       </View>
                     ) : null}
                   </View>
-                )}
+                }
                 ListEmptyComponent={!inventoryQuery.isLoading ? (
                   <View style={styles.emptyContainer}>
                     <Text style={styles.emptyEmoji}>📦</Text>

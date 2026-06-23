@@ -9,3 +9,4 @@
 - [Reanimated 4 worklets Babel plugin required for web](reanimated4-worklets-babel-plugin.md) — missing react-native-worklets/plugin causes web-only "Invalid hook call" crash; babel-preset-expo does NOT include it automatically.
 - [reanimated mock __esModule + RN render-path strategy](reanimated-mock-esmodule.md) — three traps when mounting WarehouseMapView (or similar) past the containerW=0 early return in tests.
 - [Poe Bot API Protocol](poe-bot-api-protocol.md) — Poe uses its own SSE protocol (not OpenAI chat/completions); OpenAI SDK with poe.com baseURL was always 404.
+- [FlatList ListHeaderComponent inline function remounts children](flatlist-header-inline-fn.md) — passing an inline arrow function to ListHeaderComponent causes complete remount of all children on every parent re-render; pass a JSX element instead.
