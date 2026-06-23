@@ -72,8 +72,8 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
   const [fetchState, setFetchState] = useState<FetchState>({ status: "idle" });
   const fetchedRef = useRef(false);
 
-  const triggerFetch = React.useCallback(() => {
-    if (fetchedRef.current) return;
+  const triggerFetch = React.useCallback((opts?: { force?: boolean }) => {
+    if (!opts?.force && fetchedRef.current) return;
     fetchedRef.current = true;
     setFetchState({ status: "loading" });
 
@@ -83,7 +83,7 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
     fetch(`${API_BASE}/ai/part-card`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ catalog, vendor: vendor ?? "", description: description ?? "" }),
+      body: JSON.stringify({ catalog, vendor: vendor ?? "", description: description ?? "", ...(opts?.force ? { force: true } : {}) }),
       signal: controller.signal,
     })
       .then(async (res) => {
@@ -211,9 +211,20 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
               ) : null}
 
               {formatCachedAge(fetchState.data.cachedAt) ? (
-                <Text style={[pcStyles.cachedAtLabel, { color: colors.mutedForeground }]}>
-                  {formatCachedAge(fetchState.data.cachedAt)}
-                </Text>
+                <View style={pcStyles.cachedAtRow}>
+                  <Text style={[pcStyles.cachedAtLabel, { color: colors.mutedForeground }]}>
+                    {formatCachedAge(fetchState.data.cachedAt)}
+                  </Text>
+                  <Pressable
+                    onPress={() => triggerFetch({ force: true })}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Refresh part details"
+                    style={({ pressed }) => [pcStyles.refreshButton, { opacity: pressed ? 0.5 : 1 }]}
+                  >
+                    <Feather name="refresh-cw" size={11} color={colors.mutedForeground} />
+                  </Pressable>
+                </View>
               ) : null}
             </View>
           ) : (
@@ -360,10 +371,18 @@ const pcStyles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     letterSpacing: 0.2,
   },
+  cachedAtRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 5,
+  },
   cachedAtLabel: {
     fontSize: 10,
     fontFamily: "Inter_400Regular",
     fontStyle: "italic",
-    textAlign: "right",
+  },
+  refreshButton: {
+    padding: 2,
   },
 });
