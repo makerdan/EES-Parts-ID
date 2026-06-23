@@ -32,7 +32,9 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -41,6 +43,13 @@ import {
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import { shouldUseFallback } from "@/utils/aiFallbackHeaders";
+import {
+  clearPdfPickLogs,
+  formatPdfPickLogs,
+  getPdfPickLogs,
+  logPdfPick,
+  subscribePdfPickLogs,
+} from "@/utils/pdfPickLogger";
 import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
 import { getOrSplitChunks, PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
 
@@ -97,6 +106,7 @@ type PausedUploadCache = {
   filename: string | null;
 };
 let _pausedUploadCache: PausedUploadCache | null = null;
+let _mountCount = 0;
 
 interface Props {
   adminToken: string | null;
@@ -156,6 +166,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   // Stable ref to handleStart so the poe_chain_exhausted useEffect can call it
   // without capturing a stale closure.
   const handleStartRef = useRef<(attempt?: number) => void>(() => {});
+  const [, setLogVersion] = useState(0);
 
   useEffect(() => {
     if (!loading) return;
@@ -193,6 +204,20 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   }, []);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
+
+  useEffect(() => {
+    const mountId = ++_mountCount;
+    logPdfPick(`LIFECYCLE: component mounted (instance #${mountId})`, {
+      platform: Platform.OS,
+      adminToken: adminToken ? "set" : "null",
+    });
+    return () => {
+      logPdfPick(`LIFECYCLE: component unmounted (instance #${mountId})`);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => subscribePdfPickLogs(() => setLogVersion(v => v + 1)), []);
 
   useEffect(() => {
     return () => {
@@ -284,38 +309,70 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   }, [jobStatus, stopPolling, onSessionExpired]);
 
   const handlePickFile = async () => {
+    logPdfPick("handlePickFile: called", {
+      platform: Platform.OS,
+      adminToken: adminToken ? "set" : "null",
+      currentFilename: filename ?? "none",
+      currentJobStatus: jobStatus?.status ?? "none",
+    });
     setError(null);
     setReadingFile(true);
+    logPdfPick("handlePickFile: setReadingFile(true)");
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "application/pdf",
-        copyToCacheDirectory: true,
+      const pickerOptions = { type: "application/pdf", copyToCacheDirectory: true };
+      logPdfPick("handlePickFile: calling DocumentPicker.getDocumentAsync", pickerOptions);
+      const result = await DocumentPicker.getDocumentAsync(pickerOptions);
+      logPdfPick("handlePickFile: DocumentPicker resolved", {
+        canceled: result.canceled,
+        assetCount: result.assets?.length ?? 0,
       });
       if (result.canceled || !result.assets?.[0]) {
+        logPdfPick("handlePickFile: canceled or no assets → returning early");
         setReadingFile(false);
         return;
       }
       const asset = result.assets[0]!;
+      const webFile = (asset as { file?: File }).file;
+      logPdfPick("handlePickFile: asset received", {
+        uriScheme: asset.uri?.split(":")[0],
+        uriPrefix: asset.uri?.substring(0, 80),
+        name: asset.name,
+        mimeType: asset.mimeType,
+        size: asset.size,
+        hasFile: webFile !== undefined,
+        fileConstructor: webFile?.constructor?.name,
+        isFileInstance: webFile instanceof File,
+        isBlobInstance: webFile instanceof Blob,
+      });
       try {
-        // On web, asset.file is the native File object exposed by
-        // expo-document-picker. Passing it lets readPdfAsBytes use FileReader
-        // instead of fetch(blob:uri), which silently fails in proxy/iframe
-        // environments like the Replit canvas preview.
-        const webFile = (asset as { file?: File }).file;
-        const bytes = await readPdfAsBytes(asset.uri, webFile);
+        logPdfPick("handlePickFile: calling readPdfAsBytes");
+        const bytes = await readPdfAsBytes(asset.uri, webFile, logPdfPick);
+        logPdfPick("handlePickFile: readPdfAsBytes resolved", { byteLength: bytes.length });
         setPdfBytes(bytes);
+        logPdfPick("handlePickFile: setPdfBytes called", { byteLength: bytes.length });
         setFilename(asset.name ?? "catalog.pdf");
+        logPdfPick("handlePickFile: setFilename called", { filename: asset.name ?? "catalog.pdf" });
         chunksRef.current = null;
         setHasStoredChunks(false);
         chunkRetryCountsRef.current = new Map();
+        logPdfPick("handlePickFile: ✅ SUCCESS — file ready for extraction");
       } catch (err) {
+        logPdfPick("handlePickFile: ❌ inner catch (readPdfAsBytes threw)", {
+          errName: (err as Error)?.name,
+          errMsg: (err as Error)?.message,
+        });
         const message = toFriendlyReadError(err);
         setError(message);
         Alert.alert("Could not read PDF", message);
       } finally {
+        logPdfPick("handlePickFile: finally — setReadingFile(false)");
         setReadingFile(false);
       }
     } catch (err) {
+      logPdfPick("handlePickFile: ❌ outer catch (DocumentPicker threw)", {
+        errName: (err as Error)?.name,
+        errMsg: (err as Error)?.message,
+      });
       setReadingFile(false);
       setError(toFriendlyReadError(err));
     }
@@ -1065,6 +1122,53 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           )}
         </View>
       ) : null}
+
+      {/* ── PDF Pick Diagnostic Log ─────────────────────────────────── */}
+      {getPdfPickLogs().length > 0 ? (
+        <View style={[s.logPanel, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+          <View style={s.logPanelHeader}>
+            <Text style={[s.logPanelTitle, { color: colors.foreground }]}>
+              📋 Diag Log · {getPdfPickLogs().length} entries
+            </Text>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              <Pressable
+                onPress={() => {
+                  const text = formatPdfPickLogs();
+                  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+                    void navigator.clipboard.writeText(text);
+                  }
+                  Alert.alert("Copied", `${getPdfPickLogs().length} entries copied to clipboard.`);
+                }}
+                style={[s.logPanelBtn, { borderColor: colors.border }]}
+              >
+                <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Copy</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => clearPdfPickLogs()}
+                style={[s.logPanelBtn, { borderColor: colors.destructive }]}
+              >
+                <Text style={[s.logPanelBtnText, { color: colors.destructive }]}>Clear</Text>
+              </Pressable>
+            </View>
+          </View>
+          <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
+            {getPdfPickLogs().map(entry => (
+              <View key={entry.seq} style={s.logEntry}>
+                <Text style={[s.logEntryTime, { color: colors.primary }]}>
+                  {`+${entry.relMs}ms`.padStart(8)}
+                </Text>
+                <Text
+                  style={[s.logEntryMsg, { color: colors.mutedForeground }]}
+                  selectable
+                >
+                  {entry.msg}
+                  {entry.data !== undefined ? `\n    ${JSON.stringify(entry.data)}` : ""}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1104,4 +1208,20 @@ const s = StyleSheet.create({
   reviewBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   cancelBtn: { borderWidth: 1, borderRadius: 6, paddingVertical: 5, paddingHorizontal: 12 },
   cancelBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+
+  // ── Diagnostic log panel ────────────────────────────────────────────────
+  logPanel: {
+    borderWidth: 1, borderRadius: 8, padding: 8, marginTop: 4, gap: 4,
+  },
+  logPanelHeader: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4,
+  },
+  logPanelTitle: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  logPanelBtn: {
+    borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
+  },
+  logPanelBtnText: { fontSize: 11, fontFamily: "Inter_500Medium" },
+  logEntry: { flexDirection: "row", gap: 4, flexWrap: "wrap", paddingVertical: 1 },
+  logEntryTime: { fontSize: 10, fontFamily: "Inter_400Regular", opacity: 0.7, minWidth: 60 },
+  logEntryMsg: { fontSize: 10, fontFamily: "Inter_400Regular", flex: 1, flexWrap: "wrap" },
 });

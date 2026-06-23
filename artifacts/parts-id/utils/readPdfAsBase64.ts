@@ -100,10 +100,22 @@ function validatePdfBytes(bytes: Uint8Array): void {
  * instead of fetch(blob:uri), which avoids silent failures in
  * iframe/proxy environments such as the Replit canvas preview.
  */
-async function readRawBytes(uri: string, maxBytes?: number, file?: File): Promise<Uint8Array> {
+async function readRawBytes(
+  uri: string,
+  maxBytes?: number,
+  file?: File,
+  onLog?: (msg: string, data?: unknown) => void,
+): Promise<Uint8Array> {
+  const log = onLog ?? (() => {});
+
   if (Platform.OS !== "web") {
     // ── Native path ──────────────────────────────────────────────────────────
+    log("readRawBytes: native path — calling FileSystem.getInfoAsync", { uri });
     const info = await FileSystem.getInfoAsync(uri).catch(() => null);
+    log("readRawBytes: FileSystem.getInfoAsync result", {
+      exists: info?.exists,
+      size: (info as Record<string, unknown> | null)?.size,
+    });
     if (info !== null && !info.exists) {
       throw new Error("Failed to read PDF: file not found");
     }
@@ -117,44 +129,67 @@ async function readRawBytes(uri: string, maxBytes?: number, file?: File): Promis
       throw new PdfTooLargeError();
     }
 
+    log("readRawBytes: calling FileSystem.readAsStringAsync (Base64)");
     const rawBase64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     });
     const base64 = rawBase64.replace(/\s/g, "");
-    return new Uint8Array(Buffer.from(base64, "base64"));
+    const bytes = new Uint8Array(Buffer.from(base64, "base64"));
+    log("readRawBytes: native read complete", { byteLength: bytes.length });
+    return bytes;
   }
 
   // ── Web path ───────────────────────────────────────────────────────────────
+  log("readRawBytes: web path", {
+    uriScheme: uri.split(":")[0],
+    uriPrefix: uri.substring(0, 60),
+    fileArg: file === undefined ? "undefined" : file === null ? "null" : file.constructor?.name,
+    isFile: file instanceof File,
+    isBlob: file instanceof Blob,
+  });
 
   // Prefer FileReader when the native File object is available (expo-document-picker
   // on web exposes it as asset.file). This avoids the silent fetch(blob:uri) failure
   // that occurs inside iframe/proxy environments like the Replit canvas preview.
   if (file instanceof File) {
+    log("readRawBytes: file instanceof File=true → FileReader path", {
+      fileName: file.name, fileSize: file.size, fileType: file.type,
+    });
     const bytes = await new Promise<Uint8Array>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        resolve(new Uint8Array(reader.result as ArrayBuffer));
+        const buf = reader.result as ArrayBuffer;
+        log("readRawBytes: FileReader.onload fired", { byteLength: buf.byteLength });
+        resolve(new Uint8Array(buf));
       };
       reader.onerror = () => {
+        log("readRawBytes: FileReader.onerror fired", { error: String(reader.error) });
         reject(new Error("Failed to read PDF: FileReader error"));
       };
+      log("readRawBytes: FileReader.readAsArrayBuffer called");
       reader.readAsArrayBuffer(file);
     });
 
     if (maxBytes !== undefined && bytes.length > maxBytes) {
       throw new PdfTooLargeError();
     }
+    log("readRawBytes: FileReader path complete", { byteLength: bytes.length });
     return bytes;
   }
 
   // Fallback: fetch(blob:uri) — used when asset.file is not available.
+  log("readRawBytes: file not instanceof File → fetch(blob:uri) fallback", {
+    fileConstructor: (file as unknown as { constructor?: { name?: string } } | undefined)?.constructor?.name,
+  });
   const controller = new AbortController();
   const fetchTimeout = setTimeout(() => controller.abort(), 120_000);
 
+  log("readRawBytes: fetch() starting");
   const response = await fetch(uri, { signal: controller.signal }).then(
     (r) => { clearTimeout(fetchTimeout); return r; },
     (err: unknown) => {
       clearTimeout(fetchTimeout);
+      log("readRawBytes: fetch() threw", { errName: (err as Error)?.name, errMsg: (err as Error)?.message });
       if ((err as { name?: string }).name === "AbortError") {
         throw new Error(
           "Reading the PDF timed out — the file may be corrupted or too large for your browser. Please try again.",
@@ -164,11 +199,13 @@ async function readRawBytes(uri: string, maxBytes?: number, file?: File): Promis
     },
   );
 
+  log("readRawBytes: fetch() resolved", { ok: response.ok, status: response.status });
   if (!response.ok) {
     throw new Error(`Failed to read PDF: HTTP ${response.status}`);
   }
   const buffer = await response.arrayBuffer();
   const bytes = new Uint8Array(buffer);
+  log("readRawBytes: fetch path complete", { byteLength: bytes.length });
 
   if (maxBytes !== undefined && bytes.length > maxBytes) {
     throw new PdfTooLargeError();
@@ -224,10 +261,24 @@ export function toFriendlyReadError(err: unknown): string {
  * `file` — optional native `File` object (available as `asset.file` on the
  * DocumentPicker result on web). When provided, the web path uses FileReader
  * instead of fetch(blob:uri) to avoid silent failures in proxy environments.
+ *
+ * `onLog` — optional diagnostic callback; receives structured step messages
+ * for the pdfPickLogger diagnostic panel.
  */
-export async function readPdfAsBytes(uri: string, file?: File): Promise<Uint8Array> {
-  const bytes = await readRawBytes(uri, undefined, file);
+export async function readPdfAsBytes(
+  uri: string,
+  file?: File,
+  onLog?: (msg: string, data?: unknown) => void,
+): Promise<Uint8Array> {
+  const bytes = await readRawBytes(uri, undefined, file, onLog);
+  const prefix = bytes.length > 0
+    ? Array.from(bytes.subarray(0, Math.min(8, bytes.length)))
+        .map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : `\\x${b.toString(16).padStart(2, "0")}`)
+        .join("")
+    : "(empty)";
+  onLog?.("readPdfAsBytes: calling validatePdfBytes", { byteLength: bytes.length, prefix });
   validatePdfBytes(bytes);
+  onLog?.("readPdfAsBytes: validatePdfBytes passed — valid PDF");
   return bytes;
 }
 
