@@ -196,6 +196,18 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     return unsubscribe;
   }, [loading, navigation]);
 
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (!loading) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "Upload in progress. Are you sure you want to leave?";
+      return e.returnValue;
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => { window.removeEventListener("beforeunload", handler); };
+  }, [loading]);
+
   // Tracks how many times each chunk (by index) has been retried via handleRetryServerChunk.
   const chunkRetryCountsRef = useRef<Map<number, number>>(new Map());
 
