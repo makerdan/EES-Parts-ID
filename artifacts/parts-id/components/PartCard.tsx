@@ -2,6 +2,8 @@ import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   LayoutAnimation,
   Platform,
   Pressable,
@@ -67,15 +69,45 @@ function SkeletonRow({ width, colors }: { width: number | string; colors: Return
 }
 
 export function PartCard({ catalog, vendor, description, autoExpand = false }: PartCardProps) {
+  "use no memo";
   const colors = useColors();
   const [open, setOpen] = useState(false);
   const [fetchState, setFetchState] = useState<FetchState>({ status: "idle" });
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const fetchedRef = useRef(false);
+
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const spinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  const startSpin = () => {
+    spinAnim.setValue(0);
+    spinLoopRef.current = Animated.loop(
+      Animated.timing(spinAnim, {
+        toValue: 1,
+        duration: 600,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    spinLoopRef.current.start();
+  };
+
+  const stopSpin = () => {
+    spinLoopRef.current?.stop();
+    spinLoopRef.current = null;
+    spinAnim.setValue(0);
+  };
 
   const triggerFetch = React.useCallback((opts?: { force?: boolean }) => {
     if (!opts?.force && fetchedRef.current) return;
     fetchedRef.current = true;
-    setFetchState({ status: "loading" });
+
+    if (opts?.force) {
+      startSpin();
+      setIsRefreshing(true);
+    } else {
+      setFetchState({ status: "loading" });
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -88,6 +120,8 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
     })
       .then(async (res) => {
         clearTimeout(timer);
+        stopSpin();
+        setIsRefreshing(false);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json() as PartCardData;
         const hasContent = data.displayName || data.specs.length > 0 || data.crossRefs.length > 0 || data.compatibilityNote;
@@ -95,13 +129,21 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
       })
       .catch((err) => {
         clearTimeout(timer);
+        stopSpin();
+        setIsRefreshing(false);
         if ((err as Error).name === "AbortError") {
           setFetchState({ status: "empty" });
         } else {
           setFetchState({ status: "error" });
         }
       });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalog, vendor, description]);
+
+  useEffect(() => {
+    return () => { stopSpin(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (autoExpand) {
@@ -218,11 +260,23 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
                   <Pressable
                     onPress={() => triggerFetch({ force: true })}
                     hitSlop={8}
+                    disabled={isRefreshing}
                     accessibilityRole="button"
                     accessibilityLabel="Refresh part details"
-                    style={({ pressed }) => [pcStyles.refreshButton, { opacity: pressed ? 0.5 : 1 }]}
+                    style={({ pressed }) => [pcStyles.refreshButton, { opacity: pressed || isRefreshing ? 0.5 : 1 }]}
                   >
-                    <Feather name="refresh-cw" size={11} color={colors.mutedForeground} />
+                    <Animated.View
+                      style={{
+                        transform: [{
+                          rotate: spinAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: ["0deg", "360deg"],
+                          }),
+                        }],
+                      }}
+                    >
+                      <Feather name="refresh-cw" size={11} color={colors.mutedForeground} />
+                    </Animated.View>
                   </Pressable>
                 </View>
               ) : null}

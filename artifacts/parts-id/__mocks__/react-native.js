@@ -31,10 +31,12 @@ const Animated = {
   sequence: (a) => ({ start: noop, stop: noop, reset: noop }),
   timing: () => ({ start: noop, stop: noop, reset: noop }),
 };
+const Easing = { linear: noop, ease: noop, in: () => noop, out: () => noop, inOut: () => noop };
 
 module.exports = {
   View: make("rn-view"),
   Animated,
+  Easing,
   Text: make("rn-text"),
   Pressable: make("rn-pressable"),
   TouchableOpacity: make("rn-touchable"),
