@@ -1,5 +1,6 @@
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, AppStateStatus } from "react-native";
 
 export type ApiStatus = "ok" | "degraded" | "error" | "unknown";
 export type BotProbeStatus = "ok" | "timeout" | "404" | "error";
@@ -27,6 +28,7 @@ export function useApiStatus({
   const [bots, setBots] = useState<Record<string, BotProbeStatus>>({});
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const restartingRef = useRef(false);
+  const isFocusedRef = useRef(false);
 
   const poll = useCallback(async () => {
     if (restartingRef.current) return;
@@ -85,13 +87,32 @@ export function useApiStatus({
   useFocusEffect(
     useCallback(() => {
       if (!adminToken) return;
+      isFocusedRef.current = true;
       setStatus("unknown");
       startPolling();
       return () => {
+        isFocusedRef.current = false;
         stopPolling();
       };
     }, [adminToken, startPolling, stopPolling]),
   );
+
+  // Resume polling when the app returns to the foreground, regardless of
+  // which tab navigation event last fired.
+  useEffect(() => {
+    const subscription = AppState.addEventListener(
+      "change",
+      (nextState: AppStateStatus) => {
+        if (nextState === "active" && isFocusedRef.current && adminToken) {
+          setStatus("unknown");
+          startPolling();
+        }
+      },
+    );
+    return () => {
+      subscription.remove();
+    };
+  }, [adminToken, startPolling]);
 
   useEffect(() => {
     return () => {
