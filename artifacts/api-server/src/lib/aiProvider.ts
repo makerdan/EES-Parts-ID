@@ -217,12 +217,13 @@ export function getDimensionsModel(): string {
  * Used by probePoeBotsOnStartup() to validate names at boot time.
  */
 export function getAllPoeModelNames(): string[] {
-  return [
+  const names = [
     POE_ENRICH_BOT,     // enrich / reference
     POE_IDENTIFY_BOT,   // identify (photo-based)
     POE_DIMENSIONS_BOT, // dimensions
     POE_CATALOG_BOT,    // catalog PDF extraction
   ];
+  return [...new Set(names)];
 }
 
 // ── Per-feature Poe bot chains ────────────────────────────────────────────────
@@ -367,6 +368,124 @@ export function getProbeSummary(): Record<string, BotProbeStatus> {
   return Object.fromEntries(_botProbeResults);
 }
 
+/** Shared timeout budget for all Poe bot probes. */
+const PROBE_TIMEOUT_MS = 15_000;
+
+/**
+ * Probe a single Poe bot and update _botProbeResults for that bot.
+ * Contains the full timeout + error-classification logic including the
+ * catalog-bot fallback.  Callers must check _provider === "poe" first.
+ */
+async function _probeBotAndRecord(botName: string): Promise<void> {
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`__PROBE_TIMEOUT__`)),
+        PROBE_TIMEOUT_MS,
+      ),
+    );
+
+    try {
+      await Promise.race([
+        _client.chat.completions.create({
+          model: botName,
+          messages: [{ role: "user", content: "hi" }],
+          max_tokens: 16,
+        }),
+        timeoutPromise,
+      ]);
+      _botProbeResults.set(botName, "ok");
+      logger.info({ botName }, `Poe bot '${botName}' — OK`);
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        err.message === "__PROBE_TIMEOUT__"
+      ) {
+        _botProbeResults.set(botName, "timeout");
+        logger.warn(
+          { botName },
+          `Poe bot '${botName}' probe timed out after ${PROBE_TIMEOUT_MS}ms — server will continue`,
+        );
+        return;
+      }
+
+      const status =
+        err != null &&
+        typeof err === "object" &&
+        "status" in err &&
+        typeof (err as { status: unknown }).status === "number"
+          ? (err as { status: number }).status
+          : undefined;
+
+      if (status === 404 && botName === POE_CATALOG_BOT) {
+        _botProbeResults.set(botName, "404");
+        logger.warn(
+          { botName, fallback: POE_CATALOG_BOT_FALLBACK },
+          `Poe catalog bot '${botName}' not found — probing fallback '${POE_CATALOG_BOT_FALLBACK}'`,
+        );
+        try {
+          await _client.chat.completions.create({
+            model: POE_CATALOG_BOT_FALLBACK,
+            messages: [{ role: "user", content: "hi" }],
+            max_tokens: 16,
+          });
+          _effectiveCatalogBotName = POE_CATALOG_BOT_FALLBACK;
+          _botProbeResults.set(POE_CATALOG_BOT_FALLBACK, "ok");
+          logger.info(
+            { botName: POE_CATALOG_BOT_FALLBACK },
+            `Poe catalog bot switched to fallback '${POE_CATALOG_BOT_FALLBACK}' — OK`,
+          );
+        } catch (fallbackErr: unknown) {
+          const fallbackStatus =
+            fallbackErr != null &&
+            typeof fallbackErr === "object" &&
+            "status" in fallbackErr &&
+            typeof (fallbackErr as { status: unknown }).status === "number"
+              ? (fallbackErr as { status: number }).status
+              : undefined;
+          _botProbeResults.set(
+            POE_CATALOG_BOT_FALLBACK,
+            fallbackStatus === 404 ? "404" : "error",
+          );
+          logger.warn(
+            { botName: POE_CATALOG_BOT_FALLBACK, err: fallbackErr, status: fallbackStatus },
+            `Poe catalog fallback bot '${POE_CATALOG_BOT_FALLBACK}' also unavailable (status=${fallbackStatus ?? "unknown"}) — catalog extraction may fail`,
+          );
+        }
+      } else if (status === 404) {
+        _botProbeResults.set(botName, "404");
+        logger.warn(
+          { botName },
+          `Poe bot '${botName}' not found — check bot name in aiProvider.ts`,
+        );
+      } else {
+        _botProbeResults.set(botName, "error");
+        logger.warn(
+          { botName, err },
+          `Poe bot '${botName}' probe failed (status=${status ?? "unknown"}) — transient provider error, server will continue`,
+        );
+      }
+    }
+  } catch (err: unknown) {
+    _botProbeResults.set(botName, "error");
+    logger.warn(
+      { botName, err },
+      `Poe bot '${botName}' probe encountered an unexpected error — server will continue`,
+    );
+  }
+}
+
+/**
+ * Re-probe a single named Poe bot and update _botProbeResults for it.
+ * Use this for on-demand per-bot re-probes (e.g. the admin tap-to-refresh
+ * chip feature).  Does not clear the full results map.
+ * No-op when the active provider is not "poe".
+ */
+export async function probeSinglePoeBot(botName: string): Promise<void> {
+  if (_provider !== "poe") return;
+  await _probeBotAndRecord(botName);
+}
+
 /**
  * Probe each Poe bot name with a minimal completion request.
  * Logs a clear warning for any bot that returns a 404 (renamed / retired)
@@ -387,108 +506,7 @@ export async function probePoeBotsOnStartup(): Promise<void> {
   _botProbeResults.clear();
   logger.info({ botNames }, "Probing Poe bot names on startup…");
 
-  const PROBE_TIMEOUT_MS = 5000;
-
-  await Promise.all(
-    botNames.map(async (botName) => {
-      try {
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`__PROBE_TIMEOUT__`)),
-            PROBE_TIMEOUT_MS,
-          ),
-        );
-
-        try {
-          await Promise.race([
-            _client.chat.completions.create({
-              model: botName,
-              messages: [{ role: "user", content: "hi" }],
-              max_tokens: 16,
-            }),
-            timeoutPromise,
-          ]);
-          _botProbeResults.set(botName, "ok");
-          logger.info({ botName }, `Poe bot '${botName}' — OK`);
-        } catch (err: unknown) {
-          if (
-            err instanceof Error &&
-            err.message === "__PROBE_TIMEOUT__"
-          ) {
-            _botProbeResults.set(botName, "timeout");
-            logger.warn(
-              { botName },
-              `Poe bot '${botName}' probe timed out after ${PROBE_TIMEOUT_MS}ms — server will continue`,
-            );
-            return;
-          }
-
-          const status =
-            err != null &&
-            typeof err === "object" &&
-            "status" in err &&
-            typeof (err as { status: unknown }).status === "number"
-              ? (err as { status: number }).status
-              : undefined;
-
-          if (status === 404 && botName === POE_CATALOG_BOT) {
-            _botProbeResults.set(botName, "404");
-            logger.warn(
-              { botName, fallback: POE_CATALOG_BOT_FALLBACK },
-              `Poe catalog bot '${botName}' not found — probing fallback '${POE_CATALOG_BOT_FALLBACK}'`,
-            );
-            try {
-              await _client.chat.completions.create({
-                model: POE_CATALOG_BOT_FALLBACK,
-                messages: [{ role: "user", content: "hi" }],
-                max_tokens: 16,
-              });
-              _effectiveCatalogBotName = POE_CATALOG_BOT_FALLBACK;
-              _botProbeResults.set(POE_CATALOG_BOT_FALLBACK, "ok");
-              logger.info(
-                { botName: POE_CATALOG_BOT_FALLBACK },
-                `Poe catalog bot switched to fallback '${POE_CATALOG_BOT_FALLBACK}' — OK`,
-              );
-            } catch (fallbackErr: unknown) {
-              const fallbackStatus =
-                fallbackErr != null &&
-                typeof fallbackErr === "object" &&
-                "status" in fallbackErr &&
-                typeof (fallbackErr as { status: unknown }).status === "number"
-                  ? (fallbackErr as { status: number }).status
-                  : undefined;
-              _botProbeResults.set(
-                POE_CATALOG_BOT_FALLBACK,
-                fallbackStatus === 404 ? "404" : "error",
-              );
-              logger.warn(
-                { botName: POE_CATALOG_BOT_FALLBACK, err: fallbackErr, status: fallbackStatus },
-                `Poe catalog fallback bot '${POE_CATALOG_BOT_FALLBACK}' also unavailable (status=${fallbackStatus ?? "unknown"}) — catalog extraction may fail`,
-              );
-            }
-          } else if (status === 404) {
-            _botProbeResults.set(botName, "404");
-            logger.warn(
-              { botName },
-              `Poe bot '${botName}' not found — check bot name in aiProvider.ts`,
-            );
-          } else {
-            _botProbeResults.set(botName, "error");
-            logger.warn(
-              { botName, err },
-              `Poe bot '${botName}' probe failed (status=${status ?? "unknown"}) — transient provider error, server will continue`,
-            );
-          }
-        }
-      } catch (err: unknown) {
-        _botProbeResults.set(botName, "error");
-        logger.warn(
-          { botName, err },
-          `Poe bot '${botName}' probe encountered an unexpected error — server will continue`,
-        );
-      }
-    }),
-  );
+  await Promise.all(botNames.map(_probeBotAndRecord));
 }
 
 /**
