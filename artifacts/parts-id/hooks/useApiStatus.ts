@@ -118,8 +118,11 @@ export function useApiStatus({
     let attempts = 0;
     const resumePoll = async () => {
       attempts++;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5_000);
       try {
-        const res = await fetch(`${apiBase}/healthz`, { cache: "no-store" });
+        const res = await fetch(`${apiBase}/healthz`, { cache: "no-store", signal: controller.signal });
+        clearTimeout(timeoutId);
         if (res.ok) {
           const data = await res.json();
           const s = data?.status;
@@ -130,7 +133,8 @@ export function useApiStatus({
           return;
         }
       } catch {
-        // Server still restarting
+        clearTimeout(timeoutId);
+        // Server still restarting (or timed out)
       }
       if (attempts < maxAttempts) {
         setTimeout(resumePoll, 1500);

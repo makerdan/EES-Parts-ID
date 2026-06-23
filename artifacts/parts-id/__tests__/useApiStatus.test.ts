@@ -462,6 +462,45 @@ describe("useApiStatus", () => {
       expect(result.current.restarting).toBe(false);
     });
 
+    it("exhausts max attempts when the server hangs (fetch timeout fires instead of rejecting)", async () => {
+      jest.useFakeTimers();
+
+      mockFetch.mockImplementation((url, opts) => {
+        if (String(url).includes("/admin/restart")) {
+          return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+        }
+        // /healthz: hangs forever — only resolves when the AbortSignal fires
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = (opts as RequestInit | undefined)?.signal;
+          if (signal) {
+            signal.addEventListener("abort", () => {
+              reject(new DOMException("The operation was aborted.", "AbortError"));
+            });
+          }
+        });
+      });
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+      );
+
+      await act(async () => { result.current.triggerRestart(); });
+      await flushMicrotasks();
+
+      // Each attempt: 1 500 ms schedule delay + 5 000 ms fetch timeout = 6 500 ms
+      for (let i = 0; i < 20; i++) {
+        // Trigger the resumePoll setTimeout (1 500 ms)
+        await act(async () => { jest.advanceTimersByTime(1500); });
+        await flushMicrotasks();
+        // Trigger the AbortController timeout (5 000 ms), which aborts the hanging fetch
+        await act(async () => { jest.advanceTimersByTime(5000); });
+        await flushMicrotasks();
+      }
+
+      expect(result.current.status).toBe("error");
+      expect(result.current.restarting).toBe(false);
+    });
+
     it("is a no-op when adminToken is null", async () => {
       const { result } = renderHook(() =>
         useApiStatus({ apiBase: API_BASE, adminToken: null }),
