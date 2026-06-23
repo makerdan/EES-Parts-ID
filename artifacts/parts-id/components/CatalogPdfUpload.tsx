@@ -217,7 +217,15 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => subscribePdfPickLogs(() => setLogVersion(v => v + 1)), []);
+  useEffect(() => {
+    // If entries already exist (from sessionStorage restore or from a lifecycle
+    // effect that fired before this subscription was registered), force a
+    // re-render now so the panel appears without waiting for the next log event.
+    if (getPdfPickLogs().length > 0) {
+      setLogVersion(v => v + 1);
+    }
+    return subscribePdfPickLogs(() => setLogVersion(v => v + 1));
+  }, []);
 
   useEffect(() => {
     return () => {
