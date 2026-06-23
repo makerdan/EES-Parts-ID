@@ -487,6 +487,112 @@ describe("probePoeBotsOnStartup()", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POE_ENRICH_BOT coverage in probePoeBotsOnStartup()
+//
+// Explicit regression guard: these tests pin the fact that POE_ENRICH_BOT
+// ("GPT-5-Mini") is included in the startup probe.  Generic tests above cover
+// all bots via getAllPoeModelNames(); these tests fail *specifically* if the
+// enrich bot is dropped from that list or its probe branch silently changes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (GPT-5-Mini) coverage", () => {
+  type MockClient = { chat: { completions: { create: jest.Mock } } };
+
+  function getLoggerMocks() {
+    return jest.requireMock<{ logger: { info: jest.Mock; warn: jest.Mock } }>(
+      "../src/lib/logger",
+    ).logger;
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mod.setProvider("poe");
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("getAllPoeModelNames() includes POE_ENRICH_BOT so the startup probe covers enrichment", () => {
+    expect(mod.getAllPoeModelNames()).toContain(mod.POE_ENRICH_BOT);
+  });
+
+  it("logs '— OK' for POE_ENRICH_BOT when its probe resolves", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockResolvedValue({ choices: [] });
+
+    await mod.probePoeBotsOnStartup();
+
+    const { info } = getLoggerMocks();
+    expect(info).toHaveBeenCalledWith(
+      { botName: mod.POE_ENRICH_BOT },
+      expect.stringContaining("— OK"),
+    );
+  });
+
+  it("logs a structured warning for POE_ENRICH_BOT when it returns 404 — does not throw", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockImplementation(
+      async ({ model }: { model: string }) => {
+        if (model === mod.POE_ENRICH_BOT) throw { status: 404 };
+        return { choices: [] };
+      },
+    );
+
+    await expect(mod.probePoeBotsOnStartup()).resolves.toBeUndefined();
+
+    const { warn } = getLoggerMocks();
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ botName: mod.POE_ENRICH_BOT }),
+      expect.stringContaining("not found"),
+    );
+  });
+
+  it("logs a structured warning for POE_ENRICH_BOT on a transient error — does not throw", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    const transientError = new Error("Service Unavailable");
+    client.chat.completions.create.mockImplementation(
+      async ({ model }: { model: string }) => {
+        if (model === mod.POE_ENRICH_BOT) throw transientError;
+        return { choices: [] };
+      },
+    );
+
+    await expect(mod.probePoeBotsOnStartup()).resolves.toBeUndefined();
+
+    const { warn } = getLoggerMocks();
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ botName: mod.POE_ENRICH_BOT }),
+      expect.stringContaining("probe failed"),
+    );
+  });
+
+  it("records POE_ENRICH_BOT as 'ok' in getProbeSummary() after a successful probe", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockResolvedValue({ choices: [] });
+
+    await mod.probePoeBotsOnStartup();
+
+    expect(mod.getProbeSummary()[mod.POE_ENRICH_BOT]).toBe("ok");
+  });
+
+  it("records POE_ENRICH_BOT as '404' in getProbeSummary() when it is not found", async () => {
+    const client = mod.getAiClient() as unknown as MockClient;
+    client.chat.completions.create.mockImplementation(
+      async ({ model }: { model: string }) => {
+        if (model === mod.POE_ENRICH_BOT) throw { status: 404 };
+        return { choices: [] };
+      },
+    );
+
+    await mod.probePoeBotsOnStartup();
+
+    expect(mod.getProbeSummary()[mod.POE_ENRICH_BOT]).toBe("404");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // getProbeSummary()
 // ─────────────────────────────────────────────────────────────────────────────
 
