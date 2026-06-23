@@ -21,6 +21,20 @@ import renderer, { act } from "react-test-renderer";
 
 jest.mock("react-native", () => {
   const React = require("react");
+  const noop = () => {};
+  const Animated = {
+    Value: class AnimatedValue {
+      _value: number;
+      constructor(v: number) { this._value = v; }
+      setValue(v: number) { this._value = v; }
+      interpolate() { return this; }
+    },
+    View: ({ children, ...props }: { children?: React.ReactNode; [k: string]: unknown }) =>
+      React.createElement("rn-animated-view", props, children),
+    loop: () => ({ start: noop, stop: noop, reset: noop }),
+    timing: () => ({ start: noop, stop: noop, reset: noop }),
+  };
+  const Easing = { linear: noop, ease: noop, in: () => noop, out: () => noop };
   return {
     Platform:     { OS: "ios", select: (o: Record<string, unknown>) => o.ios ?? o.default },
     StyleSheet:   { create: (s: unknown) => s, flatten: (s: unknown) => s },
@@ -39,6 +53,10 @@ jest.mock("react-native", () => {
     PixelRatio:   { get: () => 3 },
     useColorScheme: () => "light",
     AppState:     { currentState: "active", addEventListener: jest.fn(() => ({ remove: jest.fn() })) },
+    Animated,
+    Easing,
+    LayoutAnimation: { configureNext: noop, Presets: { easeInEaseOut: {}, linear: {}, spring: {} } },
+    UIManager: { setLayoutAnimationEnabledExperimental: noop },
   };
 });
 
