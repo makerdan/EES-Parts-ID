@@ -292,7 +292,7 @@ router.post("/translate-query", async (req, res) => {
 });
 
 // L1 in-memory cache for part-card lookups keyed by "catalog|vendor"
-const partCardCache = new Map<string, { data: object; cachedAt: number }>();
+const partCardCache = new Map<string, { data: object; cachedAt: number; dbCachedAt: string | null }>();
 const PART_CARD_L1_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (in-process hot cache)
 const PART_CARD_DB_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (DB persistent cache)
 
@@ -320,7 +320,7 @@ router.post("/part-card", async (req, res) => {
     // L1: serve from in-memory cache if fresh
     const cached = partCardCache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < PART_CARD_L1_TTL_MS) {
-      return void res.json(cached.data);
+      return void res.json({ ...cached.data, cachedAt: cached.dbCachedAt });
     }
 
     // L2: check the database for a row younger than 30 days
@@ -336,8 +336,9 @@ router.post("/part-card", async (req, res) => {
 
       if (dbRow) {
         const data = dbRow.data as object;
-        partCardCache.set(cacheKey, { data, cachedAt: Date.now() });
-        return void res.json(data);
+        const dbCachedAt = dbRow.cachedAt instanceof Date ? dbRow.cachedAt.toISOString() : String(dbRow.cachedAt);
+        partCardCache.set(cacheKey, { data, cachedAt: Date.now(), dbCachedAt });
+        return void res.json({ ...data, cachedAt: dbCachedAt });
       }
     } catch (dbErr) {
       logger.warn({ err: dbErr }, "part-card: DB cache read failed, proceeding to AI");
@@ -395,7 +396,7 @@ router.post("/part-card", async (req, res) => {
     // Only cache if we got something useful
     if (displayName || specs.length > 0 || crossRefs.length > 0 || compatibilityNote) {
       // Populate L1 immediately
-      partCardCache.set(cacheKey, { data, cachedAt: Date.now() });
+      partCardCache.set(cacheKey, { data, cachedAt: Date.now(), dbCachedAt: null });
       // Evict oldest entries until the cache is within the 500-entry limit
       if (partCardCache.size > 500) {
         const sorted = [...partCardCache.entries()].sort((a, b) => a[1].cachedAt - b[1].cachedAt);
@@ -421,7 +422,7 @@ router.post("/part-card", async (req, res) => {
       });
     }
 
-    return void res.json(data);
+    return void res.json({ ...data, cachedAt: null });
   } catch (err) {
     if (isPoeAuthError(err)) {
       logger.error({ err }, "AI auth error in POST /ai/part-card");

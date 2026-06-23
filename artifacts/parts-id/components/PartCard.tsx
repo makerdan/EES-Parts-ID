@@ -28,6 +28,7 @@ export interface PartCardData {
   specs: Array<{ label: string; value: string }>;
   crossRefs: Array<string>;
   compatibilityNote: string;
+  cachedAt?: string | null;
 }
 
 interface PartCardProps {
@@ -44,6 +45,15 @@ type FetchState =
   | { status: "done"; data: PartCardData }
   | { status: "empty" }
   | { status: "error" };
+
+function formatCachedAge(cachedAt: string | null | undefined): string | null {
+  if (!cachedAt) return null;
+  const diffMs = Date.now() - new Date(cachedAt).getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays <= 0) return "Fetched today";
+  if (diffDays === 1) return "Fetched 1 day ago";
+  return `Fetched ${diffDays} days ago`;
+}
 
 function SkeletonRow({ width, colors }: { width: number | string; colors: ReturnType<typeof useColors> }) {
   return (
@@ -199,6 +209,12 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
                   </Text>
                 </View>
               ) : null}
+
+              {formatCachedAge(fetchState.data.cachedAt) ? (
+                <Text style={[pcStyles.cachedAtLabel, { color: colors.mutedForeground }]}>
+                  {formatCachedAge(fetchState.data.cachedAt)}
+                </Text>
+              ) : null}
             </View>
           ) : (
             <Text style={[pcStyles.emptyText, { color: colors.mutedForeground }]}>
@@ -343,5 +359,11 @@ const pcStyles = StyleSheet.create({
     fontSize: 10,
     fontFamily: "Inter_500Medium",
     letterSpacing: 0.2,
+  },
+  cachedAtLabel: {
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+    fontStyle: "italic",
+    textAlign: "right",
   },
 });
