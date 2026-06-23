@@ -1074,6 +1074,38 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     delete (global as unknown as { fetch?: jest.Mock }).fetch;
   });
 
+  it("fires xhr.upload.onprogress → progress bar appears with correct percentage", async () => {
+    const tree = await renderUploadCard("web-admin-token");
+    activeTree = tree;
+
+    await pickFileAndSetVendorWeb(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    expect(startBtn).not.toBeNull();
+
+    // Press start — XHR is created and hangs (no load/error event fired)
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    // XHR must have been created and onprogress must have been attached
+    expect(MockXMLHttpRequest).toHaveBeenCalledTimes(1);
+    expect(mockXhr.upload.onprogress).not.toBeNull();
+
+    // Fire a progress event: 5 MB of 10 MB sent → 50%
+    await act(async () => {
+      mockXhr.upload.onprogress!({
+        lengthComputable: true,
+        loaded: 5 * 1024 * 1024,
+        total: 10 * 1024 * 1024,
+      });
+    });
+    await flushPromises();
+
+    // The progress bar text must appear in the tree
+    const allText = instText(tree.root);
+    expect(allText).toContain("50% uploaded");
+  });
+
   it("chunked web upload: each chunk uses a separate XHR sequentially, polling starts after the last", async () => {
     const OVER_THRESHOLD = 20 * 1024 * 1024 + 1;
 
