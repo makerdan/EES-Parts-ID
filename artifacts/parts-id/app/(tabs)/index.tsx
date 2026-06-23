@@ -29,6 +29,7 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import type { PartDimensions } from "@/components/MeasurePartScreen";
 import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import { PartDetailsEditor } from "@/components/PartDetailsEditor";
+import { RecentSearchesPanel } from "@/components/RecentSearchesPanel";
 import { ReferenceModal } from "@/components/ReferenceModal";
 import { ResultCard } from "@/components/ResultCard";
 import { DEFAULT_SETTINGS, type DimensionUnit, type PinnedPart,type TextSize, type ThemeMode, useApp } from "@/contexts/AppContext";
@@ -49,6 +50,15 @@ import {
   QUERY_CACHE_KEY,
   resolveOfflineFallback,
 } from "@/utils/searchHelpers";
+import {
+  appendQueryHistory,
+  appendViewedHistory,
+  clearQueryHistory,
+  clearViewedHistory,
+  loadQueryHistory,
+  loadViewedHistory,
+  type ViewedEntry,
+} from "@/utils/searchHistory";
 import { searchResetEvent } from "@/utils/searchResetEvent";
 import { reportStorageError } from "@/utils/storageErrorReporter";
 import type { AIZeroResultsState } from "@/utils/translateQuery";
@@ -216,6 +226,8 @@ export default function SearchScreen() {
 
   const [filterHeaderHeight, setFilterHeaderHeight] = useState(120);
   const [detailsItem, setDetailsItem] = useState<InventoryItem | null>(null);
+  const [queryHistory, setQueryHistory] = useState<Array<string>>([]);
+  const [viewedHistory, setViewedHistory] = useState<Array<ViewedEntry>>([]);
   const [measureItem, setMeasureItem] = useState<InventoryItem | null>(null);
   // Banner shown when a dimension-filtered search returns 0 exact results
   const [showSimilarSizeBanner, setShowSimilarSizeBanner] = useState(false);
@@ -581,6 +593,12 @@ export default function SearchScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Load search and viewed-part history from AsyncStorage on mount.
+  useEffect(() => {
+    loadQueryHistory().then(setQueryHistory).catch(() => {});
+    loadViewedHistory().then(setViewedHistory).catch(() => {});
+  }, []);
+
   const runFuseSearch = useCallback((kw: string): Array<SearchResult> => {
     if (!fuseRef.current || !kw.trim()) return [];
     return fuseRef.current
@@ -799,6 +817,13 @@ export default function SearchScreen() {
     if (_aiQuery) translateQuery(_aiQuery, false, _aiGen);
     const body = buildSearchBody(filtersRef.current, activeCategorySlugRef.current);
     searchMutation.mutate({ data: body });
+    // Record the keyword query in history (non-blocking)
+    const _kw = flt.keywords.trim();
+    if (_kw) {
+      appendQueryHistory(_kw).then(() => {
+        loadQueryHistory().then(setQueryHistory).catch(() => {});
+      }).catch(() => {});
+    }
     // Fall back to offline if API hasn't responded within the timeout
     searchTimeoutRef.current = setTimeout(() => {
       searchTimeoutRef.current = null;
@@ -1681,6 +1706,35 @@ export default function SearchScreen() {
                 <Text style={[styles.welcomeHint, { color: colors.mutedForeground }]}>
                   Search by keywords, catalog #, or vendor. Expand Advanced Filters below for 16-dimension chip filters. Handles abbreviations, synonyms, and misspellings automatically.
                 </Text>
+                {(queryHistory.length > 0 || viewedHistory.length > 0) && (
+                  <RecentSearchesPanel
+                    queryHistory={queryHistory}
+                    viewedHistory={viewedHistory}
+                    onSelectQuery={(q) => {
+                      handleChange("keywords", q);
+                      filtersRef.current = { ...filtersRef.current, keywords: q };
+                      handleSearch();
+                    }}
+                    onSelectPart={(id) => {
+                      const found = fuseItemsRef.current.find(it => it.id === id);
+                      if (found) {
+                        setDetailsItem(found);
+                      } else {
+                        handleChange("keywords", String(id));
+                        filtersRef.current = { ...filtersRef.current, keywords: String(id) };
+                        handleSearch();
+                      }
+                    }}
+                    onClearQueries={() => {
+                      clearQueryHistory().catch(() => {});
+                      setQueryHistory([]);
+                    }}
+                    onClearViewed={() => {
+                      clearViewedHistory().catch(() => {});
+                      setViewedHistory([]);
+                    }}
+                  />
+                )}
                 <View style={[styles.tipCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                   <Text style={[styles.tipTitle, { color: colors.foreground }]}>💡 Quick Tips</Text>
                   {[
@@ -1728,6 +1782,16 @@ export default function SearchScreen() {
                 fontScale={textFontScale}
                 sizeUnknown={listItem.kind === "sizeUnknown"}
                 onReenrichKeywords={isAdmin && adminToken ? handleReenrichKeywords : undefined}
+                onOpen={(item) => {
+                  appendViewedHistory({
+                    id: item.id,
+                    catalog: item.catalog ?? "",
+                    name: item.description ?? item.catalog ?? "",
+                    vendor: item.vendor ?? "",
+                  }).then(() => {
+                    loadViewedHistory().then(setViewedHistory).catch(() => {});
+                  }).catch(() => {});
+                }}
               />
             </View>
           );

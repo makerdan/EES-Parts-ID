@@ -42,6 +42,11 @@ interface ResultCardProps {
    * updated InventoryItem (or throws on failure).
    */
   onReenrichKeywords?: (item: InventoryItem) => Promise<InventoryItem>;
+  /**
+   * Called the first time the card is expanded (collapsed → expanded).
+   * Used to record the part in the "Recently Viewed" history.
+   */
+  onOpen?: (item: InventoryItem) => void;
 }
 
 const CONFIDENCE_COLORS = {
@@ -100,7 +105,7 @@ const varStyles = StyleSheet.create({
   bin: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
 
-export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false, autoExpandPartCard = false, onReenrichKeywords }: ResultCardProps) {
+export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVariantsToggle, rank, fontScale = 1.0, sizeUnknown = false, autoExpandPartCard = false, onReenrichKeywords, onOpen }: ResultCardProps) {
   "use no memo";
   const colors = useColors();
   const [expanded, setExpanded] = useState(false);
@@ -135,6 +140,9 @@ export function ResultCard({ result, onEditItem, onShowOnMap, onMeasure, onVaria
     setExpanded(next);
     if (hasVariants && onVariantsToggle) {
       onVariantsToggle(item, variants!, next);
+    }
+    if (next && onOpen) {
+      onOpen(item);
     }
   };
 
