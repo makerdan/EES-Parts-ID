@@ -142,6 +142,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [failedChunkInfo, setFailedChunkInfo] = useState<FailedChunkInfo | null>(null);
   /** Byte-level upload progress (0–100) for the current chunk or single-file upload. Null = not yet started. */
   const [uploadBytePct, setUploadBytePct] = useState<number | null>(null);
+  /** Human-readable ETA string (e.g. "~12 s remaining"). Null = not enough data or upload done. */
+  const [uploadEta, setUploadEta] = useState<string | null>(null);
+  /** Human-readable speed string (e.g. "1.4 MB/s"). Null = not enough data or upload done. */
+  const [uploadSpeedStr, setUploadSpeedStr] = useState<string | null>(null);
+  /** Rolling window of raw byte-progress samples used to compute upload speed. */
+  const speedSamplesRef = useRef<Array<{ t: number; loaded: number; total: number }>>([]);
 
   useEffect(() => {
     if (retryCountdown === null || retryCountdown <= 0) return;
@@ -172,6 +178,70 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [, setLogVersion] = useState(0);
   const copyScaleAnim = useRef(new Animated.Value(1)).current;
 
+  // ── Upload speed / ETA helpers ─────────────────────────────────────────────
+  // Number of raw progress samples kept in the rolling window.
+  const SPEED_WINDOW = 5;
+
+  /**
+   * Derive human-readable upload speed and ETA from the rolling sample window.
+   * Returns { speedStr, etaStr } where either may be null when unavailable.
+   *
+   * ETA is suppressed (null) when the coefficient of variation of instantaneous
+   * speeds across consecutive sample pairs exceeds 1.5 — meaning throughput is
+   * too erratic to produce a reliable estimate.
+   */
+  function computeUploadStats(
+    samples: Array<{ t: number; loaded: number; total: number }>,
+  ): { speedStr: string | null; etaStr: string | null } {
+    const none = { speedStr: null, etaStr: null };
+    if (samples.length < 3) return none;
+    const oldest = samples[0]!;
+    const newest = samples[samples.length - 1]!;
+    const dtMs = newest.t - oldest.t;
+    if (dtMs < 100) return none;
+    const deltaBytes = newest.loaded - oldest.loaded;
+    if (deltaBytes <= 0) return none;
+    const speedBytesPerMs = deltaBytes / dtMs;
+
+    // Speed string (one decimal, e.g. "1.4 MB/s")
+    const speedMbps = (speedBytesPerMs * 1000) / (1024 * 1024);
+    const speedStr = `${speedMbps.toFixed(1)} MB/s`;
+
+    // Coefficient of variation check over instantaneous inter-sample speeds
+    const instSpeeds: Array<number> = [];
+    for (let i = 1; i < samples.length; i++) {
+      const dt = samples[i]!.t - samples[i - 1]!.t;
+      const db = samples[i]!.loaded - samples[i - 1]!.loaded;
+      if (dt > 0 && db >= 0) instSpeeds.push(dt > 0 ? db / dt : 0);
+    }
+    if (instSpeeds.length >= 2) {
+      const mean = instSpeeds.reduce((a, b) => a + b, 0) / instSpeeds.length;
+      if (mean > 0) {
+        const variance = instSpeeds.reduce((a, b) => a + (b - mean) ** 2, 0) / instSpeeds.length;
+        const cv = Math.sqrt(variance) / mean;
+        if (cv > 1.5) return { speedStr, etaStr: null };
+      }
+    }
+
+    // ETA
+    const remaining = newest.total - newest.loaded;
+    if (remaining <= 0) return { speedStr, etaStr: null };
+    const etaSec = Math.round(remaining / speedBytesPerMs / 1000);
+    if (etaSec <= 0 || etaSec >= 3600) return { speedStr, etaStr: null };
+    const etaStr = etaSec >= 60
+      ? `~${Math.round(etaSec / 60)} min remaining`
+      : `~${etaSec} s remaining`;
+    return { speedStr, etaStr };
+  }
+
+  /** Reset all byte-level upload progress state and clear the speed window. */
+  const resetUploadProgress = () => {
+    setUploadBytePct(null);
+    setUploadEta(null);
+    setUploadSpeedStr(null);
+    speedSamplesRef.current = [];
+  };
+
   useEffect(() => {
     if (!loading) return;
     activateKeepAwake("catalog-upload");
@@ -201,13 +271,18 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   useEffect(() => {
     if (Platform.OS !== "web") return;
     if (!loading) return;
+    if (typeof window === "undefined") return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "Upload in progress. Are you sure you want to leave?";
       return e.returnValue;
     };
     window.addEventListener("beforeunload", handler);
-    return () => { window.removeEventListener("beforeunload", handler); };
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("beforeunload", handler);
+      }
+    };
   }, [loading]);
 
   // Tracks how many times each chunk (by index) has been retried via handleRetryServerChunk.
@@ -422,6 +497,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     onAbort: () => void,
     onNetwork: () => void,
     onProgress?: (pct: number) => void,
+    onProgressBytes?: (loaded: number, total: number) => void,
   ): Promise<void> => {
     const token = adminTokenRef.current!;
     const body = JSON.stringify({
@@ -445,10 +521,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           xhr.setRequestHeader("x-use-openai-fallback", "true");
         }
 
-        if (onProgress) {
+        if (onProgress || onProgressBytes) {
           xhr.upload.onprogress = (ev) => {
             if (ev.lengthComputable && ev.total > 0) {
-              onProgress(Math.round((ev.loaded / ev.total) * 100));
+              if (onProgress) onProgress(Math.round((ev.loaded / ev.total) * 100));
+              if (onProgressBytes) onProgressBytes(ev.loaded, ev.total);
             }
           };
         }
@@ -525,10 +602,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           },
           sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
         },
-        onProgress
+        (onProgress || onProgressBytes)
           ? (data) => {
               if (data.totalBytesExpectedToSend > 0) {
-                onProgress(Math.round((data.totalBytesSent / data.totalBytesExpectedToSend) * 100));
+                if (onProgress) onProgress(Math.round((data.totalBytesSent / data.totalBytesExpectedToSend) * 100));
+                if (onProgressBytes) onProgressBytes(data.totalBytesSent, data.totalBytesExpectedToSend);
               }
             }
           : undefined,
@@ -595,6 +673,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               { chunkIndex: i, chunkCount: chunks.length, pageOffset: chunk.pageOffset, ...(parentJobId ? { parentJobId } : {}) },
               resolve, (msg) => reject(new Error(msg)), () => reject(new Error("__abort__")), () => reject(new Error("__network__")),
               (pct) => setUploadBytePct(pct),
+              (loaded, total) => {
+                const next = [...speedSamplesRef.current.slice(-(SPEED_WINDOW - 1)), { t: Date.now(), loaded, total }];
+                speedSamplesRef.current = next;
+                const { speedStr, etaStr } = computeUploadStats(next);
+                setUploadSpeedStr(speedStr);
+                setUploadEta(etaStr);
+              },
             );
           });
           lastErr = null;
@@ -623,7 +708,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           setChunkLabel(null);
           setChunksCompleted(0);
           setChunksTotal(0);
-          setUploadBytePct(null);
+          resetUploadProgress();
           setFailedChunkInfo(null);
           return;
         }
@@ -633,7 +718,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           setChunkLabel(null);
           setChunksCompleted(0);
           setChunksTotal(0);
-          setUploadBytePct(null);
+          resetUploadProgress();
           setFailedChunkInfo(null);
           return;
         }
@@ -642,7 +727,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         // continues to show "Part N of M failed" rather than blanking out.
         setLoading(false);
         setChunkLabel(null);
-        setUploadBytePct(null);
+        resetUploadProgress();
         setFailedChunkInfo({
           chunkIndex: i,
           totalChunks: chunks.length,
@@ -653,7 +738,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       }
 
       if (i === 0) { parentJobId = result!.jobId; }
-      setUploadBytePct(null);
+      resetUploadProgress();
       setChunksCompleted(i + 1);
     }
 
@@ -663,7 +748,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunkLabel(null);
     setChunksCompleted(0);
     setChunksTotal(0);
-    setUploadBytePct(null);
+    resetUploadProgress();
     setLoading(false);
     // pdfBytes intentionally kept so the "Use OpenAI" fallback can re-upload
     // if the server-side job fails with poe_chain_exhausted.
@@ -813,7 +898,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       {},
       (resp) => {
         setLoading(false);
-        setUploadBytePct(null);
+        resetUploadProgress();
         const jobId = resp.jobId;
         setJobStatus({
           jobId,
@@ -830,21 +915,21 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       },
       (errMsg) => {
         setLoading(false);
-        setUploadBytePct(null);
+        resetUploadProgress();
         // __session_expired__ is a sentinel — auth redirect was already handled
         // by the onSessionExpired prop inside sendChunkViaBackground; no UI error.
         if (errMsg !== "__session_expired__") setError(errMsg);
       },
       () => {
         setLoading(false);
-        setUploadBytePct(null);
+        resetUploadProgress();
         setError("Upload was interrupted. Please try again.");
       },
       () => {
         if (attempt < MAX_AUTO_RETRIES) {
           const delaySec = Math.pow(2, attempt);
           setError(null);
-          setUploadBytePct(null);
+          resetUploadProgress();
           setRetryCountdown(delaySec);
           retryTimerRef.current = setTimeout(() => {
             retryTimerRef.current = null;
@@ -852,13 +937,20 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
           }, delaySec * 1000);
         } else {
           setLoading(false);
-          setUploadBytePct(null);
+          resetUploadProgress();
           setRetryCountdown(null);
           setError("Network error — check your connection and try again.");
           setShowRetryBtn(true);
         }
       },
       (pct) => setUploadBytePct(pct),
+      (loaded, total) => {
+        const next = [...speedSamplesRef.current.slice(-(SPEED_WINDOW - 1)), { t: Date.now(), loaded, total }];
+        speedSamplesRef.current = next;
+        const { speedStr, etaStr } = computeUploadStats(next);
+        setUploadSpeedStr(speedStr);
+        setUploadEta(etaStr);
+      },
     );
   };
 
@@ -887,7 +979,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunkLabel(null);
     setChunksCompleted(0);
     setChunksTotal(0);
-    setUploadBytePct(null);
+    resetUploadProgress();
 
     if (pdfBytes.length > CHUNK_SIZE_THRESHOLD) {
       void handleChunkedUpload(pdfBytes);
@@ -1074,6 +1166,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                 {uploadBytePct !== null && uploadBytePct > 0 && chunksCompleted < chunksTotal
                   ? ` — part ${chunksCompleted + 1}: ${uploadBytePct}%`
                   : ""}
+                {uploadSpeedStr !== null ? `  ·  ${uploadSpeedStr}` : ""}
+                {uploadEta !== null ? `  ·  ${uploadEta}` : ""}
               </Text>
             </>
           ) : uploadBytePct !== null ? (
@@ -1087,6 +1181,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               </View>
               <Text style={[s.progressText, { color: colors.mutedForeground }]}>
                 {uploadBytePct}% uploaded
+                {uploadSpeedStr !== null ? `  ·  ${uploadSpeedStr}` : ""}
+                {uploadEta !== null ? `  ·  ${uploadEta}` : ""}
               </Text>
             </>
           ) : (

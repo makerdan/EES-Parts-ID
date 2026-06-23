@@ -1106,6 +1106,133 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
     expect(allText).toContain("50% uploaded");
   });
 
+  it("shows speed and ETA after ≥ 3 progress events; both disappear on upload completion", async () => {
+    const tree = await renderUploadCard("web-admin-token");
+    activeTree = tree;
+
+    await pickFileAndSetVendorWeb(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    expect(mockXhr.upload.onprogress).not.toBeNull();
+
+    const totalBytes = 10 * 1024 * 1024;
+
+    // Simulate time advancing (2 s each) so the speed window has a measurable dt.
+    let fakeNow = 1_000_000;
+    const dateSpy = jest.spyOn(Date, "now").mockImplementation(() => fakeNow);
+
+    try {
+      // Fire first 2 events — fewer than 3 samples, so speed/ETA absent yet
+      for (const loaded of [2 * 1024 * 1024, 4 * 1024 * 1024]) {
+        fakeNow += 2000;
+        await act(async () => {
+          mockXhr.upload.onprogress!({ lengthComputable: true, loaded, total: totalBytes });
+        });
+        await flushPromises();
+      }
+
+      let allText = instText(tree.root);
+      expect(allText).not.toMatch(/MB\/s/);
+      expect(allText).not.toMatch(/remaining/);
+
+      // Fire a third event — stable throughput, so speed AND ETA should now appear
+      fakeNow += 2000;
+      await act(async () => {
+        mockXhr.upload.onprogress!({ lengthComputable: true, loaded: 6 * 1024 * 1024, total: totalBytes });
+      });
+      await flushPromises();
+
+      allText = instText(tree.root);
+      expect(allText).toMatch(/MB\/s/);
+      expect(allText).toMatch(/remaining/);
+    } finally {
+      dateSpy.mockRestore();
+    }
+
+    // Complete the upload — speed and ETA must both disappear
+    mockXhr.status = 200;
+    mockXhr.responseText = JSON.stringify({ jobId: "eta-test-job" });
+    await act(async () => { mockXhr.fireEvent("load"); });
+    await flushPromises();
+
+    const allText = instText(tree.root);
+    expect(allText).not.toMatch(/MB\/s/);
+    expect(allText).not.toMatch(/remaining/);
+  });
+
+  it("does not show speed or ETA when only 1 progress event fires (not enough data)", async () => {
+    const tree = await renderUploadCard("web-admin-token");
+    activeTree = tree;
+
+    await pickFileAndSetVendorWeb(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    // Single progress event — too few samples
+    await act(async () => {
+      mockXhr.upload.onprogress!({ lengthComputable: true, loaded: 5 * 1024 * 1024, total: 10 * 1024 * 1024 });
+    });
+    await flushPromises();
+
+    const allText = instText(tree.root);
+    expect(allText).toContain("50% uploaded");
+    expect(allText).not.toMatch(/MB\/s/);
+    expect(allText).not.toMatch(/remaining/);
+  });
+
+  it("hides ETA (but still shows speed) when throughput is too variable", async () => {
+    const tree = await renderUploadCard("web-admin-token");
+    activeTree = tree;
+
+    await pickFileAndSetVendorWeb(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    const totalBytes = 100 * 1024 * 1024;
+
+    // CV > 1.5 requires ≥ 4 inter-sample speed pairs (≥ 5 samples).
+    // Pattern: 3 very slow samples then 1 huge spike then 1 very slow.
+    // Inter-sample speeds (bytes/ms): [~0.1, ~0.1, ~4194, ~0.1]
+    // mean ≈ 1049, std ≈ 1816, CV ≈ 1.73 > 1.5.
+    const TINY = 200;
+    const HUGE = 8 * 1024 * 1024;
+    const events = [
+      { loaded: TINY,              dt: 2000 },
+      { loaded: TINY * 2,          dt: 2000 },
+      { loaded: TINY * 2 + HUGE,   dt: 2000 },
+      { loaded: TINY * 3 + HUGE,   dt: 2000 },
+      { loaded: TINY * 4 + HUGE,   dt: 2000 },
+    ];
+
+    let fakeNow = 1_000_000;
+    const dateSpy = jest.spyOn(Date, "now").mockImplementation(() => fakeNow);
+
+    try {
+      for (const { loaded, dt } of events) {
+        fakeNow += dt;
+        await act(async () => {
+          mockXhr.upload.onprogress!({ lengthComputable: true, loaded, total: totalBytes });
+        });
+        await flushPromises();
+      }
+    } finally {
+      dateSpy.mockRestore();
+    }
+
+    const allText = instText(tree.root);
+    // Speed is still shown (useful even when erratic)
+    expect(allText).toMatch(/MB\/s/);
+    // ETA is suppressed because CV > 1.5
+    expect(allText).not.toMatch(/remaining/);
+  });
+
   it("chunked web upload: each chunk uses a separate XHR sequentially, polling starts after the last", async () => {
     const OVER_THRESHOLD = 20 * 1024 * 1024 + 1;
 
