@@ -549,11 +549,25 @@ export default function UploadScreen() {
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
-  const { status: apiStatus, restarting: apiRestarting, triggerRestart, bots: apiBots } = useApiStatus({
+  const { status: apiStatus, restarting: apiRestarting, triggerRestart, bots: apiBots, probeSingleBot } = useApiStatus({
     apiBase: API_BASE,
     adminToken: isAdmin ? adminToken : null,
   });
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
+  const probingBotsRef = useRef<Set<string>>(new Set());
+  const [probingBots, setProbingBots] = useState<Set<string>>(new Set());
+
+  const reprobe = useCallback(async (botName: string) => {
+    if (probingBotsRef.current.has(botName)) return;
+    probingBotsRef.current.add(botName);
+    setProbingBots(new Set(probingBotsRef.current));
+    try {
+      await probeSingleBot(botName);
+    } finally {
+      probingBotsRef.current.delete(botName);
+      setProbingBots(new Set(probingBotsRef.current));
+    }
+  }, [probeSingleBot]);
 
   const [aiStatusBots, setAiStatusBots] = useState<Record<string, string>>({});
   const [aiStatusLoading, setAiStatusLoading] = useState(false);
@@ -1661,26 +1675,29 @@ export default function UploadScreen() {
                             : botStatus === "timeout"
                             ? "#f59e0b"
                             : "#ef4444";
+                        const isProbing = probingBots.has(name);
                         if (isNarrow) {
                           return (
                             <Pressable
                               key={name}
-                              onPress={() =>
-                                setActiveBadge(activeBadge === name ? null : name)
-                              }
+                              onPress={() => {
+                                setActiveBadge(activeBadge === name ? null : name);
+                                reprobe(name);
+                              }}
                               style={[
                                 styles.botStatusBadge,
-                                { backgroundColor: dotColor },
+                                { backgroundColor: isProbing ? "#6b7280" : dotColor },
                                 activeBadge === name && styles.botStatusBadgeActive,
                               ]}
-                              accessibilityLabel={`${name}: ${botStatus}`}
+                              accessibilityLabel={`${name}: ${isProbing ? "probing" : botStatus}`}
                               accessibilityRole="button"
                             />
                           );
                         }
                         return (
-                          <View
+                          <Pressable
                             key={name}
+                            onPress={() => reprobe(name)}
                             style={[
                               styles.botStatusChip,
                               {
@@ -1688,15 +1705,21 @@ export default function UploadScreen() {
                                 borderColor: dotColor,
                               },
                             ]}
+                            accessibilityLabel={`${name}: ${isProbing ? "probing" : botStatus}. Tap to re-probe.`}
+                            accessibilityRole="button"
                           >
-                            <Text style={[styles.botStatusDot, { color: dotColor }]}>●</Text>
+                            {isProbing ? (
+                              <ActivityIndicator size="small" color={dotColor} />
+                            ) : (
+                              <Text style={[styles.botStatusDot, { color: dotColor }]}>●</Text>
+                            )}
                             <Text
                               style={[styles.botStatusText, { color: colors.foreground }]}
                               numberOfLines={1}
                             >
                               {name}
                             </Text>
-                          </View>
+                          </Pressable>
                         );
                       })}
                     </View>

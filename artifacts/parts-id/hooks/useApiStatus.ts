@@ -10,6 +10,7 @@ export interface ApiStatusResult {
   restarting: boolean;
   triggerRestart: () => Promise<void>;
   bots: Record<string, BotProbeStatus>;
+  probeSingleBot: (botName: string) => Promise<void>;
 }
 
 interface UseApiStatusOptions {
@@ -120,6 +121,36 @@ export function useApiStatus({
     };
   }, [stopPolling]);
 
+  const probeSingleBot = useCallback(async (botName: string): Promise<void> => {
+    if (!adminToken) return;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const res = await fetch(
+        `${apiBase}/admin/ai-status/probe/${encodeURIComponent(botName)}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${adminToken}` },
+          signal: controller.signal,
+          cache: "no-store",
+        },
+      );
+      clearTimeout(timeoutId);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.bots && typeof data.bots === "object" && !Array.isArray(data.bots)) {
+        const VALID: Record<string, true> = { ok: true, timeout: true, "404": true, error: true };
+        const validated: Record<string, BotProbeStatus> = {};
+        for (const [k, v] of Object.entries(data.bots)) {
+          if (typeof v === "string" && VALID[v]) validated[k] = v as BotProbeStatus;
+        }
+        setBots(validated);
+      }
+    } catch {
+      clearTimeout(timeoutId);
+    }
+  }, [apiBase, adminToken]);
+
   const triggerRestart = useCallback(async () => {
     if (!adminToken || restartingRef.current) return;
     restartingRef.current = true;
@@ -175,5 +206,5 @@ export function useApiStatus({
     setTimeout(resumePoll, 1500);
   }, [adminToken, apiBase, startPolling, stopPolling]);
 
-  return { status, restarting, triggerRestart, bots };
+  return { status, restarting, triggerRestart, bots, probeSingleBot };
 }

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAdminAuth } from "./admin";
-import { getProbeSummary, probePoeBotsOnStartup } from "../lib/aiProvider";
+import { getAllPoeModelNames, getProbeSummary, probePoeBotsOnStartup, probeSinglePoeBot } from "../lib/aiProvider";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -20,6 +20,24 @@ router.post("/ai-status/probe", requireAdminAuth, async (_req, res) => {
     await probePoeBotsOnStartup();
   } catch (err) {
     logger.warn({ err }, "adminAiStatus: on-demand probe encountered an unexpected error");
+  }
+  return res.json({ bots: getProbeSummary() });
+});
+
+// POST /admin/ai-status/probe/:botName
+// Re-probes a single named bot and returns the full refreshed summary.
+// Returns 400 when the bot name is not in the known bot list.
+// Advisory only — errors are logged and reflected in the returned summary.
+router.post("/ai-status/probe/:botName", requireAdminAuth, async (req, res) => {
+  const { botName } = req.params;
+  const knownBots = getAllPoeModelNames();
+  if (!knownBots.includes(botName)) {
+    return res.status(400).json({ error: `Unknown bot name: ${botName}` });
+  }
+  try {
+    await probeSinglePoeBot(botName);
+  } catch (err) {
+    logger.warn({ err, botName }, "adminAiStatus: single-bot on-demand probe encountered an unexpected error");
   }
   return res.json({ bots: getProbeSummary() });
 });

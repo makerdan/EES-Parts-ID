@@ -315,8 +315,8 @@ describe("probePoeBotsOnStartup()", () => {
 
     const probePromise = mod.probePoeBotsOnStartup();
 
-    // Advance past the 5 000 ms probe timeout so all per-bot timers fire
-    await jest.advanceTimersByTimeAsync(5100);
+    // Advance past the 15 000 ms probe timeout so all per-bot timers fire
+    await jest.advanceTimersByTimeAsync(15100);
     await probePromise;
 
     const botNames = mod.getAllPoeModelNames();
@@ -518,6 +518,11 @@ describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (GPT-5-Mini) coverage", () 
     expect(mod.getAllPoeModelNames()).toContain(mod.POE_ENRICH_BOT);
   });
 
+  it("getAllPoeModelNames() returns a deduplicated list (no repeated bot names)", () => {
+    const names = mod.getAllPoeModelNames();
+    expect(names.length).toBe(new Set(names).size);
+  });
+
   it("logs '— OK' for POE_ENRICH_BOT when its probe resolves", async () => {
     const client = mod.getAiClient() as unknown as MockClient;
     client.chat.completions.create.mockResolvedValue({ choices: [] });
@@ -634,7 +639,7 @@ describe("getProbeSummary()", () => {
     client.chat.completions.create.mockImplementation(() => new Promise(() => {}));
 
     const probePromise = mod.probePoeBotsOnStartup();
-    await jest.advanceTimersByTimeAsync(5100);
+    await jest.advanceTimersByTimeAsync(15100);
     await probePromise;
 
     const summary = mod.getProbeSummary();
