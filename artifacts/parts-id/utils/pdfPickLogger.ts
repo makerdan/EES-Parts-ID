@@ -2,9 +2,9 @@
  * pdfPickLogger — module-level diagnostic log for the PDF file-pick flow.
  *
  * Lives OUTSIDE React so entries survive component unmount/remount within the
- * same JS bundle session. This is essential for catching "file disappears"
- * bugs caused by re-mounts: you will see LIFECYCLE: unmounted immediately
- * followed by LIFECYCLE: mounted if a re-mount is destroying state.
+ * same JS bundle session. Also persists to sessionStorage so entries survive
+ * Expo HMR-triggered full page reloads (common in the Replit dev environment
+ * where Metro's CORS rejection causes the HMR client to hard-reload the page).
  *
  * Usage:
  *   logPdfPick("description", optionalData)
@@ -21,10 +21,67 @@ export type LogEntry = {
   data?: unknown;
 };
 
-const _log: Array<LogEntry> = [];
-let _seq = 0;
-let _originMs: number | null = null;
+const SESSION_KEY = "pdfPickLogger_v1";
+
+// ── sessionStorage helpers (no-op on native where sessionStorage is absent) ──
+
+function _ssAvailable(): boolean {
+  try {
+    return typeof sessionStorage !== "undefined" && sessionStorage !== null;
+  } catch {
+    return false;
+  }
+}
+
+function _ssLoad(): Array<LogEntry> {
+  if (!_ssAvailable()) return [];
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as Array<LogEntry>;
+  } catch {
+    return [];
+  }
+}
+
+function _ssSave(log: Array<LogEntry>): void {
+  if (!_ssAvailable()) return;
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(log));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function _ssClear(): void {
+  if (!_ssAvailable()) return;
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+// ── Module state — restored from sessionStorage on load ───────────────────────
+
+const _log: Array<LogEntry> = _ssLoad();
+let _seq = _log.length > 0 ? (_log[_log.length - 1]?.seq ?? 0) : 0;
+let _originMs: number | null = null;   // always relative within the current session
 const _listeners = new Set<() => void>();
+
+// If we restored entries from a previous session, annotate the first one
+if (_log.length > 0 && _log[0]?.msg !== "--- page reloaded; log restored from sessionStorage ---") {
+  const reloadEntry: LogEntry = {
+    seq: 0,
+    relMs: 0,
+    msg: "--- page reloaded; log restored from sessionStorage ---",
+  };
+  _log.unshift(reloadEntry);
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────────
 
 export function logPdfPick(msg: string, data?: unknown): void {
   const now = typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -36,6 +93,7 @@ export function logPdfPick(msg: string, data?: unknown): void {
     ...(data !== undefined ? { data } : {}),
   };
   _log.push(entry);
+  _ssSave(_log);
   if (data !== undefined) {
     console.log(`[PDF-PICK +${entry.relMs}ms #${entry.seq}]`, msg, data);
   } else {
@@ -52,6 +110,7 @@ export function clearPdfPickLogs(): void {
   _log.length = 0;
   _seq = 0;
   _originMs = null;
+  _ssClear();
   _listeners.forEach(fn => fn());
 }
 
