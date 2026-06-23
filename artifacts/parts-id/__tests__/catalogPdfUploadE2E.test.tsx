@@ -864,3 +864,326 @@ describe("CatalogPdfUpload — 401 mid-chunk: onSessionExpired is called and loa
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Group 5 — Web upload path (Platform.OS = "web")
+//
+// Verifies that when running on web:
+//   • FileSystem.writeAsStringAsync and FileSystem.createUploadTask are NEVER
+//     called (those APIs are native-only and would throw on web).
+//   • XMLHttpRequest is used instead, with the correct URL, Authorization
+//     header, and a JSON body containing `pdfBase64` and `vendor`.
+//   • An XHR error event surfaces the "Network error" message in the UI.
+//   • An XHR load event with status 200 triggers polling (status endpoint
+//     is fetched).
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
+  let originalPlatformOS: string;
+
+  // ── XHR mock infrastructure ───────────────────────────────────────────────
+  type XhrEventName = "load" | "error" | "abort";
+
+  interface MockXhr {
+    open: jest.Mock;
+    setRequestHeader: jest.Mock;
+    send: jest.Mock;
+    abort: jest.Mock;
+    status: number;
+    responseText: string;
+    onload: (() => void) | null;
+    onerror: (() => void) | null;
+    onabort: (() => void) | null;
+    upload: { onprogress: ((ev: { lengthComputable: boolean; loaded: number; total: number }) => void) | null };
+    /** Fire a synthetic event as if the browser raised it. */
+    fireEvent(name: XhrEventName): void;
+  }
+
+  let mockXhr: MockXhr;
+  let MockXMLHttpRequest: jest.Mock;
+
+  beforeEach(() => {
+    // Save and override Platform.OS
+    const { Platform } = require("react-native") as { Platform: { OS: string } };
+    originalPlatformOS = Platform.OS;
+    (Platform as { OS: string }).OS = "web";
+
+    // Build a controllable XHR mock
+    mockXhr = {
+      open: jest.fn(),
+      setRequestHeader: jest.fn(),
+      send: jest.fn(),
+      abort: jest.fn(),
+      status: 200,
+      responseText: "",
+      onload: null,
+      onerror: null,
+      onabort: null,
+      upload: { onprogress: null },
+      fireEvent(name: XhrEventName) {
+        const handler = this[`on${name}`] as (() => void) | null;
+        if (handler) handler.call(this);
+      },
+    };
+
+    MockXMLHttpRequest = jest.fn(() => mockXhr);
+    (global as unknown as { XMLHttpRequest: jest.Mock }).XMLHttpRequest = MockXMLHttpRequest;
+  });
+
+  afterEach(() => {
+    const { Platform } = require("react-native") as { Platform: { OS: string } };
+    (Platform as { OS: string }).OS = originalPlatformOS;
+    delete (global as unknown as { XMLHttpRequest?: jest.Mock }).XMLHttpRequest;
+  });
+
+  async function pickFileAndSetVendorWeb(
+    tree: renderer.ReactTestRenderer,
+    pdfBytes: Uint8Array,
+    vendor = "ACME",
+  ): Promise<void> {
+    const file = makeFile(pdfBytes);
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: "blob:http://localhost/catalog.pdf", name: "catalog.pdf", file }],
+    });
+    mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
+
+    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    await act(async () => { pickBtn!.props.onPress(); });
+    await flushPromises();
+
+    expect(capturedOnChangeText).not.toBeNull();
+    await act(async () => { capturedOnChangeText!(vendor); });
+  }
+
+  it("never calls FileSystem.writeAsStringAsync or createUploadTask on web", async () => {
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    await pickFileAndSetVendorWeb(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    expect(startBtn).not.toBeNull();
+
+    // Press start but do NOT fire XHR events — XHR hangs, letting us assert synchronously
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    expect(mockWriteAsStringAsync).not.toHaveBeenCalled();
+    expect(mockCreateUploadTask).not.toHaveBeenCalled();
+    expect(MockXMLHttpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends XHR to the catalog-pdf endpoint with Authorization header and correct body", async () => {
+    const tree = await renderUploadCard("web-admin-token");
+    activeTree = tree;
+
+    await pickFileAndSetVendorWeb(tree, makePdfBytes(), "BRIDGEPORT");
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    // URL
+    expect(mockXhr.open).toHaveBeenCalledWith("POST", expect.stringContaining("/admin/catalog-pdf"), true);
+
+    // Authorization header
+    const authCall = (mockXhr.setRequestHeader.mock.calls as [string, string][]).find(
+      ([key]) => key === "Authorization",
+    );
+    expect(authCall).toBeDefined();
+    expect(authCall![1]).toBe("Bearer web-admin-token");
+
+    // Body contains pdfBase64 and vendor
+    expect(mockXhr.send).toHaveBeenCalledTimes(1);
+    const sentBody = JSON.parse(mockXhr.send.mock.calls[0]?.[0] as string) as Record<string, unknown>;
+    expect(typeof sentBody.pdfBase64).toBe("string");
+    expect((sentBody.pdfBase64 as string).length).toBeGreaterThan(0);
+    expect(sentBody.vendor).toBe("BRIDGEPORT");
+  });
+
+  it("surfaces 'Network error' in the UI when XHR fires an error event (regression guard)", async () => {
+    const tree = await renderUploadCard();
+    activeTree = tree;
+
+    await pickFileAndSetVendorWeb(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    // Simulate XHR network error
+    await act(async () => { mockXhr.fireEvent("error"); });
+    await flushPromises();
+
+    const allText = instText(tree.root);
+    expect(allText.toLowerCase()).toContain("network error");
+  });
+
+  it("triggers polling when XHR load fires with status 200", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        jobId: "job-web-1",
+        status: "processing",
+        totalPages: null,
+        processedPages: 0,
+        matchedParts: 0,
+        imagesMatched: 0,
+        errorMessage: null,
+      }),
+    });
+    (global as unknown as { fetch: jest.Mock }).fetch = fetchMock;
+
+    mockXhr.status = 200;
+    mockXhr.responseText = JSON.stringify({ jobId: "job-web-1" });
+
+    const tree = await renderUploadCard("web-admin-token");
+    activeTree = tree;
+
+    await pickFileAndSetVendorWeb(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+
+    // Switch to fake timers BEFORE pressing start so that startPolling's
+    // setInterval is registered under the fake clock and can be advanced.
+    jest.useFakeTimers();
+    try {
+      await act(async () => { startBtn!.props.onPress(); });
+
+      // Fire the XHR load event — this triggers onSuccess → startPolling
+      await act(async () => { mockXhr.fireEvent("load"); });
+
+      // Advance the fake clock past POLL_MS (2500 ms) to fire the first interval tick
+      await act(() => { jest.advanceTimersByTime(3000); });
+
+      // Drain microtasks so the async fetch inside the interval can complete
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+
+    // The polling loop calls /admin/catalog-pdf/{jobId}/status (not catalog-jobs)
+    const statusCalls = (fetchMock.mock.calls as [string][]).filter(([url]) =>
+      typeof url === "string" && url.includes("/admin/catalog-pdf/"),
+    );
+    expect(statusCalls.length).toBeGreaterThan(0);
+
+    delete (global as unknown as { fetch?: jest.Mock }).fetch;
+  });
+
+  it("chunked web upload: each chunk uses a separate XHR sequentially, polling starts after the last", async () => {
+    const OVER_THRESHOLD = 20 * 1024 * 1024 + 1;
+
+    // Queue of XHR mocks — one per chunk
+    const xhrQueue: MockXhr[] = [];
+    let xhrIndex = 0;
+
+    function makeMockXhr(): MockXhr {
+      const xhr: MockXhr = {
+        open: jest.fn(),
+        setRequestHeader: jest.fn(),
+        send: jest.fn(),
+        abort: jest.fn(),
+        status: 200,
+        responseText: "",
+        onload: null,
+        onerror: null,
+        onabort: null,
+        upload: { onprogress: null },
+        fireEvent(name: XhrEventName) {
+          const handler = this[`on${name}`] as (() => void) | null;
+          if (handler) handler.call(this);
+        },
+      };
+      xhrQueue.push(xhr);
+      return xhr;
+    }
+
+    MockXMLHttpRequest = jest.fn(() => makeMockXhr());
+    (global as unknown as { XMLHttpRequest: jest.Mock }).XMLHttpRequest = MockXMLHttpRequest;
+
+    // Two chunks — use the same shape as Group 4
+    const chunk0Resp = JSON.stringify({ jobId: "web-parent-1" });
+    const chunk1Resp = JSON.stringify({ jobId: "web-parent-1", chunkJobId: "web-chunk-2" });
+
+    // Build large PDF bytes
+    const largePdfBytes = new Uint8Array(OVER_THRESHOLD);
+    largePdfBytes.set(PDF_MAGIC, 0);
+
+    const file = makeFile(largePdfBytes);
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: "blob:http://localhost/large.pdf", name: "large.pdf", file }],
+    });
+    mockReadPdfAsBytes.mockResolvedValueOnce(largePdfBytes);
+
+    const chunk0 = { bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), pageOffset: 0 };
+    const chunk1 = { bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), pageOffset: 20 };
+    mockSplitPdfIntoChunks.mockResolvedValueOnce([chunk0, chunk1]);
+
+    const tree = await renderUploadCard("web-admin-token");
+    activeTree = tree;
+
+    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    await act(async () => { pickBtn!.props.onPress(); });
+    await flushPromises();
+
+    await act(async () => { capturedOnChangeText!("ACME"); });
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    expect(startBtn).not.toBeNull();
+
+    // Press start — chunk 0 XHR is created and pending
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    expect(xhrQueue.length).toBe(1);
+
+    // Fire chunk 0 success — loop advances to chunk 1
+    xhrQueue[0]!.responseText = chunk0Resp;
+    await act(async () => { xhrQueue[0]!.fireEvent("load"); });
+    await flushPromises();
+
+    expect(xhrQueue.length).toBe(2);
+
+    // Fire chunk 1 success — loop finishes and startPolling is called
+    jest.useFakeTimers();
+    try {
+      xhrQueue[1]!.responseText = chunk1Resp;
+      await act(async () => { xhrQueue[1]!.fireEvent("load"); });
+
+      // Both XHRs must have been called with the correct endpoint
+      for (let i = 0; i < 2; i++) {
+        expect(xhrQueue[i]!.open).toHaveBeenCalledWith(
+          "POST", expect.stringContaining("/admin/catalog-pdf"), true,
+        );
+        expect(xhrQueue[i]!.setRequestHeader).toHaveBeenCalledWith(
+          "Authorization", "Bearer web-admin-token",
+        );
+      }
+
+      // Advance past POLL_MS to confirm polling is wired up
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ jobId: "web-parent-1", status: "processing", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null }),
+      });
+      (global as unknown as { fetch: jest.Mock }).fetch = fetchMock;
+
+      await act(() => { jest.advanceTimersByTime(3000); });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+      const statusCalls = (fetchMock.mock.calls as [string][]).filter(
+        ([url]) => typeof url === "string" && url.includes("/admin/catalog-pdf/"),
+      );
+      expect(statusCalls.length).toBeGreaterThan(0);
+
+      delete (global as unknown as { fetch?: jest.Mock }).fetch;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+

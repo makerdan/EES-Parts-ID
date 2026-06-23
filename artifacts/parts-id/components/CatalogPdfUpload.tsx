@@ -154,6 +154,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Holds the active background upload task so Cancel can call cancelAsync().
   const uploadTaskRef = useRef<FileSystem.UploadTask | null>(null);
+  // Holds the active XHR on web so Cancel can call xhr.abort().
+  const webXhrRef = useRef<XMLHttpRequest | null>(null);
   // Stores the split chunks so server-side failures can be retried without re-picking the file.
   const chunksRef = useRef<Awaited<ReturnType<typeof splitPdfIntoChunks>> | null>(null);
   const [hasStoredChunks, setHasStoredChunks] = useState(false);
@@ -232,6 +234,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       if (uploadTaskRef.current) {
         void uploadTaskRef.current.cancelAsync();
         uploadTaskRef.current = null;
+      }
+      if (webXhrRef.current) {
+        webXhrRef.current.abort();
+        webXhrRef.current = null;
       }
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
@@ -410,6 +416,76 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       filename: filename ?? "catalog.pdf",
       ...extraFields,
     });
+
+    // ── Web path: use XMLHttpRequest (supports upload.onprogress; FileSystem
+    // APIs are native-only and cacheDirectory is null on web).
+    if (Platform.OS === "web") {
+      return new Promise<void>((resolve) => {
+        const xhr = new XMLHttpRequest();
+        webXhrRef.current = xhr;
+
+        xhr.open("POST", `${API_BASE}/admin/catalog-pdf`, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        if (withFallbackRef.current) {
+          xhr.setRequestHeader("x-use-openai-fallback", "true");
+        }
+
+        if (onProgress) {
+          xhr.upload.onprogress = (ev) => {
+            if (ev.lengthComputable && ev.total > 0) {
+              onProgress(Math.round((ev.loaded / ev.total) * 100));
+            }
+          };
+        }
+
+        xhr.onload = () => {
+          webXhrRef.current = null;
+          const status = xhr.status;
+          if (status === 401) {
+            onSessionExpired();
+            onFailure("__session_expired__");
+            resolve();
+            return;
+          }
+          if (status < 200 || status >= 300) {
+            let errMsg = "Failed to start job";
+            try { errMsg = (JSON.parse(xhr.responseText) as { error?: string }).error ?? errMsg; } catch { /* ignore */ }
+            onFailure(errMsg);
+            resolve();
+            return;
+          }
+          let parsed: { jobId: string; chunkJobId?: string };
+          try {
+            parsed = JSON.parse(xhr.responseText) as { jobId: string; chunkJobId?: string };
+          } catch {
+            onFailure("Failed to start job");
+            resolve();
+            return;
+          }
+          onSuccess(parsed);
+          resolve();
+        };
+
+        xhr.onerror = () => {
+          webXhrRef.current = null;
+          onNetwork();
+          resolve();
+        };
+
+        xhr.onabort = () => {
+          webXhrRef.current = null;
+          onAbort();
+          resolve();
+        };
+
+        xhr.send(body);
+      });
+    }
+
+    // ── Native path (iOS / Android): write body to a temp file, then use
+    // FileSystem.createUploadTask with a BACKGROUND session so the OS
+    // networking layer can complete the transfer even while JS is suspended.
     const tempUri = `${FileSystem.cacheDirectory}upload-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
 
     try {
@@ -815,6 +891,10 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     if (uploadTaskRef.current) {
       void uploadTaskRef.current.cancelAsync();
       uploadTaskRef.current = null;
+    }
+    if (webXhrRef.current) {
+      webXhrRef.current.abort();
+      webXhrRef.current = null;
     }
   };
 
