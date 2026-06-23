@@ -299,16 +299,19 @@ const PART_CARD_DB_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (DB persistent 
 // POST /ai/part-card
 // Returns web-sourced part info: display name, key specs, cross-refs, compatibility note.
 // Results are cached: L1 in-memory (24h) → L2 database (30-day TTL) → AI call.
+// Pass force: true to bypass all cache layers and re-fetch from AI.
 router.post("/part-card", async (req, res) => {
   try {
     const {
       catalog = "",
       vendor = "",
       description = "",
+      force = false,
     } = req.body as {
       catalog?: string;
       vendor?: string;
       description?: string;
+      force?: boolean;
     };
 
     if (!catalog.trim()) {
@@ -317,31 +320,36 @@ router.post("/part-card", async (req, res) => {
 
     const cacheKey = `${catalog.trim().toLowerCase()}|${vendor.trim().toLowerCase()}`;
 
-    // L1: serve from in-memory cache if fresh
-    const cached = partCardCache.get(cacheKey);
-    if (cached && Date.now() - cached.cachedAt < PART_CARD_L1_TTL_MS) {
-      return void res.json({ ...cached.data, cachedAt: cached.dbCachedAt });
-    }
-
-    // L2: check the database for a row younger than 30 days
-    const thirtyDaysAgo = new Date(Date.now() - PART_CARD_DB_TTL_MS);
-    try {
-      const [dbRow] = await db
-        .select()
-        .from(partCardCacheTable)
-        .where(
-          sql`${partCardCacheTable.catalogKey} = ${cacheKey} AND ${partCardCacheTable.cachedAt} > ${thirtyDaysAgo}`,
-        )
-        .limit(1);
-
-      if (dbRow) {
-        const data = dbRow.data as object;
-        const dbCachedAt = dbRow.cachedAt instanceof Date ? dbRow.cachedAt.toISOString() : String(dbRow.cachedAt);
-        partCardCache.set(cacheKey, { data, cachedAt: Date.now(), dbCachedAt });
-        return void res.json({ ...data, cachedAt: dbCachedAt });
+    if (!force) {
+      // L1: serve from in-memory cache if fresh
+      const cached = partCardCache.get(cacheKey);
+      if (cached && Date.now() - cached.cachedAt < PART_CARD_L1_TTL_MS) {
+        return void res.json({ ...cached.data, cachedAt: cached.dbCachedAt });
       }
-    } catch (dbErr) {
-      logger.warn({ err: dbErr }, "part-card: DB cache read failed, proceeding to AI");
+
+      // L2: check the database for a row younger than 30 days
+      const thirtyDaysAgo = new Date(Date.now() - PART_CARD_DB_TTL_MS);
+      try {
+        const [dbRow] = await db
+          .select()
+          .from(partCardCacheTable)
+          .where(
+            sql`${partCardCacheTable.catalogKey} = ${cacheKey} AND ${partCardCacheTable.cachedAt} > ${thirtyDaysAgo}`,
+          )
+          .limit(1);
+
+        if (dbRow) {
+          const data = dbRow.data as object;
+          const dbCachedAt = dbRow.cachedAt instanceof Date ? dbRow.cachedAt.toISOString() : String(dbRow.cachedAt);
+          partCardCache.set(cacheKey, { data, cachedAt: Date.now(), dbCachedAt });
+          return void res.json({ ...data, cachedAt: dbCachedAt });
+        }
+      } catch (dbErr) {
+        logger.warn({ err: dbErr }, "part-card: DB cache read failed, proceeding to AI");
+      }
+    } else {
+      // Force refresh: evict L1 so stale data isn't served while the AI call is in flight
+      partCardCache.delete(cacheKey);
     }
 
     const contextParts: string[] = [];
