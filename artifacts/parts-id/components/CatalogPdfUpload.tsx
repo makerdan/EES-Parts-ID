@@ -683,6 +683,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       () => {
         setLoading(false);
         setUploadBytePct(null);
+        setError("Upload was interrupted. Please try again.");
       },
       () => {
         if (attempt < MAX_AUTO_RETRIES) {

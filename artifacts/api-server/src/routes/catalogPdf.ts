@@ -25,7 +25,7 @@ import { db } from "@workspace/db";
 import { inventoryTable, catalogPdfJobTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
 import { extractPdfPages, validatePdf } from "../utils/pdfProcessor";
-import { extractCatalogPage } from "../utils/catalogExtractor";
+import { extractCatalogPage, CatalogAiError } from "../utils/catalogExtractor";
 import type { ImageRegion } from "../utils/catalogExtractor";
 import { matchCatalogNumber } from "../utils/catalogMatcher";
 import { uploadCatalogImage } from "../lib/objectStorage";
@@ -218,6 +218,15 @@ async function processPdfPages(
         }
         console.warn(`[catalog-pdf] job=${jobId} poe_chain_exhausted on page ${page.pageNum + pageOffset}`);
         return;
+      }
+      // Payload-too-large: re-throw to fail the entire job (image size won't
+      // change on other pages, so all would fail anyway).
+      // Transient AI error: log and skip this page so the rest of the job continues.
+      if (err instanceof CatalogAiError && err.code !== "ai_payload_too_large") {
+        console.warn(`[catalog-pdf] job=${jobId} page=${page.pageNum + pageOffset} transient ai_error — skipping:`, err.originalMessage);
+        processedPages++;
+        await db.update(catalogPdfJobTable).set({ processedPages }).where(eq(catalogPdfJobTable.id, jobId));
+        continue;
       }
       throw err;
     }
@@ -665,7 +674,15 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
       const anyProcessing = children.some(
         (c) => c.status === "processing" || c.status === "pending",
       );
-      aggStatus = anyProcessing ? "processing" : row.status;
+      if (anyProcessing) {
+        aggStatus = "processing";
+      } else if (children.length > 0) {
+        // All children are terminal. Compute the parent's effective status from
+        // them — guards against the race where finalizeParentIfComplete failed
+        // or hasn't run yet, which would leave the parent stuck at "processing".
+        const anyFailed = children.some((c) => c.status === "failed");
+        aggStatus = anyFailed ? "failed" : "done";
+      }
     }
 
     const failedChild = children.find((c) => c.status === "failed");
