@@ -32,6 +32,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Platform,
   Pressable,
   ScrollView,
@@ -169,6 +170,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   // without capturing a stale closure.
   const handleStartRef = useRef<(attempt?: number) => void>(() => {});
   const [, setLogVersion] = useState(0);
+  const copyScaleAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (!loading) return;
@@ -1231,18 +1233,36 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               📋 Diag Log · {getPdfPickLogs().length} entries
             </Text>
             <View style={{ flexDirection: "row", gap: 6 }}>
-              <Pressable
-                onPress={() => {
-                  const text = formatPdfPickLogs();
-                  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-                    void navigator.clipboard.writeText(text);
-                  }
-                  Alert.alert("Copied", `${getPdfPickLogs().length} entries copied to clipboard.`);
-                }}
-                style={[s.logPanelBtn, { borderColor: colors.border }]}
-              >
-                <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Copy</Text>
-              </Pressable>
+              <Animated.View style={{ transform: [{ scale: copyScaleAnim }] }}>
+                <Pressable
+                  onPress={() => {
+                    const text = formatPdfPickLogs();
+                    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+                      void navigator.clipboard.writeText(text);
+                    }
+                    Alert.alert("Copied", `${getPdfPickLogs().length} entries copied to clipboard.`);
+                  }}
+                  onPressIn={() => {
+                    Animated.spring(copyScaleAnim, {
+                      toValue: 0.85,
+                      useNativeDriver: true,
+                      tension: 300,
+                      friction: 10,
+                    }).start();
+                  }}
+                  onPressOut={() => {
+                    Animated.spring(copyScaleAnim, {
+                      toValue: 1,
+                      useNativeDriver: true,
+                      tension: 300,
+                      friction: 10,
+                    }).start();
+                  }}
+                  style={[s.logPanelBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Copy</Text>
+                </Pressable>
+              </Animated.View>
               <Pressable
                 onPress={() => clearPdfPickLogs()}
                 style={[s.logPanelBtn, { borderColor: colors.destructive }]}
