@@ -17,12 +17,16 @@ interface UseApiStatusOptions {
   apiBase: string;
   adminToken: string | null;
   intervalMs?: number;
+  restartPostTimeoutMs?: number;
+  resumePollTimeoutMs?: number;
 }
 
 export function useApiStatus({
   apiBase,
   adminToken,
   intervalMs = 15_000,
+  restartPostTimeoutMs = 10_000,
+  resumePollTimeoutMs = 5_000,
 }: UseApiStatusOptions): ApiStatusResult {
   const [status, setStatus] = useState<ApiStatus>("unknown");
   const [restarting, setRestarting] = useState(false);
@@ -158,7 +162,7 @@ export function useApiStatus({
     setStatus("unknown");
     stopPolling();
     const restartController = new AbortController();
-    const restartTimeoutId = setTimeout(() => restartController.abort(), 10_000);
+    const restartTimeoutId = setTimeout(() => restartController.abort(), restartPostTimeoutMs);
     try {
       await fetch(`${apiBase}/admin/restart`, {
         method: "POST",
@@ -167,7 +171,7 @@ export function useApiStatus({
       });
     } catch {
       // Expected — process exits so the connection drops before a response arrives,
-      // or the 10 s timeout fires if the server stalls before shutting down
+      // or the timeout fires if the server stalls before shutting down
     } finally {
       clearTimeout(restartTimeoutId);
     }
@@ -177,7 +181,7 @@ export function useApiStatus({
     const resumePoll = async () => {
       attempts++;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5_000);
+      const timeoutId = setTimeout(() => controller.abort(), resumePollTimeoutMs);
       try {
         const res = await fetch(`${apiBase}/healthz`, { cache: "no-store", signal: controller.signal });
         clearTimeout(timeoutId);
@@ -204,7 +208,7 @@ export function useApiStatus({
       }
     };
     setTimeout(resumePoll, 1500);
-  }, [adminToken, apiBase, startPolling, stopPolling]);
+  }, [adminToken, apiBase, restartPostTimeoutMs, resumePollTimeoutMs, startPolling, stopPolling]);
 
   return { status, restarting, triggerRestart, bots, probeSingleBot };
 }
