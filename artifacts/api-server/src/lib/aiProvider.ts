@@ -130,7 +130,14 @@ export const AI_PROVIDER: AIProvider = _provider;
 
 // ── Poe bot name constants ─────────────────────────────────────────────────────
 
-/** Poe bot used for keyword enrichment and reference Q&A (fast, cheap). */
+/**
+ * Poe bot used for keyword enrichment and reference Q&A (fast, cheap).
+ *
+ * Casing confirmed 2026-06-23: both "GPT-5-Mini" (PascalCase) and "gpt-5-mini"
+ * (lowercase) are accepted by the Poe API — both returned "OK" in a live probe.
+ * PascalCase is the established convention for Poe display names in this codebase
+ * and matches the /v1/models catalog entry, so "GPT-5-Mini" is the canonical form.
+ */
 export const POE_ENRICH_BOT = "GPT-5-Mini";
 
 /** Poe bot used for part identification from photos (vision capable). */

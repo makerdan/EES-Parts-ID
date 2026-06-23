@@ -19,13 +19,15 @@ Poe model names are **PascalCase display names** with version dots, e.g.:
 - `"Claude-Sonnet-4.5"` — capable, confirmed working
 - `"GPT-4o-Mini"` — confirmed working
 - `"GPT-4o"` — confirmed working
+- `"GPT-5-Mini"` — confirmed working (PascalCase is canonical; lowercase `"gpt-5-mini"` also accepted by Poe, both probed 2026-06-23)
 
-**Not** lowercase slugs like `"gpt-4o-mini"` or `"gpt-5-mini"` (those return empty/error).
+**Not** lowercase slugs for older models like `"gpt-4o-mini"` (returns empty/error).
 
-Models NOT on this account (return empty): `gpt-5-mini`, `GPT-5-Mini`, `Claude-Haiku-4.5` (use `Claude-Haiku-4.5` spelling above).
+## GPT-5-Mini casing (confirmed 2026-06-23)
+Both `"GPT-5-Mini"` and `"gpt-5-mini"` are accepted by the Poe API and return real responses. PascalCase (`"GPT-5-Mini"`) is the canonical form in this codebase — it matches the Poe display-name convention and is consistent with all other bot constants. The underlying OpenAI model is `"gpt-5-mini-2025"` (revealed by Poe error messages when probing vision support).
 
 ## Current bot constants (aiProvider.ts)
-- `POE_ENRICH_BOT = "GPT-5-Mini"` — keyword enrichment & description expansion (fast, confirmed working)
+- `POE_ENRICH_BOT = "GPT-5-Mini"` — keyword enrichment & description expansion (fast, text-only, confirmed working)
 - `POE_IDENTIFY_BOT = "Claude-Sonnet-4.5"` — part identification, catalog PDF extraction
 - `POE_DIMENSIONS_BOT = "Claude-Sonnet-4.5"` — dimension estimation from photos
 
