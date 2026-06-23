@@ -1,5 +1,5 @@
 /**
- * Live regression test — Poe GPT-5-Mini model name casing.
+ * Live regression test — Poe enrich bot (Gemini-3.1-Pro) reachability.
  *
  * Confirms that callPoeBot(POE_ENRICH_BOT, ...) returns a non-empty string,
  * proving the model name Poe accepts has not changed.

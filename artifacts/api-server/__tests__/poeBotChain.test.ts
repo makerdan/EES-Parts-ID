@@ -2,13 +2,10 @@
  * Tests for the Poe bot fallback chain.
  *
  * Covers:
- *   - getPoeChainForFeature(): asserts GPT-5-Mini is absent from the
- *     `identify`, `dimensions`, and `catalog` chains and is present only in
- *     the `enrich` chain (vision-incapable bot must not appear in image paths).
+ *   - getPoeChainForFeature(): verifies chain composition for all four features.
  *   - tryPoeBotChain("identify"): simulates both Claude-Sonnet-4.5 and the
  *     catalog Gemini bot failing with transient errors and verifies that
- *     PoeBotChainExhaustedError is thrown after exactly 2 attempts — not 3
- *     (no silent fallback to a text-only model).
+ *     PoeBotChainExhaustedError is thrown after exactly 2 attempts.
  */
 
 // ── Env vars — must be set before any require() calls ────────────────────────
@@ -84,26 +81,11 @@ beforeEach(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// getPoeChainForFeature() — GPT-5-Mini chain membership
+// getPoeChainForFeature() — chain composition
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("getPoeChainForFeature() — GPT-5-Mini chain membership", () => {
-  it("identify chain does NOT include GPT-5-Mini (POE_ENRICH_BOT)", () => {
-    const chain = aiProvider.getPoeChainForFeature("identify");
-    expect(chain).not.toContain(aiProvider.POE_ENRICH_BOT);
-  });
-
-  it("dimensions chain does NOT include GPT-5-Mini (POE_ENRICH_BOT)", () => {
-    const chain = aiProvider.getPoeChainForFeature("dimensions");
-    expect(chain).not.toContain(aiProvider.POE_ENRICH_BOT);
-  });
-
-  it("catalog chain does NOT include GPT-5-Mini (POE_ENRICH_BOT)", () => {
-    const chain = aiProvider.getPoeChainForFeature("catalog");
-    expect(chain).not.toContain(aiProvider.POE_ENRICH_BOT);
-  });
-
-  it("enrich chain DOES include GPT-5-Mini (POE_ENRICH_BOT) as the primary bot", () => {
+describe("getPoeChainForFeature() — chain composition", () => {
+  it("enrich chain DOES include POE_ENRICH_BOT (Gemini-3.1-Pro) as the primary bot", () => {
     const chain = aiProvider.getPoeChainForFeature("enrich");
     expect(chain).toContain(aiProvider.POE_ENRICH_BOT);
     expect(chain[0]).toBe(aiProvider.POE_ENRICH_BOT);
@@ -255,74 +237,3 @@ describe("tryPoeBotChain — non-poe provider skips chain logic", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// assertVisionChainInvariants() — startup guard for GPT-5-Mini
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("assertVisionChainInvariants()", () => {
-  it("does NOT throw when the current chains are correctly configured", () => {
-    expect(() => aiProvider.assertVisionChainInvariants()).not.toThrow();
-  });
-
-  it("identify chain does not contain POE_ENRICH_BOT (pre-condition for the guard)", () => {
-    const chain = aiProvider.getPoeChainForFeature("identify");
-    expect(chain).not.toContain(aiProvider.POE_ENRICH_BOT);
-  });
-
-  it("dimensions chain does not contain POE_ENRICH_BOT (pre-condition for the guard)", () => {
-    const chain = aiProvider.getPoeChainForFeature("dimensions");
-    expect(chain).not.toContain(aiProvider.POE_ENRICH_BOT);
-  });
-
-  it("catalog chain does not contain POE_ENRICH_BOT (pre-condition for the guard)", () => {
-    const chain = aiProvider.getPoeChainForFeature("catalog");
-    expect(chain).not.toContain(aiProvider.POE_ENRICH_BOT);
-  });
-
-  it("throws an error that names the violated feature when GPT-5-Mini is injected into a vision chain", () => {
-    const brokenChainGetter = (feature: string) => {
-      if (feature === "identify") {
-        return [aiProvider.POE_ENRICH_BOT, aiProvider.POE_IDENTIFY_BOT];
-      }
-      return aiProvider.getPoeChainForFeature(feature as Parameters<typeof aiProvider.getPoeChainForFeature>[0]);
-    };
-
-    expect(() => aiProvider.assertVisionChainInvariants(brokenChainGetter)).toThrow(
-      /Vision chain invariant violated/,
-    );
-
-    expect(() => aiProvider.assertVisionChainInvariants(brokenChainGetter)).toThrow(
-      /"identify" chain contains POE_ENRICH_BOT/,
-    );
-  });
-
-  it("error message names ALL violated features when multiple chains are broken", () => {
-    const brokenChainGetter = (feature: string) => {
-      if (feature === "identify" || feature === "dimensions") {
-        return [aiProvider.POE_ENRICH_BOT, aiProvider.POE_IDENTIFY_BOT];
-      }
-      return aiProvider.getPoeChainForFeature(feature as Parameters<typeof aiProvider.getPoeChainForFeature>[0]);
-    };
-
-    let errorMessage = "";
-    try {
-      aiProvider.assertVisionChainInvariants(brokenChainGetter);
-    } catch (err: unknown) {
-      errorMessage = err instanceof Error ? err.message : String(err);
-    }
-
-    expect(errorMessage).toMatch(/"identify" chain contains POE_ENRICH_BOT/);
-    expect(errorMessage).toMatch(/"dimensions" chain contains POE_ENRICH_BOT/);
-  });
-
-  it("does NOT throw when GPT-5-Mini is injected only into the enrich chain (text-only, allowed)", () => {
-    const enrichOnlyGetter = (feature: string) => {
-      if (feature === "enrich") {
-        return [aiProvider.POE_ENRICH_BOT, aiProvider.POE_IDENTIFY_BOT];
-      }
-      return aiProvider.getPoeChainForFeature(feature as Parameters<typeof aiProvider.getPoeChainForFeature>[0]);
-    };
-
-    expect(() => aiProvider.assertVisionChainInvariants(enrichOnlyGetter)).not.toThrow();
-  });
-});
