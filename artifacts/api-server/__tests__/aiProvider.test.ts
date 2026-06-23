@@ -490,12 +490,12 @@ describe("probePoeBotsOnStartup()", () => {
 // POE_ENRICH_BOT coverage in probePoeBotsOnStartup()
 //
 // Explicit regression guard: these tests pin the fact that POE_ENRICH_BOT
-// ("GPT-5-Mini") is included in the startup probe.  Generic tests above cover
+// (Gemini-3.1-Pro) is included in the startup probe. Generic tests above cover
 // all bots via getAllPoeModelNames(); these tests fail *specifically* if the
 // enrich bot is dropped from that list or its probe branch silently changes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (GPT-5-Mini) coverage", () => {
+describe("probePoeBotsOnStartup() — POE_ENRICH_BOT (Gemini-3.1-Pro) coverage", () => {
   type MockClient = { chat: { completions: { create: jest.Mock } } };
 
   function getLoggerMocks() {
