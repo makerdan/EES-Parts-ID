@@ -17,6 +17,11 @@
  *  - triggerRestart falls back to status="error" after max attempts
  *  - triggerRestart is a no-op when adminToken is null
  *  - second concurrent triggerRestart call is ignored while one is in progress
+ *  - AppState "active" restarts polling and resets status when screen is focused
+ *  - AppState "active" is a no-op when the screen is not focused
+ *  - AppState non-"active" transitions do not affect polling
+ *  - AppState subscription is removed on unmount
+ *  - AppState "active" is a no-op when adminToken is null
  */
 
 // @ts-ignore — global augmentation for test environment only
@@ -38,6 +43,22 @@ jest.mock("expo-router", () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// react-native mock — expose a controllable AppState so tests can simulate
+// foreground/background transitions.
+// ---------------------------------------------------------------------------
+let capturedAppStateListener: ((state: string) => void) | null = null;
+const mockSubscriptionRemove = jest.fn();
+
+jest.mock("react-native", () => ({
+  AppState: {
+    addEventListener: jest.fn((_event: string, cb: (state: string) => void) => {
+      capturedAppStateListener = cb;
+      return { remove: mockSubscriptionRemove };
+    }),
+  },
+}));
+
+// ---------------------------------------------------------------------------
 // fetch mock — installed on global so the hook can call it unmodified.
 // Each test configures mockFetch via .mockResolvedValue / .mockImplementation.
 // ---------------------------------------------------------------------------
@@ -55,6 +76,12 @@ const ADMIN_TOKEN = "test-admin-token";
 function triggerFocus(): (() => void) | void {
   if (!capturedFocusCallback) throw new Error("useFocusEffect was never called");
   return capturedFocusCallback();
+}
+
+/** Simulate an AppState change event. */
+function triggerAppState(nextState: string): void {
+  if (!capturedAppStateListener) throw new Error("AppState.addEventListener was never called");
+  capturedAppStateListener(nextState);
 }
 
 /**
@@ -80,6 +107,8 @@ const flushPromises = (): Promise<void> =>
 // ---------------------------------------------------------------------------
 beforeEach(() => {
   capturedFocusCallback = null;
+  capturedAppStateListener = null;
+  mockSubscriptionRemove.mockReset();
   mockFetch.mockReset();
 });
 
@@ -306,6 +335,121 @@ describe("useApiStatus", () => {
       await flushMicrotasks();
 
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── AppState background/foreground lifecycle ───────────────────────────────
+
+  describe("AppState background/foreground lifecycle", () => {
+    it("restarts polling and resets status to 'unknown' when app becomes active while screen is focused", async () => {
+      jest.useFakeTimers();
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "ok" }),
+      } as Response);
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN, intervalMs: 60_000 }),
+      );
+
+      // Bring the screen into focus so isFocusedRef = true
+      act(() => { triggerFocus(); });
+      await flushMicrotasks();
+      expect(result.current.status).toBe("ok");
+
+      const callsAfterFocus = mockFetch.mock.calls.length;
+
+      // Simulate app returning to foreground
+      mockFetch.mockReturnValue(new Promise(() => {}));
+      act(() => { triggerAppState("active"); });
+
+      // Status must reset to "unknown" immediately
+      expect(result.current.status).toBe("unknown");
+
+      // A new poll must have been dispatched
+      await flushMicrotasks();
+      expect(mockFetch.mock.calls.length).toBeGreaterThan(callsAfterFocus);
+    });
+
+    it("does not restart polling when app becomes active but the screen is not focused", async () => {
+      jest.useFakeTimers();
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "ok" }),
+      } as Response);
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN, intervalMs: 60_000 }),
+      );
+
+      // Focus then immediately blur so isFocusedRef = false
+      let blur: (() => void) | void;
+      act(() => { blur = triggerFocus(); });
+      await flushMicrotasks();
+      act(() => { if (typeof blur === "function") blur(); });
+
+      const callsAfterBlur = mockFetch.mock.calls.length;
+
+      // App comes to foreground, but screen is not focused
+      act(() => { triggerAppState("active"); });
+      await flushMicrotasks();
+
+      expect(mockFetch.mock.calls.length).toBe(callsAfterBlur);
+    });
+
+    it("does not restart polling on non-active AppState transitions", async () => {
+      jest.useFakeTimers();
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "ok" }),
+      } as Response);
+
+      const { result } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN, intervalMs: 60_000 }),
+      );
+
+      act(() => { triggerFocus(); });
+      await flushMicrotasks();
+      expect(result.current.status).toBe("ok");
+
+      const callsAfterFocus = mockFetch.mock.calls.length;
+
+      act(() => { triggerAppState("background"); });
+      await flushMicrotasks();
+      act(() => { triggerAppState("inactive"); });
+      await flushMicrotasks();
+
+      expect(mockFetch.mock.calls.length).toBe(callsAfterFocus);
+      expect(result.current.status).toBe("ok");
+    });
+
+    it("is a no-op when adminToken is null", async () => {
+      jest.useFakeTimers();
+
+      renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: null, intervalMs: 60_000 }),
+      );
+
+      act(() => { triggerFocus(); });
+      act(() => { triggerAppState("active"); });
+      await flushMicrotasks();
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("removes the AppState subscription on unmount", () => {
+      mockFetch.mockReturnValue(new Promise(() => {}));
+
+      const { unmount } = renderHook(() =>
+        useApiStatus({ apiBase: API_BASE, adminToken: ADMIN_TOKEN }),
+      );
+
+      expect(mockSubscriptionRemove).not.toHaveBeenCalled();
+      unmount();
+      expect(mockSubscriptionRemove).toHaveBeenCalledTimes(1);
     });
   });
 
