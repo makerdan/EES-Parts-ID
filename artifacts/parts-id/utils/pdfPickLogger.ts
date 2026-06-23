@@ -21,7 +21,7 @@ export type LogEntry = {
   data?: unknown;
 };
 
-const _log: LogEntry[] = [];
+const _log: Array<LogEntry> = [];
 let _seq = 0;
 let _originMs: number | null = null;
 const _listeners = new Set<() => void>();
@@ -44,7 +44,7 @@ export function logPdfPick(msg: string, data?: unknown): void {
   _listeners.forEach(fn => fn());
 }
 
-export function getPdfPickLogs(): readonly LogEntry[] {
+export function getPdfPickLogs(): ReadonlyArray<LogEntry> {
   return _log;
 }
 

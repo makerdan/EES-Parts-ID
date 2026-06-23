@@ -274,7 +274,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     await flushPromises();
 
     expect(mockReadPdfAsBytes).toHaveBeenCalledTimes(1);
-    expect(mockReadPdfAsBytes).toHaveBeenCalledWith(uri, file);
+    expect(mockReadPdfAsBytes).toHaveBeenCalledWith(uri, file, expect.any(Function));
   });
 
   it("passes the exact same File reference from the picker to readPdfAsBytes", async () => {
@@ -317,7 +317,7 @@ describe("CatalogPdfUpload — handlePickFile calls readPdfAsBytes with asset.fi
     await act(async () => { pickBtn!.props.onPress(); });
     await flushPromises();
 
-    expect(mockReadPdfAsBytes).toHaveBeenCalledWith(uri, undefined);
+    expect(mockReadPdfAsBytes).toHaveBeenCalledWith(uri, undefined, expect.any(Function));
   });
 
   it("does NOT call readPdfAsBytes when the picker is cancelled", async () => {
