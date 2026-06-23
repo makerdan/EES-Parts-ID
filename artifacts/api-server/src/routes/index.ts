@@ -14,6 +14,7 @@ import contactRouter from "./contact";
 import adminQueryRouter from "./adminQuery";
 import adminDashboardRouter from "./adminDashboard";
 import trackRouter from "./track";
+import adminAiStatusRouter from "./adminAiStatus";
 
 const router: IRouter = Router();
 
@@ -28,6 +29,7 @@ router.use("/admin", adminUploadRouter);
 router.use("/admin", catalogPdfRouter);
 router.use("/admin", adminQueryRouter);
 router.use("/admin", adminDashboardRouter);
+router.use("/admin", adminAiStatusRouter);
 router.use("/warehouse-zones", warehouseZonesRouter);
 router.use(floorPlanRouter);
 router.use("/contact", contactRouter);

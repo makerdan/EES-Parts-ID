@@ -555,6 +555,54 @@ export default function UploadScreen() {
   });
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
 
+  const [aiStatusBots, setAiStatusBots] = useState<Record<string, string>>({});
+  const [aiStatusLoading, setAiStatusLoading] = useState(false);
+  const [aiStatusError, setAiStatusError] = useState<string | null>(null);
+  const [aiStatusProbing, setAiStatusProbing] = useState(false);
+
+  const fetchAiStatus = useCallback(async () => {
+    if (!adminToken || !API_BASE) return;
+    setAiStatusLoading(true);
+    setAiStatusError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { bots: Record<string, string> };
+      setAiStatusBots(data.bots ?? {});
+    } catch (err) {
+      setAiStatusError(err instanceof Error ? err.message : "Failed to load AI status");
+    } finally {
+      setAiStatusLoading(false);
+    }
+  }, [adminToken]);
+
+  const triggerAiProbe = useCallback(async () => {
+    if (!adminToken || !API_BASE || aiStatusProbing) return;
+    setAiStatusProbing(true);
+    setAiStatusError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/ai-status/probe`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { bots: Record<string, string> };
+      setAiStatusBots(data.bots ?? {});
+    } catch (err) {
+      setAiStatusError(err instanceof Error ? err.message : "Probe failed");
+    } finally {
+      setAiStatusProbing(false);
+    }
+  }, [adminToken, aiStatusProbing]);
+
+  useEffect(() => {
+    if (adminToken) {
+      fetchAiStatus();
+    }
+  }, [adminToken, fetchAiStatus]);
+
   const handleRestartPress = useCallback(() => {
     Alert.alert(
       "Restart API server?",
@@ -2179,6 +2227,75 @@ export default function UploadScreen() {
                 </View>
               ) : null}
 
+              {/* AI Status card */}
+              <View style={[styles.uploadCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={styles.aiStatusHeader}>
+                  <Text style={[styles.cardTitle, { color: colors.foreground }]}>🤖 AI Status</Text>
+                  <Pressable
+                    onPress={aiStatusProbing ? undefined : triggerAiProbe}
+                    disabled={aiStatusProbing}
+                    style={[
+                      styles.aiProbeBtn,
+                      { borderColor: aiStatusProbing ? colors.border : colors.primary },
+                    ]}
+                  >
+                    {aiStatusProbing ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Text style={[styles.aiProbeBtnText, { color: colors.primary }]}>Re-run probe</Text>
+                    )}
+                  </Pressable>
+                </View>
+
+                {aiStatusLoading && Object.keys(aiStatusBots).length === 0 ? (
+                  <ActivityIndicator size="small" color={colors.primary} style={{ alignSelf: "flex-start" }} />
+                ) : aiStatusError ? (
+                  <Text style={[styles.aiStatusError, { color: colors.destructive }]}>⚠ {aiStatusError}</Text>
+                ) : Object.keys(aiStatusBots).length === 0 ? (
+                  <Text style={[styles.cardHint, { color: colors.mutedForeground }]}>
+                    No probe results yet. Tap "Re-run probe" to check bot health.
+                  </Text>
+                ) : (
+                  <View style={styles.aiStatusBotList}>
+                    {Object.entries(aiStatusBots).map(([name, botStatus]) => {
+                      const dotColor =
+                        botStatus === "ok"
+                          ? "#10b981"
+                          : botStatus === "timeout"
+                          ? "#f59e0b"
+                          : "#ef4444";
+                      return (
+                        <View
+                          key={name}
+                          style={[
+                            styles.aiStatusBotRow,
+                            { borderBottomColor: colors.border },
+                          ]}
+                        >
+                          <Text
+                            style={[styles.aiStatusBotName, { color: colors.foreground }]}
+                            numberOfLines={1}
+                          >
+                            {name}
+                          </Text>
+                          <View
+                            style={[
+                              styles.aiStatusBadge,
+                              { backgroundColor: dotColor + "20", borderColor: dotColor },
+                            ]}
+                          >
+                            <Text style={[styles.aiStatusBadgeDot, { color: dotColor }]}>●</Text>
+                            <Text style={[styles.aiStatusBadgeText, { color: dotColor }]}>
+                              {botStatus}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
             </ScrollView>
           ) : tab === "enrichment" ? (
             <View style={{ flex: 1 }}>
@@ -3198,6 +3315,16 @@ const styles = StyleSheet.create({
   queryExportRow: { flexDirection: "row", gap: 8, paddingTop: 4 },
   queryExportBtn: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: "center", justifyContent: "center", minHeight: 40 },
   queryExportBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  aiStatusHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  aiProbeBtn: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, minWidth: 44, alignItems: "center" },
+  aiProbeBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  aiStatusError: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 18 },
+  aiStatusBotList: { gap: 0 },
+  aiStatusBotRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  aiStatusBotName: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", marginRight: 10 },
+  aiStatusBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  aiStatusBadgeDot: { fontSize: 8 },
+  aiStatusBadgeText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   shelfEntryBanner: {
     flexDirection: "row",
     alignItems: "center",
