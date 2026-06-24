@@ -778,23 +778,17 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
       return;
     }
 
-    // Multi-chunk path: activate keep-awake for the full upload lifetime.
-    // deactivateKeepAwake is called in the finally block so it fires on
-    // completion, abort, network error, and unexpected exceptions alike.
-    activateKeepAwake("catalog-upload");
-    try {
-      // Persist the chunks so server-side processing failures can be retried
-      // without the admin re-picking the file (pdfBytes is cleared after upload).
-      chunksRef.current = chunks;
-      setHasStoredChunks(true);
+    // Keep-awake is managed by the useEffect watching `loading` state,
+    // which covers all upload paths uniformly.
+    // Persist the chunks so server-side processing failures can be retried
+    // without the admin re-picking the file (pdfBytes is cleared after upload).
+    chunksRef.current = chunks;
+    setHasStoredChunks(true);
 
-      setChunksTotal(chunks.length);
-      setChunksCompleted(0);
+    setChunksTotal(chunks.length);
+    setChunksCompleted(0);
 
-      await uploadChunksFromIndex(chunks, 0, null);
-    } finally {
-      deactivateKeepAwake("catalog-upload");
-    }
+    await uploadChunksFromIndex(chunks, 0, null);
   };
 
   // ── Retry a single failed chunk (without re-uploading the whole file) ──────
