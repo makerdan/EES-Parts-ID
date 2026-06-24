@@ -1343,7 +1343,7 @@ export const ListWarehouseZonesResponse = zod.object({
     zod.object({
       id: zod.number(),
       aisleId: zod.string(),
-      sectionNum: zod.number(),
+      sectionNum: zod.number().nullable(),
       sectionCode: zod.string().nullable(),
       isInventory: zod.boolean(),
       svgX: zod.number(),
@@ -1367,7 +1367,7 @@ export const createWarehouseZoneBodySectionCodeRegExp = new RegExp(
 
 export const CreateWarehouseZoneBody = zod.object({
   aisleId: zod.string().min(1),
-  sectionNum: zod.number().optional(),
+  sectionNum: zod.number().nullish(),
   sectionCode: zod
     .string()
     .regex(createWarehouseZoneBodySectionCodeRegExp)
@@ -1393,7 +1393,7 @@ export const updateWarehouseZoneBodySectionCodeRegExp = new RegExp(
 
 export const UpdateWarehouseZoneBody = zod.object({
   aisleId: zod.string().min(1).optional(),
-  sectionNum: zod.number().optional(),
+  sectionNum: zod.number().nullish(),
   sectionCode: zod
     .string()
     .regex(updateWarehouseZoneBodySectionCodeRegExp)
@@ -1410,7 +1410,7 @@ export const UpdateWarehouseZoneResponse = zod.object({
   zone: zod.object({
     id: zod.number(),
     aisleId: zod.string(),
-    sectionNum: zod.number(),
+    sectionNum: zod.number().nullable(),
     sectionCode: zod.string().nullable(),
     isInventory: zod.boolean(),
     svgX: zod.number(),

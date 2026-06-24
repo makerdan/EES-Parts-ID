@@ -9,7 +9,7 @@
 export interface CreateWarehouseZoneBody {
   /** @minLength 1 */
   aisleId: string;
-  sectionNum?: number;
+  sectionNum?: number | null;
   /** @pattern ^[A-Z]{4}$ */
   sectionCode?: string | null;
   isInventory?: boolean;

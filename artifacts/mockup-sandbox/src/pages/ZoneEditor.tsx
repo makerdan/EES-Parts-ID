@@ -198,7 +198,7 @@ const INITIAL_SCALE = 0.18; // start zoomed out to show whole floor plan
 interface Zone {
   id: number;
   aisleId: string;
-  sectionNum: number;
+  sectionNum: number | null;
   isInventory: boolean;
   svgX: number;
   svgY: number;
@@ -230,7 +230,7 @@ type UndoEntry =
 
 export interface FormState {
   aisleId: string;
-  sectionNum: number;
+  sectionNum: number | null;
   isInventory: boolean;
   sortOrder: number;
 }
@@ -251,11 +251,13 @@ type IxState =
 
 /**
  * Converts a sectionNum to a display string.
+ * Null (unassigned) returns an empty string.
  * Non-negative numbers display as zero-padded two-digit strings ("00", "06", "14" …).
- * Negative sentinels used for unassigned duplicates display as capital letters:
+ * Negative sentinels (legacy) display as capital letters:
  *   -1 → "A", -2 → "B", … -26 → "Z", -27 → "AA", -28 → "AB" …
  */
-function sectionNumToDisplay(n: number): string {
+function sectionNumToDisplay(n: number | null): string {
+  if (n === null) return "";
   if (n >= 0) return String(n).padStart(2, "0");
   let val = -n;
   let result = "";
@@ -327,8 +329,8 @@ function parseSectionInput(raw: string): number | null {
 function nextSentinelForAisle(zones: ZoneLike[], aisleId: string): number {
   const normalized = normalizeAisleId(aisleId);
   const sentinels = zones
-    .filter((z) => normalizeAisleId(z.aisleId) === normalized && z.sectionNum < 0)
-    .map((z) => z.sectionNum);
+    .filter((z) => normalizeAisleId(z.aisleId) === normalized && z.sectionNum !== null && z.sectionNum < 0)
+    .map((z) => z.sectionNum as number);
   return sentinels.length === 0 ? -1 : Math.min(...sentinels) - 1;
 }
 
@@ -371,32 +373,33 @@ export function buildBulkAislePatchJobs(
   // sectionNums already in use in the target aisle by NON-selected zones.
   // We build this set as a "taken" pool and add to it as we resolve each zone
   // in the batch so intra-batch conflicts are also caught.
+  // NULL sectionNums are excluded — multiple zones may share NULL simultaneously.
   const taken = new Set<number>(
     allZones
-      .filter((z) => normalizeAisleId(z.aisleId) === normalizedTarget && !selectedSet.has(z.id))
-      .map((z) => z.sectionNum),
+      .filter((z) => normalizeAisleId(z.aisleId) === normalizedTarget && !selectedSet.has(z.id) && z.sectionNum !== null)
+      .map((z) => z.sectionNum as number),
   );
 
   // Start allocating sentinels just below the lowest negative already in the
   // target aisle (so we never collide with existing assigned sentinels there).
   const existingTargetNegatives = allZones
-    .filter((z) => normalizeAisleId(z.aisleId) === normalizedTarget && z.sectionNum < 0)
-    .map((z) => z.sectionNum);
+    .filter((z) => normalizeAisleId(z.aisleId) === normalizedTarget && z.sectionNum !== null && z.sectionNum < 0)
+    .map((z) => z.sectionNum as number);
   let nextSentinel = (existingTargetNegatives.length > 0 ? Math.min(...existingTargetNegatives) : 0) - 1;
 
   return ids.map((id) => {
     const zone = allZones.find((z) => z.id === id);
-    const existingSectionNum = zone?.sectionNum ?? 0;
+    const existingSectionNum = zone?.sectionNum ?? null;
     const before: MetaSnap = {
       aisleId: zone?.aisleId,
       sectionNum: existingSectionNum,
     };
 
-    let resolvedSectionNum: number;
+    let resolvedSectionNum: number | null;
     let body: Partial<Zone>;
     let after: MetaSnap;
 
-    if (taken.has(existingSectionNum)) {
+    if (existingSectionNum !== null && taken.has(existingSectionNum)) {
       // Conflict — allocate the next available sentinel not yet claimed.
       while (taken.has(nextSentinel)) nextSentinel--;
       resolvedSectionNum = nextSentinel--;
@@ -412,7 +415,7 @@ export function buildBulkAislePatchJobs(
     }
 
     // Mark this sectionNum as taken so subsequent zones in the batch don't reuse it.
-    taken.add(resolvedSectionNum);
+    if (resolvedSectionNum !== null) taken.add(resolvedSectionNum);
 
     return { id, body, before, after };
   });
@@ -476,8 +479,8 @@ export function buildAutoNumSentinelMap(
     preview.map(({ zone }) => normalizeAisleId(zone.aisleId)),
   );
   const existingNegatives = allZones
-    .filter((z) => affectedAisleIds.has(normalizeAisleId(z.aisleId)) && z.sectionNum < 0)
-    .map((z) => z.sectionNum);
+    .filter((z) => affectedAisleIds.has(normalizeAisleId(z.aisleId)) && z.sectionNum !== null && z.sectionNum < 0)
+    .map((z) => z.sectionNum as number);
   let nextSentinel =
     (existingNegatives.length > 0 ? Math.min(...existingNegatives) : 0) - 1;
   return preview.map(({ zone, newSectionNum }) => ({
@@ -502,10 +505,11 @@ export function buildAutoNumCollisions(
   allZones: Zone[],
   selectedIds: Set<number>,
 ): Array<{ aisleId: string; sectionNum: number; conflictingZoneId: number; blockingSectionNum: number }> {
-  // Build a lookup: normalized-aisleId + sectionNum → {id, sectionNum}, for every non-selected zone
+  // Build a lookup: normalized-aisleId + sectionNum → {id, sectionNum}, for every non-selected zone.
+  // Zones with null sectionNum are excluded — null values never conflict.
   const nonSelectedKey = new Map<string, { id: number; sectionNum: number }>();
   for (const z of allZones) {
-    if (!selectedIds.has(z.id)) {
+    if (!selectedIds.has(z.id) && z.sectionNum !== null) {
       nonSelectedKey.set(`${normalizeAisleId(z.aisleId)}:${z.sectionNum}`, { id: z.id, sectionNum: z.sectionNum });
     }
   }
@@ -658,7 +662,7 @@ export function ZoneEditor() {
   // Original positions of every selected zone at the start of a multi-move drag
   const multiDragOriginsRef = useRef<Map<number, Pt>>(new Map());
   const [form, setForm] = useState<FormState>({
-    aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0,
+    aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0,
   });
   const [saving, setSaving] = useState(false);
   const [assigningCodes, setAssigningCodes] = useState(false);
@@ -1112,8 +1116,8 @@ export function ZoneEditor() {
                 .map((z) => normalizeAisleId(z.aisleId)),
             );
             const existingNegatives = currentZones
-              .filter((z) => affectedAisles.has(normalizeAisleId(z.aisleId)) && z.sectionNum < 0)
-              .map((z) => z.sectionNum);
+              .filter((z) => affectedAisles.has(normalizeAisleId(z.aisleId)) && z.sectionNum !== null && z.sectionNum < 0)
+              .map((z) => z.sectionNum as number);
             let nextSentinel =
               (existingNegatives.length > 0 ? Math.min(...existingNegatives) : 0) - 1;
 
@@ -1271,22 +1275,18 @@ export function ZoneEditor() {
     setSaving(true);
     try {
       const targetAisleId = normalizeAisleId(form.aisleId);
-      const nextSectionNum = nextSentinelForAisle(zones, targetAisleId);
-      const existingCodes = new Set(zones.flatMap((z) => (z.sectionCode ? [z.sectionCode] : [])));
-      const sectionCode = generateUniqueSectionCode(existingCodes);
       const res = await fetch(`${API_BASE}/warehouse-zones`, {
         method: "POST",
         headers: headers(),
         body: JSON.stringify({
           aisleId: targetAisleId,
-          sectionNum: nextSectionNum,
+          sectionNum: null,
           isInventory: form.isInventory,
           svgX: selectedZone.svgX + selectedZone.svgWidth + 2,
           svgY: selectedZone.svgY,
           svgWidth: selectedZone.svgWidth,
           svgHeight: selectedZone.svgHeight,
           sortOrder: form.sortOrder,
-          sectionCode,
         }),
       });
       if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
@@ -1312,35 +1312,24 @@ export function ZoneEditor() {
     if (selectedZoneList.length === 0) return;
     setSaving(true);
     try {
-      const aisleNextSentinel = new Map<string, number>();
-      const sortedSelection = [...selectedZoneList].sort((a, b) => a.sectionNum - b.sectionNum);
-      const usedCodes = new Set(zones.flatMap((z) => (z.sectionCode ? [z.sectionCode] : [])));
-      const assignedCodes = sortedSelection.map(() => {
-        const code = generateUniqueSectionCode(usedCodes);
-        usedCodes.add(code);
-        return code;
+      const sortedSelection = [...selectedZoneList].sort((a, b) => {
+        if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+        return a.svgY - b.svgY;
       });
       const results = await Promise.all(
-        sortedSelection.map((z, i) => {
-          const aid = normalizeAisleId(z.aisleId);
-          if (!aisleNextSentinel.has(aid)) {
-            aisleNextSentinel.set(aid, nextSentinelForAisle(zones, aid));
-          }
-          const nextSectionNum = aisleNextSentinel.get(aid)!;
-          aisleNextSentinel.set(aid, nextSectionNum - 1);
+        sortedSelection.map((z) => {
           return fetch(`${API_BASE}/warehouse-zones`, {
             method: "POST",
             headers: headers(),
             body: JSON.stringify({
               aisleId: z.aisleId,
-              sectionNum: nextSectionNum,
+              sectionNum: null,
               isInventory: z.isInventory,
               sortOrder: z.sortOrder,
               svgX: z.svgX,
               svgY: z.svgY + z.svgHeight + 4,
               svgWidth: z.svgWidth,
               svgHeight: z.svgHeight,
-              sectionCode: assignedCodes[i],
             }),
           }).then(async (res) => {
             if (res.status === 401) { clearToken(); throw new Error("Session expired — please log in again"); }
@@ -1395,6 +1384,26 @@ export function ZoneEditor() {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setAssigningCodes(false);
+    }
+  };
+
+  const handleResetSectionNumToNull = async () => {
+    if (selectedIds.size === 0) return;
+    const undoChanges = [...selectedIds].map((id) => {
+      const zone = zones.find((z) => z.id === id);
+      return {
+        id,
+        before: { sectionNum: zone?.sectionNum ?? null } as MetaSnap,
+        after: { sectionNum: null } as MetaSnap,
+      };
+    });
+    try {
+      await Promise.all([...selectedIds].map((id) => patchZone(id, { sectionNum: null })));
+      pushUndo({ type: "multiEdit", changes: undoChanges });
+      toast.success(`Reset §number for ${selectedIds.size} zone${selectedIds.size !== 1 ? "s" : ""}`);
+      await fetchZones();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -1747,7 +1756,7 @@ export function ZoneEditor() {
       setPendingRect(rect);
       setSelectedIds(new Set());
       setSelectionOrder([]);
-      setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
+      setForm({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 });
 
       // Auto-switch back to Pan so a stray click doesn't trigger another fill.
       setMode("pan");
@@ -1860,7 +1869,7 @@ export function ZoneEditor() {
         setPendingRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
         setSelectedIds(new Set());
         setSelectionOrder([]);
-        setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
+        setForm({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 });
         return;
       }
 
@@ -2253,7 +2262,7 @@ export function ZoneEditor() {
           <ModeBtn active={mode === "pan"} onClick={() => { setMode("pan"); }}>
             Pan / Select
           </ModeBtn>
-          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setSelectionOrder([]); setPendingRect(null); setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 }); }}>
+          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setSelectionOrder([]); setPendingRect(null); setForm({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 }); }}>
             Draw Zone
           </ModeBtn>
           <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setSelectionOrder([]); setPendingRect(null); }}>
@@ -2313,6 +2322,25 @@ export function ZoneEditor() {
             }}
           >
             {assigningCodes ? "Assigning…" : "Assign Codes"}
+          </button>
+          <button
+            title={selectedIds.size > 0 ? `Clear §number for ${selectedIds.size} selected zone${selectedIds.size !== 1 ? "s" : ""}` : "Select zones first"}
+            disabled={selectedIds.size === 0}
+            onClick={() => { void handleResetSectionNumToNull(); }}
+            style={{
+              padding: "3px 9px",
+              borderRadius: 4,
+              background: selectedIds.size > 0 ? "rgba(107,114,128,0.18)" : "transparent",
+              color: selectedIds.size > 0 ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.3)",
+              border: `1px solid ${selectedIds.size > 0 ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.3)"}`,
+              cursor: selectedIds.size > 0 ? "pointer" : "default",
+              fontSize: 11,
+              fontWeight: 600,
+              lineHeight: 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Reset §
           </button>
         </div>
         {mode === "fill" && (
@@ -3203,7 +3231,7 @@ export function ZoneForm({
           }}
           onBlur={() => {
             const parsed = parseSectionInput(rawSection ?? "");
-            onChange({ ...form, sectionNum: parsed ?? 0 });
+            onChange({ ...form, sectionNum: parsed ?? null });
             setRawSection(null);
           }}
           placeholder="e.g. 06 or A"
