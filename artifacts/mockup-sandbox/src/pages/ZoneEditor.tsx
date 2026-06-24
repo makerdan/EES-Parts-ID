@@ -430,15 +430,25 @@ export function buildAutoNumPreview(
   start: number,
   increment: number,
   digits: number,
+  orderedIds?: number[],
 ): Array<{ zone: Zone; newSectionNum: number; newSectionNumDisplay: string; newSortOrder: number }> {
   if (selectedIds.size === 0) return [];
   const selected = zones.filter((z) => selectedIds.has(z.id));
-  const sorted = [...selected].sort((a, b) => {
-    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
-    return a.svgY - b.svgY;
-  });
+  let ordered: Zone[];
+  if (orderedIds && orderedIds.length > 0) {
+    const byId = new Map(selected.map((z) => [z.id, z]));
+    ordered = orderedIds.flatMap((id) => {
+      const z = byId.get(id);
+      return z ? [z] : [];
+    });
+  } else {
+    ordered = [...selected].sort((a, b) => {
+      if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+      return a.svgY - b.svgY;
+    });
+  }
   const inc = Math.max(1, increment);
-  return sorted.map((zone, i) => {
+  return ordered.map((zone, i) => {
     const num = start + i * inc;
     const display = digits > 1 ? String(num).padStart(digits, "0") : String(num);
     return { zone, newSectionNum: num, newSectionNumDisplay: display, newSortOrder: num };
@@ -625,6 +635,9 @@ export function ZoneEditor() {
 
   // Multi-select: a Set of selected zone IDs
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // Selection order: zone IDs in the order they were added to the selection.
+  // Used by Auto-Number to assign numbers in tap/click sequence.
+  const [selectionOrder, setSelectionOrder] = useState<number[]>([]);
 
   // draftRect: the live rectangle being drawn (while dragging in draw mode)
   const [draftRect, setDraftRect] = useState<{
@@ -946,6 +959,7 @@ export function ZoneEditor() {
         );
         if (zonesToDelete.length > 0) pushUndo({ type: "delete", zones: zonesToDelete });
         setSelectedIds(new Set());
+        setSelectionOrder([]);
         await fetchZones();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err));
@@ -970,6 +984,7 @@ export function ZoneEditor() {
       ) return;
       e.preventDefault();
       setSelectedIds(new Set());
+      setSelectionOrder([]);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -1191,6 +1206,7 @@ export function ZoneEditor() {
       pushUndo({ type: "create", zones: [zone] });
       setPendingRect(null);
       setSelectedIds(new Set([zone.id]));
+      setSelectionOrder([zone.id]);
       setForm({ aisleId: zone.aisleId, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
@@ -1241,6 +1257,7 @@ export function ZoneEditor() {
       toast.success("Zone deleted");
       if (zoneToDelete) pushUndo({ type: "delete", zones: [zoneToDelete] });
       setSelectedIds(new Set());
+      setSelectionOrder([]);
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -1281,6 +1298,7 @@ export function ZoneEditor() {
       toast.success(`Duplicated → placed to the right`);
       pushUndo({ type: "create", zones: [zone] });
       setSelectedIds(new Set([zone.id]));
+      setSelectionOrder([zone.id]);
       setForm({ aisleId: zone.aisleId, sectionNum: zone.sectionNum, isInventory: zone.isInventory, sortOrder: zone.sortOrder });
       await fetchZones();
     } catch (e) {
@@ -1338,6 +1356,7 @@ export function ZoneEditor() {
       toast.success(`Duplicated ${newIds.size} zone${newIds.size !== 1 ? "s" : ""} — drag to reposition`);
       pushUndo({ type: "create", zones: results.map((r) => r.zone) });
       setSelectedIds(newIds);
+      setSelectionOrder([...newIds]);
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -1658,6 +1677,16 @@ export function ZoneEditor() {
     selectedIds,
     setSelectedIds,
     setPendingRect,
+    // Rubber-band has no pointer sequence — append newly-hit IDs in sortOrder/svgY
+    // order (the order they arrive from hitTestZones via zonesRef) after any
+    // previously-selected IDs, matching the existing fallback sort in buildAutoNumPreview.
+    onRubberBandSelect: (newIds) => {
+      setSelectionOrder((prev) => {
+        const prevSet = new Set(prev);
+        const toAdd = newIds.filter((id) => !prevSet.has(id));
+        return [...prev, ...toAdd];
+      });
+    },
   });
 
   // ── Fill-mode click handler ─────────────────────────────────────────────────
@@ -1717,6 +1746,7 @@ export function ZoneEditor() {
       // Commit as pendingRect — opens the sidebar form (same flow as Draw mode).
       setPendingRect(rect);
       setSelectedIds(new Set());
+      setSelectionOrder([]);
       setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
 
       // Auto-switch back to Pan so a stray click doesn't trigger another fill.
@@ -1811,6 +1841,7 @@ export function ZoneEditor() {
         const dy = e.clientY - state.sy;
         if (Math.hypot(dx, dy) < 5) {
           setSelectedIds(new Set());
+          setSelectionOrder([]);
           setPendingRect(null);
         }
         return;
@@ -1822,11 +1853,13 @@ export function ZoneEditor() {
         setDraftRect(null);
         if (r.svgWidth < minSvg || r.svgHeight < minSvg) {
           setSelectedIds(new Set());
+          setSelectionOrder([]);
           setPendingRect(null);
           return;
         }
         setPendingRect({ x: r.svgX, y: r.svgY, w: r.svgWidth, h: r.svgHeight });
         setSelectedIds(new Set());
+        setSelectionOrder([]);
         setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 });
         return;
       }
@@ -1963,6 +1996,10 @@ export function ZoneEditor() {
         else next.add(zone.id);
         return next;
       });
+      setSelectionOrder((prev) => {
+        if (prev.includes(zone.id)) return prev.filter((id) => id !== zone.id);
+        return [...prev, zone.id];
+      });
       setPendingRect(null);
       return; // don't start move for shift-clicks
     }
@@ -1990,6 +2027,7 @@ export function ZoneEditor() {
     // Cancel any pending auto-save before the position drag fires its own PATCH
     if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
     setSelectedIds(new Set([zone.id]));
+    setSelectionOrder([zone.id]);
     setPendingRect(null);
     const p = getSvgPt(e.clientX, e.clientY);
     ixRef.current = {
@@ -2056,10 +2094,10 @@ export function ZoneEditor() {
   }, [zones, dragZone, multiDragDelta, selectedIds]);
 
   // ── Auto-number computed values ────────────────────────────────────────────
-  // Selected zones ordered by sortOrder then svgY (tiebreaker).
+  // Selected zones ordered by selection sequence (or sortOrder/svgY fallback for rubber-band).
   const autoNumPreview = useMemo(
-    () => buildAutoNumPreview(zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits),
-    [zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits],
+    () => buildAutoNumPreview(zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits, selectionOrder),
+    [zones, selectedIds, autoNumStart, autoNumIncrement, autoNumDigits, selectionOrder],
   );
 
   // Live collision check — recomputed whenever the preview or zone list changes.
@@ -2215,10 +2253,10 @@ export function ZoneEditor() {
           <ModeBtn active={mode === "pan"} onClick={() => { setMode("pan"); }}>
             Pan / Select
           </ModeBtn>
-          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setPendingRect(null); setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 }); }}>
+          <ModeBtn active={mode === "draw"} onClick={() => { setMode("draw"); setSelectedIds(new Set()); setSelectionOrder([]); setPendingRect(null); setForm({ aisleId: "", sectionNum: 0, isInventory: true, sortOrder: 0 }); }}>
             Draw Zone
           </ModeBtn>
-          <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setPendingRect(null); }}>
+          <ModeBtn active={mode === "fill"} onClick={() => { setMode("fill"); setSelectedIds(new Set()); setSelectionOrder([]); setPendingRect(null); }}>
             ⬛ Fill
           </ModeBtn>
           <div style={{ width: 1, background: "rgba(255,255,255,0.3)", margin: "0 2px" }} />
@@ -2669,7 +2707,7 @@ export function ZoneEditor() {
                   >
                     {saving ? "Duplicating…" : `Duplicate ${selectedIds.size}`}
                   </Btn>
-                  <Btn color="#6b7280" onClick={() => setSelectedIds(new Set())}>
+                  <Btn color="#6b7280" onClick={() => { setSelectedIds(new Set()); setSelectionOrder([]); }}>
                     Clear
                   </Btn>
                 </Row>
@@ -2750,7 +2788,7 @@ export function ZoneEditor() {
                     </Btn>
                     <Btn
                       color="#6b7280"
-                      onClick={() => setSelectedIds(new Set())}
+                      onClick={() => { setSelectedIds(new Set()); setSelectionOrder([]); }}
                     >
                       Deselect
                     </Btn>
@@ -3038,8 +3076,13 @@ export function ZoneEditor() {
                         else next.add(zone.id);
                         return next;
                       });
+                      setSelectionOrder((prev) => {
+                        if (prev.includes(zone.id)) return prev.filter((id) => id !== zone.id);
+                        return [...prev, zone.id];
+                      });
                     } else {
                       setSelectedIds(new Set([zone.id]));
+                      setSelectionOrder([zone.id]);
                     }
                     setPendingRect(null);
                   }}

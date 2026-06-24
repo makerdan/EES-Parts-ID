@@ -48,6 +48,14 @@ interface UseRubberBandOptions<T extends RubberZone> {
   setPendingRect: React.Dispatch<
     React.SetStateAction<{ x: number; y: number; w: number; h: number } | null>
   >;
+  /**
+   * Optional callback invoked with the newly-added zone IDs when a rubber-band
+   * selection completes and at least one zone was hit.
+   * The IDs are provided in the order they appear in `zonesRef` at drag-end
+   * (already sorted by sortOrder/svgY by the caller convention).
+   * Use this to append the IDs to a selection-order list.
+   */
+  onRubberBandSelect?: (newIds: number[]) => void;
 }
 
 interface UseRubberBandResult {
@@ -67,6 +75,7 @@ export function useRubberBand<T extends RubberZone>({
   getSvgPt,
   setSelectedIds,
   setPendingRect,
+  onRubberBandSelect,
 }: UseRubberBandOptions<T>): UseRubberBandResult {
   const [rubberRect, setRubberRect] = useState<{
     x: number;
@@ -87,12 +96,16 @@ export function useRubberBand<T extends RubberZone>({
   /** Stable refs to the latest setter callbacks — avoids stale closure captures. */
   const setSelectedIdsRef = useRef(setSelectedIds);
   const setPendingRectRef = useRef(setPendingRect);
+  const onRubberBandSelectRef = useRef(onRubberBandSelect);
   useEffect(() => {
     setSelectedIdsRef.current = setSelectedIds;
   }, [setSelectedIds]);
   useEffect(() => {
     setPendingRectRef.current = setPendingRect;
   }, [setPendingRect]);
+  useEffect(() => {
+    onRubberBandSelectRef.current = onRubberBandSelect;
+  }, [onRubberBandSelect]);
 
   /** Remove document listeners and reset all drag state. */
   const teardown = useCallback((clearRect = true) => {
@@ -157,6 +170,10 @@ export function useRubberBand<T extends RubberZone>({
           const newIds = hits.map((z) => z.id);
           setSelectedIdsRef.current((prev) => new Set([...prev, ...newIds]));
           setPendingRectRef.current(null);
+          // Notify the caller about newly-added IDs so it can update selection order.
+          // Rubber-band has no meaningful pointer sequence, so IDs arrive in
+          // zonesRef order (sortOrder/svgY) — matching the existing fallback sort.
+          onRubberBandSelectRef.current?.(newIds);
         }
       };
 
