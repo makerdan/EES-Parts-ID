@@ -1346,3 +1346,189 @@ describe("CatalogPdfUpload — web upload path (Platform.OS = 'web')", () => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Group 6 — Native upload path ETA (Platform.OS = "ios")
+//
+// Verifies that when running on iOS (or Android — same code path):
+//   • The FileSystem.createUploadTask progress callback fires onProgressBytes.
+//   • After ≥ 3 spaced progress events the upload speed and ETA text appear.
+//   • Both disappear once uploadAsync resolves (resetUploadProgress is called).
+//   • With only 1 progress event the UI has no speed or ETA text yet.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", () => {
+  let originalPlatformOS: string;
+
+  beforeEach(() => {
+    const { Platform } = require("react-native") as { Platform: { OS: string } };
+    originalPlatformOS = Platform.OS;
+    (Platform as { OS: string }).OS = "ios";
+  });
+
+  afterEach(() => {
+    const { Platform } = require("react-native") as { Platform: { OS: string } };
+    (Platform as { OS: string }).OS = originalPlatformOS;
+  });
+
+  /**
+   * Sets up mockCreateUploadTask so it:
+   *   1. Captures the native progress callback passed as the 4th argument.
+   *   2. Returns a task whose uploadAsync is a promise that callers can
+   *      resolve manually via the returned `resolve` function.
+   */
+  function installControllableUploadTask(): {
+    getProgressCallback: () => ((data: { totalBytesSent: number; totalBytesExpectedToSend: number }) => void) | undefined;
+    resolveUpload: (result: { status: number; body: string }) => void;
+  } {
+    let capturedCallback: ((data: { totalBytesSent: number; totalBytesExpectedToSend: number }) => void) | undefined;
+    let resolveUpload!: (result: { status: number; body: string }) => void;
+
+    mockCreateUploadTask.mockImplementation(
+      (_url: unknown, _tempUri: unknown, _options: unknown, progressCallback: unknown) => {
+        capturedCallback = progressCallback as typeof capturedCallback;
+        return {
+          uploadAsync: jest.fn(
+            () => new Promise<{ status: number; body: string }>((res) => { resolveUpload = res; }),
+          ),
+          cancelAsync: jest.fn(),
+        };
+      },
+    );
+
+    return {
+      getProgressCallback: () => capturedCallback,
+      resolveUpload: (result) => resolveUpload(result),
+    };
+  }
+
+  async function pickFileAndSetVendorNative(
+    tree: renderer.ReactTestRenderer,
+    pdfBytes: Uint8Array,
+    vendor = "ACME",
+  ): Promise<void> {
+    const file = makeFile(pdfBytes);
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: "blob:http://localhost/catalog.pdf", name: "catalog.pdf", file }],
+    });
+    mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
+
+    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    await act(async () => { pickBtn!.props.onPress(); });
+    await flushPromises();
+
+    expect(capturedOnChangeText).not.toBeNull();
+    await act(async () => { capturedOnChangeText!(vendor); });
+  }
+
+  it("progress bar appears after the native progress callback fires once", async () => {
+    const { getProgressCallback } = installControllableUploadTask();
+
+    const tree = await renderUploadCard("native-admin-tok");
+    activeTree = tree;
+
+    await pickFileAndSetVendorNative(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    const cb = getProgressCallback();
+    expect(cb).toBeDefined();
+
+    await act(async () => {
+      cb!({ totalBytesSent: 3 * 1024 * 1024, totalBytesExpectedToSend: 10 * 1024 * 1024 });
+    });
+    await flushPromises();
+
+    const allText = instText(tree.root);
+    expect(allText).toContain("30% uploaded");
+  });
+
+  it("shows speed and ETA after ≥ 3 native progress events; both disappear when uploadAsync resolves", async () => {
+    const { getProgressCallback, resolveUpload } = installControllableUploadTask();
+
+    const tree = await renderUploadCard("native-admin-tok");
+    activeTree = tree;
+
+    await pickFileAndSetVendorNative(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    const cb = getProgressCallback();
+    expect(cb).toBeDefined();
+
+    const totalBytes = 10 * 1024 * 1024;
+
+    let fakeNow = 1_000_000;
+    const dateSpy = jest.spyOn(Date, "now").mockImplementation(() => fakeNow);
+
+    try {
+      // Fire first 2 events — fewer than 3 samples, so speed/ETA absent yet
+      for (const sent of [2 * 1024 * 1024, 4 * 1024 * 1024]) {
+        fakeNow += 2000;
+        await act(async () => {
+          cb!({ totalBytesSent: sent, totalBytesExpectedToSend: totalBytes });
+        });
+        await flushPromises();
+      }
+
+      let allText = instText(tree.root);
+      expect(allText).not.toMatch(/MB\/s/);
+      expect(allText).not.toMatch(/remaining/);
+
+      // Fire a third event — stable throughput, so speed AND ETA should now appear
+      fakeNow += 2000;
+      await act(async () => {
+        cb!({ totalBytesSent: 6 * 1024 * 1024, totalBytesExpectedToSend: totalBytes });
+      });
+      await flushPromises();
+
+      allText = instText(tree.root);
+      expect(allText).toMatch(/MB\/s/);
+      expect(allText).toMatch(/remaining/);
+    } finally {
+      dateSpy.mockRestore();
+    }
+
+    // Resolve the upload — speed and ETA must both disappear
+    await act(async () => {
+      resolveUpload({ status: 200, body: JSON.stringify({ jobId: "native-eta-job" }) });
+    });
+    await flushPromises();
+
+    const allText = instText(tree.root);
+    expect(allText).not.toMatch(/MB\/s/);
+    expect(allText).not.toMatch(/remaining/);
+  });
+
+  it("does not show speed or ETA when only 1 native progress event fires (not enough data)", async () => {
+    const { getProgressCallback } = installControllableUploadTask();
+
+    const tree = await renderUploadCard("native-admin-tok");
+    activeTree = tree;
+
+    await pickFileAndSetVendorNative(tree, makePdfBytes());
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    const cb = getProgressCallback();
+    expect(cb).toBeDefined();
+
+    // Single progress event — too few samples for speed/ETA computation
+    await act(async () => {
+      cb!({ totalBytesSent: 5 * 1024 * 1024, totalBytesExpectedToSend: 10 * 1024 * 1024 });
+    });
+    await flushPromises();
+
+    const allText = instText(tree.root);
+    expect(allText).toContain("50% uploaded");
+    expect(allText).not.toMatch(/MB\/s/);
+    expect(allText).not.toMatch(/remaining/);
+  });
+});
+
