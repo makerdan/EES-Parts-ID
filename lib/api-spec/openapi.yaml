@@ -1230,10 +1230,6 @@ components:
         sectionNum:
           type: integer
           nullable: true
-        sectionCode:
-          type: string
-          nullable: true
-          pattern: "^[A-Z]{4}$"
         isInventory:
           type: boolean
         svgX:
@@ -1262,10 +1258,6 @@ components:
         sectionNum:
           type: integer
           nullable: true
-        sectionCode:
-          type: string
-          nullable: true
-          pattern: "^[A-Z]{4}$"
         isInventory:
           type: boolean
         svgX:

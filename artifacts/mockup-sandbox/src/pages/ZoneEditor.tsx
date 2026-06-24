@@ -270,23 +270,6 @@ function sectionNumToDisplay(n: number | null): string {
 }
 
 /**
- * Generates a random 4-letter uppercase section code (e.g. "JKQM") that is
- * not already present in existingCodes. Retries on the rare collision.
- * 26^4 = 456,976 possible codes — probability of collision is negligible until
- * the zone count exceeds several thousand.
- */
-export function generateUniqueSectionCode(existingCodes: Set<string>): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  for (;;) {
-    let code = "";
-    for (let i = 0; i < 4; i++) {
-      code += chars[Math.floor(Math.random() * 26)];
-    }
-    if (!existingCodes.has(code)) return code;
-  }
-}
-
-/**
  * Formats a raw aisle-ID or section string for two-digit display.
  * Pure single-digit numbers are zero-padded ("1" → "01", "9" → "09").
  * Multi-digit numbers and letter codes are returned uppercased as-is.
@@ -665,7 +648,6 @@ export function ZoneEditor() {
     aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0,
   });
   const [saving, setSaving] = useState(false);
-  const [assigningCodes, setAssigningCodes] = useState(false);
 
   // Multi-select form fields
   const [multiAisleId, setMultiAisleId] = useState("");
@@ -1351,39 +1333,6 @@ export function ZoneEditor() {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleAssignCodes = async () => {
-    if (selectedIds.size === 0) return;
-    setAssigningCodes(true);
-    try {
-      const usedCodes = new Set(zones.flatMap((z) => (z.sectionCode ? [z.sectionCode] : [])));
-      const assignments = [...selectedIds].map((id) => {
-        const code = generateUniqueSectionCode(usedCodes);
-        usedCodes.add(code);
-        return { id, code };
-      });
-      const undoChanges = assignments.map(({ id, code }) => {
-        const zone = zones.find((z) => z.id === id);
-        return {
-          id,
-          before: { sectionCode: zone?.sectionCode ?? null } as MetaSnap,
-          after: { sectionCode: code } as MetaSnap,
-        };
-      });
-      await Promise.all(
-        assignments.map(({ id, code }) =>
-          patchZone(id, { sectionCode: code }),
-        ),
-      );
-      pushUndo({ type: "multiEdit", changes: undoChanges });
-      toast.success(`Assigned codes to ${assignments.length} zone${assignments.length !== 1 ? "s" : ""}`);
-      await fetchZones();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setAssigningCodes(false);
     }
   };
 
@@ -2302,26 +2251,6 @@ export function ZoneEditor() {
             }}
           >
             ↪
-          </button>
-          <div style={{ width: 1, background: "rgba(255,255,255,0.3)", margin: "0 2px" }} />
-          <button
-            title={selectedIds.size > 0 ? `Assign 4-letter codes to ${selectedIds.size} selected zone${selectedIds.size !== 1 ? "s" : ""}` : "Select zones first"}
-            disabled={selectedIds.size === 0 || assigningCodes}
-            onClick={() => { void handleAssignCodes(); }}
-            style={{
-              padding: "3px 9px",
-              borderRadius: 4,
-              background: selectedIds.size > 0 && !assigningCodes ? "rgba(245,158,11,0.18)" : "transparent",
-              color: selectedIds.size > 0 && !assigningCodes ? "#f59e0b" : "rgba(255,255,255,0.3)",
-              border: `1px solid ${selectedIds.size > 0 && !assigningCodes ? "#f59e0b" : "rgba(255,255,255,0.3)"}`,
-              cursor: selectedIds.size > 0 && !assigningCodes ? "pointer" : "default",
-              fontSize: 11,
-              fontWeight: 600,
-              lineHeight: 1,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {assigningCodes ? "Assigning…" : "Assign Codes"}
           </button>
           <button
             title={selectedIds.size > 0 ? `Clear §number for ${selectedIds.size} selected zone${selectedIds.size !== 1 ? "s" : ""}` : "Select zones first"}

@@ -109,7 +109,6 @@ router.post("/", requireAdminAuth, async (req, res) => {
       svgWidth,
       svgHeight,
       sortOrder,
-      sectionCode,
     } = parsed.data;
     const aisleId = normalizeAisleId(rawAisleId);
     const [zone] = await db
@@ -123,7 +122,6 @@ router.post("/", requireAdminAuth, async (req, res) => {
         svgWidth,
         svgHeight,
         sortOrder: sortOrder ?? 0,
-        ...(sectionCode !== undefined ? { sectionCode } : {}),
       })
       .returning();
     res.status(201).json({ zone });
@@ -150,6 +148,7 @@ router.patch("/:id", requireAdminAuth, async (req, res) => {
     if (updates.aisleId !== undefined) {
       updates.aisleId = normalizeAisleId(updates.aisleId);
     }
+    delete (updates as Record<string, unknown>)["sectionCode"];
     const [zone] = await db
       .update(warehouseZoneTable)
       .set({ ...updates, updatedAt: new Date() })
