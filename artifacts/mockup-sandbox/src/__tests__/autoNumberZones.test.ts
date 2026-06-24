@@ -179,6 +179,69 @@ describe("buildAutoNumPreview", () => {
     const result = buildAutoNumPreview(zones, new Set([1, 2]), 10, 0, 1);
     expect(result.map((r) => r.newSortOrder)).toEqual([10, 11]);
   });
+
+  // ── orderedIds parameter ───────────────────────────────────────────────────
+
+  // 15. orderedIds overrides sortOrder/svgY sort when provided and non-empty
+  it("uses orderedIds sequence instead of sortOrder/svgY when orderedIds is provided", () => {
+    const zones = [
+      zone(1, "5", 1, 10, 100), // sortOrder=10, svgY=100
+      zone(2, "5", 1, 5,  200), // sortOrder=5,  svgY=200 — would sort first by sortOrder
+      zone(3, "5", 1, 20, 50),  // sortOrder=20, svgY=50  — would sort last by sortOrder
+    ];
+    // Request reverse of natural sortOrder sort: 3 → 1 → 2
+    const result = buildAutoNumPreview(zones, new Set([1, 2, 3]), 1, 1, 1, [3, 1, 2]);
+    expect(result.map((r) => r.zone.id)).toEqual([3, 1, 2]);
+  });
+
+  // 16. orderedIds assigns numbers in caller-supplied sequence, not sortOrder sequence
+  it("assigns sectionNums in orderedIds sequence", () => {
+    const zones = [
+      zone(10, "5", 99, 1, 0), // sortOrder=1 — would be first in natural sort
+      zone(20, "5", 99, 2, 0), // sortOrder=2
+      zone(30, "5", 99, 3, 0), // sortOrder=3 — would be last in natural sort
+    ];
+    // Reverse order: 30 gets num=1, 20 gets num=2, 10 gets num=3
+    const result = buildAutoNumPreview(zones, new Set([10, 20, 30]), 1, 1, 1, [30, 20, 10]);
+    expect(result[0]!.zone.id).toBe(30);
+    expect(result[0]!.newSectionNum).toBe(1);
+    expect(result[1]!.zone.id).toBe(20);
+    expect(result[1]!.newSectionNum).toBe(2);
+    expect(result[2]!.zone.id).toBe(10);
+    expect(result[2]!.newSectionNum).toBe(3);
+  });
+
+  // 17. empty orderedIds array falls back to sortOrder/svgY sort
+  it("falls back to sortOrder/svgY sort when orderedIds is an empty array", () => {
+    const zones = [
+      zone(1, "5", 1, 10, 100),
+      zone(2, "5", 1, 5,  200), // sortOrder=5 — sorts first
+      zone(3, "5", 1, 20, 50),  // sortOrder=20 — sorts last
+    ];
+    const result = buildAutoNumPreview(zones, new Set([1, 2, 3]), 1, 1, 1, []);
+    expect(result.map((r) => r.zone.id)).toEqual([2, 1, 3]);
+  });
+
+  // 18. orderedIds absent (undefined) falls back to sortOrder/svgY sort
+  it("falls back to sortOrder/svgY sort when orderedIds is omitted", () => {
+    const zones = [
+      zone(1, "5", 1, 10, 100),
+      zone(2, "5", 1, 5,  200),
+      zone(3, "5", 1, 20, 50),
+    ];
+    const result = buildAutoNumPreview(zones, new Set([1, 2, 3]), 1, 1, 1);
+    expect(result.map((r) => r.zone.id)).toEqual([2, 1, 3]);
+  });
+
+  // 19. orderedIds only includes a subset — IDs not in selectedIds are silently skipped
+  it("skips orderedIds entries whose zone is not in selectedIds", () => {
+    const zones = [zone(1, "5", 99), zone(2, "5", 99), zone(3, "5", 99)];
+    // selectedIds only contains 1 and 3; orderedIds mentions 2 which is not selected
+    const result = buildAutoNumPreview(zones, new Set([1, 3]), 1, 1, 1, [3, 2, 1]);
+    // 2 is not in selectedIds — byId.get(2) returns undefined and is dropped
+    expect(result.map((r) => r.zone.id)).toEqual([3, 1]);
+    expect(result).toHaveLength(2);
+  });
 });
 
 // ── buildAutoNumSentinelMap ────────────────────────────────────────────────────
