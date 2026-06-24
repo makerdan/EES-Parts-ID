@@ -345,7 +345,7 @@ export interface AiIdentifyResponse {
 export interface WarehouseZoneItem {
   id: number;
   aisleId: string;
-  sectionNum: number;
+  sectionNum: number | null;
   sectionCode: string | null;
   isInventory: boolean;
   svgX: number;
@@ -368,7 +368,7 @@ export interface WarehouseZoneResponse {
 export interface CreateWarehouseZoneBody {
   /** @minLength 1 */
   aisleId: string;
-  sectionNum?: number;
+  sectionNum?: number | null;
   /** @pattern ^[A-Z]{4}$ */
   sectionCode?: string | null;
   isInventory?: boolean;
@@ -382,7 +382,7 @@ export interface CreateWarehouseZoneBody {
 export interface UpdateWarehouseZoneBody {
   /** @minLength 1 */
   aisleId?: string;
-  sectionNum?: number;
+  sectionNum?: number | null;
   /** @pattern ^[A-Z]{4}$ */
   sectionCode?: string | null;
   isInventory?: boolean;

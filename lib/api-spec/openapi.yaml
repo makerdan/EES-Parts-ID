@@ -1167,6 +1167,7 @@ components:
           type: string
         sectionNum:
           type: integer
+          nullable: true
         sectionCode:
           type: string
           nullable: true
@@ -1228,6 +1229,7 @@ components:
           minLength: 1
         sectionNum:
           type: integer
+          nullable: true
         sectionCode:
           type: string
           nullable: true
@@ -1259,6 +1261,7 @@ components:
           minLength: 1
         sectionNum:
           type: integer
+          nullable: true
         sectionCode:
           type: string
           nullable: true

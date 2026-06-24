@@ -89,7 +89,7 @@ async function checkZoneSectionNumIntegrity(): Promise<void> {
       return;
     }
 
-    const mismatches: { id: number; expected: number; actual: number }[] = [];
+    const mismatches: { id: number; expected: number; actual: number | null }[] = [];
     for (const sentinel of ZONE_SECTION_SENTINELS) {
       const row = rows.find((r) => r.id === sentinel.id);
       if (row && row.sectionNum !== sentinel.expectedSectionNum) {
@@ -144,7 +144,42 @@ async function migrateWarehouseZoneSectionCode(): Promise<void> {
   }
 }
 
-Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneSectionCode(), checkZoneSectionNumIntegrity()])
+async function migrateWarehouseZoneNullSectionNum(): Promise<void> {
+  try {
+    // Make section_num nullable if it still has a NOT NULL constraint.
+    await db.execute(sql`
+      ALTER TABLE warehouse_zone ALTER COLUMN section_num DROP NOT NULL
+    `);
+  } catch {
+    // Silently ignore — column may already be nullable.
+  }
+  try {
+    // Drop the column default so new inserts don't fall back to 0.
+    await db.execute(sql`
+      ALTER TABLE warehouse_zone ALTER COLUMN section_num DROP DEFAULT
+    `);
+  } catch {
+    // Silently ignore — default may already be gone.
+  }
+  try {
+    // (a) Set section_num = NULL for sentinel rows (≤ 0) AND for any row that
+    //     previously had a section_code (auto-generated codes indicate the
+    //     section number was never user-assigned).
+    await db.execute(sql`
+      UPDATE warehouse_zone
+         SET section_num = NULL
+       WHERE section_num IS NOT NULL
+         AND (section_num <= 0 OR section_code IS NOT NULL)
+    `);
+    // (b) Wipe all section codes (deprecated field).
+    await db.execute(sql`UPDATE warehouse_zone SET section_code = NULL`);
+    logger.info("Cleared section_code and nulled sentinel/coded section_nums");
+  } catch (err) {
+    logger.error({ err }, "Failed to null-migrate warehouse_zone section_num / section_code");
+  }
+}
+
+Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneSectionCode(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity()])
   .then(() => initProvider())
   .then(() => probePoeBotsOnStartup())
   .then(() => startServer(app, port, MAX_RETRIES))

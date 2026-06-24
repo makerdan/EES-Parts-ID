@@ -6,7 +6,7 @@
 export interface ZoneLike {
   id: number;
   aisleId: string;
-  sectionNum: number;
+  sectionNum: number | null;
 }
 
 /**
@@ -45,8 +45,9 @@ export function findDuplicateConflict<T extends ZoneLike>(
   zones: T[],
   excludeId: number | null,
   aisleId: string,
-  sectionNum: number,
+  sectionNum: number | null,
 ): T | null {
+  if (sectionNum === null) return null;
   const normalized = normalizeAisleId(aisleId);
   return (
     zones.find((z) => {
