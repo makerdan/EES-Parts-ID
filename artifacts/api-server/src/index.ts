@@ -162,6 +162,27 @@ async function migrateWarehouseZoneNullSectionNum(): Promise<void> {
     // Silently ignore — default may already be gone.
   }
   try {
+    // Ensure the quick_lookup_cache table exists before we use it as a flag
+    // store. This function runs in parallel with initQuickLookupCache(), so we
+    // cannot rely on that function having already created the table.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS quick_lookup_cache (
+        label TEXT PRIMARY KEY,
+        answer TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+
+    // Idempotency guard — only run the one-time wipe once per deployment
+    // environment. Subsequent restarts skip directly to the log line below.
+    const flagRows = await db.execute(sql`
+      SELECT 1 FROM quick_lookup_cache WHERE label = 'section_code_wipe_v1'
+    `);
+    if (flagRows.rows.length > 0) {
+      logger.debug("section_code one-time wipe already applied — skipping");
+      return;
+    }
+
     // (a) Set section_num = NULL for sentinel rows (≤ 0) AND for any row that
     //     previously had a section_code (auto-generated codes indicate the
     //     section number was never user-assigned).
@@ -171,9 +192,16 @@ async function migrateWarehouseZoneNullSectionNum(): Promise<void> {
        WHERE section_num IS NOT NULL
          AND (section_num <= 0 OR section_code IS NOT NULL)
     `);
-    // (b) Wipe all section codes (deprecated field).
+    // (b) Wipe all section codes (deprecated field) unconditionally.
     await db.execute(sql`UPDATE warehouse_zone SET section_code = NULL`);
-    logger.info("Cleared section_code and nulled sentinel/coded section_nums");
+
+    // Persist the idempotency flag so this block is skipped on future restarts.
+    await db.execute(sql`
+      INSERT INTO quick_lookup_cache (label, answer, updated_at)
+      VALUES ('section_code_wipe_v1', 'done', now())
+      ON CONFLICT (label) DO NOTHING
+    `);
+    logger.info("Cleared section_code and nulled sentinel/coded section_nums (one-time wipe complete)");
   } catch (err) {
     logger.error({ err }, "Failed to null-migrate warehouse_zone section_num / section_code");
   }
