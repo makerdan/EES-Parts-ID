@@ -228,7 +228,7 @@ describe("PDF job progress — DB updated per page", () => {
           stateAtStartOfPage2.matchedParts = latest.matchedParts ?? -1;
         }
       }
-      return [];
+      return { entries: [], rawText: "" };
     });
 
     const jobId = await startJob();
@@ -284,12 +284,12 @@ describe("PDF job progress — DB updated per page", () => {
           stateAtStartOfPage2.processedPages = latest.processedPages ?? -1;
           stateAtStartOfPage2.matchedParts = latest.matchedParts ?? -1;
         }
-        return [];
+        return { entries: [], rawText: "" };
       }
       // First call: return the fixture entry so matchCatalogNumber fires.
-      return [
+      return { entries: [
         { catalogNumber: "JEST-PGS-PART-001", description: "Jest Test Part", confidence: 0.95, hasPartImage: false, imageRegion: null },
-      ];
+      ], rawText: "" };
     });
 
     const jobId = await startJob();
@@ -331,7 +331,7 @@ describe("PDF job progress — DB updated per page", () => {
           capturedCounts.push(latest.processedPages);
         }
       }
-      return [];
+      return { entries: [], rawText: "" };
     });
 
     const jobId = await startJob();
@@ -358,7 +358,7 @@ describe("PDF job status endpoint — DB-accurate counts after simulated restart
       { pageNum: 1, text: "p1", images: [], isRendered: false, pageWidth: 0, pageHeight: 0 },
       { pageNum: 2, text: "p2", images: [], isRendered: false, pageWidth: 0, pageHeight: 0 },
     ]);
-    mockExtractCatalogPage.mockResolvedValue([]);
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
     const jobId = await startJob();
     await waitForJobDone(jobId);
@@ -383,9 +383,9 @@ describe("PDF job status endpoint — DB-accurate counts after simulated restart
     mockExtractPdfPages.mockResolvedValueOnce([
       { pageNum: 1, text: "part page", images: [], isRendered: false, pageWidth: 0, pageHeight: 0 },
     ]);
-    mockExtractCatalogPage.mockResolvedValueOnce([
+    mockExtractCatalogPage.mockResolvedValueOnce({ entries: [
       { catalogNumber: "JEST-PGS-PART-002", description: "Another Jest Part", confidence: 0.9, hasPartImage: false, imageRegion: null },
-    ]);
+    ], rawText: "" });
     mockMatchCatalogNumber.mockResolvedValueOnce({
       inventoryId,
       similarityScore: 0.85,

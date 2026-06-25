@@ -262,7 +262,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — skips already-processed 
     });
 
     mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(TOTAL_PAGES));
-    mockExtractCatalogPage.mockResolvedValue([]);
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
     await supertest(app)
       .post(`/api/admin/catalog-pdf/${jobId}/resume`)
@@ -288,7 +288,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — skips already-processed 
     });
 
     mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(TOTAL_PAGES));
-    mockExtractCatalogPage.mockResolvedValue([]);
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
     await supertest(app)
       .post(`/api/admin/catalog-pdf/${jobId}/resume`)
@@ -314,7 +314,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — skips already-processed 
     });
 
     mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(TOTAL_PAGES));
-    mockExtractCatalogPage.mockResolvedValue([]);
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
     await supertest(app)
       .post(`/api/admin/catalog-pdf/${jobId}/resume`)
@@ -343,7 +343,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — skips already-processed 
 
     const pages = makeFakePages(TOTAL_PAGES);
     mockExtractPdfPages.mockResolvedValueOnce(pages);
-    mockExtractCatalogPage.mockResolvedValue([]);
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
     await supertest(app)
       .post(`/api/admin/catalog-pdf/${jobId}/resume`)
@@ -381,7 +381,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — status transitions to pr
       statusWhenExtractCalled = row.status;
       return makeFakePages(2);
     });
-    mockExtractCatalogPage.mockResolvedValue([]);
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
     await supertest(app)
       .post(`/api/admin/catalog-pdf/${jobId}/resume`)
@@ -404,7 +404,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — status transitions to pr
     });
 
     mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(5));
-    mockExtractCatalogPage.mockResolvedValue([]);
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
     const res = await supertest(app)
       .post(`/api/admin/catalog-pdf/${jobId}/resume`)

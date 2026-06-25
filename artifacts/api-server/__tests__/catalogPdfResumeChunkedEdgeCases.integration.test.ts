@@ -141,12 +141,12 @@ async function waitForJobTerminal(
 beforeAll(async () => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
-  mockExtractCatalogPage.mockResolvedValue([]);
+  mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 }, 15_000);
 
 afterEach(() => {
   jest.clearAllMocks();
-  mockExtractCatalogPage.mockResolvedValue([]);
+  mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 });
 
 afterAll(async () => {
@@ -192,7 +192,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — chunkPageOffset arithmet
       });
 
       mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(CHUNK_PAGES));
-      mockExtractCatalogPage.mockResolvedValue([]);
+      mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
       await supertest(app)
         .post(`/api/admin/catalog-pdf/${jobId}/resume`)
@@ -233,7 +233,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — chunkPageOffset arithmet
       });
 
       mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(CHUNK_PAGES));
-      mockExtractCatalogPage.mockResolvedValue([]);
+      mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
       await supertest(app)
         .post(`/api/admin/catalog-pdf/${jobId}/resume`)
@@ -265,7 +265,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/resume — chunkPageOffset arithmet
       });
 
       mockExtractPdfPages.mockResolvedValueOnce(makeFakePages(10));
-      mockExtractCatalogPage.mockResolvedValue([]);
+      mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
       const res = await supertest(app)
         .post(`/api/admin/catalog-pdf/${jobId}/resume`)

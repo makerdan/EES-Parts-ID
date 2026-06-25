@@ -321,7 +321,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/cancel — processing loop stops on
         .expect(200);
       return makeFakePages(TOTAL_PAGES);
     });
-    mockExtractCatalogPage.mockResolvedValue([]);
+    mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 
     await supertest(app)
       .post(`/api/admin/catalog-pdf/${jobId}/resume`)
@@ -362,7 +362,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/cancel — processing loop stops on
           .set("Authorization", `Bearer ${adminToken}`)
           .expect(200);
       }
-      return [];
+      return { entries: [], rawText: "" };
     });
 
     await supertest(app)
@@ -408,7 +408,7 @@ describe("POST /api/admin/catalog-pdf/:jobId/cancel — processing loop stops on
           .set("Authorization", `Bearer ${adminToken}`)
           .expect(200);
       }
-      return [];
+      return { entries: [], rawText: "" };
     });
 
     await supertest(app)

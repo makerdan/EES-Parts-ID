@@ -189,7 +189,7 @@ describe("full pipeline: PDF → extractPdfPages → extractCatalogPage", () => 
     const pages = await extractPdfPages(Buffer.alloc(64));
     expect(pages).toHaveLength(1);
 
-    const entries = await extractCatalogPage(pages[0].text, pages[0].images, "Eaton");
+    const { entries } = await extractCatalogPage(pages[0].text, pages[0].images, "Eaton");
 
     expect(entries).toHaveLength(2);
     expect(entries.map((e) => e.catalogNumber)).toContain("BR120");
@@ -207,7 +207,7 @@ describe("full pipeline: PDF → extractPdfPages → extractCatalogPage", () => 
     setupPdfjsDoc([[{ str: "" }]]);
 
     const pages = await extractPdfPages(Buffer.alloc(64));
-    const entries = await extractCatalogPage(pages[0].text, pages[0].images, "Eaton");
+    const { entries } = await extractCatalogPage(pages[0].text, pages[0].images, "Eaton");
 
     // Both text and images are empty – no AI call should be made
     expect(entries).toEqual([]);
@@ -230,8 +230,8 @@ describe("full pipeline: PDF → extractPdfPages → extractCatalogPage", () => 
     expect(pages[1].pageNum).toBe(2);
 
     // Process each page independently (as the catalog job would)
-    const page1Entries = await extractCatalogPage(pages[0].text, pages[0].images, "Eaton");
-    const page2Entries = await extractCatalogPage(pages[1].text, pages[1].images, "Eaton");
+    const { entries: page1Entries } = await extractCatalogPage(pages[0].text, pages[0].images, "Eaton");
+    const { entries: page2Entries } = await extractCatalogPage(pages[1].text, pages[1].images, "Eaton");
 
     expect(page1Entries).toEqual([]);
     expect(page2Entries).toHaveLength(1);
@@ -257,7 +257,7 @@ describe("full pipeline: scanned page (text empty, page image provided)", () => 
       JSON.stringify([{ catalogNumber: "HBL5262I", description: "20A Receptacle", confidence: 0.88, hasPartImage: true, imageRegion: { x: 0.05, y: 0.1, width: 0.4, height: 0.3 } }]),
     ));
 
-    const entries = await extractCatalogPage(pages[0].text, [fakeRenderedImage], "Hubbell");
+    const { entries } = await extractCatalogPage(pages[0].text, [fakeRenderedImage], "Hubbell");
 
     expect(entries).toHaveLength(1);
     expect(entries[0].catalogNumber).toBe("HBL5262I");

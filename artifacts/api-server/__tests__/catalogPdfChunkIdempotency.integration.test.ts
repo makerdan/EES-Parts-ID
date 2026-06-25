@@ -141,12 +141,12 @@ async function waitForJobTerminal(
 beforeAll(async () => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
-  mockExtractCatalogPage.mockResolvedValue([]);
+  mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 }, 15_000);
 
 afterEach(() => {
   jest.clearAllMocks();
-  mockExtractCatalogPage.mockResolvedValue([]);
+  mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 });
 
 afterAll(async () => {
