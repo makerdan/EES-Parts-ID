@@ -90,13 +90,18 @@ function parseRegion(val: unknown): ImageRegion | null {
   };
 }
 
+export interface ExtractCatalogPageResult {
+  entries: CatalogEntry[];
+  rawText: string;
+}
+
 export async function extractCatalogPage(
   pageText: string,
   pageImages: Buffer[],
   vendor: string,
   useOpenAiFallback = false,
-): Promise<CatalogEntry[]> {
-  if (!pageText.trim() && pageImages.length === 0) return [];
+): Promise<ExtractCatalogPageResult> {
+  if (!pageText.trim() && pageImages.length === 0) return { entries: [], rawText: "" };
 
   // Enforce Gemini's 20 MB total inline request cap before building the
   // content array.  Gemini's limit covers all images + prompt text combined;
@@ -131,7 +136,7 @@ export async function extractCatalogPage(
     });
   }
 
-  if (userContent.length === 0) return [];
+  if (userContent.length === 0) return { entries: [], rawText: "" };
 
   try {
     const response = useOpenAiFallback
@@ -156,12 +161,12 @@ export async function extractCatalogPage(
 
     const raw = response.choices[0]?.message?.content ?? "[]";
     const match = raw.match(/\[[\s\S]*?\]/);
-    if (!match) return [];
+    if (!match) return { entries: [], rawText: raw };
 
     const parsed = JSON.parse(match[0]) as unknown[];
-    if (!Array.isArray(parsed)) return [];
+    if (!Array.isArray(parsed)) return { entries: [], rawText: raw };
 
-    return parsed
+    const entries = parsed
       .filter((e): e is Record<string, unknown> => {
         const entry = e as Partial<CatalogEntry>;
         return (
@@ -189,6 +194,7 @@ export async function extractCatalogPage(
           imageIndex2,
         };
       });
+    return { entries, rawText: raw };
   } catch (err) {
     if (err instanceof PoeBotChainExhaustedError) {
       throw err;

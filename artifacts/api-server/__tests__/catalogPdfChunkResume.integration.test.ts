@@ -136,7 +136,7 @@ async function waitForDb(
 beforeAll(async () => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
-  mockExtractCatalogPage.mockResolvedValue([]);
+  mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 }, 15_000);
 
 afterAll(async () => {
@@ -148,7 +148,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockExtractCatalogPage.mockResolvedValue([]);
+  mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -27,10 +27,23 @@ import { verifyAdminToken } from "./admin";
 import { extractPdfPages, validatePdf } from "../utils/pdfProcessor";
 import { extractCatalogPage, CatalogAiError } from "../utils/catalogExtractor";
 import type { ImageRegion } from "../utils/catalogExtractor";
+
 import { matchCatalogNumber } from "../utils/catalogMatcher";
 import { uploadCatalogImage } from "../lib/objectStorage";
 import { PoeBotChainExhaustedError } from "../lib/poeBot";
 import { isProviderPayloadTooLargeError } from "../utils/aiHelpers";
+
+// ── In-memory AI raw log store (in-session only, not persisted to DB) ─────────
+// Keyed by job ID (child job or single-upload job). Entries are appended as
+// each page is processed. The status endpoint aggregates across child jobs for
+// parent (multi-chunk) jobs.
+const aiRawLogStore = new Map<number, Array<{ page: number; text: string }>>();
+
+function appendAiRawLog(jobId: number, page: number, text: string): void {
+  let entries = aiRawLogStore.get(jobId);
+  if (!entries) { entries = []; aiRawLogStore.set(jobId, entries); }
+  entries.push({ page, text });
+}
 
 const router = Router();
 
@@ -197,9 +210,11 @@ async function processPdfPages(
       `[catalog-pdf] page=${page.pageNum + pageOffset} text=${page.text.length}chars images=${page.images.length} preview="${textPreview}"`,
     );
 
-    let entries: Awaited<ReturnType<typeof extractCatalogPage>>;
+    let entries: Awaited<ReturnType<typeof extractCatalogPage>>["entries"];
     try {
-      entries = await extractCatalogPage(page.text, page.images, normalizedVendor, useOpenAiFallback);
+      const result = await extractCatalogPage(page.text, page.images, normalizedVendor, useOpenAiFallback);
+      entries = result.entries;
+      appendAiRawLog(jobId, page.pageNum + pageOffset, result.rawText);
     } catch (err) {
       if (err instanceof PoeBotChainExhaustedError) {
         await db
@@ -693,6 +708,14 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
       .filter((c) => c.status === "failed")
       .map((c) => ({ chunkJobId: String(c.id), chunkIndex: c.chunkIndex }));
 
+    // Aggregate AI raw log from all child jobs, ordered by page number
+    const aggregatedAiRawLog: Array<{ page: number; text: string }> = [];
+    for (const child of children) {
+      const childLog = aiRawLogStore.get(child.id);
+      if (childLog) aggregatedAiRawLog.push(...childLog);
+    }
+    aggregatedAiRawLog.sort((a, b) => a.page - b.page);
+
     return void res.json({
       jobId,
       vendor: row.vendor,
@@ -706,11 +729,13 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
       startedAt: row.startedAt,
       finishedAt: row.finishedAt,
       errorMessage: errorMessage ?? null,
+      aiRawLog: aggregatedAiRawLog,
       ...(failedChunks.length > 0 ? { failedChunks } : {}),
     });
   }
 
   // ── Non-parent (child or legacy) job: return directly ────────────────────
+  const directLog = aiRawLogStore.get(Number(jobId)) ?? [];
   res.json({
     jobId,
     vendor: row.vendor,
@@ -724,6 +749,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
     errorMessage: row.errorMessage,
+    aiRawLog: directLog,
   });
 });
 

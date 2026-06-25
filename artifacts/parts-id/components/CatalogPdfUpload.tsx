@@ -71,6 +71,9 @@ const MAX_SILENT_RETRIES = 2;
 /** Back-off delay between silent retries (ms). */
 const SILENT_RETRY_DELAY_MS = 2000;
 
+type AiRawLogEntry = { page: number; text: string };
+type AiRawLogEntries = Array<AiRawLogEntry>;
+
 type JobStatus = {
   jobId: string;
   status: "pending" | "processing" | "done" | "failed" | "cancelled";
@@ -81,6 +84,7 @@ type JobStatus = {
   unmatchedParts?: Array<{ catalogNumber: string; description: string }>;
   errorMessage: string | null;
   failedChunks?: Array<{ chunkJobId: string; chunkIndex: number }>;
+  aiRawLog?: Array<AiRawLogEntry>;
 };
 
 type FailedChunkInfo = {
@@ -177,6 +181,11 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const handleStartRef = useRef<(attempt?: number) => void>(() => {});
   const [, setLogVersion] = useState(0);
   const copyScaleAnim = useRef(new Animated.Value(1)).current;
+  const aiRawCopyScaleAnim = useRef(new Animated.Value(1)).current;
+
+  const [aiRawLog, setAiRawLog] = useState<AiRawLogEntries>([]);
+  const [diagTab, setDiagTab] = useState<"pick" | "ai">("pick");
+  const seenAiPagesRef = useRef(new Set<number>());
 
   // ── Upload speed / ETA helpers ─────────────────────────────────────────────
   // Number of raw progress samples kept in the rolling window.
@@ -388,6 +397,13 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         if (!r.ok) return;
         const data = await r.json() as JobStatus;
         setJobStatus(data);
+        if (data.aiRawLog && data.aiRawLog.length > 0) {
+          const newEntries = data.aiRawLog.filter(e => !seenAiPagesRef.current.has(e.page));
+          if (newEntries.length > 0) {
+            newEntries.forEach(e => seenAiPagesRef.current.add(e.page));
+            setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
+          }
+        }
         if (data.status === "done" || data.status === "failed" || data.status === "cancelled") stopPolling();
       } catch { /* network blip — keep polling */ }
     }, POLL_MS);
@@ -754,6 +770,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     // if the server-side job fails with poe_chain_exhausted.
     setFailedChunkInfo(null);
 
+    setAiRawLog([]);
+    seenAiPagesRef.current.clear();
     setJobStatus({ jobId: parentJobId, status: "pending", totalPages: null, processedPages: 0, matchedParts: 0, imagesMatched: 0, errorMessage: null });
     startPolling(parentJobId);
   };
@@ -894,6 +912,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         setLoading(false);
         resetUploadProgress();
         const jobId = resp.jobId;
+        setAiRawLog([]);
+        seenAiPagesRef.current.clear();
         setJobStatus({
           jobId,
           status: "pending",
@@ -1315,68 +1335,155 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
         </View>
       ) : null}
 
-      {/* ── PDF Pick Diagnostic Log ─────────────────────────────────── */}
-      {getPdfPickLogs().length > 0 ? (
+      {/* ── Diagnostic Log Panel (Pick Log + AI Raw tabs) ────────────── */}
+      {(getPdfPickLogs().length > 0 || aiRawLog.length > 0) ? (
         <View style={[s.logPanel, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-          <View style={s.logPanelHeader}>
-            <Text style={[s.logPanelTitle, { color: colors.foreground }]}>
-              📋 Diag Log · {getPdfPickLogs().length} entries
-            </Text>
-            <View style={{ flexDirection: "row", gap: 6 }}>
-              <Animated.View style={{ transform: [{ scale: copyScaleAnim }] }}>
-                <Pressable
-                  onPress={() => {
-                    const text = formatPdfPickLogs();
-                    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-                      void navigator.clipboard.writeText(text);
-                    }
-                    Alert.alert("Copied", `${getPdfPickLogs().length} entries copied to clipboard.`);
-                  }}
-                  onPressIn={() => {
-                    Animated.spring(copyScaleAnim, {
-                      toValue: 0.85,
-                      useNativeDriver: true,
-                      tension: 300,
-                      friction: 10,
-                    }).start();
-                  }}
-                  onPressOut={() => {
-                    Animated.spring(copyScaleAnim, {
-                      toValue: 1,
-                      useNativeDriver: true,
-                      tension: 300,
-                      friction: 10,
-                    }).start();
-                  }}
-                  style={[s.logPanelBtn, { borderColor: colors.border }]}
-                >
-                  <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Copy</Text>
-                </Pressable>
-              </Animated.View>
-              <Pressable
-                onPress={() => clearPdfPickLogs()}
-                style={[s.logPanelBtn, { borderColor: colors.destructive }]}
-              >
-                <Text style={[s.logPanelBtnText, { color: colors.destructive }]}>Clear</Text>
-              </Pressable>
-            </View>
+          {/* Tab bar */}
+          <View style={s.logTabBar}>
+            <Pressable
+              onPress={() => setDiagTab("pick")}
+              style={[s.logTab, diagTab === "pick" && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+            >
+              <Text style={[s.logTabText, { color: diagTab === "pick" ? colors.primary : colors.mutedForeground }]}>
+                Pick Log{getPdfPickLogs().length > 0 ? ` · ${getPdfPickLogs().length}` : ""}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setDiagTab("ai")}
+              style={[s.logTab, diagTab === "ai" && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+            >
+              <Text style={[s.logTabText, { color: diagTab === "ai" ? colors.primary : colors.mutedForeground }]}>
+                AI Raw{aiRawLog.length > 0 ? ` · ${aiRawLog.length}` : ""}
+              </Text>
+            </Pressable>
           </View>
-          <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
-            {getPdfPickLogs().map(entry => (
-              <View key={entry.seq} style={s.logEntry}>
-                <Text style={[s.logEntryTime, { color: colors.primary }]}>
-                  {`+${entry.relMs}ms`.padStart(8)}
+
+          {/* ── Pick Log tab ── */}
+          {diagTab === "pick" ? (
+            <>
+              <View style={s.logPanelHeader}>
+                <Text style={[s.logPanelTitle, { color: colors.foreground }]}>
+                  📋 {getPdfPickLogs().length} entries
                 </Text>
-                <Text
-                  style={[s.logEntryMsg, { color: colors.mutedForeground }]}
-                  selectable
-                >
-                  {entry.msg}
-                  {entry.data !== undefined ? `\n    ${JSON.stringify(entry.data)}` : ""}
-                </Text>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  <Animated.View style={{ transform: [{ scale: copyScaleAnim }] }}>
+                    <Pressable
+                      onPress={() => {
+                        const text = formatPdfPickLogs();
+                        if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+                          void navigator.clipboard.writeText(text);
+                        }
+                        Alert.alert("Copied", `${getPdfPickLogs().length} entries copied to clipboard.`);
+                      }}
+                      onPressIn={() => {
+                        Animated.spring(copyScaleAnim, {
+                          toValue: 0.85,
+                          useNativeDriver: true,
+                          tension: 300,
+                          friction: 10,
+                        }).start();
+                      }}
+                      onPressOut={() => {
+                        Animated.spring(copyScaleAnim, {
+                          toValue: 1,
+                          useNativeDriver: true,
+                          tension: 300,
+                          friction: 10,
+                        }).start();
+                      }}
+                      style={[s.logPanelBtn, { borderColor: colors.border }]}
+                    >
+                      <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Copy</Text>
+                    </Pressable>
+                  </Animated.View>
+                  <Pressable
+                    onPress={() => clearPdfPickLogs()}
+                    style={[s.logPanelBtn, { borderColor: colors.destructive }]}
+                  >
+                    <Text style={[s.logPanelBtnText, { color: colors.destructive }]}>Clear</Text>
+                  </Pressable>
+                </View>
               </View>
-            ))}
-          </ScrollView>
+              <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
+                {getPdfPickLogs().map(entry => (
+                  <View key={entry.seq} style={s.logEntry}>
+                    <Text style={[s.logEntryTime, { color: colors.primary }]}>
+                      {`+${entry.relMs}ms`.padStart(8)}
+                    </Text>
+                    <Text
+                      style={[s.logEntryMsg, { color: colors.mutedForeground }]}
+                      selectable
+                    >
+                      {entry.msg}
+                      {entry.data !== undefined ? `\n    ${JSON.stringify(entry.data)}` : ""}
+                    </Text>
+                  </View>
+                ))}
+              </ScrollView>
+            </>
+          ) : (
+            /* ── AI Raw tab ── */
+            <>
+              <View style={s.logPanelHeader}>
+                <Text style={[s.logPanelTitle, { color: colors.foreground }]}>
+                  🤖 {aiRawLog.length} page{aiRawLog.length !== 1 ? "s" : ""}
+                </Text>
+                <Animated.View style={{ transform: [{ scale: aiRawCopyScaleAnim }] }}>
+                  <Pressable
+                    onPress={() => {
+                      const text = aiRawLog
+                        .map(e => `=== Page ${e.page} ===\n${e.text}`)
+                        .join("\n\n");
+                      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+                        void navigator.clipboard.writeText(text);
+                      }
+                      Alert.alert("Copied", `AI raw text for ${aiRawLog.length} page(s) copied to clipboard.`);
+                    }}
+                    onPressIn={() => {
+                      Animated.spring(aiRawCopyScaleAnim, {
+                        toValue: 0.85,
+                        useNativeDriver: true,
+                        tension: 300,
+                        friction: 10,
+                      }).start();
+                    }}
+                    onPressOut={() => {
+                      Animated.spring(aiRawCopyScaleAnim, {
+                        toValue: 1,
+                        useNativeDriver: true,
+                        tension: 300,
+                        friction: 10,
+                      }).start();
+                    }}
+                    style={[s.logPanelBtn, { borderColor: colors.border }]}
+                  >
+                    <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Copy all</Text>
+                  </Pressable>
+                </Animated.View>
+              </View>
+              {aiRawLog.length === 0 ? (
+                <Text style={[s.logEntryMsg, { color: colors.mutedForeground, paddingVertical: 4 }]}>
+                  No AI responses captured yet.
+                </Text>
+              ) : (
+                <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
+                  {aiRawLog.map(entry => (
+                    <View key={entry.page} style={s.aiRawEntry}>
+                      <Text style={[s.aiRawPageLabel, { color: colors.primary }]}>
+                        Page {entry.page}
+                      </Text>
+                      <Text
+                        style={[s.aiRawText, { color: colors.mutedForeground, borderColor: colors.border }]}
+                        selectable
+                      >
+                        {entry.text}
+                      </Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </>
+          )}
         </View>
       ) : null}
     </View>
@@ -1423,6 +1530,13 @@ const s = StyleSheet.create({
   logPanel: {
     borderWidth: 1, borderRadius: 8, padding: 8, marginTop: 4, gap: 4,
   },
+  logTabBar: {
+    flexDirection: "row", gap: 0, marginBottom: 4, borderBottomWidth: 1,
+  },
+  logTab: {
+    paddingHorizontal: 10, paddingVertical: 5, marginBottom: -1,
+  },
+  logTabText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   logPanelHeader: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4,
   },
@@ -1434,4 +1548,10 @@ const s = StyleSheet.create({
   logEntry: { flexDirection: "row", gap: 4, flexWrap: "wrap", paddingVertical: 1 },
   logEntryTime: { fontSize: 10, fontFamily: "Inter_400Regular", opacity: 0.7, minWidth: 60 },
   logEntryMsg: { fontSize: 10, fontFamily: "Inter_400Regular", flex: 1, flexWrap: "wrap" },
+  aiRawEntry: { marginBottom: 10 },
+  aiRawPageLabel: { fontSize: 10, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
+  aiRawText: {
+    fontSize: 10, fontFamily: "Inter_400Regular", lineHeight: 14,
+    borderWidth: 1, borderRadius: 4, padding: 6,
+  },
 });

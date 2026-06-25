@@ -123,7 +123,7 @@ beforeAll(async () => {
   process.env.ADMIN_PASSWORD = ADMIN_SECRET;
   adminToken = signAdminToken(Date.now(), ADMIN_SECRET);
   // Default: each page returns no catalog entries (fast path)
-  mockExtractCatalogPage.mockResolvedValue([]);
+  mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
 }, 15_000);
 
 afterAll(async () => {
@@ -135,7 +135,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockExtractCatalogPage.mockResolvedValue([]);
+  mockExtractCatalogPage.mockResolvedValue({ entries: [], rawText: "" });
   mockMatchCatalogNumber.mockResolvedValue(null);
 });
 
@@ -511,11 +511,11 @@ const STUB_PAGE = { text: "", images: [] as Buffer[], isRendered: false as const
 describe("partsFound counter and unmatchedParts behavior", () => {
   it("partsFound counts all AI-extracted entries including those below confidence threshold", async () => {
     mockExtractPdfPages.mockResolvedValueOnce([STUB_PAGE]);
-    mockExtractCatalogPage.mockResolvedValueOnce([
+    mockExtractCatalogPage.mockResolvedValueOnce({ entries: [
       { catalogNumber: "HIGH-001", description: "Part A", confidence: 0.9, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
       { catalogNumber: "HIGH-002", description: "Part B", confidence: 0.5, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
       { catalogNumber: "LOW-003", description: "Part C", confidence: 0.3, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
-    ]);
+    ], rawText: "" });
 
     const res = await supertest(app)
       .post("/api/admin/catalog-pdf")
@@ -541,12 +541,12 @@ describe("partsFound counter and unmatchedParts behavior", () => {
 
   it("entries with confidence < 0.4 do not appear in unmatchedParts", async () => {
     mockExtractPdfPages.mockResolvedValueOnce([STUB_PAGE]);
-    mockExtractCatalogPage.mockResolvedValueOnce([
+    mockExtractCatalogPage.mockResolvedValueOnce({ entries: [
       { catalogNumber: "HIGH-001", description: "Part A", confidence: 0.9, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
       { catalogNumber: "HIGH-002", description: "Part B", confidence: 0.4, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
       { catalogNumber: "LOW-003", description: "Part C", confidence: 0.39, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
       { catalogNumber: "LOW-004", description: "Part D", confidence: 0.1, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
-    ]);
+    ], rawText: "" });
 
     const res = await supertest(app)
       .post("/api/admin/catalog-pdf")
@@ -593,7 +593,7 @@ describe("partsFound counter and unmatchedParts behavior", () => {
     }));
 
     mockExtractPdfPages.mockResolvedValueOnce([STUB_PAGE]);
-    mockExtractCatalogPage.mockResolvedValueOnce(entries);
+    mockExtractCatalogPage.mockResolvedValueOnce({ entries, rawText: "" });
 
     const res = await supertest(app)
       .post("/api/admin/catalog-pdf")
