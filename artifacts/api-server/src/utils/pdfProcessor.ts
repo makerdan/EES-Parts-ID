@@ -266,7 +266,7 @@ async function tryPdftoppmRendering(pdfBuffer: Buffer): Promise<PageData[] | nul
  */
 async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<string[]> {
   try {
-    const pdfjs = await import("pdfjs-dist");
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     pdfjs.GlobalWorkerOptions.workerSrc = "";
     const doc = await pdfjs.getDocument({
       data: new Uint8Array(pdfBuffer),
@@ -317,7 +317,7 @@ async function extractRichText(pdfBuffer: Buffer, numPages: number): Promise<str
 // ── pdfjs-dist fallback (text + embedded images) ─────────────────────────────
 
 async function pdfJsFallback(pdfBuffer: Buffer): Promise<PageData[]> {
-  const pdfjs = await import("pdfjs-dist");
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = "";
 
   const doc = await pdfjs.getDocument({
