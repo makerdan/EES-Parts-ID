@@ -1211,12 +1211,18 @@ export function ZoneEditor() {
 
   // Flush unsaved form changes immediately (used by blur-save and selection-change).
   // Takes an explicit FormState so it works even when React state hasn't updated yet.
+  //
+  // Optimistically sets lastSavedFormRef.current BEFORE the first await so that a
+  // concurrent flush for the same zone (onBlur fires, then selection-change effect
+  // runs before the PATCH resolves) sees the equality check as true and skips.
   const flushSave = useCallback(async (committedForm: FormState, zoneId: number) => {
     if (!committedForm.aisleId.trim()) return;
     if (!isValidAisleId(committedForm.aisleId)) return;
     if (JSON.stringify(committedForm) === JSON.stringify(lastSavedFormRef.current)) return;
     if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
     const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
+    // Optimistic: mark as saved now so concurrent flush calls skip the duplicate PATCH.
+    lastSavedFormRef.current = { ...committedForm };
     const afterMeta: MetaSnap = {
       aisleId: normalizeAisleId(committedForm.aisleId),
       sectionNum: committedForm.sectionNum,
@@ -1226,11 +1232,12 @@ export function ZoneEditor() {
     try {
       await patchZone(zoneId, afterMeta);
       pushUndo({ type: "edit", id: zoneId, before: beforeMeta, after: afterMeta });
-      lastSavedFormRef.current = { ...committedForm };
       toast.success("Saved");
       await fetchZones();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+      // Do not restore lastSavedFormRef on failure — selection may have already
+      // changed, overwriting it with a different zone's baseline.
     }
   }, [patchZone, pushUndo, fetchZones]);
 
@@ -1587,15 +1594,42 @@ export function ZoneEditor() {
   };
 
   // Sync single-select form when selected zone changes.
+  // Also flushes unsaved changes for the previously selected zone in cases where
+  // the container onBlur didn't fire (e.g. Escape to deselect, programmatic
+  // selection changes). In the common click-another-zone path the onBlur fires
+  // first and optimistically sets lastSavedFormRef, so this call becomes a no-op
+  // via the equality check inside flushSave.
   useEffect(() => {
-    if (!selectedId) return;
-    const z = zones.find((z) => z.id === selectedId);
-    if (z) {
-      const synced: FormState = { aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, sortOrder: z.sortOrder };
-      prevSelectedIdRef.current = selectedId;
-      setForm(synced);
-      lastSavedFormRef.current = synced;
+    const prevId = prevSelectedIdRef.current;
+
+    if (!selectedId) {
+      // Zone was deselected — flush unsaved changes for the previous zone.
+      if (prevId !== null) {
+        const pending = formRef.current;
+        if (lastSavedFormRef.current && JSON.stringify(pending) !== JSON.stringify(lastSavedFormRef.current)) {
+          void flushSave(pending, prevId);
+        }
+        prevSelectedIdRef.current = null;
+      }
+      return;
     }
+
+    const z = zones.find((z) => z.id === selectedId);
+    if (!z) return;
+
+    // Switching to a different zone — flush unsaved changes for previous zone.
+    if (prevId !== null && prevId !== selectedId) {
+      const pending = formRef.current;
+      if (lastSavedFormRef.current && JSON.stringify(pending) !== JSON.stringify(lastSavedFormRef.current)) {
+        void flushSave(pending, prevId);
+      }
+    }
+
+    const synced: FormState = { aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, sortOrder: z.sortOrder };
+    prevSelectedIdRef.current = selectedId;
+    setForm(synced);
+    lastSavedFormRef.current = synced;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, zones]);
 
   // Mixed-value indicators for multi-select form
@@ -2725,10 +2759,15 @@ export function ZoneEditor() {
                 <div
                   onBlur={(e) => {
                     if (pendingRect) return;
-                    if (!selectedId) return;
+                    // Capture zone id synchronously — React batches the concurrent
+                    // mousedown state update until after blur fires, so selectedId
+                    // is still the previous zone's id here. Capturing it explicitly
+                    // makes the intent clear and robust.
+                    const zoneIdToSave = selectedId;
+                    if (!zoneIdToSave) return;
                     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
                       const committedForm = zoneFormRef.current?.getCommittedForm() ?? formRef.current;
-                      void flushSave(committedForm, selectedId);
+                      void flushSave(committedForm, zoneIdToSave);
                     }
                   }}
                 >
