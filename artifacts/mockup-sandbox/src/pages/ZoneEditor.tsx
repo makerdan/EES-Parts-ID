@@ -2345,6 +2345,7 @@ export function ZoneEditor() {
             disabled={undoCount === 0}
             onClick={() => { void applyUndoRedoRef.current?.("undo"); }}
             style={{
+              position: "relative",
               padding: "3px 8px",
               borderRadius: 4,
               background: "transparent",
@@ -2355,7 +2356,28 @@ export function ZoneEditor() {
               lineHeight: 1,
             }}
           >
-            ↩
+            ↩{undoCount > 0 && (
+              <span style={{
+                position: "absolute",
+                top: -6,
+                right: -6,
+                background: "#4a9eff",
+                color: "#fff",
+                borderRadius: 8,
+                fontSize: 10,
+                fontWeight: 700,
+                lineHeight: 1,
+                minWidth: 14,
+                height: 14,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "0 3px",
+                pointerEvents: "none",
+              }}>
+                {undoCount > 99 ? "99+" : undoCount}
+              </span>
+            )}
           </button>
           <button
             title={redoCount > 0 ? `Redo (${redoCount})` : "Nothing to redo"}
