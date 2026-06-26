@@ -1689,6 +1689,59 @@ export function ZoneEditor() {
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   }, [form, selectedId, pendingRect]);
 
+  // ── beforeunload guard: flush unsaved form changes on tab close / navigation ──
+  // Covers two scenarios:
+  //   1. Tab close or browser refresh (native beforeunload)
+  //   2. In-app navigation via <a href> links (also triggers a full-page reload,
+  //      so beforeunload fires here too — App.tsx uses <a href>, not a client router)
+  //
+  // All reads go through refs so the handler never captures stale state.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      const ids = [...selectedIdsRef.current];
+      const currentSelectedId = ids.length === 1 ? ids[0] : null;
+      const hasPendingTimer = autoSaveTimerRef.current !== null;
+      const formIsDirty =
+        currentSelectedId !== null &&
+        lastSavedFormRef.current !== null &&
+        JSON.stringify(formRef.current) !== JSON.stringify(lastSavedFormRef.current);
+
+      if (!formIsDirty && !hasPendingTimer) return;
+
+      // Best-effort keepalive PATCH so data survives even if the user confirms "Leave".
+      if (formIsDirty && currentSelectedId !== null) {
+        const pending = formRef.current;
+        if (pending.aisleId.trim() && isValidAisleId(pending.aisleId)) {
+          const afterMeta = {
+            aisleId: normalizeAisleId(pending.aisleId),
+            sectionNum: pending.sectionNum,
+            isInventory: pending.isInventory,
+            sortOrder: pending.sortOrder,
+          };
+          const token = (() => {
+            try { return sessionStorage.getItem("zoneEditorAdminToken"); } catch { return null; }
+          })();
+          void fetch(`${API_BASE}/warehouse-zones/${currentSelectedId}`, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(afterMeta),
+            keepalive: true,
+          });
+        }
+      }
+
+      // Show the browser's native "Leave site?" dialog so the user has a chance
+      // to stay if they navigated away accidentally.
+      e.preventDefault();
+    };
+
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+
   // ── SVG coordinate utility ──────────────────────────────────────────────────
   const getSvgPt = useCallback((clientX: number, clientY: number): Pt => {
     if (!svgRef.current) return { x: 0, y: 0 };
