@@ -1587,26 +1587,15 @@ export function ZoneEditor() {
   };
 
   // Sync single-select form when selected zone changes.
-  // When switching to a different zone, flush any unsaved changes for the
-  // previously selected zone immediately (before resetting the form).
   useEffect(() => {
     if (!selectedId) return;
     const z = zones.find((z) => z.id === selectedId);
     if (z) {
-      const prevId = prevSelectedIdRef.current;
-      if (prevId !== null && prevId !== selectedId) {
-        const pending = formRef.current;
-        const saved = lastSavedFormRef.current;
-        if (saved && JSON.stringify(pending) !== JSON.stringify(saved)) {
-          void flushSave(pending, prevId);
-        }
-      }
       const synced: FormState = { aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, sortOrder: z.sortOrder };
       prevSelectedIdRef.current = selectedId;
       setForm(synced);
       lastSavedFormRef.current = synced;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, zones]);
 
   // Mixed-value indicators for multi-select form
