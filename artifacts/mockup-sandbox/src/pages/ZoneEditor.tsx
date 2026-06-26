@@ -663,10 +663,10 @@ export function ZoneEditor() {
 
   // ── Auto-number panel state ────────────────────────────────────────────────
   const [autoNumOpen, setAutoNumOpen] = useState(false);
-  const [autoNumStartMode, setAutoNumStartMode] = useState<"1" | "2" | "custom">(() => {
+  const [autoNumStartMode, setAutoNumStartMode] = useState<"0" | "1" | "2" | "custom">(() => {
     try {
       const stored = localStorage.getItem("zoneEditorAutoNumStartMode");
-      if (stored === "1" || stored === "2" || stored === "custom") return stored;
+      if (stored === "0" || stored === "1" || stored === "2" || stored === "custom") return stored;
     } catch {}
     return "1";
   });
@@ -676,10 +676,12 @@ export function ZoneEditor() {
   });
   const autoNumStart =
     autoNumStartMode === "custom"
-      ? Math.max(1, parseInt(autoNumStartCustom, 10) || 1)
+      ? (() => { const p = parseInt(autoNumStartCustom, 10); return isNaN(p) ? 1 : Math.max(0, p); })()
       : Number(autoNumStartMode);
   const autoNumDigits =
-    autoNumStartMode === "custom" && autoNumStartCustom.length > 1
+    autoNumStartMode === "0"
+      ? 2
+      : autoNumStartMode === "custom" && autoNumStartCustom.length > 1
       ? autoNumStartCustom.length
       : 1;
   const [autoNumIncrement, setAutoNumIncrement] = useState<number>(() => {
@@ -2812,7 +2814,7 @@ export function ZoneEditor() {
                   <div>
                     <Label>Starting number</Label>
                     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                      {(["1", "2", "custom"] as const).map((mode) => (
+                      {(["0", "1", "2", "custom"] as const).map((mode) => (
                         <button
                           key={mode}
                           onClick={() => setAutoNumStartMode(mode)}
@@ -2828,7 +2830,7 @@ export function ZoneEditor() {
                             cursor: "pointer",
                           }}
                         >
-                          {mode === "1" ? "1 (odd)" : mode === "2" ? "2 (even)" : "Custom"}
+                          {mode === "0" ? "00 (even)" : mode === "1" ? "1 (odd)" : mode === "2" ? "2 (even)" : "Custom"}
                         </button>
                       ))}
                     </div>
