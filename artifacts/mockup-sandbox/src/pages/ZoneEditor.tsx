@@ -13,8 +13,10 @@
  *   Resize    : drag corner handles of selected zone (single-select only) → PATCH on drop
  */
 import React, {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -644,9 +646,11 @@ export function ZoneEditor() {
   const [multiDragDelta, setMultiDragDelta] = useState<Pt | null>(null);
   // Original positions of every selected zone at the start of a multi-move drag
   const multiDragOriginsRef = useRef<Map<number, Pt>>(new Map());
-  const [form, setForm] = useState<FormState>({
+  const [form, setFormState] = useState<FormState>({
     aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0,
   });
+  const formRef = useRef<FormState>({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 });
+  const setForm = useCallback((f: FormState) => { formRef.current = f; setFormState(f); }, []);
   const [saving, setSaving] = useState(false);
 
   // Multi-select form fields
@@ -827,6 +831,7 @@ export function ZoneEditor() {
   // suppress false conflict warnings when a zone is selected but not yet changed).
   const lastSavedFormRef = useRef<FormState | null>(null);
   const prevSelectedIdRef = useRef<number | null>(null);
+  const zoneFormRef = useRef<ZoneFormHandle>(null);
 
   // Non-blocking duplicate warning: another zone already claims this aisle+parity.
   const duplicateConflict = useMemo(() => {
@@ -1204,23 +1209,51 @@ export function ZoneEditor() {
     }
   };
 
+  // Flush unsaved form changes immediately (used by blur-save and selection-change).
+  // Takes an explicit FormState so it works even when React state hasn't updated yet.
+  const flushSave = useCallback(async (committedForm: FormState, zoneId: number) => {
+    if (!committedForm.aisleId.trim()) return;
+    if (!isValidAisleId(committedForm.aisleId)) return;
+    if (JSON.stringify(committedForm) === JSON.stringify(lastSavedFormRef.current)) return;
+    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
+    const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
+    const afterMeta: MetaSnap = {
+      aisleId: normalizeAisleId(committedForm.aisleId),
+      sectionNum: committedForm.sectionNum,
+      isInventory: committedForm.isInventory,
+      sortOrder: committedForm.sortOrder,
+    };
+    try {
+      await patchZone(zoneId, afterMeta);
+      pushUndo({ type: "edit", id: zoneId, before: beforeMeta, after: afterMeta });
+      lastSavedFormRef.current = { ...committedForm };
+      toast.success("Saved");
+      await fetchZones();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }, [patchZone, pushUndo, fetchZones]);
+
   const handleSaveEdit = async () => {
     if (!selectedId) return;
-    if (!form.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
-    if (!isValidAisleId(form.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 09)"); return; }
+    // Read committed values — zoneFormRef.current captures rawSection even
+    // if React state hasn't flushed the section-number onBlur yet.
+    const committedForm = zoneFormRef.current?.getCommittedForm() ?? form;
+    if (!committedForm.aisleId.trim()) { toast.error("Aisle ID is required"); return; }
+    if (!isValidAisleId(committedForm.aisleId)) { toast.error("Aisle ID must be numeric (e.g. 09)"); return; }
     if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null; }
     const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
     setSaving(true);
     try {
       const afterMeta: MetaSnap = {
-        aisleId: normalizeAisleId(form.aisleId),
-        sectionNum: form.sectionNum,
-        isInventory: form.isInventory,
-        sortOrder: form.sortOrder,
+        aisleId: normalizeAisleId(committedForm.aisleId),
+        sectionNum: committedForm.sectionNum,
+        isInventory: committedForm.isInventory,
+        sortOrder: committedForm.sortOrder,
       };
       await patchZone(selectedId, afterMeta);
       pushUndo({ type: "edit", id: selectedId, before: beforeMeta, after: afterMeta });
-      lastSavedFormRef.current = { ...form };
+      lastSavedFormRef.current = { ...committedForm };
       toast.success("Zone updated");
       await fetchZones();
     } catch (e) {
@@ -1553,16 +1586,27 @@ export function ZoneEditor() {
     );
   };
 
-  // Sync single-select form when selected zone changes
+  // Sync single-select form when selected zone changes.
+  // When switching to a different zone, flush any unsaved changes for the
+  // previously selected zone immediately (before resetting the form).
   useEffect(() => {
     if (!selectedId) return;
     const z = zones.find((z) => z.id === selectedId);
     if (z) {
+      const prevId = prevSelectedIdRef.current;
+      if (prevId !== null && prevId !== selectedId) {
+        const pending = formRef.current;
+        const saved = lastSavedFormRef.current;
+        if (saved && JSON.stringify(pending) !== JSON.stringify(saved)) {
+          void flushSave(pending, prevId);
+        }
+      }
       const synced: FormState = { aisleId: z.aisleId, sectionNum: z.sectionNum, isInventory: z.isInventory, sortOrder: z.sortOrder };
       prevSelectedIdRef.current = selectedId;
       setForm(synced);
       lastSavedFormRef.current = synced;
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, zones]);
 
   // Mixed-value indicators for multi-select form
@@ -2689,77 +2733,89 @@ export function ZoneEditor() {
                     {selectedZone.svgHeight.toFixed(1)}
                   </div>
                 )}
-                <ZoneForm
-                  key={selectedZone?.id ?? "pending"}
-                  form={form}
-                  onChange={setForm}
-                  aisleIdError={aisleIdError}
-                  sectionCode={selectedZone?.sectionCode}
-                  zones={zones}
-                  zoneId={selectedId}
-                  onSectionCodeSave={async (code) => {
+                <div
+                  onBlur={(e) => {
+                    if (pendingRect) return;
                     if (!selectedId) return;
-                    try {
-                      await patchZone(selectedId, { sectionCode: code });
-                      toast.success(code ? `Section code set to ${code}` : "Section code cleared");
-                      await fetchZones();
-                    } catch (e) {
-                      toast.error(e instanceof Error ? e.message : String(e));
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                      const committedForm = zoneFormRef.current?.getCommittedForm() ?? formRef.current;
+                      void flushSave(committedForm, selectedId);
                     }
                   }}
-                />
-                {duplicateConflict && (pendingRect || selectedZone) && (
-                  <div style={styles.dupWarning}>
-                    ⚠ Section {sectionNumToDisplay(duplicateConflict.sectionNum)} already exists. Saving
-                    anyway will create an overlapping mapping.
-                  </div>
-                )}
-                {pendingRect && (
-                  <Row>
-                    <Btn color="#3b82f6" onClick={handleCreate} disabled={saving || !!aisleIdError}>
-                      {saving ? "Saving…" : "Save Zone"}
-                    </Btn>
-                    <Btn
-                      color="#6b7280"
-                      onClick={() => {
-                        setPendingRect(null);
-                        setDraftRect(null);
-                      }}
-                    >
-                      Cancel
-                    </Btn>
-                  </Row>
-                )}
-                {selectedZone && !pendingRect && (
-                  <Row style={{ flexWrap: "wrap" }}>
-                    <Btn
-                      color="#0070ff"
-                      onClick={handleDuplicate}
-                      disabled={saving}
-                    >
-                      Duplicate
-                    </Btn>
-                    <Btn
-                      color="#7c3aed"
-                      onClick={copyCoords}
-                    >
-                      Copy coords
-                    </Btn>
-                    <Btn
-                      color="#6b7280"
-                      onClick={() => { setSelectedIds(new Set()); setSelectionOrder([]); }}
-                    >
-                      Deselect
-                    </Btn>
-                    <Btn
-                      color="#dc2626"
-                      onClick={handleDelete}
-                      disabled={saving}
-                    >
-                      Delete
-                    </Btn>
-                  </Row>
-                )}
+                >
+                  <ZoneForm
+                    ref={zoneFormRef}
+                    key={selectedZone?.id ?? "pending"}
+                    form={form}
+                    onChange={setForm}
+                    aisleIdError={aisleIdError}
+                    sectionCode={selectedZone?.sectionCode}
+                    zones={zones}
+                    zoneId={selectedId}
+                    onSectionCodeSave={async (code) => {
+                      if (!selectedId) return;
+                      try {
+                        await patchZone(selectedId, { sectionCode: code });
+                        toast.success(code ? `Section code set to ${code}` : "Section code cleared");
+                        await fetchZones();
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : String(e));
+                      }
+                    }}
+                  />
+                  {duplicateConflict && (pendingRect || selectedZone) && (
+                    <div style={styles.dupWarning}>
+                      ⚠ Section {sectionNumToDisplay(duplicateConflict.sectionNum)} already exists. Saving
+                      anyway will create an overlapping mapping.
+                    </div>
+                  )}
+                  {pendingRect && (
+                    <Row>
+                      <Btn color="#3b82f6" onClick={handleCreate} disabled={saving || !!aisleIdError}>
+                        {saving ? "Saving…" : "Save Zone"}
+                      </Btn>
+                      <Btn
+                        color="#6b7280"
+                        onClick={() => {
+                          setPendingRect(null);
+                          setDraftRect(null);
+                        }}
+                      >
+                        Cancel
+                      </Btn>
+                    </Row>
+                  )}
+                  {selectedZone && !pendingRect && (
+                    <Row style={{ flexWrap: "wrap" }}>
+                      <Btn
+                        color="#0070ff"
+                        onClick={handleDuplicate}
+                        disabled={saving}
+                      >
+                        Duplicate
+                      </Btn>
+                      <Btn
+                        color="#7c3aed"
+                        onClick={copyCoords}
+                      >
+                        Copy coords
+                      </Btn>
+                      <Btn
+                        color="#6b7280"
+                        onClick={() => { setSelectedIds(new Set()); setSelectionOrder([]); }}
+                      >
+                        Deselect
+                      </Btn>
+                      <Btn
+                        color="#dc2626"
+                        onClick={handleDelete}
+                        disabled={saving}
+                      >
+                        Delete
+                      </Btn>
+                    </Row>
+                  )}
+                </div>
                 {!pendingRect && !selectedZone && mode === "draw" && (
                   <div style={styles.emptyHint}>
                     Click and drag on the map to draw a new zone.
@@ -3074,15 +3130,12 @@ export function ZoneEditor() {
 // ── Sub-components ────────────────────────────────────────────────────────────
 const SECTION_CODE_RE = /^[A-Z]{4}$/;
 
-export function ZoneForm({
-  form,
-  onChange,
-  aisleIdError,
-  sectionCode,
-  onSectionCodeSave,
-  zones: allZones,
-  zoneId,
-}: {
+export type ZoneFormHandle = {
+  /** Returns the current form values with any pending rawSection input committed. */
+  getCommittedForm: () => FormState;
+};
+
+type ZoneFormProps = {
   form: FormState;
   onChange: (f: FormState) => void;
   aisleIdError?: string | null;
@@ -3090,13 +3143,32 @@ export function ZoneForm({
   onSectionCodeSave?: (code: string | null) => void;
   zones?: Zone[];
   zoneId?: number | null;
-}) {
+};
+
+export const ZoneForm = forwardRef<ZoneFormHandle, ZoneFormProps>(function ZoneForm({
+  form,
+  onChange,
+  aisleIdError,
+  sectionCode,
+  onSectionCodeSave,
+  zones: allZones,
+  zoneId,
+}, ref) {
   // Local raw string for the Section # field while the user is typing.
   // null = field is not focused (show the canonical formatted value).
   // This prevents the cursor jumping to position 0 when typing "15" — without
   // local state, every keystroke re-formats via sectionNumToDisplay and
   // React replaces the entire value, resetting the cursor.
   const [rawSection, setRawSection] = useState<string | null>(null);
+
+  // Expose committed form values to parent (captures rawSection before blur fires).
+  useImperativeHandle(ref, () => ({
+    getCommittedForm: () => {
+      if (rawSection === null) return form;
+      const parsed = parseSectionInput(rawSection);
+      return { ...form, sectionNum: parsed ?? null };
+    },
+  }), [form, rawSection]);
 
   // Local draft for the Section Code field.
   const [codeDraft, setCodeDraft] = useState<string>(sectionCode ?? "");
@@ -3220,7 +3292,7 @@ export function ZoneForm({
       </div>
     </div>
   );
-}
+});
 
 function SideSection({
   children,
