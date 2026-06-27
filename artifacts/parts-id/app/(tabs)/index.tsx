@@ -970,8 +970,14 @@ export default function SearchScreen() {
     return res.json() as Promise<InventoryItem>;
   }, [adminToken]);
 
-  const results: Array<SearchResult> = offlineResults ?? (searchMutation.data?.results ?? []);
-  const sizeUnknownResults: Array<SearchResult> = isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []);
+  const results: Array<SearchResult> = useMemo(
+    () => offlineResults ?? (searchMutation.data?.results ?? []),
+    [offlineResults, searchMutation.data],
+  );
+  const sizeUnknownResults: Array<SearchResult> = useMemo(
+    () => isOffline ? [] : (searchMutation.data?.sizeUnknownResults ?? []),
+    [isOffline, searchMutation.data],
+  );
   const belowThreshold = searchMutation.data?.belowThreshold ?? 0;
   const hasResults = searchMutation.isSuccess || offlineResults !== null;
 
