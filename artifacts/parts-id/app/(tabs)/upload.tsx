@@ -555,6 +555,7 @@ export default function UploadScreen() {
     adminToken: isAdmin ? adminToken : null,
   });
   const apiCheckAnim = useRef(new Animated.Value(1)).current;
+  const [apiChecking, setApiChecking] = useState(false);
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
   const probingBotsRef = useRef<Set<string>>(new Set());
   const [probingBots, setProbingBots] = useState<Set<string>>(new Set());
@@ -630,13 +631,15 @@ export default function UploadScreen() {
     );
   }, [triggerRestart]);
 
-  const handleCheckPress = useCallback(() => {
+  const handleCheckPress = useCallback(async () => {
     const native = Platform.OS !== "web";
     Animated.sequence([
       Animated.timing(apiCheckAnim, { toValue: 0.82, duration: 100, useNativeDriver: native }),
       Animated.spring(apiCheckAnim, { toValue: 1, useNativeDriver: native, tension: 240, friction: 7 }),
     ]).start();
-    void checkStatus();
+    setApiChecking(true);
+    await checkStatus();
+    setApiChecking(false);
   }, [apiCheckAnim, checkStatus]);
 
   const lidarSupported = isLiDARSupported();
@@ -1654,7 +1657,7 @@ export default function UploadScreen() {
                       styles.apiStatusPill,
                       {
                         backgroundColor:
-                          apiRestarting
+                          apiRestarting || apiChecking
                             ? "#6b7280"
                             : apiStatus === "ok"
                             ? "#10b981"
