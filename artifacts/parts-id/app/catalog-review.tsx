@@ -197,7 +197,7 @@ export default function CatalogReviewScreen() {
     setAddingInProgress(true);
     setAddError(null);
     try {
-      const r = await fetch(`${API_BASE}/admin/inventory/add-part`, {
+      const r = await fetch(`${API_BASE}/inventory/add-part`, {
         method: "POST",
         headers: { ...authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({
