@@ -14,8 +14,8 @@ import {
 import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
-import { fetchWithAuth } from "@/utils/appAuth";
 import { API_BASE } from "@/utils/apiBase";
+import { fetchWithAuth } from "@/utils/appAuth";
 
 const DEVICE_TOKEN_KEY = "contact_device_token";
 

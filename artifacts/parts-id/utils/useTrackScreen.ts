@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
-import { fetchWithAuth } from "@/utils/appAuth";
 import { API_BASE } from "@/utils/apiBase";
+import { fetchWithAuth } from "@/utils/appAuth";
 
 /**
  * Fire-and-forget screen view tracking.

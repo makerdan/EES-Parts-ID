@@ -13,8 +13,8 @@
 
 import { Platform } from "react-native";
 
-import { fetchWithAuth } from "@/utils/appAuth";
 import { API_BASE } from "@/utils/apiBase";
+import { fetchWithAuth } from "@/utils/appAuth";
 
 /**
  * Return the API URL for tile (z, x, y).

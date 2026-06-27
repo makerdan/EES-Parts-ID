@@ -36,8 +36,8 @@ import { DEFAULT_SETTINGS, type DimensionUnit, type PinnedPart,type TextSize, ty
 import { useColors } from "@/hooks/useColors";
 import { parseBin } from "@/lib/aisleHierarchy";
 import { secondaryBtnBase } from "@/styles/shared";
-import { fetchWithAuth } from "@/utils/appAuth";
 import { API_BASE } from "@/utils/apiBase";
+import { fetchWithAuth } from "@/utils/appAuth";
 import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, FUSE_SYNC_MAX_AGE_MS,getFuseCacheSyncedAt } from "@/utils/offlineBarcode";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { retryAsync } from "@/utils/retryAsync";
