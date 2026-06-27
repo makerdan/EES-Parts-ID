@@ -29,6 +29,7 @@
  *            oversample SvgUri when the SVG XML is not yet available.
  */
 import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Asset } from "expo-asset";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -95,6 +96,8 @@ import {
   fetchTile,
   prefetchZoomLevel,
 } from "@/utils/tilePyramidCache";
+
+const VIEWPORT_KEY = "@rdc34/warehouse_map_viewport_v2";
 
 // Standalone worklet — no closure over JS values
 function clamp(val: number, min: number, max: number) {
@@ -787,6 +790,12 @@ export function WarehouseMapView({
   // zones-change effect below can retry once they arrive.
   const pendingFocusRef = useRef(false);
 
+  // Viewport restore values that arrived from AsyncStorage before the first
+  // layout pass completed.  onLayout drains this on its first call so the
+  // tx/ty are always clamped to the real container bounds, regardless of
+  // whether layout or the storage read wins the race.
+  const pendingRestore = useRef<{ s: number; tx: number; ty: number } | null>(null);
+
   // Snapshot of the viewport state captured at the moment the app moves to
   // background.  When the OS delivers a layout event after resume (e.g. because
   // the device was rotated while the app was suspended), the snapshot gives us
@@ -815,8 +824,8 @@ export function WarehouseMapView({
   const contentVBRef = useRef<ContentViewBox | null>(contentVB);
 
   // True when we need to apply a fit-to-content viewport as soon as both the
-  // container dimensions and the content viewBox are known.  Set on every
-  // mount so the map always opens fitted to the screen on cold start.
+  // container dimensions and the content viewBox are known.  Set when the
+  // AsyncStorage read returns null (no saved viewport).
   const pendingFit = useRef(false);
 
   // Indirection ref so onLayout (declared before the shared values) can call
@@ -861,9 +870,25 @@ export function WarehouseMapView({
         }
         bgSnapshotRef.current = null;
 
-        // Apply the fit-to-content position now that we have real container
-        // dimensions (or wait for the SVG viewBox if it hasn't arrived yet).
-        applyFitIfReadyRef.current();
+        // If the AsyncStorage restore already ran while we were still at size 0,
+        // its tx/ty were saved unclamped in pendingRestore.  Apply them now that
+        // we have real dimensions so portrait-saved offsets don't bleed into a
+        // landscape session (and vice versa).
+        const pending = pendingRestore.current;
+        if (pending !== null) {
+          pendingRestore.current = null;
+          const { maxX, maxY } = panBounds(width, height, pending.s);
+          const clampedTX = Math.max(-maxX, Math.min(maxX, pending.tx));
+          const clampedTY = Math.max(-maxY, Math.min(maxY, pending.ty));
+          translateX.value = clampedTX;
+          translateY.value = clampedTY;
+          savedTX.value = clampedTX;
+          savedTY.value = clampedTY;
+        } else {
+          // No saved viewport — try to apply the fit-to-content position now
+          // that we have real container dimensions.
+          applyFitIfReadyRef.current();
+        }
         return;
       }
 
@@ -1050,7 +1075,21 @@ export function WarehouseMapView({
     _runPendingFocus();
   }, [containerW, containerH, _runPendingFocus]);
 
+  // ── Viewport persistence (AsyncStorage) ────────────────────────────────────
+  // Restore the saved viewport once on mount, before the first layout clamp
+  // runs, so the user resumes exactly where they left off.
+  const _persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const persistViewport = useCallback((s: number, tx: number, ty: number) => {
+    if (_persistTimer.current !== null) clearTimeout(_persistTimer.current);
+    _persistTimer.current = setTimeout(() => {
+      AsyncStorage.setItem(VIEWPORT_KEY, JSON.stringify({ s, tx, ty })).catch(() => {});
+    }, 300);
+  }, []);
+
   // ── Fit-to-content helpers ─────────────────────────────────────────────────
+  // Declared after persistViewport so applyFit can reference it without
+  // triggering the temporal dead zone.
 
   /**
    * Apply the fit viewport immediately (no animation) if pendingFit is set and
@@ -1119,17 +1158,30 @@ export function WarehouseMapView({
     savedScale.value = targetS;
     savedTX.value = targetTX;
     savedTY.value = targetTY;
+    persistViewport(targetS, targetTX, targetTY);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [persistViewport]);
 
   // Keep applyFitRef current so the focusAisleNum effect always calls the
-  // latest applyFit closure.
+  // latest applyFit closure (which captures persistViewport).
   applyFitRef.current = applyFit;
 
-  // Cancel any pending snapshot expiry timer on unmount to avoid a dangling
-  // setTimeout touching an unmounted component's refs.
+  // Flush any pending debounced write and cancel the timer on unmount so a
+  // stale timeout never fires against an unmounted component.
   useEffect(() => {
     return () => {
+      if (_persistTimer.current !== null) {
+        clearTimeout(_persistTimer.current);
+        _persistTimer.current = null;
+        // Immediate flush: write the latest saved values synchronously so
+        // the last viewport is not lost if the tab is closed mid-debounce.
+        AsyncStorage.setItem(
+          VIEWPORT_KEY,
+          JSON.stringify({ s: savedScale.value, tx: savedTX.value, ty: savedTY.value }),
+        ).catch(() => {});
+      }
+      // Cancel any pending snapshot expiry timer to avoid a dangling
+      // setTimeout touching an unmounted component's refs.
       if (bgSnapshotExpireTimerRef.current !== null) {
         clearTimeout(bgSnapshotExpireTimerRef.current);
         bgSnapshotExpireTimerRef.current = null;
@@ -1148,6 +1200,9 @@ export function WarehouseMapView({
   // The fix: snapshot {w, tx, ty} at the moment of backgrounding.  The next
   // onLayout call reads from the snapshot (not the live refs) so the ratio is
   // always W_resume / W_pre-suspension, not W_resume / W_mid-transition.
+  //
+  // We also flush the debounced persist timer immediately so AsyncStorage is
+  // always up-to-date before the OS suspends the process.
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === "background" || nextState === "inactive") {
@@ -1156,6 +1211,16 @@ export function WarehouseMapView({
           tx: savedTX.value,
           ty: savedTY.value,
         };
+        // Flush any pending debounced viewport write so the OS doesn't suspend
+        // the process before the AsyncStorage write completes.
+        if (_persistTimer.current !== null) {
+          clearTimeout(_persistTimer.current);
+          _persistTimer.current = null;
+          AsyncStorage.setItem(
+            VIEWPORT_KEY,
+            JSON.stringify({ s: savedScale.value, tx: savedTX.value, ty: savedTY.value }),
+          ).catch(() => {});
+        }
       } else if (nextState === "active") {
         // Schedule snapshot expiry.  The OS can deliver the post-resume layout
         // event either BEFORE or AFTER the `active` AppState event:
@@ -1180,12 +1245,54 @@ export function WarehouseMapView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Always fit to screen on startup — signal that the fit-to-content position
-  // should be applied as soon as both the container and the SVG viewBox are
-  // ready.  applyFitIfReady() checks both conditions.
+  // ── Viewport restore on mount ──────────────────────────────────────────────
+  // Read the persisted viewport from AsyncStorage.  If found, apply it
+  // immediately (clamping to real container bounds if layout has already fired).
+  // If not found, set pendingFit so the map opens fitted to the screen.
   useEffect(() => {
-    pendingFit.current = true;
-    applyFitIfReadyRef.current();
+    AsyncStorage.getItem(VIEWPORT_KEY)
+      .then((raw) => {
+        if (raw !== null) {
+          try {
+            const { s, tx, ty } = JSON.parse(raw) as { s: number; tx: number; ty: number };
+            const clampedS = clampScale(s);
+            scale.value = clampedS;
+            savedScale.value = clampedS;
+            setRenderZoom(zoomStopForScale(clampedS));
+
+            // Always clamp tx/ty to the bounds that match the current container
+            // dimensions so a portrait-saved viewport doesn't bleed off-screen
+            // when the device is reopened in landscape (and vice versa).
+            const w = containerWRef.current;
+            const h = containerHRef.current;
+            if (w > 0) {
+              // Layout has already fired — we have real dimensions.
+              const { maxX, maxY } = panBounds(w, h, clampedS);
+              const clampedTX = Math.max(-maxX, Math.min(maxX, tx));
+              const clampedTY = Math.max(-maxY, Math.min(maxY, ty));
+              translateX.value = clampedTX;
+              translateY.value = clampedTY;
+              savedTX.value = clampedTX;
+              savedTY.value = clampedTY;
+            } else {
+              // Layout hasn't fired yet — stash the raw values; onLayout will
+              // clamp and apply them once real dimensions are known.
+              pendingRestore.current = { s: clampedS, tx, ty };
+              translateX.value = tx;
+              translateY.value = ty;
+              savedTX.value = tx;
+              savedTY.value = ty;
+            }
+          } catch {
+            // Corrupted JSON — silently discard; starts at default position.
+          }
+        } else {
+          // No saved viewport — fit the map to screen on first open.
+          pendingFit.current = true;
+          applyFitIfReadyRef.current();
+        }
+      })
+      .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1655,8 +1762,9 @@ export function WarehouseMapView({
     savedScale.value = targetScale;
     savedTX.value = newTX;
     savedTY.value = newTY;
+    persistViewport(targetScale, newTX, newTY);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [_triggerPrefetch]);
+  }, [persistViewport, _triggerPrefetch]);
 
   // ── Pinch gesture ──────────────────────────────────────────────────────────
   const pinchGesture = Gesture.Pinch()
@@ -1746,6 +1854,7 @@ export function WarehouseMapView({
     .onEnd(() => {
       savedTX.value = translateX.value;
       savedTY.value = translateY.value;
+      runOnJS(persistViewport)(scale.value, translateX.value, translateY.value);
     });
 
   // ── Double-tap to reset zoom ────────────────────────────────────────────────
@@ -1796,8 +1905,9 @@ export function WarehouseMapView({
     savedScale.value = newScale;
     savedTX.value = newTX;
     savedTY.value = newTY;
+    persistViewport(newScale, newTX, newTY);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [svgRenderW, svgRenderH, containerW, containerH, _triggerPrefetch]);
+  }, [svgRenderW, svgRenderH, containerW, containerH, persistViewport, _triggerPrefetch]);
 
   // Zoom buttons step through discrete ZOOM_STOPS rather than multiplying by
   // a fixed ratio, so each tap lands exactly on a preset stop.
