@@ -21,7 +21,7 @@ pnpm workspace monorepo using TypeScript. **Parts ID** — Expo (React Native) e
 ## Artifacts
 
 ### parts-id (Expo mobile app)
-- Password-only login (EXPO_PUBLIC_APP_PASSWORD env var, default: "warehouse2024")
+- Password-only login (server-side: APP_PASSWORD secret validates via POST /api/auth/app-login and returns a signed session token; password never ships in the JS bundle)
 - 3 tabs: Search, Photo ID, Upload/Inventory
 - Dark industrial amber theme (primary: #f59e0b, dark bg: #0d1117)
 - Fuse.js offline fuzzy search fallback
