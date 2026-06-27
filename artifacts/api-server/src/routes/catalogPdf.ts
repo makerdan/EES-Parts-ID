@@ -1039,6 +1039,23 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
       return;
     }
 
+    // When a jobId filter is provided, we need to include inventory rows that
+    // were won by a different chunk in a multi-chunk race.  The optimistic-lock
+    // update (lower confidence loses) sets catalogPdfJobId to the *winning
+    // child* job, not the parent.  To avoid silently hiding those rows from the
+    // parent job's review screen we match against both the requested jobId
+    // directly *and* any child job whose parent_job_id equals the requested
+    // jobId.
+    let effectiveJobIds: number[] | null = null;
+    if (jobIdFilter !== null) {
+      const childRows = await db
+        .select({ id: catalogPdfJobTable.id })
+        .from(catalogPdfJobTable)
+        .where(eq(catalogPdfJobTable.parentJobId, jobIdFilter));
+
+      effectiveJobIds = [jobIdFilter, ...childRows.map((c) => c.id)];
+    }
+
     const rows = await db
       .select({
         id: inventoryTable.id,
@@ -1054,17 +1071,17 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
       })
       .from(inventoryTable)
       .where(
-        jobIdFilter !== null
+        effectiveJobIds !== null
           ? and(
               sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
-              eq(inventoryTable.catalogPdfJobId, jobIdFilter),
+              inArray(inventoryTable.catalogPdfJobId, effectiveJobIds),
             )
           : sql`${inventoryTable.imageSource} = 'pdf_extraction'`,
       )
       .orderBy(desc(inventoryTable.catalogPdfJobId), desc(inventoryTable.updatedAt));
 
     const jobIds = [...new Set(rows.map((r) => r.catalogPdfJobId).filter(Boolean))] as number[];
-    let jobs: { id: number; vendor: string; filename: string; status: string; createdAt: Date }[] = [];
+    let jobs: { id: number; vendor: string; filename: string; status: string; createdAt: Date; parentJobId: number | null }[] = [];
     if (jobIds.length > 0) {
       jobs = await db
         .select({
@@ -1073,19 +1090,54 @@ router.get("/catalog-pdf/reviews", requireAdminAuth, async (req, res) => {
           filename: catalogPdfJobTable.filename,
           status: catalogPdfJobTable.status,
           createdAt: catalogPdfJobTable.createdAt,
+          parentJobId: catalogPdfJobTable.parentJobId,
         })
         .from(catalogPdfJobTable)
-        .where(sql`${catalogPdfJobTable.id} = ANY(${jobIds})`);
+        .where(inArray(catalogPdfJobTable.id, jobIds));
     }
 
     const jobMap = new Map(jobs.map((j) => [j.id, j]));
 
+    // When a jobId filter is active, resolve the display job for each row to
+    // the parent job (when the row's catalogPdfJobId is a child job).  This
+    // ensures the review screen always shows the parent-level job metadata
+    // rather than an opaque child job ID that the admin never directly browsed.
+    let parentJobCache: Map<number, { id: number; vendor: string; filename: string; status: string; createdAt: Date; parentJobId: number | null }> = new Map();
+    if (jobIdFilter !== null) {
+      const parentIds = [...new Set(
+        jobs.map((j) => j.parentJobId).filter((pid): pid is number => pid !== null),
+      )];
+      if (parentIds.length > 0) {
+        const parentRows = await db
+          .select({
+            id: catalogPdfJobTable.id,
+            vendor: catalogPdfJobTable.vendor,
+            filename: catalogPdfJobTable.filename,
+            status: catalogPdfJobTable.status,
+            createdAt: catalogPdfJobTable.createdAt,
+            parentJobId: catalogPdfJobTable.parentJobId,
+          })
+          .from(catalogPdfJobTable)
+          .where(inArray(catalogPdfJobTable.id, parentIds));
+        parentJobCache = new Map(parentRows.map((p) => [p.id, p]));
+      }
+    }
+
     res.json({
-      items: rows.map((r) => ({
-        ...r,
-        job: r.catalogPdfJobId ? (jobMap.get(r.catalogPdfJobId) ?? null) : null,
-        isLowConfidence: (r.imageConfidence ?? 1) < 0.6,
-      })),
+      items: rows.map((r) => {
+        const directJob = r.catalogPdfJobId ? (jobMap.get(r.catalogPdfJobId) ?? null) : null;
+        // If the row's job is a child job and a jobId filter is active, surface
+        // the parent job as the display job so the review screen stays coherent.
+        const displayJob =
+          directJob?.parentJobId != null
+            ? (parentJobCache.get(directJob.parentJobId) ?? directJob)
+            : directJob;
+        return {
+          ...r,
+          job: displayJob,
+          isLowConfidence: (r.imageConfidence ?? 1) < 0.6,
+        };
+      }),
       total: rows.length,
     });
   } catch (err) {
