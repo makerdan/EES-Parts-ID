@@ -11,6 +11,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Platform,
   Pressable,
@@ -549,10 +550,11 @@ export default function UploadScreen() {
   const colors = useColors();
   const router = useRouter();
   const { isAdmin, logoutAdmin, adminToken } = useApp();
-  const { status: apiStatus, restarting: apiRestarting, triggerRestart, bots: apiBots, probeSingleBot } = useApiStatus({
+  const { status: apiStatus, restarting: apiRestarting, triggerRestart, checkStatus, bots: apiBots, probeSingleBot } = useApiStatus({
     apiBase: API_BASE,
     adminToken: isAdmin ? adminToken : null,
   });
+  const apiCheckAnim = useRef(new Animated.Value(1)).current;
   const [activeBadge, setActiveBadge] = useState<string | null>(null);
   const probingBotsRef = useRef<Set<string>>(new Set());
   const [probingBots, setProbingBots] = useState<Set<string>>(new Set());
@@ -627,6 +629,14 @@ export default function UploadScreen() {
       ],
     );
   }, [triggerRestart]);
+
+  const handleCheckPress = useCallback(() => {
+    Animated.sequence([
+      Animated.timing(apiCheckAnim, { toValue: 0.88, duration: 80, useNativeDriver: true }),
+      Animated.spring(apiCheckAnim, { toValue: 1, useNativeDriver: true, tension: 280, friction: 8 }),
+    ]).start();
+    void checkStatus();
+  }, [apiCheckAnim, checkStatus]);
 
   const lidarSupported = isLiDARSupported();
   const [parsedRows, setParsedRows] = useState<Array<ParsedRow>>([]);
@@ -1635,36 +1645,39 @@ export default function UploadScreen() {
           {isAdmin ? (
             <View style={styles.headerActions}>
               <View style={{ alignItems: "flex-end", gap: 4 }}>
-                <Pressable
-                  onPress={handleRestartPress}
-                  style={[
-                    styles.apiStatusPill,
-                    {
-                      backgroundColor:
-                        apiRestarting
-                          ? "#6b7280"
-                          : apiStatus === "ok"
-                          ? "#10b981"
-                          : apiStatus === "degraded"
-                          ? "#f59e0b"
-                          : apiStatus === "error"
-                          ? "#ef4444"
-                          : "#6b7280",
-                    },
-                  ]}
-                >
-                  <Text style={styles.apiStatusPillText}>
-                    {apiRestarting
-                      ? "⟳ Restarting…"
-                      : apiStatus === "ok"
-                      ? "● API: ok"
-                      : apiStatus === "degraded"
-                      ? "● API: degraded"
-                      : apiStatus === "error"
-                      ? "● API: error"
-                      : "● API: …"}
-                  </Text>
-                </Pressable>
+                <Animated.View style={{ transform: [{ scale: apiCheckAnim }] }}>
+                  <Pressable
+                    onPress={handleCheckPress}
+                    onLongPress={handleRestartPress}
+                    style={[
+                      styles.apiStatusPill,
+                      {
+                        backgroundColor:
+                          apiRestarting
+                            ? "#6b7280"
+                            : apiStatus === "ok"
+                            ? "#10b981"
+                            : apiStatus === "degraded"
+                            ? "#f59e0b"
+                            : apiStatus === "error"
+                            ? "#ef4444"
+                            : "#6b7280",
+                      },
+                    ]}
+                  >
+                    <Text style={styles.apiStatusPillText}>
+                      {apiRestarting
+                        ? "⟳ Restarting…"
+                        : apiStatus === "ok"
+                        ? "● API: ok"
+                        : apiStatus === "degraded"
+                        ? "● API: degraded"
+                        : apiStatus === "error"
+                        ? "● API: error"
+                        : "● API: …"}
+                    </Text>
+                  </Pressable>
+                </Animated.View>
                 {Object.keys(apiBots).length > 0 ? (
                   <View>
                     <View style={styles.botStatusRow}>

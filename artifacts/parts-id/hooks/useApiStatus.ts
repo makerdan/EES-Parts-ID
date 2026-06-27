@@ -9,6 +9,7 @@ export interface ApiStatusResult {
   status: ApiStatus;
   restarting: boolean;
   triggerRestart: () => Promise<void>;
+  checkStatus: () => Promise<void>;
   bots: Record<string, BotProbeStatus>;
   probeSingleBot: (botName: string) => Promise<void>;
 }
@@ -210,5 +211,5 @@ export function useApiStatus({
     setTimeout(resumePoll, 1500);
   }, [adminToken, apiBase, restartPostTimeoutMs, resumePollTimeoutMs, startPolling, stopPolling]);
 
-  return { status, restarting, triggerRestart, bots, probeSingleBot };
+  return { status, restarting, triggerRestart, checkStatus: poll, bots, probeSingleBot };
 }
