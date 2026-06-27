@@ -37,6 +37,7 @@ import { RetryImage } from "@/components/RetryImage";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import type { ResumeProgress } from "@/types/catalogPdf";
+import { performAddToInventory } from "@/utils/addToInventory";
 import { buildResumeHeaders } from "@/utils/aiFallbackHeaders";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
 import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
@@ -189,54 +190,20 @@ export default function CatalogReviewScreen() {
     });
   };
 
-  const handleAddToInventory = async () => {
-    if (!addForm.vendor.trim()) {
-      setAddError("Vendor is required.");
-      return;
-    }
-    setAddingInProgress(true);
-    setAddError(null);
-    try {
-      const r = await fetch(`${API_BASE}/inventory/add-part`, {
-        method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          vendor: addForm.vendor.trim(),
-          catalog: addForm.catalog.trim(),
-          description: addForm.description.trim(),
-          ...(addForm.binLocation.trim() ? { binLocation: addForm.binLocation.trim() } : {}),
-        }),
-      });
-      if (r.status === 401) { logoutAdmin(); return; }
-      if (r.status === 409) {
-        const body = await r.json().catch(() => ({})) as { error?: string; existingItem?: CreatedPart };
-        if (body.existingItem) {
-          setDuplicateItem(body.existingItem);
-        } else {
-          setAddError(body.error ?? "This part already exists in inventory.");
-        }
-        return;
-      }
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({})) as { error?: string };
-        setAddError(body.error ?? "Failed to add part.");
-        return;
-      }
-      const body = await r.json().catch(() => ({})) as { item?: CreatedPart };
-      if (addModalPart?.catalogNumber) {
-        setAddedCatalogs((prev) => new Set([...prev, addModalPart.catalogNumber]));
-      }
-      if (body.item) {
-        setAddedItem(body.item);
-      } else {
-        setAddModalPart(null);
-      }
-    } catch {
-      setAddError("Network error. Please try again.");
-    } finally {
-      setAddingInProgress(false);
-    }
-  };
+  const handleAddToInventory = () =>
+    performAddToInventory({
+      apiBase: API_BASE,
+      authHeaders,
+      addForm,
+      catalogNumber: addModalPart?.catalogNumber ?? null,
+      logoutAdmin,
+      setAddingInProgress,
+      setAddError,
+      setDuplicateItem,
+      setAddedCatalogs,
+      setAddedItem,
+      setAddModalPart: () => setAddModalPart(null),
+    });
 
   const authHeaders = useMemo<Record<string, string>>(
     () => (adminToken ? { Authorization: `Bearer ${adminToken}` } : {} as Record<string, string>),
