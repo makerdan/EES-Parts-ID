@@ -37,13 +37,35 @@ import { isProviderPayloadTooLargeError } from "../utils/aiHelpers";
 // Keyed by job ID (child job or single-upload job). Entries are appended as
 // each page is processed. The status endpoint aggregates across child jobs for
 // parent (multi-chunk) jobs.
-const aiRawLogStore = new Map<number, Array<{ page: number; text: string }>>();
+//
+// Each record carries a createdAt timestamp so the TTL sweep below can evict
+// orphaned entries (e.g. jobs whose client never polled for their logs).
+interface AiRawLogRecord {
+  createdAt: number;
+  entries: Array<{ page: number; text: string }>;
+}
+const aiRawLogStore = new Map<number, AiRawLogRecord>();
 
 function appendAiRawLog(jobId: number, page: number, text: string): void {
-  let entries = aiRawLogStore.get(jobId);
-  if (!entries) { entries = []; aiRawLogStore.set(jobId, entries); }
-  entries.push({ page, text });
+  let record = aiRawLogStore.get(jobId);
+  if (!record) {
+    record = { createdAt: Date.now(), entries: [] };
+    aiRawLogStore.set(jobId, record);
+  }
+  record.entries.push({ page, text });
 }
+
+// Evict entries older than 1 hour every 10 minutes to bound memory on
+// long-lived server instances (jobs whose client never polled for their logs).
+const AI_RAW_LOG_TTL_MS = 60 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [jobId, record] of aiRawLogStore) {
+    if (now - record.createdAt > AI_RAW_LOG_TTL_MS) {
+      aiRawLogStore.delete(jobId);
+    }
+  }
+}, 10 * 60 * 1000).unref();
 
 const router = Router();
 
@@ -711,12 +733,12 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
     // Aggregate AI raw log from all child jobs, ordered by page number
     const aggregatedAiRawLog: Array<{ page: number; text: string }> = [];
     for (const child of children) {
-      const childLog = aiRawLogStore.get(child.id);
-      if (childLog) aggregatedAiRawLog.push(...childLog);
+      const childRecord = aiRawLogStore.get(child.id);
+      if (childRecord) aggregatedAiRawLog.push(...childRecord.entries);
     }
     aggregatedAiRawLog.sort((a, b) => a.page - b.page);
 
-    return void res.json({
+    res.json({
       jobId,
       vendor: row.vendor,
       status: aggStatus,
@@ -732,10 +754,20 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
       aiRawLog: aggregatedAiRawLog,
       ...(failedChunks.length > 0 ? { failedChunks } : {}),
     });
+
+    // Evict child log entries once the parent reaches a terminal state and
+    // we have served the aggregated logs to the client.
+    if (aggStatus === "done" || aggStatus === "failed" || aggStatus === "cancelled") {
+      for (const child of children) {
+        aiRawLogStore.delete(child.id);
+      }
+    }
+    return;
   }
 
   // ── Non-parent (child or legacy) job: return directly ────────────────────
-  const directLog = aiRawLogStore.get(Number(jobId)) ?? [];
+  const directRecord = aiRawLogStore.get(Number(jobId));
+  const directLog = directRecord?.entries ?? [];
   res.json({
     jobId,
     vendor: row.vendor,
@@ -751,6 +783,11 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
     errorMessage: row.errorMessage,
     aiRawLog: directLog,
   });
+
+  // Evict the log entry once the job is terminal and the client has the data.
+  if (row.status === "done" || row.status === "failed" || row.status === "cancelled") {
+    aiRawLogStore.delete(Number(jobId));
+  }
 });
 
 // ── GET /admin/catalog-pdf/failed-jobs ────────────────────────────────────────
