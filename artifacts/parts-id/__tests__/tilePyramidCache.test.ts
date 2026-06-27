@@ -15,6 +15,12 @@
  *   expo-file-system/legacy → __mocks__/expo-file-system-legacy.js
  */
 
+// ── Mock apiBase so API_BASE="" (root-relative) in tests ─────────────────────
+// Platform.OS is "ios" in Jest (not "web"), so apiBase.ts would otherwise
+// resolve API_BASE to "http://localhost:8080/api".  Mocking here matches the
+// comment on API_TILE_URL: "EXPO_PUBLIC_DOMAIN unset → API_BASE=""".
+jest.mock("@/utils/apiBase", () => ({ API_BASE: "", API_ORIGIN: "" }));
+
 import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import {
