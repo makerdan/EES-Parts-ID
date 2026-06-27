@@ -1,7 +1,9 @@
 /**
  * Regression tests: WarehouseMapView viewport persistence via AsyncStorage.
  *
- * Three runtime paths restored in task-1885 are covered:
+ * Four runtime paths are covered: three viewport-persistence paths (suites 1–3,
+ * restored in task-1885) and one cold-cache startup fit path (suite 4, added
+ * in task-1898):
  *
  *   1. Saved viewport found → scale/translateX/translateY shared values are
  *      set to the restored (clamped) values after the mount useEffect reads
@@ -15,13 +17,17 @@
  *      AsyncStorage.setItem to flush any pending debounced viewport write so
  *      the OS does not suspend the process before the data is persisted.
  *
+ *   4. Cold cache (getCachedData returns null) → after the SVG XML loads from
+ *      the bundle fallback, computeFitTarget is called and scale/tx/ty shared
+ *      values are applied via applyFitIfReady.
+ *
  * Mock strategy
  * ─────────────
  * • useSharedValue returns a tracked plain object; every instance is pushed to
  *   `trackedValues` so tests can inspect post-mount / post-layout .value
  *   mutations without knowing which slot in the component each value occupies.
  * • AsyncStorage.getItem is a jest.fn() configured per-suite: returns a saved
- *   viewport JSON string (suite 1) or null (suites 2 and 3).
+ *   viewport JSON string (suite 1) or null (suites 2, 3, and 4).
  * • panBounds is spied upon and mocked to return {maxX:10000, maxY:10000} so
  *   the small test tx/ty values pass through clamping unchanged.
  * • AppState.addEventListener in the react-native mock is re-implemented
@@ -194,6 +200,17 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
     removeItem: jest.fn(() => Promise.resolve()),
     multiGet:   jest.fn(() => Promise.resolve([])),
   },
+}));
+
+// ─── @/utils/appAuth ─────────────────────────────────────────────────────────
+// Default: returns a non-ok response so _loadFloorPlanFromServer always fails
+// and falls back to the bundled asset.  Cold-cache tests rely on this.
+// Warm-cache tests never reach fetchWithAuth (hasCachedData() returns true).
+
+jest.mock("@/utils/appAuth", () => ({
+  fetchWithAuth:       jest.fn(() => Promise.resolve({ ok: false })),
+  setAuthTokenGetter:  jest.fn(),
+  onUnauthorized:      jest.fn(),
 }));
 
 // ─── @/utils/floorPlan ───────────────────────────────────────────────────────
@@ -569,4 +586,160 @@ describe("AppState background handler — flushes pending _persistTimer write", 
 
     await act(async () => { renderer.unmount(); });
   });
+});
+
+// =============================================================================
+// Suite 4 — cold-cache startup fit (getCachedData returns null on first install)
+// =============================================================================
+//
+// Covers the code path where the in-memory SVG cache is empty (first install or
+// after a cache clear).  In this path:
+//   1. getCachedData() returns null → svgXml state starts as "", contentVBRef = null.
+//   2. hasCachedData() returns false → the SVG load effect runs instead of returning early.
+//   3. _loadFloorPlanFromServer fails (fetchWithAuth returns { ok: false }).
+//   4. Falls back to _loadFloorPlanFromBundle → Asset.loadAsync → fetch(localUri) →
+//      parseContentViewBox → setCached updates the mock cache.
+//   5. getSvgXml state is set → the svgXml parse effect fires → contentVBRef populated.
+//   6. applyFitIfReady() succeeds (pendingFit = true from the viewport-restore path,
+//      containerW already known from the onLayout that fired before the SVG arrived).
+//   7. computeFitTarget is called and shared values are updated.
+//
+// The suite uses a single comprehensive test for the full async chain, avoiding the
+// module-level _svgLoadPromise singleton from affecting independent assertions.
+
+describe("startup fit — cold cache (getCachedData returns null on first install)", () => {
+  // An SVG string whose viewBox matches MOCK_CONTENT_VB so parseContentViewBox
+  // returns the same rect the warm-cache tests use, keeping assertions consistent.
+  const COLD_SVG_XML = `<svg viewBox="${MOCK_CONTENT_VB.x} ${MOCK_CONTENT_VB.y} ${MOCK_CONTENT_VB.w} ${MOCK_CONTENT_VB.h}"><g/></svg>`;
+
+  // Tracks in-memory cache state for cold-cache tests.  Starts null (cold) and
+  // is populated when the mocked setCached fires during _loadFloorPlanFromBundle.
+  let coldData: typeof MOCK_CACHED_DATA | null = null;
+
+  beforeEach(() => {
+    coldData = null;
+
+    const fpc = require("@/utils/floorPlanCache");
+
+    // Override the warm-cache defaults set by the outer beforeEach.
+    fpc.getCachedData.mockImplementation(() => coldData);
+    fpc.hasCachedData.mockReturnValue(false);
+    fpc.getCachedHash.mockReturnValue(null);
+    // getIfValid must return null (cache miss) so _loadFloorPlanFromBundle
+    // does not short-circuit before calling setCached.  jest.clearAllMocks()
+    // would have left it returning undefined, which !== null passes the guard
+    // and causes the function to return before setCached is ever called.
+    fpc.getIfValid.mockReturnValue(null);
+
+    // setCached populates coldData so subsequent getCachedData() calls return
+    // the freshly loaded SVG (matching what the real cache module does).
+    fpc.setCached.mockImplementation(
+      (
+        _hash: string,
+        data: {
+          uri: string;
+          innerXml: string;
+          xml: string;
+          contentViewBox?: { x: number; y: number; w: number; h: number };
+        },
+      ) => {
+        coldData = {
+          uri:          data.uri,
+          innerXml:     data.innerXml,
+          xml:          data.xml,
+          contentViewBox: data.contentViewBox ?? MOCK_CONTENT_VB,
+        };
+      },
+    );
+
+    // fetchWithAuth returns a non-ok response so _loadFloorPlanFromServer throws
+    // and the load falls through to _loadFloorPlanFromBundle.
+    const appAuth = require("@/utils/appAuth");
+    appAuth.fetchWithAuth.mockResolvedValue({ ok: false });
+
+    // The outer beforeEach calls jest.clearAllMocks() which clears the
+    // expo-asset mock implementation.  Restore it so Asset.loadAsync() returns
+    // the expected bundle asset during _loadFloorPlanFromBundle.
+    const expoAsset = require("expo-asset");
+    expoAsset.Asset.loadAsync.mockResolvedValue([{
+      uri:        "file:///mock/floor-plan.svg",
+      localUri:   "file:///mock/floor-plan.svg",
+      downloaded: true,
+      hash:       "bundle-hash",
+    }]);
+
+    // global.fetch serves the SVG bytes for the bundle-fallback local-file read.
+    global.fetch = jest.fn().mockResolvedValue({
+      ok:   true,
+      text: () => Promise.resolve(COLD_SVG_XML),
+    } as unknown as Response);
+  });
+
+  afterEach(() => {
+    // Remove the global.fetch override so it doesn't leak into other suites.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (global as any).fetch;
+  });
+
+  // Helper: mount + layout + drain all async SVG-load work.
+  //
+  // The cold-cache load chain is a Promise waterfall:
+  //   _persistReadPromise (1 tick) →
+  //   fetchWithAuth (1 tick) → throws → .catch →
+  //   Asset.loadAsync (1 tick) →
+  //   fetch(localUri) (1 tick) →
+  //   res.text() (1 tick) →
+  //   setCached / getSvgXml / setSvgXml (sync + React batch) →
+  //   svgXml parse effect → applyFitIfReady → computeFitTarget
+  //
+  // Each `await act(async () => { await Promise.resolve(); })` advances
+  // exactly one microtask tick AND flushes any React state updates +
+  // effects triggered by that tick.  12 rounds is enough headroom for
+  // the full chain (the real depth is ~6 ticks).
+  //
+  async function mountLayoutAndDrain(containerW: number, containerH: number) {
+    const renderer = await mountAndLayout(containerW, containerH);
+    for (let i = 0; i < 12; i++) {
+      await act(async () => { await Promise.resolve(); });
+    }
+    return renderer;
+  }
+
+  it(
+    "phone (390×761): computeFitTarget is called and scale/tx/ty are applied " +
+    "after SVG XML arrives from cold cache",
+    async () => {
+      await mountLayoutAndDrain(390, 761);
+
+      // computeFitTarget must have been called by applyFitIfReady once both
+      // contentVBRef (populated by the svgXml parse effect) and containerW
+      // (populated by onLayout) are available.
+      expect(computeFitTargetSpy).toHaveBeenCalled();
+
+      // The first call must receive the parsed contentViewBox, not a stale default.
+      const call = computeFitTargetSpy.mock.calls[0] as [unknown, number, number];
+      expect(call[0]).toEqual(MOCK_CONTENT_VB);
+      expect(call[1]).toBe(390);
+      expect(call[2]).toBe(761);
+
+      // applyFitIfReady writes the fit result to six shared values:
+      // scale, savedScale, translateX, translateY, savedTX, savedTY.
+      // At least one tracked shared value must hold each of scale, tx, ty.
+      const { scale: fitScale, tx: fitTx, ty: fitTy } =
+        computeFitTargetSpy.mock.results[0]!.value as {
+          scale: number; tx: number; ty: number;
+        };
+      expect(trackedValues.some((sv) => sv.value === fitScale)).toBe(true);
+      expect(trackedValues.some((sv) => sv.value === fitTx)).toBe(true);
+      expect(trackedValues.some((sv) => sv.value === fitTy)).toBe(true);
+
+      // AsyncStorage.getItem must never be called during cold-cache startup.
+      // The SVG-loading chain (loadSvgAsset → _loadFloorPlanFromBundle →
+      // setCached → setSvgXml → svgXml parse effect) and the fit-application
+      // path (applyFitIfReady → computeFitTarget) must not read AsyncStorage;
+      // and there is no viewport-restore effect to trigger it on mount either.
+      expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+    },
+  );
+
 });

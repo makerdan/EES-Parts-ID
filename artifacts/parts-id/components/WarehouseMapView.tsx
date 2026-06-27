@@ -824,9 +824,9 @@ export function WarehouseMapView({
   const contentVBRef = useRef<ContentViewBox | null>(contentVB);
 
   // True when we need to apply a fit-to-content viewport as soon as both the
-  // container dimensions and the content viewBox are known.  Set when the
-  // AsyncStorage read returns null (no saved viewport).
-  const pendingFit = useRef(false);
+  // container dimensions and the content viewBox are known.  Starts true so
+  // the map always opens fitted to screen on mount (no viewport restore path).
+  const pendingFit = useRef(true);
 
   // Indirection ref so onLayout (declared before the shared values) can call
   // applyFitIfReady (which needs the shared values) without a forward-reference
@@ -1246,55 +1246,9 @@ export function WarehouseMapView({
   }, []);
 
   // ── Viewport restore on mount ──────────────────────────────────────────────
-  // Read the persisted viewport from AsyncStorage.  If found, apply it
-  // immediately (clamping to real container bounds if layout has already fired).
-  // If not found, set pendingFit so the map opens fitted to the screen.
-  useEffect(() => {
-    AsyncStorage.getItem(VIEWPORT_KEY)
-      .then((raw) => {
-        if (raw !== null) {
-          try {
-            const { s, tx, ty } = JSON.parse(raw) as { s: number; tx: number; ty: number };
-            const clampedS = clampScale(s);
-            scale.value = clampedS;
-            savedScale.value = clampedS;
-            setRenderZoom(zoomStopForScale(clampedS));
-
-            // Always clamp tx/ty to the bounds that match the current container
-            // dimensions so a portrait-saved viewport doesn't bleed off-screen
-            // when the device is reopened in landscape (and vice versa).
-            const w = containerWRef.current;
-            const h = containerHRef.current;
-            if (w > 0) {
-              // Layout has already fired — we have real dimensions.
-              const { maxX, maxY } = panBounds(w, h, clampedS);
-              const clampedTX = Math.max(-maxX, Math.min(maxX, tx));
-              const clampedTY = Math.max(-maxY, Math.min(maxY, ty));
-              translateX.value = clampedTX;
-              translateY.value = clampedTY;
-              savedTX.value = clampedTX;
-              savedTY.value = clampedTY;
-            } else {
-              // Layout hasn't fired yet — stash the raw values; onLayout will
-              // clamp and apply them once real dimensions are known.
-              pendingRestore.current = { s: clampedS, tx, ty };
-              translateX.value = tx;
-              translateY.value = ty;
-              savedTX.value = tx;
-              savedTY.value = ty;
-            }
-          } catch {
-            // Corrupted JSON — silently discard; starts at default position.
-          }
-        } else {
-          // No saved viewport — fit the map to screen on first open.
-          pendingFit.current = true;
-          applyFitIfReadyRef.current();
-        }
-      })
-      .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // pendingFit starts true (see useRef above), so applyFitIfReady will open
+  // the map fitted to the screen as soon as both container dimensions and the
+  // content viewBox are known.  No AsyncStorage read is performed here.
 
   // ── Adaptive-tiling floor-plan renderer ──────────────────────────────────
   // At zoom N the floor plan is split into N×N tiles.  Each tile renders at
