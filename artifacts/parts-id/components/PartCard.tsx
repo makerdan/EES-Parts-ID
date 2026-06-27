@@ -14,6 +14,7 @@ import {
 } from "react-native";
 
 import { useColors } from "@/hooks/useColors";
+import { fetchWithAuth } from "@/utils/appAuth";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -112,7 +113,7 @@ export function PartCard({ catalog, vendor, description, autoExpand = false }: P
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    fetch(`${API_BASE}/ai/part-card`, {
+    fetchWithAuth(`${API_BASE}/ai/part-card`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ catalog, vendor: vendor ?? "", description: description ?? "", ...(opts?.force ? { force: true } : {}) }),

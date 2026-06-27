@@ -14,6 +14,7 @@ import {
 import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
+import { fetchWithAuth } from "@/utils/appAuth";
 
 const DEVICE_TOKEN_KEY = "contact_device_token";
 
@@ -72,7 +73,7 @@ export function ContactSheet({ visible, onClose, onSuccess, senderToken }: Props
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/contact`, {
+      const res = await fetchWithAuth(`${API_BASE}/contact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

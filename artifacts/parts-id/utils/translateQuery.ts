@@ -14,6 +14,8 @@
 
 import type { SearchResult } from "@workspace/api-client-react";
 
+import { fetchWithAuth } from "@/utils/appAuth";
+
 export type AIZeroResultsState = {
   loading: boolean;
   partName: string;
@@ -55,7 +57,7 @@ export async function runTranslateQuery(
   };
 
   try {
-    const res = await fetch(`${apiBase}/ai/translate-query`, {
+    const res = await fetchWithAuth(`${apiBase}/ai/translate-query`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, zeroResults }),

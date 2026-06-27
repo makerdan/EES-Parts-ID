@@ -99,7 +99,7 @@ describe("fetchChipAnswer — Layer 2 (DB cache via GET)", () => {
     expect(cache.get(LABEL)?.answer).toBe(ANSWER);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch.mock.calls[0][0]).toContain(`quick-lookups/${encodeURIComponent(LABEL)}`);
-    expect(mockFetch.mock.calls[0][1]).toBeUndefined();
+    expect((mockFetch.mock.calls[0][1] as RequestInit | undefined)?.method).toBeUndefined();
   });
 
   it("does NOT call the AI (POST) when GET returns 200", async () => {
@@ -173,7 +173,7 @@ describe("prefetchQuickLookups", () => {
 
     expect(cache.get("GFCI")?.answer).toBe("Ground fault interrupter.");
     expect(cache.get("AWG")?.answer).toBe("American Wire Gauge.");
-    expect(mockFetch).toHaveBeenCalledWith(`${API_BASE}/reference/quick-lookups`);
+    expect(mockFetch.mock.calls[0][0]).toBe(`${API_BASE}/reference/quick-lookups`);
   });
 
   it("stores a fetchedAt timestamp within each prefetched entry", async () => {
