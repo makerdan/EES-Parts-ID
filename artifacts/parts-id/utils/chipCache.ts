@@ -10,6 +10,8 @@
  * they are pure and fully testable without a mounted component.
  */
 
+import { fetchWithAuth } from "@/utils/appAuth";
+
 /** Maximum age for an in-memory cache entry before it is considered stale. */
 export const MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -36,7 +38,7 @@ export async function fetchChipAnswer(
   }
 
   try {
-    const res = await fetch(
+    const res = await fetchWithAuth(
       `${apiBase}/reference/quick-lookups/${encodeURIComponent(label)}`,
     );
     if (res.ok) {
@@ -48,7 +50,7 @@ export async function fetchChipAnswer(
     // network error — fall through to AI
   }
 
-  const res = await fetch(
+  const res = await fetchWithAuth(
     `${apiBase}/reference/quick-lookups/${encodeURIComponent(label)}`,
     {
       method: "POST",
@@ -67,7 +69,7 @@ export async function prefetchQuickLookups(
   apiBase: string,
 ): Promise<void> {
   try {
-    const res = await fetch(`${apiBase}/reference/quick-lookups`);
+    const res = await fetchWithAuth(`${apiBase}/reference/quick-lookups`);
     if (!res.ok) return;
     const rows: Array<{ label: string; answer: string }> = await res.json();
     const now = Date.now();

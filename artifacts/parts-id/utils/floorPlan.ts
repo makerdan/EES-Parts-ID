@@ -13,6 +13,8 @@
 
 import { Platform } from "react-native";
 
+import { fetchWithAuth } from "@/utils/appAuth";
+
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "";
@@ -46,7 +48,7 @@ export function tileApiUrl(z: number, x: number, y: number): string {
 export async function warmupTiles(_svgHash: string): Promise<void> {
   if (Platform.OS === "web" || !API_BASE) return;
   try {
-    await fetch(`${API_BASE}/floor-plan/tiles/warmup`, { method: "POST" });
+    await fetchWithAuth(`${API_BASE}/floor-plan/tiles/warmup`, { method: "POST" });
   } catch {
     // Non-fatal — tiles will be generated on first request.
   }

@@ -18,6 +18,7 @@ import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
+import { fetchWithAuth } from "@/utils/appAuth";
 import { type CacheEntry,fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl } from "@/utils/chipCache";
 
 const API_BASE =
@@ -169,7 +170,7 @@ export function ReferenceModal({ open, onClose }: Props = {}) {
     pulseButton();
 
     try {
-      const res = await fetch(`${API_BASE}/reference/ask?stream=false`, {
+      const res = await fetchWithAuth(`${API_BASE}/reference/ask?stream=false`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q, history }),

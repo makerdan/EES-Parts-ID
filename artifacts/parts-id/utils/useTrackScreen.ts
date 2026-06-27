@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 
+import { fetchWithAuth } from "@/utils/appAuth";
+
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "";
@@ -12,7 +14,7 @@ const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
 export function useTrackScreen(screenName: string): void {
   useEffect(() => {
     if (!API_BASE) return;
-    fetch(`${API_BASE}/track/screen-view`, {
+    fetchWithAuth(`${API_BASE}/track/screen-view`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ screen: screenName }),
