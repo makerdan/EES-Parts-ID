@@ -18,6 +18,7 @@ import {
   setAppToken as setAppTokenModule,
   setOnUnauthorized,
 } from "@/utils/appAuth";
+import { API_BASE, API_ORIGIN } from "@/utils/apiBase";
 import { type LogoutHandler,LogoutRegistry } from "@/utils/logoutRegistry";
 import {
   ADMIN_TOKEN_KEY,
@@ -141,9 +142,6 @@ function applyThemeMode(mode: ThemeMode) {
     // `setColorScheme` is a no-op on platforms that don't support it (old RN, some web runtimes).
   }
 }
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
 
 type AdminProfilePayload = {
   dimensionUnit?: string;
@@ -358,12 +356,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       // Configure the base URL once on mount so all generated hooks point at
       // the correct API origin without requiring each call site to repeat it.
-      // Use the bare origin (no /api suffix) because the generated client paths
-      // already start with /api/…; including it here would double the prefix.
-      const origin = process.env.EXPO_PUBLIC_DOMAIN
-        ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-        : "";
-      if (origin) setBaseUrl(origin);
+      // API_ORIGIN is the bare origin (no /api suffix) because the generated
+      // client paths already start with /api/…; including it here would double
+      // the prefix. Empty string means "use relative URLs" (web dev).
+      if (API_ORIGIN) setBaseUrl(API_ORIGIN);
       // Use admin token when present; fall back to app-session token so regular
       // (non-admin) users' generated-client calls still pass requireAppAuth.
       setAuthTokenGetter(() => adminTokenRef.current ?? appTokenRef.current);

@@ -14,10 +14,7 @@
 import { Platform } from "react-native";
 
 import { fetchWithAuth } from "@/utils/appAuth";
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
+import { API_BASE } from "@/utils/apiBase";
 
 /**
  * Return the API URL for tile (z, x, y).

@@ -24,11 +24,8 @@ import {
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldRedirectNonAdmin } from "@/utils/adminGuard";
+import { API_BASE } from "@/utils/apiBase";
 import { useTrackScreen } from "@/utils/useTrackScreen";
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
 
 type LogRow = {
   id: number;

@@ -20,11 +20,8 @@ import {
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 import { useColors } from "@/hooks/useColors";
+import { API_BASE } from "@/utils/apiBase";
 import { invalidateInventoryList } from "@/utils/listEditorHandlers";
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
 
 const STEP_OPTIONS = [1, 2, 5, 10] as const;
 type Step = (typeof STEP_OPTIONS)[number];

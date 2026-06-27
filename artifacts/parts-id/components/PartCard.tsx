@@ -15,14 +15,11 @@ import {
 
 import { useColors } from "@/hooks/useColors";
 import { fetchWithAuth } from "@/utils/appAuth";
+import { API_BASE } from "@/utils/apiBase";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
 
 const FETCH_TIMEOUT_MS = 12_000;
 

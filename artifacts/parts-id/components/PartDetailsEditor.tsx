@@ -28,6 +28,7 @@ import { MeasurePartScreen } from "@/components/MeasurePartScreen";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { useColors } from "@/hooks/useColors";
+import { API_BASE } from "@/utils/apiBase";
 import { BIN_FORMAT_HINT,isBinLocationValid } from "@/utils/binValidation";
 import { invalidateListCache } from "@/utils/editItemCache";
 import type { QueryCache } from "@/utils/searchHelpers";
@@ -37,15 +38,11 @@ interface CapturedPhoto {
   uri: string;
 }
 
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
-
-if (__DEV__ && !process.env.EXPO_PUBLIC_DOMAIN) {
+if (__DEV__ && !API_BASE) {
   // eslint-disable-next-line no-console
   console.error(
-    "[PartDetailsEditor] EXPO_PUBLIC_DOMAIN is not set — all API calls will fail. " +
-    "Set the environment variable before starting the dev server.",
+    "[PartDetailsEditor] No API base URL configured — all API calls will fail. " +
+    "Set EXPO_PUBLIC_DOMAIN or EXPO_PUBLIC_API_BASE before starting the dev server.",
   );
 }
 

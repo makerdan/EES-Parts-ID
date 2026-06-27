@@ -19,12 +19,8 @@ import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
 import { fetchWithAuth } from "@/utils/appAuth";
+import { API_BASE } from "@/utils/apiBase";
 import { type CacheEntry,fetchChipAnswer as fetchChipAnswerImpl, prefetchQuickLookups as prefetchQuickLookupsImpl } from "@/utils/chipCache";
-
-const API_BASE =
-  process.env.EXPO_PUBLIC_DOMAIN
-    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-    : "";
 
 type Props = {
   open?: boolean;

@@ -19,10 +19,7 @@ import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 import { useColors } from "@/hooks/useColors";
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
+import { API_BASE } from "@/utils/apiBase";
 
 export interface AddPartModalProps {
   visible: boolean;
