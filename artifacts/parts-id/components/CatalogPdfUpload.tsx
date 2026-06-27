@@ -161,7 +161,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     return () => clearTimeout(timer);
   }, [retryCountdown]);
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef = useRef<AbortController | null>(null);
+  const pollGenRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Holds the active background upload task so Cancel can call cancelAsync().
   const uploadTaskRef = useRef<FileSystem.UploadTask | null>(null);
@@ -300,7 +301,8 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
   const [cancellingJob, setCancellingJob] = useState(false);
 
   const stopPolling = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (pollRef.current) { pollRef.current.abort(); pollRef.current = null; }
+    pollGenRef.current += 1;
   }, []);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
@@ -386,27 +388,53 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const startPolling = useCallback((jobId: string) => {
     stopPolling();
-    pollRef.current = setInterval(async () => {
-      const token = adminTokenRef.current;
-      if (!token) { stopPolling(); return; }
-      try {
-        const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (r.status === 401) { stopPolling(); onSessionExpired(); return; }
-        if (!r.ok) return;
-        const data = await r.json() as JobStatus;
-        setJobStatus(data);
-        if (data.aiRawLog && data.aiRawLog.length > 0) {
-          const newEntries = data.aiRawLog.filter(e => !seenAiPagesRef.current.has(e.page));
-          if (newEntries.length > 0) {
-            newEntries.forEach(e => seenAiPagesRef.current.add(e.page));
-            setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
+    const gen = ++pollGenRef.current;
+    const controller = new AbortController();
+    pollRef.current = controller;
+
+    const run = async () => {
+      while (!controller.signal.aborted) {
+        const token = adminTokenRef.current;
+        if (!token) return;
+
+        try {
+          const r = await fetch(`${API_BASE}/admin/catalog-pdf/${jobId}/status`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          });
+
+          if (pollGenRef.current !== gen) return;
+
+          if (r.status === 401) { onSessionExpired(); return; }
+
+          if (r.ok) {
+            const data = await r.json() as JobStatus;
+            if (pollGenRef.current !== gen) return;
+
+            setJobStatus(data);
+            if (data.aiRawLog && data.aiRawLog.length > 0) {
+              const newEntries = data.aiRawLog.filter(e => !seenAiPagesRef.current.has(e.page));
+              if (newEntries.length > 0) {
+                newEntries.forEach(e => seenAiPagesRef.current.add(e.page));
+                setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
+              }
+            }
+            if (data.status === "done" || data.status === "failed" || data.status === "cancelled") return;
           }
+        } catch {
+          if (controller.signal.aborted || pollGenRef.current !== gen) return;
+          /* network blip — fall through to wait */
         }
-        if (data.status === "done" || data.status === "failed" || data.status === "cancelled") stopPolling();
-      } catch { /* network blip — keep polling */ }
-    }, POLL_MS);
+
+        /* Wait POLL_MS before next request; abort-aware so cleanup is immediate. */
+        await new Promise<void>(resolve => {
+          const t = setTimeout(resolve, POLL_MS);
+          controller.signal.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+        });
+      }
+    };
+
+    void run();
   }, [stopPolling, onSessionExpired]);
 
   const handleCancelJob = useCallback(async () => {
