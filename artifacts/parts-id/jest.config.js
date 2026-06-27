@@ -14,6 +14,7 @@ module.exports = {
     "^react-native-gesture-handler$": "<rootDir>/__mocks__/react-native-gesture-handler.js",
     "^@react-native-community/netinfo$": "<rootDir>/__mocks__/netinfo.js",
     "^lidar-measure$": "<rootDir>/__mocks__/lidar-measure.js",
+    "\\.svg$": "<rootDir>/__mocks__/svg-asset.js",
     "^@/(.*)$": "<rootDir>/$1",
     "^@workspace/zone-validation$": "<rootDir>/../../lib/zone-validation/src/index.ts",
     "^@workspace/api-client-react$": "<rootDir>/../../lib/api-client-react/src/index.ts",
