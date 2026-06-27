@@ -124,26 +124,12 @@
     {
       "idx": 17,
       "version": "7",
-      "when": 1750550400000,
-      "tag": "0023_zone_section_code",
-      "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "7",
       "when": 1750636800000,
       "tag": "0024_part_card_cache",
       "breakpoints": true
     },
     {
-      "idx": 19,
-      "version": "7",
-      "when": 1751000000000,
-      "tag": "0025_drop_zone_section_code",
-      "breakpoints": true
-    },
-    {
-      "idx": 20,
+      "idx": 18,
       "version": "7",
       "when": 1751086400000,
       "tag": "0026_catalog_pdf_chunk_unique",
