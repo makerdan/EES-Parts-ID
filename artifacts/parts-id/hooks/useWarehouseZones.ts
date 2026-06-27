@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 
 import { retryAsync } from "@/utils/retryAsync";
+import { getAuthHeaders } from "@/utils/appAuth";
 
 const ZONES_CACHE_KEY = "parts_id_warehouse_zones_v1";
 
@@ -55,7 +56,9 @@ export function useWarehouseZones() {
     fetchingRef.current = true;
     try {
       const data: { zones: Array<ApiWarehouseZone> } = await retryAsync(async () => {
-        const res = await fetch(`${API_BASE}/warehouse-zones`);
+        const res = await fetch(`${API_BASE}/warehouse-zones`, {
+          headers: getAuthHeaders(),
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       });

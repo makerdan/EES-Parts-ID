@@ -24,6 +24,10 @@ import {
   reportStorageError,
   setStorageErrorHandler,
 } from "@/utils/storageErrorReporter";
+import {
+  setAppToken as setAppTokenModule,
+  setAdminToken as setAdminTokenModule,
+} from "@/utils/appAuth";
 
 // ── App Settings ─────────────────────────────────────────────────────────────
 export const SETTINGS_KEY = "parts_id_settings_v1";
@@ -136,8 +140,6 @@ function applyThemeMode(mode: ThemeMode) {
     // `setColorScheme` is a no-op on platforms that don't support it (old RN, some web runtimes).
   }
 }
-const APP_PASSWORD = process.env.EXPO_PUBLIC_APP_PASSWORD ?? "";
-
 const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
   ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
   : "";
@@ -337,6 +339,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // and 401, even when the user is logged in as admin.
   const adminTokenRef = useRef<string | null>(null);
   useEffect(() => { adminTokenRef.current = adminToken; }, [adminToken]);
+  // Sync admin token to module-level store so non-React hooks (manual fetch
+  // calls that use getAuthHeaders()) always send the current token.
+  useEffect(() => { setAdminTokenModule(adminToken); }, [adminToken]);
+
+  // App-session token returned by POST /auth/app-login. Stored in SecureStore
+  // under SESSION_KEY and restored on boot.
+  const appTokenRef = useRef<string | null>(null);
   useEffect(() => {
     try {
       // If setBaseUrl or setAuthTokenGetter are not functions the generated API
@@ -354,7 +363,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
         : "";
       if (origin) setBaseUrl(origin);
-      setAuthTokenGetter(() => adminTokenRef.current);
+      // Use admin token when present; fall back to app-session token so regular
+      // (non-admin) users' generated-client calls still pass requireAppAuth.
+      setAuthTokenGetter(() => adminTokenRef.current ?? appTokenRef.current);
     } catch {
       // API client module threw during initialisation — still show the error UI.
       setApiInitError(true);
@@ -425,7 +436,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       secureGet(ADMIN_TOKEN_KEY),
       loadSettings(),
     ]).then(([session, token, s]) => {
-      if (session === "authenticated") setIsAuthenticated(true);
+      // SESSION_KEY now stores the signed app-session token. The legacy value
+      // "authenticated" (stored by the old client-side check) is treated as
+      // invalid and will require a fresh server-validated login.
+      if (session && session !== "authenticated") {
+        appTokenRef.current = session;
+        setAppTokenModule(session);
+        setIsAuthenticated(true);
+      }
       if (token) setAdminToken(token);
       setSettings(s);
       applyThemeMode(s.themeMode);
@@ -497,15 +515,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     settings.textSize === "small" ? 0.85 : settings.textSize === "large" ? 1.18 : 1.0;
 
   const login = useCallback(async (password: string) => {
-    if (!APP_PASSWORD) {
-      return { success: false, error: "App password not configured. Contact your administrator." };
-    }
-    if (password === APP_PASSWORD) {
-      await secureSet(SESSION_KEY, "authenticated");
+    try {
+      const resp = await fetch(`${API_BASE}/auth/app-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const body = await resp.json() as { token?: string; error?: string };
+
+      if (!resp.ok) {
+        if (resp.status === 503) {
+          return { success: false, error: body.error ?? "App password not configured on the server" };
+        }
+        return { success: false, error: body.error ?? "Incorrect password" };
+      }
+
+      if (!body.token) {
+        return { success: false, error: "Server did not return a token" };
+      }
+
+      await secureSet(SESSION_KEY, body.token);
+      appTokenRef.current = body.token;
+      setAppTokenModule(body.token);
       setIsAuthenticated(true);
       return { success: true };
+    } catch {
+      return { success: false, error: "Could not reach the server. Check your connection." };
     }
-    return { success: false, error: "Incorrect password" };
   }, []);
 
   const logout = useCallback(async () => {
@@ -516,6 +552,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     // Fire in-memory reset handlers so screens drop the prior session's state
     logoutRegistryRef.current.fire();
+    appTokenRef.current = null;
+    setAppTokenModule(null);
     setIsAuthenticated(false);
     setAdminToken(null);
   }, []);

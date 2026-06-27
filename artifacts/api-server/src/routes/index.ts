@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
+import authRouter from "./auth";
 import inventoryRouter from "./inventory";
 import inventoryCategoriesRouter from "./inventoryCategories";
 import dictionariesRouter from "./dictionaries";
@@ -19,6 +20,7 @@ import adminAiStatusRouter from "./adminAiStatus";
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use("/auth", authRouter);
 router.use("/inventory", inventoryRouter);
 router.use("/inventory", inventoryCategoriesRouter);
 router.use("/dictionaries", dictionariesRouter);
