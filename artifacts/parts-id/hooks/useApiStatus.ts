@@ -35,6 +35,8 @@ export function useApiStatus({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const restartingRef = useRef(false);
   const isFocusedRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const restartTimerIdsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
   const poll = useCallback(async () => {
     if (restartingRef.current) return;
@@ -121,8 +123,12 @@ export function useApiStatus({
   }, [adminToken, startPolling]);
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       stopPolling();
+      for (const id of restartTimerIdsRef.current) clearTimeout(id);
+      restartTimerIdsRef.current = [];
     };
   }, [stopPolling]);
 
@@ -189,10 +195,13 @@ export function useApiStatus({
         if (res.ok) {
           const data = await res.json();
           const s = data?.status;
-          setStatus(s === "ok" || s === "degraded" || s === "error" ? s : "ok");
           restartingRef.current = false;
-          setRestarting(false);
-          startPolling();
+          restartTimerIdsRef.current = [];
+          if (isMountedRef.current) {
+            setStatus(s === "ok" || s === "degraded" || s === "error" ? s : "ok");
+            setRestarting(false);
+            startPolling();
+          }
           return;
         }
       } catch {
@@ -200,15 +209,20 @@ export function useApiStatus({
         // Server still restarting (or timed out)
       }
       if (attempts < maxAttempts) {
-        setTimeout(resumePoll, 1500);
+        const tid = setTimeout(resumePoll, 1500);
+        restartTimerIdsRef.current.push(tid);
       } else {
-        setStatus("error");
         restartingRef.current = false;
-        setRestarting(false);
-        startPolling();
+        restartTimerIdsRef.current = [];
+        if (isMountedRef.current) {
+          setStatus("error");
+          setRestarting(false);
+          startPolling();
+        }
       }
     };
-    setTimeout(resumePoll, 1500);
+    const tid = setTimeout(resumePoll, 1500);
+    restartTimerIdsRef.current.push(tid);
   }, [adminToken, apiBase, restartPostTimeoutMs, resumePollTimeoutMs, startPolling, stopPolling]);
 
   return { status, restarting, triggerRestart, checkStatus: poll, bots, probeSingleBot };
