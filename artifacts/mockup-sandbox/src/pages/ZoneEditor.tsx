@@ -207,7 +207,6 @@ interface Zone {
   svgWidth: number;
   svgHeight: number;
   sortOrder: number;
-  sectionCode?: string | null;
 }
 
 interface Tf { x: number; y: number; s: number }
@@ -219,7 +218,7 @@ type Mode = "pan" | "draw" | "fill";
 const UNDO_LIMIT = 50;
 type PositionSnap = { svgX: number; svgY: number };
 type GeomSnap    = { svgX: number; svgY: number; svgWidth: number; svgHeight: number };
-type MetaSnap    = Partial<Pick<Zone, "aisleId" | "sectionNum" | "isInventory" | "sortOrder" | "sectionCode">>;
+type MetaSnap    = Partial<Pick<Zone, "aisleId" | "sectionNum" | "isInventory" | "sortOrder">>;
 
 type UndoEntry =
   | { type: "move";       id: number; before: PositionSnap; after: PositionSnap }
@@ -1162,17 +1161,15 @@ export function ZoneEditor() {
                 sentinel: nextSentinel--,
                 targetSectionNum: snap.sectionNum!,
                 targetSortOrder: snap.sortOrder,
-                targetSectionCode: snap.sectionCode,
               };
             });
 
             for (const { id, sentinel } of sentinelMap) {
               await patchZone(id, { sectionNum: sentinel });
             }
-            for (const { id, targetSectionNum, targetSortOrder, targetSectionCode } of sentinelMap) {
+            for (const { id, targetSectionNum, targetSortOrder } of sentinelMap) {
               const patch: Partial<Zone> = { sectionNum: targetSectionNum };
               if (targetSortOrder !== undefined) patch.sortOrder = targetSortOrder;
-              if (targetSectionCode !== undefined) patch.sectionCode = targetSectionCode;
               await patchZone(id, patch);
             }
           } else {
@@ -1542,12 +1539,10 @@ export function ZoneEditor() {
       before: {
         sectionNum: zone.sectionNum,
         ...(autoNumSyncSortOrder ? { sortOrder: zone.sortOrder } : {}),
-        ...(zone.sectionCode ? { sectionCode: zone.sectionCode } : {}),
       } as MetaSnap,
       after: {
         sectionNum: newSectionNum,
         ...(autoNumSyncSortOrder ? { sortOrder: newSortOrder } : {}),
-        ...(zone.sectionCode ? { sectionCode: null } : {}),
       } as MetaSnap,
     }));
     // Two-phase apply to avoid (aisleId, sectionNum) unique constraint
@@ -1572,7 +1567,6 @@ export function ZoneEditor() {
         const preview = autoNumPreview.find((p) => p.zone.id === id)!;
         const patch: Partial<Zone> = { sectionNum: newSectionNum };
         if (autoNumSyncSortOrder) patch.sortOrder = preview.newSortOrder;
-        if (preview.zone.sectionCode) patch.sectionCode = null;
         await patchZone(id, patch);
       }
       // IMPORTANT: pushUndo must remain here — after BOTH phases have fully
@@ -2650,7 +2644,7 @@ export function ZoneEditor() {
                       paintOrder="stroke"
                       style={{ pointerEvents: "none", userSelect: "none" }}
                     >
-                      {zone.sectionCode ?? sectionNumToDisplay(zone.sectionNum)}
+                      {sectionNumToDisplay(zone.sectionNum)}
                     </text>
 
                     {/* Corner handles (single-selected zone only) */}
@@ -2956,19 +2950,6 @@ export function ZoneEditor() {
                     form={form}
                     onChange={setForm}
                     aisleIdError={aisleIdError}
-                    sectionCode={selectedZone?.sectionCode}
-                    zones={zones}
-                    zoneId={selectedId}
-                    onSectionCodeSave={async (code) => {
-                      if (!selectedId) return;
-                      try {
-                        await patchZone(selectedId, { sectionCode: code });
-                        toast.success(code ? `Section code set to ${code}` : "Section code cleared");
-                        await fetchZones();
-                      } catch (e) {
-                        toast.error(e instanceof Error ? e.message : String(e));
-                      }
-                    }}
                   />
                   {duplicateConflict && (pendingRect || selectedZone) && (
                     <div style={styles.dupWarning}>
@@ -3149,7 +3130,7 @@ export function ZoneEditor() {
                             }}
                           >
                             <span style={{ color: "#6b7280" }}>
-                              Zone #{zone.id} ({zone.sectionCode ?? sectionNumToDisplay(zone.sectionNum)} →)
+                              Zone #{zone.id} ({sectionNumToDisplay(zone.sectionNum)} →)
                             </span>
                             <span style={{ fontWeight: 600, color: "#7c3aed" }}>
                               {newSectionNumDisplay}
@@ -3314,7 +3295,7 @@ export function ZoneEditor() {
                     background: sel ? "rgba(245,158,11,0.08)" : "transparent",
                   }}
                 >
-                  <div style={styles.zoneItemLabel}>Aisle {zone.aisleId} §{zone.sectionCode || sectionNumToDisplay(zone.sectionNum)}</div>
+                  <div style={styles.zoneItemLabel}>Aisle {zone.aisleId} §{sectionNumToDisplay(zone.sectionNum)}</div>
                   <div style={styles.zoneItemMeta}>
                     {zone.isInventory ? "inventory" : "non-inv"}
                   </div>
@@ -3335,7 +3316,6 @@ export function ZoneEditor() {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-const SECTION_CODE_RE = /^[A-Z]{4}$/;
 
 export type ZoneFormHandle = {
   /** Returns the current form values with any pending rawSection input committed. */
@@ -3346,20 +3326,12 @@ type ZoneFormProps = {
   form: FormState;
   onChange: (f: FormState) => void;
   aisleIdError?: string | null;
-  sectionCode?: string | null;
-  onSectionCodeSave?: (code: string | null) => void;
-  zones?: Zone[];
-  zoneId?: number | null;
 };
 
 export const ZoneForm = forwardRef<ZoneFormHandle, ZoneFormProps>(function ZoneForm({
   form,
   onChange,
   aisleIdError,
-  sectionCode,
-  onSectionCodeSave,
-  zones: allZones,
-  zoneId,
 }, ref) {
   // Local raw string for the Section # field while the user is typing.
   // null = field is not focused (show the canonical formatted value).
@@ -3376,29 +3348,6 @@ export const ZoneForm = forwardRef<ZoneFormHandle, ZoneFormProps>(function ZoneF
       return { ...form, sectionNum: parsed ?? null };
     },
   }), [form, rawSection]);
-
-  // Local draft for the Section Code field.
-  const [codeDraft, setCodeDraft] = useState<string>(sectionCode ?? "");
-  // Track focus so we never clobber an in-progress edit when the prop refreshes.
-  const [codeFieldFocused, setCodeFieldFocused] = useState(false);
-
-  // Re-sync draft whenever the server value changes (e.g. Auto-Number clears the
-  // code for the same zone), but only while the field is not focused.
-  useEffect(() => {
-    if (!codeFieldFocused) {
-      setCodeDraft(sectionCode ?? "");
-    }
-  }, [sectionCode, zoneId, codeFieldFocused]);
-
-  // Check if codeDraft conflicts with another zone's existing code.
-  const codeConflict = useMemo(() => {
-    if (!SECTION_CODE_RE.test(codeDraft)) return false;
-    return (allZones ?? []).some(
-      (z) => z.id !== zoneId && z.sectionCode === codeDraft,
-    );
-  }, [codeDraft, allZones, zoneId]);
-
-  const codeInvalid = codeDraft !== "" && !SECTION_CODE_RE.test(codeDraft);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -3447,40 +3396,6 @@ export const ZoneForm = forwardRef<ZoneFormHandle, ZoneFormProps>(function ZoneF
           placeholder="e.g. 06 or A"
           style={styles.input}
         />
-      </div>
-      <div>
-        <Label>Section Code</Label>
-        <input
-          value={codeDraft}
-          onChange={(e) => setCodeDraft(e.target.value.toUpperCase())}
-          onFocus={() => setCodeFieldFocused(true)}
-          onBlur={() => {
-            setCodeFieldFocused(false);
-            if (codeInvalid) return;
-            const normalized = codeDraft || null;
-            const current = sectionCode ?? null;
-            if (normalized === current) return;
-            onSectionCodeSave?.(normalized);
-          }}
-          placeholder="ABCD"
-          maxLength={4}
-          style={{
-            ...styles.input,
-            borderColor: codeInvalid || codeConflict ? "#f87171" : undefined,
-            fontFamily: "monospace",
-            letterSpacing: "0.1em",
-          }}
-        />
-        {codeInvalid && (
-          <div style={{ fontSize: 11, color: "#f87171", marginTop: 2 }}>
-            Must be exactly 4 uppercase letters (e.g. ABCD)
-          </div>
-        )}
-        {!codeInvalid && codeConflict && (
-          <div style={{ fontSize: 11, color: "#f87171", marginTop: 2 }}>
-            ⚠ This code is already used by another zone
-          </div>
-        )}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <input

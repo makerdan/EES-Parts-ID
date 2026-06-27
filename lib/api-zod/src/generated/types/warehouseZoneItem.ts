@@ -10,7 +10,6 @@ export interface WarehouseZoneItem {
   id: number;
   aisleId: string;
   sectionNum: number | null;
-  sectionCode: string | null;
   isInventory: boolean;
   svgX: number;
   svgY: number;

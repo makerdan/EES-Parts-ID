@@ -148,7 +148,6 @@ router.patch("/:id", requireAdminAuth, async (req, res) => {
     if (updates.aisleId !== undefined) {
       updates.aisleId = normalizeAisleId(updates.aisleId);
     }
-    delete (updates as Record<string, unknown>)["sectionCode"];
     const [zone] = await db
       .update(warehouseZoneTable)
       .set({ ...updates, updatedAt: new Date() })
