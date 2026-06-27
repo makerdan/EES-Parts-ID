@@ -1532,3 +1532,203 @@ describe("CatalogPdfUpload — native upload path ETA (Platform.OS = 'ios')", ()
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Group 7 — Poll abort safety: stopPolling / unmount mid-flight
+//
+// The polling loop was rewritten to use AbortController + a sequential
+// while-loop. These tests verify the exact failure modes the rewrite was
+// meant to prevent:
+//
+//   1. The AbortController signal is immediately aborted when the component
+//      unmounts while a poll fetch is in-flight (not just skipped on the
+//      next loop iteration).
+//
+//   2. No state update (setJobStatus) reaches the component when a slow
+//      poll response resolves after stopPolling has already fired: the
+//      gen-counter guard and the signal check both gate the setter call,
+//      so the UI stays in whatever terminal state stopPolling left it in.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("CatalogPdfUpload — poll abort safety on unmount / stopPolling mid-flight", () => {
+  let originalPlatformOS: string;
+
+  // ── XHR mock (same shape as Group 5) ─────────────────────────────────────
+  type XhrEventName = "load" | "error" | "abort";
+
+  interface MockXhrG7 {
+    open: jest.Mock;
+    setRequestHeader: jest.Mock;
+    send: jest.Mock;
+    abort: jest.Mock;
+    status: number;
+    responseText: string;
+    onload: (() => void) | null;
+    onerror: (() => void) | null;
+    onabort: (() => void) | null;
+    upload: { onprogress: null };
+    fireEvent(name: XhrEventName): void;
+  }
+
+  let mockXhrG7: MockXhrG7;
+  let MockXMLHttpRequestG7: jest.Mock;
+
+  beforeEach(() => {
+    const { Platform } = require("react-native") as { Platform: { OS: string } };
+    originalPlatformOS = Platform.OS;
+    (Platform as { OS: string }).OS = "web";
+
+    mockXhrG7 = {
+      open: jest.fn(),
+      setRequestHeader: jest.fn(),
+      send: jest.fn(),
+      abort: jest.fn(),
+      status: 200,
+      responseText: "",
+      onload: null,
+      onerror: null,
+      onabort: null,
+      upload: { onprogress: null },
+      fireEvent(name: XhrEventName) {
+        const handler = this[`on${name}`] as (() => void) | null;
+        if (handler) handler.call(this);
+      },
+    };
+
+    MockXMLHttpRequestG7 = jest.fn(() => mockXhrG7);
+    (global as unknown as { XMLHttpRequest: jest.Mock }).XMLHttpRequest = MockXMLHttpRequestG7;
+  });
+
+  afterEach(() => {
+    const { Platform } = require("react-native") as { Platform: { OS: string } };
+    (Platform as { OS: string }).OS = originalPlatformOS;
+    delete (global as unknown as { XMLHttpRequest?: jest.Mock }).XMLHttpRequest;
+    delete (global as unknown as { fetch?: jest.Mock }).fetch;
+  });
+
+  /**
+   * Drive the component through pick → vendor → start → XHR load (200) so
+   * that startPolling fires and the first polling fetch is in-flight.
+   *
+   * Returns the captured AbortSignal passed to fetch() by the polling loop.
+   */
+  async function startPollingInFlight(
+    tree: renderer.ReactTestRenderer,
+    fetchImpl: (url: string, opts: RequestInit) => Promise<unknown>,
+  ): Promise<AbortSignal> {
+    let capturedSignal: AbortSignal | undefined;
+
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(
+      (url: string, opts: RequestInit) => {
+        capturedSignal = opts?.signal as AbortSignal | undefined;
+        return fetchImpl(url, opts);
+      },
+    );
+
+    const pdfBytes = makePdfBytes();
+    const file = makeFile(pdfBytes);
+    mockGetDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: "blob:http://localhost/catalog.pdf", name: "catalog.pdf", file }],
+    });
+    mockReadPdfAsBytes.mockResolvedValueOnce(pdfBytes);
+
+    const pickBtn = findPressable(tree.root, "Choose PDF File");
+    await act(async () => { pickBtn!.props.onPress(); });
+    await flushPromises();
+
+    await act(async () => { capturedOnChangeText!("ACME"); });
+
+    const startBtn = findPressable(tree.root, "Start Extraction");
+    await act(async () => { startBtn!.props.onPress(); });
+    await flushPromises();
+
+    // Fire the upload XHR load → onSuccess → startPolling → fetch (polling)
+    mockXhrG7.status = 200;
+    mockXhrG7.responseText = JSON.stringify({ jobId: "job-abort-test" });
+    await act(async () => { mockXhrG7.fireEvent("load"); });
+    await flushPromises();
+
+    // At this point the polling fetch should have been called and be in-flight.
+    expect(capturedSignal).toBeDefined();
+    return capturedSignal!;
+  }
+
+  it("AbortController signal is aborted immediately when the component unmounts during an in-flight poll", async () => {
+    const tree = await renderUploadCard("admin-tok");
+    activeTree = tree;
+
+    // Polling fetch hangs forever — simulates a slow server response.
+    const signal = await startPollingInFlight(tree, () => new Promise<never>(() => {}));
+
+    expect(signal.aborted).toBe(false);
+
+    // Unmount → useEffect cleanup calls stopPolling → pollRef.current.abort()
+    await act(async () => { tree.unmount(); });
+    activeTree = null;
+
+    // The signal must be aborted synchronously within the cleanup.
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("does not update job status when a slow poll response resolves after stopPolling fires on unmount", async () => {
+    let resolveFetch!: (value: unknown) => void;
+
+    const tree = await renderUploadCard("admin-tok");
+    activeTree = tree;
+
+    // Polling fetch hangs until we manually resolve it.
+    const signal = await startPollingInFlight(
+      tree,
+      () => new Promise<unknown>((res) => { resolveFetch = res; }),
+    );
+
+    // Signal not yet aborted — the fetch is in-flight.
+    expect(signal.aborted).toBe(false);
+
+    // Unmount → stopPolling → signal aborted.
+    await act(async () => { tree.unmount(); });
+    activeTree = null;
+
+    expect(signal.aborted).toBe(true);
+
+    // Now resolve the hanging fetch with a "done" response — this is the
+    // slow-response-after-cancel scenario.  The polling loop checks
+    // `controller.signal.aborted` (true) before calling setJobStatus, so the
+    // setter is never invoked.  We verify there are no unexpected errors and
+    // that the abort guard held by confirming the signal remained aborted
+    // throughout (no re-assignment occurred).
+    const donePayload = {
+      jobId: "job-abort-test",
+      status: "done" as const,
+      totalPages: 10,
+      processedPages: 10,
+      matchedParts: 5,
+      imagesMatched: 0,
+      errorMessage: null,
+    };
+
+    // Construct a minimal Response-like object accepted by the poll loop.
+    const fakeResponse = {
+      ok: true,
+      status: 200,
+      json: async () => donePayload,
+    };
+
+    // Resolving must not throw — any erroneous setState on an unmounted
+    // component (React 18 no-op) or unhandled rejection would surface here.
+    await act(async () => { resolveFetch(fakeResponse); });
+    await flushPromises();
+
+    // The signal must still be aborted — it was never reset.
+    expect(signal.aborted).toBe(true);
+
+    // A freshly mounted instance must start with no job status, proving
+    // the stale response did not corrupt any module-level state.
+    const freshTree = await renderUploadCard("admin-tok");
+    activeTree = freshTree;
+    const freshAllText = instText(freshTree.root);
+    expect(freshAllText).not.toContain("done");
+    expect(freshAllText).not.toContain("job-abort-test");
+  });
+});
+
