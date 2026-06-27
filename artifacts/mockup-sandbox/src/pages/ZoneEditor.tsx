@@ -546,6 +546,26 @@ const HANDLE_CURSOR: Record<Handle, string> = {
   w:  "ew-resize",
 };
 
+// ── Crash-recovery draft helpers (localStorage, keyed by zone ID) ─────────────
+// Persists unsaved form edits when the PATCH fails (e.g. server unreachable).
+// On next zone selection the editor compares the draft against the server state
+// and offers to restore if they differ.
+const DRAFT_LS_PREFIX = "zoneEditorDraft:";
+function draftKey(id: number) { return `${DRAFT_LS_PREFIX}${id}`; }
+function writeDraft(id: number, f: FormState) {
+  try { localStorage.setItem(draftKey(id), JSON.stringify({ form: f, savedAt: Date.now() })); } catch {}
+}
+function clearDraft(id: number) {
+  try { localStorage.removeItem(draftKey(id)); } catch {}
+}
+function readDraft(id: number): { form: FormState; savedAt: number } | null {
+  try {
+    const raw = localStorage.getItem(draftKey(id));
+    if (!raw) return null;
+    return JSON.parse(raw) as { form: FormState; savedAt: number };
+  } catch { return null; }
+}
+
 // ── Undo / Redo singletons (module-level so they survive panel navigation) ────
 // These intentionally live outside React: they persist as long as the JS module
 // is loaded (i.e. the whole browser tab session) and are wiped on full reload.
@@ -652,6 +672,14 @@ export function ZoneEditor() {
   const formRef = useRef<FormState>({ aisleId: "", sectionNum: null, isInventory: true, sortOrder: 0 });
   const setForm = useCallback((f: FormState) => { formRef.current = f; setFormState(f); }, []);
   const [saving, setSaving] = useState(false);
+
+  // Crash-recovery draft offer: set when the selected zone has a localStorage
+  // draft that differs from the current server state.
+  const [draftOffer, setDraftOffer] = useState<{
+    zoneId: number;
+    form: FormState;
+    savedAt: number;
+  } | null>(null);
 
   // Multi-select form fields
   const [multiAisleId, setMultiAisleId] = useState("");
@@ -1248,10 +1276,14 @@ export function ZoneEditor() {
     };
     try {
       await patchZone(zoneId, afterMeta);
+      clearDraft(zoneId);
       pushUndo({ type: "edit", id: zoneId, before: beforeMeta, after: afterMeta });
       toast.success("Saved");
       await fetchZones();
     } catch (e) {
+      // Persist the unsaved form to localStorage so it can be recovered when
+      // the server comes back online and the user re-selects this zone.
+      writeDraft(zoneId, committedForm);
       toast.error(e instanceof Error ? e.message : String(e));
       // Do not restore lastSavedFormRef on failure — selection may have already
       // changed, overwriting it with a different zone's baseline.
@@ -1276,11 +1308,13 @@ export function ZoneEditor() {
         sortOrder: committedForm.sortOrder,
       };
       await patchZone(selectedId, afterMeta);
+      clearDraft(selectedId);
       pushUndo({ type: "edit", id: selectedId, before: beforeMeta, after: afterMeta });
       lastSavedFormRef.current = { ...committedForm };
       toast.success("Zone updated");
       await fetchZones();
     } catch (e) {
+      writeDraft(selectedId, committedForm);
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
@@ -1628,6 +1662,7 @@ export function ZoneEditor() {
         }
         prevSelectedIdRef.current = null;
       }
+      setDraftOffer(null);
       return;
     }
 
@@ -1646,6 +1681,16 @@ export function ZoneEditor() {
     prevSelectedIdRef.current = selectedId;
     setForm(synced);
     lastSavedFormRef.current = synced;
+
+    // Check for a crash-recovery draft and offer to restore it if it differs
+    // from the current server state.
+    const draft = readDraft(selectedId);
+    if (draft && JSON.stringify(draft.form) !== JSON.stringify(synced)) {
+      setDraftOffer({ zoneId: selectedId, form: draft.form, savedAt: draft.savedAt });
+    } else {
+      if (draft) clearDraft(selectedId); // draft already matches server — discard silently
+      setDraftOffer(null);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, zones]);
 
@@ -1685,21 +1730,27 @@ export function ZoneEditor() {
     if (JSON.stringify(form) === JSON.stringify(lastSavedFormRef.current)) return;
 
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    // Capture mutable values for the timer closure.
+    const capturedId = selectedId;
+    const capturedForm = form;
     autoSaveTimerRef.current = setTimeout(async () => {
       const beforeMeta: MetaSnap = lastSavedFormRef.current ? { ...lastSavedFormRef.current } : {};
       try {
         const afterMeta: MetaSnap = {
-          aisleId: normalizeAisleId(form.aisleId),
-          sectionNum: form.sectionNum,
-          isInventory: form.isInventory,
-          sortOrder: form.sortOrder,
+          aisleId: normalizeAisleId(capturedForm.aisleId),
+          sectionNum: capturedForm.sectionNum,
+          isInventory: capturedForm.isInventory,
+          sortOrder: capturedForm.sortOrder,
         };
-        await patchZone(selectedId, afterMeta);
-        pushUndo({ type: "edit", id: selectedId, before: beforeMeta, after: afterMeta });
-        lastSavedFormRef.current = { ...form };
+        await patchZone(capturedId, afterMeta);
+        clearDraft(capturedId);
+        pushUndo({ type: "edit", id: capturedId, before: beforeMeta, after: afterMeta });
+        lastSavedFormRef.current = { ...capturedForm };
         toast.success("Saved");
         await fetchZones();
       } catch (e) {
+        // Server unreachable — save the form locally so the user can recover it.
+        writeDraft(capturedId, capturedForm);
         toast.error(e instanceof Error ? e.message : String(e));
       }
     }, 600);
@@ -1729,6 +1780,9 @@ export function ZoneEditor() {
       if (formIsDirty && currentSelectedId !== null) {
         const pending = formRef.current;
         if (pending.aisleId.trim() && isValidAisleId(pending.aisleId)) {
+          // Persist to localStorage first as a crash-recovery draft — if the
+          // keepalive PATCH fails (server down) the user can restore on reload.
+          writeDraft(currentSelectedId, pending);
           const afterMeta = {
             aisleId: normalizeAisleId(pending.aisleId),
             sectionNum: pending.sectionNum,
@@ -1746,7 +1800,10 @@ export function ZoneEditor() {
             },
             body: JSON.stringify(afterMeta),
             keepalive: true,
-          });
+          }).then((r) => {
+            // If the keepalive PATCH succeeded the data is in the DB — remove draft.
+            if (r.ok) clearDraft(currentSelectedId);
+          }).catch(() => { /* draft stays — server was unreachable */ });
         }
       }
 
@@ -2863,6 +2920,36 @@ export function ZoneEditor() {
                     }
                   }}
                 >
+                  {draftOffer && draftOffer.zoneId === selectedId && (
+                    <div style={styles.draftRestoreBanner}>
+                      <div style={styles.draftRestoreText}>
+                        ↩ Unsaved edits from{" "}
+                        {new Date(draftOffer.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{" "}
+                        — server was unreachable when auto-save fired.
+                      </div>
+                      <div style={styles.draftRestoreActions}>
+                        <button
+                          style={styles.draftRestoreBtn}
+                          onClick={() => {
+                            setForm(draftOffer.form);
+                            clearDraft(draftOffer.zoneId);
+                            setDraftOffer(null);
+                          }}
+                        >
+                          Restore
+                        </button>
+                        <button
+                          style={styles.draftDiscardBtn}
+                          onClick={() => {
+                            clearDraft(draftOffer.zoneId);
+                            setDraftOffer(null);
+                          }}
+                        >
+                          Discard
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <ZoneForm
                     ref={zoneFormRef}
                     key={selectedZone?.id ?? "pending"}
@@ -3710,5 +3797,45 @@ const styles = {
     display: "flex",
     flexDirection: "column" as const,
     gap: 3,
+  },
+  draftRestoreBanner: {
+    margin: "0 0 8px",
+    padding: "8px 10px",
+    background: "rgba(245,158,11,0.10)",
+    border: "1px solid rgba(245,158,11,0.40)",
+    borderRadius: 4,
+    fontSize: 11,
+    color: "#78350f",
+    lineHeight: 1.5,
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 6,
+  },
+  draftRestoreText: {
+    lineHeight: 1.5,
+  },
+  draftRestoreActions: {
+    display: "flex",
+    gap: 6,
+  },
+  draftRestoreBtn: {
+    padding: "3px 10px",
+    fontSize: 11,
+    fontWeight: 600,
+    background: "rgba(245,158,11,0.18)",
+    border: "1px solid rgba(245,158,11,0.50)",
+    borderRadius: 3,
+    cursor: "pointer",
+    color: "#78350f",
+  },
+  draftDiscardBtn: {
+    padding: "3px 10px",
+    fontSize: 11,
+    fontWeight: 600,
+    background: "transparent",
+    border: "1px solid rgba(180,150,100,0.35)",
+    borderRadius: 3,
+    cursor: "pointer",
+    color: "#92400e",
   },
 };
