@@ -44,6 +44,7 @@ import {
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import { shouldUseFallback } from "@/utils/aiFallbackHeaders";
+import { API_BASE } from "@/utils/apiBase";
 import {
   clearPdfPickLogs,
   formatPdfPickLogs,
@@ -53,10 +54,6 @@ import {
 } from "@/utils/pdfPickLogger";
 import { readPdfAsBytes, toFriendlyReadError } from "@/utils/readPdfAsBase64";
 import { getOrSplitChunks, PAGES_PER_CHUNK, splitPdfIntoChunks } from "@/utils/splitPdfIntoChunks";
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
 
 const POLL_MS = 2500;
 

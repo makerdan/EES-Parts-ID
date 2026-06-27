@@ -16,14 +16,11 @@ import {
 import type { FilterValues } from "@/components/FilterPanel";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
+import { API_BASE } from "@/utils/apiBase";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
 
 interface ItemTypeNode {
   slug: string;

@@ -1,10 +1,7 @@
 import { useEffect } from "react";
 
 import { fetchWithAuth } from "@/utils/appAuth";
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
+import { API_BASE } from "@/utils/apiBase";
 
 /**
  * Fire-and-forget screen view tracking.

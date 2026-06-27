@@ -40,6 +40,7 @@ import {
 
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { type DimensionUnit,useApp } from "@/contexts/AppContext";
+import { API_BASE } from "@/utils/apiBase";
 import { getDeviceId } from "@/utils/deviceId";
 
 /**
@@ -55,10 +56,6 @@ export function isLiDARCapableDevice(): boolean {
   const iPadProPattern = /iPad Pro/i;
   return iPhoneProPattern.test(m) || iPadProPattern.test(m);
 }
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
 
 // ── LiDAR error-code → user-friendly hint ────────────────────────────────────
 // The native LidarMeasureModule rejects with one of these code strings embedded

@@ -14,9 +14,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import { Platform } from "react-native";
 
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
+import { API_BASE } from "@/utils/apiBase";
 
 const TILES_BASE_DIR = (FileSystem.cacheDirectory ?? "") + "map-tiles/";
 

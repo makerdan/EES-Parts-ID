@@ -37,6 +37,7 @@ import { useColors } from "@/hooks/useColors";
 import { parseBin } from "@/lib/aisleHierarchy";
 import { secondaryBtnBase } from "@/styles/shared";
 import { fetchWithAuth } from "@/utils/appAuth";
+import { API_BASE } from "@/utils/apiBase";
 import { FUSE_CACHE_KEY, FUSE_CACHE_SYNCED_AT_KEY, FUSE_SYNC_MAX_AGE_MS,getFuseCacheSyncedAt } from "@/utils/offlineBarcode";
 import { evictLRU, QUERY_CACHE_MAX_ENTRIES } from "@/utils/queryCacheBound";
 import { retryAsync } from "@/utils/retryAsync";
@@ -65,11 +66,6 @@ import { reportStorageError } from "@/utils/storageErrorReporter";
 import type { AIZeroResultsState } from "@/utils/translateQuery";
 import { runTranslateQuery } from "@/utils/translateQuery";
 import { useTrackScreen } from "@/utils/useTrackScreen";
-
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
 
 
 type QueryCacheEntry = { timestamp: number; results: Array<SearchResult> };

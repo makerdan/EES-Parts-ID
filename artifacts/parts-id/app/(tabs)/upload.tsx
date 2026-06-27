@@ -40,6 +40,7 @@ import { useApp } from "@/contexts/AppContext";
 import { useApiStatus } from "@/hooks/useApiStatus";
 import { useColors } from "@/hooks/useColors";
 import { secondaryBtnBase } from "@/styles/shared";
+import { API_BASE } from "@/utils/apiBase";
 import {
   activeReplacementCount,
   type BinDiffRow,
@@ -56,11 +57,6 @@ import {
 } from "@/utils/expandDescHandlers";
 import { serializeInventoryToCsv } from "@/utils/exportCsv";
 import { useTrackScreen } from "@/utils/useTrackScreen";
-
-const API_BASE =
-  process.env.EXPO_PUBLIC_DOMAIN
-    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-    : "";
 
 const EXPAND_DESC_DRAFT_KEY = "@expandDesc:draft";
 type ExpandDescDraft = {

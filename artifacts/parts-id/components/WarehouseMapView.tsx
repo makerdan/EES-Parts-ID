@@ -61,6 +61,7 @@ import { Ellipse,G, Path, Rect, Svg, SvgUri, SvgXml, Text as SvgText } from "rea
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
 import { fetchWithAuth } from "@/utils/appAuth";
+import { API_BASE } from "@/utils/apiBase";
 import { warmupTiles } from "@/utils/floorPlan";
 import {
   getCachedData,
@@ -117,11 +118,6 @@ const _persistReadPromise = initPersistRead();
 // duplicate network requests.
 let _svgLoadPromise: Promise<void> | null = null;
 
-// Base URL for API calls — matches the pattern used elsewhere in the app.
-const SVG_API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
-
 export function prefetchSvgAsset(): Promise<void> {
   if (hasCachedData()) return Promise.resolve();
   return loadSvgAsset();
@@ -141,14 +137,14 @@ function loadSvgAsset(): Promise<void> {
 }
 
 async function _loadFloorPlanFromServer(): Promise<void> {
-  const metaRes = await fetchWithAuth(`${SVG_API_BASE}/floor-plan/meta`);
+  const metaRes = await fetchWithAuth(`${API_BASE}/floor-plan/meta`);
   if (!metaRes.ok) throw new Error("no server floor plan");
 
   const { hash } = await metaRes.json() as { hash: string };
   // Cache hit — skip re-fetching the SVG bytes entirely.
   if (getIfValid(hash) !== null) return;
 
-  const svgRes = await fetchWithAuth(`${SVG_API_BASE}/floor-plan/svg`);
+  const svgRes = await fetchWithAuth(`${API_BASE}/floor-plan/svg`);
   if (!svgRes.ok) throw new Error("floor-plan svg fetch failed");
   const xml = await svgRes.text();
 
@@ -163,7 +159,7 @@ async function _loadFloorPlanFromServer(): Promise<void> {
     newData = { xml, innerXml, uri: "", contentViewBox };
   } else {
     // On native, SvgUri can render directly from an http:// URL.
-    newData = { xml, innerXml: "", uri: `${SVG_API_BASE}/floor-plan/svg`, contentViewBox };
+    newData = { xml, innerXml: "", uri: `${API_BASE}/floor-plan/svg`, contentViewBox };
   }
   setCached(hash, newData);
 }
@@ -1305,11 +1301,11 @@ export function WarehouseMapView({
   const knownServerHashRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!SVG_API_BASE) return;
+    if (!API_BASE) return;
     let cancelled = false;
     async function checkServerHash() {
       try {
-        const res = await fetchWithAuth(`${SVG_API_BASE}/floor-plan/meta`);
+        const res = await fetchWithAuth(`${API_BASE}/floor-plan/meta`);
         if (!res.ok || cancelled) return;
         const { hash } = await res.json() as { hash: string };
         if (cancelled) return;

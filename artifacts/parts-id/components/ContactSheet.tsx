@@ -15,6 +15,7 @@ import { DismissKeyboard } from "@/components/DismissKeyboard";
 import { KeyboardDoneInput } from "@/components/KeyboardDoneInput";
 import { useColors } from "@/hooks/useColors";
 import { fetchWithAuth } from "@/utils/appAuth";
+import { API_BASE } from "@/utils/apiBase";
 
 const DEVICE_TOKEN_KEY = "contact_device_token";
 
@@ -22,10 +23,6 @@ function makeDeviceToken(): string {
   const rand = () => Math.random().toString(36).slice(2, 9);
   return `dev_${rand()}${rand()}`;
 }
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
 
 type Props = {
   visible: boolean;

@@ -28,13 +28,10 @@ import { PartDetailsEditor } from "@/components/PartDetailsEditor";
 import { PartPhotoPicker } from "@/components/PartPhotoPicker";
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
+import { API_BASE } from "@/utils/apiBase";
 import { resolveShelfAssign } from "@/utils/barcodeResolver";
 import { invalidateListCache } from "@/utils/editItemCache";
 import { upsertItemInBarcodeCache } from "@/utils/offlineBarcode";
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "http://localhost:8080/api";
 
 interface AssignmentEntry {
   barcode: string;

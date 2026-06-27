@@ -27,11 +27,8 @@ import Svg, { Rect, Text as SvgText } from "react-native-svg";
 
 import { useApp } from "@/contexts/AppContext";
 import { useColors } from "@/hooks/useColors";
+import { API_BASE } from "@/utils/apiBase";
 import { serializeDashboardToCsv } from "@/utils/exportCsv";
-
-const API_BASE = process.env.EXPO_PUBLIC_DOMAIN
-  ? `https://${process.env.EXPO_PUBLIC_DOMAIN}/api`
-  : "";
 
 type DailyPoint = { date: string; total: number };
 type ByScreen = { screenName: string; total: number };
