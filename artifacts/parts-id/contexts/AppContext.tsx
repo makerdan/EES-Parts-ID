@@ -391,20 +391,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }, 4000);
   }, []);
 
-  // When the generated API client receives a 401, force the admin session to
-  // end locally and surface a re-login prompt — the stored token is no longer
-  // valid (either expired or server-side revoked via POST /admin/logout).
+  // When the generated API client receives a 401, force the session to end
+  // locally and surface a re-login prompt — the stored token is no longer
+  // valid (either expired or server-side revoked).
+  // If an admin token is active the admin session expired; clear only the
+  // admin overlay and let the app-session token continue. Otherwise the
+  // app-session token itself expired; force a full re-login.
   useEffect(() => {
     try {
       if (typeof setUnauthorizedHandler !== "function") return;
       setUnauthorizedHandler(() => {
-        secureDelete(ADMIN_TOKEN_KEY).catch(err => {
-          // eslint-disable-next-line no-console
-          console.warn("[AppContext] Failed to delete admin token from secure storage:", err);
-          reportStorageError("Could not clear admin session token", err);
-        });
-        setAdminToken(null);
-        showToast("Admin session expired. Please log in again.", "error");
+        if (adminTokenRef.current !== null) {
+          secureDelete(ADMIN_TOKEN_KEY).catch(err => {
+            // eslint-disable-next-line no-console
+            console.warn("[AppContext] Failed to delete admin token from secure storage:", err);
+            reportStorageError("Could not clear admin session token", err);
+          });
+          setAdminToken(null);
+          showToast("Admin session expired. Please log in again.", "error");
+        } else {
+          secureDelete(SESSION_KEY).catch(err => {
+            // eslint-disable-next-line no-console
+            console.warn("[AppContext] Failed to delete app token from secure storage:", err);
+            reportStorageError("Could not clear app session token", err);
+          });
+          appTokenRef.current = null;
+          setAppTokenModule(null);
+          setIsAuthenticated(false);
+          showToast("Session expired. Please enter the app password again.", "error");
+        }
       });
     } catch {}
     return () => {
