@@ -161,6 +161,19 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   },
 }));
 
+// ─── @/utils/appAuth ─────────────────────────────────────────────────────────
+// WarehouseMapView uses fetchWithAuth (not raw fetch) for all server requests.
+// Delegating to global.fetch lets per-test stubs control the responses.
+jest.mock("@/utils/appAuth", () => ({
+  fetchWithAuth: jest.fn((url: string, init?: RequestInit) =>
+    (global.fetch as typeof fetch)(url, init),
+  ),
+  setAppToken:    jest.fn(),
+  setAdminToken:  jest.fn(),
+  getAuthHeaders: jest.fn(() => ({})),
+  setAuthTokenGetter: jest.fn(),
+}));
+
 // ─── @/utils/floorPlan ────────────────────────────────────────────────────────
 jest.mock("@/utils/floorPlan", () => ({
   warmupTiles: jest.fn(() => Promise.resolve()),
@@ -274,52 +287,76 @@ describe("cleanStaleCacheDirs call site — hash present at mount", () => {
 
 describe("cleanStaleCacheDirs call site — null → string hash transition", () => {
   it("calls cleanStaleCacheDirs when hash resolves from the async SVG load (null → 'loaded-hash')", async () => {
-    // No hash or cached data at mount.
-    mockGetCachedHash.mockReturnValue(null);
-    mockHasCachedData.mockReturnValue(false);
-    mockGetCachedData.mockReturnValue(null);
+    // jest.isolateModules gives a fresh WarehouseMapView module instance so
+    // the module-level _svgLoadPromise singleton is re-initialized.  We
+    // configure fetchWithAuth BEFORE requiring WarehouseMapView, so the
+    // server-load path (_loadFloorPlanFromServer) sees the mocked responses
+    // and resolves _svgLoadPromise with the server hash instead of the bundle
+    // fallback hash.
+    await new Promise<void>((resolve, reject) => {
+      jest.isolateModules(async () => {
+        try {
+          // Configure fetchWithAuth responses BEFORE WarehouseMapView loads.
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const appAuth = require("@/utils/appAuth");
+          appAuth.fetchWithAuth
+            // GET /floor-plan/meta → { hash: "loaded-hash" }
+            .mockResolvedValueOnce({
+              ok: true,
+              json: async () => ({ hash: "loaded-hash" }),
+            })
+            // GET /floor-plan/svg → minimal SVG
+            .mockResolvedValueOnce({
+              ok: true,
+              text: async () => "<svg/>",
+            })
+            // Any further call fails (should not be reached)
+            .mockResolvedValue({ ok: false });
 
-    // When the load effect calls setCached(), side-effect the mocks so that
-    // getCachedData() / getCachedHash() return the resolved values — exactly
-    // as the production floorPlanCache module would after a real write.
-    const RESOLVED_DATA = { uri: "/floor-plan/svg", innerXml: "", xml: "<svg/>" };
-    mockSetCached.mockImplementationOnce((hash: string) => {
-      mockGetCachedHash.mockReturnValue(hash);
-      mockGetCachedData.mockReturnValue(RESOLVED_DATA);
-      mockHasCachedData.mockReturnValue(true);
+          // Configure floorPlanCache for cold-cache path.
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const fpc = require("@/utils/floorPlanCache");
+          fpc.getCachedHash.mockReturnValue(null);
+          fpc.hasCachedData.mockReturnValue(false);
+          fpc.getCachedData.mockReturnValue(null);
+          const RESOLVED_DATA = { uri: "/floor-plan/svg", innerXml: "", xml: "<svg/>" };
+          fpc.setCached.mockImplementationOnce((hash: string) => {
+            fpc.getCachedHash.mockReturnValue(hash);
+            fpc.getCachedData.mockReturnValue(RESOLVED_DATA);
+            fpc.hasCachedData.mockReturnValue(true);
+          });
+
+          // Grab the isolated cleanStaleCacheDirs instance for assertions.
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const tpc = require("@/utils/tilePyramidCache");
+
+          // NOW require WarehouseMapView so _svgLoadPromise is initialized with
+          // the patched fetchWithAuth already in place.
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { WarehouseMapView: WMV } = require("@/components/WarehouseMapView");
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const TR = require("react-test-renderer");
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const React_ = require("react");
+
+          await TR.act(async () => {
+            TR.create(React_.createElement(WMV, BASE_PROPS));
+          });
+          // Drain the full async SVG-load microtask chain.
+          for (let i = 0; i < 12; i++) {
+            await TR.act(async () => { await Promise.resolve(); });
+          }
+
+          // After the load resolves, setSvgHash("loaded-hash") fires which
+          // triggers the cleanStaleCacheDirs effect.
+          expect(tpc.cleanStaleCacheDirs).toHaveBeenCalledTimes(1);
+          expect(tpc.cleanStaleCacheDirs).toHaveBeenCalledWith("loaded-hash");
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
     });
-
-    // Stub fetch so _loadFloorPlanFromServer() succeeds and calls setCached().
-    // SVG_API_BASE = "" in tests (EXPO_PUBLIC_DOMAIN not set), so paths are bare.
-    const originalFetch = global.fetch;
-    global.fetch = jest.fn()
-      // GET /floor-plan/meta → returns the hash
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ hash: "loaded-hash" }),
-      } as unknown as Response)
-      // GET /floor-plan/svg → returns minimal SVG text
-      .mockResolvedValueOnce({
-        ok: true,
-        text: async () => "<svg/>",
-      } as unknown as Response)
-      // Fallback for any additional fetch (e.g. viewport restore; should not fire)
-      .mockResolvedValue({
-        ok: false,
-        json: async () => ({}),
-        text: async () => "",
-      } as unknown as Response);
-
-    await act(async () => {
-      TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
-    });
-
-    global.fetch = originalFetch;
-
-    // After the async load resolves, setSvgHash("loaded-hash") fires which
-    // triggers the cleanup effect.
-    expect(mockCleanStaleCacheDirs).toHaveBeenCalledTimes(1);
-    expect(mockCleanStaleCacheDirs).toHaveBeenCalledWith("loaded-hash");
   });
 
   it("does NOT call cleanStaleCacheDirs when the async load fails (hash stays null)", async () => {

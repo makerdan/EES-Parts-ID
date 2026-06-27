@@ -12,8 +12,10 @@ function* walkTsx(dir) {
   if (!fs.existsSync(dir)) return;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) yield* walkTsx(full);
-    else if (entry.name.endsWith(".tsx") || entry.name.endsWith(".ts")) yield full;
+    if (entry.isDirectory()) {
+      if (entry.name === "__tests__") continue;
+      yield* walkTsx(full);
+    } else if (entry.name.endsWith(".tsx") || entry.name.endsWith(".ts")) yield full;
   }
 }
 

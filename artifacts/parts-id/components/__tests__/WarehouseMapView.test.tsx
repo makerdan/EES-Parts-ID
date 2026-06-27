@@ -681,6 +681,23 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
     delete (global as any).fetch;
   });
 
+  // Helper: mount the component and fire onLayout with the given dimensions.
+  //
+  // The cold-cache path has pendingFit=true from the start (no AsyncStorage
+  // viewport-restore useEffect fires on mount), so no getItem call is made.
+  // onLayout fires synchronously after the initial render.
+  //
+  async function mountAndLayout(containerW: number, containerH: number) {
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = TestRenderer.create(<WarehouseMapView {...BASE_PROPS} />);
+    });
+    await act(async () => {
+      fireOnLayout(renderer, containerW, containerH);
+    });
+    return renderer;
+  }
+
   // Helper: mount + layout + drain all async SVG-load work.
   //
   // The cold-cache load chain is a Promise waterfall:
