@@ -7,7 +7,7 @@
     "dev": "NODE_ENV=development exec tsx src/index.ts",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "jest --runInBand",
     "seed": "tsx src/seed/run.ts",
     "seed:reference": "tsx src/seed/runQuickLookupChips.ts",

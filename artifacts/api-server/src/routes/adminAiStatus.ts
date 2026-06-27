@@ -29,7 +29,7 @@ router.post("/ai-status/probe", requireAdminAuth, async (_req, res) => {
 // Returns 400 when the bot name is not in the known bot list.
 // Advisory only — errors are logged and reflected in the returned summary.
 router.post("/ai-status/probe/:botName", requireAdminAuth, async (req, res) => {
-  const { botName } = req.params;
+  const botName = req.params["botName"] as string;
   const knownBots = getAllPoeModelNames();
   if (!knownBots.includes(botName)) {
     return res.status(400).json({ error: `Unknown bot name: ${botName}` });
