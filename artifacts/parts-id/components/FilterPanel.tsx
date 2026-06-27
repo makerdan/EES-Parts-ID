@@ -72,6 +72,8 @@ interface FilterPanelProps {
   onChange: (key: keyof FilterValues, value: string | number | boolean) => void;
   /** Per-chip counts returned from the last search (key → option → count) */
   dimensionCounts?: DimensionCounts;
+  /** Called when the user taps either Apply button inside the expanded panel */
+  onApply?: () => void;
 }
 
 // ── 16 required chip dimensions (must mirror CHIP_DIMS_SERVER in inventory.ts) ─
@@ -380,7 +382,7 @@ export function ConfidenceSlider({
 
 const TEXT_FIELD_KEYS = ["catalog", "vendor", "color", "size", "material", "textNumbers"] as const;
 
-export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelProps) {
+export function FilterPanel({ values, onChange, dimensionCounts, onApply }: FilterPanelProps) {
   "use no memo";
   const colors = useColors();
 
@@ -462,6 +464,15 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
             </Animated.View>
           </View>
         </Pressable>
+
+        {!dimCollapsed && onApply && (
+          <Pressable
+            onPress={onApply}
+            style={[applyBtnStyles.btn, { backgroundColor: colors.primary, marginBottom: 10 }]}
+          >
+            <Text style={[applyBtnStyles.label, { color: colors.primaryForeground }]}>Apply</Text>
+          </Pressable>
+        )}
 
         {!dimCollapsed && (
           <KeyboardAwareScrollViewCompat
@@ -746,6 +757,14 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
               onChange={v => onChange("confidenceThreshold", v)}
               colors={colors}
             />
+            {onApply && (
+              <Pressable
+                onPress={onApply}
+                style={[applyBtnStyles.btn, { backgroundColor: colors.primary, marginTop: 10 }]}
+              >
+                <Text style={[applyBtnStyles.label, { color: colors.primaryForeground }]}>Apply</Text>
+              </Pressable>
+            )}
           </KeyboardAwareScrollViewCompat>
         )}
       </View>
@@ -753,6 +772,20 @@ export function FilterPanel({ values, onChange, dimensionCounts }: FilterPanelPr
     </View>
   );
 }
+
+const applyBtnStyles = StyleSheet.create({
+  btn: {
+    borderRadius: 8,
+    paddingVertical: 11,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  label: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.3,
+  },
+});
 
 const chipStyles = StyleSheet.create({
   rowLabel: {
