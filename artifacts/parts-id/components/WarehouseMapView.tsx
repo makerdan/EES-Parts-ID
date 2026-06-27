@@ -61,7 +61,7 @@ import { Ellipse,G, Path, Rect, Svg, SvgUri, SvgXml, Text as SvgText } from "rea
 
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
-import { getAuthHeaders } from "@/utils/appAuth";
+import { fetchWithAuth } from "@/utils/appAuth";
 import { warmupTiles } from "@/utils/floorPlan";
 import {
   getCachedData,
@@ -144,18 +144,14 @@ function loadSvgAsset(): Promise<void> {
 }
 
 async function _loadFloorPlanFromServer(): Promise<void> {
-  const metaRes = await fetch(`${SVG_API_BASE}/floor-plan/meta`, {
-    headers: getAuthHeaders(),
-  });
+  const metaRes = await fetchWithAuth(`${SVG_API_BASE}/floor-plan/meta`);
   if (!metaRes.ok) throw new Error("no server floor plan");
 
   const { hash } = await metaRes.json() as { hash: string };
   // Cache hit — skip re-fetching the SVG bytes entirely.
   if (getIfValid(hash) !== null) return;
 
-  const svgRes = await fetch(`${SVG_API_BASE}/floor-plan/svg`, {
-    headers: getAuthHeaders(),
-  });
+  const svgRes = await fetchWithAuth(`${SVG_API_BASE}/floor-plan/svg`);
   if (!svgRes.ok) throw new Error("floor-plan svg fetch failed");
   const xml = await svgRes.text();
 
@@ -1424,9 +1420,7 @@ export function WarehouseMapView({
     let cancelled = false;
     async function checkServerHash() {
       try {
-        const res = await fetch(`${SVG_API_BASE}/floor-plan/meta`, {
-          headers: getAuthHeaders(),
-        });
+        const res = await fetchWithAuth(`${SVG_API_BASE}/floor-plan/meta`);
         if (!res.ok || cancelled) return;
         const { hash } = await res.json() as { hash: string };
         if (cancelled) return;
