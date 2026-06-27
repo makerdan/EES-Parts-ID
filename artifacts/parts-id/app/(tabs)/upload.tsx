@@ -631,9 +631,10 @@ export default function UploadScreen() {
   }, [triggerRestart]);
 
   const handleCheckPress = useCallback(() => {
+    const native = Platform.OS !== "web";
     Animated.sequence([
-      Animated.timing(apiCheckAnim, { toValue: 0.88, duration: 80, useNativeDriver: true }),
-      Animated.spring(apiCheckAnim, { toValue: 1, useNativeDriver: true, tension: 280, friction: 8 }),
+      Animated.timing(apiCheckAnim, { toValue: 0.82, duration: 100, useNativeDriver: native }),
+      Animated.spring(apiCheckAnim, { toValue: 1, useNativeDriver: native, tension: 240, friction: 7 }),
     ]).start();
     void checkStatus();
   }, [apiCheckAnim, checkStatus]);
