@@ -5,6 +5,8 @@
  * Separated so it can be unit-tested without mounting the full screen.
  */
 
+import { BIN_FORMAT_HINT,isBinLocationValid } from "./binValidation";
+
 export type CreatedPart = {
   id: number;
   vendor: string;
@@ -64,6 +66,11 @@ export async function performAddToInventory(
 
   if (!addForm.vendor.trim()) {
     setAddError("Vendor is required.");
+    return;
+  }
+
+  if (!isBinLocationValid(addForm.binLocation)) {
+    setAddError(`Invalid bin location. ${BIN_FORMAT_HINT}`);
     return;
   }
 

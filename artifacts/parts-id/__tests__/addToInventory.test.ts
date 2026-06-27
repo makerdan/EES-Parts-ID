@@ -262,6 +262,91 @@ describe("performAddToInventory — vendor validation", () => {
   });
 });
 
+// ── (h) Bin location validation ───────────────────────────────────────────────
+
+describe("performAddToInventory — bin location validation", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("sets an error and does NOT call fetch when bin location is malformed", async () => {
+    global.fetch = jest.fn();
+    const { deps, mocks } = makeDeps({
+      addForm: { ...BASE_FORM, binLocation: "INVALID BIN" },
+    });
+    await performAddToInventory(deps);
+
+    expect(mocks.setAddError).toHaveBeenCalledWith(
+      expect.stringContaining("Invalid bin location"),
+    );
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not set addingInProgress when bin location is malformed", async () => {
+    global.fetch = jest.fn();
+    const { deps, mocks } = makeDeps({
+      addForm: { ...BASE_FORM, binLocation: "no-dash-start/" },
+    });
+    await performAddToInventory(deps);
+
+    expect(mocks.setAddingInProgress).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bin location that is a bare token with no delimiter", async () => {
+    global.fetch = jest.fn();
+    const { deps, mocks } = makeDeps({
+      addForm: { ...BASE_FORM, binLocation: "NODASH" },
+    });
+    await performAddToInventory(deps);
+
+    expect(mocks.setAddError).toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bin location containing spaces", async () => {
+    global.fetch = jest.fn();
+    const { deps, mocks } = makeDeps({
+      addForm: { ...BASE_FORM, binLocation: "A 1 2" },
+    });
+    await performAddToInventory(deps);
+
+    expect(mocks.setAddError).toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("accepts a blank bin location and proceeds to fetch", async () => {
+    global.fetch = jest.fn().mockResolvedValue(makeOkResponse());
+    const { deps } = makeDeps({
+      addForm: { ...BASE_FORM, binLocation: "" },
+    });
+    await performAddToInventory(deps);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a valid bin location and proceeds to fetch", async () => {
+    global.fetch = jest.fn().mockResolvedValue(makeOkResponse());
+    const { deps } = makeDeps({
+      addForm: { ...BASE_FORM, binLocation: "A-12-3" },
+    });
+    await performAddToInventory(deps);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("error message includes the format hint", async () => {
+    global.fetch = jest.fn();
+    const { deps, mocks } = makeDeps({
+      addForm: { ...BASE_FORM, binLocation: "bad location!" },
+    });
+    await performAddToInventory(deps);
+
+    expect(mocks.setAddError).toHaveBeenCalledWith(
+      expect.stringContaining("segments separated by dashes"),
+    );
+  });
+});
+
 // ── (d) 409 conflict ──────────────────────────────────────────────────────────
 
 describe("performAddToInventory — 409 conflict", () => {
