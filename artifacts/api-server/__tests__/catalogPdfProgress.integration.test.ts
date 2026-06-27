@@ -288,7 +288,7 @@ describe("PDF job progress — DB updated per page", () => {
       }
       // First call: return the fixture entry so matchCatalogNumber fires.
       return { entries: [
-        { catalogNumber: "JEST-PGS-PART-001", description: "Jest Test Part", confidence: 0.95, hasPartImage: false, imageRegion: null },
+        { catalogNumber: "JEST-PGS-PART-001", description: "Jest Test Part", confidence: 0.95, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
       ], rawText: "" };
     });
 
@@ -384,7 +384,7 @@ describe("PDF job status endpoint — DB-accurate counts after simulated restart
       { pageNum: 1, text: "part page", images: [], isRendered: false, pageWidth: 0, pageHeight: 0 },
     ]);
     mockExtractCatalogPage.mockResolvedValueOnce({ entries: [
-      { catalogNumber: "JEST-PGS-PART-002", description: "Another Jest Part", confidence: 0.9, hasPartImage: false, imageRegion: null },
+      { catalogNumber: "JEST-PGS-PART-002", description: "Another Jest Part", confidence: 0.9, hasPartImage: false, imageRegion: null, imageRegion2: null, imageIndex: -1, imageIndex2: -1 },
     ], rawText: "" });
     mockMatchCatalogNumber.mockResolvedValueOnce({
       inventoryId,

@@ -506,7 +506,7 @@ describe("GET /api/admin/catalog-pdf/failed-jobs — excludes child jobs", () =>
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Minimal page shape accepted by processPdfPages / extractCatalogPage
-const STUB_PAGE = { text: "", images: [] as Buffer[], isRendered: false as const, pageWidth: 0, pageHeight: 0 };
+const STUB_PAGE = { pageNum: 1, text: "", images: [] as Buffer[], isRendered: false as const, pageWidth: 0, pageHeight: 0 };
 
 describe("partsFound counter and unmatchedParts behavior", () => {
   it("partsFound counts all AI-extracted entries including those below confidence threshold", async () => {
