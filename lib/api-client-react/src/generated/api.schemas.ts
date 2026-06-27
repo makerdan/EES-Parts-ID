@@ -5,21 +5,19 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export type HealthStatusStatus =
-  (typeof HealthStatusStatus)[keyof typeof HealthStatusStatus];
+export type HealthStatusStatus = typeof HealthStatusStatus[keyof typeof HealthStatusStatus];
+
 
 export const HealthStatusStatus = {
-  ok: "ok",
-  degraded: "degraded",
-  error: "error",
+  ok: 'ok',
+  degraded: 'degraded',
+  error: 'error',
 } as const;
 
 /**
  * Per-bot Poe reachability results from the startup probe
  */
-export type HealthStatusBots = {
-  [key: string]: "ok" | "timeout" | "404" | "error";
-};
+export type HealthStatusBots = {[key: string]: 'ok' | 'timeout' | '404' | 'error'};
 
 export interface HealthStatus {
   status: HealthStatusStatus;
@@ -184,9 +182,7 @@ export interface SearchResult {
 /**
  * Per-chip-dimension live match counts (dimKey → optionLabel → count)
  */
-export type SearchInventoryResponseDimensionCounts = {
-  [key: string]: { [key: string]: number };
-};
+export type SearchInventoryResponseDimensionCounts = {[key: string]: {[key: string]: number}};
 
 /**
  * Response shape for POST /inventory/search.
@@ -222,8 +218,8 @@ export interface UpdateDimensionsBody {
 /**
  * Which photo slot to target (1 = Box / Label, 2 = Detail / Wire Frame). Defaults to 1.
  */
-export type UploadPhotoBodySlot =
-  (typeof UploadPhotoBodySlot)[keyof typeof UploadPhotoBodySlot];
+export type UploadPhotoBodySlot = typeof UploadPhotoBodySlot[keyof typeof UploadPhotoBodySlot];
+
 
 export const UploadPhotoBodySlot = {
   NUMBER_1: 1,
@@ -397,18 +393,19 @@ export interface AiReferenceBody {
 }
 
 export type ListInventoryParams = {
-  page?: number;
-  limit?: number;
-  /**
-   * Filter items to those stored in bins starting with this prefix
-   */
-  binPrefix?: string;
+page?: number;
+limit?: number;
+/**
+ * Filter items to those stored in bins starting with this prefix
+ */
+binPrefix?: string;
 };
 
 export type LookupDictionaryParams = {
-  term: string;
+term: string;
 };
 
 export type DeleteWarehouseZone200 = {
   deleted: boolean;
 };
+
