@@ -14,8 +14,8 @@ import {
 } from "react-native";
 
 import { useColors } from "@/hooks/useColors";
-import { fetchWithAuth } from "@/utils/appAuth";
 import { API_BASE } from "@/utils/apiBase";
+import { fetchWithAuth } from "@/utils/appAuth";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);

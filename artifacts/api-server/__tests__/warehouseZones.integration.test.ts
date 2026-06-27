@@ -28,6 +28,7 @@ import { signAdminToken } from "../src/routes/admin";
 import { seedFixtures, cleanupFixtures, closePool } from "./helpers/testDb";
 import { db, warehouseZoneTable } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { UpdateWarehouseZoneResponse } from "@workspace/api-zod";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 const ADMIN_SECRET = "jest-zone-secret";
@@ -468,4 +469,80 @@ describe("GET /api/warehouse-zones/coverage", () => {
       expect(uncoveredAisles).toContain(a);
     }
   }, 30_000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Response shape — no sectionCode after section_code removal
+//
+// These tests confirm that the POST and PATCH responses conform to the
+// UpdateWarehouseZoneResponse Zod schema and that the deprecated sectionCode
+// field is absent from all zone objects returned by the API.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("zone response shape — sectionCode absent after section_code deprecation", () => {
+  it("POST response zone passes UpdateWarehouseZoneResponse and has no sectionCode key", async () => {
+    const res = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(BASE_ZONE)
+      .expect(201);
+
+    const parsed = UpdateWarehouseZoneResponse.safeParse(res.body);
+    expect(parsed.success).toBe(true);
+    expect(res.body.zone).not.toHaveProperty("sectionCode");
+  });
+
+  it("PATCH response zone passes UpdateWarehouseZoneResponse and has no sectionCode key", async () => {
+    const create = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(BASE_ZONE)
+      .expect(201);
+
+    const id: number = create.body.zone.id;
+
+    const res = await supertest(app)
+      .patch(`/api/warehouse-zones/${id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ aisleId: "JEST-SHAPE" })
+      .expect(200);
+
+    const parsed = UpdateWarehouseZoneResponse.safeParse(res.body);
+    expect(parsed.success).toBe(true);
+    expect(res.body.zone).not.toHaveProperty("sectionCode");
+  });
+
+  it("GET list zones have no sectionCode key on any zone", async () => {
+    await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(BASE_ZONE)
+      .expect(201);
+
+    const res = await supertest(app)
+      .get("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    for (const zone of res.body.zones as Record<string, unknown>[]) {
+      expect(zone).not.toHaveProperty("sectionCode");
+    }
+  });
+
+  it("POST response zone has all expected keys (id, aisleId, sectionNum, isInventory, svgX, svgY, svgWidth, svgHeight, sortOrder, createdAt, updatedAt)", async () => {
+    const res = await supertest(app)
+      .post("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send(BASE_ZONE)
+      .expect(201);
+
+    const zone = res.body.zone as Record<string, unknown>;
+    const expectedKeys = [
+      "id", "aisleId", "sectionNum", "isInventory",
+      "svgX", "svgY", "svgWidth", "svgHeight",
+      "sortOrder", "createdAt", "updatedAt",
+    ];
+    for (const key of expectedKeys) {
+      expect(zone).toHaveProperty(key);
+    }
+  });
 });

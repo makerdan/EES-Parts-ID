@@ -60,8 +60,8 @@ import { Ellipse,G, Path, Rect, Svg, SvgUri, SvgXml, Text as SvgText } from "rea
 
 import { useColors } from "@/hooks/useColors";
 import type { ApiWarehouseZone } from "@/hooks/useWarehouseZones";
-import { fetchWithAuth } from "@/utils/appAuth";
 import { API_BASE } from "@/utils/apiBase";
+import { fetchWithAuth } from "@/utils/appAuth";
 import { warmupTiles } from "@/utils/floorPlan";
 import {
   getCachedData,
