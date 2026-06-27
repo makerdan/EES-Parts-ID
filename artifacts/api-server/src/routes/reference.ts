@@ -327,7 +327,7 @@ router.get("/quick-lookups/:label", async (req, res) => {
 // Called internally by the mobile client when cache misses at all layers.
 router.post("/quick-lookups/:label", requireAdminAuth, async (req, res) => {
   try {
-    const { label } = req.params;
+    const label = req.params["label"] as string;
     const { question } = req.body as { question: string };
     if (!question?.trim()) {
       return void res.status(400).json({ error: "question is required" });
