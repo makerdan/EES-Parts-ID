@@ -13,6 +13,10 @@ import { Appearance, AppState, Platform, StyleSheet, Text, useColorScheme,View }
 
 import colorTokens from "@/constants/colors";
 import type { ResumeProgress } from "@/types/catalogPdf";
+import {
+  setAdminToken as setAdminTokenModule,
+  setAppToken as setAppTokenModule,
+} from "@/utils/appAuth";
 import { type LogoutHandler,LogoutRegistry } from "@/utils/logoutRegistry";
 import {
   ADMIN_TOKEN_KEY,
@@ -24,10 +28,6 @@ import {
   reportStorageError,
   setStorageErrorHandler,
 } from "@/utils/storageErrorReporter";
-import {
-  setAppToken as setAppTokenModule,
-  setAdminToken as setAdminTokenModule,
-} from "@/utils/appAuth";
 
 // ── App Settings ─────────────────────────────────────────────────────────────
 export const SETTINGS_KEY = "parts_id_settings_v1";
