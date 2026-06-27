@@ -1857,6 +1857,7 @@ export default function SearchScreen() {
               values={filters}
               onChange={handleChange}
               dimensionCounts={dimensionCounts}
+              onApply={hasResults ? handleSearch : undefined}
             />
           </View>
         </View>
