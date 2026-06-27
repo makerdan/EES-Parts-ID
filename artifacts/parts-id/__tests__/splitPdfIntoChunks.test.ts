@@ -6,7 +6,7 @@
  */
 
 import { PDFDocument } from "pdf-lib";
-import { splitPdfIntoChunks } from "../../../artifacts/parts-id/utils/splitPdfIntoChunks";
+import { splitPdfIntoChunks } from "../utils/splitPdfIntoChunks";
 
 // Helper: build a synthetic N-page PDF as a Uint8Array
 async function makeTestPdf(pageCount: number): Promise<Uint8Array> {
