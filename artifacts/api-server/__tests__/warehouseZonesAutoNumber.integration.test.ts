@@ -96,7 +96,7 @@ async function getSectionNum(id: number): Promise<number> {
     .from(warehouseZoneTable)
     .where(eq(warehouseZoneTable.id, id));
   if (!row) throw new Error(`Zone ${id} not found`);
-  return row.sectionNum;
+  return row.sectionNum!;
 }
 
 /**
@@ -120,6 +120,7 @@ async function applyTwoPhase(
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("auto-number zone sequencing — two-phase PATCH", () => {
+
 
   // ── 1. Baseline: straight renumber (no overlap) ───────────────────────────
   it("straight renumber — sectionNums are set correctly without any constraint error", async () => {
@@ -284,5 +285,5 @@ describe("auto-number zone sequencing — two-phase PATCH", () => {
     for (let i = 0; i < ids.length; i++) {
       expect(await getSectionNum(ids[i]!)).toBe(finals[i]);
     }
-  });
-}, 60_000);
+  }, 60_000);
+});

@@ -146,11 +146,12 @@ describe("FTS expression drift guard — no bare to_tsvector() in src/", () => {
     for (const file of ftsFiles) {
       const content = fs.readFileSync(file, "utf-8");
       const relative = path.relative(SRC_DIR, file);
-      expect(content).toMatch(
-        /inventoryFtsVector/,
-        `${relative} uses FTS operators but does not call inventoryFtsVector() — ` +
-        `add the import or delegate to the shared helper to keep expression in sync with the GIN index`,
-      );
+      if (!/inventoryFtsVector/.test(content)) {
+        throw new Error(
+          `${relative} uses FTS operators but does not call inventoryFtsVector() — ` +
+          `add the import or delegate to the shared helper to keep expression in sync with the GIN index`,
+        );
+      }
     }
   });
 });
