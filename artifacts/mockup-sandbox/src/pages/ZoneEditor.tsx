@@ -853,7 +853,24 @@ export function ZoneEditor() {
 
   // ── Undo / Redo helpers ──────────────────────────────────────────────────
   const pushUndo = useCallback((entry: UndoEntry) => {
-    undoStackRef.current = [...undoStackRef.current.slice(-(UNDO_LIMIT - 1)), entry];
+    const stack = undoStackRef.current;
+    const last = stack.length > 0 ? stack[stack.length - 1] : undefined;
+    // Merge consecutive "edit" entries for the same zone: if the new entry's
+    // `before` state equals the previous entry's `after` state, the two entries
+    // form a contiguous chain (no other save happened in between).  Collapsing
+    // them keeps the undo stack manageable when the user types quickly and the
+    // 600 ms auto-save fires many times before they click away.
+    if (
+      entry.type === "edit" &&
+      last?.type === "edit" &&
+      last.id === entry.id &&
+      JSON.stringify(last.after) === JSON.stringify(entry.before)
+    ) {
+      const merged: UndoEntry = { type: "edit", id: entry.id, before: last.before, after: entry.after };
+      undoStackRef.current = [...stack.slice(0, -1), merged];
+    } else {
+      undoStackRef.current = [...stack.slice(-(UNDO_LIMIT - 1)), entry];
+    }
     redoStackRef.current = [];
     setUndoCount(undoStackRef.current.length);
     setRedoCount(0);
