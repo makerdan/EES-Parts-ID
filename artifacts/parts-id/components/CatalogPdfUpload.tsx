@@ -806,7 +806,16 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunksTotal(chunks.length);
     setChunksCompleted(0);
 
-    await uploadChunksFromIndex(chunks, 0, null);
+    try {
+      await uploadChunksFromIndex(chunks, 0, null);
+    } catch {
+      setLoading(false);
+      setChunkLabel(null);
+      setChunksCompleted(0);
+      setChunksTotal(0);
+      resetUploadProgress();
+      setError("An unexpected error occurred. Please try again.");
+    }
   };
 
   // ── Retry a single failed chunk (without re-uploading the whole file) ──────
@@ -839,7 +848,14 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
     setChunksTotal(chunks.length);
     setChunksCompleted(chunkIndex);
 
-    await uploadChunksFromIndex(chunks, chunkIndex, parentJobId);
+    try {
+      await uploadChunksFromIndex(chunks, chunkIndex, parentJobId);
+    } catch {
+      setLoading(false);
+      setChunkLabel(null);
+      resetUploadProgress();
+      setError("An unexpected error occurred. Please try again.");
+    }
   };
 
   // ── Retry a specific chunk that failed during server-side AI processing ────
