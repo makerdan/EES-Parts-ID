@@ -3,7 +3,8 @@ import { verifyAdminToken, getRevokedBefore } from "../routes/admin";
 import { verifyAppToken } from "../routes/auth";
 
 // Paths relative to /api that do not require any authentication token.
-const PUBLIC_PATHS = new Set(["/healthz", "/auth/app-login"]);
+// /admin/login must stay public so the admin-bootstrap call can reach the handler.
+const PUBLIC_PATHS = new Set(["/healthz", "/auth/app-login", "/admin/login"]);
 
 /**
  * Middleware that validates either an app-session token or an admin token on
