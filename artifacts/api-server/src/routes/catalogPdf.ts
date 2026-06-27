@@ -764,10 +764,14 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
       .map((c) => ({ chunkJobId: String(c.id), chunkIndex: c.chunkIndex }));
 
     // Aggregate AI raw log from all child jobs, ordered by page number
-    const aggregatedAiRawLog: Array<{ page: number; text: string }> = [];
+    const aggregatedAiRawLog: Array<{ page: number; text: string; chunkJobId: string }> = [];
     for (const child of children) {
       const childRecord = aiRawLogStore.get(child.id);
-      if (childRecord) aggregatedAiRawLog.push(...childRecord.entries);
+      if (childRecord) {
+        aggregatedAiRawLog.push(
+          ...childRecord.entries.map((e) => ({ ...e, chunkJobId: String(child.id) })),
+        );
+      }
     }
     aggregatedAiRawLog.sort((a, b) => a.page - b.page);
 
@@ -800,7 +804,7 @@ router.get("/catalog-pdf/:jobId/status", requireAdminAuth, async (req, res) => {
 
   // ── Non-parent (child or legacy) job: return directly ────────────────────
   const directRecord = aiRawLogStore.get(Number(jobId));
-  const directLog = directRecord?.entries ?? [];
+  const directLog = (directRecord?.entries ?? []).map((e) => ({ ...e, chunkJobId: jobId }));
   res.json({
     jobId,
     vendor: row.vendor,
