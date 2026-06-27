@@ -20,7 +20,7 @@
  */
 
 import { Router } from "express";
-import { eq, sql, and, desc, inArray, isNull } from "drizzle-orm";
+import { eq, sql, and, or, lt, desc, inArray, isNull } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { inventoryTable, catalogPdfJobTable } from "@workspace/db";
 import { verifyAdminToken } from "./admin";
@@ -313,6 +313,7 @@ async function processPdfPages(
         }
       }
 
+      const incomingConfidence = match.similarityScore * entry.confidence;
       await db
         .update(inventoryTable)
         .set({
@@ -321,11 +322,19 @@ async function processPdfPages(
           imageUrl,
           imageUrl2,
           imageSource: "pdf_extraction",
-          imageConfidence: match.similarityScore * entry.confidence,
+          imageConfidence: incomingConfidence,
           catalogPdfJobId: jobId,
           updatedAt: new Date(),
         })
-        .where(eq(inventoryTable.id, match.inventoryId));
+        .where(
+          and(
+            eq(inventoryTable.id, match.inventoryId),
+            or(
+              isNull(inventoryTable.imageConfidence),
+              lt(inventoryTable.imageConfidence, incomingConfidence),
+            ),
+          ),
+        );
 
       if (imageUrl) imagesMatched++;
       matchedParts++;
