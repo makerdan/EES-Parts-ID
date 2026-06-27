@@ -3,6 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { requireAppAuth } from "./middlewares/requireAppAuth";
 
 const app: Express = express();
 
@@ -36,6 +37,7 @@ app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
+app.use("/api", requireAppAuth);
 app.use("/api", router);
 
 export default app;
