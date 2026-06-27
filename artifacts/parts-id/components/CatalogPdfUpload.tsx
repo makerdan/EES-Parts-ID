@@ -71,7 +71,7 @@ const MAX_SILENT_RETRIES = 2;
 /** Back-off delay between silent retries (ms). */
 const SILENT_RETRY_DELAY_MS = 2000;
 
-type AiRawLogEntry = { page: number; text: string };
+type AiRawLogEntry = { page: number; text: string; chunkJobId: string };
 type AiRawLogEntries = Array<AiRawLogEntry>;
 
 type JobStatus = {
@@ -186,7 +186,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
   const [aiRawLog, setAiRawLog] = useState<AiRawLogEntries>([]);
   const [diagTab, setDiagTab] = useState<"pick" | "ai">("pick");
-  const seenAiPagesRef = useRef(new Set<number>());
+  const seenAiPagesRef = useRef(new Set<string>());
 
   // ── Upload speed / ETA helpers ─────────────────────────────────────────────
   // Number of raw progress samples kept in the rolling window.
@@ -413,9 +413,9 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
 
             setJobStatus(data);
             if (data.aiRawLog && data.aiRawLog.length > 0) {
-              const newEntries = data.aiRawLog.filter(e => !seenAiPagesRef.current.has(e.page));
+              const newEntries = data.aiRawLog.filter(e => !seenAiPagesRef.current.has(`${e.chunkJobId}:${e.page}`));
               if (newEntries.length > 0) {
-                newEntries.forEach(e => seenAiPagesRef.current.add(e.page));
+                newEntries.forEach(e => seenAiPagesRef.current.add(`${e.chunkJobId}:${e.page}`));
                 setAiRawLog(prev => [...prev, ...newEntries].sort((a, b) => a.page - b.page));
               }
             }
@@ -1518,7 +1518,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               ) : (
                 <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
                   {aiRawLog.map(entry => (
-                    <View key={entry.page} style={s.aiRawEntry}>
+                    <View key={`${entry.chunkJobId}:${entry.page}`} style={s.aiRawEntry}>
                       <Text style={[s.aiRawPageLabel, { color: colors.primary }]}>
                         Page {entry.page}
                       </Text>
