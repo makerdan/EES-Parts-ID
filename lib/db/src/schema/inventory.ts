@@ -160,7 +160,15 @@ export const catalogPdfJobTable = pgTable("catalog_pdf_job", {
   chunkIndex: integer("chunk_index"),
   chunkCount: integer("chunk_count"),
   pageOffset: integer("page_offset"),
-});
+},
+(table) => [
+  // Partial unique index: enforces one child job per (parent_job_id, chunk_index) slot.
+  // The WHERE clause excludes parent and legacy single-upload rows (parent_job_id IS NULL)
+  // so they are never affected by this constraint.
+  uniqueIndex("catalog_pdf_job_parent_chunk_uniq")
+    .on(table.parentJobId, table.chunkIndex)
+    .where(sql`parent_job_id IS NOT NULL`),
+]);
 
 export const insertCatalogPdfJobSchema = createInsertSchema(catalogPdfJobTable).omit({
   id: true,

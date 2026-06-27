@@ -516,26 +516,59 @@ router.post("/catalog-pdf", requireAdminAuth, async (req, res) => {
   }
 
   // ── Create child (or legacy) job record ───────────────────────────────────
+  // For chunked uploads the unique index on (parent_job_id, chunk_index) can
+  // prevent a second insert when a client retries a chunk that already has an
+  // active child job in the DB. In that case ON CONFLICT DO NOTHING returns no
+  // rows; we fetch the existing child job and return it to the client so it can
+  // resume polling without creating a duplicate.
+  const insertValues = {
+    vendor: normalizedVendor,
+    filename: filename.trim(),
+    status: "pending" as const,
+    processedPages: 0,
+    matchedParts: 0,
+    ...(isChunked
+      ? {
+          parentJobId: resolvedParentJobId,
+          chunkIndex: chunkIndex!,
+          chunkCount: chunkCount!,
+          pageOffset,
+        }
+      : {}),
+  };
+
   const [jobRow] = await db
     .insert(catalogPdfJobTable)
-    .values({
-      vendor: normalizedVendor,
-      filename: filename.trim(),
-      status: "pending",
-      processedPages: 0,
-      matchedParts: 0,
-      ...(isChunked
-        ? {
-            parentJobId: resolvedParentJobId,
-            chunkIndex: chunkIndex!,
-            chunkCount: chunkCount!,
-            pageOffset,
-          }
-        : {}),
-    })
+    .values(insertValues)
+    .onConflictDoNothing()
     .returning({ id: catalogPdfJobTable.id });
 
   if (!jobRow) {
+    if (isChunked && resolvedParentJobId !== null && chunkIndex !== null) {
+      // Conflict: a child job for this slot already exists.  Return it so the
+      // client can poll its status without starting a duplicate run.
+      const [existing] = await db
+        .select({ id: catalogPdfJobTable.id, status: catalogPdfJobTable.status })
+        .from(catalogPdfJobTable)
+        .where(
+          and(
+            eq(catalogPdfJobTable.parentJobId, resolvedParentJobId),
+            eq(catalogPdfJobTable.chunkIndex, chunkIndex),
+          ),
+        )
+        .limit(1);
+
+      if (!existing) {
+        return void res.status(500).json({ error: "Failed to create or find job record" });
+      }
+
+      return void res.json({
+        jobId: String(resolvedParentJobId),
+        chunkJobId: String(existing.id),
+        status: existing.status,
+        message: "Chunk already submitted",
+      });
+    }
     return void res.status(500).json({ error: "Failed to create job record" });
   }
 
