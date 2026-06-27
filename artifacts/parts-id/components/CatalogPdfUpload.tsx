@@ -1278,7 +1278,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             <Text style={[s.reviewBtnText, { color: colors.primary }]}>Review changes →</Text>
           </Pressable>
           <Pressable
-            onPress={() => { setJobStatus(null); setFilename(null); setPdfBytes(null); }}
+            onPress={() => { setJobStatus(null); setFilename(null); setPdfBytes(null); setVendor(""); setAiRawLog([]); seenAiPagesRef.current.clear(); }}
             style={[s.reviewBtn, { borderColor: colors.mutedForeground }]}
           >
             <Text style={[s.reviewBtnText, { color: colors.mutedForeground }]}>Start new extraction</Text>
@@ -1296,7 +1296,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
               : ""}
           </Text>
           <Pressable
-            onPress={() => { setJobStatus(null); setFilename(null); setCancellingJob(false); }}
+            onPress={() => { setJobStatus(null); setFilename(null); setCancellingJob(false); setVendor(""); setAiRawLog([]); seenAiPagesRef.current.clear(); }}
             style={[s.reviewBtn, { borderColor: colors.mutedForeground }]}
           >
             <Text style={[s.reviewBtnText, { color: colors.mutedForeground }]}>Start new job</Text>
@@ -1342,7 +1342,7 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
             })
           ) : (
             <Pressable
-              onPress={() => { setJobStatus(null); setFilename(null); chunksRef.current = null; setHasStoredChunks(false); }}
+              onPress={() => { setJobStatus(null); setFilename(null); chunksRef.current = null; setHasStoredChunks(false); setVendor(""); setAiRawLog([]); seenAiPagesRef.current.clear(); }}
               style={[s.reviewBtn, { borderColor: colors.destructive }]}
             >
               <Text style={[s.reviewBtnText, { color: colors.destructive }]}>Try again</Text>
