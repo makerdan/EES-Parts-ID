@@ -1476,6 +1476,12 @@ export function CatalogPdfUpload({ adminToken, onSessionExpired }: Props) {
                     <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Copy all</Text>
                   </Pressable>
                 </Animated.View>
+                <Pressable
+                  onPress={() => { setAiRawLog([]); seenAiPagesRef.current.clear(); }}
+                  style={[s.logPanelBtn, { borderColor: colors.border }]}
+                >
+                  <Text style={[s.logPanelBtnText, { color: colors.foreground }]}>Clear</Text>
+                </Pressable>
               </View>
               {aiRawLog.length === 0 ? (
                 <Text style={[s.logEntryMsg, { color: colors.mutedForeground, paddingVertical: 4 }]}>
