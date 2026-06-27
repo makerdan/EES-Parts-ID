@@ -130,19 +130,6 @@ async function migrateAdminPreferences(): Promise<void> {
   }
 }
 
-async function migrateWarehouseZoneSectionCode(): Promise<void> {
-  try {
-    await db.execute(sql`
-      ALTER TABLE warehouse_zone ADD COLUMN IF NOT EXISTS section_code TEXT
-    `);
-    await db.execute(sql`
-      CREATE UNIQUE INDEX IF NOT EXISTS warehouse_zone_section_code_idx
-        ON warehouse_zone (section_code) WHERE section_code IS NOT NULL
-    `);
-  } catch (err) {
-    logger.error({ err }, "Failed to migrate warehouse_zone section_code column");
-  }
-}
 
 async function migrateWarehouseZoneNullSectionNum(): Promise<void> {
   try {
@@ -162,52 +149,20 @@ async function migrateWarehouseZoneNullSectionNum(): Promise<void> {
     // Silently ignore — default may already be gone.
   }
   try {
-    // Ensure the quick_lookup_cache table exists before we use it as a flag
-    // store. This function runs in parallel with initQuickLookupCache(), so we
-    // cannot rely on that function having already created the table.
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS quick_lookup_cache (
-        label TEXT PRIMARY KEY,
-        answer TEXT NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )
-    `);
-
-    // Idempotency guard — only run the one-time wipe once per deployment
-    // environment. Subsequent restarts skip directly to the log line below.
-    const flagRows = await db.execute(sql`
-      SELECT 1 FROM quick_lookup_cache WHERE label = 'section_code_wipe_v1'
-    `);
-    if (flagRows.rows.length > 0) {
-      logger.debug("section_code one-time wipe already applied — skipping");
-      return;
-    }
-
-    // (a) Set section_num = NULL for sentinel rows (≤ 0) AND for any row that
-    //     previously had a section_code (auto-generated codes indicate the
-    //     section number was never user-assigned).
+    // Null out any leftover sentinel rows (section_num <= 0) that were used
+    // during the old auto-number migration and should never appear in the UI.
     await db.execute(sql`
       UPDATE warehouse_zone
          SET section_num = NULL
        WHERE section_num IS NOT NULL
-         AND (section_num <= 0 OR section_code IS NOT NULL)
+         AND section_num <= 0
     `);
-    // (b) Wipe all section codes (deprecated field) unconditionally.
-    await db.execute(sql`UPDATE warehouse_zone SET section_code = NULL`);
-
-    // Persist the idempotency flag so this block is skipped on future restarts.
-    await db.execute(sql`
-      INSERT INTO quick_lookup_cache (label, answer, updated_at)
-      VALUES ('section_code_wipe_v1', 'done', now())
-      ON CONFLICT (label) DO NOTHING
-    `);
-    logger.info("Cleared section_code and nulled sentinel/coded section_nums (one-time wipe complete)");
   } catch (err) {
-    logger.error({ err }, "Failed to null-migrate warehouse_zone section_num / section_code");
+    logger.error({ err }, "Failed to null-migrate warehouse_zone sentinel section_nums");
   }
 }
 
-Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneSectionCode(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity()])
+Promise.all([recoverOrphanedJobs(), initQuickLookupCache(), migrateAdminPreferences(), migrateWarehouseZoneNullSectionNum(), checkZoneSectionNumIntegrity()])
   .then(() => initProvider())
   .then(() => probePoeBotsOnStartup())
   .then(() => startServer(app, port, MAX_RETRIES))

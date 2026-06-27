@@ -1168,9 +1168,6 @@ components:
         sectionNum:
           type: integer
           nullable: true
-        sectionCode:
-          type: string
-          nullable: true
         isInventory:
           type: boolean
         svgX:
@@ -1193,7 +1190,6 @@ components:
         - id
         - aisleId
         - sectionNum
-        - sectionCode
         - isInventory
         - svgX
         - svgY
