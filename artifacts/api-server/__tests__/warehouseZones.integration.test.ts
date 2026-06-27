@@ -1,8 +1,8 @@
 /**
  * Integration tests for GET/POST/PATCH/DELETE /api/warehouse-zones.
  *
- * Mutation endpoints (POST, PATCH, DELETE) require a valid admin token.
- * GET endpoints are unauthenticated (read-only).
+ * All endpoints require a valid admin or app token (requireAppAuth middleware).
+ * Mutation endpoints (POST, PATCH, DELETE) additionally require an admin token.
  */
 
 // ── Mock OpenAI BEFORE app is imported ────────────────────────────────────────
@@ -70,8 +70,11 @@ const BASE_ZONE = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("GET /api/warehouse-zones", () => {
-  it("returns 200 and a zones array (no auth required)", async () => {
-    const res = await supertest(app).get("/api/warehouse-zones").expect(200);
+  it("returns 200 and a zones array", async () => {
+    const res = await supertest(app)
+      .get("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
     expect(res.body).toHaveProperty("zones");
     expect(Array.isArray(res.body.zones)).toBe(true);
   });
@@ -83,7 +86,10 @@ describe("GET /api/warehouse-zones", () => {
       .send(BASE_ZONE)
       .expect(201);
 
-    const res = await supertest(app).get("/api/warehouse-zones").expect(200);
+    const res = await supertest(app)
+      .get("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
     const found = res.body.zones.find(
       (z: { aisleId: string }) => z.aisleId === BASE_ZONE.aisleId,
     );
@@ -127,14 +133,14 @@ describe("POST /api/warehouse-zones", () => {
     expect(typeof res.body.zone.id).toBe("number");
   });
 
-  it("defaults sectionNum to 0 when omitted", async () => {
+  it("defaults sectionNum to null when omitted", async () => {
     const res = await supertest(app)
       .post("/api/warehouse-zones")
       .set("Authorization", `Bearer ${adminToken}`)
       .send(BASE_ZONE)
       .expect(201);
 
-    expect(res.body.zone.sectionNum).toBe(0);
+    expect(res.body.zone.sectionNum).toBeNull();
   });
 
   it("accepts explicit sectionNum values", async () => {
@@ -323,7 +329,10 @@ describe("DELETE /api/warehouse-zones/:id", () => {
       .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
 
-    const list = await supertest(app).get("/api/warehouse-zones").expect(200);
+    const list = await supertest(app)
+      .get("/api/warehouse-zones")
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
     const found = list.body.zones.find(
       (z: { id: number }) => z.id === id,
     );
@@ -380,9 +389,10 @@ describe("GET /api/warehouse-zones/coverage", () => {
     await cleanupCoverageFixtures();
   }, 15_000);
 
-  it("returns 200 with unsortedCount and uncoveredAisles fields (no auth required)", async () => {
+  it("returns 200 with unsortedCount and uncoveredAisles fields", async () => {
     const res = await supertest(app)
       .get("/api/warehouse-zones/coverage")
+      .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
     expect(res.body).toHaveProperty("unsortedCount");
     expect(res.body).toHaveProperty("uncoveredAisles");
@@ -394,6 +404,7 @@ describe("GET /api/warehouse-zones/coverage", () => {
     // Record baseline before seeding
     const baseline = await supertest(app)
       .get("/api/warehouse-zones/coverage")
+      .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
     const baseUnsorted: number = baseline.body.unsortedCount;
     const baseUncovered: string[] = baseline.body.uncoveredAisles;
@@ -450,6 +461,7 @@ describe("GET /api/warehouse-zones/coverage", () => {
 
     const res = await supertest(app)
       .get("/api/warehouse-zones/coverage")
+      .set("Authorization", `Bearer ${adminToken}`)
       .expect(200);
 
     const unsortedCount: number = res.body.unsortedCount;
