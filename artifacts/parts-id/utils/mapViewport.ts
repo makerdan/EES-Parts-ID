@@ -207,12 +207,16 @@ export function clampScale(s: number): number {
  * Compute the maximum safe translation (pan limits) for a given container
  * size and scale.
  *
- * The SVG renders at containerW × (containerW / SVG_ASPECT) points.  At a
- * given scale the rendered area grows by that factor.  Each axis allows panning
- * up to half the overflow past the container edge (because the transform pivots
- * around the view centre).  When the scaled map is smaller than the container
- * on an axis — i.e. in the "letterboxed" portrait case for Y — that axis
- * returns 0 and no panning is permitted.
+ * The SVG renders at containerW × svgRenderH points.  At a given scale the
+ * rendered area grows by that factor.  Each axis allows panning up to half
+ * the overflow past the container edge (because the transform pivots around
+ * the view centre).  When the scaled map is smaller than the container on an
+ * axis — i.e. in the "letterboxed" portrait case for Y — that axis returns 0
+ * and no panning is permitted.
+ *
+ * `svgRenderH` must reflect the ACTUAL floor-plan viewBox aspect ratio
+ * (containerW / (contentVB.w / contentVB.h)), falling back to
+ * containerW / SVG_ASPECT before the viewBox is parsed.
  *
  * Returns { maxX, maxY } — always ≥ 0.
  */
@@ -220,8 +224,8 @@ export function panBounds(
   containerW: number,
   containerH: number,
   scale: number,
+  svgRenderH: number,
 ): { maxX: number; maxY: number } {
-  const svgRenderH = containerW / SVG_ASPECT;
   return {
     maxX: Math.max(0, (containerW * scale - containerW) / 2),
     maxY: Math.max(0, (svgRenderH * scale - containerH) / 2),

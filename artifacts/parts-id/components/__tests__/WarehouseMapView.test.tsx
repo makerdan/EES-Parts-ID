@@ -328,6 +328,12 @@ beforeEach(() => {
     .mockReturnValue({ maxX: 10_000, maxY: 10_000 });
 
   mockAsyncStorageGetItem.mockReset();
+  // Default: no saved viewport (returns null).  Individual suites override
+  // this to return a stored viewport JSON string (Suite 1) or keep null
+  // (Suites 2, 3, 4).  The default must be a resolved Promise so the
+  // viewport-restore useEffect's .then() call doesn't crash in suites that
+  // don't configure the mock explicitly.
+  mockAsyncStorageGetItem.mockResolvedValue(null);
   mockAsyncStorageSetItem.mockReset();
   mockAsyncStorageSetItem.mockResolvedValue(undefined);
 
@@ -683,9 +689,9 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
 
   // Helper: mount the component and fire onLayout with the given dimensions.
   //
-  // The cold-cache path has pendingFit=true from the start (no AsyncStorage
-  // viewport-restore useEffect fires on mount), so no getItem call is made.
-  // onLayout fires synchronously after the initial render.
+  // The viewport-restore useEffect fires on mount and calls getItem, which
+  // returns null (no saved viewport on first install).  pendingFit stays true
+  // so the fit-to-screen path runs when onLayout fires.
   //
   async function mountAndLayout(containerW: number, containerH: number) {
     let renderer!: TestRenderer.ReactTestRenderer;
@@ -750,12 +756,12 @@ describe("startup fit — cold cache (getCachedData returns null on first instal
       expect(trackedValues.some((sv) => sv.value === fitTx)).toBe(true);
       expect(trackedValues.some((sv) => sv.value === fitTy)).toBe(true);
 
-      // AsyncStorage.getItem must never be called during cold-cache startup.
-      // The SVG-loading chain (loadSvgAsset → _loadFloorPlanFromBundle →
-      // setCached → setSvgXml → svgXml parse effect) and the fit-application
-      // path (applyFitIfReady → computeFitTarget) must not read AsyncStorage;
-      // and there is no viewport-restore effect to trigger it on mount either.
-      expect(mockAsyncStorageGetItem).not.toHaveBeenCalled();
+      // The viewport-restore useEffect calls AsyncStorage.getItem once on mount
+      // with VIEWPORT_KEY.  On a cold-cache / first-install scenario there is no
+      // stored viewport, so getItem returns null and pendingFit stays true,
+      // allowing the fit-to-screen path above to run normally.
+      expect(mockAsyncStorageGetItem).toHaveBeenCalledTimes(1);
+      expect(mockAsyncStorageGetItem).toHaveBeenCalledWith(VIEWPORT_KEY);
     },
   );
 
